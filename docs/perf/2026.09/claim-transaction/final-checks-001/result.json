@@ -1,0 +1,124 @@
+{
+  "passed": true,
+  "commands": [
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "crates/schema/generator/src/generate.rs"
+      ],
+      "exit_code": 0,
+      "seconds": 0.083
+    },
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "crates/schema/generator/src/manifest.rs"
+      ],
+      "exit_code": 0,
+      "seconds": 0.041
+    },
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "crates/schema/generator/tests/generation.rs"
+      ],
+      "exit_code": 0,
+      "seconds": 0.054
+    },
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "components/data/receiving-data/src/record_receipt.rs"
+      ],
+      "exit_code": 0,
+      "seconds": 0.033
+    },
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "components/data/wms-data/src/inventory_adjust.rs"
+      ],
+      "exit_code": 0,
+      "seconds": 0.027
+    },
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "components/data/wms-data/src/inventory_move.rs"
+      ],
+      "exit_code": 0,
+      "seconds": 0.026
+    },
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "components/data/wms-data/src/inventory_merge.rs"
+      ],
+      "exit_code": 0,
+      "seconds": 0.029
+    },
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "components/data/wms-data/src/inventory_split.rs"
+      ],
+      "exit_code": 0,
+      "seconds": 0.029
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "seconds": 0.038
+    }
+  ],
+  "source_sha256": {
+    "components/data/receiving-data/src/record_receipt.rs": "f72f48b6aef9235cac957e5b92d8bd0af51499c93be15ab38fead0f3872a1fa8",
+    "components/data/wms-data/src/inventory_adjust.rs": "2515694da1c6596e1c0cdc354e884359c3ce726a0ed5f9cec8a5411ab1f76c12",
+    "components/data/wms-data/src/inventory_merge.rs": "bbeb989d00ff7c3cc01abe1b1157948d25faa16501fdce2eed5f887cacf516ef",
+    "components/data/wms-data/src/inventory_move.rs": "330a6665b4488c04063587696e4ff8e7c4838f41d424fd88c71466b45b01d13a",
+    "components/data/wms-data/src/inventory_split.rs": "0dde395c1260c92c56abdadc917527daa011db189661ea358a7efcf7747509e8",
+    "crates/schema/generator/src/generate.rs": "3cf8d412439e05ef63db34a73c723879d2a4cd2ad43ee0198612a689884ceafd",
+    "crates/schema/generator/src/manifest.rs": "c87b52ee8f7230a70a258aabccbc75c85917985228a4bdf0168933b8cc737ef8",
+    "crates/schema/generator/tests/generation.rs": "66d7b87214f4f004e78935aca2590c9e22c1fee8feb3a5beded4a35e6ae9a61b",
+    "packages/client_acme_receiving/generated/contracts/receiving/record_receipt.inherited-tests.json": "148ca1e583b55ad0cb4ef349db1c594eda54f18594073039c86cb6de3a5de916",
+    "packages/client_acme_receiving/generated/contracts/receiving/record_receipt.operation.json": "63a1401b73a613a51fa266f396d0c2e8c27b3e446f5584d6036af7161bd91e62",
+    "packages/client_acme_receiving/generated/platform-policy/data-access.json": "278e241c55b26d92fe5483aa1866c0833ee98fe61f64ba871c904aebaec4f478",
+    "packages/client_acme_receiving/generated/source-map/receiving_record_receipt.json": "234c35d438cecda84f67ec22f67ad2e6516c3122e766ad3cb473788510330903",
+    "packages/client_acme_receiving/wamn.json": "9a2d7760d95acc06568f9960df0248194fa451827eafdc4edbdf98683ae95d19",
+    "packages/receiving/generated/wamn/receiving_record_receipt.rs": "03ca17525e4063c31f2e12042ecfea6dc88c902c4083f8fd83862dbbe49db355",
+    "packages/wms/generated/wamn/inventory_adjust.rs": "087501eec283a3f5fdaeb967914ce879c3cd2cc8ac1c76c4553b72aa2fb4186c",
+    "packages/wms/generated/wamn/inventory_merge.rs": "f28507d546576ecccceeaa132b4abe38b63d1be358efeb7ceb891e5be80425db",
+    "packages/wms/generated/wamn/inventory_move.rs": "c3b20770fbf93fb250f574121ee810db8d02655d7418aaa135b7b95981adea6c",
+    "packages/wms/generated/wamn/inventory_split.rs": "e7213c3f8040d63b2c6ce5d73848d080b5e4113078dbdf0f2be652c8d7855034"
+  },
+  "receiving_digest": "sha256:f7427c1425e02cfd856a0a8174fb30c86da5748321bb4c1ea896f457fc1139ff",
+  "compile_inputs_unchanged": true
+}

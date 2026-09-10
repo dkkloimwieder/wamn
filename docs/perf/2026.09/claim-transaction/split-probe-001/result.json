@@ -1,0 +1,25 @@
+{
+  "command": [
+    "cargo",
+    "check",
+    "--offline",
+    "--manifest-path",
+    "/tmp/wamn-claim-split-probe-ku8xhl63/Cargo.toml"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910",
+  "environment": {
+    "CARGO_TARGET_DIR": "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/target/claim-split-probe",
+    "WAMN_SPLIT_PROBE_ACCESSORS": "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/packages/receiving/generated/wamn/receiving_record_receipt.rs"
+  },
+  "exit_code": 0,
+  "elapsed_seconds": 17.308556961012073,
+  "input_sha256": {
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/docs/perf/2026.09/claim-transaction/tools/split_probe.rs": "9eb98872bac04d29f8a584633476c5062ff0cad555c4c9db0f3ebe6bcd3aba9e",
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/packages/receiving/generated/wamn/receiving_record_receipt.rs": "73fc661bdbdcab9dc028a6b3b583a2ede7e8346d9c402ca25bd1a6cdeb7f371c",
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/postgres-statements/src/lib.rs": "7a52073f3177d0db93ea44543464dbb39b0c7a812dbe9cd1125269ee3b7351a5",
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/postgres-statements/Cargo.toml": "91c830b4b2f5d4959452f9ba8453b0c27582ce0b5f38b4e85aba0ec3987019e8",
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/Cargo.toml": "09ce2141d46030f9f45b6ea2cff231d9309b14fe8ee816ca58cebff67f93e1e4"
+  },
+  "observation": "split shape compiles",
+  "scope": "compile only; no runtime execution or database mutation"
+}

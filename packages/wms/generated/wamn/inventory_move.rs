@@ -1,7 +1,5 @@
 // @generated from migration IR; do not edit.
 
-use wamn_postgres_statements::Transaction;
-
 #[derive(Debug)]
 pub(crate) struct ClaimCommandRow {
     pub movement_id: wamn_postgres_statements::Uuid,
@@ -62,13 +60,38 @@ pub(crate) const MOVE_PALLET_DIGEST: &str = "sha256:0253289ea4de402bbf488abeb841
 pub(crate) const SELECT_PALLET_QUANTITY_DIGEST: &str = "sha256:7788b618608496d40d21c0bbfec54e4508661fbea826075abb61e5cceeec6288";
 pub(crate) const VALIDATE_LOCATION_DIGEST: &str = "sha256:043f1cb7e8359f79c83b7944e308c1d4238a2bc7b0eac50a0093e53e7563d516";
 
+/// One claim and its work, with no commit before finalization.
+#[derive(Debug)]
+pub(crate) struct PendingClaim {
+    transaction: wamn_postgres_statements::Transaction,
+}
+
+/// Transfer the open transaction into this command's claim scope.
+pub(crate) fn begin_claim(transaction: wamn_postgres_statements::Transaction) -> PendingClaim {
+    PendingClaim { transaction }
+}
+
+/// A finalized claim whose transaction can now commit.
+#[derive(Debug)]
+pub(crate) struct FinalizedClaim {
+    transaction: wamn_postgres_statements::Transaction,
+    pub row: FinalizeCommandRow,
+}
+
+impl FinalizedClaim {
+    /// Commit the claim and its work together.
+    pub(crate) async fn commit(self) -> Result<(), wamn_postgres_statements::StatementError> {
+        self.transaction.commit().await
+    }
+}
+
 pub(crate) async fn claim_command(
-    transaction: &mut Transaction,
+    claim: &mut PendingClaim,
     idempotency_key: String,
     canonical_command: Vec<u8>,
     pallet_id: wamn_postgres_statements::Uuid,
 ) -> Result<Option<ClaimCommandRow>, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(CLAIM_COMMAND_DIGEST, vec![
+    let rows = claim.transaction.run(CLAIM_COMMAND_DIGEST, vec![
         wamn_postgres_statements::into_sql_value(idempotency_key),
         wamn_postgres_statements::into_sql_value(canonical_command),
         wamn_postgres_statements::into_sql_value(pallet_id),
@@ -81,33 +104,34 @@ pub(crate) async fn claim_command(
 }
 
 pub(crate) async fn finalize_command(
-    transaction: &mut Transaction,
+    mut claim: PendingClaim,
     idempotency_key: String,
     canonical_command: Vec<u8>,
     movement_id: wamn_postgres_statements::Uuid,
     pallet_status: String,
     row_version: i64,
-) -> Result<FinalizeCommandRow, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(FINALIZE_COMMAND_DIGEST, vec![
+) -> Result<FinalizedClaim, wamn_postgres_statements::StatementError> {
+    let rows = claim.transaction.run(FINALIZE_COMMAND_DIGEST, vec![
         wamn_postgres_statements::into_sql_value(idempotency_key),
         wamn_postgres_statements::into_sql_value(canonical_command),
         wamn_postgres_statements::into_sql_value(movement_id),
         wamn_postgres_statements::into_sql_value(pallet_status),
         wamn_postgres_statements::into_sql_value(row_version),
     ]).await?;
-    wamn_postgres_statements::decode_one(FINALIZE_COMMAND_DIGEST, rows, |row| {
+    let row = wamn_postgres_statements::decode_one(FINALIZE_COMMAND_DIGEST, rows, |row| {
         Ok(FinalizeCommandRow {
             pallet_status: row.decode("pallet_status")?,
             row_version: row.decode("row_version")?,
         })
-    })
+    })?;
+    Ok(FinalizedClaim { transaction: claim.transaction, row })
 }
 
 pub(crate) async fn find_replay(
-    transaction: &mut Transaction,
+    claim: &mut PendingClaim,
     idempotency_key: String,
 ) -> Result<Option<FindReplayRow>, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(FIND_REPLAY_DIGEST, vec![
+    let rows = claim.transaction.run(FIND_REPLAY_DIGEST, vec![
         wamn_postgres_statements::into_sql_value(idempotency_key),
     ]).await?;
     wamn_postgres_statements::decode_optional(FIND_REPLAY_DIGEST, rows, |row| {
@@ -122,7 +146,7 @@ pub(crate) async fn find_replay(
 }
 
 pub(crate) async fn insert_movement(
-    transaction: &mut Transaction,
+    claim: &mut PendingClaim,
     idempotency_key: String,
     pallet_id: wamn_postgres_statements::Uuid,
     product_id: wamn_postgres_statements::Uuid,
@@ -131,7 +155,7 @@ pub(crate) async fn insert_movement(
     quantity: wamn_postgres_statements::Numeric,
     occurred_at: wamn_postgres_statements::TimestampTz,
 ) -> Result<InsertMovementRow, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(INSERT_MOVEMENT_DIGEST, vec![
+    let rows = claim.transaction.run(INSERT_MOVEMENT_DIGEST, vec![
         wamn_postgres_statements::into_sql_value(idempotency_key),
         wamn_postgres_statements::into_sql_value(pallet_id),
         wamn_postgres_statements::into_sql_value(product_id),
@@ -148,10 +172,10 @@ pub(crate) async fn insert_movement(
 }
 
 pub(crate) async fn lock_pallet(
-    transaction: &mut Transaction,
+    claim: &mut PendingClaim,
     pallet_id: wamn_postgres_statements::Uuid,
 ) -> Result<Option<LockPalletRow>, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(LOCK_PALLET_DIGEST, vec![
+    let rows = claim.transaction.run(LOCK_PALLET_DIGEST, vec![
         wamn_postgres_statements::into_sql_value(pallet_id),
     ]).await?;
     wamn_postgres_statements::decode_optional(LOCK_PALLET_DIGEST, rows, |row| {
@@ -164,11 +188,11 @@ pub(crate) async fn lock_pallet(
 }
 
 pub(crate) async fn move_pallet(
-    transaction: &mut Transaction,
+    claim: &mut PendingClaim,
     pallet_id: wamn_postgres_statements::Uuid,
     to_location_id: wamn_postgres_statements::Uuid,
 ) -> Result<MovePalletRow, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(MOVE_PALLET_DIGEST, vec![
+    let rows = claim.transaction.run(MOVE_PALLET_DIGEST, vec![
         wamn_postgres_statements::into_sql_value(pallet_id),
         wamn_postgres_statements::into_sql_value(to_location_id),
     ]).await?;
@@ -182,10 +206,10 @@ pub(crate) async fn move_pallet(
 }
 
 pub(crate) async fn select_pallet_quantity(
-    transaction: &mut Transaction,
+    claim: &mut PendingClaim,
     pallet_id: wamn_postgres_statements::Uuid,
 ) -> Result<Vec<SelectPalletQuantityRow>, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(SELECT_PALLET_QUANTITY_DIGEST, vec![
+    let rows = claim.transaction.run(SELECT_PALLET_QUANTITY_DIGEST, vec![
         wamn_postgres_statements::into_sql_value(pallet_id),
     ]).await?;
     wamn_postgres_statements::decode_all(SELECT_PALLET_QUANTITY_DIGEST, rows, |row| {
@@ -198,10 +222,10 @@ pub(crate) async fn select_pallet_quantity(
 }
 
 pub(crate) async fn validate_location(
-    transaction: &mut Transaction,
+    claim: &mut PendingClaim,
     location_id: wamn_postgres_statements::Uuid,
 ) -> Result<Option<ValidateLocationRow>, wamn_postgres_statements::StatementError> {
-    let rows = transaction.run(VALIDATE_LOCATION_DIGEST, vec![
+    let rows = claim.transaction.run(VALIDATE_LOCATION_DIGEST, vec![
         wamn_postgres_statements::into_sql_value(location_id),
     ]).await?;
     wamn_postgres_statements::decode_optional(VALIDATE_LOCATION_DIGEST, rows, |row| {

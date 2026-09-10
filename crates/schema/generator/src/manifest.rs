@@ -759,6 +759,16 @@ fn validate_custom_operation_kind(
                 ));
             }
             validate_command_idempotence(manifest, operation_name, operation)?;
+            if operation.claim.is_some()
+                && operation.transaction != Some(CommandTransaction::ExplicitPerInput)
+            {
+                return Err(GenerateError::new(
+                    GenerateErrorKind::InvalidOperation,
+                    format!(
+                        "command {operation_name} has a claim; declare transaction: explicit_per_input and automatic_retry: false so the claim and its work commit together"
+                    ),
+                ));
+            }
             let has_local_sql = operation.connection.is_some()
                 || !operation.relations.is_empty()
                 || !operation.statements.is_empty();

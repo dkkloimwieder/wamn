@@ -1,0 +1,27 @@
+{
+  "case": "valid",
+  "command": [
+    "cargo",
+    "check",
+    "--offline",
+    "--message-format=json",
+    "--manifest-path",
+    "/tmp/wamn-claim-compile-gate-5oisx5hm/Cargo.toml"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910",
+  "exit_code": 0,
+  "elapsed_seconds": 0.36473689699778333,
+  "passed": true,
+  "expected_error": null,
+  "matched_errors": 0,
+  "actual_error_codes": [],
+  "input_sha256": {
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/docs/perf/2026.09/claim-transaction/tools/split_probe_gate.py": "2b243a133d074ae9f997506ef38d60c2d19d14bf758d009167cfd6db1ee61860",
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/docs/perf/2026.09/claim-transaction/tools/split_probe_valid.rs": "913d93b28e8b259cc9e03e4d31db96b7add011943d3401f300a833af45bbd4d7",
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/packages/receiving/generated/wamn/receiving_record_receipt.rs": "03ca17525e4063c31f2e12042ecfea6dc88c902c4083f8fd83862dbbe49db355",
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/packages/wms/generated/wamn/inventory_split.rs": "e7213c3f8040d63b2c6ce5d73848d080b5e4113078dbdf0f2be652c8d7855034",
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/postgres-statements/src/lib.rs": "7a52073f3177d0db93ea44543464dbb39b0c7a812dbe9cd1125269ee3b7351a5",
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/postgres-statements/Cargo.toml": "91c830b4b2f5d4959452f9ba8453b0c27582ce0b5f38b4e85aba0ec3987019e8",
+    "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/Cargo.toml": "09ce2141d46030f9f45b6ea2cff231d9309b14fe8ee816ca58cebff67f93e1e4"
+  }
+}

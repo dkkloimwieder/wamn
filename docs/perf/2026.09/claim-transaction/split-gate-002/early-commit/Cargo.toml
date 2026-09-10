@@ -1,0 +1,17 @@
+[package]
+name = "wamn-claim-split-probe"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[lib]
+path = "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/docs/perf/2026.09/claim-transaction/tools/split_probe_reject.rs"
+
+[dependencies]
+wamn-postgres-statements = { path = "/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/postgres-statements" }
+
+[features]
+early-commit = []
+moved-transaction = []
+private-transaction = []

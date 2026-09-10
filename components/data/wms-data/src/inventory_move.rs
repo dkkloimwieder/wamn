@@ -24,7 +24,7 @@
 //! quantity rows, and the pallet is what makes them serialize.
 
 use serde::Deserialize;
-use wamn_postgres_statements::{Connection, TimestampTz, Transaction, Uuid};
+use wamn_postgres_statements::{Connection, TimestampTz, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_move as sql;
@@ -101,26 +101,11 @@ pub(crate) async fn execute(command: &MoveCommand) -> Result<MoveResult, AccessE
     let canonical = canonical_command(command, &parsed);
 
     let mut connection = Connection::new();
-    let mut transaction = connection
+    let transaction = connection
         .begin()
         .await
         .map_err(|e| error::from_statement(&e))?;
-    let result = run(&mut transaction, command, &canonical, &parsed).await;
-    match result {
-        Ok(value) => {
-            transaction
-                .commit()
-                .await
-                .map_err(|e| error::from_statement(&e))?;
-            Ok(value)
-        }
-        // Dropping the transaction rolls it back; the explicit rollback makes
-        // the refusal path say so rather than relying on a Drop nobody reads.
-        Err(refusal) => {
-            let _ = transaction.rollback().await;
-            Err(refusal)
-        }
-    }
+    run(sql::begin_claim(transaction), command, &canonical, &parsed).await
 }
 
 /// The bytes the idempotency key keys: the RE-SPELLED command, so two
@@ -141,7 +126,7 @@ fn canonical_command(command: &MoveCommand, parsed: &Parsed) -> Vec<u8> {
 }
 
 async fn run(
-    transaction: &mut Transaction,
+    mut transaction: sql::PendingClaim,
     command: &MoveCommand,
     canonical: &[u8],
     parsed: &Parsed,
@@ -149,7 +134,7 @@ async fn run(
     // A REPLAY RETURNS THE ORIGINAL RESULT, unchanged. Not a fresh execution
     // that happens to agree — the claim row holds what the first attempt
     // decided, including the movement id a downstream label key depends on.
-    if let Some(replay) = sql::find_replay(transaction, command.idempotency_key.clone())
+    if let Some(replay) = sql::find_replay(&mut transaction, command.idempotency_key.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
     {
@@ -181,7 +166,7 @@ async fn run(
     }
 
     let claim = sql::claim_command(
-        transaction,
+        &mut transaction,
         command.idempotency_key.clone(),
         canonical.to_vec(),
         parsed.pallet_id.clone(),
@@ -191,7 +176,7 @@ async fn run(
     .ok_or_else(|| AccessError::new(AccessErrorKind::Retry, serde_json::json!({})))?;
 
     // THE SERIALIZATION POINT.
-    let locked = sql::lock_pallet(transaction, parsed.pallet_id.clone())
+    let locked = sql::lock_pallet(&mut transaction, parsed.pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(|| {
@@ -209,7 +194,7 @@ async fn run(
         ));
     }
 
-    sql::validate_location(transaction, parsed.to_location_id.clone())
+    sql::validate_location(&mut transaction, parsed.to_location_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(|| {
@@ -222,12 +207,12 @@ async fn run(
 
     // ONE MOVEMENT PER QUANTITY ROW. The history says WHAT moved, not merely
     // that something did — which is the multi-row half of this command.
-    let quantities = sql::select_pallet_quantity(transaction, parsed.pallet_id.clone())
+    let quantities = sql::select_pallet_quantity(&mut transaction, parsed.pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
     for quantity in &quantities {
         sql::insert_movement(
-            transaction,
+            &mut transaction,
             command.idempotency_key.clone(),
             parsed.pallet_id.clone(),
             quantity.product_id.clone(),
@@ -241,7 +226,7 @@ async fn run(
     }
 
     let moved = sql::move_pallet(
-        transaction,
+        &mut transaction,
         parsed.pallet_id.clone(),
         parsed.to_location_id.clone(),
     )
@@ -258,7 +243,7 @@ async fn run(
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    if finalized.row_version.is_none() {
+    if finalized.row.row_version.is_none() {
         // The guarded finalize matched nothing, so this claim was already
         // finalized by a concurrent attempt. Refusing beats reporting a result
         // this transaction did not write.
@@ -268,6 +253,10 @@ async fn run(
         ));
     }
 
+    finalized
+        .commit()
+        .await
+        .map_err(|e| error::from_statement(&e))?;
     Ok(MoveResult {
         movement_id: claim.movement_id.0.clone(),
         pallet_id: command.pallet_id.clone(),

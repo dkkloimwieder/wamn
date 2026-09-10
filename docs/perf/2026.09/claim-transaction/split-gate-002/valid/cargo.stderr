@@ -1,0 +1,3 @@
+     Locking 34 packages to latest Rust 1.98.0 compatible versions
+    Checking wamn-claim-split-probe v0.0.0 (/tmp/wamn-claim-compile-gate-5oisx5hm)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.32s

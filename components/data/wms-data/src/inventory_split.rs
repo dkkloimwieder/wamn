@@ -20,7 +20,7 @@
 //! release the hold. The source must keep stock: moving everything is a move.
 
 use serde::Deserialize;
-use wamn_postgres_statements::{Connection, Numeric, TimestampTz, Transaction, Uuid};
+use wamn_postgres_statements::{Connection, Numeric, TimestampTz, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_split as sql;
@@ -127,24 +127,11 @@ pub(crate) async fn execute(command: &SplitCommand) -> Result<SplitResult, Acces
     let canonical = canonical_command(command, &parsed);
 
     let mut connection = Connection::new();
-    let mut transaction = connection
+    let transaction = connection
         .begin()
         .await
         .map_err(|e| error::from_statement(&e))?;
-    let result = run(&mut transaction, command, &canonical, &parsed).await;
-    match result {
-        Ok(value) => {
-            transaction
-                .commit()
-                .await
-                .map_err(|e| error::from_statement(&e))?;
-            Ok(value)
-        }
-        Err(refusal) => {
-            let _ = transaction.rollback().await;
-            Err(refusal)
-        }
-    }
+    run(sql::begin_claim(transaction), command, &canonical, &parsed).await
 }
 
 fn retry() -> AccessError {
@@ -156,13 +143,13 @@ fn internal() -> AccessError {
 }
 
 async fn run(
-    transaction: &mut Transaction,
+    mut transaction: sql::PendingClaim,
     command: &SplitCommand,
     canonical: &[u8],
     parsed: &Parsed,
 ) -> Result<SplitResult, AccessError> {
     let key = command.idempotency_key.clone();
-    if let Some(replay) = sql::find_replay(transaction, key.clone())
+    if let Some(replay) = sql::find_replay(&mut transaction, key.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
     {
@@ -177,7 +164,7 @@ async fn run(
         };
         // The source's status was never this command's to change, so the
         // live row's is the original's.
-        let source = sql::lock_pallet(transaction, replay.source_pallet_id.clone())
+        let source = sql::lock_pallet(&mut transaction, replay.source_pallet_id.clone())
             .await
             .map_err(|e| error::from_statement(&e))?
             .ok_or_else(internal)?;
@@ -191,7 +178,7 @@ async fn run(
     }
 
     let claim = sql::claim_command(
-        transaction,
+        &mut transaction,
         key.clone(),
         canonical.to_vec(),
         parsed.source_pallet_id.clone(),
@@ -208,7 +195,7 @@ async fn run(
             &parsed.source_pallet_id.0,
         )
     };
-    let locked = sql::lock_pallet(transaction, parsed.source_pallet_id.clone())
+    let locked = sql::lock_pallet(&mut transaction, parsed.source_pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(not_found)?;
@@ -222,7 +209,7 @@ async fn run(
         ));
     }
 
-    sql::validate_location(transaction, parsed.to_location_id.clone())
+    sql::validate_location(&mut transaction, parsed.to_location_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(|| {
@@ -236,7 +223,7 @@ async fn run(
     // Read before taking, so the refusal can say which of two things is
     // wrong: no such row, or a row that cannot spare what was asked.
     let held = sql::select_quantity(
-        transaction,
+        &mut transaction,
         parsed.source_pallet_id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
@@ -251,7 +238,7 @@ async fn run(
         )
     })?;
     sql::take_from_source(
-        transaction,
+        &mut transaction,
         parsed.source_pallet_id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
@@ -262,7 +249,7 @@ async fn run(
     .ok_or_else(|| AccessError::insufficient("value.quantity", &held.quantity.0))?;
 
     sql::create_pallet(
-        transaction,
+        &mut transaction,
         claim.new_pallet_id.clone(),
         command.new_pallet_code.clone(),
         parsed.to_location_id.clone(),
@@ -271,7 +258,7 @@ async fn run(
     .await
     .map_err(|e| error::from_statement(&e))?;
     sql::place_quantity(
-        transaction,
+        &mut transaction,
         claim.new_pallet_id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
@@ -280,7 +267,7 @@ async fn run(
     .await
     .map_err(|e| error::from_statement(&e))?;
     sql::insert_movement(
-        transaction,
+        &mut transaction,
         key.clone(),
         parsed.source_pallet_id.clone(),
         parsed.product_id.clone(),
@@ -290,7 +277,7 @@ async fn run(
     .await
     .map_err(|e| error::from_statement(&e))?;
 
-    let touched = sql::touch_source(transaction, parsed.source_pallet_id.clone())
+    let touched = sql::touch_source(&mut transaction, parsed.source_pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
 
@@ -303,10 +290,14 @@ async fn run(
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    if finalized.row_version.is_none() {
+    if finalized.row.row_version.is_none() {
         return Err(retry());
     }
 
+    finalized
+        .commit()
+        .await
+        .map_err(|e| error::from_statement(&e))?;
     Ok(SplitResult {
         movement_id: claim.movement_id.0,
         source_pallet_id: parsed.source_pallet_id.0.clone(),

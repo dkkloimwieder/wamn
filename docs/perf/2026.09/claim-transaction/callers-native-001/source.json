@@ -1,0 +1,18 @@
+{
+  "changed_source_sha256": {
+    "components/data/receiving-data/src/record_receipt.rs": "f72f48b6aef9235cac957e5b92d8bd0af51499c93be15ab38fead0f3872a1fa8",
+    "components/data/wms-data/src/inventory_adjust.rs": "2515694da1c6596e1c0cdc354e884359c3ce726a0ed5f9cec8a5411ab1f76c12",
+    "components/data/wms-data/src/inventory_merge.rs": "bbeb989d00ff7c3cc01abe1b1157948d25faa16501fdce2eed5f887cacf516ef",
+    "components/data/wms-data/src/inventory_move.rs": "330a6665b4488c04063587696e4ff8e7c4838f41d424fd88c71466b45b01d13a",
+    "components/data/wms-data/src/inventory_split.rs": "0dde395c1260c92c56abdadc917527daa011db189661ea358a7efcf7747509e8",
+    "crates/schema/generator/src/generate.rs": "8528c2edb3674688cf7ecc49408f80ecd438be5800b91bd739545695436c9f7b",
+    "crates/schema/generator/src/manifest.rs": "c87b52ee8f7230a70a258aabccbc75c85917985228a4bdf0168933b8cc737ef8",
+    "crates/schema/generator/tests/generation.rs": "66d7b87214f4f004e78935aca2590c9e22c1fee8feb3a5beded4a35e6ae9a61b",
+    "packages/receiving/generated/wamn/receiving_record_receipt.rs": "2963055d0feb894c432fce3281af22049f1dce4e63a720b9a926fde961c2eb96",
+    "packages/wms/generated/wamn/inventory_adjust.rs": "0ba073d44d576b44c07576ab1b6094acb7f9d508dd71450d0d70d0b533bf0a30",
+    "packages/wms/generated/wamn/inventory_merge.rs": "c3caf79e598b2de1f04ac4f3c2f95273566fea36d51ab04b568bed327a227d16",
+    "packages/wms/generated/wamn/inventory_move.rs": "55ff234af568c81e4e70579265f74f304cd333731e87ed8ede0adabd436a7354",
+    "packages/wms/generated/wamn/inventory_split.rs": "040cc768ab1401ca24f2d88cd3dac18620a05733395d6b7841934110c57b9829"
+  },
+  "head": "437672fcae8f76ad1df6cde705524a267dac1e04"
+}

@@ -1,0 +1,50 @@
+{
+  "changed_generated_paths": [
+    "packages/receiving/generated/wamn/receiving_record_receipt.rs",
+    "packages/wms/generated/wamn/inventory_adjust.rs",
+    "packages/wms/generated/wamn/inventory_merge.rs",
+    "packages/wms/generated/wamn/inventory_move.rs",
+    "packages/wms/generated/wamn/inventory_split.rs"
+  ],
+  "cleanup_complete": true,
+  "container": "wamn-claim-materialize-59a8501d2477",
+  "packages": {
+    "client_acme_receiving": {
+      "completed_modes": [
+        "write",
+        "check"
+      ],
+      "migrations": [
+        "packages/client_acme_receiving/migrations/0001_add_inspection_required.sql",
+        "packages/client_acme_receiving/migrations/0002_quality_inspection.sql"
+      ]
+    },
+    "receiving": {
+      "completed_modes": [
+        "write",
+        "check"
+      ],
+      "migrations": [
+        "packages/receiving/migrations/0001_initial.sql"
+      ]
+    },
+    "wms": {
+      "completed_modes": [
+        "write",
+        "check"
+      ],
+      "migrations": [
+        "packages/wms/migrations/0001_initial.sql"
+      ]
+    }
+  },
+  "passed": true,
+  "readiness": {
+    "attempts": 6,
+    "limit_seconds": 30,
+    "seconds": 1.538
+  },
+  "seconds": 3.815,
+  "server_version_num": 180006,
+  "source_unchanged": true
+}

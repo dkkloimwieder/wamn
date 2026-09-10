@@ -1,0 +1,2447 @@
+   Compiling zmij v1.0.23
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+    Checking serde_core v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling wit-parser v0.258.0
+    Checking typenum v1.20.1
+    Checking hybrid-array v0.4.14
+   Compiling wit-component v0.258.0
+   Compiling wit-bindgen-core v0.61.1
+   Compiling wit-bindgen-rust v0.61.1
+    Checking serde v1.0.229
+   Compiling wit-bindgen-rust-macro v0.61.1
+    Checking block-buffer v0.12.1
+    Checking crypto-common v0.2.2
+    Checking wit-bindgen v0.61.1
+    Checking const-oid v0.10.2
+    Checking wamn-postgres-statements v0.1.0 (/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/postgres-statements)
+    Checking digest v0.11.3
+    Checking cfg-if v1.0.4
+    Checking uuid v1.26.0
+warning: the `Err`-variant returned from this function is very large
+   --> data/postgres-statements/src/lib.rs:245:10
+    |
+245 |     ) -> Result<RowSet, StatementError> {
+    |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+    = note: `-W clippy::result-large-err` implied by `-W clippy::perf`
+    = help: to override `-W clippy::perf` add `#[allow(clippy::result_large_err)]`
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> data/postgres-statements/src/lib.rs:241:5
+    |
+241 | /     pub async fn run(
+242 | |         &mut self,
+243 | |         statement_digest: &str,
+244 | |         params: Vec<SqlValue>,
+245 | |     ) -> Result<RowSet, StatementError> {
+246 | |         host::run(statement_digest, &params).map_err(StatementError::from_wire)
+247 | |     }
+    | |_____^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+    = note: `-W clippy::unused-async-trait-impl` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::unused_async_trait_impl)]`
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<RowSet, StatementError>>` instead
+    |
+241 ~     pub fn run(
+242 |         &mut self,
+243 |         statement_digest: &str,
+244 |         params: Vec<SqlValue>,
+245 ~     ) -> impl Future<Output = Result<RowSet, StatementError>> {
+246 ~         std::future::ready(host::run(statement_digest, &params).map_err(StatementError::from_wire))
+    |
+
+warning: the `Err`-variant returned from this function is very large
+   --> data/postgres-statements/src/lib.rs:250:38
+    |
+250 |     pub async fn begin(&mut self) -> Result<Transaction, StatementError> {
+    |                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> data/postgres-statements/src/lib.rs:250:5
+    |
+250 | /     pub async fn begin(&mut self) -> Result<Transaction, StatementError> {
+251 | |         host::begin()
+252 | |             .map(|inner| Transaction { inner })
+253 | |             .map_err(StatementError::from_wire)
+254 | |     }
+    | |_____^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<Transaction, StatementError>>` instead
+    |
+250 ~     pub fn begin(&mut self) -> impl Future<Output = Result<Transaction, StatementError>> {
+251 ~         std::future::ready(host::begin()
+252 +             .map(|inner| Transaction { inner })
+253 +             .map_err(StatementError::from_wire))
+    |
+
+warning: the `Err`-variant returned from this function is very large
+   --> data/postgres-statements/src/lib.rs:276:10
+    |
+276 |     ) -> Result<RowSet, StatementError> {
+    |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> data/postgres-statements/src/lib.rs:272:5
+    |
+272 | /     pub async fn run(
+273 | |         &mut self,
+274 | |         statement_digest: &str,
+275 | |         params: Vec<SqlValue>,
+...   |
+279 | |             .map_err(StatementError::from_wire)
+280 | |     }
+    | |_____^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<RowSet, StatementError>>` instead
+    |
+272 ~     pub fn run(
+273 |         &mut self,
+274 |         statement_digest: &str,
+275 |         params: Vec<SqlValue>,
+276 ~     ) -> impl Future<Output = Result<RowSet, StatementError>> {
+277 ~         std::future::ready(self.inner
+278 +             .run(statement_digest, &params)
+279 +             .map_err(StatementError::from_wire))
+    |
+
+warning: the `Err`-variant returned from this function is very large
+   --> data/postgres-statements/src/lib.rs:283:34
+    |
+283 |     pub async fn commit(self) -> Result<(), StatementError> {
+    |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> data/postgres-statements/src/lib.rs:283:5
+    |
+283 | /     pub async fn commit(self) -> Result<(), StatementError> {
+284 | |         self.inner.commit().map_err(StatementError::from_wire)
+285 | |     }
+    | |_____^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), StatementError>>` instead
+    |
+283 ~     pub fn commit(self) -> impl Future<Output = Result<(), StatementError>> {
+284 ~         std::future::ready(self.inner.commit().map_err(StatementError::from_wire))
+    |
+
+warning: the `Err`-variant returned from this function is very large
+   --> data/postgres-statements/src/lib.rs:288:36
+    |
+288 |     pub async fn rollback(self) -> Result<(), StatementError> {
+    |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: unused `async` for async trait impl function with no `.await` statements
+   --> data/postgres-statements/src/lib.rs:288:5
+    |
+288 | /     pub async fn rollback(self) -> Result<(), StatementError> {
+289 | |         self.inner.rollback().map_err(StatementError::from_wire)
+290 | |     }
+    | |_____^
+    |
+    = note: `std::future::ready` creates a `Future` which returns the value immediately when `poll`ed
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async_trait_impl
+help: consider removing the `async` from this function and returning `impl Future<Output = Result<(), StatementError>>` instead
+    |
+288 ~     pub fn rollback(self) -> impl Future<Output = Result<(), StatementError>> {
+289 ~         std::future::ready(self.inner.rollback().map_err(StatementError::from_wire))
+    |
+
+warning: the `Err`-variant returned from this function is very large
+   --> data/postgres-statements/src/lib.rs:423:57
+    |
+423 |     pub fn decode<T>(&mut self, expected_name: &str) -> Result<T, StatementError>
+    |                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> data/postgres-statements/src/lib.rs:456:25
+    |
+456 |     fn finish(&self) -> Result<(), StatementError> {
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> data/postgres-statements/src/lib.rs:473:6
+    |
+473 | ) -> Result<T, StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> data/postgres-statements/src/lib.rs:490:6
+    |
+490 | ) -> Result<Option<T>, StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> data/postgres-statements/src/lib.rs:509:6
+    |
+509 | ) -> Result<Vec<T>, StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> data/postgres-statements/src/lib.rs:512:14
+    |
+512 |         .map(|values| decode_row(statement_digest, &rows.columns, values, &mut decode))
+    |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> data/postgres-statements/src/lib.rs:521:6
+    |
+521 | ) -> Result<T, StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `StatementError`, for example by boxing large elements or replacing it with `Box<StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: unused `async` for function with no await statements
+   --> data/postgres-statements/src/lib.rs:241:5
+    |
+241 | /     pub async fn run(
+242 | |         &mut self,
+243 | |         statement_digest: &str,
+244 | |         params: Vec<SqlValue>,
+245 | |     ) -> Result<RowSet, StatementError> {
+246 | |         host::run(statement_digest, &params).map_err(StatementError::from_wire)
+247 | |     }
+    | |_____^
+    |
+    = help: consider removing the `async` from this function
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async
+    = note: `-W clippy::unused-async` implied by `-W clippy::pedantic`
+    = help: to override `-W clippy::pedantic` add `#[allow(clippy::unused_async)]`
+
+warning: unused `async` for function with no await statements
+   --> data/postgres-statements/src/lib.rs:250:5
+    |
+250 | /     pub async fn begin(&mut self) -> Result<Transaction, StatementError> {
+251 | |         host::begin()
+252 | |             .map(|inner| Transaction { inner })
+253 | |             .map_err(StatementError::from_wire)
+254 | |     }
+    | |_____^
+    |
+    = help: consider removing the `async` from this function
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async
+
+warning: unused `async` for function with no await statements
+   --> data/postgres-statements/src/lib.rs:272:5
+    |
+272 | /     pub async fn run(
+273 | |         &mut self,
+274 | |         statement_digest: &str,
+275 | |         params: Vec<SqlValue>,
+...   |
+279 | |             .map_err(StatementError::from_wire)
+280 | |     }
+    | |_____^
+    |
+    = help: consider removing the `async` from this function
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async
+
+warning: unused `async` for function with no await statements
+   --> data/postgres-statements/src/lib.rs:283:5
+    |
+283 | /     pub async fn commit(self) -> Result<(), StatementError> {
+284 | |         self.inner.commit().map_err(StatementError::from_wire)
+285 | |     }
+    | |_____^
+    |
+    = help: consider removing the `async` from this function
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async
+
+warning: unused `async` for function with no await statements
+   --> data/postgres-statements/src/lib.rs:288:5
+    |
+288 | /     pub async fn rollback(self) -> Result<(), StatementError> {
+289 | |         self.inner.rollback().map_err(StatementError::from_wire)
+290 | |     }
+    | |_____^
+    |
+    = help: consider removing the `async` from this function
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#unused_async
+
+    Checking cpufeatures v0.3.0
+warning: `wamn-postgres-statements` (lib) generated 22 warnings
+    Checking dyn-clone v1.0.20
+    Checking sha2 v0.11.0
+    Checking schemars v0.8.22
+    Checking num-traits v0.2.19
+    Checking wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/execution/contract)
+    Checking base64 v0.22.1
+    Checking chrono v0.4.45
+    Checking slab v0.4.12
+    Checking pin-project-lite v0.2.17
+    Checking futures-core v0.3.34
+    Checking futures-task v0.3.34
+    Checking futures-util v0.3.34
+    Checking wamn-wms-data-access v0.1.0 (/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data)
+warning: field `adjusted_quantity` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:10:9
+   |
+ 9 | pub(crate) struct FinalizeCommandRow {
+   |                   ------------------ field in this struct
+10 |     pub adjusted_quantity: Option<wamn_postgres_statements::Numeric>,
+   |         ^^^^^^^^^^^^^^^^^
+   |
+   = note: `FinalizeCommandRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `id` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:25:9
+   |
+24 | pub(crate) struct InsertMovementRow {
+   |                   ----------------- field in this struct
+25 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `InsertMovementRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `location_id` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:30:9
+   |
+29 | pub(crate) struct LockPalletRow {
+   |                   ------------- field in this struct
+30 |     pub location_id: wamn_postgres_statements::Uuid,
+   |         ^^^^^^^^^^^
+   |
+   = note: `LockPalletRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:37:9
+   |
+36 | pub(crate) struct SetQuantityRow {
+   |                   -------------- field in this struct
+37 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `SetQuantityRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `id` and `quantity` are never read
+ --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:5:9
+  |
+4 | pub(crate) struct AddToTargetRow {
+  |                   -------------- fields in this struct
+5 |     pub id: wamn_postgres_statements::Uuid,
+  |         ^^
+6 |     pub quantity: wamn_postgres_statements::Numeric,
+  |         ^^^^^^^^
+  |
+  = note: `AddToTargetRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `row_version` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:16:9
+   |
+15 | pub(crate) struct ConsumeSourceRow {
+   |                   ---------------- field in this struct
+16 |     pub row_version: i64,
+   |         ^^^^^^^^^^^
+   |
+   = note: `ConsumeSourceRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:35:9
+   |
+34 | pub(crate) struct InsertMovementRow {
+   |                   ----------------- field in this struct
+35 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `InsertMovementRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `location_id` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:41:9
+   |
+39 | pub(crate) struct LockBothPalletsRow {
+   |                   ------------------ field in this struct
+40 |     pub id: wamn_postgres_statements::Uuid,
+41 |     pub location_id: wamn_postgres_statements::Uuid,
+   |         ^^^^^^^^^^^
+   |
+   = note: `LockBothPalletsRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `id` and `quantity` are never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:48:9
+   |
+47 | pub(crate) struct PlaceOnTargetRow {
+   |                   ---------------- fields in this struct
+48 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+49 |     pub quantity: wamn_postgres_statements::Numeric,
+   |         ^^^^^^^^
+   |
+   = note: `PlaceOnTargetRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `pallet_status` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:10:9
+   |
+ 9 | pub(crate) struct FinalizeCommandRow {
+   |                   ------------------ field in this struct
+10 |     pub pallet_status: Option<String>,
+   |         ^^^^^^^^^^^^^
+   |
+   = note: `FinalizeCommandRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:25:9
+   |
+24 | pub(crate) struct InsertMovementRow {
+   |                   ----------------- field in this struct
+25 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `InsertMovementRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `status` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:32:9
+   |
+29 | pub(crate) struct LockPalletRow {
+   |                   ------------- field in this struct
+...
+32 |     pub status: String,
+   |         ^^^^^^
+   |
+   = note: `LockPalletRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `status` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:46:9
+   |
+43 | pub(crate) struct SelectPalletQuantityRow {
+   |                   ----------------------- field in this struct
+...
+46 |     pub status: String,
+   |         ^^^^^^
+   |
+   = note: `SelectPalletQuantityRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:51:9
+   |
+50 | pub(crate) struct ValidateLocationRow {
+   |                   ------------------- field in this struct
+51 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `ValidateLocationRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `id`, `row_version`, and `status` are never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:11:9
+   |
+10 | pub(crate) struct CreatePalletRow {
+   |                   --------------- fields in this struct
+11 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+12 |     pub row_version: i64,
+   |         ^^^^^^^^^^^
+13 |     pub status: String,
+   |         ^^^^^^
+   |
+   = note: `CreatePalletRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:32:9
+   |
+31 | pub(crate) struct InsertMovementRow {
+   |                   ----------------- field in this struct
+32 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `InsertMovementRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `location_id` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:37:9
+   |
+36 | pub(crate) struct LockPalletRow {
+   |                   ------------- field in this struct
+37 |     pub location_id: wamn_postgres_statements::Uuid,
+   |         ^^^^^^^^^^^
+   |
+   = note: `LockPalletRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `id` and `quantity` are never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:44:9
+   |
+43 | pub(crate) struct PlaceQuantityRow {
+   |                   ---------------- fields in this struct
+44 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+45 |     pub quantity: wamn_postgres_statements::Numeric,
+   |         ^^^^^^^^
+   |
+   = note: `PlaceQuantityRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: fields `id` and `quantity` are never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:55:9
+   |
+54 | pub(crate) struct TakeFromSourceRow {
+   |                   ----------------- fields in this struct
+55 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+56 |     pub quantity: wamn_postgres_statements::Numeric,
+   |         ^^^^^^^^
+   |
+   = note: `TakeFromSourceRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: field `id` is never read
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:67:9
+   |
+66 | pub(crate) struct ValidateLocationRow {
+   |                   ------------------- field in this struct
+67 |     pub id: wamn_postgres_statements::Uuid,
+   |         ^^
+   |
+   = note: `ValidateLocationRow` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: constant `REFUSALS` is never used
+  --> data/wms-data/src/inventory_adjust.rs:28:18
+   |
+28 | pub(crate) const REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^
+
+warning: constant `REFUSALS` is never used
+  --> data/wms-data/src/inventory_aggregate.rs:14:18
+   |
+14 | pub(crate) const REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^
+
+warning: constant `REFUSALS` is never used
+  --> data/wms-data/src/inventory_merge.rs:30:18
+   |
+30 | pub(crate) const REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^
+
+warning: constant `REFUSALS` is never used
+  --> data/wms-data/src/inventory_move.rs:33:18
+   |
+33 | pub(crate) const REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^
+
+warning: constant `REFUSALS` is never used
+  --> data/wms-data/src/inventory_split.rs:29:18
+   |
+29 | pub(crate) const REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^
+
+warning: constant `GET_REFUSALS` is never used
+  --> data/wms-data/src/pallet.rs:16:18
+   |
+16 | pub(crate) const GET_REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^^^^^
+
+warning: constant `QUERY_REFUSALS` is never used
+  --> data/wms-data/src/pallet.rs:25:18
+   |
+25 | pub(crate) const QUERY_REFUSALS: &[AccessErrorKind] = &[
+   |                  ^^^^^^^^^^^^^^
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:75:41
+   |
+75 |     pub(crate) async fn commit(self) -> Result<(), wamn_postgres_statements::StatementError> {
+   |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+   = note: `-W clippy::result-large-err` implied by `-W clippy::perf`
+   = help: to override `-W clippy::perf` add `#[allow(clippy::result_large_err)]`
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:85:6
+   |
+85 | ) -> Result<Option<ClaimCommandRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:91:75
+   |
+91 |       wamn_postgres_statements::decode_optional(CLAIM_COMMAND_DIGEST, rows, |row| {
+   |  ___________________________________________________________________________^
+92 | |         Ok(ClaimCommandRow {
+93 | |             movement_id: row.decode("movement_id")?,
+94 | |         })
+95 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:105:6
+    |
+105 | ) -> Result<FinalizedClaim, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:113:83
+    |
+113 |       let row = wamn_postgres_statements::decode_one(FINALIZE_COMMAND_DIGEST, rows, |row| {
+    |  ___________________________________________________________________________________^
+114 | |         Ok(FinalizeCommandRow {
+115 | |             adjusted_quantity: row.decode("adjusted_quantity")?,
+116 | |             row_version: row.decode("row_version")?,
+117 | |         })
+118 | |     })?;
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:125:6
+    |
+125 | ) -> Result<Option<FindReplayRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:129:73
+    |
+129 |       wamn_postgres_statements::decode_optional(FIND_REPLAY_DIGEST, rows, |row| {
+    |  _________________________________________________________________________^
+130 | |         Ok(FindReplayRow {
+131 | |             canonical_command: row.decode("canonical_command")?,
+132 | |             movement_id: row.decode("movement_id")?,
+...   |
+136 | |         })
+137 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:148:6
+    |
+148 | ) -> Result<InsertMovementRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:157:72
+    |
+157 |       wamn_postgres_statements::decode_one(INSERT_MOVEMENT_DIGEST, rows, |row| {
+    |  ________________________________________________________________________^
+158 | |         Ok(InsertMovementRow {
+159 | |             id: row.decode("id")?,
+160 | |         })
+161 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:167:6
+    |
+167 | ) -> Result<Option<LockPalletRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:171:73
+    |
+171 |       wamn_postgres_statements::decode_optional(LOCK_PALLET_DIGEST, rows, |row| {
+    |  _________________________________________________________________________^
+172 | |         Ok(LockPalletRow {
+173 | |             location_id: row.decode("location_id")?,
+174 | |             row_version: row.decode("row_version")?,
+175 | |             status: row.decode("status")?,
+176 | |         })
+177 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:186:6
+    |
+186 | ) -> Result<Option<SetQuantityRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:193:74
+    |
+193 |       wamn_postgres_statements::decode_optional(SET_QUANTITY_DIGEST, rows, |row| {
+    |  __________________________________________________________________________^
+194 | |         Ok(SetQuantityRow {
+195 | |             id: row.decode("id")?,
+196 | |             quantity: row.decode("quantity")?,
+197 | |         })
+198 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:204:6
+    |
+204 | ) -> Result<TouchPalletRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_adjust.rs:208:69
+    |
+208 |       wamn_postgres_statements::decode_one(TOUCH_PALLET_DIGEST, rows, |row| {
+    |  _____________________________________________________________________^
+209 | |         Ok(TouchPalletRow {
+210 | |             row_version: row.decode("row_version")?,
+211 | |             status: row.decode("status")?,
+212 | |         })
+213 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_aggregate.rs:18:6
+   |
+18 | ) -> Result<Vec<InventoryAggregateRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_aggregate.rs:21:76
+   |
+21 |       wamn_postgres_statements::decode_all(INVENTORY_AGGREGATE_DIGEST, rows, |row| {
+   |  ____________________________________________________________________________^
+22 | |         Ok(InventoryAggregateRow {
+23 | |             product_id: row.decode("product_id")?,
+24 | |             location_id: row.decode("location_id")?,
+...  |
+28 | |         })
+29 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:96:41
+   |
+96 |     pub(crate) async fn commit(self) -> Result<(), wamn_postgres_statements::StatementError> {
+   |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:107:6
+    |
+107 | ) -> Result<Option<AddToTargetRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:114:75
+    |
+114 |       wamn_postgres_statements::decode_optional(ADD_TO_TARGET_DIGEST, rows, |row| {
+    |  ___________________________________________________________________________^
+115 | |         Ok(AddToTargetRow {
+116 | |             id: row.decode("id")?,
+117 | |             quantity: row.decode("quantity")?,
+118 | |         })
+119 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:128:6
+    |
+128 | ) -> Result<Option<ClaimCommandRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:135:75
+    |
+135 |       wamn_postgres_statements::decode_optional(CLAIM_COMMAND_DIGEST, rows, |row| {
+    |  ___________________________________________________________________________^
+136 | |         Ok(ClaimCommandRow {
+137 | |             movement_id: row.decode("movement_id")?,
+138 | |         })
+139 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:145:6
+    |
+145 | ) -> Result<ConsumeSourceRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:149:71
+    |
+149 |       wamn_postgres_statements::decode_one(CONSUME_SOURCE_DIGEST, rows, |row| {
+    |  _______________________________________________________________________^
+150 | |         Ok(ConsumeSourceRow {
+151 | |             row_version: row.decode("row_version")?,
+152 | |         })
+153 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:162:6
+    |
+162 | ) -> Result<FinalizedClaim, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:169:83
+    |
+169 |       let row = wamn_postgres_statements::decode_one(FINALIZE_COMMAND_DIGEST, rows, |row| {
+    |  ___________________________________________________________________________________^
+170 | |         Ok(FinalizeCommandRow {
+171 | |             row_version: row.decode("row_version")?,
+172 | |         })
+173 | |     })?;
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:180:6
+    |
+180 | ) -> Result<Option<FindReplayRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:184:73
+    |
+184 |       wamn_postgres_statements::decode_optional(FIND_REPLAY_DIGEST, rows, |row| {
+    |  _________________________________________________________________________^
+185 | |         Ok(FindReplayRow {
+186 | |             canonical_command: row.decode("canonical_command")?,
+187 | |             movement_id: row.decode("movement_id")?,
+...   |
+191 | |         })
+192 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:202:6
+    |
+202 | ) -> Result<InsertMovementRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:210:72
+    |
+210 |       wamn_postgres_statements::decode_one(INSERT_MOVEMENT_DIGEST, rows, |row| {
+    |  ________________________________________________________________________^
+211 | |         Ok(InsertMovementRow {
+212 | |             id: row.decode("id")?,
+213 | |         })
+214 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:221:6
+    |
+221 | ) -> Result<Vec<LockBothPalletsRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:226:74
+    |
+226 |       wamn_postgres_statements::decode_all(LOCK_BOTH_PALLETS_DIGEST, rows, |row| {
+    |  __________________________________________________________________________^
+227 | |         Ok(LockBothPalletsRow {
+228 | |             id: row.decode("id")?,
+229 | |             location_id: row.decode("location_id")?,
+...   |
+232 | |         })
+233 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:242:6
+    |
+242 | ) -> Result<PlaceOnTargetRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:249:72
+    |
+249 |       wamn_postgres_statements::decode_one(PLACE_ON_TARGET_DIGEST, rows, |row| {
+    |  ________________________________________________________________________^
+250 | |         Ok(PlaceOnTargetRow {
+251 | |             id: row.decode("id")?,
+252 | |             quantity: row.decode("quantity")?,
+253 | |         })
+254 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:260:6
+    |
+260 | ) -> Result<Vec<SelectSourceQuantityRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:264:79
+    |
+264 |       wamn_postgres_statements::decode_all(SELECT_SOURCE_QUANTITY_DIGEST, rows, |row| {
+    |  _______________________________________________________________________________^
+265 | |         Ok(SelectSourceQuantityRow {
+266 | |             product_id: row.decode("product_id")?,
+267 | |             quantity: row.decode("quantity")?,
+268 | |             status: row.decode("status")?,
+269 | |         })
+270 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:276:6
+    |
+276 | ) -> Result<TouchTargetRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_merge.rs:280:69
+    |
+280 |       wamn_postgres_statements::decode_one(TOUCH_TARGET_DIGEST, rows, |row| {
+    |  _____________________________________________________________________^
+281 | |         Ok(TouchTargetRow {
+282 | |             row_version: row.decode("row_version")?,
+283 | |             status: row.decode("status")?,
+284 | |         })
+285 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:83:41
+   |
+83 |     pub(crate) async fn commit(self) -> Result<(), wamn_postgres_statements::StatementError> {
+   |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:93:6
+   |
+93 | ) -> Result<Option<ClaimCommandRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:99:75
+    |
+ 99 |       wamn_postgres_statements::decode_optional(CLAIM_COMMAND_DIGEST, rows, |row| {
+    |  ___________________________________________________________________________^
+100 | |         Ok(ClaimCommandRow {
+101 | |             movement_id: row.decode("movement_id")?,
+102 | |         })
+103 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:113:6
+    |
+113 | ) -> Result<FinalizedClaim, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:121:83
+    |
+121 |       let row = wamn_postgres_statements::decode_one(FINALIZE_COMMAND_DIGEST, rows, |row| {
+    |  ___________________________________________________________________________________^
+122 | |         Ok(FinalizeCommandRow {
+123 | |             pallet_status: row.decode("pallet_status")?,
+124 | |             row_version: row.decode("row_version")?,
+125 | |         })
+126 | |     })?;
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:133:6
+    |
+133 | ) -> Result<Option<FindReplayRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:137:73
+    |
+137 |       wamn_postgres_statements::decode_optional(FIND_REPLAY_DIGEST, rows, |row| {
+    |  _________________________________________________________________________^
+138 | |         Ok(FindReplayRow {
+139 | |             canonical_command: row.decode("canonical_command")?,
+140 | |             movement_id: row.decode("movement_id")?,
+...   |
+144 | |         })
+145 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:157:6
+    |
+157 | ) -> Result<InsertMovementRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: this function has too many arguments (8/7)
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:148:1
+    |
+148 | / pub(crate) async fn insert_movement(
+149 | |     claim: &mut PendingClaim,
+150 | |     idempotency_key: String,
+151 | |     pallet_id: wamn_postgres_statements::Uuid,
+...   |
+156 | |     occurred_at: wamn_postgres_statements::TimestampTz,
+157 | | ) -> Result<InsertMovementRow, wamn_postgres_statements::StatementError> {
+    | |________________________________________________________________________^
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#too_many_arguments
+    = note: `-W clippy::too-many-arguments` implied by `-W clippy::complexity`
+    = help: to override `-W clippy::complexity` add `#[allow(clippy::too_many_arguments)]`
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:167:72
+    |
+167 |       wamn_postgres_statements::decode_one(INSERT_MOVEMENT_DIGEST, rows, |row| {
+    |  ________________________________________________________________________^
+168 | |         Ok(InsertMovementRow {
+169 | |             id: row.decode("id")?,
+170 | |         })
+171 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:177:6
+    |
+177 | ) -> Result<Option<LockPalletRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:181:73
+    |
+181 |       wamn_postgres_statements::decode_optional(LOCK_PALLET_DIGEST, rows, |row| {
+    |  _________________________________________________________________________^
+182 | |         Ok(LockPalletRow {
+183 | |             location_id: row.decode("location_id")?,
+184 | |             row_version: row.decode("row_version")?,
+185 | |             status: row.decode("status")?,
+186 | |         })
+187 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:194:6
+    |
+194 | ) -> Result<MovePalletRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:199:68
+    |
+199 |       wamn_postgres_statements::decode_one(MOVE_PALLET_DIGEST, rows, |row| {
+    |  ____________________________________________________________________^
+200 | |         Ok(MovePalletRow {
+201 | |             location_id: row.decode("location_id")?,
+202 | |             row_version: row.decode("row_version")?,
+203 | |             status: row.decode("status")?,
+204 | |         })
+205 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:211:6
+    |
+211 | ) -> Result<Vec<SelectPalletQuantityRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:215:79
+    |
+215 |       wamn_postgres_statements::decode_all(SELECT_PALLET_QUANTITY_DIGEST, rows, |row| {
+    |  _______________________________________________________________________________^
+216 | |         Ok(SelectPalletQuantityRow {
+217 | |             product_id: row.decode("product_id")?,
+218 | |             quantity: row.decode("quantity")?,
+219 | |             status: row.decode("status")?,
+220 | |         })
+221 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:227:6
+    |
+227 | ) -> Result<Option<ValidateLocationRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_move.rs:231:79
+    |
+231 |       wamn_postgres_statements::decode_optional(VALIDATE_LOCATION_DIGEST, rows, |row| {
+    |  _______________________________________________________________________________^
+232 | |         Ok(ValidateLocationRow {
+233 | |             id: row.decode("id")?,
+234 | |         })
+235 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:102:41
+    |
+102 |     pub(crate) async fn commit(self) -> Result<(), wamn_postgres_statements::StatementError> {
+    |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:112:6
+    |
+112 | ) -> Result<Option<ClaimCommandRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:118:75
+    |
+118 |       wamn_postgres_statements::decode_optional(CLAIM_COMMAND_DIGEST, rows, |row| {
+    |  ___________________________________________________________________________^
+119 | |         Ok(ClaimCommandRow {
+120 | |             movement_id: row.decode("movement_id")?,
+121 | |             new_pallet_id: row.decode("new_pallet_id")?,
+122 | |         })
+123 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:132:6
+    |
+132 | ) -> Result<CreatePalletRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:139:70
+    |
+139 |       wamn_postgres_statements::decode_one(CREATE_PALLET_DIGEST, rows, |row| {
+    |  ______________________________________________________________________^
+140 | |         Ok(CreatePalletRow {
+141 | |             id: row.decode("id")?,
+142 | |             row_version: row.decode("row_version")?,
+143 | |             status: row.decode("status")?,
+144 | |         })
+145 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:154:6
+    |
+154 | ) -> Result<FinalizedClaim, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:161:83
+    |
+161 |       let row = wamn_postgres_statements::decode_one(FINALIZE_COMMAND_DIGEST, rows, |row| {
+    |  ___________________________________________________________________________________^
+162 | |         Ok(FinalizeCommandRow {
+163 | |             row_version: row.decode("row_version")?,
+164 | |         })
+165 | |     })?;
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:172:6
+    |
+172 | ) -> Result<Option<FindReplayRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:176:73
+    |
+176 |       wamn_postgres_statements::decode_optional(FIND_REPLAY_DIGEST, rows, |row| {
+    |  _________________________________________________________________________^
+177 | |         Ok(FindReplayRow {
+178 | |             canonical_command: row.decode("canonical_command")?,
+179 | |             movement_id: row.decode("movement_id")?,
+...   |
+183 | |         })
+184 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:194:6
+    |
+194 | ) -> Result<InsertMovementRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:202:72
+    |
+202 |       wamn_postgres_statements::decode_one(INSERT_MOVEMENT_DIGEST, rows, |row| {
+    |  ________________________________________________________________________^
+203 | |         Ok(InsertMovementRow {
+204 | |             id: row.decode("id")?,
+205 | |         })
+206 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:212:6
+    |
+212 | ) -> Result<Option<LockPalletRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:216:73
+    |
+216 |       wamn_postgres_statements::decode_optional(LOCK_PALLET_DIGEST, rows, |row| {
+    |  _________________________________________________________________________^
+217 | |         Ok(LockPalletRow {
+218 | |             location_id: row.decode("location_id")?,
+219 | |             row_version: row.decode("row_version")?,
+220 | |             status: row.decode("status")?,
+221 | |         })
+222 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:231:6
+    |
+231 | ) -> Result<PlaceQuantityRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:238:71
+    |
+238 |       wamn_postgres_statements::decode_one(PLACE_QUANTITY_DIGEST, rows, |row| {
+    |  _______________________________________________________________________^
+239 | |         Ok(PlaceQuantityRow {
+240 | |             id: row.decode("id")?,
+241 | |             quantity: row.decode("quantity")?,
+242 | |         })
+243 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:251:6
+    |
+251 | ) -> Result<Option<SelectQuantityRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:257:77
+    |
+257 |       wamn_postgres_statements::decode_optional(SELECT_QUANTITY_DIGEST, rows, |row| {
+    |  _____________________________________________________________________________^
+258 | |         Ok(SelectQuantityRow {
+259 | |             quantity: row.decode("quantity")?,
+260 | |         })
+261 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:270:6
+    |
+270 | ) -> Result<Option<TakeFromSourceRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:277:78
+    |
+277 |       wamn_postgres_statements::decode_optional(TAKE_FROM_SOURCE_DIGEST, rows, |row| {
+    |  ______________________________________________________________________________^
+278 | |         Ok(TakeFromSourceRow {
+279 | |             id: row.decode("id")?,
+280 | |             quantity: row.decode("quantity")?,
+281 | |         })
+282 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:288:6
+    |
+288 | ) -> Result<TouchSourceRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:292:69
+    |
+292 |       wamn_postgres_statements::decode_one(TOUCH_SOURCE_DIGEST, rows, |row| {
+    |  _____________________________________________________________________^
+293 | |         Ok(TouchSourceRow {
+294 | |             row_version: row.decode("row_version")?,
+295 | |             status: row.decode("status")?,
+296 | |         })
+297 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:303:6
+    |
+303 | ) -> Result<Option<ValidateLocationRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/inventory_split.rs:307:79
+    |
+307 |       wamn_postgres_statements::decode_optional(VALIDATE_LOCATION_DIGEST, rows, |row| {
+    |  _______________________________________________________________________________^
+308 | |         Ok(ValidateLocationRow {
+309 | |             id: row.decode("id")?,
+310 | |         })
+311 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:29:6
+   |
+29 | ) -> Result<Option<PalletRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:33:65
+   |
+33 |       wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
+   |  _________________________________________________________________^
+34 | |         Ok(PalletRow {
+35 | |             created_at: row.decode("created_at")?,
+36 | |             id: row.decode("id")?,
+...  |
+42 | |         })
+43 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:54:6
+   |
+54 | ) -> Result<Vec<PalletRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:63:64
+   |
+63 |       wamn_postgres_statements::decode_all(QUERY_0_DIGEST, rows, |row| {
+   |  ________________________________________________________________^
+64 | |         Ok(PalletRow {
+65 | |             created_at: row.decode("created_at")?,
+66 | |             id: row.decode("id")?,
+...  |
+72 | |         })
+73 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:84:6
+   |
+84 | ) -> Result<Vec<PalletRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:93:64
+    |
+ 93 |       wamn_postgres_statements::decode_all(QUERY_1_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+ 94 | |         Ok(PalletRow {
+ 95 | |             created_at: row.decode("created_at")?,
+ 96 | |             id: row.decode("id")?,
+...   |
+102 | |         })
+103 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:114:6
+    |
+114 | ) -> Result<Vec<PalletRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:123:64
+    |
+123 |       wamn_postgres_statements::decode_all(QUERY_2_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+124 | |         Ok(PalletRow {
+125 | |             created_at: row.decode("created_at")?,
+126 | |             id: row.decode("id")?,
+...   |
+132 | |         })
+133 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:144:6
+    |
+144 | ) -> Result<Vec<PalletRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:153:64
+    |
+153 |       wamn_postgres_statements::decode_all(QUERY_3_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+154 | |         Ok(PalletRow {
+155 | |             created_at: row.decode("created_at")?,
+156 | |             id: row.decode("id")?,
+...   |
+162 | |         })
+163 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:174:6
+    |
+174 | ) -> Result<Vec<PalletRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:183:64
+    |
+183 |       wamn_postgres_statements::decode_all(QUERY_4_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+184 | |         Ok(PalletRow {
+185 | |             created_at: row.decode("created_at")?,
+186 | |             id: row.decode("id")?,
+...   |
+192 | |         })
+193 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:204:6
+    |
+204 | ) -> Result<Vec<PalletRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:213:64
+    |
+213 |       wamn_postgres_statements::decode_all(QUERY_5_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+214 | |         Ok(PalletRow {
+215 | |             created_at: row.decode("created_at")?,
+216 | |             id: row.decode("id")?,
+...   |
+222 | |         })
+223 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:234:6
+    |
+234 | ) -> Result<Vec<PalletRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:243:64
+    |
+243 |       wamn_postgres_statements::decode_all(QUERY_6_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+244 | |         Ok(PalletRow {
+245 | |             created_at: row.decode("created_at")?,
+246 | |             id: row.decode("id")?,
+...   |
+252 | |         })
+253 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:264:6
+    |
+264 | ) -> Result<Vec<PalletRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/wms-data/../../../packages/wms/generated/wamn/pallet.rs:273:64
+    |
+273 |       wamn_postgres_statements::decode_all(QUERY_7_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+274 | |         Ok(PalletRow {
+275 | |             created_at: row.decode("created_at")?,
+276 | |             id: row.decode("id")?,
+...   |
+282 | |         })
+283 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: `wamn-wms-data-access` (lib) generated 124 warnings
+    Checking wamn-receiving-data-access v0.1.0 (/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data)
+    Checking futures-executor v0.3.34
+    Checking wamn-client-acme-receiving-data-access v0.1.0 (/home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data)
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/purchase_order.rs:44:6
+   |
+44 | ) -> Result<Option<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+   = note: `-W clippy::result-large-err` implied by `-W clippy::perf`
+   = help: to override `-W clippy::perf` add `#[allow(clippy::result_large_err)]`
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/purchase_order.rs:48:65
+   |
+48 |       wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
+   |  _________________________________________________________________^
+49 | |         Ok(PurchaseOrderRow {
+50 | |             acme_inspection_required: row.decode("acme_inspection_required")?,
+51 | |             acme_quality_status: row.decode("acme_quality_status")?,
+...  |
+59 | |         })
+60 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/purchase_order.rs:71:6
+   |
+71 | ) -> Result<PurchaseOrderUpdateRow, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/purchase_order.rs:80:63
+   |
+80 |       wamn_postgres_statements::decode_one(UPDATE_DIGEST, rows, |row| {
+   |  _______________________________________________________________^
+81 | |         Ok(PurchaseOrderUpdateRow {
+82 | |             outcome: row.decode("outcome")?,
+83 | |             observed_row_version: row.decode("observed_row_version")?,
+...  |
+93 | |         })
+94 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/quality_approve_inspection.rs:22:6
+   |
+22 | ) -> Result<ApproveInspectionRow, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/quality_approve_inspection.rs:27:75
+   |
+27 |       wamn_postgres_statements::decode_one(APPROVE_INSPECTION_DIGEST, rows, |row| {
+   |  ___________________________________________________________________________^
+28 | |         Ok(ApproveInspectionRow {
+29 | |             outcome: row.decode("outcome")?,
+30 | |             observed_row_version: row.decode("observed_row_version")?,
+...  |
+36 | |         })
+37 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/quality_create_inspection.rs:21:6
+   |
+21 | ) -> Result<Option<InsertInspectionRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/quality_create_inspection.rs:25:79
+   |
+25 |       wamn_postgres_statements::decode_optional(INSERT_INSPECTION_DIGEST, rows, |row| {
+   |  _______________________________________________________________________________^
+26 | |         Ok(InsertInspectionRow {
+27 | |             receipt_id: row.decode("receipt_id")?,
+28 | |         })
+29 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/quality_create_inspection.rs:35:6
+   |
+35 | ) -> Result<Option<LoadInspectionRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/quality_create_inspection.rs:39:77
+   |
+39 |       wamn_postgres_statements::decode_optional(LOAD_INSPECTION_DIGEST, rows, |row| {
+   |  _____________________________________________________________________________^
+40 | |         Ok(LoadInspectionRow {
+41 | |             receipt_id: row.decode("receipt_id")?,
+42 | |         })
+43 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/quality_load_purchase_order_detail.rs:21:6
+   |
+21 | ) -> Result<Option<LoadPurchaseOrderDetailRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/quality_load_purchase_order_detail.rs:25:88
+   |
+25 |       wamn_postgres_statements::decode_optional(LOAD_PURCHASE_ORDER_DETAIL_DIGEST, rows, |row| {
+   |  ________________________________________________________________________________________^
+26 | |         Ok(LoadPurchaseOrderDetailRow {
+27 | |             id: row.decode("id")?,
+28 | |             purchase_order_number: row.decode("purchase_order_number")?,
+...  |
+34 | |         })
+35 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/receiving_record_receipt.rs:21:6
+   |
+21 | ) -> Result<Option<LoadPurchaseOrderDetailRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/client-acme-receiving-data/../../../packages/client_acme_receiving/generated/wamn/receiving_record_receipt.rs:25:88
+   |
+25 |       wamn_postgres_statements::decode_optional(LOAD_PURCHASE_ORDER_DETAIL_DIGEST, rows, |row| {
+   |  ________________________________________________________________________________________^
+26 | |         Ok(LoadPurchaseOrderDetailRow {
+27 | |             id: row.decode("id")?,
+28 | |             purchase_order_number: row.decode("purchase_order_number")?,
+...  |
+34 | |         })
+35 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: `wamn-client-acme-receiving-data-access` (lib test) generated 14 warnings
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/location_list.rs:15:6
+   |
+15 | ) -> Result<Vec<ListLocationsRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+   = note: `-W clippy::result-large-err` implied by `-W clippy::perf`
+   = help: to override `-W clippy::perf` add `#[allow(clippy::result_large_err)]`
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/location_list.rs:18:71
+   |
+18 |       wamn_postgres_statements::decode_all(LIST_LOCATIONS_DIGEST, rows, |row| {
+   |  _______________________________________________________________________^
+19 | |         Ok(ListLocationsRow {
+20 | |             id: row.decode("id")?,
+21 | |             location_code: row.decode("location_code")?,
+22 | |         })
+23 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:46:6
+   |
+46 | ) -> Result<Option<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:50:65
+   |
+50 |       wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
+   |  _________________________________________________________________^
+51 | |         Ok(PurchaseOrderRow {
+52 | |             created_at: row.decode("created_at")?,
+53 | |             id: row.decode("id")?,
+...  |
+59 | |         })
+60 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:70:6
+   |
+70 | ) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:78:64
+   |
+78 |       wamn_postgres_statements::decode_all(QUERY_0_DIGEST, rows, |row| {
+   |  ________________________________________________________________^
+79 | |         Ok(PurchaseOrderRow {
+80 | |             created_at: row.decode("created_at")?,
+81 | |             id: row.decode("id")?,
+...  |
+87 | |         })
+88 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:98:6
+   |
+98 | ) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:106:64
+    |
+106 |       wamn_postgres_statements::decode_all(QUERY_1_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+107 | |         Ok(PurchaseOrderRow {
+108 | |             created_at: row.decode("created_at")?,
+109 | |             id: row.decode("id")?,
+...   |
+115 | |         })
+116 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:126:6
+    |
+126 | ) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:134:64
+    |
+134 |       wamn_postgres_statements::decode_all(QUERY_2_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+135 | |         Ok(PurchaseOrderRow {
+136 | |             created_at: row.decode("created_at")?,
+137 | |             id: row.decode("id")?,
+...   |
+143 | |         })
+144 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:154:6
+    |
+154 | ) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:162:64
+    |
+162 |       wamn_postgres_statements::decode_all(QUERY_3_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+163 | |         Ok(PurchaseOrderRow {
+164 | |             created_at: row.decode("created_at")?,
+165 | |             id: row.decode("id")?,
+...   |
+171 | |         })
+172 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:182:6
+    |
+182 | ) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:190:64
+    |
+190 |       wamn_postgres_statements::decode_all(QUERY_4_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+191 | |         Ok(PurchaseOrderRow {
+192 | |             created_at: row.decode("created_at")?,
+193 | |             id: row.decode("id")?,
+...   |
+199 | |         })
+200 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:210:6
+    |
+210 | ) -> Result<Vec<PurchaseOrderRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:218:64
+    |
+218 |       wamn_postgres_statements::decode_all(QUERY_5_DIGEST, rows, |row| {
+    |  ________________________________________________________________^
+219 | |         Ok(PurchaseOrderRow {
+220 | |             created_at: row.decode("created_at")?,
+221 | |             id: row.decode("id")?,
+...   |
+227 | |         })
+228 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:237:6
+    |
+237 | ) -> Result<PurchaseOrderUpdateRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/purchase_order.rs:244:63
+    |
+244 |       wamn_postgres_statements::decode_one(UPDATE_DIGEST, rows, |row| {
+    |  _______________________________________________________________^
+245 | |         Ok(PurchaseOrderUpdateRow {
+246 | |             outcome: row.decode("outcome")?,
+247 | |             observed_row_version: row.decode("observed_row_version")?,
+...   |
+255 | |         })
+256 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receipt.rs:21:6
+   |
+21 | ) -> Result<Option<ReceiptRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receipt.rs:25:65
+   |
+25 |       wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
+   |  _________________________________________________________________^
+26 | |         Ok(ReceiptRow {
+27 | |             created_at: row.decode("created_at")?,
+28 | |             id: row.decode("id")?,
+...  |
+33 | |         })
+34 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receipt.rs:42:6
+   |
+42 | ) -> Result<Vec<ReceiptRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receipt.rs:48:62
+   |
+48 |       wamn_postgres_statements::decode_all(QUERY_DIGEST, rows, |row| {
+   |  ______________________________________________________________^
+49 | |         Ok(ReceiptRow {
+50 | |             created_at: row.decode("created_at")?,
+51 | |             id: row.decode("id")?,
+...  |
+56 | |         })
+57 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:85:41
+   |
+85 |     pub(crate) async fn commit(self) -> Result<(), wamn_postgres_statements::StatementError> {
+   |                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:95:6
+   |
+95 | ) -> Result<Option<ClaimCommandRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:101:75
+    |
+101 |       wamn_postgres_statements::decode_optional(CLAIM_COMMAND_DIGEST, rows, |row| {
+    |  ___________________________________________________________________________^
+102 | |         Ok(ClaimCommandRow {
+103 | |             receipt_id: row.decode("receipt_id")?,
+104 | |         })
+105 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:115:6
+    |
+115 | ) -> Result<FinalizedClaim, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:123:83
+    |
+123 |       let row = wamn_postgres_statements::decode_one(FINALIZE_COMMAND_DIGEST, rows, |row| {
+    |  ___________________________________________________________________________________^
+124 | |         Ok(FinalizeCommandRow {
+125 | |             purchase_order_status: row.decode("purchase_order_status")?,
+126 | |             row_version: row.decode("row_version")?,
+127 | |         })
+128 | |     })?;
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:135:6
+    |
+135 | ) -> Result<Option<FindReplayRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:139:73
+    |
+139 |       wamn_postgres_statements::decode_optional(FIND_REPLAY_DIGEST, rows, |row| {
+    |  _________________________________________________________________________^
+140 | |         Ok(FindReplayRow {
+141 | |             canonical_command: row.decode("canonical_command")?,
+142 | |             receipt_id: row.decode("receipt_id")?,
+...   |
+146 | |         })
+147 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:153:6
+    |
+153 | ) -> Result<FinishPurchaseOrderRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:157:78
+    |
+157 |       wamn_postgres_statements::decode_one(FINISH_PURCHASE_ORDER_DIGEST, rows, |row| {
+    |  ______________________________________________________________________________^
+158 | |         Ok(FinishPurchaseOrderRow {
+159 | |             status: row.decode("status")?,
+160 | |             row_version: row.decode("row_version")?,
+161 | |         })
+162 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:172:6
+    |
+172 | ) -> Result<InsertReceiptRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:180:71
+    |
+180 |       wamn_postgres_statements::decode_one(INSERT_RECEIPT_DIGEST, rows, |row| {
+    |  _______________________________________________________________________^
+181 | |         Ok(InsertReceiptRow {
+182 | |             id: row.decode("id")?,
+183 | |         })
+184 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:191:6
+    |
+191 | ) -> Result<Vec<InsertReceiptLineRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:196:76
+    |
+196 |       wamn_postgres_statements::decode_all(INSERT_RECEIPT_LINE_DIGEST, rows, |row| {
+    |  ____________________________________________________________________________^
+197 | |         Ok(InsertReceiptLineRow {
+198 | |             id: row.decode("id")?,
+199 | |         })
+200 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:206:6
+    |
+206 | ) -> Result<Option<LockPurchaseOrderRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:210:81
+    |
+210 |       wamn_postgres_statements::decode_optional(LOCK_PURCHASE_ORDER_DIGEST, rows, |row| {
+    |  _________________________________________________________________________________^
+211 | |         Ok(LockPurchaseOrderRow {
+212 | |             status: row.decode("status")?,
+213 | |         })
+214 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:221:6
+    |
+221 | ) -> Result<Vec<UpdatePurchaseOrderLineRow>, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:226:83
+    |
+226 |       wamn_postgres_statements::decode_all(UPDATE_PURCHASE_ORDER_LINE_DIGEST, rows, |row| {
+    |  ___________________________________________________________________________________^
+227 | |         Ok(UpdatePurchaseOrderLineRow {
+228 | |             id: row.decode("id")?,
+229 | |         })
+230 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:237:6
+    |
+237 | ) -> Result<ValidateReceiptLineRow, wamn_postgres_statements::StatementError> {
+    |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+   --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_record_receipt.rs:242:78
+    |
+242 |       wamn_postgres_statements::decode_one(VALIDATE_RECEIPT_LINE_DIGEST, rows, |row| {
+    |  ______________________________________________________________________________^
+243 | |         Ok(ValidateReceiptLineRow {
+244 | |             outcome: row.decode("outcome")?,
+245 | |             id: row.decode("id")?,
+246 | |         })
+247 | |     })
+    | |_____^ the `Err`-variant is at least 144 bytes
+    |
+    = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this function is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_load_receipt_screen.rs:26:6
+   |
+26 | ) -> Result<Vec<LoadReceiptScreenRow>, wamn_postgres_statements::StatementError> {
+   |      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: the `Err`-variant returned from this closure is very large
+  --> /home/kaalin/.cache/wamn-lanes/claim-transaction-20260910/components/data/receiving-data/../../../packages/receiving/generated/wamn/receiving_load_receipt_screen.rs:30:76
+   |
+30 |       wamn_postgres_statements::decode_all(LOAD_RECEIPT_SCREEN_DIGEST, rows, |row| {
+   |  ____________________________________________________________________________^
+31 | |         Ok(LoadReceiptScreenRow {
+32 | |             purchase_order_id: row.decode("purchase_order_id")?,
+33 | |             purchase_order_number: row.decode("purchase_order_number")?,
+...  |
+44 | |         })
+45 | |     })
+   | |_____^ the `Err`-variant is at least 144 bytes
+   |
+   = help: try reducing the size of `wamn_postgres_statements::StatementError`, for example by boxing large elements or replacing it with `Box<wamn_postgres_statements::StatementError>`
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.98.0/index.html#result_large_err
+
+warning: `wamn-receiving-data-access` (lib) generated 43 warnings
+warning: `wamn-receiving-data-access` (lib test) generated 43 warnings (43 duplicates)
+warning: `wamn-wms-data-access` (lib test) generated 117 warnings (117 duplicates)
+warning: `wamn-client-acme-receiving-data-access` (lib) generated 14 warnings (14 duplicates)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.28s

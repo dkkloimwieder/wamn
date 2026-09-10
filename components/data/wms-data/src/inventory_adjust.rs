@@ -19,7 +19,7 @@
 //! revision.
 
 use serde::Deserialize;
-use wamn_postgres_statements::{Connection, Numeric, TimestampTz, Transaction, Uuid};
+use wamn_postgres_statements::{Connection, Numeric, TimestampTz, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_adjust as sql;
@@ -124,24 +124,11 @@ pub(crate) async fn execute(command: &AdjustCommand) -> Result<AdjustResult, Acc
     let canonical = canonical_command(command, &parsed);
 
     let mut connection = Connection::new();
-    let mut transaction = connection
+    let transaction = connection
         .begin()
         .await
         .map_err(|e| error::from_statement(&e))?;
-    let result = run(&mut transaction, command, &canonical, &parsed).await;
-    match result {
-        Ok(value) => {
-            transaction
-                .commit()
-                .await
-                .map_err(|e| error::from_statement(&e))?;
-            Ok(value)
-        }
-        Err(refusal) => {
-            let _ = transaction.rollback().await;
-            Err(refusal)
-        }
-    }
+    run(sql::begin_claim(transaction), command, &canonical, &parsed).await
 }
 
 fn retry() -> AccessError {
@@ -149,13 +136,13 @@ fn retry() -> AccessError {
 }
 
 async fn run(
-    transaction: &mut Transaction,
+    mut transaction: sql::PendingClaim,
     command: &AdjustCommand,
     canonical: &[u8],
     parsed: &Parsed,
 ) -> Result<AdjustResult, AccessError> {
     let key = command.idempotency_key.clone();
-    if let Some(replay) = sql::find_replay(transaction, key.clone())
+    if let Some(replay) = sql::find_replay(&mut transaction, key.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
     {
@@ -172,7 +159,7 @@ async fn run(
         };
         // The status was never this command's to change, so the live row's
         // is the original's. A pallet cannot vanish (nothing deletes one).
-        let pallet = sql::lock_pallet(transaction, replay.pallet_id.clone())
+        let pallet = sql::lock_pallet(&mut transaction, replay.pallet_id.clone())
             .await
             .map_err(|e| error::from_statement(&e))?
             .ok_or_else(|| {
@@ -188,7 +175,7 @@ async fn run(
     }
 
     let claim = sql::claim_command(
-        transaction,
+        &mut transaction,
         key.clone(),
         canonical.to_vec(),
         parsed.pallet_id.clone(),
@@ -205,7 +192,7 @@ async fn run(
             &parsed.pallet_id.0,
         )
     };
-    let locked = sql::lock_pallet(transaction, parsed.pallet_id.clone())
+    let locked = sql::lock_pallet(&mut transaction, parsed.pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
         .ok_or_else(not_found)?;
@@ -220,7 +207,7 @@ async fn run(
     }
 
     let set = sql::set_quantity(
-        transaction,
+        &mut transaction,
         parsed.pallet_id.clone(),
         parsed.product_id.clone(),
         parsed.status.clone(),
@@ -237,7 +224,7 @@ async fn run(
     })?;
 
     sql::insert_movement(
-        transaction,
+        &mut transaction,
         key.clone(),
         parsed.pallet_id.clone(),
         parsed.product_id.clone(),
@@ -248,7 +235,7 @@ async fn run(
     .await
     .map_err(|e| error::from_statement(&e))?;
 
-    let touched = sql::touch_pallet(transaction, parsed.pallet_id.clone())
+    let touched = sql::touch_pallet(&mut transaction, parsed.pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
 
@@ -262,10 +249,14 @@ async fn run(
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    if finalized.row_version.is_none() {
+    if finalized.row.row_version.is_none() {
         return Err(retry());
     }
 
+    finalized
+        .commit()
+        .await
+        .map_err(|e| error::from_statement(&e))?;
     Ok(AdjustResult {
         movement_id: claim.movement_id.0,
         pallet_id: parsed.pallet_id.0.clone(),

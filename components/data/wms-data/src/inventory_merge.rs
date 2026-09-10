@@ -21,7 +21,7 @@
 //! Movements are recorded against the source, the pallet the stock left.
 
 use serde::Deserialize;
-use wamn_postgres_statements::{Connection, TimestampTz, Transaction, Uuid};
+use wamn_postgres_statements::{Connection, TimestampTz, Uuid};
 
 use crate::error::{self, AccessError, AccessErrorKind};
 use crate::generated::wamn::inventory_merge as sql;
@@ -114,24 +114,11 @@ pub(crate) async fn execute(command: &MergeCommand) -> Result<MergeResult, Acces
     let canonical = canonical_command(command, &parsed);
 
     let mut connection = Connection::new();
-    let mut transaction = connection
+    let transaction = connection
         .begin()
         .await
         .map_err(|e| error::from_statement(&e))?;
-    let result = run(&mut transaction, command, &canonical, &parsed).await;
-    match result {
-        Ok(value) => {
-            transaction
-                .commit()
-                .await
-                .map_err(|e| error::from_statement(&e))?;
-            Ok(value)
-        }
-        Err(refusal) => {
-            let _ = transaction.rollback().await;
-            Err(refusal)
-        }
-    }
+    run(sql::begin_claim(transaction), command, &canonical, &parsed).await
 }
 
 fn retry() -> AccessError {
@@ -167,13 +154,13 @@ fn locked_target(
 }
 
 async fn run(
-    transaction: &mut Transaction,
+    mut transaction: sql::PendingClaim,
     command: &MergeCommand,
     canonical: &[u8],
     parsed: &Parsed,
 ) -> Result<MergeResult, AccessError> {
     let key = command.idempotency_key.clone();
-    if let Some(replay) = sql::find_replay(transaction, key.clone())
+    if let Some(replay) = sql::find_replay(&mut transaction, key.clone())
         .await
         .map_err(|e| error::from_statement(&e))?
     {
@@ -189,7 +176,7 @@ async fn run(
         // The target's status was never this command's to change, so the
         // live row's is the original's.
         let rows = sql::lock_both_pallets(
-            transaction,
+            &mut transaction,
             replay.source_pallet_id.clone(),
             replay.target_pallet_id.clone(),
         )
@@ -209,7 +196,7 @@ async fn run(
     }
 
     let claim = sql::claim_command(
-        transaction,
+        &mut transaction,
         key.clone(),
         canonical.to_vec(),
         parsed.source_pallet_id.clone(),
@@ -221,7 +208,7 @@ async fn run(
 
     // THE SERIALIZATION POINT: both rows, in id order.
     let rows = sql::lock_both_pallets(
-        transaction,
+        &mut transaction,
         parsed.source_pallet_id.clone(),
         parsed.target_pallet_id.clone(),
     )
@@ -237,12 +224,12 @@ async fn run(
 
     // EVERY SOURCE ROW LANDS ON THE TARGET, matched by product and status,
     // and each is a movement of its own.
-    let quantities = sql::select_source_quantity(transaction, parsed.source_pallet_id.clone())
+    let quantities = sql::select_source_quantity(&mut transaction, parsed.source_pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
     for quantity in &quantities {
         let added = sql::add_to_target(
-            transaction,
+            &mut transaction,
             parsed.target_pallet_id.clone(),
             quantity.product_id.clone(),
             quantity.status.clone(),
@@ -252,7 +239,7 @@ async fn run(
         .map_err(|e| error::from_statement(&e))?;
         if added.is_none() {
             sql::place_on_target(
-                transaction,
+                &mut transaction,
                 parsed.target_pallet_id.clone(),
                 quantity.product_id.clone(),
                 quantity.status.clone(),
@@ -262,7 +249,7 @@ async fn run(
             .map_err(|e| error::from_statement(&e))?;
         }
         sql::insert_movement(
-            transaction,
+            &mut transaction,
             key.clone(),
             parsed.source_pallet_id.clone(),
             quantity.product_id.clone(),
@@ -273,10 +260,10 @@ async fn run(
         .map_err(|e| error::from_statement(&e))?;
     }
 
-    sql::consume_source(transaction, parsed.source_pallet_id.clone())
+    sql::consume_source(&mut transaction, parsed.source_pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
-    let touched = sql::touch_target(transaction, parsed.target_pallet_id.clone())
+    let touched = sql::touch_target(&mut transaction, parsed.target_pallet_id.clone())
         .await
         .map_err(|e| error::from_statement(&e))?;
 
@@ -289,10 +276,14 @@ async fn run(
     )
     .await
     .map_err(|e| error::from_statement(&e))?;
-    if finalized.row_version.is_none() {
+    if finalized.row.row_version.is_none() {
         return Err(retry());
     }
 
+    finalized
+        .commit()
+        .await
+        .map_err(|e| error::from_statement(&e))?;
     Ok(MergeResult {
         movement_id: claim.movement_id.0,
         source_pallet_id: parsed.source_pallet_id.0.clone(),

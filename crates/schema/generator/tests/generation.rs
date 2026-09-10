@@ -1482,12 +1482,16 @@ fn operation_error_details_are_required_closed_and_exact() {
         .unwrap();
     command.remove("transaction");
     command.remove("automatic_retry");
-    assert_eq!(
-        validate_operation_vocabulary(&parsed_manifest(&transactionless_sql))
-            .expect_err("a local SQL command without an explicit transaction was accepted")
-            .kind(),
-        GenerateErrorKind::InvalidOperation
+    let error = validate_operation_vocabulary(&parsed_manifest(&transactionless_sql))
+        .expect_err("a claim-bearing command without an explicit transaction was accepted");
+    assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+    assert!(error.to_string().contains("receiving.record_receipt"));
+    assert!(
+        error
+            .to_string()
+            .contains("transaction: explicit_per_input")
     );
+    assert!(error.to_string().contains("automatic_retry: false"));
 
     let mut missing_canonical_quantity = shipped_manifest();
     missing_canonical_quantity["custom_operations"]["receiving.record_receipt"]["input"]["fields"]
@@ -3430,6 +3434,7 @@ fn generated_create_contracts_publish_the_claim_and_its_refusal() {
             "atomicity": "claim_and_insert_commit_together",
         })
     );
+    assert_eq!(operation["transaction"], "explicit_per_input");
     let statements = operation["statements"].as_array().unwrap();
     assert_eq!(
         statements
@@ -4000,6 +4005,19 @@ fn an_authored_command_carries_the_two_claim_contract_tests() {
             ],
         })
     );
+}
+
+#[test]
+fn claim_finalization_requires_one_returned_row() {
+    for fetch in ["optional_one", "bounded_list"] {
+        let mut declaration = shipped_manifest();
+        declaration["custom_operations"]["receiving.record_receipt"]["statements"]["finalize_command"]
+            ["fetch"] = json!(fetch);
+        let error = shipped_generation(&receiving_catalog(), &declaration)
+            .expect_err("a finalizer that can return no row must not permit commit");
+        assert_eq!(error.kind(), GenerateErrorKind::InvalidOperation);
+        assert!(error.to_string().contains("finalize_command fetch to one"));
+    }
 }
 
 /// EXIT GATE: a command that declares no idempotence refuses generation, and

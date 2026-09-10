@@ -1237,6 +1237,15 @@ fn validate_custom_claim(
         ));
     }
     claim_statement_row(operation_name, operation, &declaration.finalize, "finalize")?;
+    if operation.statements[&declaration.finalize].fetch != StaticSqlFetch::One {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidOperation,
+            format!(
+                "{operation_name} claim finalization must return exactly one row; set {} fetch to one",
+                declaration.finalize
+            ),
+        ));
+    }
     Ok(())
 }
 
@@ -2493,7 +2502,7 @@ fn emit_static_sql_projection(
     projection: Projection,
 ) -> Result<(), GenerateError> {
     let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
-    if matches!(projection, Projection::Wamn) {
+    if matches!(projection, Projection::Wamn) && operation.claim.is_none() {
         source.push_str("use wamn_postgres_statements::Transaction;\n\n");
     }
     for row in rows {
@@ -2533,12 +2542,28 @@ fn emit_static_sql_projection(
         source.push('\n');
     }
     if matches!(projection, Projection::Wamn) {
-        for accessor in static_sql_accessors(operation) {
+        let accessors = static_sql_accessors(operation);
+        if let Some(claim) = &operation.claim {
+            let finalizer = accessors
+                .iter()
+                .find(|accessor| accessor.name == claim.finalize)
+                .expect("claim validation resolved the finalizer");
+            emit_claim_transaction(&mut source, &finalizer.row);
+        }
+        for accessor in accessors {
             let row = rows
                 .iter()
                 .find(|row| row.name == accessor.row)
                 .expect("static accessor row was generated from the same statement");
-            emit_static_sql_wamn_accessor(&mut source, &accessor, row);
+            emit_static_sql_wamn_accessor(
+                &mut source,
+                &accessor,
+                row,
+                operation
+                    .claim
+                    .as_ref()
+                    .map(|claim| claim.finalize.as_str()),
+            );
         }
     }
     while source.ends_with("\n\n") {
@@ -2555,11 +2580,56 @@ fn emit_static_sql_projection(
     )
 }
 
-fn emit_static_sql_wamn_accessor(source: &mut String, accessor: &StaticSqlAccessor, row: &RustRow) {
+/// Keep the transaction private until the declared finalizer succeeds.
+fn emit_claim_transaction(source: &mut String, finalized_row: &str) {
+    writeln!(
+        source,
+        r#"/// One claim and its work, with no commit before finalization.
+#[derive(Debug)]
+pub(crate) struct PendingClaim {{
+    transaction: wamn_postgres_statements::Transaction,
+}}
+
+/// Transfer the open transaction into this command's claim scope.
+pub(crate) fn begin_claim(transaction: wamn_postgres_statements::Transaction) -> PendingClaim {{
+    PendingClaim {{ transaction }}
+}}
+
+/// A finalized claim whose transaction can now commit.
+#[derive(Debug)]
+pub(crate) struct FinalizedClaim {{
+    transaction: wamn_postgres_statements::Transaction,
+    pub row: {finalized_row},
+}}
+
+impl FinalizedClaim {{
+    /// Commit the claim and its work together.
+    pub(crate) async fn commit(self) -> Result<(), wamn_postgres_statements::StatementError> {{
+        self.transaction.commit().await
+    }}
+}}
+"#
+    )
+    .expect("writing to a String cannot fail");
+}
+
+fn emit_static_sql_wamn_accessor(
+    source: &mut String,
+    accessor: &StaticSqlAccessor,
+    row: &RustRow,
+    claim_finalize: Option<&str>,
+) {
+    let finalizes_claim = claim_finalize == Some(accessor.name.as_str());
     let function = rust_identifier(&accessor.name)
         .expect("static SQL statement names were validated for Rust");
     writeln!(source, "pub(crate) async fn {function}(").expect("writing to a String cannot fail");
-    source.push_str("    transaction: &mut Transaction,\n");
+    if finalizes_claim {
+        source.push_str("    mut claim: PendingClaim,\n");
+    } else if claim_finalize.is_some() {
+        source.push_str("    claim: &mut PendingClaim,\n");
+    } else {
+        source.push_str("    transaction: &mut Transaction,\n");
+    }
     for bind in &accessor.binds {
         let parameter = rust_identifier(&bind.parameter)
             .expect("static SQL parameter names were validated for Rust");
@@ -2569,12 +2639,21 @@ fn emit_static_sql_wamn_accessor(source: &mut String, accessor: &StaticSqlAccess
     writeln!(
         source,
         ") -> Result<{}, wamn_postgres_statements::StatementError> {{",
-        static_sql_accessor_result_type(accessor),
+        if finalizes_claim {
+            "FinalizedClaim".to_owned()
+        } else {
+            static_sql_accessor_result_type(accessor)
+        },
     )
     .expect("writing to a String cannot fail");
     writeln!(
         source,
-        "    let rows = transaction.run({}, vec![",
+        "    let rows = {}.run({}, vec![",
+        if claim_finalize.is_some() {
+            "claim.transaction"
+        } else {
+            "transaction"
+        },
         accessor.statement_digest_constant,
     )
     .expect("writing to a String cannot fail");
@@ -2598,6 +2677,7 @@ fn emit_static_sql_wamn_accessor(source: &mut String, accessor: &StaticSqlAccess
         row,
         decode_function,
         &accessor.statement_digest_constant,
+        finalizes_claim,
     );
 }
 
@@ -2925,7 +3005,14 @@ fn emit_operation_contracts(
         ("grant".to_owned(), json!(operation_id)),
         ("result".to_owned(), json!(operation.result)),
         ("statements".to_owned(), json!(statements)),
-        ("transaction".to_owned(), json!("implicit")),
+        (
+            "transaction".to_owned(),
+            json!(if action == CrudAction::Create {
+                "explicit_per_input"
+            } else {
+                "implicit"
+            }),
+        ),
         ("automatic_retry".to_owned(), json!(false)),
     ]);
     if operation.fresh_only {
@@ -3957,6 +4044,13 @@ fn emit_projection(
         source.push('\n');
     }
     if let Some(api) = wamn_api {
+        if api
+            .accessors
+            .iter()
+            .any(|accessor| accessor.operation == CrudAction::Create)
+        {
+            emit_claim_transaction(&mut source, &model_row.name);
+        }
         for constraints in &api.mutation_constraints {
             emit_constraint_name_slice(&mut source, &constraints.unique);
             emit_constraint_name_slice(&mut source, &constraints.foreign_key);
@@ -4036,6 +4130,8 @@ fn emit_rust_row(source: &mut String, row: &RustRow, projection: Projection) {
 }
 
 fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRow) {
+    let owns_claim = accessor.operation == CrudAction::Create;
+    let finalizes_claim = owns_claim && accessor.name == CREATE_STATEMENT;
     writeln!(
         source,
         "{} async fn {}(",
@@ -4043,7 +4139,13 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
         accessor.name
     )
     .expect("writing to a String cannot fail");
-    source.push_str("    connection: &mut Connection,\n");
+    if finalizes_claim {
+        source.push_str("    mut claim: PendingClaim,\n");
+    } else if owns_claim {
+        source.push_str("    claim: &mut PendingClaim,\n");
+    } else {
+        source.push_str("    connection: &mut Connection,\n");
+    }
     for bind in &accessor.binds {
         writeln!(source, "    {}: {},", bind.parameter, bind.wamn_rust)
             .expect("writing to a String cannot fail");
@@ -4051,12 +4153,21 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
     writeln!(
         source,
         ") -> Result<{}, wamn_postgres_statements::StatementError> {{",
-        accessor_result_type(accessor)
+        if finalizes_claim {
+            "FinalizedClaim".to_owned()
+        } else {
+            accessor_result_type(accessor)
+        }
     )
     .expect("writing to a String cannot fail");
     writeln!(
         source,
-        "    let rows = connection.run({}, vec![",
+        "    let rows = {}.run({}, vec![",
+        if owns_claim {
+            "claim.transaction"
+        } else {
+            "connection"
+        },
         accessor.statement_digest_constant
     )
     .expect("writing to a String cannot fail");
@@ -4079,6 +4190,7 @@ fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRo
         row,
         decode_function,
         &accessor.statement_digest_constant,
+        finalizes_claim,
     );
 }
 
@@ -4095,10 +4207,16 @@ fn emit_decode_result(
     row: &RustRow,
     decode_function: &str,
     statement_digest_constant: &str,
+    finalizes_claim: bool,
 ) {
+    source.push_str(if finalizes_claim {
+        "    let row = "
+    } else {
+        "    "
+    });
     writeln!(
         source,
-        "    wamn_postgres_statements::{decode_function}({statement_digest_constant}, rows, |row| {{"
+        "wamn_postgres_statements::{decode_function}({statement_digest_constant}, rows, |row| {{"
     )
     .expect("writing to a String cannot fail");
     writeln!(source, "        Ok({} {{", row.name).expect("writing to a String cannot fail");
@@ -4110,7 +4228,11 @@ fn emit_decode_result(
         )
         .expect("writing to a String cannot fail");
     }
-    source.push_str("        })\n    })\n}\n\n");
+    source.push_str("        })\n    })");
+    if finalizes_claim {
+        source.push_str("?;\n    Ok(FinalizedClaim { transaction: claim.transaction, row })");
+    }
+    source.push_str("\n}\n\n");
 }
 
 fn sql_constant_name(action: &str, index: usize, path_count: usize) -> String {

@@ -8,9 +8,7 @@ use chrono::{DateTime, SecondsFormat};
 use serde_json::{Value, json};
 use uuid::Uuid;
 use wamn_execution_contract::canonical_json_bytes;
-use wamn_postgres_statements::{
-    Connection, Json, StatementError, TimestampTz, Transaction, Uuid as WamnUuid, run_transaction,
-};
+use wamn_postgres_statements::{Connection, Json, StatementError, TimestampTz, Uuid as WamnUuid};
 
 use crate::error::{AccessError, AccessErrorKind, AllowedConstraints};
 use crate::generated::wamn::receiving_record_receipt as generated;
@@ -398,10 +396,8 @@ async fn record_receipt_item(
     command: &RecordReceiptInput,
 ) -> Result<RecordReceiptResult, RecordReceiptError> {
     let prepared = prepare(command)?;
-    run_transaction(connection, move |transaction| {
-        Box::pin(record_receipt_in(transaction, prepared))
-    })
-    .await
+    let transaction = connection.begin().await?;
+    record_receipt_in(generated::begin_claim(transaction), prepared).await
 }
 
 #[derive(Debug)]
@@ -487,10 +483,10 @@ fn prepare(command: &RecordReceiptInput) -> Result<PreparedCommand, RecordReceip
 }
 
 async fn record_receipt_in(
-    transaction: &mut Transaction,
+    mut transaction: generated::PendingClaim,
     command: PreparedCommand,
 ) -> Result<RecordReceiptResult, RecordReceiptError> {
-    if let Some(replay) = generated::find_replay(transaction, command.idempotency_key.clone())
+    if let Some(replay) = generated::find_replay(&mut transaction, command.idempotency_key.clone())
         .await
         .map_err(|source| sql_error("find record_receipt replay", source))?
     {
@@ -498,7 +494,7 @@ async fn record_receipt_in(
     }
 
     let claim = generated::claim_command(
-        transaction,
+        &mut transaction,
         command.idempotency_key.clone(),
         command.canonical_command.clone(),
         WamnUuid(command.purchase_order_id.clone()),
@@ -506,7 +502,7 @@ async fn record_receipt_in(
     .await
     .map_err(|source| sql_error("claim record_receipt idempotency key", source))?;
     let Some(claim) = claim else {
-        let replay = generated::find_replay(transaction, command.idempotency_key.clone())
+        let replay = generated::find_replay(&mut transaction, command.idempotency_key.clone())
             .await
             .map_err(|source| sql_error("load concurrent record_receipt replay", source))?
             .ok_or_else(|| {
@@ -515,17 +511,19 @@ async fn record_receipt_in(
         return replay_result(replay, &command.canonical_command);
     };
 
-    let purchase_order =
-        generated::lock_purchase_order(transaction, WamnUuid(command.purchase_order_id.clone()))
-            .await
-            .map_err(|source| sql_error("lock purchase_order", source))?
-            .ok_or_else(|| {
-                RecordReceiptError::domain(
-                    RecordReceiptErrorKind::PurchaseOrderNotFound,
-                    "purchase_order does not exist",
-                    "value.purchase_order_id",
-                )
-            })?;
+    let purchase_order = generated::lock_purchase_order(
+        &mut transaction,
+        WamnUuid(command.purchase_order_id.clone()),
+    )
+    .await
+    .map_err(|source| sql_error("lock purchase_order", source))?
+    .ok_or_else(|| {
+        RecordReceiptError::domain(
+            RecordReceiptErrorKind::PurchaseOrderNotFound,
+            "purchase_order does not exist",
+            "value.purchase_order_id",
+        )
+    })?;
     if purchase_order.status != "open" {
         return Err(RecordReceiptError::domain(
             RecordReceiptErrorKind::PurchaseOrderNotOpen,
@@ -535,7 +533,7 @@ async fn record_receipt_in(
     }
 
     let validation = generated::validate_receipt_line(
-        transaction,
+        &mut transaction,
         WamnUuid(command.purchase_order_id.clone()),
         Json(command.line_json.clone()),
     )
@@ -558,7 +556,7 @@ async fn record_receipt_in(
     );
     let receipt_id = claim.receipt_id.0;
     let inserted_receipt = generated::insert_receipt(
-        transaction,
+        &mut transaction,
         WamnUuid(receipt_id.clone()),
         command.idempotency_key.clone(),
         WamnUuid(command.purchase_order_id.clone()),
@@ -588,7 +586,7 @@ async fn record_receipt_in(
     }
 
     let inserted = generated::insert_receipt_line(
-        transaction,
+        &mut transaction,
         WamnUuid(receipt_id.clone()),
         Json(command.line_json.clone()),
     )
@@ -601,7 +599,7 @@ async fn record_receipt_in(
     )?;
 
     let updated = generated::update_purchase_order_line(
-        transaction,
+        &mut transaction,
         WamnUuid(command.purchase_order_id.clone()),
         Json(command.line_json),
     )
@@ -613,10 +611,12 @@ async fn record_receipt_in(
         command.line_count,
     )?;
 
-    let finished =
-        generated::finish_purchase_order(transaction, WamnUuid(command.purchase_order_id.clone()))
-            .await
-            .map_err(|source| sql_error("finish purchase_order", source))?;
+    let finished = generated::finish_purchase_order(
+        &mut transaction,
+        WamnUuid(command.purchase_order_id.clone()),
+    )
+    .await
+    .map_err(|source| sql_error("finish purchase_order", source))?;
     let status = PurchaseOrderStatus::parse(&finished.status)?;
     let finalized = generated::finalize_command(
         transaction,
@@ -628,13 +628,14 @@ async fn record_receipt_in(
     )
     .await
     .map_err(|source| sql_error("finalize record_receipt result", source))?;
-    if finalized.purchase_order_status.as_deref() != Some(status.as_str())
-        || finalized.row_version != Some(finished.row_version)
+    if finalized.row.purchase_order_status.as_deref() != Some(status.as_str())
+        || finalized.row.row_version != Some(finished.row_version)
     {
         return Err(RecordReceiptError::internal(
             "command ledger did not preserve the committed result",
         ));
     }
+    finalized.commit().await?;
     Ok(RecordReceiptResult {
         receipt_id: receipt_id.into_boxed_str(),
         purchase_order_id: command.purchase_order_id.into_boxed_str(),
