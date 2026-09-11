@@ -1,0 +1,19 @@
+{
+  "complete": true,
+  "passed": true,
+  "source_unchanged": true,
+  "head": "52ac90a6400e4b955a90d3f97733c0c5be8a5418",
+  "test_cases_passed": 16,
+  "test_cases_failed": 0,
+  "test_cases_ignored": 0,
+  "debug_binaries": [
+    "wamn",
+    "wamn-host",
+    "wamn-identity",
+    "wamn-receiving",
+    "wamn-scenario-worker"
+  ],
+  "binary_count": 5,
+  "artifact_hashes": "artifacts.json",
+  "not_run": []
+}

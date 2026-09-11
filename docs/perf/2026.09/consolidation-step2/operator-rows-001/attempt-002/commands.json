@@ -1,0 +1,243 @@
+[
+  {
+    "label": "image",
+    "argv": [
+      "docker",
+      "image",
+      "inspect",
+      "postgres:18",
+      "--format",
+      "{{.Id}}"
+    ],
+    "exit": 0,
+    "stdout": "sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "start",
+    "argv": [
+      "docker",
+      "run",
+      "--detach",
+      "--pull=never",
+      "--name",
+      "wamn-operator-rows-30244e3deff1",
+      "--label",
+      "com.wamn.test=operator-rows-001",
+      "-e",
+      "POSTGRES_PASSWORD",
+      "-p",
+      "127.0.0.1::5432",
+      "postgres:18"
+    ],
+    "exit": 0,
+    "stdout": "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-1",
+    "argv": [
+      "docker",
+      "exec",
+      "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 2,
+    "stdout": "127.0.0.1:5432 - no response\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-2",
+    "argv": [
+      "docker",
+      "exec",
+      "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 2,
+    "stdout": "127.0.0.1:5432 - no response\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-3",
+    "argv": [
+      "docker",
+      "exec",
+      "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 2,
+    "stdout": "127.0.0.1:5432 - no response\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-4",
+    "argv": [
+      "docker",
+      "exec",
+      "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 2,
+    "stdout": "127.0.0.1:5432 - no response\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-5",
+    "argv": [
+      "docker",
+      "exec",
+      "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 2,
+    "stdout": "127.0.0.1:5432 - no response\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-6",
+    "argv": [
+      "docker",
+      "exec",
+      "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 1,
+    "stdout": "127.0.0.1:5432 - rejecting connections\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-7",
+    "argv": [
+      "docker",
+      "exec",
+      "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 0,
+    "stdout": "127.0.0.1:5432 - accepting connections\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "port",
+    "argv": [
+      "docker",
+      "port",
+      "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d",
+      "5432/tcp"
+    ],
+    "exit": 0,
+    "stdout": "127.0.0.1:32980\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "version",
+    "argv": [
+      "psql",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1"
+    ],
+    "exit": 2,
+    "stdout": "",
+    "stderr": "psql: error: connection to server on socket \"/var/run/postgresql/.s.PGSQL.5432\" failed: No such file or directory\n\tIs the server running locally and accepting connections on that socket?\n",
+    "stdin": "SHOW server_version_num;\n",
+    "database": "postgresql://postgres@127.0.0.1:32980/postgres"
+  },
+  {
+    "label": "container-logs",
+    "argv": [
+      "docker",
+      "logs",
+      "--timestamps",
+      "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d"
+    ],
+    "exit": 0,
+    "stdout": "2026-09-11T14:09:27.858842317Z The files belonging to this database system will be owned by user \"postgres\".\n2026-09-11T14:09:27.858881005Z This user must also own the server process.\n2026-09-11T14:09:27.858884640Z \n2026-09-11T14:09:27.858894701Z The database cluster will be initialized with locale \"en_US.utf8\".\n2026-09-11T14:09:27.858898170Z The default database encoding has accordingly been set to \"UTF8\".\n2026-09-11T14:09:27.858901527Z The default text search configuration will be set to \"english\".\n2026-09-11T14:09:27.858906385Z \n2026-09-11T14:09:27.858915770Z Data page checksums are enabled.\n2026-09-11T14:09:27.858971020Z \n2026-09-11T14:09:27.859711435Z fixing permissions on existing directory /var/lib/postgresql/18/docker ... ok\n2026-09-11T14:09:27.859896151Z creating subdirectories ... ok\n2026-09-11T14:09:27.859928692Z selecting dynamic shared memory implementation ... posix\n2026-09-11T14:09:27.878852702Z selecting default \"max_connections\" ... 100\n2026-09-11T14:09:27.894965074Z selecting default \"shared_buffers\" ... 128MB\n2026-09-11T14:09:27.906115977Z selecting default time zone ... Etc/UTC\n2026-09-11T14:09:27.906843522Z creating configuration files ... ok\n2026-09-11T14:09:28.058179877Z running bootstrap script ... ok\n2026-09-11T14:09:28.394179237Z performing post-bootstrap initialization ... ok\n2026-09-11T14:09:28.916661941Z syncing data to disk ... ok\n2026-09-11T14:09:28.916696520Z \n2026-09-11T14:09:28.916697782Z \n2026-09-11T14:09:28.916698936Z Success. You can now start the database server using:\n2026-09-11T14:09:28.916700131Z \n2026-09-11T14:09:28.916701227Z     pg_ctl -D /var/lib/postgresql/18/docker -l logfile start\n2026-09-11T14:09:28.916702537Z \n2026-09-11T14:09:28.962526647Z waiting for server to start....2026-09-11 14:09:28.962 UTC [77] LOG:  starting PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit\n2026-09-11T14:09:28.971344152Z 2026-09-11 14:09:28.971 UTC [77] LOG:  listening on Unix socket \"/var/run/postgresql/.s.PGSQL.5432\"\n2026-09-11T14:09:29.000745027Z 2026-09-11 14:09:29.000 UTC [89] LOG:  database system was shut down at 2026-09-11 14:09:28 UTC\n2026-09-11T14:09:29.011865416Z 2026-09-11 14:09:29.011 UTC [77] LOG:  database system is ready to accept connections\n2026-09-11T14:09:29.032168683Z  done\n2026-09-11T14:09:29.032185768Z server started\n2026-09-11T14:09:29.074682647Z \n2026-09-11T14:09:29.074702825Z /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*\n2026-09-11T14:09:29.074712320Z \n2026-09-11T14:09:29.075488540Z waiting for server to shut down....2026-09-11 14:09:29.075 UTC [77] LOG:  received fast shutdown request\n2026-09-11T14:09:29.084247667Z 2026-09-11 14:09:29.084 UTC [77] LOG:  aborting any active transactions\n2026-09-11T14:09:29.085802271Z 2026-09-11 14:09:29.085 UTC [77] LOG:  background worker \"logical replication launcher\" (PID 92) exited with exit code 1\n2026-09-11T14:09:29.086222161Z 2026-09-11 14:09:29.086 UTC [87] LOG:  shutting down\n2026-09-11T14:09:29.095002375Z 2026-09-11 14:09:29.094 UTC [87] LOG:  checkpoint starting: shutdown immediate\n2026-09-11T14:09:29.158455063Z 2026-09-11 14:09:29.158 UTC [87] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.018 s, sync=0.007 s, total=0.073 s; sync files=2, longest=0.004 s, average=0.004 s; distance=0 kB, estimate=0 kB; lsn=0/1761918, redo lsn=0/1761918\n2026-09-11T14:09:29.189133130Z 2026-09-11 14:09:29.189 UTC [77] LOG:  database system is shut down\n2026-09-11T14:09:29.275721333Z  done\n2026-09-11T14:09:29.275745880Z server stopped\n2026-09-11T14:09:29.276724882Z \n2026-09-11T14:09:29.276737738Z PostgreSQL init process complete; ready for start up.\n2026-09-11T14:09:29.276740101Z \n",
+    "stderr": "2026-09-11T14:09:28.916660902Z initdb: warning: enabling \"trust\" authentication for local connections\n2026-09-11T14:09:28.916692093Z initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.\n2026-09-11T14:09:29.308689055Z 2026-09-11 14:09:29.308 UTC [1] LOG:  starting PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit\n2026-09-11T14:09:29.308851973Z 2026-09-11 14:09:29.308 UTC [1] LOG:  listening on IPv4 address \"0.0.0.0\", port 5432\n2026-09-11T14:09:29.308856403Z 2026-09-11 14:09:29.308 UTC [1] LOG:  listening on IPv6 address \"::\", port 5432\n2026-09-11T14:09:29.326754952Z 2026-09-11 14:09:29.326 UTC [1] LOG:  listening on Unix socket \"/var/run/postgresql/.s.PGSQL.5432\"\n2026-09-11T14:09:29.355329077Z 2026-09-11 14:09:29.355 UTC [109] LOG:  database system was shut down at 2026-09-11 14:09:29 UTC\n2026-09-11T14:09:29.355606367Z 2026-09-11 14:09:29.355 UTC [110] FATAL:  the database system is starting up\n2026-09-11T14:09:29.365844219Z 2026-09-11 14:09:29.365 UTC [1] LOG:  database system is ready to accept connections\n",
+    "database": null
+  },
+  {
+    "label": "container-cleanup",
+    "argv": [
+      "docker",
+      "rm",
+      "--force",
+      "--volumes",
+      "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d"
+    ],
+    "exit": 0,
+    "stdout": "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "container-absent",
+    "argv": [
+      "docker",
+      "inspect",
+      "--format",
+      "{{.Id}}",
+      "7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d"
+    ],
+    "exit": 1,
+    "stdout": "\n",
+    "stderr": "Error: No such object: 7b44bdbc21a9bdf2630b0ed984f10fb1048119f2ad1db77ec183e5bf209cf73d\n",
+    "database": null
+  }
+]

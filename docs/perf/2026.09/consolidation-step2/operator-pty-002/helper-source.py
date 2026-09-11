@@ -439,7 +439,7 @@ def prove(binary, root):
             fresh_id = verify_request(fresh)
             require(fresh_id != old_id, "new target replayed the captured old request")
             session.text("Pending.")
-            session.text("Results | 0 rows |")
+            session.text("No result yet.")
             session.quiet(3)
             old.release.set()
             session.until(old.finished.is_set, "old response release")

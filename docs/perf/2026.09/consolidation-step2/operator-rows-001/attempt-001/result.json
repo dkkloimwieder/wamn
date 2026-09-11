@@ -1,0 +1,23 @@
+{
+  "passed": false,
+  "source_head": "52ac90a6400e4b955a90d3f97733c0c5be8a5418",
+  "source_sha256_before": {
+    "services/ctl/tests/generated_operator_live.py": "1aacf821133cb8193d1fb32c3d81b3bb419e0faf85ce71206c14819507d0da73",
+    "apps/wamn_receiving/migrations/0001_initial.sql": "46f703e4e9bc83001bbd6293cd3aea6b01dad4feb3a5458d88ef1308ac37d16a",
+    "crates/client/terminal/tests/operator_pty.py": "209712a24622996eb8a694aeda89d2d6edc5ce34a78c01ca7a9739726d6326c5",
+    "docs/perf/2026.09/consolidation-step2/pin-remint-001/tools/remint.py": "7d753ce9d5c0684350f4e1161a2f52adf81db69fa1da05bb122c36205fa290b8"
+  },
+  "container_name": "wamn-operator-rows-bbf361befb14",
+  "container_id": "13a0fd253e00bcc3b72e965c7ee4ff179f84fdc3c6a6ce58607c32cac9f4f8c1",
+  "failure": "RuntimeError: version exited 2",
+  "container_cleanup_exit": 0,
+  "container_removed": true,
+  "source_sha256_after": {
+    "services/ctl/tests/generated_operator_live.py": "1aacf821133cb8193d1fb32c3d81b3bb419e0faf85ce71206c14819507d0da73",
+    "apps/wamn_receiving/migrations/0001_initial.sql": "46f703e4e9bc83001bbd6293cd3aea6b01dad4feb3a5458d88ef1308ac37d16a",
+    "crates/client/terminal/tests/operator_pty.py": "209712a24622996eb8a694aeda89d2d6edc5ce34a78c01ca7a9739726d6326c5",
+    "docs/perf/2026.09/consolidation-step2/pin-remint-001/tools/remint.py": "7d753ce9d5c0684350f4e1161a2f52adf81db69fa1da05bb122c36205fa290b8"
+  },
+  "source_unchanged": true,
+  "exit_code": 1
+}

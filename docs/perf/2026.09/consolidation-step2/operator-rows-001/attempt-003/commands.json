@@ -1,0 +1,493 @@
+[
+  {
+    "label": "image",
+    "argv": [
+      "docker",
+      "image",
+      "inspect",
+      "postgres:18",
+      "--format",
+      "{{.Id}}"
+    ],
+    "exit": 0,
+    "stdout": "sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "start",
+    "argv": [
+      "docker",
+      "run",
+      "--detach",
+      "--pull=never",
+      "--name",
+      "wamn-operator-rows-62541bc831b9",
+      "--label",
+      "com.wamn.test=operator-rows-001",
+      "-e",
+      "POSTGRES_PASSWORD",
+      "-p",
+      "127.0.0.1::5432",
+      "postgres:18"
+    ],
+    "exit": 0,
+    "stdout": "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-1",
+    "argv": [
+      "docker",
+      "exec",
+      "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 2,
+    "stdout": "127.0.0.1:5432 - no response\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-2",
+    "argv": [
+      "docker",
+      "exec",
+      "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 2,
+    "stdout": "127.0.0.1:5432 - no response\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-3",
+    "argv": [
+      "docker",
+      "exec",
+      "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 2,
+    "stdout": "127.0.0.1:5432 - no response\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-4",
+    "argv": [
+      "docker",
+      "exec",
+      "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 2,
+    "stdout": "127.0.0.1:5432 - no response\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-5",
+    "argv": [
+      "docker",
+      "exec",
+      "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 2,
+    "stdout": "127.0.0.1:5432 - no response\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "ready-6",
+    "argv": [
+      "docker",
+      "exec",
+      "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663",
+      "pg_isready",
+      "-h",
+      "127.0.0.1",
+      "-U",
+      "postgres",
+      "-t",
+      "1"
+    ],
+    "exit": 0,
+    "stdout": "127.0.0.1:5432 - accepting connections\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "port",
+    "argv": [
+      "docker",
+      "port",
+      "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663",
+      "5432/tcp"
+    ],
+    "exit": 0,
+    "stdout": "127.0.0.1:32981\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "version",
+    "argv": [
+      "psql",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1"
+    ],
+    "exit": 0,
+    "stdout": "180006\n",
+    "stderr": "",
+    "stdin": "SHOW server_version_num;\n",
+    "database": null
+  },
+  {
+    "label": "schema",
+    "argv": [
+      "psql",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "stdin": "CREATE SCHEMA receiving;\n",
+    "database": null
+  },
+  {
+    "label": "migration",
+    "argv": [
+      "psql",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-f",
+      "/home/kaalin/dev/wamn/apps/wamn_receiving/migrations/0001_initial.sql"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "unrelated-rows",
+    "argv": [
+      "psql",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1"
+    ],
+    "exit": 0,
+    "stdout": "",
+    "stderr": "",
+    "stdin": "INSERT INTO receiving.purchase_order\n        (id, purchase_order_number, supplier_id, created_at)\n        VALUES ('0ec0b626-0aee-41e5-b582-a1571d80bc5e', 'OTHER-0ec0b626-0aee-41e5-b582-a1571d80bc5e', '0ec0b626-0aee-41e5-b582-a1571d80bc5e', '2020-01-01T00:00:00Z');\n        INSERT INTO receiving.location (id, location_code)\n        VALUES ('9119293d-7604-4402-b8b8-fb55c165ec01', 'OTHER-9119293d-7604-4402-b8b8-fb55c165ec01');\n",
+    "database": null
+  },
+  {
+    "label": "before-helper",
+    "argv": [
+      "psql",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1"
+    ],
+    "exit": 0,
+    "stdout": "{\"owned_orders\" : 0, \"owned_locations\" : 0, \"total_orders\" : 1, \"total_locations\" : 1, \"other_order\" : {\"id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"status\": \"open\", \"created_at\": \"2020-01-01T00:00:00+00:00\", \"updated_at\": \"2026-09-11T14:12:48.024067+00:00\", \"row_version\": 1, \"supplier_id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"purchase_order_number\": \"OTHER-0ec0b626-0aee-41e5-b582-a1571d80bc5e\"}, \"other_location\" : {\"id\": \"9119293d-7604-4402-b8b8-fb55c165ec01\", \"location_code\": \"OTHER-9119293d-7604-4402-b8b8-fb55c165ec01\"}, \"first_order\" : \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\"}\n",
+    "stderr": "",
+    "stdin": "SELECT json_build_object(\n        'owned_orders', (SELECT count(*) FROM receiving.purchase_order WHERE id = '8427cef3-8ece-4a8c-9961-7e88978f26bf'),\n        'owned_locations', (SELECT count(*) FROM receiving.location WHERE id = '1e11d17d-3160-42df-a463-9920c67c9c29'),\n        'total_orders', (SELECT count(*) FROM receiving.purchase_order),\n        'total_locations', (SELECT count(*) FROM receiving.location),\n        'other_order', (SELECT to_jsonb(row) FROM receiving.purchase_order AS row WHERE id = '0ec0b626-0aee-41e5-b582-a1571d80bc5e'),\n        'other_location', (SELECT to_jsonb(row) FROM receiving.location AS row WHERE id = '9119293d-7604-4402-b8b8-fb55c165ec01'),\n        'first_order', (SELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1));\n",
+    "database": null
+  },
+  {
+    "label": "seed-helper",
+    "argv": [
+      "psql",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres"
+    ],
+    "exit": 0,
+    "stdout": "8427cef3-8ece-4a8c-9961-7e88978f26bf\n",
+    "stderr": "",
+    "stdin": "BEGIN;\nINSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id, created_at)\nSELECT '8427cef3-8ece-4a8c-9961-7e88978f26bf', 'RESTART-d707ad0d78d3', '8427cef3-8ece-4a8c-9961-7e88978f26bf',\n       COALESCE(MIN(created_at), CURRENT_TIMESTAMP) - interval '1 second'\nFROM receiving.purchase_order WHERE true\nON CONFLICT ON CONSTRAINT purchase_order_id_pkey DO NOTHING;\nINSERT INTO receiving.location (id, location_code)\nVALUES ('1e11d17d-3160-42df-a463-9920c67c9c29', 'RESTART-d707ad0d78d3-LOC')\nON CONFLICT ON CONSTRAINT location_id_pkey DO NOTHING;\nCOMMIT;\nSELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1;",
+    "database": null
+  },
+  {
+    "label": "seed-state",
+    "argv": [
+      "psql",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1"
+    ],
+    "exit": 0,
+    "stdout": "{\"owned_orders\" : 1, \"owned_locations\" : 1, \"total_orders\" : 2, \"total_locations\" : 2, \"other_order\" : {\"id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"status\": \"open\", \"created_at\": \"2020-01-01T00:00:00+00:00\", \"updated_at\": \"2026-09-11T14:12:48.024067+00:00\", \"row_version\": 1, \"supplier_id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"purchase_order_number\": \"OTHER-0ec0b626-0aee-41e5-b582-a1571d80bc5e\"}, \"other_location\" : {\"id\": \"9119293d-7604-4402-b8b8-fb55c165ec01\", \"location_code\": \"OTHER-9119293d-7604-4402-b8b8-fb55c165ec01\"}, \"first_order\" : \"8427cef3-8ece-4a8c-9961-7e88978f26bf\"}\n",
+    "stderr": "",
+    "stdin": "SELECT json_build_object(\n        'owned_orders', (SELECT count(*) FROM receiving.purchase_order WHERE id = '8427cef3-8ece-4a8c-9961-7e88978f26bf'),\n        'owned_locations', (SELECT count(*) FROM receiving.location WHERE id = '1e11d17d-3160-42df-a463-9920c67c9c29'),\n        'total_orders', (SELECT count(*) FROM receiving.purchase_order),\n        'total_locations', (SELECT count(*) FROM receiving.location),\n        'other_order', (SELECT to_jsonb(row) FROM receiving.purchase_order AS row WHERE id = '0ec0b626-0aee-41e5-b582-a1571d80bc5e'),\n        'other_location', (SELECT to_jsonb(row) FROM receiving.location AS row WHERE id = '9119293d-7604-4402-b8b8-fb55c165ec01'),\n        'first_order', (SELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1));\n",
+    "database": null
+  },
+  {
+    "label": "repeat-seed-helper",
+    "argv": [
+      "psql",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres"
+    ],
+    "exit": 0,
+    "stdout": "8427cef3-8ece-4a8c-9961-7e88978f26bf\n",
+    "stderr": "",
+    "stdin": "BEGIN;\nINSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id, created_at)\nSELECT '8427cef3-8ece-4a8c-9961-7e88978f26bf', 'RESTART-d707ad0d78d3', '8427cef3-8ece-4a8c-9961-7e88978f26bf',\n       COALESCE(MIN(created_at), CURRENT_TIMESTAMP) - interval '1 second'\nFROM receiving.purchase_order WHERE true\nON CONFLICT ON CONSTRAINT purchase_order_id_pkey DO NOTHING;\nINSERT INTO receiving.location (id, location_code)\nVALUES ('1e11d17d-3160-42df-a463-9920c67c9c29', 'RESTART-d707ad0d78d3-LOC')\nON CONFLICT ON CONSTRAINT location_id_pkey DO NOTHING;\nCOMMIT;\nSELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1;",
+    "database": null
+  },
+  {
+    "label": "repeat-seed-state",
+    "argv": [
+      "psql",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1"
+    ],
+    "exit": 0,
+    "stdout": "{\"owned_orders\" : 1, \"owned_locations\" : 1, \"total_orders\" : 2, \"total_locations\" : 2, \"other_order\" : {\"id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"status\": \"open\", \"created_at\": \"2020-01-01T00:00:00+00:00\", \"updated_at\": \"2026-09-11T14:12:48.024067+00:00\", \"row_version\": 1, \"supplier_id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"purchase_order_number\": \"OTHER-0ec0b626-0aee-41e5-b582-a1571d80bc5e\"}, \"other_location\" : {\"id\": \"9119293d-7604-4402-b8b8-fb55c165ec01\", \"location_code\": \"OTHER-9119293d-7604-4402-b8b8-fb55c165ec01\"}, \"first_order\" : \"8427cef3-8ece-4a8c-9961-7e88978f26bf\"}\n",
+    "stderr": "",
+    "stdin": "SELECT json_build_object(\n        'owned_orders', (SELECT count(*) FROM receiving.purchase_order WHERE id = '8427cef3-8ece-4a8c-9961-7e88978f26bf'),\n        'owned_locations', (SELECT count(*) FROM receiving.location WHERE id = '1e11d17d-3160-42df-a463-9920c67c9c29'),\n        'total_orders', (SELECT count(*) FROM receiving.purchase_order),\n        'total_locations', (SELECT count(*) FROM receiving.location),\n        'other_order', (SELECT to_jsonb(row) FROM receiving.purchase_order AS row WHERE id = '0ec0b626-0aee-41e5-b582-a1571d80bc5e'),\n        'other_location', (SELECT to_jsonb(row) FROM receiving.location AS row WHERE id = '9119293d-7604-4402-b8b8-fb55c165ec01'),\n        'first_order', (SELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1));\n",
+    "database": null
+  },
+  {
+    "label": "cleanup-helper",
+    "argv": [
+      "psql",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres"
+    ],
+    "exit": 0,
+    "stdout": "0\n",
+    "stderr": "",
+    "stdin": "BEGIN;\nDELETE FROM receiving.purchase_order WHERE id = '8427cef3-8ece-4a8c-9961-7e88978f26bf';\nDELETE FROM receiving.location WHERE id = '1e11d17d-3160-42df-a463-9920c67c9c29';\nCOMMIT;\nSELECT (SELECT count(*) FROM receiving.purchase_order WHERE id = '8427cef3-8ece-4a8c-9961-7e88978f26bf')\n     + (SELECT count(*) FROM receiving.location WHERE id = '1e11d17d-3160-42df-a463-9920c67c9c29');",
+    "database": null
+  },
+  {
+    "label": "cleanup-state",
+    "argv": [
+      "psql",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1"
+    ],
+    "exit": 0,
+    "stdout": "{\"owned_orders\" : 0, \"owned_locations\" : 0, \"total_orders\" : 1, \"total_locations\" : 1, \"other_order\" : {\"id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"status\": \"open\", \"created_at\": \"2020-01-01T00:00:00+00:00\", \"updated_at\": \"2026-09-11T14:12:48.024067+00:00\", \"row_version\": 1, \"supplier_id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"purchase_order_number\": \"OTHER-0ec0b626-0aee-41e5-b582-a1571d80bc5e\"}, \"other_location\" : {\"id\": \"9119293d-7604-4402-b8b8-fb55c165ec01\", \"location_code\": \"OTHER-9119293d-7604-4402-b8b8-fb55c165ec01\"}, \"first_order\" : \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\"}\n",
+    "stderr": "",
+    "stdin": "SELECT json_build_object(\n        'owned_orders', (SELECT count(*) FROM receiving.purchase_order WHERE id = '8427cef3-8ece-4a8c-9961-7e88978f26bf'),\n        'owned_locations', (SELECT count(*) FROM receiving.location WHERE id = '1e11d17d-3160-42df-a463-9920c67c9c29'),\n        'total_orders', (SELECT count(*) FROM receiving.purchase_order),\n        'total_locations', (SELECT count(*) FROM receiving.location),\n        'other_order', (SELECT to_jsonb(row) FROM receiving.purchase_order AS row WHERE id = '0ec0b626-0aee-41e5-b582-a1571d80bc5e'),\n        'other_location', (SELECT to_jsonb(row) FROM receiving.location AS row WHERE id = '9119293d-7604-4402-b8b8-fb55c165ec01'),\n        'first_order', (SELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1));\n",
+    "database": null
+  },
+  {
+    "label": "seed-after-cleanup-helper",
+    "argv": [
+      "psql",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres"
+    ],
+    "exit": 0,
+    "stdout": "8427cef3-8ece-4a8c-9961-7e88978f26bf\n",
+    "stderr": "",
+    "stdin": "BEGIN;\nINSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id, created_at)\nSELECT '8427cef3-8ece-4a8c-9961-7e88978f26bf', 'RESTART-d707ad0d78d3', '8427cef3-8ece-4a8c-9961-7e88978f26bf',\n       COALESCE(MIN(created_at), CURRENT_TIMESTAMP) - interval '1 second'\nFROM receiving.purchase_order WHERE true\nON CONFLICT ON CONSTRAINT purchase_order_id_pkey DO NOTHING;\nINSERT INTO receiving.location (id, location_code)\nVALUES ('1e11d17d-3160-42df-a463-9920c67c9c29', 'RESTART-d707ad0d78d3-LOC')\nON CONFLICT ON CONSTRAINT location_id_pkey DO NOTHING;\nCOMMIT;\nSELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1;",
+    "database": null
+  },
+  {
+    "label": "seed-after-cleanup-state",
+    "argv": [
+      "psql",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1"
+    ],
+    "exit": 0,
+    "stdout": "{\"owned_orders\" : 1, \"owned_locations\" : 1, \"total_orders\" : 2, \"total_locations\" : 2, \"other_order\" : {\"id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"status\": \"open\", \"created_at\": \"2020-01-01T00:00:00+00:00\", \"updated_at\": \"2026-09-11T14:12:48.024067+00:00\", \"row_version\": 1, \"supplier_id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"purchase_order_number\": \"OTHER-0ec0b626-0aee-41e5-b582-a1571d80bc5e\"}, \"other_location\" : {\"id\": \"9119293d-7604-4402-b8b8-fb55c165ec01\", \"location_code\": \"OTHER-9119293d-7604-4402-b8b8-fb55c165ec01\"}, \"first_order\" : \"8427cef3-8ece-4a8c-9961-7e88978f26bf\"}\n",
+    "stderr": "",
+    "stdin": "SELECT json_build_object(\n        'owned_orders', (SELECT count(*) FROM receiving.purchase_order WHERE id = '8427cef3-8ece-4a8c-9961-7e88978f26bf'),\n        'owned_locations', (SELECT count(*) FROM receiving.location WHERE id = '1e11d17d-3160-42df-a463-9920c67c9c29'),\n        'total_orders', (SELECT count(*) FROM receiving.purchase_order),\n        'total_locations', (SELECT count(*) FROM receiving.location),\n        'other_order', (SELECT to_jsonb(row) FROM receiving.purchase_order AS row WHERE id = '0ec0b626-0aee-41e5-b582-a1571d80bc5e'),\n        'other_location', (SELECT to_jsonb(row) FROM receiving.location AS row WHERE id = '9119293d-7604-4402-b8b8-fb55c165ec01'),\n        'first_order', (SELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1));\n",
+    "database": null
+  },
+  {
+    "label": "final-row-cleanup-helper",
+    "argv": [
+      "psql",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres"
+    ],
+    "exit": 0,
+    "stdout": "0\n",
+    "stderr": "",
+    "stdin": "BEGIN;\nDELETE FROM receiving.purchase_order WHERE id = '8427cef3-8ece-4a8c-9961-7e88978f26bf';\nDELETE FROM receiving.location WHERE id = '1e11d17d-3160-42df-a463-9920c67c9c29';\nCOMMIT;\nSELECT (SELECT count(*) FROM receiving.purchase_order WHERE id = '8427cef3-8ece-4a8c-9961-7e88978f26bf')\n     + (SELECT count(*) FROM receiving.location WHERE id = '1e11d17d-3160-42df-a463-9920c67c9c29');",
+    "database": null
+  },
+  {
+    "label": "final-row-cleanup-state",
+    "argv": [
+      "psql",
+      "--dbname",
+      "postgresql://postgres@127.0.0.1:32981/postgres",
+      "-X",
+      "-A",
+      "-t",
+      "-q",
+      "-v",
+      "ON_ERROR_STOP=1"
+    ],
+    "exit": 0,
+    "stdout": "{\"owned_orders\" : 0, \"owned_locations\" : 0, \"total_orders\" : 1, \"total_locations\" : 1, \"other_order\" : {\"id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"status\": \"open\", \"created_at\": \"2020-01-01T00:00:00+00:00\", \"updated_at\": \"2026-09-11T14:12:48.024067+00:00\", \"row_version\": 1, \"supplier_id\": \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\", \"purchase_order_number\": \"OTHER-0ec0b626-0aee-41e5-b582-a1571d80bc5e\"}, \"other_location\" : {\"id\": \"9119293d-7604-4402-b8b8-fb55c165ec01\", \"location_code\": \"OTHER-9119293d-7604-4402-b8b8-fb55c165ec01\"}, \"first_order\" : \"0ec0b626-0aee-41e5-b582-a1571d80bc5e\"}\n",
+    "stderr": "",
+    "stdin": "SELECT json_build_object(\n        'owned_orders', (SELECT count(*) FROM receiving.purchase_order WHERE id = '8427cef3-8ece-4a8c-9961-7e88978f26bf'),\n        'owned_locations', (SELECT count(*) FROM receiving.location WHERE id = '1e11d17d-3160-42df-a463-9920c67c9c29'),\n        'total_orders', (SELECT count(*) FROM receiving.purchase_order),\n        'total_locations', (SELECT count(*) FROM receiving.location),\n        'other_order', (SELECT to_jsonb(row) FROM receiving.purchase_order AS row WHERE id = '0ec0b626-0aee-41e5-b582-a1571d80bc5e'),\n        'other_location', (SELECT to_jsonb(row) FROM receiving.location AS row WHERE id = '9119293d-7604-4402-b8b8-fb55c165ec01'),\n        'first_order', (SELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1));\n",
+    "database": null
+  },
+  {
+    "label": "container-logs",
+    "argv": [
+      "docker",
+      "logs",
+      "--timestamps",
+      "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663"
+    ],
+    "exit": 0,
+    "stdout": "2026-09-11T14:12:46.421347633Z The files belonging to this database system will be owned by user \"postgres\".\n2026-09-11T14:12:46.421380817Z This user must also own the server process.\n2026-09-11T14:12:46.421383775Z \n2026-09-11T14:12:46.421385633Z The database cluster will be initialized with locale \"en_US.utf8\".\n2026-09-11T14:12:46.421388801Z The default database encoding has accordingly been set to \"UTF8\".\n2026-09-11T14:12:46.421390570Z The default text search configuration will be set to \"english\".\n2026-09-11T14:12:46.421392410Z \n2026-09-11T14:12:46.421393961Z Data page checksums are enabled.\n2026-09-11T14:12:46.421396849Z \n2026-09-11T14:12:46.421398382Z fixing permissions on existing directory /var/lib/postgresql/18/docker ... ok\n2026-09-11T14:12:46.421726548Z creating subdirectories ... ok\n2026-09-11T14:12:46.421788801Z selecting dynamic shared memory implementation ... posix\n2026-09-11T14:12:46.434671651Z selecting default \"max_connections\" ... 100\n2026-09-11T14:12:46.462240041Z selecting default \"shared_buffers\" ... 128MB\n2026-09-11T14:12:46.483322595Z selecting default time zone ... Etc/UTC\n2026-09-11T14:12:46.483855615Z creating configuration files ... ok\n2026-09-11T14:12:46.578435729Z running bootstrap script ... ok\n2026-09-11T14:12:46.855962018Z performing post-bootstrap initialization ... ok\n2026-09-11T14:12:47.314784355Z syncing data to disk ... ok\n2026-09-11T14:12:47.314810501Z \n2026-09-11T14:12:47.314812744Z \n2026-09-11T14:12:47.314814686Z Success. You can now start the database server using:\n2026-09-11T14:12:47.314816787Z \n2026-09-11T14:12:47.314818969Z     pg_ctl -D /var/lib/postgresql/18/docker -l logfile start\n2026-09-11T14:12:47.314828180Z \n2026-09-11T14:12:47.357423713Z waiting for server to start....2026-09-11 14:12:47.357 UTC [77] LOG:  starting PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit\n2026-09-11T14:12:47.366277486Z 2026-09-11 14:12:47.366 UTC [77] LOG:  listening on Unix socket \"/var/run/postgresql/.s.PGSQL.5432\"\n2026-09-11T14:12:47.394288293Z 2026-09-11 14:12:47.394 UTC [83] LOG:  database system was shut down at 2026-09-11 14:12:46 UTC\n2026-09-11T14:12:47.405688070Z 2026-09-11 14:12:47.405 UTC [77] LOG:  database system is ready to accept connections\n2026-09-11T14:12:47.428718254Z  done\n2026-09-11T14:12:47.428734108Z server started\n2026-09-11T14:12:47.458046223Z \n2026-09-11T14:12:47.458064178Z /usr/local/bin/docker-entrypoint.sh: ignoring /docker-entrypoint-initdb.d/*\n2026-09-11T14:12:47.458073515Z \n2026-09-11T14:12:47.458926614Z 2026-09-11 14:12:47.458 UTC [77] LOG:  received fast shutdown request\n2026-09-11T14:12:47.467831667Z waiting for server to shut down....2026-09-11 14:12:47.467 UTC [77] LOG:  aborting any active transactions\n2026-09-11T14:12:47.468985286Z 2026-09-11 14:12:47.468 UTC [77] LOG:  background worker \"logical replication launcher\" (PID 86) exited with exit code 1\n2026-09-11T14:12:47.469108314Z 2026-09-11 14:12:47.469 UTC [81] LOG:  shutting down\n2026-09-11T14:12:47.477734451Z 2026-09-11 14:12:47.477 UTC [81] LOG:  checkpoint starting: shutdown immediate\n2026-09-11T14:12:47.549271167Z 2026-09-11 14:12:47.549 UTC [81] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.028 s, sync=0.007 s, total=0.081 s; sync files=2, longest=0.004 s, average=0.004 s; distance=0 kB, estimate=0 kB; lsn=0/1761918, redo lsn=0/1761918\n2026-09-11T14:12:47.581130295Z 2026-09-11 14:12:47.581 UTC [77] LOG:  database system is shut down\n2026-09-11T14:12:47.659211606Z  done\n2026-09-11T14:12:47.659234993Z server stopped\n2026-09-11T14:12:47.660017443Z \n2026-09-11T14:12:47.660028967Z PostgreSQL init process complete; ready for start up.\n2026-09-11T14:12:47.660031001Z \n",
+    "stderr": "2026-09-11T14:12:47.314797526Z initdb: warning: enabling \"trust\" authentication for local connections\n2026-09-11T14:12:47.314833504Z initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.\n2026-09-11T14:12:47.689333524Z 2026-09-11 14:12:47.689 UTC [1] LOG:  starting PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit\n2026-09-11T14:12:47.689394871Z 2026-09-11 14:12:47.689 UTC [1] LOG:  listening on IPv4 address \"0.0.0.0\", port 5432\n2026-09-11T14:12:47.689402117Z 2026-09-11 14:12:47.689 UTC [1] LOG:  listening on IPv6 address \"::\", port 5432\n2026-09-11T14:12:47.707427774Z 2026-09-11 14:12:47.707 UTC [1] LOG:  listening on Unix socket \"/var/run/postgresql/.s.PGSQL.5432\"\n2026-09-11T14:12:47.726756742Z 2026-09-11 14:12:47.726 UTC [103] LOG:  database system was shut down at 2026-09-11 14:12:47 UTC\n2026-09-11T14:12:47.737351863Z 2026-09-11 14:12:47.737 UTC [1] LOG:  database system is ready to accept connections\n",
+    "database": null
+  },
+  {
+    "label": "container-cleanup",
+    "argv": [
+      "docker",
+      "rm",
+      "--force",
+      "--volumes",
+      "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663"
+    ],
+    "exit": 0,
+    "stdout": "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663\n",
+    "stderr": "",
+    "database": null
+  },
+  {
+    "label": "container-absent",
+    "argv": [
+      "docker",
+      "inspect",
+      "--format",
+      "{{.Id}}",
+      "28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663"
+    ],
+    "exit": 1,
+    "stdout": "\n",
+    "stderr": "Error: No such object: 28d51611aecaa984c8746c392d3bfee2681ed59a54fa02d2978810e742a9e663\n",
+    "database": null
+  }
+]
