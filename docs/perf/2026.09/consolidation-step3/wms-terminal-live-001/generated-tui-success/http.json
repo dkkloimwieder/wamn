@@ -1,0 +1,26 @@
+[
+  {
+    "authorization_matches": true,
+    "content_type": "application/json",
+    "host": "wms.localhost",
+    "method": "POST",
+    "path": "/pallet/get",
+    "request_body": "[{\"id\":\"8bc0d39c-62f4-4de2-a170-5947643544dc\",\"request_id\":\"423b4ae8-9fa3-4707-b153-be6615fd650f\"}]",
+    "request_sha256": "78af25c9a2f5ee0f63ac993004743b2c2a9c5778fffb1fcde1641cf1cb2918e2",
+    "response_body": "[{\"request_id\":\"423b4ae8-9fa3-4707-b153-be6615fd650f\",\"value\":{\"created_at\":\"2026-09-11T19:00:27.625301Z\",\"id\":\"8bc0d39c-62f4-4de2-a170-5947643544dc\",\"location_id\":\"50d880eb-9634-4b60-a7ad-1ad68c437303\",\"pallet_code\":\"WMS-TUI-299e2c2f-PALLET\",\"row_version\":1,\"status\":\"available\",\"updated_at\":\"2026-09-11T19:00:27.625301Z\"}}]",
+    "response_sha256": "20fa5dd28786f6a23b7cf60bca8d9926768ba779456ace3223614bee22b013a4",
+    "status": 200
+  },
+  {
+    "authorization_matches": true,
+    "content_type": "application/json",
+    "host": "wms.localhost",
+    "method": "POST",
+    "path": "/inventory/move",
+    "request_body": "[{\"request_id\":\"16f65582-d08f-4ccd-bc72-ccb45017b97e\",\"value\":{\"expected_row_version\":1,\"idempotency_key\":\"e982240b-5d63-47ce-bd76-9826539c4cf9\",\"occurred_at\":\"2026-09-11T19:00:28.333382Z\",\"pallet_id\":\"8bc0d39c-62f4-4de2-a170-5947643544dc\",\"to_location_id\":\"bb0c153e-ce37-4f32-8ed8-af44c1d29f84\"}}]",
+    "request_sha256": "bcd345e2258ebd31022dfa08bd9818b195b31257d1b9857299f6c595b3c17bd2",
+    "response_body": "[{\"request_id\":\"16f65582-d08f-4ccd-bc72-ccb45017b97e\",\"value\":{\"location_id\":\"bb0c153e-ce37-4f32-8ed8-af44c1d29f84\",\"movement_id\":\"3b35f3cf-7348-481a-b6c0-95e2ac87dc82\",\"pallet_id\":\"8bc0d39c-62f4-4de2-a170-5947643544dc\",\"pallet_status\":\"available\",\"row_version\":2,\"stored\":{\"container\":\"labels\",\"key\":\"3b35f3cf-7348-481a-b6c0-95e2ac87dc82\"},\"zpl\":\"^XA\\n^PW812\\n^LL1218\\n^MD0\\n^CI28\\n^FO40,40^A0N,36,36^FDPALLET^FS\\n^FO40,96^A0N,28,28^FDPallet: 8bc0d39c-62f4-4de2-a170-5947643544dc^FS\\n^FO40,136^A0N,28,28^FDLocation: bb0c153e-ce37-4f32-8ed8-af44c1d29f84^FS\\n^FO40,176^BY3^BCN,120,Y,N,N^FD8bc0d39c-62f4-4de2-a170-5947643544dc^FS\\n^XZ\\n\"}}]",
+    "response_sha256": "aa566864c806b36ecc9fd3fbe53cb40a7fe7b0758b80a4ba219c5523204576a6",
+    "status": 200
+  }
+]

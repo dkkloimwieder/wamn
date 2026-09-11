@@ -1,0 +1,20 @@
+{
+  "artifact_pull_ms": 0.0,
+  "authentication_ms": 60.520136,
+  "callable_http_acquire_ms": 56.422205,
+  "compile_ms": 0.0,
+  "executor_platform_acquire_ms": 0.0,
+  "guest_db_call_ms": 60.959403,
+  "guest_sql_acquire_ms": 58.320425,
+  "http_total_ms": 135.97899999999998,
+  "instantiate_ms": 0.0,
+  "link_ms": 0.0,
+  "linker_setup_ms": 0.0,
+  "overhead_ratio": 82.18550922918968,
+  "passed": true,
+  "phase": "restart-first",
+  "real_work_ms": 1.648953,
+  "resolution_ms": 0.094637,
+  "root_ms": 135.520042,
+  "sql_ms": 1.648953
+}

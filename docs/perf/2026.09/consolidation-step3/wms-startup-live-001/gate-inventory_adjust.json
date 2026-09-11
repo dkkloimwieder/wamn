@@ -1,0 +1,19 @@
+{
+  "body": {
+    "command-id": "gate-wamn_wms-inventory_adjust",
+    "outcome": {
+      "status": "completed",
+      "value": {
+        "command": "gate",
+        "result": {
+          "report-id": "sha256:fcc8980cffa3dea8bf0aa66cb042dd1ab7a0ff9534c2bf88889eb9d078e42462",
+          "validated-draft": {
+            "validated-draft-id": "sha256:fcc8980cffa3dea8bf0aa66cb042dd1ab7a0ff9534c2bf88889eb9d078e42462"
+          }
+        }
+      }
+    },
+    "schema-version": "0.1"
+  },
+  "document": "response"
+}

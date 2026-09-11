@@ -1,0 +1,46 @@
+{
+  "source_commit": "8759198ef765508a029bea3883110f9159ea5fe4",
+  "started_utc": "2026-09-11T19:11:24.423406+00:00",
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "runs": [
+    {
+      "name": "receiving",
+      "command": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::measurement::tests",
+        "--",
+        "--nocapture"
+      ],
+      "exit_code": 101,
+      "elapsed_seconds": 17.529
+    },
+    {
+      "name": "wms",
+      "command": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-wms-tests",
+        "--lib",
+        "cluster::startup::tests",
+        "--",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 18.79
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "source_commit": "c891488348eb8ac05117f78d963432b51034bbc3",
+  "started_utc": "2026-09-11T19:15:23.859657+00:00",
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-receiving-tests",
+    "--lib",
+    "route_authentication_live::cluster::measurement::tests::throughput_postgres_job_keeps_the_statement_and_runs_its_output_script",
+    "--",
+    "--exact",
+    "--nocapture"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "exit_code": 0,
+  "elapsed_seconds": 7.585
+}

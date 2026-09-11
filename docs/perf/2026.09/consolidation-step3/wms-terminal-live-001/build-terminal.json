@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "cargo",
+    "build",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-client-terminal",
+    "--example",
+    "wms_move"
+  ],
+  "elapsed_seconds": 40.950389092,
+  "exit": 0,
+  "success": true
+}

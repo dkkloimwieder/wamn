@@ -1,0 +1,255 @@
+{
+  "apiVersion": "v1",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-09-11T19:12:16Z",
+        "generateName": "startup-request-steady-",
+        "generation": 1,
+        "labels": {
+          "batch.kubernetes.io/controller-uid": "a21c4548-6f14-4ce0-bb0a-1d71e13159a6",
+          "batch.kubernetes.io/job-name": "startup-request-steady",
+          "controller-uid": "a21c4548-6f14-4ce0-bb0a-1d71e13159a6",
+          "job-name": "startup-request-steady"
+        },
+        "name": "startup-request-steady-6h8wp",
+        "namespace": "wamn-wms-e3b5b923871a448f9475a0adcf93d856",
+        "ownerReferences": [
+          {
+            "apiVersion": "batch/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "Job",
+            "name": "startup-request-steady",
+            "uid": "a21c4548-6f14-4ce0-bb0a-1d71e13159a6"
+          }
+        ],
+        "resourceVersion": "1612",
+        "uid": "36cb6182-7305-4190-b7ad-be7ae668ef32"
+      },
+      "spec": {
+        "containers": [
+          {
+            "args": [
+              "probe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header \"Host: $ROUTE_HOST\" --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" --header \"traceparent: $TRACEPARENT\" \\\n    --data \"$REQUEST_BODY\" \"$ROUTE_URL\") || metrics='000 0 0'\n  set -- $metrics\n  elapsed=$(( $(date +%s) - probe_start ))\n  printf '{\"attempt\":%s,\"status\":\"%s\",\"recovery_seconds\":%s,\"total_seconds\":\"%s\"}\\n' \"$attempt\" \"$1\" \"$elapsed\" \"$3\"\n  [ \"$1\" = 200 ] && break\n  [ \"$elapsed\" -ge 150 ] && break\n  sleep 1\ndone\nbody=$(od -An -v -tx1 /tmp/body | tr -d ' \\n')\nprintf '{\"status\":\"%s\",\"first_seconds\":\"%s\",\"total_seconds\":\"%s\",\"recovery_seconds\":%s,\"attempts\":%s,\"body_hex\":\"%s\"}\\n' \"$1\" \"$2\" \"$3\" \"$elapsed\" \"$attempt\" \"$body\" >/dev/termination-log\ntest \"$1\" = 200\n"
+            ],
+            "command": [
+              "/bin/sh",
+              "-ec"
+            ],
+            "env": [
+              {
+                "name": "ROUTE_CALLER_PAT",
+                "valueFrom": {
+                  "secretKeyRef": {
+                    "key": "token",
+                    "name": "wamn-pat-route-caller-acme--wms--dev"
+                  }
+                }
+              },
+              {
+                "name": "ROUTE_HOST",
+                "value": "wms.localhost"
+              },
+              {
+                "name": "TRACEPARENT",
+                "value": "00-33333333333333333333333333333333-3333333333333333-01"
+              },
+              {
+                "name": "REQUEST_BODY",
+                "value": "[{\"id\":\"00000000-0000-0000-0000-000000000301\",\"request_id\":\"startup-steady\"}]"
+              },
+              {
+                "name": "ROUTE_URL",
+                "value": "http://flow-http.wamn-wms-e3b5b923871a448f9475a0adcf93d856.svc.cluster.local/pallet/get"
+              }
+            ],
+            "image": "wamn-host:wms-04b72bd0d1cf-e3b5b923871a-debug",
+            "imagePullPolicy": "Never",
+            "name": "probe",
+            "resources": {},
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-z42k4",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "enableServiceLinks": true,
+        "nodeName": "wamn-wms-e3b5b923871a448f9475a0adcf93d856-worker",
+        "preemptionPolicy": "PreemptLowerPriority",
+        "priority": 0,
+        "restartPolicy": "Never",
+        "schedulerName": "default-scheduler",
+        "securityContext": {},
+        "serviceAccount": "default",
+        "serviceAccountName": "default",
+        "terminationGracePeriodSeconds": 30,
+        "tolerations": [
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/not-ready",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          },
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/unreachable",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          }
+        ],
+        "volumes": [
+          {
+            "name": "kube-api-access-z42k4",
+            "projected": {
+              "defaultMode": 420,
+              "sources": [
+                {
+                  "serviceAccountToken": {
+                    "expirationSeconds": 3607,
+                    "path": "token"
+                  }
+                },
+                {
+                  "configMap": {
+                    "items": [
+                      {
+                        "key": "ca.crt",
+                        "path": "ca.crt"
+                      }
+                    ],
+                    "name": "kube-root-ca.crt"
+                  }
+                },
+                {
+                  "downwardAPI": {
+                    "items": [
+                      {
+                        "fieldRef": {
+                          "apiVersion": "v1",
+                          "fieldPath": "metadata.namespace"
+                        },
+                        "path": "namespace"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-11T19:12:18Z",
+            "observedGeneration": 1,
+            "status": "False",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-11T19:12:16Z",
+            "observedGeneration": 1,
+            "reason": "PodCompleted",
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-11T19:12:17Z",
+            "observedGeneration": 1,
+            "reason": "PodCompleted",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-11T19:12:17Z",
+            "observedGeneration": 1,
+            "reason": "PodCompleted",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-11T19:12:16Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "containerID": "containerd://2e6c9b6b28777f2773d837595906309a6df11fc38f837db055d6ab31a0da731e",
+            "image": "docker.io/library/wamn-host:wms-04b72bd0d1cf-e3b5b923871a-debug",
+            "imageID": "docker.io/library/import-2026-09-11@sha256:c484f52de4433ff42d10f1dfd17a3b12322fe46492fc4d9d59f9154f0777adee",
+            "lastState": {},
+            "name": "probe",
+            "ready": false,
+            "resources": {},
+            "restartCount": 0,
+            "started": false,
+            "state": {
+              "terminated": {
+                "containerID": "containerd://2e6c9b6b28777f2773d837595906309a6df11fc38f837db055d6ab31a0da731e",
+                "exitCode": 0,
+                "finishedAt": "2026-09-11T19:12:16Z",
+                "message": "{\"status\":\"200\",\"first_seconds\":\"0.024256\",\"total_seconds\":\"0.025093\",\"recovery_seconds\":0,\"attempts\":1,\"body_hex\":\"5b7b22726571756573745f6964223a22737461727475702d737465616479222c2276616c7565223a7b22637265617465645f6174223a22323032362d30392d31315431393a30393a31382e3932373130375a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c226c6f636174696f6e5f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030323031222c2270616c6c65745f636f6465223a2250414c2d333031222c22726f775f76657273696f6e223a312c22737461747573223a22617661696c61626c65222c22757064617465645f6174223a22323032362d30392d31315431393a30393a31382e3932373130375a227d7d5d\"}\n",
+                "reason": "Completed",
+                "startedAt": "2026-09-11T19:12:16Z"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 0,
+                "supplementalGroups": [
+                  0
+                ],
+                "uid": 0
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-z42k4",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.28.0.5",
+        "hostIPs": [
+          {
+            "ip": "172.28.0.5"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Succeeded",
+        "podIP": "10.244.2.8",
+        "podIPs": [
+          {
+            "ip": "10.244.2.8"
+          }
+        ],
+        "qosClass": "BestEffort",
+        "resources": {},
+        "startTime": "2026-09-11T19:12:16Z"
+      }
+    }
+  ],
+  "kind": "List",
+  "metadata": {
+    "resourceVersion": ""
+  }
+}

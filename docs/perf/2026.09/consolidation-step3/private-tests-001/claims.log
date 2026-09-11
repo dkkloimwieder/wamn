@@ -1,0 +1,179 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/crates/platform/runtime)
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:131:1
+    |
+131 | / pub struct ConnectionHttp {
+132 | |     postgres: Arc<WamnPostgres>,
+133 | |     transport: Arc<HttpTransport>,
+134 | |     vault: Arc<WamnCredentials>,
+...   |
+151 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+152 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:507:1
+    |
+507 | / pub struct WamnJetstream {
+508 | |     nats_url: Option<String>,
+509 | |     stream_replicas: Option<usize>,
+510 | |     dup_window_secs: Option<u64>,
+...   |
+536 | |     release: Option<Arc<ReleaseManifestWeld>>,
+537 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:54:1
+    |
+ 54 | / pub struct WamnPostgres {
+ 55 | |     /// Resolves a project id → its database connection + policy.
+ 56 | |     provider: Arc<dyn CredentialProvider>,
+ 57 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+117 | |     pub(super) bind_counters: super::BindCounters,
+118 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:248:1
+    |
+248 | / pub struct StaticCredentialProvider {
+249 | |     projects: HashMap<String, ProjectConfig>,
+250 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:423:1
+    |
+423 | / pub struct K8sSecretProvider {
+424 | |     pub namespace: String,
+425 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: `wamn-runtime` (lib test) generated 10 warnings
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.22s
+     Running unittests src/lib.rs (target/debug/deps/wamn_runtime-26550c96544e10e9)
+
+running 40 tests
+test plugins::wamn_postgres::claims::tests::a_serving_host_refuses_an_invalid_declared_project ... ok
+test plugins::wamn_postgres::claims::tests::an_explicit_project_credential_refuses_a_second_source ... ok
+test plugins::wamn_postgres::claims::tests::a_serving_host_binds_its_credential_to_the_declared_project ... ok
+test plugins::wamn_postgres::claims::tests::a_guest_credential_resolves_for_its_own_tenant_and_no_other ... ok
+test plugins::wamn_postgres::claims::tests::a_platform_checkout_refuses_the_guest_authority ... ok
+test plugins::wamn_postgres::claims::tests::building_a_pool_requires_a_probeable_credential ... ok
+test plugins::wamn_postgres::claims::tests::bench_pipelined_claim_flight ... ok
+test plugins::wamn_postgres::claims::tests::candidate_binding_world_requires_complete_canonical_unique_rows ... ok
+test plugins::wamn_postgres::claims::tests::candidate_effect_snapshot_pins_instance_and_generation_without_fallback ... ok
+test plugins::wamn_postgres::claims::tests::claim_sql_is_fully_bound_with_no_interpolation ... ok
+test plugins::wamn_postgres::claims::tests::causation_emit_sql_escapes_single_quotes_in_the_run_id ... ok
+test plugins::wamn_postgres::claims::tests::causation_emit_sql_pins_the_transactional_wamn_message ... ok
+test plugins::wamn_postgres::claims::tests::effect_authority_has_no_run_plan_frame_or_legacy_requirement_fallback ... ok
+test plugins::wamn_postgres::claims::tests::effect_authority_resolves_exact_wiring_component_and_store_alias ... ok
+test plugins::wamn_postgres::claims::tests::clear_component_claims_reaps_all_registries_for_the_workload ... ok
+test plugins::wamn_postgres::claims::tests::guard_allows_non_wamn_logical_messages_and_normal_sql ... ok
+test plugins::wamn_postgres::claims::tests::guard_rejects_guest_causation_forgery ... ok
+test plugins::wamn_postgres::claims::tests::guard_allows_normal_statements_and_current_setting ... ok
+test plugins::wamn_postgres::claims::tests::effect_snapshot_refuses_a_component_with_no_bound_tenant ... ok
+test plugins::wamn_postgres::claims::tests::effect_snapshot_checks_out_under_the_callable_http_authority ... ok
+test plugins::wamn_postgres::claims::tests::effect_snapshot_refuses_a_tenant_that_disagrees_with_the_bound_claim ... ok
+test plugins::wamn_postgres::claims::tests::guard_rejects_set_and_reset_variants ... ok
+test plugins::wamn_postgres::claims::tests::guard_rejects_set_config_anywhere ... ok
+test plugins::wamn_postgres::claims::tests::live_a_cold_connection_parses_inside_the_claim_transaction ... ok
+test plugins::wamn_postgres::claims::tests::live_a_second_tenant_is_refused_rather_than_served_the_first_tenants_rows ... ok
+test plugins::wamn_postgres::claims::tests::live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim ... ok
+WAMN_SCS_OFF_PG_URL unset — skipping the wamn-2jkm.65 R18 live negative (boot a postgres:18 with -c standard_conforming_strings=off; see docs/operations/build-and-test.md [R18-NEG])
+
+thread 'plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving' (547541) panicked at crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs:1732:10:
+set WAMN_POOL_LIFECYCLE_PG_URL to a disposable PostgreSQL database: NotPresent
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test plugins::wamn_postgres::claims::tests::live_bound_claims_are_injection_inert_and_txn_local ... ok
+test plugins::wamn_postgres::claims::tests::live_connect_asserts_standard_conforming_strings ... ok
+test plugins::wamn_postgres::claims::tests::live_guest_cannot_override_the_injected_role_or_user_claim ... ok
+test plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed ... ok
+test plugins::wamn_postgres::claims::tests::manifest_digest_shape_matches_the_run_plane_check ... ok
+test plugins::wamn_postgres::claims::tests::live_compiled_per_user_policy_permits_the_injected_caller ... ok
+test plugins::wamn_postgres::claims::tests::guest_and_platform_pool_caches_remain_distinct_under_interleaving ... ok
+test plugins::wamn_postgres::claims::tests::set_and_clear_current_run_is_per_component ... ok
+test plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving ... FAILED
+test plugins::wamn_postgres::claims::tests::operation_permissions_reuse_only_the_callable_http_authority ... ok
+test plugins::wamn_postgres::claims::tests::the_composed_credential_becomes_the_default_project ... ok
+test plugins::wamn_postgres::claims::tests::validate_claims_rejects_malformed_identities ... ok
+test plugins::wamn_postgres::claims::tests::workload_binding_selects_only_the_materializer_authority ... ok
+test plugins::wamn_postgres::claims::tests::user_operation_permissions_reuse_only_the_callable_http_authority ... ok
+
+failures:
+
+failures:
+    plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving
+
+test result: FAILED. 39 passed; 1 failed; 0 ignored; 0 measured; 268 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p wamn-runtime --lib`
+error: 1 target failed:
+    `-p wamn-runtime --lib`

@@ -1,0 +1,25 @@
+{
+  "command": {
+    "movement_id": "0e55a072-5e12-47a7-88d5-6e29c916b965",
+    "pallet_id": "00000000-0000-0000-0000-000000000301",
+    "pallet_status": "available",
+    "row_version": 6
+  },
+  "command_count": 1,
+  "movement": {
+    "from_location_id": "00000000-0000-0000-0000-000000000202",
+    "id": "213a3f15-d1e5-4124-b44a-4762b3d8470b",
+    "idempotency_key": "a6c5ac22-016f-4847-96ab-5fdb2c5be543",
+    "kind": "move",
+    "pallet_id": "00000000-0000-0000-0000-000000000301",
+    "to_location_id": "00000000-0000-0000-0000-000000000201"
+  },
+  "movement_count": 1,
+  "pallet": {
+    "id": "00000000-0000-0000-0000-000000000301",
+    "location_id": "00000000-0000-0000-0000-000000000201",
+    "row_version": 6,
+    "status": "available"
+  },
+  "quantity_count": 1
+}

@@ -1,0 +1,1 @@
+The WMS terminal case passes at 04b72bd0. It runs successful and partial-completion requests against a fresh cluster. The result records completed, source unchanged, resource cleanup, and private-file removal. The test takes 376.01 seconds. Cargo and prerequisites take 455.815 seconds. These durations are elapsed test times, not application performance measurements.

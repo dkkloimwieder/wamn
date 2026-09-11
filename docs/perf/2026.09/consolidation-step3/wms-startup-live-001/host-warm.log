@@ -1,0 +1,14 @@
+2026-09-11T19:10:51.687655030Z 2026-09-11T19:10:51.687514Z  INFO native descriptor limits initialized descriptor_soft_limit=Some(2147483584) default_max_connections=32768 default_max_http_ingress_connections=32768
+2026-09-11T19:10:52.105370405Z 2026-09-11T19:10:52.105143Z  INFO connected to NATS
+2026-09-11T19:10:52.107770790Z 2026-09-11T19:10:52.106638Z  INFO host memory resolved max_guest_memory=4GiB guest_memory_mode="count" default_heap_memory=256MiB core_instances=512 memories=512 pool_reservation=128GiB
+2026-09-11T19:10:52.839952909Z 2026-09-11T19:10:52.839819Z  INFO synchronous release preload completed synchronous_wirings=7 component_digests=3 elapsed_ms=555
+2026-09-11T19:10:52.839984783Z 2026-09-11T19:10:52.839927Z  INFO release preload completed; component cache warm
+2026-09-11T19:10:52.859213604Z 2026-09-11T19:10:52.859075Z  INFO wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing) router_delivery=true
+2026-09-11T19:10:52.859276686Z 2026-09-11T19:10:52.859169Z  INFO wamn-host welded to its release effective_release_id=1 manifest_digest=sha256:f34520bfeeddf5563cdf148709222253b346640b333e1d0fdc7dd26d9433a908
+2026-09-11T19:10:52.859401119Z 2026-09-11T19:10:52.859324Z  INFO HTTP server listening addr=0.0.0.0:80 protocol="HTTP"
+2026-09-11T19:10:52.859569808Z 2026-09-11T19:10:52.859440Z  INFO Starting WASI OTel plugin endpoint=http://otel-collector.wamn-system.svc.cluster.local:4317 protocol="grpc"
+2026-09-11T19:10:52.859635207Z 2026-09-11T19:10:52.859537Z  INFO probe server listening addr=0.0.0.0:8081
+2026-09-11T19:10:52.860881358Z 2026-09-11T19:10:52.860817Z  INFO WASI OTel plugin started
+2026-09-11T19:10:52.860964507Z 2026-09-11T19:10:52.860913Z  INFO Host started host_id="ded88c9e-4d86-45aa-8709-a0c4c979a9d8" friendly_name="plant-learning-2523" host_name="10.244.2.5" labels={"hostgroup": "default"} version="2.9.0" max_concurrent_starts=1
+2026-09-11T19:10:52.861569696Z 2026-09-11T19:10:52.861495Z  INFO Host provides interfaces count=11 interfaces=["wasi:cli/stderr,stdout,terminal-output,terminal-stdin,terminal-stdout,exit,stdin,environment,terminal-input,terminal-stderr@0.2.0", "wasi:clocks/wall-time,monotonic-clock@0.2.0", "wasi:clocks/monotonic-clock,wall-clock@0.2.0", "wasi:filesystem/types,preopens@0.2.0", "wasi:http/types,outgoing-handler,incoming-handler@0.2.0", "wasi:http/handler,types@0.3.0", "wasi:io/streams,error,poll@0.2.0", "wasi:random/random@0.2.0", "wasi:random/random,insecure,insecure-seed@0.2.0", "wasi:sockets/udp-create-socket,udp,instance-network,tcp,tcp-create-socket,network,ip-name-lookup@0.2.0", "wasmcloud:nats/jetstream-handler,kv-handler,core-handler@0.1.0"]
+2026-09-11T19:10:52.861711038Z 2026-09-11T19:10:52.861611Z  INFO wamn-host runtime startup completed elapsed_ms=1174 cleanup_budget_secs=57

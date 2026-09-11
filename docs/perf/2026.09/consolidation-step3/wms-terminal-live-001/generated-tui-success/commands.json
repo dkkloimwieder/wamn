@@ -1,0 +1,69 @@
+[
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "01-seed.sql"
+  },
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "02-initial-db.sql"
+  },
+  {
+    "action": "launch",
+    "binary": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911/target/debug/examples/wms_move",
+    "credential": "private PAT file via WAMN_TOKEN",
+    "relay": "http://127.0.0.1:43785",
+    "upstream": "http://172.28.0.5:31948"
+  },
+  {
+    "action": "keys",
+    "bytes": "38626330643339632d363266342d346465322d613137302d3539343736343335343464630d",
+    "description": "set /id"
+  },
+  {
+    "action": "keys",
+    "bytes": "13",
+    "description": "read the owned pallet"
+  },
+  {
+    "action": "keys",
+    "bytes": "62623063313533652d636533372d346633322d386564382d6166343463316432396638340d",
+    "description": "set /value/to_location_id"
+  },
+  {
+    "action": "keys",
+    "bytes": "13",
+    "description": "submit the composed move once"
+  },
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "14-committed-db.sql"
+  },
+  {
+    "action": "keys",
+    "bytes": "1b5b31387e",
+    "description": "attempt captured retry of the spent move"
+  },
+  {
+    "action": "keys",
+    "bytes": "13",
+    "description": "attempt submit of the spent move"
+  },
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "17-spent-db.sql"
+  },
+  {
+    "action": "keys",
+    "bytes": "71",
+    "description": "quit the completed operator"
+  },
+  {
+    "action": "psql",
+    "connection": "private URL file via --dbname",
+    "sql": "90-cleanup.sql"
+  }
+]

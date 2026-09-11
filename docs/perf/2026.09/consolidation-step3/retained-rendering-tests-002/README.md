@@ -1,0 +1,1 @@
+At c8914883, the corrected generated pgbench-output case passes. The local executable now lives in a separate bin directory, and its shell exits on a missing statement. The production script bytes remain unchanged. This run repeats only the previously failed case.

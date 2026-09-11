@@ -1,0 +1,14 @@
+{
+  "cluster": "wamn-wms-e3b5b923871a448f9475a0adcf93d856",
+  "completed": false,
+  "demo": false,
+  "failure": "steady request overhead ratio 23.809243876261803 exceeds 12",
+  "failure_capture": null,
+  "generated_terminal": false,
+  "partial_completion": false,
+  "private_files_removed": true,
+  "resource_cleanup": true,
+  "source": "04b72bd0d1cf87a170e44e65266f69208f045978",
+  "source_unchanged": true,
+  "startup": true
+}

@@ -1,0 +1,1392 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-11T19:10:12Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/pod-host-finalizer"
+                ],
+                "generateName": "hostgroup-default-958d5697-",
+                "generation": 1,
+                "labels": {
+                    "app.kubernetes.io/instance": "wamn-host",
+                    "app.kubernetes.io/managed-by": "Helm",
+                    "app.kubernetes.io/name": "runtime-operator",
+                    "app.kubernetes.io/version": "2.9.0",
+                    "helm.sh/chart": "runtime-operator-2.9.0",
+                    "pod-template-hash": "958d5697",
+                    "wasmcloud.com/hostgroup": "default",
+                    "wasmcloud.com/name": "hostgroup"
+                },
+                "name": "hostgroup-default-958d5697-rlg25",
+                "namespace": "wamn-wms-e3b5b923871a448f9475a0adcf93d856",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "apps/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "ReplicaSet",
+                        "name": "hostgroup-default-958d5697",
+                        "uid": "f29c9365-405d-46f0-805f-041e1f303ecc"
+                    }
+                ],
+                "resourceVersion": "1376",
+                "uid": "91c4ab6a-c6bc-423d-bf1e-26d9f1946cd8"
+            },
+            "spec": {
+                "automountServiceAccountToken": false,
+                "containers": [
+                    {
+                        "args": [
+                            "host",
+                            "--host-name=$(WASMCLOUD_HOST_IP)",
+                            "--host-group=default",
+                            "--environment=$(WASMCLOUD_HOST_ENVIRONMENT)",
+                            "--scheduler-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+                            "--scheduler-nats-tls-ca=/runtime-cert/ca.crt",
+                            "--scheduler-nats-tls-cert=/runtime-cert/tls.crt",
+                            "--scheduler-nats-tls-key=/runtime-cert/tls.key",
+                            "--data-nats-url=nats://nats.wamn-system.svc.cluster.local:4222",
+                            "--data-nats-tls-ca=/data-cert/ca.crt",
+                            "--data-nats-tls-cert=/data-cert/tls.crt",
+                            "--data-nats-tls-key=/data-cert/tls.key",
+                            "--oci-cache-dir=/oci-cache",
+                            "--drain-delay=5s",
+                            "--nats-connect-timeout=60s",
+                            "--probe-addr=0.0.0.0:8081",
+                            "--http-addr=0.0.0.0:80",
+                            "--oci-ca-path=/runtime-cert/ca.crt",
+                            "--release-artifact-base=172.28.0.9:5000/wamn/releases",
+                            "--release-manifest-digest=sha256:f34520bfeeddf5563cdf148709222253b346640b333e1d0fdc7dd26d9433a908",
+                            "--allow-insecure-registries"
+                        ],
+                        "env": [
+                            {
+                                "name": "HOME",
+                                "value": "/tmp"
+                            },
+                            {
+                                "name": "WASMCLOUD_HOST_IP",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "status.podIP"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WASMCLOUD_HOST_ENVIRONMENT",
+                                "valueFrom": {
+                                    "fieldRef": {
+                                        "apiVersion": "v1",
+                                        "fieldPath": "metadata.namespace"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WASH_HOST_MAX_GUEST_MEMORY",
+                                "value": "4Gi"
+                            },
+                            {
+                                "name": "WASH_DEFAULT_HEAP_MEMORY",
+                                "value": "256MiB"
+                            },
+                            {
+                                "name": "WASH_CORE_INSTANCES",
+                                "value": "512"
+                            },
+                            {
+                                "name": "WASH_GUEST_MEMORY_MODE",
+                                "value": "count"
+                            },
+                            {
+                                "name": "WASH_MAX_CONCURRENT_STARTS",
+                                "value": "1"
+                            },
+                            {
+                                "name": "WAMN_PG_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "url",
+                                        "name": "wamn-guest-acme--wms--dev"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_PG_GUEST_POOL_MAX",
+                                "value": "14"
+                            },
+                            {
+                                "name": "WAMN_PG_PLATFORM_POOL_MAX",
+                                "value": "2"
+                            },
+                            {
+                                "name": "WAMN_HTTP_ROUTE_IN_FLIGHT_LIMIT",
+                                "value": "64"
+                            },
+                            {
+                                "name": "WAMN_WASMTIME_CACHE_DIR",
+                                "value": "/tmp/wamn-wasmtime-cache"
+                            },
+                            {
+                                "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+                                "value": "http://otel-collector.wamn-system.svc.cluster.local:4317"
+                            },
+                            {
+                                "name": "OTEL_BSP_SCHEDULE_DELAY",
+                                "value": "1"
+                            },
+                            {
+                                "name": "OTEL_BSP_MAX_EXPORT_BATCH_SIZE",
+                                "value": "1"
+                            },
+                            {
+                                "name": "DOCKER_CONFIG",
+                                "value": "/etc/wamn/registry"
+                            },
+                            {
+                                "name": "WAMN_REGISTRY_AUTH_FILE",
+                                "value": "/etc/wamn/registry/config.json"
+                            },
+                            {
+                                "name": "WAMN_COMPONENT_ARTIFACT_BASE",
+                                "value": "172.28.0.9:5000/wamn/components"
+                            },
+                            {
+                                "name": "WAMN_EVT_NATS_URL",
+                                "value": "nats://172.28.0.10:4222"
+                            },
+                            {
+                                "name": "WAMN_EVT_NATS_USERNAME",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "username",
+                                        "name": "wamn-event-nats",
+                                        "optional": false
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_EVT_NATS_PASSWORD_FILE",
+                                "value": "/etc/wamn/event-nats/password"
+                            },
+                            {
+                                "name": "WAMN_MAT_NATS_BINDING_FILE",
+                                "value": "/etc/wamn/materializer-nats/binding.json"
+                            },
+                            {
+                                "name": "WAMN_EVT_ORG",
+                                "value": "acme"
+                            },
+                            {
+                                "name": "WAMN_EVT_PROJECT",
+                                "value": "wms"
+                            },
+                            {
+                                "name": "WAMN_EVT_ENV",
+                                "value": "dev"
+                            },
+                            {
+                                "name": "WAMN_EVT_STREAM_REPLICAS",
+                                "value": "1"
+                            },
+                            {
+                                "name": "WAMN_EVT_DUP_WINDOW_SECS",
+                                "value": "120"
+                            },
+                            {
+                                "name": "WAMN_ORG",
+                                "value": "acme"
+                            },
+                            {
+                                "name": "WAMN_PROJECT",
+                                "value": "wms"
+                            },
+                            {
+                                "name": "WAMN_SCHEMA",
+                                "value": "wms"
+                            },
+                            {
+                                "name": "WAMN_CREDENTIALS_FILE",
+                                "value": "/etc/wamn/credentials/credentials.json"
+                            },
+                            {
+                                "name": "WAMN_SYSTEM_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "url",
+                                        "name": "wamn-identity-reader-acme--wms--dev",
+                                        "optional": false
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_EXECUTOR_PLATFORM_PG_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "url",
+                                        "name": "wamn-executor-platform-acme--wms--dev",
+                                        "optional": false
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_HTTP_ADMITTER_PG_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "url",
+                                        "name": "wamn-http-admitter-acme--wms--dev",
+                                        "optional": false
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_EVENT_MATERIALIZER_PG_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "url",
+                                        "name": "wamn-event-materializer-acme--wms--dev",
+                                        "optional": false
+                                    }
+                                }
+                            }
+                        ],
+                        "image": "wamn-host:wms-04b72bd0d1cf-e3b5b923871a-debug",
+                        "imagePullPolicy": "Never",
+                        "livenessProbe": {
+                            "failureThreshold": 5,
+                            "httpGet": {
+                                "path": "/livez",
+                                "port": "probes",
+                                "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 10,
+                            "periodSeconds": 30,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 5
+                        },
+                        "name": "host",
+                        "ports": [
+                            {
+                                "containerPort": 80,
+                                "name": "http",
+                                "protocol": "TCP"
+                            },
+                            {
+                                "containerPort": 8081,
+                                "name": "probes",
+                                "protocol": "TCP"
+                            }
+                        ],
+                        "readinessProbe": {
+                            "failureThreshold": 3,
+                            "httpGet": {
+                                "path": "/readyz",
+                                "port": "probes",
+                                "scheme": "HTTP"
+                            },
+                            "initialDelaySeconds": 5,
+                            "periodSeconds": 10,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                        },
+                        "resources": {
+                            "limits": {
+                                "cpu": "2",
+                                "memory": "4Gi"
+                            },
+                            "requests": {
+                                "cpu": "250m",
+                                "memory": "256Mi"
+                            }
+                        },
+                        "securityContext": {
+                            "allowPrivilegeEscalation": false,
+                            "capabilities": {
+                                "drop": [
+                                    "ALL"
+                                ]
+                            },
+                            "readOnlyRootFilesystem": true,
+                            "runAsNonRoot": true
+                        },
+                        "startupProbe": {
+                            "failureThreshold": 60,
+                            "httpGet": {
+                                "path": "/livez",
+                                "port": "probes",
+                                "scheme": "HTTP"
+                            },
+                            "periodSeconds": 5,
+                            "successThreshold": 1,
+                            "timeoutSeconds": 1
+                        },
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/oci-cache",
+                                "name": "oci-cache"
+                            },
+                            {
+                                "mountPath": "/tmp",
+                                "name": "tmp"
+                            },
+                            {
+                                "mountPath": "/runtime-cert",
+                                "name": "runtime-cert",
+                                "readOnly": true
+                            },
+                            {
+                                "mountPath": "/data-cert",
+                                "name": "data-cert",
+                                "readOnly": true
+                            },
+                            {
+                                "mountPath": "/etc/wamn/event-nats",
+                                "name": "event-nats",
+                                "readOnly": true
+                            },
+                            {
+                                "mountPath": "/etc/wamn/materializer-nats",
+                                "name": "materializer-nats",
+                                "readOnly": true
+                            },
+                            {
+                                "mountPath": "/etc/wamn/registry",
+                                "name": "registry-pull",
+                                "readOnly": true
+                            },
+                            {
+                                "mountPath": "/etc/wamn/credentials",
+                                "name": "connection-credentials",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-wms-e3b5b923871a448f9475a0adcf93d856-worker",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Always",
+                "schedulerName": "default-scheduler",
+                "securityContext": {
+                    "fsGroup": 65532,
+                    "runAsGroup": 65532,
+                    "runAsNonRoot": true,
+                    "runAsUser": 65532,
+                    "seccompProfile": {
+                        "type": "RuntimeDefault"
+                    }
+                },
+                "serviceAccount": "wamn-host-runtime-operator-runtime",
+                "serviceAccountName": "wamn-host-runtime-operator-runtime",
+                "terminationGracePeriodSeconds": 70,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "emptyDir": {},
+                        "name": "oci-cache"
+                    },
+                    {
+                        "emptyDir": {},
+                        "name": "tmp"
+                    },
+                    {
+                        "name": "runtime-cert",
+                        "secret": {
+                            "defaultMode": 420,
+                            "secretName": "wasmcloud-runtime-tls"
+                        }
+                    },
+                    {
+                        "name": "data-cert",
+                        "secret": {
+                            "defaultMode": 420,
+                            "secretName": "wasmcloud-data-tls"
+                        }
+                    },
+                    {
+                        "name": "event-nats",
+                        "secret": {
+                            "defaultMode": 420,
+                            "items": [
+                                {
+                                    "key": "password",
+                                    "path": "password"
+                                }
+                            ],
+                            "optional": false,
+                            "secretName": "wamn-event-nats"
+                        }
+                    },
+                    {
+                        "name": "materializer-nats",
+                        "secret": {
+                            "defaultMode": 420,
+                            "items": [
+                                {
+                                    "key": "binding.json",
+                                    "path": "binding.json"
+                                }
+                            ],
+                            "optional": false,
+                            "secretName": "wamn-materializer-nats"
+                        }
+                    },
+                    {
+                        "name": "registry-pull",
+                        "secret": {
+                            "defaultMode": 420,
+                            "items": [
+                                {
+                                    "key": ".dockerconfigjson",
+                                    "path": "config.json"
+                                }
+                            ],
+                            "optional": false,
+                            "secretName": "wamn-registry-pull"
+                        }
+                    },
+                    {
+                        "name": "connection-credentials",
+                        "secret": {
+                            "defaultMode": 420,
+                            "items": [
+                                {
+                                    "key": "credentials.json",
+                                    "path": "credentials.json"
+                                }
+                            ],
+                            "optional": false,
+                            "secretName": "wamn-object-store-credentials-acme--wms--dev"
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "allocatedResources": {
+                    "cpu": "250m",
+                    "memory": "256Mi"
+                },
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:10:13Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:10:12Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:11:04Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:11:04Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:10:12Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "allocatedResources": {
+                            "cpu": "250m",
+                            "memory": "256Mi"
+                        },
+                        "containerID": "containerd://aec4272e7056e0049faf406793d576d4b798b6b095528be6dad0171fbe517dcc",
+                        "image": "docker.io/library/wamn-host:wms-04b72bd0d1cf-e3b5b923871a-debug",
+                        "imageID": "docker.io/library/import-2026-09-11@sha256:c484f52de4433ff42d10f1dfd17a3b12322fe46492fc4d9d59f9154f0777adee",
+                        "lastState": {
+                            "terminated": {
+                                "containerID": "containerd://15b0178b050b516b077956b30e560c1fffab0b5f36360f3cb1089b3d15d0b438",
+                                "exitCode": 0,
+                                "finishedAt": "2026-09-11T19:10:50Z",
+                                "reason": "Completed",
+                                "startedAt": "2026-09-11T19:10:13Z"
+                            }
+                        },
+                        "name": "host",
+                        "ready": true,
+                        "resources": {
+                            "limits": {
+                                "cpu": "2",
+                                "memory": "4Gi"
+                            },
+                            "requests": {
+                                "cpu": "250m",
+                                "memory": "256Mi"
+                            }
+                        },
+                        "restartCount": 1,
+                        "started": true,
+                        "state": {
+                            "running": {
+                                "startedAt": "2026-09-11T19:10:51Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 65532,
+                                "supplementalGroups": [
+                                    65532
+                                ],
+                                "uid": 65532
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/oci-cache",
+                                "name": "oci-cache"
+                            },
+                            {
+                                "mountPath": "/tmp",
+                                "name": "tmp"
+                            },
+                            {
+                                "mountPath": "/runtime-cert",
+                                "name": "runtime-cert",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            },
+                            {
+                                "mountPath": "/data-cert",
+                                "name": "data-cert",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            },
+                            {
+                                "mountPath": "/etc/wamn/event-nats",
+                                "name": "event-nats",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            },
+                            {
+                                "mountPath": "/etc/wamn/materializer-nats",
+                                "name": "materializer-nats",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            },
+                            {
+                                "mountPath": "/etc/wamn/registry",
+                                "name": "registry-pull",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            },
+                            {
+                                "mountPath": "/etc/wamn/credentials",
+                                "name": "connection-credentials",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.5",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.5"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Running",
+                "podIP": "10.244.2.5",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.5"
+                    }
+                ],
+                "qosClass": "Burstable",
+                "resources": {
+                    "limits": {
+                        "cpu": "2",
+                        "memory": "4Gi"
+                    },
+                    "requests": {
+                        "cpu": "232m",
+                        "memory": "256Mi"
+                    }
+                },
+                "startTime": "2026-09-11T19:10:12Z"
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-11T19:10:41Z",
+                "generateName": "startup-request-cold-",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "23336aba-7312-40e0-8bd8-11310ceceb3c",
+                    "batch.kubernetes.io/job-name": "startup-request-cold",
+                    "controller-uid": "23336aba-7312-40e0-8bd8-11310ceceb3c",
+                    "job-name": "startup-request-cold"
+                },
+                "name": "startup-request-cold-l6w9v",
+                "namespace": "wamn-wms-e3b5b923871a448f9475a0adcf93d856",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "batch/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Job",
+                        "name": "startup-request-cold",
+                        "uid": "23336aba-7312-40e0-8bd8-11310ceceb3c"
+                    }
+                ],
+                "resourceVersion": "1313",
+                "uid": "a5234d1e-1422-4665-982b-dc04c40c0b3a"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "args": [
+                            "probe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header \"Host: $ROUTE_HOST\" --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" --header \"traceparent: $TRACEPARENT\" \\\n    --data \"$REQUEST_BODY\" \"$ROUTE_URL\") || metrics='000 0 0'\n  set -- $metrics\n  elapsed=$(( $(date +%s) - probe_start ))\n  printf '{\"attempt\":%s,\"status\":\"%s\",\"recovery_seconds\":%s,\"total_seconds\":\"%s\"}\\n' \"$attempt\" \"$1\" \"$elapsed\" \"$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\nbody=$(od -An -v -tx1 /tmp/body | tr -d ' \\n')\nprintf '{\"status\":\"%s\",\"first_seconds\":\"%s\",\"total_seconds\":\"%s\",\"recovery_seconds\":%s,\"attempts\":%s,\"body_hex\":\"%s\"}\\n' \"$1\" \"$2\" \"$3\" \"$elapsed\" \"$attempt\" \"$body\" \u003e/dev/termination-log\ntest \"$1\" = 200\n"
+                        ],
+                        "command": [
+                            "/bin/sh",
+                            "-ec"
+                        ],
+                        "env": [
+                            {
+                                "name": "ROUTE_CALLER_PAT",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "token",
+                                        "name": "wamn-pat-route-caller-acme--wms--dev"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "ROUTE_HOST",
+                                "value": "wms.localhost"
+                            },
+                            {
+                                "name": "TRACEPARENT",
+                                "value": "00-11111111111111111111111111111111-1111111111111111-01"
+                            },
+                            {
+                                "name": "REQUEST_BODY",
+                                "value": "[{\"id\":\"00000000-0000-0000-0000-000000000301\",\"request_id\":\"startup-cold\"}]"
+                            },
+                            {
+                                "name": "ROUTE_URL",
+                                "value": "http://flow-http.wamn-wms-e3b5b923871a448f9475a0adcf93d856.svc.cluster.local/pallet/get"
+                            }
+                        ],
+                        "image": "wamn-host:wms-04b72bd0d1cf-e3b5b923871a-debug",
+                        "imagePullPolicy": "Never",
+                        "name": "probe",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-5vqlr",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-wms-e3b5b923871a448f9475a0adcf93d856-worker",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "kube-api-access-5vqlr",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:10:44Z",
+                        "observedGeneration": 1,
+                        "status": "False",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:10:41Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:10:43Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:10:43Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:10:41Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "containerID": "containerd://5fbf2f972c57010dbd921d3a39489ebc5baa959f952cf9ead0d0a2c96ae4ca54",
+                        "image": "docker.io/library/wamn-host:wms-04b72bd0d1cf-e3b5b923871a-debug",
+                        "imageID": "docker.io/library/import-2026-09-11@sha256:c484f52de4433ff42d10f1dfd17a3b12322fe46492fc4d9d59f9154f0777adee",
+                        "lastState": {},
+                        "name": "probe",
+                        "ready": false,
+                        "resources": {},
+                        "restartCount": 0,
+                        "started": false,
+                        "state": {
+                            "terminated": {
+                                "containerID": "containerd://5fbf2f972c57010dbd921d3a39489ebc5baa959f952cf9ead0d0a2c96ae4ca54",
+                                "exitCode": 0,
+                                "finishedAt": "2026-09-11T19:10:42Z",
+                                "message": "{\"status\":\"200\",\"first_seconds\":\"0.194099\",\"total_seconds\":\"0.194374\",\"recovery_seconds\":0,\"attempts\":1,\"body_hex\":\"5b7b22726571756573745f6964223a22737461727475702d636f6c64222c2276616c7565223a7b22637265617465645f6174223a22323032362d30392d31315431393a30393a31382e3932373130375a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c226c6f636174696f6e5f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030323031222c2270616c6c65745f636f6465223a2250414c2d333031222c22726f775f76657273696f6e223a312c22737461747573223a22617661696c61626c65222c22757064617465645f6174223a22323032362d30392d31315431393a30393a31382e3932373130375a227d7d5d\"}\n",
+                                "reason": "Completed",
+                                "startedAt": "2026-09-11T19:10:42Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-5vqlr",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.5",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.5"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Succeeded",
+                "podIP": "10.244.2.6",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.6"
+                    }
+                ],
+                "qosClass": "BestEffort",
+                "resources": {},
+                "startTime": "2026-09-11T19:10:41Z"
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-11T19:11:05Z",
+                "generateName": "startup-request-restart-first-",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "c58dfbc3-f562-4525-9178-981929be719d",
+                    "batch.kubernetes.io/job-name": "startup-request-restart-first",
+                    "controller-uid": "c58dfbc3-f562-4525-9178-981929be719d",
+                    "job-name": "startup-request-restart-first"
+                },
+                "name": "startup-request-restart-first-wtcpn",
+                "namespace": "wamn-wms-e3b5b923871a448f9475a0adcf93d856",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "batch/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Job",
+                        "name": "startup-request-restart-first",
+                        "uid": "c58dfbc3-f562-4525-9178-981929be719d"
+                    }
+                ],
+                "resourceVersion": "1585",
+                "uid": "2fb41afa-cfb8-417b-b64f-690ef160a0e8"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "args": [
+                            "probe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header \"Host: $ROUTE_HOST\" --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" --header \"traceparent: $TRACEPARENT\" \\\n    --data \"$REQUEST_BODY\" \"$ROUTE_URL\") || metrics='000 0 0'\n  set -- $metrics\n  elapsed=$(( $(date +%s) - probe_start ))\n  printf '{\"attempt\":%s,\"status\":\"%s\",\"recovery_seconds\":%s,\"total_seconds\":\"%s\"}\\n' \"$attempt\" \"$1\" \"$elapsed\" \"$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\nbody=$(od -An -v -tx1 /tmp/body | tr -d ' \\n')\nprintf '{\"status\":\"%s\",\"first_seconds\":\"%s\",\"total_seconds\":\"%s\",\"recovery_seconds\":%s,\"attempts\":%s,\"body_hex\":\"%s\"}\\n' \"$1\" \"$2\" \"$3\" \"$elapsed\" \"$attempt\" \"$body\" \u003e/dev/termination-log\ntest \"$1\" = 200\n"
+                        ],
+                        "command": [
+                            "/bin/sh",
+                            "-ec"
+                        ],
+                        "env": [
+                            {
+                                "name": "ROUTE_CALLER_PAT",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "token",
+                                        "name": "wamn-pat-route-caller-acme--wms--dev"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "ROUTE_HOST",
+                                "value": "wms.localhost"
+                            },
+                            {
+                                "name": "TRACEPARENT",
+                                "value": "00-22222222222222222222222222222222-2222222222222222-01"
+                            },
+                            {
+                                "name": "REQUEST_BODY",
+                                "value": "[{\"id\":\"00000000-0000-0000-0000-000000000301\",\"request_id\":\"startup-restart-first\"}]"
+                            },
+                            {
+                                "name": "ROUTE_URL",
+                                "value": "http://flow-http.wamn-wms-e3b5b923871a448f9475a0adcf93d856.svc.cluster.local/pallet/get"
+                            }
+                        ],
+                        "image": "wamn-host:wms-04b72bd0d1cf-e3b5b923871a-debug",
+                        "imagePullPolicy": "Never",
+                        "name": "probe",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-k77fg",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-wms-e3b5b923871a448f9475a0adcf93d856-worker",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "kube-api-access-k77fg",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:12:14Z",
+                        "observedGeneration": 1,
+                        "status": "False",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:11:05Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:12:13Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:12:13Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:11:05Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "containerID": "containerd://0e76c337631aee3ae64ee6662f526c28a1054270554c8f29fce5d9116f7a2275",
+                        "image": "docker.io/library/wamn-host:wms-04b72bd0d1cf-e3b5b923871a-debug",
+                        "imageID": "docker.io/library/import-2026-09-11@sha256:c484f52de4433ff42d10f1dfd17a3b12322fe46492fc4d9d59f9154f0777adee",
+                        "lastState": {},
+                        "name": "probe",
+                        "ready": false,
+                        "resources": {},
+                        "restartCount": 0,
+                        "started": false,
+                        "state": {
+                            "terminated": {
+                                "containerID": "containerd://0e76c337631aee3ae64ee6662f526c28a1054270554c8f29fce5d9116f7a2275",
+                                "exitCode": 0,
+                                "finishedAt": "2026-09-11T19:12:12Z",
+                                "message": "{\"status\":\"200\",\"first_seconds\":\"0.135606\",\"total_seconds\":\"0.135979\",\"recovery_seconds\":67,\"attempts\":67,\"body_hex\":\"5b7b22726571756573745f6964223a22737461727475702d726573746172742d6669727374222c2276616c7565223a7b22637265617465645f6174223a22323032362d30392d31315431393a30393a31382e3932373130375a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c226c6f636174696f6e5f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030323031222c2270616c6c65745f636f6465223a2250414c2d333031222c22726f775f76657273696f6e223a312c22737461747573223a22617661696c61626c65222c22757064617465645f6174223a22323032362d30392d31315431393a30393a31382e3932373130375a227d7d5d\"}\n",
+                                "reason": "Completed",
+                                "startedAt": "2026-09-11T19:11:05Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-k77fg",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.5",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.5"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Succeeded",
+                "podIP": "10.244.2.7",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.7"
+                    }
+                ],
+                "qosClass": "BestEffort",
+                "resources": {},
+                "startTime": "2026-09-11T19:11:05Z"
+            }
+        },
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-11T19:12:16Z",
+                "generateName": "startup-request-steady-",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "a21c4548-6f14-4ce0-bb0a-1d71e13159a6",
+                    "batch.kubernetes.io/job-name": "startup-request-steady",
+                    "controller-uid": "a21c4548-6f14-4ce0-bb0a-1d71e13159a6",
+                    "job-name": "startup-request-steady"
+                },
+                "name": "startup-request-steady-6h8wp",
+                "namespace": "wamn-wms-e3b5b923871a448f9475a0adcf93d856",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "batch/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Job",
+                        "name": "startup-request-steady",
+                        "uid": "a21c4548-6f14-4ce0-bb0a-1d71e13159a6"
+                    }
+                ],
+                "resourceVersion": "1612",
+                "uid": "36cb6182-7305-4190-b7ad-be7ae668ef32"
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "args": [
+                            "probe_start=$(date +%s)\nattempt=0\nwhile :; do\n  attempt=$((attempt + 1))\n  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \\\n    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \\\n    --header \"Host: $ROUTE_HOST\" --header 'Content-Type: application/json' \\\n    --header \"Authorization: Bearer $ROUTE_CALLER_PAT\" --header \"traceparent: $TRACEPARENT\" \\\n    --data \"$REQUEST_BODY\" \"$ROUTE_URL\") || metrics='000 0 0'\n  set -- $metrics\n  elapsed=$(( $(date +%s) - probe_start ))\n  printf '{\"attempt\":%s,\"status\":\"%s\",\"recovery_seconds\":%s,\"total_seconds\":\"%s\"}\\n' \"$attempt\" \"$1\" \"$elapsed\" \"$3\"\n  [ \"$1\" = 200 ] \u0026\u0026 break\n  [ \"$elapsed\" -ge 150 ] \u0026\u0026 break\n  sleep 1\ndone\nbody=$(od -An -v -tx1 /tmp/body | tr -d ' \\n')\nprintf '{\"status\":\"%s\",\"first_seconds\":\"%s\",\"total_seconds\":\"%s\",\"recovery_seconds\":%s,\"attempts\":%s,\"body_hex\":\"%s\"}\\n' \"$1\" \"$2\" \"$3\" \"$elapsed\" \"$attempt\" \"$body\" \u003e/dev/termination-log\ntest \"$1\" = 200\n"
+                        ],
+                        "command": [
+                            "/bin/sh",
+                            "-ec"
+                        ],
+                        "env": [
+                            {
+                                "name": "ROUTE_CALLER_PAT",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "token",
+                                        "name": "wamn-pat-route-caller-acme--wms--dev"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "ROUTE_HOST",
+                                "value": "wms.localhost"
+                            },
+                            {
+                                "name": "TRACEPARENT",
+                                "value": "00-33333333333333333333333333333333-3333333333333333-01"
+                            },
+                            {
+                                "name": "REQUEST_BODY",
+                                "value": "[{\"id\":\"00000000-0000-0000-0000-000000000301\",\"request_id\":\"startup-steady\"}]"
+                            },
+                            {
+                                "name": "ROUTE_URL",
+                                "value": "http://flow-http.wamn-wms-e3b5b923871a448f9475a0adcf93d856.svc.cluster.local/pallet/get"
+                            }
+                        ],
+                        "image": "wamn-host:wms-04b72bd0d1cf-e3b5b923871a-debug",
+                        "imagePullPolicy": "Never",
+                        "name": "probe",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File",
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-z42k4",
+                                "readOnly": true
+                            }
+                        ]
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-wms-e3b5b923871a448f9475a0adcf93d856-worker",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ],
+                "volumes": [
+                    {
+                        "name": "kube-api-access-z42k4",
+                        "projected": {
+                            "defaultMode": 420,
+                            "sources": [
+                                {
+                                    "serviceAccountToken": {
+                                        "expirationSeconds": 3607,
+                                        "path": "token"
+                                    }
+                                },
+                                {
+                                    "configMap": {
+                                        "items": [
+                                            {
+                                                "key": "ca.crt",
+                                                "path": "ca.crt"
+                                            }
+                                        ],
+                                        "name": "kube-root-ca.crt"
+                                    }
+                                },
+                                {
+                                    "downwardAPI": {
+                                        "items": [
+                                            {
+                                                "fieldRef": {
+                                                    "apiVersion": "v1",
+                                                    "fieldPath": "metadata.namespace"
+                                                },
+                                                "path": "namespace"
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:12:18Z",
+                        "observedGeneration": 1,
+                        "status": "False",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:12:16Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:12:17Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:12:17Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T19:12:16Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "containerID": "containerd://2e6c9b6b28777f2773d837595906309a6df11fc38f837db055d6ab31a0da731e",
+                        "image": "docker.io/library/wamn-host:wms-04b72bd0d1cf-e3b5b923871a-debug",
+                        "imageID": "docker.io/library/import-2026-09-11@sha256:c484f52de4433ff42d10f1dfd17a3b12322fe46492fc4d9d59f9154f0777adee",
+                        "lastState": {},
+                        "name": "probe",
+                        "ready": false,
+                        "resources": {},
+                        "restartCount": 0,
+                        "started": false,
+                        "state": {
+                            "terminated": {
+                                "containerID": "containerd://2e6c9b6b28777f2773d837595906309a6df11fc38f837db055d6ab31a0da731e",
+                                "exitCode": 0,
+                                "finishedAt": "2026-09-11T19:12:16Z",
+                                "message": "{\"status\":\"200\",\"first_seconds\":\"0.024256\",\"total_seconds\":\"0.025093\",\"recovery_seconds\":0,\"attempts\":1,\"body_hex\":\"5b7b22726571756573745f6964223a22737461727475702d737465616479222c2276616c7565223a7b22637265617465645f6174223a22323032362d30392d31315431393a30393a31382e3932373130375a222c226964223a2230303030303030302d303030302d303030302d303030302d303030303030303030333031222c226c6f636174696f6e5f6964223a2230303030303030302d303030302d303030302d303030302d303030303030303030323031222c2270616c6c65745f636f6465223a2250414c2d333031222c22726f775f76657273696f6e223a312c22737461747573223a22617661696c61626c65222c22757064617465645f6174223a22323032362d30392d31315431393a30393a31382e3932373130375a227d7d5d\"}\n",
+                                "reason": "Completed",
+                                "startedAt": "2026-09-11T19:12:16Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        },
+                        "volumeMounts": [
+                            {
+                                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                                "name": "kube-api-access-z42k4",
+                                "readOnly": true,
+                                "recursiveReadOnly": "Disabled"
+                            }
+                        ]
+                    }
+                ],
+                "hostIP": "172.28.0.5",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.5"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Succeeded",
+                "podIP": "10.244.2.8",
+                "podIPs": [
+                    {
+                        "ip": "10.244.2.8"
+                    }
+                ],
+                "qosClass": "BestEffort",
+                "resources": {},
+                "startTime": "2026-09-11T19:12:16Z"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

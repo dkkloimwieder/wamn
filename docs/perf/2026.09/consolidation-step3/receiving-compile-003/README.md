@@ -1,0 +1,1 @@
+The connected Receiving extraction passes at 9bda6080. All 18 selected ordinary cases pass, and 12 cluster cases remain ignored. Three cases replay retained operator records. This command runs no live case.

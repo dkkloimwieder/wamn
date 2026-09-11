@@ -1,0 +1,409 @@
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/dev/wamn/apps/platform/events/wire)
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/dev/wamn/crates/control/registry)
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/crates/catalog/model)
+   Compiling wamn-router v0.1.0 (/home/kaalin/dev/wamn/crates/execution/router)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-event-reg v0.1.0 (/home/kaalin/dev/wamn/apps/platform/events/registration)
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/crates/schema/generator)
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/crates/control/provision)
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/crates/platform/runtime)
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+   Compiling wamn-schema-control v0.1.0 (/home/kaalin/dev/wamn/crates/schema/control)
+   Compiling wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/test-support/infrastructure)
+   Compiling wamn-cdc-reader v0.1.0 (/home/kaalin/dev/wamn/services/cdc-reader)
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:56:7
+   |
+56 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:131:1
+    |
+131 | / pub struct ConnectionHttp {
+132 | |     postgres: Arc<WamnPostgres>,
+133 | |     transport: Arc<HttpTransport>,
+134 | |     vault: Arc<WamnCredentials>,
+...   |
+151 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+152 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:507:1
+    |
+507 | / pub struct WamnJetstream {
+508 | |     nats_url: Option<String>,
+509 | |     stream_replicas: Option<usize>,
+510 | |     dup_window_secs: Option<u64>,
+...   |
+536 | |     release: Option<Arc<ReleaseManifestWeld>>,
+537 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:54:1
+    |
+ 54 | / pub struct WamnPostgres {
+ 55 | |     /// Resolves a project id → its database connection + policy.
+ 56 | |     provider: Arc<dyn CredentialProvider>,
+ 57 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+117 | |     pub(super) bind_counters: super::BindCounters,
+118 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:248:1
+    |
+248 | / pub struct StaticCredentialProvider {
+249 | |     projects: HashMap<String, ProjectConfig>,
+250 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:423:1
+    |
+423 | / pub struct K8sSecretProvider {
+424 | |     pub namespace: String,
+425 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+   Compiling wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/services/ctl)
+warning: function `run_once_stages` is never used
+   --> services/ctl/src/dev.rs:604:10
+    |
+604 | async fn run_once_stages<R>(
+    |          ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `verify_source_package_with_client` is never used
+    --> services/ctl/src/push_component.rs:1301:10
+     |
+1301 | async fn verify_source_package_with_client(
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: `wamn-runtime` (lib) generated 12 warnings
+   Compiling wamn-scenario-worker v0.1.0 (/home/kaalin/dev/wamn/services/scenario-worker)
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> services/scenario-worker/src/authoring.rs:218:1
+    |
+218 | / pub struct InternalAuthoringBackend {
+219 | |     authority: InternalDevAdmin,
+220 | |     client: Client,
+221 | |     connection_task: tokio::task::JoinHandle<()>,
+222 | |     tenant_id: Box<str>,
+223 | |     source_schema: BareSchemaName,
+224 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> services/scenario-worker/src/store/admission.rs:316:1
+    |
+316 | / pub struct AdmissionSurface {
+317 | |     /// The explicit credential and exact server-side predicates are retained so
+318 | |     /// every replacement physical connection is checked identically.
+319 | |     probe: CredentialExactnessProbe,
+...   |
+322 | |     tenant_id: Box<str>,
+323 | | }
+    | |_^
+
+warning: `wamn-scenario-worker` (lib) generated 2 warnings
+   Compiling wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/test-support/harness)
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> test-support/harness/src/ceiling.rs:72:1
+   |
+72 | / pub struct Ramp {
+73 | |     tolerance: f64,
+74 | |     max_levels: usize,
+75 | |     levels: Vec<LevelStats>,
+...  |
+82 | |     retrying: bool,
+83 | | }
+   | |_^
+   |
+   = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: `wamn-gate-harness` (lib) generated 1 warning
+   Compiling wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/crates/execution/host)
+warning: `wamn-ctl` (lib) generated 2 warnings
+   Compiling wamn-proof-integration v0.1.0 (/home/kaalin/dev/wamn/tests/integration)
+warning: function `models` is never used
+  --> tests/integration/src/measurement_schema.rs:25:8
+   |
+25 | pub fn models(schema: &str) -> Vec<ManagedModel> {
+   |        ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `release` is never read
+   --> tests/integration/src/trusted_http_route.rs:110:16
+    |
+105 | pub struct TrustedHttpRoute {
+    |            ---------------- field in this struct
+...
+110 |     pub(crate) release: Arc<ReleaseManifestWeld>,
+    |                ^^^^^^^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> tests/integration/src/trusted_http_route.rs:105:1
+    |
+105 | / pub struct TrustedHttpRoute {
+106 | |     pub driver: Arc<RouterDriver>,
+107 | |     /// The same welded release the driver authorizes. Callers that exercise a
+108 | |     /// release-owned ingress plugin must share this exact weld rather than mint
+...   |
+116 | |     pub wiring_hash: String,
+117 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: `wamn-proof-integration` (lib) generated 3 warnings
+   Compiling wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/apps/wamn_receiving/tests)
+error[E0277]: the trait bound `Array<u8, UInt<UInt<UInt<UInt<..., ...>, ...>, ...>, ...>>: LowerHex` is not satisfied
+   --> apps/wamn_receiving/tests/route_authentication_live/cluster/build.rs:102:13
+    |
+101 |             "{:x}  {}\n",
+    |              ---- required by this formatting parameter
+102 |             Sha256::digest(fs::read(&path)?),
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `LowerHex` is not implemented for `Array<u8, UInt<UInt<UInt<UInt<UInt<..., ...>, ...>, ...>, ...>, ...>>`
+    |
+    = help: the following other types implement trait `LowerHex`:
+              &T
+              &mut T
+              Braced
+              BytesMut
+              DirPerms
+              FilePerms
+              Hyphenated
+              OpenMode
+            and 261 others
+    = note: the full name for the type has been written to '/home/kaalin/dev/wamn/target/debug/deps/wamn_receiving_tests-a1b045d8511c803f.long-type-1257738236707696089.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+error[E0277]: the trait bound `async_nats::jetstream::stream::Info: serde::Serialize` is not satisfied
+   --> apps/wamn_receiving/tests/route_authentication_live/cluster/cdc.rs:176:26
+    |
+176 |                         &serde_json::json!({"source":source_info,"advisories":advisory_info}),
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |                          |
+    |                          the trait `receiving_data_access::tests::_::_serde::Serialize` is not implemented for `async_nats::jetstream::stream::Info`
+    |                          required by a bound introduced by this call
+    |
+    = note: for local types consider adding `#[derive(serde::Serialize)]` to your `async_nats::jetstream::stream::Info` type
+    = note: for types from other crates check whether the crate offers a `serde` feature flag
+    = help: the following other types implement trait `receiving_data_access::tests::_::_serde::Serialize`:
+              &'a T
+              &'a mut T
+              ()
+              (T,)
+              (T0, T1)
+              (T0, T1, T2)
+              (T0, T1, T2, T3)
+              (T0, T1, T2, T3, T4)
+            and 1198 others
+    = note: required for `&async_nats::jetstream::stream::Info` to implement `receiving_data_access::tests::_::_serde::Serialize`
+    = note: 1 redundant requirement hidden
+    = note: required for `&&async_nats::jetstream::stream::Info` to implement `receiving_data_access::tests::_::_serde::Serialize`
+note: required by a bound in `serde_json::to_value`
+   --> /home/kaalin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde_json-1.0.151/src/value/mod.rs:997:8
+    |
+995 | pub fn to_value<T>(value: T) -> Result<Value, Error>
+    |        -------- required by a bound in this function
+996 | where
+997 |     T: Serialize,
+    |        ^^^^^^^^^ required by this bound in `to_value`
+    = note: the full name for the type has been written to '/home/kaalin/dev/wamn/target/debug/deps/wamn_receiving_tests-a1b045d8511c803f.long-type-18306058133821630533.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+    = note: this error originates in the macro `$crate::json_internal` which comes from the expansion of the macro `serde_json::json` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0308]: mismatched types
+   --> apps/wamn_receiving/tests/route_authentication_live/cluster/deployment.rs:66:26
+    |
+ 66 |       let output = checked(Command::new(
+    |  __________________-------_^
+    | |                  |
+    | |                  arguments to this function are incorrect
+ 67 | |         cluster.resources.repository.join("tools/install-wash"),
+ 68 | |     ))
+    | |_____^ expected `&mut Command`, found `Command`
+    |
+note: function defined here
+   --> apps/wamn_receiving/tests/route_authentication_live/cluster/resources.rs:306:21
+    |
+306 | pub(super) async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
+    |                     ^^^^^^^ ---------------------
+help: consider mutably borrowing here
+    |
+ 66 |     let output = checked(&mut Command::new(
+    |                          ++++
+
+error[E0277]: the trait bound `Array<u8, UInt<UInt<UInt<UInt<..., ...>, ...>, ...>, ...>>: LowerHex` is not satisfied
+  --> apps/wamn_receiving/tests/route_authentication_live/cluster/route_cases.rs:30:75
+   |
+30 |             digests.insert(component.into(), json!(format!("sha256:{:x}", Sha256::digest(bytes))));
+   |                                                                    ----   ^^^^^^^^^^^^^^^^^^^^^ the trait `LowerHex` is not implemented for `Array<u8, UInt<UInt<UInt<UInt<UInt<..., ...>, ...>, ...>, ...>, ...>>`
+   |                                                                    |
+   |                                                                    required by this formatting parameter
+   |
+   = help: the following other types implement trait `LowerHex`:
+             &T
+             &mut T
+             Braced
+             BytesMut
+             DirPerms
+             FilePerms
+             Hyphenated
+             OpenMode
+           and 261 others
+   = note: the full name for the type has been written to '/home/kaalin/dev/wamn/target/debug/deps/wamn_receiving_tests-a1b045d8511c803f.long-type-1257738236707696089.txt'
+   = note: consider using `--verbose` to print the full type name to the console
+
+error[E0277]: the trait bound `Array<u8, UInt<UInt<UInt<UInt<..., ...>, ...>, ...>, ...>>: LowerHex` is not satisfied
+  --> apps/wamn_receiving/tests/route_authentication_live/cluster/startup_case.rs:45:67
+   |
+45 | ...] = json!(format!("{:x}",Sha256::digest(fs::read(cluster.artifacts.target.join("release/wamn-host"))?)));
+   |                       ----  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `LowerHex` is not implemented for `Array<u8, UInt<UInt<UInt<UInt<UInt<..., ...>, ...>, ...>, ...>, ...>>`
+   |                       |
+   |                       required by this formatting parameter
+   |
+   = help: the following other types implement trait `LowerHex`:
+             &T
+             &mut T
+             Braced
+             BytesMut
+             DirPerms
+             FilePerms
+             Hyphenated
+             OpenMode
+           and 261 others
+   = note: the full name for the type has been written to '/home/kaalin/dev/wamn/target/debug/deps/wamn_receiving_tests-a1b045d8511c803f.long-type-1257738236707696089.txt'
+   = note: consider using `--verbose` to print the full type name to the console
+
+error[E0277]: the trait bound `Array<u8, UInt<UInt<UInt<UInt<..., ...>, ...>, ...>, ...>>: LowerHex` is not satisfied
+  --> apps/wamn_receiving/tests/route_authentication_live/cluster/startup_case.rs:53:71
+   |
+53 |             final_result["input_sha256"][name] = json!(format!("{:x}",Sha256::digest(fs::read(path)?)));
+   |                                                                 ----  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `LowerHex` is not implemented for `Array<u8, UInt<UInt<UInt<UInt<UInt<..., ...>, ...>, ...>, ...>, ...>>`
+   |                                                                 |
+   |                                                                 required by this formatting parameter
+   |
+   = help: the following other types implement trait `LowerHex`:
+             &T
+             &mut T
+             Braced
+             BytesMut
+             DirPerms
+             FilePerms
+             Hyphenated
+             OpenMode
+           and 261 others
+   = note: the full name for the type has been written to '/home/kaalin/dev/wamn/target/debug/deps/wamn_receiving_tests-a1b045d8511c803f.long-type-1257738236707696089.txt'
+   = note: consider using `--verbose` to print the full type name to the console
+
+error[E0277]: the trait bound `Array<u8, UInt<UInt<UInt<UInt<..., ...>, ...>, ...>, ...>>: LowerHex` is not satisfied
+   --> apps/wamn_receiving/tests/route_authentication_live/cluster/startup_case.rs:172:17
+    |
+171 |                 "{:x}  {}\n",
+    |                  ---- required by this formatting parameter
+172 |                 Sha256::digest(fs::read(&path)?),
+    |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the trait `LowerHex` is not implemented for `Array<u8, UInt<UInt<UInt<UInt<UInt<..., ...>, ...>, ...>, ...>, ...>>`
+    |
+    = help: the following other types implement trait `LowerHex`:
+              &T
+              &mut T
+              Braced
+              BytesMut
+              DirPerms
+              FilePerms
+              Hyphenated
+              OpenMode
+            and 261 others
+    = note: the full name for the type has been written to '/home/kaalin/dev/wamn/target/debug/deps/wamn_receiving_tests-a1b045d8511c803f.long-type-1257738236707696089.txt'
+    = note: consider using `--verbose` to print the full type name to the console
+
+Some errors have detailed explanations: E0277, E0308.
+For more information about an error, try `rustc --explain E0277`.
+error: could not compile `wamn-receiving-tests` (lib test) due to 8 previous errors
