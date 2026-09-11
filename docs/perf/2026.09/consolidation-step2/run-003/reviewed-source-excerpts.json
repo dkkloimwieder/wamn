@@ -1,0 +1,505 @@
+{
+  "writer_scan": {
+    "path": "tests/conformance/tests/state_ownership.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "d6f25e89c3295ef528b826f0000bb7d7d89a1b5a311440476c0d2047fe0d00b3",
+    "start_line": 892,
+    "end_line": 975,
+    "lines": [
+      {
+        "line": 892,
+        "text": "    repository: &Path,"
+      },
+      {
+        "line": 893,
+        "text": "    manifest: &Manifest,"
+      },
+      {
+        "line": 894,
+        "text": ") -> Result<Vec<Discovery>, String> {"
+      },
+      {
+        "line": 895,
+        "text": "    let mut roots = manifest.scan_policy.roots.clone();"
+      },
+      {
+        "line": 896,
+        "text": "    // Cargo identifies the crates now below apps/. Authored package SQL keeps"
+      },
+      {
+        "line": 897,
+        "text": "    // its existing application tests and remains in the separate claim scan."
+      },
+      {
+        "line": 898,
+        "text": "    roots.retain(|root| root != \"apps\");"
+      },
+      {
+        "line": 899,
+        "text": "    roots.extend(application_crate_roots(repository)?);"
+      },
+      {
+        "line": 900,
+        "text": "    let roots = roots.iter().map(String::as_str).collect::<Vec<_>>();"
+      },
+      {
+        "line": 901,
+        "text": ""
+      },
+      {
+        "line": 902,
+        "text": "    let mut discoveries = Vec::new();"
+      },
+      {
+        "line": 903,
+        "text": "    for (relative, line, literal) in production_sql_fragments(repository, manifest, &roots)? {"
+      },
+      {
+        "line": 904,
+        "text": "        if manifest"
+      },
+      {
+        "line": 905,
+        "text": "            .scan_policy"
+      },
+      {
+        "line": 906,
+        "text": "            .ignored_literals"
+      },
+      {
+        "line": 907,
+        "text": "            .iter()"
+      },
+      {
+        "line": 908,
+        "text": "            .any(|ignored| ignored.path == relative && ignored.literal == literal)"
+      },
+      {
+        "line": 909,
+        "text": "        {"
+      },
+      {
+        "line": 910,
+        "text": "            continue;"
+      },
+      {
+        "line": 911,
+        "text": "        }"
+      },
+      {
+        "line": 912,
+        "text": "        discoveries.extend(discover_writes(&relative, line, &literal));"
+      },
+      {
+        "line": 913,
+        "text": "    }"
+      },
+      {
+        "line": 914,
+        "text": "    Ok(discoveries)"
+      },
+      {
+        "line": 915,
+        "text": "}"
+      },
+      {
+        "line": 916,
+        "text": ""
+      },
+      {
+        "line": 917,
+        "text": "fn application_crate_roots(repository: &Path) -> Result<BTreeSet<String>, String> {"
+      },
+      {
+        "line": 918,
+        "text": "    #[derive(Deserialize)]"
+      },
+      {
+        "line": 919,
+        "text": "    struct Workspace {"
+      },
+      {
+        "line": 920,
+        "text": "        packages: Vec<Package>,"
+      },
+      {
+        "line": 921,
+        "text": "        workspace_members: BTreeSet<String>,"
+      },
+      {
+        "line": 922,
+        "text": "    }"
+      },
+      {
+        "line": 923,
+        "text": ""
+      },
+      {
+        "line": 924,
+        "text": "    #[derive(Deserialize)]"
+      },
+      {
+        "line": 925,
+        "text": "    struct Package {"
+      },
+      {
+        "line": 926,
+        "text": "        id: String,"
+      },
+      {
+        "line": 927,
+        "text": "        manifest_path: PathBuf,"
+      },
+      {
+        "line": 928,
+        "text": "    }"
+      },
+      {
+        "line": 929,
+        "text": ""
+      },
+      {
+        "line": 930,
+        "text": "    let mut roots = BTreeSet::new();"
+      },
+      {
+        "line": 931,
+        "text": "    for manifest in ["
+      },
+      {
+        "line": 932,
+        "text": "        \"Cargo.toml\","
+      },
+      {
+        "line": 933,
+        "text": "        \"apps/Cargo.toml\","
+      },
+      {
+        "line": 934,
+        "text": "        \"apps/platform/no-std/Cargo.toml\","
+      },
+      {
+        "line": 935,
+        "text": "    ] {"
+      },
+      {
+        "line": 936,
+        "text": "        let output = std::process::Command::new(env!(\"CARGO\"))"
+      },
+      {
+        "line": 937,
+        "text": "            .args(["
+      },
+      {
+        "line": 938,
+        "text": "                \"metadata\","
+      },
+      {
+        "line": 939,
+        "text": "                \"--format-version\","
+      },
+      {
+        "line": 940,
+        "text": "                \"1\","
+      },
+      {
+        "line": 941,
+        "text": "                \"--no-deps\","
+      },
+      {
+        "line": 942,
+        "text": "                \"--locked\","
+      },
+      {
+        "line": 943,
+        "text": "                \"--offline\","
+      },
+      {
+        "line": 944,
+        "text": "                \"--manifest-path\","
+      },
+      {
+        "line": 945,
+        "text": "            ])"
+      },
+      {
+        "line": 946,
+        "text": "            .arg(repository.join(manifest))"
+      },
+      {
+        "line": 947,
+        "text": "            .current_dir(repository)"
+      },
+      {
+        "line": 948,
+        "text": "            .output()"
+      },
+      {
+        "line": 949,
+        "text": "            .map_err(|error| format!(\"read Cargo workspace {manifest}: {error}\"))?;"
+      },
+      {
+        "line": 950,
+        "text": "        if !output.status.success() {"
+      },
+      {
+        "line": 951,
+        "text": "            return Err(format!("
+      },
+      {
+        "line": 952,
+        "text": "                \"read Cargo workspace {manifest}: {}\","
+      },
+      {
+        "line": 953,
+        "text": "                String::from_utf8_lossy(&output.stderr)"
+      },
+      {
+        "line": 954,
+        "text": "            ));"
+      },
+      {
+        "line": 955,
+        "text": "        }"
+      },
+      {
+        "line": 956,
+        "text": "        let workspace: Workspace = serde_json::from_slice(&output.stdout)"
+      },
+      {
+        "line": 957,
+        "text": "            .map_err(|error| format!(\"parse Cargo workspace {manifest}: {error}\"))?;"
+      },
+      {
+        "line": 958,
+        "text": "        for package in workspace.packages {"
+      },
+      {
+        "line": 959,
+        "text": "            if !workspace.workspace_members.contains(&package.id) {"
+      },
+      {
+        "line": 960,
+        "text": "                continue;"
+      },
+      {
+        "line": 961,
+        "text": "            }"
+      },
+      {
+        "line": 962,
+        "text": "            let directory = package"
+      },
+      {
+        "line": 963,
+        "text": "                .manifest_path"
+      },
+      {
+        "line": 964,
+        "text": "                .parent()"
+      },
+      {
+        "line": 965,
+        "text": "                .ok_or_else(|| format!(\"Cargo package {} has no directory\", package.id))?;"
+      },
+      {
+        "line": 966,
+        "text": "            let relative = relative_path(repository, directory)?;"
+      },
+      {
+        "line": 967,
+        "text": "            if path_is_within(&relative, \"apps\") {"
+      },
+      {
+        "line": 968,
+        "text": "                roots.insert(relative);"
+      },
+      {
+        "line": 969,
+        "text": "            }"
+      },
+      {
+        "line": 970,
+        "text": "        }"
+      },
+      {
+        "line": 971,
+        "text": "    }"
+      },
+      {
+        "line": 972,
+        "text": "    Ok(roots)"
+      },
+      {
+        "line": 973,
+        "text": "}"
+      },
+      {
+        "line": 974,
+        "text": ""
+      },
+      {
+        "line": 975,
+        "text": "fn collect_files("
+      }
+    ]
+  },
+  "unqualified_target": {
+    "path": "tests/conformance/tests/state_ownership.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "d6f25e89c3295ef528b826f0000bb7d7d89a1b5a311440476c0d2047fe0d00b3",
+    "start_line": 1535,
+    "end_line": 1550,
+    "lines": [
+      {
+        "line": 1535,
+        "text": ""
+      },
+      {
+        "line": 1536,
+        "text": "    let context = manifest"
+      },
+      {
+        "line": 1537,
+        "text": "        .scan_policy"
+      },
+      {
+        "line": 1538,
+        "text": "        .unqualified_contexts"
+      },
+      {
+        "line": 1539,
+        "text": "        .iter()"
+      },
+      {
+        "line": 1540,
+        "text": "        .filter(|context| path_is_within(&discovery.path, &context.path_prefix))"
+      },
+      {
+        "line": 1541,
+        "text": "        .max_by_key(|context| context.path_prefix.len());"
+      },
+      {
+        "line": 1542,
+        "text": "    if !normalized.contains('.') {"
+      },
+      {
+        "line": 1543,
+        "text": "        let context = context.ok_or_else(|| {"
+      },
+      {
+        "line": 1544,
+        "text": "            format!("
+      },
+      {
+        "line": 1545,
+        "text": "                \"{}:{}: unqualified {} target `{}` has no declared default schema\","
+      },
+      {
+        "line": 1546,
+        "text": "                discovery.path, discovery.line, discovery.operation, discovery.target"
+      },
+      {
+        "line": 1547,
+        "text": "            )"
+      },
+      {
+        "line": 1548,
+        "text": "        })?;"
+      },
+      {
+        "line": 1549,
+        "text": "        let qualified = format!(\"{}.{}\", context.default_schema, normalized);"
+      },
+      {
+        "line": 1550,
+        "text": "        if let Some(object) = manifest"
+      }
+    ]
+  },
+  "app_statement": {
+    "path": "apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "1049669b64fe0491694988be7e38771a8c4068839c06371b2bd3a81cd09140c0",
+    "start_line": 1,
+    "end_line": 19,
+    "lines": [
+      {
+        "line": 1,
+        "text": "WITH locked_inspection AS MATERIALIZED ("
+      },
+      {
+        "line": 2,
+        "text": "    SELECT"
+      },
+      {
+        "line": 3,
+        "text": "        quality_inspection.receipt_id,"
+      },
+      {
+        "line": 4,
+        "text": "        quality_inspection.status,"
+      },
+      {
+        "line": 5,
+        "text": "        quality_inspection.row_version,"
+      },
+      {
+        "line": 6,
+        "text": "        receipt.purchase_order_id"
+      },
+      {
+        "line": 7,
+        "text": "    FROM quality_inspection"
+      },
+      {
+        "line": 8,
+        "text": "    JOIN receipt"
+      },
+      {
+        "line": 9,
+        "text": "        ON receipt.id = quality_inspection.receipt_id"
+      },
+      {
+        "line": 10,
+        "text": "    WHERE quality_inspection.receipt_id = $1"
+      },
+      {
+        "line": 11,
+        "text": "    FOR UPDATE OF quality_inspection"
+      },
+      {
+        "line": 12,
+        "text": "),"
+      },
+      {
+        "line": 13,
+        "text": "approved_inspection AS ("
+      },
+      {
+        "line": 14,
+        "text": "    UPDATE quality_inspection"
+      },
+      {
+        "line": 15,
+        "text": "    SET"
+      },
+      {
+        "line": 16,
+        "text": "        status = 'approved',"
+      },
+      {
+        "line": 17,
+        "text": "        row_version = quality_inspection.row_version + 1"
+      },
+      {
+        "line": 18,
+        "text": "    FROM locked_inspection"
+      },
+      {
+        "line": 19,
+        "text": "    WHERE quality_inspection.receipt_id = locked_inspection.receipt_id"
+      }
+    ]
+  }
+}
