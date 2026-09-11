@@ -1,0 +1,22 @@
+{
+  "source_commit": "c1d674892cac4305651d3f0a31f9b810cc70481c",
+  "source_directory": "/home/kaalin/dev/wamn",
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-ctl",
+    "--features",
+    "ops",
+    "--test",
+    "dev_command"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "started_utc": "2026-09-11T21:10:45.929024+00:00"
+}

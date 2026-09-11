@@ -1,0 +1,30 @@
+Name:		receiving-postcommit-final-20260910 (host)
+Context:	/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910
+Dockerfile:	Dockerfile
+VCS Repository:	git@github.com:dkkloimwieder/wamn.git
+VCS Revision:	25bece68bfe93b3948bc2a72903ff1c3c2af806f
+Target:		host
+Platforms:	linux/amd64
+
+Started:	2026-09-11 17:02:06
+Duration:	7m  4s
+Build Steps:	28/28 (14% cached)
+
+Image Resolve Mode:	local
+
+LABEL			VALUE
+wamn.dev/build-profile	release
+wamn.dev/source-head	25bece68bfe93b3948bc2a72903ff1c3c2af806f
+
+Materials:
+URI							DIGEST
+pkg:docker/debian@trixie-slim?platform=linux%2Famd64	sha256:411a86676185cb54d695a805b238194a64e9b77e0c723f3802fbb87d333ea0b3
+pkg:docker/rust@1.98-trixie?platform=linux%2Famd64	sha256:d0701a0968bfc86666b1e3f4bed2df66806534e39678a85624a3a91d3e0e87e0
+
+Attachments:
+DIGEST									PLATFORM	TYPE
+sha256:6e8c10ef7da943adfdb8e357f7f123cfca62679ee84fc3245685801156c37f98			application/vnd.docker.container.image.v1+json
+sha256:07609999537535b17a74125aeb0f6ea87326e2f43599344df0f4afa235be5acf			https://slsa.dev/provenance/v0.2
+
+Print build logs: docker buildx history logs i16rmem417dudhs35c9c2tlvk
+View build in Docker Desktop: docker-desktop://dashboard/build/default/default/i16rmem417dudhs35c9c2tlvk

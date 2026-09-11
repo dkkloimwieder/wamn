@@ -1,0 +1,161 @@
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 18.61kB done
+#1 DONE 0.1s
+
+#2 [internal] load metadata for docker.io/library/debian:trixie-slim
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/rust:1.98-trixie
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 DONE 0.0s
+
+#5 [host 1/3] FROM docker.io/library/debian:trixie-slim
+#5 DONE 0.0s
+
+#6 [chef 1/4] FROM docker.io/library/rust:1.98-trixie
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 101.86kB 0.0s done
+#7 DONE 0.1s
+
+#8 [chef 2/4] RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git && rm -rf /var/lib/apt/lists/*
+#8 CACHED
+
+#9 [chef 4/4] RUN --mount=type=cache,id=wamn-chef-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-chef-cargo-git,target=/usr/local/cargo/git,sharing=locked     cargo install cargo-chef --version 0.1.77 --locked
+#9 CACHED
+
+#10 [chef 3/4] WORKDIR /build
+#10 CACHED
+
+#11 [component-toolchain 1/6] RUN rustup target add --toolchain 1.97.0 wasm32-wasip2
+#11 CACHED
+
+#12 [root-recipe 2/3] COPY --from=root-planner /build/root-recipe.json ./root-recipe.json
+#12 CACHED
+
+#13 [root-planner 2/7] COPY crates ./crates
+#13 CACHED
+
+#14 [root-planner 7/7] RUN cargo chef prepare --recipe-path root-recipe.json
+#14 CACHED
+
+#15 [root-planner 5/7] COPY test-support ./test-support
+#15 CACHED
+
+#16 [root-planner 4/7] COPY services ./services
+#16 CACHED
+
+#17 [root-planner 3/7] COPY apps ./apps
+#17 CACHED
+
+#18 [root-recipe 1/3] COPY .cargo/config.toml ./.cargo/config.toml
+#18 CACHED
+
+#19 [root-planner 1/7] COPY Cargo.toml Cargo.lock ./
+#19 CACHED
+
+#20 [root-planner 6/7] COPY tests ./tests
+#20 CACHED
+
+#21 [root-source 1/2] COPY .cargo/config.toml ./.cargo/config.toml
+#21 CACHED
+
+#22 [cook-host 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-host
+#22 CACHED
+
+#23 [build-host 1/2] COPY --from=root-source /build /build
+#23 CACHED
+
+#24 [root-recipe 3/3] COPY apps ./apps
+#24 CACHED
+
+#25 [build-host 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-host  && install -D -m 0755 target/release/wamn-host /native-output/wamn-host
+#25 CACHED
+
+#26 [root-source 2/2] COPY deploy ./deploy
+#26 CACHED
+
+#27 [host 2/3] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+#27 CACHED
+
+#28 [host 3/3] COPY --from=build-host /native-output/wamn-host /usr/local/bin/wamn-host
+#28 CACHED
+
+#29 [component-toolchain 2/6] COPY .cargo/config.toml /build/.cargo/config.toml
+#29 DONE 0.2s
+
+#30 [component-toolchain 3/6] COPY Cargo.toml /build/Cargo.toml
+#30 DONE 0.2s
+
+#31 [component-toolchain 4/6] COPY crates /build/crates
+#31 DONE 0.2s
+
+#32 [component-toolchain 5/6] COPY apps /build/apps
+#32 DONE 0.4s
+
+#33 [component-toolchain 6/6] WORKDIR /build/apps
+#33 DONE 0.1s
+
+#34 [cook-dispatcher 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-dispatcher
+#34 1.041    Compiling wamn-execution-contract v0.1.0 (/build/apps/platform/execution/contract)
+#34 1.041    Compiling wamn-pg-core v0.0.1 (/build/crates/platform/pg-core)
+#34 1.048    Compiling wamn-control-registry v0.0.1 (/build/crates/control/registry)
+#34 1.048    Compiling wamn-scheduler v0.0.1 (/build/crates/execution/scheduler)
+#34 1.413    Compiling wamn-run-state v0.0.1 (/build/crates/execution/run-state)
+#34 1.433    Compiling wamn-dispatcher v0.0.1 (/build/services/dispatcher)
+#34 5.694     Finished `release` profile [optimized] target(s) in 5.19s
+#34 DONE 6.9s
+
+#35 [build-dispatcher 1/2] COPY --from=root-source /build /build
+#35 DONE 0.4s
+
+#36 [component-builder 1/1] RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-component-target,target=/build/apps/target,sharing=locked     cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p http-route  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p materializer  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p busyloop  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p connection-http-standard  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p sockprobe  && install -d /component-output  && for artifact in       http_route materializer       busyloop connection_http_standard sockprobe; do       install -m 0644 "target/wasm32-wasip2/release/${artifact}.wasm"         "/component-output/${artifact}.wasm";     done
+#36 0.700    Compiling wamn-execution-contract v0.1.0 (/build/apps/platform/execution/contract)
+#36 1.810    Compiling http-route v0.1.0 (/build/apps/platform/ingress/http-route)
+#36 3.556     Finished `release` profile [optimized] target(s) in 3.23s
+#36 3.653    Compiling wamn-event-wire v0.1.0 (/build/apps/platform/events/wire)
+#36 3.654    Compiling wit-bindgen v0.61.1
+#36 3.947    Compiling wamn-event-reg v0.1.0 (/build/apps/platform/events/registration)
+#36 4.206    Compiling wamn-materializer v0.1.0 (/build/apps/platform/events/materializer)
+#36 4.788    Compiling materializer v0.1.0 (/build/apps/platform/execution/materializer)
+#36 6.389 error: linking with `wasm-component-ld` failed: exit status: 1
+#36 6.389   |
+#36 6.389   = note:  "wasm-component-ld" "-flavor" "wasm" "--export" "[async-lift]wasi:cli/run@0.3.0#run" "--export" "[callback][async-lift]wasi:cli/run@0.3.0#run" "--export" "cabi_realloc" "-z" "stack-size=1048576" "--stack-first" "--no-demangle" "<11 object files omitted>" "<sysroot>/lib/rustlib/wasm32-wasip2/lib/libpanic_abort-*.rlib" "/build/apps/target/wasm32-wasip2/release/deps/{libwit_bindgen-93f942c50dbe338a,libwamn_materializer-40f24d211d5b8706,libwamn_event_reg-0ca589ecba332977,libjmespath-107960d78f83ec9c,liblazy_static-c9473daf15aaafe8,libwamn_event_wire-fb1ab2bffef8122f,libchrono-64be3e4142aa7d2c,libnum_traits-88576326e5c2c667,libsha2-0f76ca1a83ecd104,libcfg_if-c3f02fc368f21d25,libdigest-e22e7e220fb154b3,libconst_oid-91bb88eeb76bac1a,libcrypto_common-3fb20f0433a4b876,libblock_buffer-988825a064163ef9,libhybrid_array-3b3ee3419bbd9632,libtypenum-38f2f218c755d057,libserde-16a5b8ba957930fd,libserde_json-9d4ec76d9362b77d,libmemchr-e05e80c73b6fc5f4,libitoa-83f213c5d6bcd360,libzmij-3c4644adbf7bffdd,libserde_core-f26b59d69c69dfe3}.rlib" "<sysroot>/lib/rustlib/wasm32-wasip2/lib/{libstd-*,libwasip2-*,libwit_bindgen-*,libcfg_if-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libminiz_oxide-*,libadler2-*,libunwind-*,liblibc-*}.rlib" "-l" "c" "<sysroot>/lib/rustlib/wasm32-wasip2/lib/{librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "-L" "/build/apps/target/wasm32-wasip2/release/build/wit-bindgen-3837f137a469cf30/out" "-L" "<sysroot>/lib/rustlib/wasm32-wasip2/lib/self-contained" "-o" "/build/apps/target/wasm32-wasip2/release/deps/materializer.wasm" "--gc-sections" "--no-entry" "-O2" "--strip-all"
+#36 6.389   = note: some arguments are omitted. use `--verbose` to show all linker arguments
+#36 6.389   = note: error: failed to parse core wasm for componentization
+#36 6.389           
+#36 6.389           Caused by:
+#36 6.389               0: decoding custom section component-type:wit-bindgen:0.61.1:wamn:materializer@0.1.0:materializer:encoded world
+#36 6.389               1: invalid leading byte (0x2) for import name (at offset 0xe45)
+#36 6.389           
+#36 6.389 
+#36 6.405 error: could not compile `materializer` (lib) due to 1 previous error
+#36 ERROR: process "/bin/sh -c cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p http-route  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p materializer  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p busyloop  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p connection-http-standard  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p sockprobe  && install -d /component-output  && for artifact in       http_route materializer       busyloop connection_http_standard sockprobe; do       install -m 0644 \"target/wasm32-wasip2/release/${artifact}.wasm\"         \"/component-output/${artifact}.wasm\";     done" did not complete successfully: exit code: 101
+
+#37 [build-gates 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-gates  && install -D -m 0755 target/release/wamn-gates /native-output/wamn-gates
+#37 CANCELED
+
+#38 [cook-ctl 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-ctl
+#38 CANCELED
+
+#39 [build-dispatcher 2/2] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo build --locked --release -p wamn-dispatcher  && install -D -m 0755 target/release/wamn-dispatcher /native-output/wamn-dispatcher
+#39 CANCELED
+
+#40 [cook-cdc-reader 1/1] RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked     cargo chef cook --locked --release --recipe-path root-recipe.json -p wamn-cdc-reader
+#40 CANCELED
+------
+ > [component-builder 1/1] RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-component-target,target=/build/apps/target,sharing=locked     cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p http-route  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p materializer  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p busyloop  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p connection-http-standard  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p sockprobe  && install -d /component-output  && for artifact in       http_route materializer       busyloop connection_http_standard sockprobe; do       install -m 0644 "target/wasm32-wasip2/release/${artifact}.wasm"         "/component-output/${artifact}.wasm";     done:
+6.389   = note:  "wasm-component-ld" "-flavor" "wasm" "--export" "[async-lift]wasi:cli/run@0.3.0#run" "--export" "[callback][async-lift]wasi:cli/run@0.3.0#run" "--export" "cabi_realloc" "-z" "stack-size=1048576" "--stack-first" "--no-demangle" "<11 object files omitted>" "<sysroot>/lib/rustlib/wasm32-wasip2/lib/libpanic_abort-*.rlib" "/build/apps/target/wasm32-wasip2/release/deps/{libwit_bindgen-93f942c50dbe338a,libwamn_materializer-40f24d211d5b8706,libwamn_event_reg-0ca589ecba332977,libjmespath-107960d78f83ec9c,liblazy_static-c9473daf15aaafe8,libwamn_event_wire-fb1ab2bffef8122f,libchrono-64be3e4142aa7d2c,libnum_traits-88576326e5c2c667,libsha2-0f76ca1a83ecd104,libcfg_if-c3f02fc368f21d25,libdigest-e22e7e220fb154b3,libconst_oid-91bb88eeb76bac1a,libcrypto_common-3fb20f0433a4b876,libblock_buffer-988825a064163ef9,libhybrid_array-3b3ee3419bbd9632,libtypenum-38f2f218c755d057,libserde-16a5b8ba957930fd,libserde_json-9d4ec76d9362b77d,libmemchr-e05e80c73b6fc5f4,libitoa-83f213c5d6bcd360,libzmij-3c4644adbf7bffdd,libserde_core-f26b59d69c69dfe3}.rlib" "<sysroot>/lib/rustlib/wasm32-wasip2/lib/{libstd-*,libwasip2-*,libwit_bindgen-*,libcfg_if-*,librustc_demangle-*,libstd_detect-*,libhashbrown-*,librustc_std_workspace_alloc-*,libminiz_oxide-*,libadler2-*,libunwind-*,liblibc-*}.rlib" "-l" "c" "<sysroot>/lib/rustlib/wasm32-wasip2/lib/{librustc_std_workspace_core-*,liballoc-*,libcore-*,libcompiler_builtins-*}.rlib" "-L" "/build/apps/target/wasm32-wasip2/release/build/wit-bindgen-3837f137a469cf30/out" "-L" "<sysroot>/lib/rustlib/wasm32-wasip2/lib/self-contained" "-o" "/build/apps/target/wasm32-wasip2/release/deps/materializer.wasm" "--gc-sections" "--no-entry" "-O2" "--strip-all"
+6.389   = note: some arguments are omitted. use `--verbose` to show all linker arguments
+6.389   = note: error: failed to parse core wasm for componentization
+6.389           
+6.389           Caused by:
+6.389               0: decoding custom section component-type:wit-bindgen:0.61.1:wamn:materializer@0.1.0:materializer:encoded world
+6.389               1: invalid leading byte (0x2) for import name (at offset 0xe45)
+6.389           
+6.389 
+6.405 error: could not compile `materializer` (lib) due to 1 previous error
+------

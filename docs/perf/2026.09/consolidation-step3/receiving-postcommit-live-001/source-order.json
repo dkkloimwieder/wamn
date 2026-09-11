@@ -1,0 +1,184 @@
+[
+  {
+    "source": "25bece68bfe93b3948bc2a72903ff1c3c2af806f",
+    "path": "apps/wamn_receiving/tests/route_authentication_live/cluster.rs",
+    "sha256": "4038dc7eb88fcd31bbc92d70b479e6d9cc48cefa840bab8cef8169e67b43d1f4",
+    "lines": [
+      {
+        "line": 79,
+        "text": "    if !standard_images {"
+      },
+      {
+        "line": 80,
+        "text": "        build::prepare_host_image(&cluster.work, &artifacts.target, &cluster.source)?;"
+      },
+      {
+        "line": 81,
+        "text": "    }"
+      },
+      {
+        "line": 82,
+        "text": "    resources::build_images(&mut cluster, standard_images).await?;"
+      },
+      {
+        "line": 83,
+        "text": "    resources::create(&mut cluster).await?;"
+      },
+      {
+        "line": 84,
+        "text": "    checked(kubectl(&cluster).args(["
+      },
+      {
+        "line": 85,
+        "text": "        \"wait\","
+      },
+      {
+        "line": 86,
+        "text": "        \"--for=condition=Ready\","
+      },
+      {
+        "line": 87,
+        "text": "        \"nodes\","
+      },
+      {
+        "line": 88,
+        "text": "        \"--all\","
+      },
+      {
+        "line": 89,
+        "text": "        \"--timeout=180s\","
+      },
+      {
+        "line": 90,
+        "text": "    ]))"
+      },
+      {
+        "line": 91,
+        "text": "    .await?;"
+      },
+      {
+        "line": 92,
+        "text": "    checked(kubectl(&cluster).args([\"create\", \"namespace\", &cluster.name])).await?;"
+      },
+      {
+        "line": 93,
+        "text": ""
+      },
+      {
+        "line": 94,
+        "text": "    let postgres = resources::inspect(&cluster, \"postgres\").await?;"
+      },
+      {
+        "line": 95,
+        "text": "    let postgres_address = resources::kind_address(&postgres)?;"
+      },
+      {
+        "line": 96,
+        "text": "    let loopback_port = resources::postgres_host_port(&postgres)?;"
+      },
+      {
+        "line": 97,
+        "text": "    let registry_address ="
+      },
+      {
+        "line": 98,
+        "text": "        resources::kind_address(&resources::inspect(&cluster, \"registry\").await?)?;"
+      },
+      {
+        "line": 99,
+        "text": "    let nats_address = resources::kind_address(&resources::inspect(&cluster, \"nats\").await?)?;"
+      }
+    ]
+  },
+  {
+    "source": "25bece68bfe93b3948bc2a72903ff1c3c2af806f",
+    "path": "apps/wamn_receiving/tests/route_authentication_live/cluster/postcommit_pair.rs",
+    "sha256": "750634160e397997be0d6475180dbc7e6b22bef5da3d2490fab46bc164eb5302",
+    "lines": [
+      {
+        "line": 9,
+        "text": ""
+      },
+      {
+        "line": 10,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 11,
+        "text": "#[ignore = \"builds two independent Receiving installations and compares the unchanged overlay\"]"
+      },
+      {
+        "line": 12,
+        "text": "async fn unchanged_overlay_across_baseline_and_additive_installations() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 13,
+        "text": "    let evidence = super::evidence_directory().await?;"
+      },
+      {
+        "line": 14,
+        "text": "    super::with_signals(&evidence, async {"
+      },
+      {
+        "line": 15,
+        "text": "        fs::create_dir(&evidence)?;"
+      },
+      {
+        "line": 16,
+        "text": "        super::postcommit_case::run_selected(BaseCandidate::Baseline, &evidence.join(\"baseline\"))"
+      },
+      {
+        "line": 17,
+        "text": "            .await?;"
+      },
+      {
+        "line": 18,
+        "text": "        super::postcommit_case::run_selected(BaseCandidate::Additive, &evidence.join(\"additive\"))"
+      },
+      {
+        "line": 19,
+        "text": "            .await?;"
+      },
+      {
+        "line": 20,
+        "text": "        let (source, baseline) = installation(&evidence.join(\"baseline\"), \"baseline\")?;"
+      },
+      {
+        "line": 21,
+        "text": "        let (additive_source, additive) = installation(&evidence.join(\"additive\"), \"additive\")?;"
+      },
+      {
+        "line": 22,
+        "text": "        ensure!("
+      },
+      {
+        "line": 23,
+        "text": "            source == additive_source,"
+      },
+      {
+        "line": 24,
+        "text": "            \"the two installations must use the same source commit\""
+      },
+      {
+        "line": 25,
+        "text": "        );"
+      },
+      {
+        "line": 26,
+        "text": "        let result = compare(&source, &baseline, &additive)?;"
+      },
+      {
+        "line": 27,
+        "text": "        fs::write("
+      },
+      {
+        "line": 28,
+        "text": "            evidence.join(\"pair.json\"),"
+      },
+      {
+        "line": 29,
+        "text": "            serde_json::to_vec_pretty(&result)?,"
+      }
+    ]
+  }
+]
