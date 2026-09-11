@@ -111,8 +111,10 @@ def main():
                 "environment", "namespace", "system-namespace", "update-trace", "receipt-trace"):
         parser.add_argument("--" + key, required=True)
     args = parser.parse_args()
-    if args.context != "kind-wamn-receiving-journey" or args.namespace != "wamn-receiving-journey":
-        parser.error("This proof only reads the disposable Receiving journey")
+    if (args.context, args.namespace) not in {
+            ("kind-wamn-receiving-journey", "wamn-receiving-journey"),
+            ("kind-wamn-receiving-postcommit", "wamn-receiving-postcommit")}:
+        parser.error("This proof only reads a named disposable Receiving journey")
     if args.system_namespace != "wamn-system" or not Path(args.kubeconfig).is_file():
         parser.error("The proof requires the journey's explicit private kubeconfig")
     if not re.fullmatch(r"[0-9a-f]{40}", args.source):

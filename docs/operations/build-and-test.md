@@ -3635,6 +3635,48 @@ cleanup. It cites the immutable RC bootstrap, M2-supersession, socketguard,
 traceproof, and scoped RegistryReader receipts; it does not rerun those
 unchanged mechanisms.
 
+### `[RECEIVING-POSTCOMMIT]` — unchanged overlay and event progress
+
+`wamn-10yt.78` owns this correctness proof under Increment 2 of `docs/poc/wamn_testing_spec.md`.
+The pair uses separate fresh installations of the baseline and additive base with identical overlay files and component bytes.
+The additive base contains one extra nullable text field in its copied initial migration.
+A third empty database proves that a base-owned `acme_inspection_required` field causes the exact `base-definition-mutation-refused` refusal.
+The schema comparison observes the installed requirements. It does not claim that publication enforces the generated schema contract.
+
+Run from clean committed source in an isolated worktree.
+Use a new evidence directory under the main checkout.
+
+```bash
+tools/receiving-postcommit-proof --apply \
+  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/live-001
+```
+
+Each installation executes the existing thirteen-route proof with the same overlay component.
+The deployed materializer first completes the existing causal receipt proof.
+The replay case approves that inspection, waits past the observed broker deduplication window, and republishes the original event bytes and headers.
+The second registered delivery must emit matching acceptance and completion records, acknowledge once, and preserve the approved inspection and its revision.
+
+The retry case stops only the owned materializer, commits a new receipt through its released route, and locks that receipt on another connection.
+The proof resumes the same materializer and submits an independent receipt.
+It observes three separate blocked handler queries before the actual `router-retry-exhausted` dead-letter record appears.
+The record must preserve the poison event, headers, stream sequence, and registration identity.
+The independent receipt must produce its inspection within 90 seconds.
+The proof releases the lock and restores the owned materializer on every normal result path.
+
+The router uses three attempts with 100 ms and 200 ms delays.
+The runner records the deployed statement timeout, which must be positive and at most 10 seconds.
+The replay wait permits the existing 120-second broker deduplication window plus two seconds.
+Each post-commit test has a 600-second outer bound.
+The proof assumes that its database, broker, host, and materializer remain available during delivery.
+It proves the named application behavior, not a platform-wide exactly-once guarantee.
+
+`overlay-compatibility.json` records the exact overlay files, component digest, schema observations, and breaking refusal.
+`postcommit.json` records source events, registered deliveries, approved state, observed retries, dead letters, independent state, and restoration.
+`pair.json` requires both installations, unchanged overlay identities, and successful cleanup.
+An absent test, zero executed cases, missing event, or unarmed phase fails the recipe.
+The mutation rules in **Traps** apply to deliberate defects and exact restoration.
+This recipe records no live result by itself.
+
 ### `[RECEIVING-CLUSTER-JOURNEY]` — released flow-http scheduling and reachability
 
 The same runner wraps the production Receiving route and materializer journeys

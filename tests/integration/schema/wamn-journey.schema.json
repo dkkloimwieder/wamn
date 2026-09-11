@@ -2,6 +2,33 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "definitions": {
+    "BaseCandidate": {
+      "enum": [
+        "baseline",
+        "additive"
+      ],
+      "type": "string"
+    },
+    "CompatibilityPhase": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "$ref": "#/definitions/BaseCandidate"
+        },
+        "evidence_file": {
+          "type": "string"
+        },
+        "package_directory": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "base",
+        "evidence_file",
+        "package_directory"
+      ],
+      "type": "object"
+    },
     "MaterializerPhase": {
       "additionalProperties": false,
       "description": "The materializer phase's inputs: the project-environment database the route phase provisioned, the event stream it subscribes to, and the receipt the trigger produced. The NATS URL is known from the start, but the only reader that needs it is this phase's, so it rides here rather than being a required top-level field a route-only run would have to invent.",
@@ -20,6 +47,48 @@
         "nats_url",
         "project_pg_url",
         "receipt_id"
+      ],
+      "type": "object"
+    },
+    "PostcommitPhase": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "type": "string"
+        },
+        "evidence_file": {
+          "type": "string"
+        },
+        "kubeconfig": {
+          "type": "string"
+        },
+        "materializer_workload": {
+          "type": "string"
+        },
+        "namespace": {
+          "type": "string"
+        },
+        "route_endpoint": {
+          "type": "string"
+        },
+        "source_commit": {
+          "type": "string"
+        },
+        "statement_timeout_ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "context",
+        "evidence_file",
+        "kubeconfig",
+        "materializer_workload",
+        "namespace",
+        "route_endpoint",
+        "source_commit",
+        "statement_timeout_ms"
       ],
       "type": "object"
     },
@@ -85,6 +154,28 @@
         }
       ],
       "description": "Known only after the route phase has provisioned the project environment and the materializer trigger has produced a receipt. The shell amends the document with it then; before that it is absent, and the materializer test refuses to run rather than read an empty string."
+    },
+    "overlay_compatibility": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/CompatibilityPhase"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Fresh-install proof with unchanged overlay artifacts."
+    },
+    "postcommit": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/PostcommitPhase"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Released materializer replay and retry proof."
     },
     "registry_auth_file": {
       "type": "string"

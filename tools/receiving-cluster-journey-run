@@ -5,7 +5,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--fresh-auth-bench] [--membershipproof] [--session-host-proof] [--fresh-only-proof] [--session-client-proof] [--receiving-correctness] --evidence-dir DIR
+usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--fresh-auth-bench] [--membershipproof] [--session-host-proof] [--fresh-only-proof] [--session-client-proof] [--receiving-correctness] [--receiving-postcommit baseline|additive] --evidence-dir DIR
 
 Without --apply, print the immutable plan and exit.
 
@@ -20,6 +20,8 @@ Without --apply, print the immutable plan and exit.
                        reachable and unavailable JWKS; cannot combine modes
   --receiving-correctness Prove command histories, rollback, replay, authorization, and contention
                          Cannot combine modes. Does not measure performance.
+  --receiving-postcommit BASE Prove unchanged overlay compatibility and materializer progress
+                         BASE is baseline or additive. Cannot combine modes.
   --fresh-only-proof   Prove direct/nested session refusal, same-human PAT success, and
                        next-request revocation and prior commits, plus the session-host proof
   --session-client-proof Prove client login, session use, explicit PAT selection, and
@@ -41,6 +43,7 @@ throughput=false
 membershipproof=false
 session_host_proof=false
 receiving_correctness=false
+receiving_postcommit=
 fresh_only_proof=false
 session_client_proof=false
 session_host_requested=false
@@ -57,6 +60,7 @@ while (($#)); do
     --fresh-only-proof) fresh_only_proof=true; session_host_proof=true; shift ;;
     --session-client-proof) session_client_proof=true; session_host_proof=true; shift ;;
     --receiving-correctness) receiving_correctness=true; shift ;;
+    --receiving-postcommit) receiving_postcommit=${2-}; shift 2 ;;
     --fresh-auth-bench) fresh_auth_bench=true; throughput=true; measure_startup=true; shift ;;
     --evidence-dir) evidence_dir=${2-}; shift 2 ;;
     --help|-h) usage; exit 0 ;;
@@ -83,7 +87,16 @@ if [[ "$receiving_correctness" == true && ( "$membershipproof" == true || "$sess
   echo "--receiving-correctness cannot combine with other proof or measurement modes" >&2
   exit 2
 fi
-if [[ "$membershipproof" == true || "$session_host_proof" == true || "$receiving_correctness" == true ]]; then
+if [[ -n "$receiving_postcommit" ]]; then
+  case "$receiving_postcommit" in baseline|additive) ;; *)
+    echo "--receiving-postcommit requires baseline or additive" >&2; exit 2 ;;
+  esac
+  if [[ "$membershipproof" == true || "$session_host_proof" == true || "$receiving_correctness" == true || "$measure_startup" == true ]]; then
+    echo "--receiving-postcommit cannot combine with other modes" >&2
+    exit 2
+  fi
+fi
+if [[ "$membershipproof" == true || "$session_host_proof" == true || "$receiving_correctness" == true || -n "$receiving_postcommit" ]]; then
   standard_images=true
 fi
 
@@ -116,6 +129,8 @@ short_head=${head:0:12}
 cluster=wamn-receiving-journey
 if [[ "$receiving_correctness" == true ]]; then
   cluster=wamn-receiving-correctness
+elif [[ -n "$receiving_postcommit" ]]; then
+  cluster=wamn-receiving-postcommit
 fi
 context=kind-$cluster
 namespace=$cluster
@@ -214,7 +229,9 @@ if [[ "$apply" != true ]]; then
   printf '  cluster/context: %s / %s\n' "$cluster" "$context"
   printf '  namespace: %s\n' "$namespace"
   printf '  route host: %s (setup overlay only)\n' "$route_host"
-  if [[ "$receiving_correctness" == true ]]; then
+  if [[ -n "$receiving_postcommit" ]]; then
+    printf '  order: fresh %s base + unchanged overlay -> thirteen released routes -> CDC + registered materializer -> duplicate handler delivery -> retry exhaustion and independent progress -> exact teardown\n' "$receiving_postcommit"
+  elif [[ "$receiving_correctness" == true ]]; then
     printf '  order: compile correctness proof -> Dockerfile host + gates -> production admission + release -> deployed HTTP command histories, rollback, replay, authorization, and contention -> exact teardown\n'
     printf '  correctness: 16 generated histories with seed 7701, explicit histories, and seven boundary cases. No performance measurement.\n'
   elif [[ "$session_client_proof" == true ]]; then
@@ -314,6 +331,11 @@ assert_can_i() {
   esac
   printf '%s=%s\n' "$verb" "$output" >>"$receipt"
 }
+
+if [[ -n "$receiving_postcommit" ]]; then
+  # The postcommit HTTP client runs locally; production images need no curl.
+  run curl --disable --version >"$evidence_dir/postcommit-http-client.version"
+fi
 
 work_dir=$(mktemp -d)
 kubeconfig=$work_dir/kubeconfig
@@ -522,7 +544,10 @@ cleanup() {
   fi
 
   if [[ $status -eq 0 && "$run_complete" == true && "$cleanup_failed" == false ]]; then
-    if [[ "$receiving_correctness" == true ]]; then
+    if [[ -n "$receiving_postcommit" ]]; then
+      printf 'RECEIVING POSTCOMMIT PASS source=%s namespace=%s base=%s cleanup=pass\n' \
+        "$head" "$namespace" "$receiving_postcommit" >"$evidence_dir/postcommit-journey.receipt"
+    elif [[ "$receiving_correctness" == true ]]; then
       printf 'RECEIVING CORRECTNESS PASS source=%s namespace=%s generated_cases=16 boundary_cases=7 cleanup=pass\n' \
         "$head" "$namespace" >"$evidence_dir/receiving-correctness-journey.receipt"
     elif [[ "$session_client_proof" == true ]]; then
@@ -561,6 +586,8 @@ trap 'exit 130' HUP INT TERM
 lock_file=${TMPDIR:-/tmp}/wamn-receiving-cluster-journey.lock
 if [[ "$receiving_correctness" == true ]]; then
   lock_file=${TMPDIR:-/tmp}/wamn-receiving-correctness.lock
+elif [[ -n "$receiving_postcommit" ]]; then
+  lock_file=${TMPDIR:-/tmp}/wamn-receiving-postcommit.lock
 fi
 exec 9>"$lock_file"
 if ! flock -n 9; then
@@ -618,7 +645,7 @@ fi
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   cargo build --locked -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor
 export WAMN_IDENTITY_BINARY="$cargo_target_dir/debug/wamn-identity"
-if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true ]]; then
+if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true && -z "$receiving_postcommit" ]]; then
   run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
     cargo test --locked --offline -p wamn-proof-integration --test startup_burst_live --no-run
 fi
@@ -989,6 +1016,12 @@ if [[ "$fresh_only_proof" == true || "$session_client_proof" == true ]]; then
   route_phase_test=production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes
 fi
 write_journey_document journey_spec "$journey_schema" "$journey_document"
+if [[ -n "$receiving_postcommit" ]]; then
+  amend_journey_document "$journey_schema" "$journey_document" overlay_compatibility \
+    "$(jq -n --arg base "$receiving_postcommit" --arg directory "$work_dir/compatibility-packages" \
+      --arg evidence "$evidence_dir/overlay-compatibility.json" \
+      '{base:$base,package_directory:$directory,evidence_file:$evidence}')"
+fi
 record_command cargo test "$route_phase_test" \
   '<journey document with disposable PostgreSQL and OCI inputs redacted>'
 WAMN_JOURNEY_DOCUMENT="$journey_document" \
@@ -1180,7 +1213,7 @@ manifest_digest=${digest_lines[0]#*=}
 
 # Reuse the released closure and scoped generations before materializer traffic.
 # This proves real idle executor probes and shutdown, not queued delivery drain.
-if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true ]]; then
+if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true && -z "$receiving_postcommit" ]]; then
 record_command executor-native-lifecycle "$cargo_target_dir/debug/wamn-run-worker" \
   '<private fixture credentials>' "$manifest_digest" SIGTERM SIGINT
 python3 - "$cargo_target_dir/debug/wamn-run-worker" "$host_secret_directory" \
@@ -3025,6 +3058,55 @@ if [[ "$measure_startup" == true ]]; then
   exit 0
 fi
 
+if [[ -n "$receiving_postcommit" ]]; then
+  # Reuse the owned NodePort for this probe, the trigger, and the Rust proof.
+  postcommit_nodeport=$work_dir/postcommit-nodeport.json
+  jq -n --arg namespace "$namespace" \
+    --slurpfile slices "$evidence_dir/flow-http-endpointslices.json" \
+    --slurpfile service "$evidence_dir/flow-http-service.json" '
+    $slices[0].items[0] as $slice |
+    {apiVersion:"v1",kind:"List",items:[
+      {apiVersion:"v1",kind:"Service",
+       metadata:{name:"receiving-postcommit-nodeport",namespace:$namespace},
+       spec:{type:"NodePort",ports:[{name:"http",protocol:"TCP",
+         port:$service[0].spec.ports[0].port,targetPort:$slice.ports[0].port}]}},
+      {apiVersion:"discovery.k8s.io/v1",kind:"EndpointSlice",
+       metadata:{name:"receiving-postcommit-nodeport",namespace:$namespace,
+         labels:{"kubernetes.io/service-name":"receiving-postcommit-nodeport"}},
+       addressType:$slice.addressType,ports:$slice.ports,
+       endpoints:[$slice.endpoints[] | {addresses,conditions}]}]}
+  ' >"$postcommit_nodeport"
+  run "${kube[@]}" apply -f "$postcommit_nodeport"
+  "${kube[@]}" -n "$namespace" get service receiving-postcommit-nodeport -o json \
+    >"$evidence_dir/postcommit-service.json"
+  postcommit_port=$(jq -er '.spec.ports[0].nodePort' "$evidence_dir/postcommit-service.json")
+  postcommit_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
+    "$cluster-control-plane")
+  [[ $postcommit_port =~ ^[0-9]{4,5}$ && -n $postcommit_ip ]] || exit 1
+  postcommit_endpoint=http://$postcommit_ip:$postcommit_port
+  cp "$postcommit_nodeport" "$evidence_dir/postcommit-nodeport.json"
+  postcommit_probe_exit=0
+  postcommit_probe_status=$(run curl --disable --noproxy '*' \
+    --silent --show-error --connect-timeout 5 --max-time 15 \
+    --retry 15 --retry-delay 1 --retry-connrefused --retry-max-time 45 \
+    --dump-header "$evidence_dir/flow-http-probe.headers" \
+    --output "$evidence_dir/flow-http-probe.body" --write-out '%{http_code}' \
+    --header "Host: $route_host" "$postcommit_endpoint/no-such-route" \
+    2>"$evidence_dir/flow-http-probe.stderr") || postcommit_probe_exit=$?
+  jq -n --arg endpoint "$postcommit_endpoint" --arg host "$route_host" \
+    --arg status "$postcommit_probe_status" --argjson exit_code "$postcommit_probe_exit" \
+    '{transport:"owned-nodeport",endpoint:$endpoint,host:$host,
+      http_status:$status,curl_exit_code:$exit_code}' \
+    >"$evidence_dir/flow-http-probe-endpoint.json"
+  postcommit_content_type=$(sed -n 's/^[Cc]ontent-[Tt]ype:[[:space:]]*//p' \
+    "$evidence_dir/flow-http-probe.headers" | tr -d '\r' | tail -n 1)
+  [[ "$postcommit_probe_exit" == 0 && "$postcommit_probe_status" == 404 &&
+    "$postcommit_content_type" == application/json ]]
+  cmp -s <(printf '%s' '{"error":{"code":"route-not-found"}}') \
+    "$evidence_dir/flow-http-probe.body"
+  printf 'RECEIVING_HTTP_PROBE {"status":404,"content_type":"application/json","host":"%s","body":{"error":{"code":"route-not-found"}}}\n' \
+    "$route_host" >"$evidence_dir/flow-http-probe.log"
+else
 probe_manifest=$work_dir/flow-http-reachability.yaml
 cat >"$probe_manifest" <<EOF
 apiVersion: batch/v1
@@ -3083,6 +3165,7 @@ jq -e --arg image "$host_image" --arg image_id "$host_runtime_digest" '
 ' >/dev/null "$evidence_dir/flow-http-probe-pod.json"
 "${kube[@]}" -n "$namespace" logs job/flow-http-reachability \
   >"$evidence_dir/flow-http-probe.log"
+fi
 if [[ $(grep -Fc 'RECEIVING_HTTP_PROBE ' "$evidence_dir/flow-http-probe.log") -ne 1 ]]; then
   echo "flow-http probe did not emit exactly one typed-refusal receipt" >&2
   exit 1
@@ -3101,6 +3184,9 @@ materializer_update_trace=$(openssl rand -hex 16)
 materializer_receipt_trace=$(openssl rand -hex 16)
 jq -n --arg update "$materializer_update_trace" --arg receipt "$materializer_receipt_trace" \
   '{update:$update,receipt:$receipt}' >"$evidence_dir/materializer-trace-ids.json"
+materializer_update_body='[{"request_id":"materializer-order","id":"00000000-0000-0000-0000-000000000304","expected_row_version":"1","change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]'
+materializer_receipt_body='[{"request_id":"materializer-receipt","value":{"idempotency_key":"materializer-receipt-command","purchase_order_id":"00000000-0000-0000-0000-000000000304","receipt_reference":"MATERIALIZER-RECEIPT","occurred_at":"2026-08-31T12:34:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000504","quantity":"9.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]'
+if [[ -z "$receiving_postcommit" ]]; then
 materializer_trigger=$work_dir/materializer-trigger.yaml
 cat >"$materializer_trigger" <<EOF
 apiVersion: batch/v1
@@ -3133,7 +3219,7 @@ spec:
                 --header 'Content-Type: application/json' \
                 --header "Authorization: Bearer \$ROUTE_CALLER_PAT" \
                 --header 'traceparent: 00-$materializer_update_trace-1111111111111111-01' \
-                --data '[{"request_id":"materializer-order","id":"00000000-0000-0000-0000-000000000304","expected_row_version":"1","change":{"acme_inspection_required":true,"acme_quality_status":"pending"}}]' \
+                --data '$materializer_update_body' \
                 'http://flow-http.$namespace.svc.cluster.local/acme/purchase_order/update')
               test "\$update_status" = 200
               receipt_status=\$(curl --silent --show-error --connect-timeout 5 --max-time 60 \
@@ -3142,7 +3228,7 @@ spec:
                 --header 'Content-Type: application/json' \
                 --header "Authorization: Bearer \$ROUTE_CALLER_PAT" \
                 --header 'traceparent: 00-$materializer_receipt_trace-2222222222222222-01' \
-                --data '[{"request_id":"materializer-receipt","value":{"idempotency_key":"materializer-receipt-command","purchase_order_id":"00000000-0000-0000-0000-000000000304","receipt_reference":"MATERIALIZER-RECEIPT","occurred_at":"2026-08-31T12:34:00.000000Z","line":[{"purchase_order_line_id":"00000000-0000-0000-0000-000000000504","quantity":"9.0000","location_id":"00000000-0000-0000-0000-000000000201"}]}}]' \
+                --data '$materializer_receipt_body' \
                 'http://flow-http.$namespace.svc.cluster.local/acme/receiving/record_receipt')
               test "\$receipt_status" = 200
               printf 'RECEIVING_MATERIALIZER_UPDATE '
@@ -3151,6 +3237,7 @@ spec:
               tr -d '\n' </tmp/receipt.json
               printf '\n'
 EOF
+fi
 materializer_manifest=$work_dir/materializer.yaml
 # The template is a GENERIC example; every identity field in it is a
 # placeholder this journey fills from the declaration above. The template_*
@@ -3262,11 +3349,56 @@ jq -e --arg namespace "$namespace" \
 # Both production consumers are resident before this HTTP commit. The first
 # request makes the untouched order inspection-bearing; the second creates the
 # receipt whose causal CDC event the materializer consumes.
+if [[ -n "$receiving_postcommit" ]]; then
+  materializer_curl_config=$work_dir/materializer-curl.conf
+  (
+    umask 077
+    jq -r '.stringData.token | "header = " + ("Authorization: Bearer " + . | @json)' \
+      "$route_caller_secret" >"$materializer_curl_config"
+  )
+  [[ $(stat -c '%a' "$materializer_curl_config") == 600 ]]
+  # Disable user curl configuration and retries: each POST must run only once.
+  materializer_trigger_deadline=$((SECONDS + 90))
+  materializer_update_status=$(run_sensitive materializer-http-update \
+    curl --disable --config "$materializer_curl_config" --noproxy '*' \
+    --silent --show-error --connect-timeout 5 --max-time 60 --retry 0 \
+    --output "$work_dir/materializer-update.json" --write-out '%{http_code}' \
+    --header "Host: $route_host" --header 'Content-Type: application/json' \
+    --header "traceparent: 00-$materializer_update_trace-1111111111111111-01" \
+    --data "$materializer_update_body" "$postcommit_endpoint/acme/purchase_order/update" \
+    2>"$evidence_dir/materializer-update.stderr")
+  [[ "$materializer_update_status" == 200 ]]
+  materializer_receipt_timeout=$((materializer_trigger_deadline - SECONDS))
+  ((materializer_receipt_timeout > 0))
+  if ((materializer_receipt_timeout > 60)); then materializer_receipt_timeout=60; fi
+  materializer_receipt_status=$(run_sensitive materializer-http-receipt \
+    curl --disable --config "$materializer_curl_config" --noproxy '*' \
+    --silent --show-error --connect-timeout 5 --max-time "$materializer_receipt_timeout" --retry 0 \
+    --output "$work_dir/materializer-receipt.json" --write-out '%{http_code}' \
+    --header "Host: $route_host" --header 'Content-Type: application/json' \
+    --header "traceparent: 00-$materializer_receipt_trace-2222222222222222-01" \
+    --data "$materializer_receipt_body" "$postcommit_endpoint/acme/receiving/record_receipt" \
+    2>"$evidence_dir/materializer-receipt.stderr")
+  [[ "$materializer_receipt_status" == 200 ]]
+  jq -n --arg endpoint "$postcommit_endpoint" --arg host "$route_host" \
+    --arg update "$materializer_update_status" --arg receipt "$materializer_receipt_status" \
+    '{transport:"owned-nodeport",endpoint:$endpoint,host:$host,
+      update_http_status:$update,receipt_http_status:$receipt}' \
+    >"$evidence_dir/materializer-trigger-endpoint.json"
+  {
+    printf 'RECEIVING_MATERIALIZER_UPDATE '
+    tr -d '\n' <"$work_dir/materializer-update.json"
+    printf '\nRECEIVING_MATERIALIZER_RECEIPT '
+    tr -d '\n' <"$work_dir/materializer-receipt.json"
+    printf '\n'
+  } >"$evidence_dir/materializer-trigger.log"
+else
 run "${kube[@]}" apply -f "$materializer_trigger"
 run "${kube[@]}" -n "$namespace" wait --for=condition=Complete \
   "job/$app_materializer_trigger" --timeout=120s
 "${kube[@]}" -n "$namespace" logs "job/$app_materializer_trigger" \
   >"$evidence_dir/materializer-trigger.log"
+fi
 sed -n 's/^RECEIVING_MATERIALIZER_UPDATE //p' \
   "$evidence_dir/materializer-trigger.log" >"$evidence_dir/materializer-update.json"
 sed -n 's/^RECEIVING_MATERIALIZER_RECEIPT //p' \
@@ -3333,6 +3465,49 @@ run python3 "$repo_root/tools/journey-telemetry-proof" \
   --tenant "$app_tenant" --project "$app_project" --environment "$app_environment" \
   --namespace "$namespace" --system-namespace "$system_namespace" \
   --update-trace "$materializer_update_trace" --receipt-trace "$materializer_receipt_trace"
+
+if [[ -n "$receiving_postcommit" ]]; then
+  "${kube[@]}" -n "$namespace" get deployment hostgroup-default -o json \
+    >"$evidence_dir/postcommit-host-configuration.json"
+  postcommit_timeout=$(jq -er '
+    [.spec.template.spec.containers[] | select(.name == "host") |
+      .env[]? | select(.name == "WAMN_PG_STATEMENT_TIMEOUT_MS")] as $values |
+    if ($values | length) == 0 then 5000
+    elif ($values | length) == 1 and ($values[0].value | type) == "string"
+    then ($values[0].value | tonumber)
+    else error("ambiguous host statement timeout") end |
+    select(. > 0 and . <= 10000)
+  ' "$evidence_dir/postcommit-host-configuration.json")
+  amend_journey_document "$journey_schema" "$journey_document" postcommit \
+    "$(jq -n --arg endpoint "$postcommit_endpoint" \
+      --arg evidence "$evidence_dir/postcommit.json" --arg kubeconfig "$kubeconfig" \
+      --arg context "$context" --arg namespace "$namespace" \
+      --arg workload "$app_materializer_workload" --arg source "$head" \
+      --argjson timeout "$postcommit_timeout" \
+      '{route_endpoint:$endpoint,evidence_file:$evidence,kubeconfig:$kubeconfig,
+        context:$context,namespace:$namespace,materializer_workload:$workload,
+        source_commit:$source,statement_timeout_ms:$timeout}')"
+  record_command timeout --signal=TERM --kill-after=10s 600s \
+    cargo test route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress
+  timeout --signal=TERM --kill-after=10s 600s \
+    env WAMN_JOURNEY_DOCUMENT="$journey_document" CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+    cargo test --locked --offline -p wamn-proof-integration --lib \
+    route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress \
+    -- --ignored --exact --nocapture --test-threads=1 \
+    2>&1 | tee "$evidence_dir/postcommit.log"
+  assert_one_test_ran "$evidence_dir/postcommit.log" \
+    production_materializer_preserves_replay_and_progress 'route_authentication_live::postcommit::'
+  [[ $(git rev-parse HEAD) == "$head" ]] || exit 1
+  [[ -z $(git status --porcelain --untracked-files=normal -- . \
+      ':(exclude).beads/issues.jsonl' ':(exclude).beads/interactions.jsonl') ]] || exit 1
+  jq -n --arg source "$head" --arg base "$receiving_postcommit" \
+    '{schema:"wamn-receiving-postcommit/v1",verdict:"pass",source:$source,base:$base,
+      passing_arms:["unchanged-overlay-routes","schema-requirements-observed",
+        "duplicate-handler-delivery","retry-exhaustion-dlq","independent-event-progress"]}' \
+    >"$evidence_dir/verdict.json"
+  run_complete=true
+  exit 0
+fi
 
 # Full journey only. This fresh process uses the published production HTTP shell
 # and the existing private authorities. Measurement modes have already exited.

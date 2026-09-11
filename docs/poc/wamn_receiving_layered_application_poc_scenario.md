@@ -1150,3 +1150,29 @@ The response control exercises application delivery after transport receipt. It 
 The suite also requires deliberate business-defect evidence, including a contention-protection mutant, under the existing mutation rules.
 If another database constraint protects the invariant, record the surviving mutant. Do not weaken that constraint to force an unsafe result.
 Future overlay compatibility uses two independent fresh installations with identical overlay artifacts under `wamn-10yt.78`. It does not reopen in-place upgrades.
+
+
+## 16. Unchanged overlay and post-commit proof
+
+`wamn-10yt.78` owns these invariants under Increment 2 of `wamn_testing_spec.md`.
+The tests use separate fresh installations and the exact same overlay files and component artifact.
+This section defines proof obligations. It records no executed result.
+
+`OVL-SCHEMA` requires the unchanged overlay to operate with both the baseline and an additive base.
+The affected state includes the consumed fields, constraints, and installed package ownership records.
+The observation follows the thirteen released route cases and reads the required columns and named constraints from PostgreSQL catalogs.
+The `overlay_compatibility` test module compares the required schema and proves the typed ownership refusal in a third empty database.
+The production enforcer for that refusal is `apply_package::preflight_add_definition`.
+The schema comparison is a test observation, not a new production admission rule.
+
+`REC-EVENT-REPLAY` requires a second delivery of the same receipt event to preserve its approved inspection and revision.
+The observation follows the first handler completion and broker acknowledgement.
+The enforcer is the primary key on `quality_inspection.receipt_id` and the handler's `ON CONFLICT DO NOTHING` statement.
+`production_materializer_preserves_replay_and_progress` requires the second registered delivery and compares the complete inspection row.
+
+`REC-POSTCOMMIT-PROGRESS` requires retry exhaustion to produce a correlated dead letter while an independent receipt reaches its inspection within 90 seconds.
+The affected state includes the locked receipt, its absent inspection, the independent inspection, and the registration's durable delivery state.
+The test observes three separate blocked handler statements and the actual dead-letter record before it releases the lock.
+The enforcers are the router's default attempt budget and the materializer's settlement policy.
+The same named post-commit test records the limits, source identities, outcomes, and restoration.
+The proof assumes that its database, broker, host, and materializer remain available.
