@@ -146,7 +146,7 @@ const OVERLAY_OPERATIONS: [(&str, &str); 6] = [
 const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
 const OVERLAY_RECORD_RECEIPT: &str = "client-acme-receiving:receiving/record-receipt@3.0.0";
 const PREEXISTING_QUALITY_RECEIPT_ID: &str = "00000000-0000-0000-0000-000000000603";
-const MATERIALIZER_STREAM: &str = "EVT_acme_dev";
+const MATERIALIZER_STREAM: &str = "EVT_4_acme_9_receiving_3_dev";
 const MATERIALIZER_DURABLE: &str =
     "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection";
 

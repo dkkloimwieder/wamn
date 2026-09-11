@@ -304,7 +304,7 @@ async fn matching_delivery_advisory(
     sequence: u64,
 ) -> anyhow::Result<Option<(String, DeliveryAdvisory)>> {
     let mut stream = jetstream
-        .get_stream(wamn_event_wire::DELIVERY_ADVISORY_STREAM)
+        .get_stream(wamn_event_wire::delivery_advisory_stream(MATERIALIZER_STREAM))
         .await?;
     let state = stream.info().await?.state.clone();
     if state.messages == 0 {
