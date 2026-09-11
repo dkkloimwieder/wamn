@@ -25,6 +25,7 @@ use super::{GradeArgs, GradeFailure, failure, home, read_json, text, write, writ
 const PORTS: [u16; 6] = [54332, 5004, 4224, 3201, 4319, 8088];
 const GATE_DOCUMENT: &str = "docs/operations/build-and-test.md";
 const PILOT_SECTION: &str = "[AGENT-PILOT]";
+const REPLAY_RESULTS: &str = "docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001";
 const HARNESS_DOCUMENTS: [&str; 2] = [
     "docs/poc/agent-authoring-tooling-spec.md",
     "docs/poc/deterministic-testing-spec.md",
@@ -324,6 +325,9 @@ fn assert_rubric_unreachable(
     if worktree.join("tests/integration/src/agent_pilot").exists() {
         found.push("tests/integration/src/agent_pilot".to_owned());
     }
+    if worktree.join(REPLAY_RESULTS).exists() {
+        found.push(REPLAY_RESULTS.to_owned());
+    }
     let mut parent = run;
     while let Some(up) = parent.parent() {
         if up == user_home || up == Path::new("/") {
@@ -519,9 +523,13 @@ impl Run {
         .await?;
         let worktree = self.directory.join("worktree");
         let mut removed = Vec::new();
-        for path in ["docs/experiments", "tests/integration/src/agent_pilot"]
-            .into_iter()
-            .chain(HARNESS_DOCUMENTS)
+        for path in [
+            "docs/experiments",
+            "tests/integration/src/agent_pilot",
+            REPLAY_RESULTS,
+        ]
+        .into_iter()
+        .chain(HARNESS_DOCUMENTS)
         {
             if worktree.join(path).exists() {
                 removed.push(path.to_owned());

@@ -5,8 +5,8 @@ use serde_json::json;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 use super::{
-    GATE_DOCUMENT, assert_rubric_unreachable, directory, matches_pattern, strip_document_section,
-    validate_steps,
+    GATE_DOCUMENT, REPLAY_RESULTS, assert_rubric_unreachable, directory, matches_pattern,
+    strip_document_section, validate_steps,
 };
 use crate::agent_pilot::write_json;
 
@@ -85,6 +85,46 @@ fn rubric_in_worktree_is_refused() {
     cut(&root);
     fs::write(root.path().join("run/worktree/steps.json"), "[]").unwrap();
     assert!(check(&root, Path::new("/separate-pilot-grading")).is_err());
+}
+
+#[test]
+fn recorded_replay_steps_in_worktree_are_refused() {
+    let root = layout();
+    cut(&root);
+    let steps = root
+        .path()
+        .join("run/worktree")
+        .join(REPLAY_RESULTS)
+        .join("recovered-lookups/cache/wamn-pilot/grading/031/steps.json");
+    directory(steps.parent().unwrap()).unwrap();
+    fs::write(&steps, "[]").unwrap();
+    let error = check(&root, Path::new("/separate-pilot-grading")).unwrap_err();
+    assert!(error.to_string().contains(&steps.display().to_string()));
+}
+
+#[test]
+fn recorded_replay_results_without_steps_in_worktree_are_refused() {
+    let root = layout();
+    cut(&root);
+    let results = root.path().join("run/worktree").join(REPLAY_RESULTS);
+    directory(&results).unwrap();
+    fs::write(results.join("checklist.json"), "{}").unwrap();
+    fs::write(results.join("result.json"), "{}").unwrap();
+    let error = check(&root, Path::new("/separate-pilot-grading")).unwrap_err();
+    assert!(error.to_string().contains(REPLAY_RESULTS));
+}
+
+#[test]
+fn unrelated_performance_record_in_worktree_is_accepted() {
+    let root = layout();
+    cut(&root);
+    let record = root
+        .path()
+        .join("run/worktree/docs/perf/unrelated-test/result.json");
+    directory(record.parent().unwrap()).unwrap();
+    fs::write(&record, "{\"passed\":true}\n").unwrap();
+    check(&root, Path::new("/separate-pilot-grading")).unwrap();
+    assert_eq!(fs::read(&record).unwrap(), b"{\"passed\":true}\n");
 }
 
 #[test]
