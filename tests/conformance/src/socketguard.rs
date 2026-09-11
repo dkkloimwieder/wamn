@@ -22,8 +22,12 @@ use clap::Args;
 use wamn_component_policy::{EgressGuardError, PolicyProfile, analyze};
 use wamn_runtime::engine::build_engine;
 
-#[derive(Args)]
-pub struct SocketGuardArgs {}
+#[derive(Args, Debug)]
+pub struct SocketGuardArgs {
+    /// Write the completed assertions as JSON, including to a Kubernetes termination file.
+    #[arg(long)]
+    pub result_file: Option<std::path::PathBuf>,
+}
 
 /// A socket interface the runtime links unconditionally — the world an
 /// attacker component would import to reach Postgres directly.
@@ -83,7 +87,7 @@ fn screen(
     Ok(analyze(&imports, PolicyProfile::FirstParty, label).map(|_| ()))
 }
 
-pub async fn run(_args: SocketGuardArgs) -> anyhow::Result<()> {
+pub async fn run(args: SocketGuardArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
     println!("# wamn-gates socketguard — E13a publish-time egress guard (hermetic)");
@@ -93,16 +97,24 @@ pub async fn run(_args: SocketGuardArgs) -> anyhow::Result<()> {
     let engine = build_engine(&[])?;
 
     let mut pass = true;
+    let mut checks = serde_json::Map::new();
 
     // NEGATIVE — the socket-importing world must be refused, naming the offense.
     for (abi, imports) in [("P2", P2_ATTACKER_IMPORTS), ("P3", P3_ATTACKER_IMPORTS)] {
         println!("\n## negative — a {abi} wasi:sockets importer is refused at publish");
         match screen(&engine, imports, &format!("socket-importer-{abi}.wasm"))? {
-            Err(e) => println!("    PASS: refused — {e}"),
+            Err(e) => {
+                println!("    PASS: refused — {e}");
+                checks.insert(
+                    abi.to_owned(),
+                    serde_json::json!({"refused":true,"reason":e.to_string()}),
+                );
+            }
             Ok(()) => {
                 println!(
                     "    FAIL: a {abi} wasi:sockets importer was ADMITTED — the DB-path bypass is open"
                 );
+                checks.insert(abi.to_owned(), serde_json::json!({"refused":false}));
                 pass = false;
             }
         }
@@ -111,14 +123,29 @@ pub async fn run(_args: SocketGuardArgs) -> anyhow::Result<()> {
     // POSITIVE control — a standard world must still publish.
     println!("\n## positive control — a standard workload still publishes");
     match screen(&engine, STANDARD_IMPORTS, "standard.wasm")? {
-        Ok(()) => println!("    PASS: admitted — no raw-socket surface"),
+        Ok(()) => {
+            println!("    PASS: admitted — no raw-socket surface");
+            checks.insert("standard".to_owned(), serde_json::json!({"admitted":true}));
+        }
         Err(e) => {
             println!("    FAIL: a standard workload was REFUSED — {e}");
+            checks.insert(
+                "standard".to_owned(),
+                serde_json::json!({"admitted":false,"reason":e.to_string()}),
+            );
             pass = false;
         }
     }
 
     println!("\nsocketguard complete — overall PASS: {pass}");
+    if let Some(path) = args.result_file {
+        std::fs::write(
+            path,
+            serde_json::to_vec(&serde_json::json!({
+                "test":"socketguard","passed":pass,"checks":checks,
+            }))?,
+        )?;
+    }
     if !pass {
         bail!("E13a socketguard failed: the publish-time egress guard did not hold");
     }

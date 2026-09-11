@@ -146,6 +146,9 @@ pub struct TraceproofArgs {
     /// Reflecting upstream in a separate process/pod.
     #[arg(long)]
     pub upstream: String,
+    /// Write the completed assertions as JSON, including to a Kubernetes termination file.
+    #[arg(long)]
+    pub result_file: Option<std::path::PathBuf>,
 }
 
 pub async fn run(args: TraceproofArgs) -> anyhow::Result<()> {
@@ -162,7 +165,16 @@ pub async fn run(args: TraceproofArgs) -> anyhow::Result<()> {
 
     let parent = parent_context(&trace_id, &sent_span)?;
     match prove_effect_surface(&args.upstream, &parent, &trace_id, &sent_span).await {
-        Ok(()) => {
+        Ok((captured, reflected)) => {
+            if let Some(path) = args.result_file {
+                std::fs::write(
+                    path,
+                    serde_json::to_vec(&serde_json::json!({
+                        "test":"traceproof","passed":true,"surface":SURFACE,
+                        "parent":sent_tp,"injected":captured,"reflected":reflected,
+                    }))?,
+                )?;
+            }
             println!(
                 "PASS [{SURFACE} trace id threads across process boundary without guest help]"
             );
@@ -184,7 +196,7 @@ async fn prove_effect_surface(
     parent: &opentelemetry::Context,
     sent_trace_id: &str,
     sent_span_id: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<(String, serde_json::Value)> {
     let captured = capture_effect_traceparent(parent)
         .with_context(|| format!("FAIL [{SURFACE} effect span executes]"))?
         .with_context(|| {
@@ -223,7 +235,7 @@ async fn prove_effect_surface(
         );
     }
     println!("{SURFACE} injected traceparent = {captured}");
-    Ok(())
+    Ok((captured, reflected))
 }
 
 fn validate_traceparent(

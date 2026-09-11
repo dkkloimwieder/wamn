@@ -119,7 +119,7 @@ impl Bootstrap {
 }
 
 /// Prepare temporary operator credentials and start the existing service binary.
-pub(super) async fn start(system_url: &str, root: &Path) -> anyhow::Result<Bootstrap> {
+pub async fn start(system_url: &str, root: &Path) -> anyhow::Result<Bootstrap> {
     start_with(
         system_url,
         root,
