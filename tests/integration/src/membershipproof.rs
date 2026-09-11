@@ -8,13 +8,11 @@ use std::io::Write as _;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, ensure};
 use clap::Args;
 use serde_json::{Value, json};
-use tokio::process::Command;
 use tokio_postgres::{Client, NoTls};
 use wamn_platform_identity::{PrincipalId, assign_project_role, create_human, issue_pat};
 
@@ -50,9 +48,6 @@ pub struct MembershipProofArgs {
     /// Tenant already attached to the released route.
     #[arg(long)]
     pub tenant: String,
-    /// Built production provisioning CLI executable.
-    #[arg(long, env = "WAMN_CTL_BIN")]
-    pub ctl_bin: PathBuf,
     /// Seed a disposable human benchmark fixture and write its PAT to a new mode-0600 file.
     /// The journey teardown owns these retained facts; this mode runs no HTTP proof.
     #[arg(long)]
@@ -286,31 +281,22 @@ async fn membership(
     principal: &PrincipalId,
     verb: &str,
 ) -> anyhow::Result<()> {
-    let mut command = Command::new(&args.ctl_bin);
-    command
-        .args([
-            "--log-level",
-            "error",
-            verb,
-            "--org",
-            &args.org,
-            "--project",
-            &args.project,
-            "--env",
-            &args.env,
-            "--principal-id",
-            principal.as_str(),
-        ])
-        .env("WAMN_SYSTEM_ADMIN_URL", &args.system_database_url)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .kill_on_drop(true);
-    let status = tokio::time::timeout(OPERATION_TIMEOUT, command.status())
-        .await
-        .map_err(|_| anyhow!("{verb} timed out"))?
-        .map_err(|_| anyhow!("could not run the production membership CLI"))?;
-    ensure!(status.success(), "{verb} failed with {status}");
+    let arguments = wamn_ctl::project_env_membership::ProjectEnvMembershipArgs {
+        org: args.org.clone(),
+        project: args.project.clone(),
+        env: args.env.clone(),
+        principal_id: principal.as_str().to_owned(),
+        system_database_url: args.system_database_url.clone(),
+    };
+    tokio::time::timeout(OPERATION_TIMEOUT, async {
+        match verb {
+            "grant-project-env-membership" => wamn_ctl::project_env_membership::grant(arguments).await,
+            "revoke-project-env-membership" => wamn_ctl::project_env_membership::revoke(arguments).await,
+            _ => unreachable!("the membership test names only its two control operations"),
+        }
+    })
+    .await
+    .map_err(|_| anyhow!("{verb} timed out"))??;
     Ok(())
 }
 
@@ -475,8 +461,6 @@ mod tests {
             "dev",
             "--tenant",
             "fixture",
-            "--ctl-bin",
-            "/proof/wamn-ctl",
         ])
         .expect("parse every required proof argument");
         let diagnostic = format!("{:?}", command.proof);

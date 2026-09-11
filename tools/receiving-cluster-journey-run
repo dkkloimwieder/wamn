@@ -2637,15 +2637,13 @@ spec:
                 secretKeyRef:
                   name: membershipproof-fixture
                   key: project-url
-            - name: WAMN_CTL_BIN
-              value: /usr/local/bin/wamn-ctl
 EOF
   cp "$membership_manifest" "$evidence_dir/membershipproof-job.yaml"
   record_command /usr/local/bin/wamn-gates membershipproof \
     --endpoint-url "http://flow-http.$namespace.svc.cluster.local" \
     --host "$route_host" --org "$app_org" --project "$app_project" \
     --env "$app_environment" --tenant "$app_tenant" \
-    '<admin URLs supplied by ephemeral Secret; ctl=/usr/local/bin/wamn-ctl>'
+    '<admin URLs supplied by ephemeral Secret>'
   run "${kube[@]}" apply -f "$membership_manifest"
   run "${kube[@]}" -n "$namespace" wait --for=condition=Complete \
     job/membershipproof --timeout=720s
@@ -3146,7 +3144,7 @@ if [[ "$measure_startup" == true ]]; then
       "$cargo_target_dir/debug/wamn-gates" membershipproof \
       --endpoint-url "http://flow-http.$namespace.svc.cluster.local" --host "$route_host" \
       --org "$app_org" --project "$app_project" --env "$app_environment" \
-      --tenant "$app_tenant" --ctl-bin "$ctl" --throughput-pat-file "$human_pat_file" \
+      --tenant "$app_tenant" --throughput-pat-file "$human_pat_file" \
       >"$evidence_dir/human-benchmark-fixture.receipt"
     [[ $(stat -c '%a' "$human_pat_file") == 600 ]] || {
       echo "human benchmark PAT file is not private" >&2
