@@ -11,6 +11,8 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[5]
 PREFIX = "docs/perf/2026.09/ctc8-33-nested-authority/"
+RECEIVING_PREFIX = "docs/perf/2026.09/receiving-postcommit/"
+RECEIVING_COMMIT = "7c6b880ba0083c2a9c5f3f378afcc435207bc262"
 ACTIVE = tuple(f"docs/perf/2026.09/{name}/" for name in (
     "receiving-postcommit", "receiving-update-projection", "native-b-adoption", "native-f-retained"))
 # The nine source and documentation paths for wamn-ctc8.33. Follow-up commits get no wider scope.
@@ -83,6 +85,8 @@ def main():
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", required=True)
     parser.add_argument("--run-name", required=True)
+    parser.add_argument("--include-receiving-evidence", action="store_true",
+                        help="Also admit the exact Receiving evidence from the approved published commit.")
     args = parser.parse_args()
     require(re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,79}", args.run_name), "invalid evidence run name")
     base, head = [git("rev-parse", "--verify", "--end-of-options", value + "^{commit}").decode().strip()
@@ -92,7 +96,19 @@ def main():
     git("merge-base", "--is-ancestor", base, head)
     changed = paths("diff", "--name-only", "--no-renames", base, head)
     require(changed, "incoming commit has no changes")
-    require(all(name in ALLOWED or name.startswith(PREFIX) for name in changed),
+    receiving_paths = set()
+    if args.include_receiving_evidence:
+        git("merge-base", "--is-ancestor", RECEIVING_COMMIT, head)
+        receiving_paths = {name for name in changed if name.startswith(RECEIVING_PREFIX)}
+        for name in sorted(receiving_paths):
+            published = git("ls-tree", RECEIVING_COMMIT, "--", name)
+            entry = published.split(b"\t", 1)[0].split()
+            require(len(entry) == 3 and entry[1] == b"blob",
+                    f"Receiving path is not a published blob: {name}")
+            require(published == git("ls-tree", head, "--", name),
+                    f"Receiving blob or mode differs from the approved commit: {name}")
+    require(all(name in ALLOWED or name.startswith(PREFIX) or name in receiving_paths
+                for name in changed),
             "incoming paths exceed the explicit nested-authority allowlist")
     require(not git("ls-files", "--unmerged", "-z"), "index has unresolved entries")
     require(not changed & dirty(), "incoming paths collide with staged or unstaged changes")
@@ -103,7 +119,8 @@ def main():
     tracked = paths("ls-files")
     collisions = {name for name in changed - tracked
                   if local_path(name).exists() or local_path(name).is_symlink()}
-    require(all(name.startswith(PREFIX) for name in collisions), "untracked collision outside own evidence")
+    require(all(name.startswith(PREFIX) or name in receiving_paths for name in collisions),
+            "untracked collision outside approved evidence")
     originals = snapshot(collisions)
     for name in sorted(collisions):
         path = local_path(name)
