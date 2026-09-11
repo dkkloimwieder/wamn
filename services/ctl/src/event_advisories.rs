@@ -484,6 +484,385 @@ mod tests {
         Ok(())
     }
 
+    async fn interrupted_delivery_redelivers(
+        server: &str,
+        credentials: &wamn_test_infrastructure::event_broker::Credentials,
+        publisher: &async_nats::jetstream::Context,
+        source_name: &str,
+        consumer: &PullConfig,
+    ) -> anyhow::Result<()> {
+        use wamn_test_infrastructure::event_broker;
+
+        let name = consumer
+            .durable_name
+            .as_deref()
+            .context("interrupted consumer has a name")?;
+        let sequence = publisher
+            .publish(
+                consumer.filter_subject.clone(),
+                "interrupted payload".into(),
+            )
+            .await?
+            .await?
+            .sequence;
+        let first_client = event_broker::connect(credentials, server).await?;
+        let first_context = async_nats::jetstream::new(first_client.clone());
+        let first_stream = first_context.get_stream(source_name).await?;
+        let first_consumer = first_stream
+            .get_consumer::<PullConfig>(name)
+            .await
+            .map_err(anyhow::Error::from_boxed)?;
+        let first = fetch_one(&first_consumer)
+            .await?
+            .context("the first delivery did not arrive")?;
+        let info = first.info().map_err(anyhow::Error::from_boxed)?;
+        ensure!(
+            info.stream_sequence == sequence
+                && info.delivered == 1
+                && first.payload.as_ref() == b"interrupted payload",
+            "the first interrupted delivery differs from the published message"
+        );
+        let pending = first_stream.consumer_info(name).await?;
+        ensure!(
+            pending.num_ack_pending == 1 && pending.ack_floor.stream_sequence < sequence,
+            "the broker did not retain the outstanding acknowledgement"
+        );
+        drop(first);
+        first_client.drain().await?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while first_client.connection_state() != async_nats::connection::State::Disconnected {
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "the interrupted materializer connection did not close"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        drop(first_consumer);
+        drop(first_stream);
+        drop(first_context);
+        drop(first_client);
+
+        let replacement =
+            async_nats::jetstream::new(event_broker::connect(credentials, server).await?);
+        let stream = replacement.get_stream(source_name).await?;
+        let attached = stream
+            .get_consumer::<PullConfig>(name)
+            .await
+            .map_err(anyhow::Error::from_boxed)?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let repeated = loop {
+            if let Some(message) = fetch_one(&attached).await? {
+                break message;
+            }
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "the broker did not redeliver the unacknowledged message"
+            );
+        };
+        let info = repeated.info().map_err(anyhow::Error::from_boxed)?;
+        ensure!(
+            info.stream_sequence == sequence
+                && info.delivered == 2
+                && repeated.payload.as_ref() == b"interrupted payload",
+            "the replacement consumer did not receive the same second delivery"
+        );
+        repeated
+            .double_ack()
+            .await
+            .map_err(anyhow::Error::from_boxed)?;
+        let settled = stream.consumer_info(name).await?;
+        ensure!(
+            settled.num_ack_pending == 0 && settled.ack_floor.stream_sequence == sequence,
+            "the confirmed acknowledgement did not settle the repeated delivery"
+        );
+        let later_sequence = publisher
+            .publish(
+                consumer.filter_subject.clone(),
+                "later interrupted payload".into(),
+            )
+            .await?
+            .await?
+            .sequence;
+        let later = fetch_one(&attached)
+            .await?
+            .context("interrupted delivery blocked later progress")?;
+        ensure!(
+            later
+                .info()
+                .map_err(anyhow::Error::from_boxed)?
+                .stream_sequence
+                == later_sequence
+                && later.payload.as_ref() == b"later interrupted payload",
+            "the replacement consumer did not reach the next message"
+        );
+        later
+            .double_ack()
+            .await
+            .map_err(anyhow::Error::from_boxed)?;
+        println!(
+            "NATIVE_C_INTERRUPTED_ACK_PASS first_delivery=1 repeated_delivery=2 same_sequence=true later_progress=1 connection_closed=true"
+        );
+        Ok(())
+    }
+
+    async fn large_messages_obey_pull_and_ack_limits(
+        publisher: &async_nats::jetstream::Context,
+        materializer: &async_nats::jetstream::Context,
+        source_name: &str,
+        consumer: &PullConfig,
+    ) -> anyhow::Result<()> {
+        use wamn_control_provision::events::MATERIALIZER_MAX_PULL_BYTES;
+
+        const PAYLOAD_BYTES: usize = 1024 * 1024 - 1024;
+        const MESSAGE_COUNT: usize = 65;
+        let name = consumer
+            .durable_name
+            .as_deref()
+            .context("pressure consumer has a name")?;
+        let stream = materializer.get_stream(source_name).await?;
+        let attached = stream
+            .get_consumer::<PullConfig>(name)
+            .await
+            .map_err(anyhow::Error::from_boxed)?;
+        let declared = stream.consumer_info(name).await?;
+        ensure!(
+            declared.config.max_ack_pending == 64
+                && declared.config.max_batch == 64
+                && declared.config.max_bytes == MATERIALIZER_MAX_PULL_BYTES,
+            "the pressure consumer must retain the declared materializer bounds"
+        );
+        let mut sequences = Vec::new();
+        for index in 0..MESSAGE_COUNT {
+            let mut payload = vec![0xa5; PAYLOAD_BYTES];
+            payload[..8].copy_from_slice(&(index as u64).to_be_bytes());
+            sequences.push(
+                publisher
+                    .publish(consumer.filter_subject.clone(), payload.into())
+                    .await?
+                    .await?
+                    .sequence,
+            );
+        }
+        let mut pending = Vec::new();
+        let mut largest_pull = 0;
+        let mut pull_bytes = Vec::new();
+        let mut observed_pending = Vec::new();
+        let mut byte_limited_pulls = 0;
+        while pending.len() < 64 {
+            let mut messages = attached
+                .fetch()
+                .max_messages(64 - pending.len())
+                .max_bytes(MATERIALIZER_MAX_PULL_BYTES as usize)
+                .expires(Duration::from_millis(200))
+                .messages()
+                .await?;
+            let mut bytes = 0;
+            let before = pending.len();
+            while let Some(message) = messages.next().await {
+                let message = match message {
+                    Ok(message) => message,
+                    // The pinned client exposes the broker's byte boundary as an I/O error.
+                    Err(error)
+                        if error.to_string()
+                            == r#"error while processing messages from the stream: 409, Some("Message Size Exceeds MaxBytes")"# =>
+                    {
+                        ensure!(
+                            bytes > 0
+                                && bytes <= MATERIALIZER_MAX_PULL_BYTES as usize
+                                && MATERIALIZER_MAX_PULL_BYTES as usize - bytes < PAYLOAD_BYTES,
+                            "the broker stopped before filling the declared byte limit"
+                        );
+                        byte_limited_pulls += 1;
+                        break;
+                    }
+                    Err(error) => return Err(anyhow::Error::from_boxed(error)),
+                };
+                let index = pending.len();
+                ensure!(
+                    index < 64,
+                    "the native pull exceeded the pending acknowledgement bound"
+                );
+                let info = message.info().map_err(anyhow::Error::from_boxed)?;
+                ensure!(
+                    info.stream_sequence == sequences[index]
+                        && info.delivered == 1
+                        && message.payload.len() == PAYLOAD_BYTES
+                        && message.payload[..8] == (index as u64).to_be_bytes()
+                        && message.payload[8..].iter().all(|byte| *byte == 0xa5),
+                    "a large payload or its delivery identity changed"
+                );
+                bytes += message.payload.len();
+                pending.push(message);
+            }
+            ensure!(
+                pending.len() > before && bytes <= MATERIALIZER_MAX_PULL_BYTES as usize,
+                "the native pull exceeded its byte bound or made no progress"
+            );
+            largest_pull = largest_pull.max(bytes);
+            pull_bytes.push(bytes);
+            let observed = stream.consumer_info(name).await?.num_ack_pending;
+            observed_pending.push(observed);
+            ensure!(
+                observed <= 64,
+                "the broker exceeded its acknowledgement limit"
+            );
+        }
+        ensure!(
+            byte_limited_pulls > 0,
+            "the pressure case did not reach the native pull byte boundary"
+        );
+        let full = stream.consumer_info(name).await?;
+        ensure!(
+            full.num_ack_pending == 64 && full.num_pending == 1,
+            "the broker must hold exactly 64 acknowledgements and one undelivered message"
+        );
+        ensure!(
+            fetch_one(&attached).await?.is_none(),
+            "the broker delivered past max_ack_pending"
+        );
+        for message in pending {
+            message
+                .double_ack()
+                .await
+                .map_err(anyhow::Error::from_boxed)?;
+        }
+        let last = fetch_one(&attached)
+            .await?
+            .context("acknowledgements did not release later delivery")?;
+        ensure!(
+            last.info()
+                .map_err(anyhow::Error::from_boxed)?
+                .stream_sequence
+                == sequences[64]
+                && last.payload.len() == PAYLOAD_BYTES
+                && last.payload[..8] == 64u64.to_be_bytes()
+                && last.payload[8..].iter().all(|byte| *byte == 0xa5),
+            "the final large message changed"
+        );
+        last.double_ack().await.map_err(anyhow::Error::from_boxed)?;
+        let settled = stream.consumer_info(name).await?;
+        ensure!(
+            settled.num_ack_pending == 0
+                && settled.num_pending == 0
+                && settled.ack_floor.stream_sequence == sequences[64],
+            "pressure did not settle after later progress"
+        );
+        let total_received = pull_bytes.iter().sum::<usize>() + last.payload.len();
+        println!(
+            "NATIVE_C_LARGE_MESSAGES_PASS messages={MESSAGE_COUNT} payload_bytes={PAYLOAD_BYTES} byte_limited_pulls={byte_limited_pulls} pull_payload_bytes={pull_bytes:?} observed_ack_pending={observed_pending:?} largest_pull_payload_bytes={largest_pull} total_received_payload_bytes={total_received} pull_limit_bytes={MATERIALIZER_MAX_PULL_BYTES} blocked_ack_pending={} blocked_undelivered={} final_ack_pending={} final_undelivered={} later_progress=1",
+            full.num_ack_pending, full.num_pending, settled.num_ack_pending, settled.num_pending,
+        );
+        Ok(())
+    }
+
+    async fn source_time_expiry_preserves_advisory(
+        manager: &async_nats::jetstream::Context,
+        publisher: &async_nats::jetstream::Context,
+        materializer: &async_nats::jetstream::Context,
+        observer: &async_nats::jetstream::Context,
+        source: &async_nats::jetstream::stream::Config,
+        advisory: &async_nats::jetstream::stream::Config,
+        consumer: &PullConfig,
+    ) -> anyhow::Result<()> {
+        let name = consumer
+            .durable_name
+            .as_deref()
+            .context("expiry consumer has a name")?;
+        let declared = async_nats::jetstream::stream::Config {
+            max_age: Duration::from_secs(2),
+            duplicate_window: Duration::from_secs(1),
+            ..source.clone()
+        };
+        let retained_source = manager.update_stream(declared.clone()).await?;
+        ensure!(
+            retained_source.cached_info().config == declared,
+            "the owned source expiry policy differs from its declaration"
+        );
+        let attached = materializer
+            .get_stream(&source.name)
+            .await?
+            .get_consumer::<PullConfig>(name)
+            .await
+            .map_err(anyhow::Error::from_boxed)?;
+        let sequence = publisher
+            .publish(
+                consumer.filter_subject.clone(),
+                "expiring source payload".into(),
+            )
+            .await?
+            .await?
+            .sequence;
+        let message = fetch_one(&attached)
+            .await?
+            .context("the expiring source delivery did not arrive")?;
+        ensure!(
+            message
+                .info()
+                .map_err(anyhow::Error::from_boxed)?
+                .stream_sequence
+                == sequence,
+            "the expiry case received another source message"
+        );
+        message
+            .ack_with(AckKind::Term)
+            .await
+            .map_err(anyhow::Error::from_boxed)?;
+        let retained = observer.get_stream(&advisory.name).await?;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+        let initial = loop {
+            let records = retained_advisories(observer, &retained, &source.name, name, 2).await?;
+            if let Some(record) = records.into_iter().next() {
+                break record;
+            }
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "the expiry termination advisory did not arrive"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        ensure!(
+            initial.advisory.kind == DeliveryAdvisoryKind::Terminated
+                && initial.advisory.stream_seq == sequence
+                && initial.advisory.deliveries == 1
+                && matches!(&initial.source, SourcePayload::Available { body, .. } if body == b"expiring source payload"),
+            "the initial expiry advisory must still identify its actual available source payload"
+        );
+        loop {
+            let records = retained_advisories(observer, &retained, &source.name, name, 2).await?;
+            ensure!(
+                records.len() == 1
+                    && records[0].advisory_sequence == initial.advisory_sequence
+                    && records[0].advisory.stream_seq == sequence
+                    && records[0].advisory.kind == DeliveryAdvisoryKind::Terminated,
+                "source expiry changed or removed the retained termination advisory"
+            );
+            if matches!(records[0].source, SourcePayload::Unavailable) {
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "the source message did not expire under the declared age limit"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let source_state = observer.get_stream(&source.name).await?;
+        ensure!(
+            source_state.cached_info().config.max_age == Duration::from_secs(2)
+                && source_state.cached_info().state.messages == 0,
+            "the broker did not expire the owned source messages"
+        );
+        let advisory_state = observer.get_stream(&advisory.name).await?;
+        ensure!(
+            advisory_state.cached_info().config == *advisory
+                && advisory_state.cached_info().state.consumer_count == 0,
+            "expiry changed advisory retention or monitoring created a consumer"
+        );
+        println!(
+            "NATIVE_C_SOURCE_EXPIRY_PASS source_max_age_ms=2000 source_duplicate_window_ms=1000 available=1 expired=1 retained_advisory=1 message_delete_calls=0"
+        );
+        Ok(())
+    }
+
     #[tokio::test]
     #[ignore = "requires an owned nats-server executable via WAMN_NATIVE_C_NATS_BIN"]
     async fn scoped_credentials_confine_management_delivery_and_monitoring() -> anyhow::Result<()> {
@@ -529,13 +908,31 @@ mod tests {
                 Duration::from_secs(30),
                 2,
             );
+            let mut consumers = vec![consumer.clone()];
+            if index == 0 {
+                for (name, ack_wait, max_deliver) in [
+                    ("interrupted", Duration::from_millis(100), 3),
+                    ("pressure", Duration::from_secs(60), 2),
+                    ("expiry", Duration::from_secs(30), 2),
+                ] {
+                    consumers.push(materializer_consumer_config(
+                        name,
+                        &format!(
+                            "evt.{}.{}.{}.item.{name}",
+                            scope.org, scope.project, scope.env
+                        ),
+                        ack_wait,
+                        max_deliver,
+                    ));
+                }
+            }
             let broker = event_broker::prepare(
                 &directory,
                 scope,
                 "route-tenant",
                 &source,
                 &advisory,
-                &[consumer.clone()],
+                &consumers,
             )?;
             let mut configuration: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&broker.configuration)?)?;
@@ -544,7 +941,7 @@ mod tests {
                     .as_array_mut()
                     .context("native broker configuration omitted its users")?,
             );
-            declarations.push((source, advisory, consumer));
+            declarations.push((source, advisory, consumer, consumers));
             brokers.push(broker);
         }
         let configuration_path = root.path().join("nats.conf");
@@ -594,13 +991,13 @@ mod tests {
             let mut managers = Vec::new();
             for (scope, broker) in scopes.iter().zip(&brokers) {
                 let manager = async_nats::jetstream::new(event_broker::connect(&broker.provisioning, &server).await?);
-                let (_, _, consumer) = &declarations[managers.len()];
-                crate::event_streams::provision(&manager, scope, 1, Duration::from_secs(120), &[consumer.clone()]).await?;
-                crate::event_streams::provision(&manager, scope, 1, Duration::from_secs(120), &[consumer.clone()]).await?;
+                let (_, _, _, consumers) = &declarations[managers.len()];
+                crate::event_streams::provision(&manager, scope, 1, Duration::from_secs(120), consumers).await?;
+                crate::event_streams::provision(&manager, scope, 1, Duration::from_secs(120), consumers).await?;
                 managers.push(manager);
             }
             let broker = &brokers[0];
-            let (source, advisory, consumer) = &declarations[0];
+            let (source, advisory, consumer, consumers) = &declarations[0];
             let active = || WamnJetstream::new(WamnJetstreamConfig {
                 nats_url: Some(server.clone()),
                 nats_username: Some(broker.runtime.username.clone()),
@@ -675,7 +1072,7 @@ mod tests {
             let mut restricted_runtime = async_nats::jetstream::new(runtime_client.clone());
             restricted_runtime.set_timeout(Duration::from_millis(500));
             stage = "refuse access to other environments";
-            for (foreign_source, foreign_advisory, foreign_consumer) in &declarations[1..] {
+            for (foreign_source, foreign_advisory, foreign_consumer, _) in &declarations[1..] {
                 let published = restricted_runtime.publish(foreign_consumer.filter_subject.clone(), "foreign payload".into()).await;
                 let refused = match published {
                     Ok(acknowledgement) => acknowledgement.await.is_err(),
@@ -710,6 +1107,12 @@ mod tests {
             ensure!(stream.consumer_info("registered").await?.config.max_deliver == 3, "provisioning reconfigured the consumer");
             stream.update_consumer(consumer.clone()).await?;
             active().activate_events().await.map_err(|error| anyhow::anyhow!("restored activation failed: {error:?}"))?;
+            stage = "redeliver after an interrupted acknowledgement";
+            interrupted_delivery_redelivers(&server, &broker.materializer, &publisher, &source.name, &consumers[1]).await?;
+            stage = "bound near-one-MiB messages and outstanding acknowledgements";
+            large_messages_obey_pull_and_ack_limits(&publisher, &materializer, &source.name, &consumers[2]).await?;
+            stage = "retain advisory metadata after actual source time expiry";
+            source_time_expiry_preserves_advisory(manager, &publisher, &materializer, &observer, source, advisory, &consumers[3]).await?;
             println!("NATIVE_C_SCOPED_PASS environments=3 provisioning=3 runtime_management_refusals=18 foreign_metadata_and_data_refusals=8 foreign_runtime_refusals=6");
             Ok::<(), anyhow::Error>(())
         }).await;
