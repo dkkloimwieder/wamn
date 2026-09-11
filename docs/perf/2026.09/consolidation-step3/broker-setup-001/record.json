@@ -1,0 +1,59 @@
+{
+  "source_commit": "b874ddc0bb6a813516d97f37d24ea7ac4e7b8370",
+  "started_utc": "2026-09-11T17:42:23.757683+00:00",
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "-p",
+    "wamn-test-infrastructure",
+    "--lib",
+    "event_broker::tests",
+    "--",
+    "--nocapture"
+  ],
+  "before": {
+    "Cargo.lock": {
+      "sha256": "8e52cbe4112c70a462f2a9244abe11df92eeff00d853c5c718a2787ac8471ffe",
+      "mode": "0o664"
+    },
+    "test-support/infrastructure/Cargo.toml": {
+      "sha256": "b37775d359c6e2e17ac8c7beb8c928ca1f152dde9a3676ff991cf31d7693d23b",
+      "mode": "0o664"
+    },
+    "test-support/infrastructure/lib.rs": {
+      "sha256": "aa987f3f514e7f437d8a730687c79f30b26efdc3ba2d99b87cd696982426e086",
+      "mode": "0o664"
+    },
+    "test-support/infrastructure/event_broker.rs": {
+      "sha256": "cd2b127f522fe148fc07c5976cd4ea24f88e78c4134a3b9c868f5aa2905eccfe",
+      "mode": "0o664"
+    }
+  },
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "exit_code": 0,
+  "elapsed_seconds": 35.079,
+  "after": {
+    "Cargo.lock": {
+      "sha256": "8e52cbe4112c70a462f2a9244abe11df92eeff00d853c5c718a2787ac8471ffe",
+      "mode": "0o664"
+    },
+    "test-support/infrastructure/Cargo.toml": {
+      "sha256": "b37775d359c6e2e17ac8c7beb8c928ca1f152dde9a3676ff991cf31d7693d23b",
+      "mode": "0o664"
+    },
+    "test-support/infrastructure/lib.rs": {
+      "sha256": "aa987f3f514e7f437d8a730687c79f30b26efdc3ba2d99b87cd696982426e086",
+      "mode": "0o664"
+    },
+    "test-support/infrastructure/event_broker.rs": {
+      "sha256": "cd2b127f522fe148fc07c5976cd4ea24f88e78c4134a3b9c868f5aa2905eccfe",
+      "mode": "0o664"
+    }
+  },
+  "source_unchanged": true
+}
