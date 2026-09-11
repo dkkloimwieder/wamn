@@ -170,6 +170,20 @@ Use the same simple terms in comments and identifiers.
 If a term has more than one possible meaning, ask the owner.
 This instruction does not authorize a contract rename.
 
+The materializer is platform infrastructure.
+Native C uses a platform-owned named NATS binding for it.
+Credentials apply to one environment and permit attachment only to its allowed streams.
+The binding credentials enforce authority.
+
+The composed Receiving operator is the application and owns its `main`.
+Retire the standalone launcher in a separate mechanical commit.
+Keep the generated library and update the consumers that select the retired launcher.
+
+Run the Receiving field walkthrough on a disposable branch.
+Keep its field changes inside `apps/wamn_receiving/`.
+Land only the transcript as the exit evidence, with its field diff, executed tests, and comparison with the baseline.
+The integrated branch retains the original field.
+
 When the current architecture overview exists, move this charter to `docs/history/` with the specifications that it retires.
 Keep the historical evidence and the reasons for the change.
 Beads and git continue to own completion status.
