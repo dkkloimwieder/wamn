@@ -1,0 +1,20 @@
+{
+  "source_commit": "a8f4b77730976b32a6ec6b3b4a310a4970638907",
+  "bead": "wamn-47wm.4.1",
+  "change_type": "internal_refactor",
+  "files": [
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/sessions.rs",
+      "sha256": "2760acd2f70b76ad1e304d88667f6d35367c737b48483bfdc6396173ca444575",
+      "retained_assertions": 31
+    }
+  ],
+  "assertion_tokens_preserved": true,
+  "source_selection": "Existing JourneyDocument fresh_only_packages and overlay_compatibility fields select their sources; no mapping or new input record added.",
+  "direct_calls": "Session setup and nested session cases accept their existing document, issuer, endpoint and CA. Existing externally armed test wrappers remain.",
+  "checks": [
+    "rustfmt parse passed without formatting unrelated lines",
+    "git diff --check passed"
+  ],
+  "cargo": "Not run; root owns warm integrated test execution."
+}

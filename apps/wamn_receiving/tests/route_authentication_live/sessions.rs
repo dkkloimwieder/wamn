@@ -7,14 +7,21 @@ use super::*;
 #[tokio::test]
 #[ignore = "requires the completed disposable Receiving journey and WAMN_SESSION_HOST_FIXTURE_OUTPUT"]
 async fn production_receiving_session_host_fixture() -> anyhow::Result<()> {
+    let inputs = JourneyDocument::required()?;
+    let output = required_journey_path("WAMN_SESSION_HOST_FIXTURE_OUTPUT")?;
+    prepare_session_host_fixture(&inputs, &output).await
+}
+
+pub(super) async fn prepare_session_host_fixture(
+    inputs: &JourneyDocument,
+    output: &Path,
+) -> anyhow::Result<()> {
     const SESSION_ATTACHMENT: &str = "purchase-order-get-http";
     const SESSION_ROLE: &str = "session-host-reader";
     const REQUEST_ID: &str = "session-host-proof";
     const ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
     const SESSION_RELEASE_ID: u32 = RELEASE_ID + 1;
 
-    let inputs = JourneyDocument::required()?;
-    let output = required_journey_path("WAMN_SESSION_HOST_FIXTURE_OUTPUT")?;
     anyhow::ensure!(
         output.is_absolute() && !output.exists(),
         "session fixture output must be a new absolute path in the private journey directory"
@@ -234,6 +241,24 @@ async fn production_session_client_login_and_fresh_selection() -> anyhow::Result
 }
 
 pub(super) async fn nested_session_caller(fresh_only: bool, client_proof: bool) -> anyhow::Result<()> {
+    assert_nested_session(
+        JourneyDocument::required()?,
+        &required_journey("WAMN_IDENTITY_ISSUER")?,
+        &required_journey("WAMN_SESSION_NESTED_HTTPS_ENDPOINT")?,
+        &std::fs::read(required_journey_path("WAMN_IDENTITY_CA_FILE")?)?,
+        fresh_only,
+        client_proof,
+    ).await
+}
+
+pub(super) async fn assert_nested_session(
+    mut inputs: JourneyDocument,
+    issuer: &str,
+    endpoint: &str,
+    ca: &[u8],
+    fresh_only: bool,
+    client_proof: bool,
+) -> anyhow::Result<()> {
     const ROLE: &str = "session-nested-caller";
     let overlay_attachment = JOURNEY_ATTACHMENTS
         .iter()
@@ -255,9 +280,6 @@ pub(super) async fn nested_session_caller(fresh_only: bool, client_proof: bool) 
                 .context("the journey omitted the ordinary client GET route")?,
         );
     }
-    let mut inputs = JourneyDocument::required()?;
-    let issuer = required_journey("WAMN_IDENTITY_ISSUER")?;
-    let endpoint = required_journey("WAMN_SESSION_NESTED_HTTPS_ENDPOINT")?;
     let endpoint = reqwest::Url::parse(&endpoint)?;
     anyhow::ensure!(
         endpoint.scheme() == "https"
@@ -270,7 +292,6 @@ pub(super) async fn nested_session_caller(fresh_only: bool, client_proof: bool) 
             && endpoint.fragment().is_none(),
         "nested proof requires an explicit loopback HTTPS port-forward origin"
     );
-    let ca = std::fs::read(required_journey_path("WAMN_IDENTITY_CA_FILE")?)?;
     let keys = IssuerKeys::new(IssuerKeysConfig::new(
         &issuer,
         endpoint.join("/.well-known/jwks.json")?.as_str(),
