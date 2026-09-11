@@ -119,6 +119,16 @@
       "git_mode": "100644",
       "bytes_equal": true,
       "mode_equal": true
+    },
+    {
+      "source_path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911/wamn-pilot/runs/901s-stub-dock-appointments/env.log",
+      "published_path": "docs/perf/2026.09/consolidation-step3/pilot-stub-live-001/env.log",
+      "bytes": 66108,
+      "sha256": "d4e73d6896dc5ee879227d9f8b7c0338bf3ad253576e3888427e57126ff04080",
+      "filesystem_mode": "0600",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
     }
   ],
   "original_bytes_and_modes_unchanged": true,
@@ -161,15 +171,20 @@
     "fixture/",
     "grade/"
   ],
-  "withheld_raw_log": {
-    "source_path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911/wamn-pilot/runs/901s-stub-dock-appointments/env.log",
-    "bytes": 66108,
-    "sha256": "d4e73d6896dc5ee879227d9f8b7c0338bf3ad253576e3888427e57126ff04080",
-    "filesystem_mode": "0600",
-    "copied": false,
-    "reason": "Automatic approval review rejected copying the private raw log into the repository."
-  },
   "launch_executed": false,
   "grade_executed": false,
-  "application_run_executed": false
+  "application_run_executed": false,
+  "prior_withholding": {
+    "source_commit": "efe7f1691e43496a28ca12958308838b25933d74",
+    "record": {
+      "source_path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911/wamn-pilot/runs/901s-stub-dock-appointments/env.log",
+      "bytes": 66108,
+      "sha256": "d4e73d6896dc5ee879227d9f8b7c0338bf3ad253576e3888427e57126ff04080",
+      "filesystem_mode": "0600",
+      "copied": false,
+      "reason": "Automatic approval review rejected copying the private raw log into the repository."
+    }
+  },
+  "raw_log_current_status": "User approved the exact payload and destination. The original log is included unchanged in this follow-up commit.",
+  "raw_log_authorization_record": "raw-log-publication.json"
 }

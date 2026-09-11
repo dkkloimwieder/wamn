@@ -1,0 +1,18 @@
+{
+  "recorded_utc": "2026-09-11T23:09:10.418651+00:00",
+  "prior_approval_rejections": 2,
+  "explicit_question": "Do you authorize publishing the private raw pilot setup log for run901s (env.log, 66108 bytes) to GitHub repository dkkloimwieder/wamn on branch consolidated?",
+  "user_response": "i authorize!",
+  "authorized_repository": "dkkloimwieder/wamn",
+  "authorized_branch": "consolidated",
+  "source_path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911/wamn-pilot/runs/901s-stub-dock-appointments/env.log",
+  "result_path": "docs/perf/2026.09/consolidation-step3/pilot-stub-live-001/env.log",
+  "bytes": 66108,
+  "sha256": "d4e73d6896dc5ee879227d9f8b7c0338bf3ad253576e3888427e57126ff04080",
+  "filesystem_mode": "0600",
+  "redaction_applied": false,
+  "included_in_commit": true,
+  "remote_push_performed_by_this_task": false,
+  "other_private_payload_copied": false,
+  "historical_secret_review_unchanged": true
+}
