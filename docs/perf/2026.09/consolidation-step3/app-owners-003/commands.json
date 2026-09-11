@@ -1,0 +1,28 @@
+[
+  [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-receiving-tests",
+    "-p",
+    "wamn-wms-tests",
+    "--no-fail-fast",
+    "--",
+    "--nocapture"
+  ],
+  [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-proof-integration",
+    "--lib",
+    "route_authentication_live::",
+    "--",
+    "--nocapture",
+    "--test-threads=1"
+  ]
+]

@@ -1,0 +1,15 @@
+{
+  "source": "3b858fbeacf877a175adcc2589b0adc07f209b57",
+  "exit_code": 0,
+  "elapsed_seconds": 2.945,
+  "source_hashes": {
+    "test-support/infrastructure/lib.rs": "d3611d1300c607844ae139cafb78479bab0e856a87cb3329c7a5175a2c517782",
+    "test-support/infrastructure/platform.rs": "b989cb8f139e29cf21c0b0101e0485a6055a22ef4a537e88f6233119ccc4d28e",
+    "Cargo.lock": "6193a4bb20ce619ca885b2153060d4f28c8c7c6cd0ee303bfc078bd8649210d2"
+  },
+  "source_unchanged": true,
+  "CARGO_BUILD_JOBS": "2",
+  "RUSTC_WRAPPER": "",
+  "RUSTUP_TOOLCHAIN": "1.98.0",
+  "live_environment_armed": false
+}
