@@ -1,0 +1,6 @@
+{
+  "cluster": "wamn-receiving-dde3954046a0472a8d323669f395e0de",
+  "failure": "error sending request for url (http://172.28.0.7:31297/acme/purchase_order/update): client error (Connect): tcp connect error: Connection refused (os error 111)",
+  "passed": false,
+  "source": "77ebc72a8aedacd965ef258cba9970df22ccaf3d"
+}

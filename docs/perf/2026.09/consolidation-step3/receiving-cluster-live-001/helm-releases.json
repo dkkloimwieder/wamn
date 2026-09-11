@@ -1,0 +1,20 @@
+[
+  {
+    "app_version": "2.9.0",
+    "chart": "runtime-operator-2.9.0",
+    "name": "wamn",
+    "namespace": "wamn-system",
+    "revision": "1",
+    "status": "deployed",
+    "updated": "2026-09-11 15:39:48.670470862 -0400 EDT"
+  },
+  {
+    "app_version": "2.9.0",
+    "chart": "runtime-operator-2.9.0",
+    "name": "wamn-host",
+    "namespace": "wamn-receiving-dde3954046a0472a8d323669f395e0de",
+    "revision": "1",
+    "status": "deployed",
+    "updated": "2026-09-11 15:40:15.64315132 -0400 EDT"
+  }
+]
