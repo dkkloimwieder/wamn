@@ -6373,6 +6373,7 @@ name = "wamn-wms-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats",
  "reqwest",
  "serde_json",
  "tokio",
