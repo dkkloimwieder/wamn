@@ -20,8 +20,10 @@ use serde_json::{Value, json};
 use tokio::process::{Child, Command};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
+use wamn_control_registry::{Env, Triple};
 use wamn_ctl::dev::activation::{HOST_SHUTDOWN_TIMEOUT, WORKLOAD_RPC_TIMEOUT};
 use wamn_runtime::registry_credentials::read_registry_credentials;
+use wamn_test_infrastructure::event_broker::Credentials;
 use wash_runtime::washlet::{OPERATOR_API_PREFIX, rpc_subject, types::v2};
 
 // Existing Receiving host-availability and recovery budgets, not new latency gates.
@@ -30,30 +32,30 @@ const CONTROL_BUDGET: Duration = Duration::from_secs(5);
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Inputs {
-    source: String,
-    host_binary: PathBuf,
-    host_secrets: PathBuf,
-    registry_auth: PathBuf,
-    workload: PathBuf,
-    pat_secret: PathBuf,
-    private_dir: PathBuf,
-    evidence_dir: PathBuf,
-    nats_url: String,
-    scheduler_nats_url: String,
-    otlp_endpoint: String,
-    proof_id: String,
-    component_artifact_base: String,
-    release_artifact_base: String,
-    manifest_digest: String,
-    org: String,
-    project: String,
-    schema: String,
-    environment: String,
-    route_host: String,
-    route_path: String,
-    probe_body: Value,
-    max_concurrent_starts: usize,
+pub(crate) struct Inputs {
+    pub(crate) source: String,
+    pub(crate) host_binary: PathBuf,
+    pub(crate) host_secrets: PathBuf,
+    pub(crate) registry_auth: PathBuf,
+    pub(crate) workload: PathBuf,
+    pub(crate) pat_secret: PathBuf,
+    pub(crate) private_dir: PathBuf,
+    pub(crate) evidence_dir: PathBuf,
+    pub(crate) nats_url: String,
+    pub(crate) scheduler_nats_url: String,
+    pub(crate) otlp_endpoint: String,
+    pub(crate) proof_id: String,
+    pub(crate) component_artifact_base: String,
+    pub(crate) release_artifact_base: String,
+    pub(crate) manifest_digest: String,
+    pub(crate) org: String,
+    pub(crate) project: String,
+    pub(crate) schema: String,
+    pub(crate) environment: String,
+    pub(crate) route_host: String,
+    pub(crate) route_path: String,
+    pub(crate) probe_body: Value,
+    pub(crate) max_concurrent_starts: usize,
 }
 
 fn read_json(path: &Path) -> Result<Value> {
@@ -318,6 +320,26 @@ async fn production_http_start_burst_keeps_native_host_progress() -> Result<()> 
     let input_path = std::env::var_os("WAMN_STARTUP_BURST_INPUT")
         .context("WAMN_STARTUP_BURST_INPUT must name the runner-owned fixture")?;
     let inputs: Inputs = serde_json::from_slice(&std::fs::read(PathBuf::from(input_path))?)?;
+    let credentials = Credentials {
+        username: std::env::var("WAMN_EVT_NATS_USERNAME")?,
+        password_file: PathBuf::from(
+            std::env::var_os("WAMN_EVT_NATS_PASSWORD_FILE")
+                .context("the startup test requires its private NATS password file")?,
+        ),
+    };
+    let scope = Triple {
+        org: std::env::var("WAMN_EVT_ORG")?,
+        project: std::env::var("WAMN_EVT_PROJECT")?,
+        env: Env::new(std::env::var("WAMN_EVT_ENV")?),
+    };
+    assert_startup(&inputs, &credentials, &scope).await
+}
+
+pub(crate) async fn assert_startup(
+    inputs: &Inputs,
+    credentials: &Credentials,
+    scope: &Triple,
+) -> Result<()> {
     ensure!(
         inputs.max_concurrent_starts > 0,
         "native start limit must be nonzero"
@@ -422,19 +444,12 @@ async fn production_http_start_burst_keeps_native_host_progress() -> Result<()> 
         .stdout(Stdio::from(raw_log.try_clone()?))
         .stderr(Stdio::from(raw_log))
         .kill_on_drop(true);
-    for key in [
-        "WAMN_EVT_NATS_USERNAME",
-        "WAMN_EVT_NATS_PASSWORD_FILE",
-        "WAMN_EVT_ORG",
-        "WAMN_EVT_PROJECT",
-        "WAMN_EVT_ENV",
-    ] {
-        command.env(
-            key,
-            std::env::var_os(key)
-                .with_context(|| format!("the startup proof requires private process input {key}"))?,
-        );
-    }
+    command
+        .env("WAMN_EVT_NATS_USERNAME", &credentials.username)
+        .env("WAMN_EVT_NATS_PASSWORD_FILE", &credentials.password_file)
+        .env("WAMN_EVT_ORG", &scope.org)
+        .env("WAMN_EVT_PROJECT", &scope.project)
+        .env("WAMN_EVT_ENV", scope.env.as_str());
     for (key, name) in [
         ("WAMN_SYSTEM_URL", "identity-reader"),
         ("WAMN_PG_URL", "guest-sql"),
