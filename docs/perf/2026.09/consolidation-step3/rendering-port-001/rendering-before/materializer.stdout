@@ -1,0 +1,53 @@
+1. bytes, and both applications
+  ok    the Receiving render succeeds
+  ok    bytes match the reviewed native event binding template
+  ok    the journey's own inputs render the reviewed native binding
+  ok    a second application renders
+2. every one of the eight identity values moved
+  ok    [name: hopper-materializer] replaces [name: receiving-materializer]
+  ok    [wamn.tenant: quay-9-route-auth] replaces [wamn.tenant: receiving-route-auth]
+  ok    [wamn.project: quay9] replaces [wamn.project: receiving]
+  ok    [wamn.environment: stage7] replaces [wamn.environment: dev]
+  ok    [WAMN_MAT_STREAM: EVT_zamboni_stage7] replaces [WAMN_MAT_STREAM: EVT_acme_dev]
+  ok    [WAMN_MAT_ORG: zamboni] replaces [WAMN_MAT_ORG: acme]
+  ok    [WAMN_MAT_PROJECT: quay9] replaces [WAMN_MAT_PROJECT: receiving]
+  ok    [WAMN_MAT_ENV: stage7] replaces [WAMN_MAT_ENV: dev]
+  ok    [WAMN_MAT_TENANT: quay-9-route-auth] replaces [WAMN_MAT_TENANT: receiving-route-auth]
+  ok    the platform authority class is untouched for both applications
+  ok    the template's retry bound is untouched
+  ok    rcv uses named native delivery and retains WAMN registration
+  ok    rcv workload contains no broker password or host binding file
+  ok    live uses named native delivery and retains WAMN registration
+  ok    live workload contains no broker password or host binding file
+  ok    wms uses named native delivery and retains WAMN registration
+  ok    wms workload contains no broker password or host binding file
+3. exactly once, per anchor
+  ok    control: a template missing [name: materializer-demo] is refused, naming IT
+  ok    control: a template missing [namespace: wamn-system] is refused, naming IT
+  ok    control: a template missing [environment: wamn-system] is refused, naming IT
+  ok    control: a template missing [wamn.tenant: t1] is refused, naming IT
+  ok    control: a template missing [wamn.project: default] is refused, naming IT
+  ok    control: a template missing [wamn.environment: menv] is refused, naming IT
+  ok    control: a template missing [WAMN_MAT_STREAM: EVT_morg_menv] is refused, naming IT
+  ok    control: a template missing [WAMN_MAT_ORG: morg] is refused, naming IT
+  ok    control: a template missing [WAMN_MAT_PROJECT: mproj] is refused, naming IT
+  ok    control: a template missing [WAMN_MAT_ENV: menv] is refused, naming IT
+  ok    control: a template declaring an anchor TWICE is refused
+4. the tenant-env anchor carries the insertion, so it needs its own message
+  ok    control: a template missing the tenant-env anchor is refused, naming IT
+  ok    the two poll intervals are inserted exactly once each
+  ok    the intervals come from the spec, not from the function
+5. no placeholder reaches the cluster under an anchor nobody declared
+  ok    control: a surviving placeholder under an undeclared anchor is refused
+6. the arguments themselves
+  ok    control: a missing template is refused
+  ok    control: a missing required key is refused before any work
+  ok    control: a missing template_* key is refused too
+7. nameref binding
+  ok    a caller array named 'spec' binds to the caller
+  ok    a caller array named 'materializer_spec' binds to the caller
+  ok    a caller array named 'config' binds to the caller
+  ok    a caller array named 'params' binds to the caller
+  ok    control: colliding on the internal name is detected
+
+journey-materializer: all properties hold

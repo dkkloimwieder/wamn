@@ -1,0 +1,25 @@
+1. the matrix — matched pairs pass, crossed pairs fail by name
+  ok    Receiving overlay, Receiving declaration
+  ok    WMS overlay, WMS declaration
+  ok    control: Receiving overlay under a WMS declaration is refused, naming the claim
+  ok    control: WMS overlay under a Receiving declaration is refused, naming the claim
+2. absent — fails closed, and says so
+  ok    control: a missing claim is refused as MISSING, not as a mismatch
+  ok    control: a claim in block form is reported absent, not assumed correct
+3. repeated — the uniqueness corollary at claim grain
+  ok    control: a claim declared twice with the SAME value is refused
+  ok    control: a claim declared twice with DIFFERENT values is refused
+4. the anchor is a whole-key match, not a substring
+  ok    a superstring key and a value naming the claim are both ignored
+5. the arguments themselves
+  ok    control: a missing rendered file is refused
+  ok    control: an empty claim set is refused rather than passing vacuously
+6. nameref binding
+  ok    a caller array named 'claims' binds to the caller
+  ok    a caller array named 'spec' binds to the caller
+  ok    a caller array named 'config' binds to the caller
+  ok    a caller array named 'identity' binds to the caller
+  ok    a caller array named 'app_identity_claims' binds to the caller
+  ok    control: colliding on the internal name is detected
+
+journey-rendered-identity: all properties hold

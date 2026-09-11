@@ -1,0 +1,297 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/crates/execution/run-state)
+   Compiling wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/crates/control/provision)
+   Compiling wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/test-support/infrastructure)
+   Compiling wamn-generated-receiving-tui v0.1.0 (/home/kaalin/dev/wamn/apps/wamn_receiving/generated/receiving-tui)
+   Compiling wamn-receiving-tui v0.1.0 (/home/kaalin/dev/wamn/apps/wamn_receiving/ui)
+   Compiling wamn-receiving-tests v0.1.0 (/home/kaalin/dev/wamn/apps/wamn_receiving/tests)
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/crates/platform/runtime)
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:56:7
+   |
+56 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:131:1
+    |
+131 | / pub struct ConnectionHttp {
+132 | |     postgres: Arc<WamnPostgres>,
+133 | |     transport: Arc<HttpTransport>,
+134 | |     vault: Arc<WamnCredentials>,
+...   |
+151 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+152 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:472:1
+    |
+472 | / pub struct WamnJetstream {
+473 | |     nats_url: Option<String>,
+474 | |     nats_username: Option<String>,
+475 | |     nats_password_file: Option<PathBuf>,
+...   |
+499 | |     release: Option<Arc<ReleaseManifestWeld>>,
+500 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:54:1
+    |
+ 54 | / pub struct WamnPostgres {
+ 55 | |     /// Resolves a project id → its database connection + policy.
+ 56 | |     provider: Arc<dyn CredentialProvider>,
+ 57 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+117 | |     pub(super) bind_counters: super::BindCounters,
+118 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:248:1
+    |
+248 | / pub struct StaticCredentialProvider {
+249 | |     projects: HashMap<String, ProjectConfig>,
+250 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:423:1
+    |
+423 | / pub struct K8sSecretProvider {
+424 | |     pub namespace: String,
+425 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: `wamn-runtime` (lib) generated 12 warnings
+   Compiling wamn-ctl v0.1.0 (/home/kaalin/dev/wamn/services/ctl)
+warning: function `run_once_stages` is never used
+   --> services/ctl/src/dev.rs:604:10
+    |
+604 | async fn run_once_stages<R>(
+    |          ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `verify_source_package_with_client` is never used
+    --> services/ctl/src/push_component.rs:1301:10
+     |
+1301 | async fn verify_source_package_with_client(
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+   Compiling wamn-gate-harness v0.1.0 (/home/kaalin/dev/wamn/test-support/harness)
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> test-support/harness/src/ceiling.rs:72:1
+   |
+72 | / pub struct Ramp {
+73 | |     tolerance: f64,
+74 | |     max_levels: usize,
+75 | |     levels: Vec<LevelStats>,
+...  |
+82 | |     retrying: bool,
+83 | | }
+   | |_^
+   |
+   = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: `wamn-gate-harness` (lib) generated 1 warning
+   Compiling wamn-execution-host v0.1.0 (/home/kaalin/dev/wamn/crates/execution/host)
+warning: `wamn-ctl` (lib) generated 2 warnings
+   Compiling wamn-wms-tests v0.1.0 (/home/kaalin/dev/wamn/apps/wamn_wms/tests)
+warning: function `assert_single_label` is never used
+   --> apps/wamn_wms/tests/wms_runtime_live.rs:646:15
+    |
+646 | pub(crate) fn assert_single_label(objects: &[Value], movement_id: &str) -> anyhow::Result<()> {
+    |               ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `assert_committed_rows` is never used
+   --> apps/wamn_wms/tests/wms_runtime_live.rs:657:21
+    |
+657 | pub(crate) async fn assert_committed_rows(
+    |                     ^^^^^^^^^^^^^^^^^^^^^
+
+warning: `wamn-wms-tests` (lib test) generated 2 warnings
+error[E0432]: unresolved import `super::OPERATION`
+  --> apps/wamn_receiving/tests/../../../tests/integration/src/route_authentication_live/session_client.rs:22:26
+   |
+22 |     BASE_RECORD_RECEIPT, OPERATION, assert_direct_route_trace, fresh_only, invoke_journey_route,
+   |                          ^^^^^^^^^ no `OPERATION` in `route_authentication_live`
+
+error[E0425]: cannot find value `OPERATION` in this scope
+  --> apps/wamn_receiving/tests/route_authentication_live/sessions.rs:70:55
+   |
+70 |                 attachment["registered-operation"] == OPERATION
+   |                                                       ^^^^^^^^^ not found in this scope
+   |
+note: constant `crate::route_authentication_live::fresh_only::OPERATION` exists but is inaccessible
+  --> apps/wamn_receiving/tests/../../../tests/integration/src/route_authentication_live/fresh_only.rs:36:1
+   |
+36 | const OPERATION: &str = "wamn:node/handler@0.1.0";
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not accessible
+
+error[E0425]: cannot find value `OPERATION` in this scope
+   --> apps/wamn_receiving/tests/route_authentication_live/sessions.rs:143:36
+    |
+143 |         &[&TENANT, &SESSION_ROLE, &OPERATION],
+    |                                    ^^^^^^^^^ not found in this scope
+    |
+note: constant `crate::route_authentication_live::fresh_only::OPERATION` exists but is inaccessible
+   --> apps/wamn_receiving/tests/../../../tests/integration/src/route_authentication_live/fresh_only.rs:36:1
+    |
+ 36 | const OPERATION: &str = "wamn:node/handler@0.1.0";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not accessible
+
+error[E0425]: cannot find value `OPERATION` in this scope
+   --> apps/wamn_receiving/tests/route_authentication_live/sessions.rs:254:60
+    |
+254 |                 .find(|attachment| attachment.operation == OPERATION)
+    |                                                            ^^^^^^^^^ not found in this scope
+    |
+note: constant `crate::route_authentication_live::fresh_only::OPERATION` exists but is inaccessible
+   --> apps/wamn_receiving/tests/../../../tests/integration/src/route_authentication_live/fresh_only.rs:36:1
+    |
+ 36 | const OPERATION: &str = "wamn:node/handler@0.1.0";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not accessible
+
+error[E0425]: cannot find value `OPERATION` in this scope
+   --> apps/wamn_receiving/tests/route_authentication_live/sessions.rs:447:35
+    |
+447 |         permitted_operations.push(OPERATION);
+    |                                   ^^^^^^^^^ not found in this scope
+    |
+note: constant `crate::route_authentication_live::fresh_only::OPERATION` exists but is inaccessible
+   --> apps/wamn_receiving/tests/../../../tests/integration/src/route_authentication_live/fresh_only.rs:36:1
+    |
+ 36 | const OPERATION: &str = "wamn:node/handler@0.1.0";
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not accessible
+
+warning: unused import: `WorkloadRoleFamily`
+  --> apps/wamn_receiving/tests/route_authentication_live.rs:41:30
+   |
+41 | use wamn_control_provision::{WorkloadRoleFamily, sql as provision_sql};
+   |                              ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `revoke_pat`
+  --> apps/wamn_receiving/tests/route_authentication_live.rs:53:87
+   |
+53 | use wamn_platform_identity::{PrincipalKind, create_human, issue_pat, resolve_subject, revoke_pat, route_caller_subject};
+   |                                                                                       ^^^^^^^^^^
+
+warning: unused imports: `DEV_COMMAND_TIMEOUT`, `DEV_EXPECTED_MIGRATIONS`, `DEV_LIVE_GATE_BIND`, `DevJourneyInputs`, `JOURNEY_URL_ENV`, `current_database_acl`, `declared_dev_data_access_grants`, `run_dev_product_command`, `verify_dev_command_receipt`, `verify_dev_release_state`, `verify_dev_target_package_and_acl_state`, and `verify_dev_verification_database_absent`
+  --> apps/wamn_receiving/tests/route_authentication_live.rs:79:11
+   |
+79 | ...::{JOURNEY_URL_ENV, DEV_COMMAND_TIMEOUT, DEV_EXPECTED_MIGRATIONS, DevJourneyInputs, DEV_LIVE_GATE_BIND, run_dev_product_command, verify_dev_command_receipt, declared_dev_data_access_grants, verify_dev_target_package_and_acl_state, verify_dev_release_state, current_database_acl, verify_dev_verification_database_absent};
+   |       ^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `journey_postgres`
+  --> apps/wamn_receiving/tests/route_authentication_live.rs:80:329
+   |
+80 | ...ted_permission_denial_trace, assert_no_component_trace, journey_postgres, build_journey_runtime, JourneyGuestMemory, invoke_journ...
+   |                                                            ^^^^^^^^^^^^^^^^
+
+warning: unused imports: `prepare_fresh_only_packages` and `receiving_pat_journey`
+  --> apps/wamn_receiving/tests/route_authentication_live.rs:81:39
+   |
+81 | use routes::{copy_fresh_only_package, prepare_fresh_only_packages, receiving_pat_journey};
+   |                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `nested_session_caller`
+  --> apps/wamn_receiving/tests/route_authentication_live.rs:82:16
+   |
+82 | use sessions::{nested_session_caller, assert_operation_refusal, nested_receipt_state};
+   |                ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `JourneyComponentDeclaration` and `gate_document`
+  --> apps/wamn_receiving/tests/route_authentication_live.rs:84:302
+   |
+84 | ...t, JourneyComponentDeclaration, render_component_declarations, push_journey_components, verify_journey_components_are_effectful, gate_document, g...
+   |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^                                                                                                   ^^^^^^^^^^^^^
+
+Some errors have detailed explanations: E0425, E0432.
+For more information about an error, try `rustc --explain E0425`.
+warning: `wamn-receiving-tests` (lib test) generated 7 warnings
+error: could not compile `wamn-receiving-tests` (lib test) due to 5 previous errors; 7 warnings emitted

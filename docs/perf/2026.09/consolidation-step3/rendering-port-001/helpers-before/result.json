@@ -1,0 +1,28 @@
+[
+  {
+    "source": "tools/journey-host-secrets-proof",
+    "sha256": "d1214d1467f990352fca486a2ad0f8800ffc5c7216f50478f1c2064254ea3fb6",
+    "command": [
+      "bash",
+      "/tmp/consolidation-helper-before-20260911/host-secrets-cases.sh",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-rendering-20260911"
+    ],
+    "only_test_copy_change": "Keep the temporary output directory.",
+    "exit": 0,
+    "passed_checks": 20,
+    "failed_checks": 0
+  },
+  {
+    "source": "tools/journey-mint-proof",
+    "sha256": "956d54a60c36cc6b9a6bc55810e6f8b49a195944ec5feca60077e75730189dd9",
+    "command": [
+      "bash",
+      "/tmp/consolidation-helper-before-20260911/mint-cases.sh",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-rendering-20260911"
+    ],
+    "only_test_copy_change": "Keep the temporary output directory.",
+    "exit": 0,
+    "passed_checks": 40,
+    "failed_checks": 0
+  }
+]
