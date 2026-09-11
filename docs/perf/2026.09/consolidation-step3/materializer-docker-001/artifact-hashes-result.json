@@ -1,0 +1,24 @@
+{
+  "source_commit": "e389c6fd9d8e04b7a563fecd6488b3eb544cb99f",
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "argv": [
+    "docker",
+    "run",
+    "--rm",
+    "--network",
+    "none",
+    "--name",
+    "wamn-component-hashes-e389c6fd",
+    "--entrypoint",
+    "sha256sum",
+    "wamn-component-builder:consolidation-c-20260911-e389c6fd",
+    "/component-output/http_route.wasm",
+    "/component-output/materializer.wasm",
+    "/component-output/busyloop.wasm",
+    "/component-output/connection_http_standard.wasm",
+    "/component-output/sockprobe.wasm"
+  ],
+  "started_utc": "2026-09-11T21:26:44.956857+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 0.3860307129798457
+}

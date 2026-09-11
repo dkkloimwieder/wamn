@@ -1,0 +1,19 @@
+{
+  "source_commit": "e389c6fd9d8e04b7a563fecd6488b3eb544cb99f",
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "argv": [
+    "docker",
+    "build",
+    "--progress=plain",
+    "--file",
+    "Dockerfile",
+    "--target",
+    "component-builder",
+    "--tag",
+    "wamn-component-builder:consolidation-c-20260911-e389c6fd",
+    "."
+  ],
+  "started_utc": "2026-09-11T21:26:03.977600+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 40.97894838300999
+}

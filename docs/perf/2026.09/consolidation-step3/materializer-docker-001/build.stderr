@@ -1,0 +1,128 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 18.69kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/rust:1.98-trixie
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 242B done
+#3 DONE 0.0s
+
+#4 [chef 1/4] FROM docker.io/library/rust:1.98-trixie
+#4 DONE 0.0s
+
+#5 [chef 3/4] WORKDIR /build
+#5 CACHED
+
+#6 [chef 2/4] RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git && rm -rf /var/lib/apt/lists/*
+#6 CACHED
+
+#7 [chef 4/4] RUN --mount=type=cache,id=wamn-chef-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-chef-cargo-git,target=/usr/local/cargo/git,sharing=locked     cargo install cargo-chef --version 0.1.77 --locked
+#7 CACHED
+
+#8 [internal] load build context
+#8 transferring context: 104.70kB 0.0s done
+#8 DONE 0.1s
+
+#9 [component-toolchain 1/6] RUN rustup target add --toolchain 1.97.0 wasm32-wasip2  && rustup toolchain install 1.98.0 --profile minimal --target wasm32-wasip2
+#9 0.231 info: syncing channel updates for 1.97.0-x86_64-unknown-linux-gnu
+#9 0.571 info: latest update on 2026-07-09 for version 1.97.0 (2d8144b78 2026-07-07)
+#9 0.572 info: downloading 3 components
+#9 9.726 info: downloading component rust-std
+#9 14.24 info: syncing channel updates for 1.98.0-x86_64-unknown-linux-gnu
+#9 14.62 info: latest update on 2026-08-20 for version 1.98.0 (88d9e12ae 2026-08-18)
+#9 14.63 info: downloading component rust-std
+#9 18.95 
+#9 18.95   1.98.0-x86_64-unknown-linux-gnu updated - rustc 1.98.0 (88d9e12ae 2026-08-18) (from rustc 1.98.0 (88d9e12ae 2026-08-18))
+#9 18.95 
+#9 18.95 info: checking for self-update (current version: 1.29.0)
+#9 19.07 info: downloading self-update (new version: 1.29.1)
+#9 DONE 19.8s
+
+#10 [component-toolchain 2/6] COPY .cargo/config.toml /build/.cargo/config.toml
+#10 DONE 0.5s
+
+#11 [component-toolchain 3/6] COPY Cargo.toml /build/Cargo.toml
+#11 DONE 0.1s
+
+#12 [component-toolchain 4/6] COPY crates /build/crates
+#12 DONE 0.2s
+
+#13 [component-toolchain 5/6] COPY apps /build/apps
+#13 DONE 0.2s
+
+#14 [component-toolchain 6/6] WORKDIR /build/apps
+#14 DONE 0.1s
+
+#15 [component-builder 1/1] RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-component-target,target=/build/apps/target,sharing=locked     cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p http-route  && cargo +1.98.0 build --locked --release --target wasm32-wasip2       -p materializer  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p busyloop  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p connection-http-standard  && cargo +1.97.0 build --locked --release --target wasm32-wasip2       -p sockprobe  && install -d /component-output  && for artifact in       http_route materializer       busyloop connection_http_standard sockprobe; do       install -m 0644 "target/wasm32-wasip2/release/${artifact}.wasm"         "/component-output/${artifact}.wasm";     done
+#15 0.495     Finished `release` profile [optimized] target(s) in 0.23s
+#15 0.588    Compiling serde_core v1.0.229
+#15 0.588    Compiling proc-macro2 v1.0.107
+#15 0.588    Compiling zmij v1.0.23
+#15 0.588    Compiling quote v1.0.47
+#15 0.774    Compiling unicode-ident v1.0.24
+#15 0.790    Compiling serde_json v1.0.151
+#15 0.941    Compiling itoa v1.0.18
+#15 1.033    Compiling memchr v2.8.3
+#15 1.044    Compiling foldhash v0.2.0
+#15 1.128    Compiling hashbrown v0.17.1
+#15 1.550    Compiling syn v3.0.4
+#15 1.563    Compiling equivalent v1.0.2
+#15 1.585    Compiling bitflags v2.13.1
+#15 1.697    Compiling semver v1.0.28
+#15 1.798    Compiling anyhow v1.0.104
+#15 1.904    Compiling typenum v1.20.1
+#15 2.024    Compiling serde v1.0.229
+#15 2.614    Compiling indexmap v2.14.0
+#15 3.299    Compiling wasmparser v0.258.0
+#15 3.576    Compiling hybrid-array v0.4.14
+#15 3.605    Compiling serde_derive v1.0.229
+#15 4.229    Compiling autocfg v1.5.1
+#15 4.428    Compiling prettyplease v0.2.37
+#15 4.501    Compiling num-traits v0.2.19
+#15 4.633    Compiling log v0.4.34
+#15 4.743    Compiling id-arena v2.3.0
+#15 4.823    Compiling deunicode v1.6.2
+#15 4.935    Compiling leb128fmt v0.1.0
+#15 4.988    Compiling slug v0.1.6
+#15 5.180    Compiling block-buffer v0.12.1
+#15 5.223    Compiling crypto-common v0.2.2
+#15 5.774    Compiling const-oid v0.10.2
+#15 6.551    Compiling digest v0.11.3
+#15 6.674    Compiling jmespath v0.3.0
+#15 6.902    Compiling syn v2.0.119
+#15 7.265    Compiling cfg-if v1.0.4
+#15 7.288    Compiling wit-bindgen-rust v0.61.1
+#15 7.394    Compiling heck v0.5.0
+#15 7.522    Compiling sha2 v0.11.0
+#15 8.276    Compiling wasm-encoder v0.258.0
+#15 8.718    Compiling wit-parser v0.258.0
+#15 9.823    Compiling wasm-metadata v0.258.0
+#15 10.07    Compiling chrono v0.4.45
+#15 10.45    Compiling wit-bindgen-rust-macro v0.61.1
+#15 10.57    Compiling lazy_static v1.5.0
+#15 10.58    Compiling wit-bindgen v0.61.1
+#15 10.82    Compiling wamn-event-wire v0.1.0 (/build/apps/platform/events/wire)
+#15 11.90    Compiling wit-component v0.258.0
+#15 12.20    Compiling wit-bindgen-core v0.61.1
+#15 12.83    Compiling wamn-event-reg v0.1.0 (/build/apps/platform/events/registration)
+#15 13.14    Compiling wamn-materializer v0.1.0 (/build/apps/platform/events/materializer)
+#15 16.02    Compiling materializer v0.1.0 (/build/apps/platform/execution/materializer)
+#15 17.09     Finished `release` profile [optimized] target(s) in 16.59s
+#15 17.15    Compiling busyloop v0.1.0 (/build/apps/platform/fixtures/busyloop)
+#15 17.21     Finished `release` profile [optimized] target(s) in 0.10s
+#15 17.25    Compiling connection-http-standard v0.1.0 (/build/apps/platform/fixtures/connection-http-standard)
+#15 17.35     Finished `release` profile [optimized] target(s) in 0.13s
+#15 17.39    Compiling sockprobe v0.1.0 (/build/apps/platform/fixtures/sockprobe)
+#15 17.51     Finished `release` profile [optimized] target(s) in 0.14s
+#15 DONE 17.7s
+
+#16 exporting to image
+#16 exporting layers
+#16 exporting layers 1.7s done
+#16 writing image sha256:5cd03b662c87284201d6e98a65509790051a9a88a4c65cb53368b4aa8378d03b done
+#16 naming to docker.io/library/wamn-component-builder:consolidation-c-20260911-e389c6fd 0.0s done
+#16 DONE 1.8s
