@@ -399,13 +399,13 @@ The authentication-order mutant must fail the named refusal test.
 Restore source bytes and timestamps, remove mutant build outputs, and require the suite to pass again.
 
 Commit the source before the deployed proof and place evidence outside the active worktree.
-Run the existing Receiving correctness journey after its dry run:
+Run the Receiving command histories from a clean source worktree:
 
 ```bash
-tools/receiving-cluster-journey-run --receiving-correctness \
-  --evidence-dir /absolute/repository/path/to/new-p3-dry-run
-tools/receiving-cluster-journey-run --apply --receiving-correctness \
-  --evidence-dir /absolute/repository/path/to/new-p3-journey
+WAMN_RECEIVING_EVIDENCE_DIR=/absolute/path/to/main/docs/perf/2026.09/receiving-correctness/new-run \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::route_cases::command_histories \
+  -- --ignored --exact --nocapture
 ```
 
 The journey uses one HTTP artifact for its in-process route proof and OCI publication.
@@ -1575,9 +1575,10 @@ loads their unique tags into its disposable cluster.
 It never addresses the frozen `wamn` cluster.
 
 ```bash
-mkdir -p docs/operations/evidence
-tools/receiving-cluster-journey-run --membershipproof --apply \
-  --evidence-dir docs/operations/evidence/ctc8-19-membership-http
+WAMN_RECEIVING_EVIDENCE_DIR=/absolute/path/to/main/docs/perf/2026.09/ctc8-19-membership-http/new-run \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::route_cases::human_membership_and_permission_revocation \
+  -- --ignored --exact --nocapture
 ```
 
 Start from a clean worktree. Use a new evidence directory for each run.
@@ -1706,8 +1707,10 @@ Set `WAMN_SESSION_PROOF_EVIDENCE` to a new directory under the main checkout's `
 Run the gate from a clean source worktree:
 
 ```bash
-tools/receiving-cluster-journey-run --session-host-proof --apply \
-  --evidence-dir "$WAMN_SESSION_PROOF_EVIDENCE"
+WAMN_RECEIVING_EVIDENCE_DIR="$WAMN_SESSION_PROOF_EVIDENCE" \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::session_cases::session_hosts_preserve_the_original_caller \
+  -- --ignored --exact --nocapture
 ```
 
 Create the parent directory first.
@@ -1744,8 +1747,10 @@ Create its parent directory first.
 Run the gate from a clean source worktree:
 
 ```bash
-tools/receiving-cluster-journey-run --fresh-only-proof --apply \
-  --evidence-dir "$WAMN_FRESH_ONLY_EVIDENCE"
+WAMN_RECEIVING_EVIDENCE_DIR="$WAMN_FRESH_ONLY_EVIDENCE" \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::session_cases::fresh_only_session_selection \
+  -- --ignored --exact --nocapture
 ```
 
 Keep the evidence directory outside the source worktree during the run.
@@ -1782,8 +1787,10 @@ They do not change the issuer lifetime or wait for a real session to expire.
 Run the live proof from a clean source worktree:
 
 ```bash
-tools/receiving-cluster-journey-run --session-client-proof --apply \
-  --evidence-dir "$WAMN_SESSION_CLIENT_EVIDENCE"
+WAMN_RECEIVING_EVIDENCE_DIR="$WAMN_SESSION_CLIENT_EVIDENCE" \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::session_cases::session_client_login_and_fresh_selection \
+  -- --ignored --exact --nocapture
 ```
 
 Set `WAMN_SESSION_CLIENT_EVIDENCE` to a new absolute directory outside that source worktree.
@@ -3288,21 +3295,23 @@ It does not run benchmarks.
 Run the pure model and shrinking tests through the normal Cargo test target:
 
 ```bash
-cargo test --locked --offline -p wamn-proof-integration \
-  --test receiving_command_histories_live -- --nocapture
+cargo test --locked --offline -p wamn-receiving-tests --lib \
+  receiving_command_histories_live:: -- --nocapture
 ```
 
 Run the complete live proof through the existing disposable journey:
 
 ```bash
-tools/receiving-cluster-journey-run --apply --receiving-correctness \
-  --evidence-dir /absolute/path/to/main/docs/perf/2026.09/receiving-correctness/live-001
+WAMN_RECEIVING_EVIDENCE_DIR=/absolute/path/to/main/docs/perf/2026.09/receiving-correctness/new-run \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::route_cases::command_histories \
+  -- --ignored --exact --nocapture
 ```
 
 Use a new evidence directory for each run.
 The runner owns the cluster, PostgreSQL, registry, broker, images, and cleanup.
 It creates `wamn_system` and builds the native `wamn-identity` binary for operator-authenticated PAT bootstrap.
-This mode uses the separate `wamn-receiving-correctness` scratch cluster.
+Each test creates its own cluster with a unique name.
 Its local authoring Gate binds to `127.0.0.1:18090`.
 The frozen `kind-wamn` cluster remains outside this recipe.
 The runner uses the standard host image and debug test executable.
@@ -3669,8 +3678,10 @@ overlay operation and digest, include its PostgreSQL effect, and carry no
 caller identity: post-commit causation is provenance, not identity.
 
 ```bash
-tools/receiving-cluster-journey-run --apply \
-  --evidence-dir /tmp/wamn-receiving-materializer-evidence
+WAMN_RECEIVING_EVIDENCE_DIR=/absolute/path/to/main/docs/perf/2026.09/receiving-materializer/new-run \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::default_case::released_routes_materializer_startup_and_environment_isolation \
+  -- --ignored --exact --nocapture
 ```
 
 This run re-proves the materializer journey, native scheduling, and exact
@@ -3695,8 +3706,10 @@ Run from clean committed source in an isolated worktree.
 Use a new evidence directory under the main checkout.
 
 ```bash
-tools/receiving-postcommit-proof --apply \
-  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/live-001
+WAMN_RECEIVING_EVIDENCE_DIR=/absolute/path/to/main/docs/perf/2026.09/receiving-postcommit/new-run \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::postcommit_pair::unchanged_overlay_across_baseline_and_additive_installations \
+  -- --ignored --exact --nocapture
 ```
 
 Each installation executes the existing thirteen-route proof with the same overlay component.
@@ -3763,13 +3776,13 @@ The [startup exposure proof](../perf/2026.09/wasmcloud-2-9-cutover/live-receivin
 | Helper and receipt | Required proof and limit |
 |---|---|
 | `test-support/infrastructure/traces/telemetry.rs` and `telemetry/result.json` | Within 120 seconds, collect both real PAT request traces with completed invocation spans and descendant PostgreSQL effects carrying the expected identity. Require native HTTP duration counts of at least two and PostgreSQL/JetStream counts of at least one. These histograms do not identify individual requests or measure guest CPU; HTTP egress injection and private runtime phases remain outside this proof. |
-| `tools/journey-startup-burst.py`; `startup-burst/result.json` | Start one fresh release host with empty private caches and the deployed explicit start limit. Submit cold and warm bursts of twice that limit through native RPCs. Require measured native handler overlap above the limit, heartbeat/probe progress during starts, and warm serving continuity. Replicas share one production HTTP digest and native compile deduplication; overlap measures queued demand, not active permit occupancy or CPU use. |
-| `tools/receiving-operator-recovery-run`; `operator-recovery/result.json` | Compare all five installed CRD schemas with the pinned distributed chart, allowing only recorded Kubernetes defaults. After 75 seconds of healthy fleet observation, stop only the chart's shared scheduler NATS for 150 seconds, observe the native fleet-deaf condition, restore it, then restart the operator on the same image. Each recovery requires fresh Host readiness and an exact successful application response within 120 seconds. Host identities/processes must persist; Workload UID changes are recorded. The external event NATS stays running. |
+| `apps/wamn_receiving/tests/route_authentication_live/cluster/startup_case.rs` and `startup-burst/result.json` | Start one fresh release host with empty private caches and the deployed explicit start limit. Submit cold and warm bursts of twice that limit through native RPCs. Require measured native handler overlap above the limit, heartbeat/probe progress during starts, and warm serving continuity. Replicas share one production HTTP digest and native compile deduplication; overlap measures queued demand, not active permit occupancy or CPU use. |
+| `apps/wamn_receiving/tests/route_authentication_live/cluster/operator_recovery.rs` and `operator-recovery/result.json` | Compare all five installed CRD schemas with the pinned distributed chart, allowing only recorded Kubernetes defaults. After 75 seconds of healthy fleet observation, stop only the chart's shared scheduler NATS for 150 seconds, observe the native fleet-deaf condition, restore it, then restart the operator on the same image. Each recovery requires fresh Host readiness and an exact successful application response within 120 seconds. Host identities/processes must persist; Workload UID changes are recorded. The external event NATS stays running. |
 
 The 150-second scheduler outage exceeds native TTL 60 seconds, reconciliation 60 seconds, and heartbeat RPC 5 seconds, with 25 seconds of observation margin.
 Actual responses during the outage are retained and checked; arbitrary error responses cannot satisfy the helper.
 The helpers retain command, trace, metric, identity, cleanup, and hash receipts beneath their named evidence directories.
-They run only in full mode. `--measure-startup` exits earlier and keeps its existing timing protocol and thresholds.
+The complete Receiving case calls these functions. The separate startup case keeps its existing timing protocol and thresholds.
 The [completed comparison](../perf/2026.09/wasmcloud-2-9-cutover/performance-comparison-001/tables.md) records 108 steps per source at `dfa1c318` and `e7033f72`.
 Both runs pass their existing service ratio ceiling of 12. No further benchmark is requested.
 
@@ -3832,8 +3845,10 @@ measurements below used runtime-operator 2.8.0 and TCP probes. The updated 2.9.0
 startup proof remains unexecuted.
 
 ```bash
-tools/receiving-cluster-journey-run --apply --measure-startup \
-  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-startup-001/journey
+WAMN_RECEIVING_EVIDENCE_DIR=/absolute/path/to/main/docs/perf/2026.09/receiving-startup/new-run \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::measurement_cases::startup_and_steady_request_overhead \
+  -- --ignored --exact --nocapture
 ```
 
 The helper refuses a dirty source tree or a pre-existing scratch cluster. Every
@@ -3905,8 +3920,10 @@ to one row per step and a knee and a peak per layer (`throughput/report.md`,
 read from the machine, not inferred.
 
 ```bash
-tools/receiving-cluster-journey-run --apply --throughput \
-  --evidence-dir /tmp/wamn-receiving-throughput-evidence
+WAMN_RECEIVING_EVIDENCE_DIR=/absolute/path/to/main/docs/perf/2026.09/receiving-throughput/new-run \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::measurement_cases::receiving_throughput \
+  -- --ignored --exact --nocapture
 ```
 
 The sweep runs before the overhead-ratio gate, so a red ratio does not cost it
@@ -3917,7 +3934,7 @@ knee and peak were computed. The knee and the peak are recorded in the report;
 a ceiling ratchets later, on a landing.
 
 ```bash
-WAMN_THROUGHPUT_EVIDENCE_DIR=/tmp/wamn-receiving-throughput-evidence/throughput \
+WAMN_THROUGHPUT_EVIDENCE_DIR=/absolute/path/to/main/docs/perf/2026.09/receiving-throughput/new-run/throughput \
   cargo test -p wamn-proof-integration --lib --locked --offline \
   throughput_bench_live::tests::every_layer_ran_the_whole_sweep_and_its_knee_is_recorded \
   -- --ignored --exact --nocapture
@@ -3929,7 +3946,7 @@ The existing strict index parser and result reader remain in `tests/integration/
 Its schema remains at `tests/integration/schema/wamn-throughput.schema.json`.
 Regenerate it with `wamn-throughput schema`.
 
-For the fresh-auth comparison (`wamn-ctc8.12`), use `--fresh-auth-bench` instead of `--throughput`.
+For the fresh-auth comparison (`wamn-ctc8.12`), select `route_authentication_live::cluster::measurement_cases::receiving_fresh_authority` in the same Cargo command.
 This mode runs three sweeps for each credential: a service PAT and a human PAT with explicit environment membership.
 The second pair reverses the credential order.
 Each sweep retains the existing route, no-database, and direct-statement layers in its own directory.
@@ -4006,7 +4023,10 @@ Its final request requires successful dispatch after the connection becomes enab
 From a clean committed worktree, run the deployed HTTP regression gate with a new evidence directory:
 
 ```bash
-tools/receiving-cluster-journey-run --apply --membershipproof --evidence-dir NEW_EVIDENCE_DIRECTORY
+WAMN_RECEIVING_EVIDENCE_DIR=/absolute/path/to/main/docs/perf/2026.09/receiving-membership/new-run \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::route_cases::human_membership_and_permission_revocation \
+  -- --ignored --exact --nocapture
 ```
 
 This gate rebuilds the standard host and test images and uses its own disposable cluster.
