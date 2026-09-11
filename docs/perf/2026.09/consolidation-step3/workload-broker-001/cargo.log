@@ -1,0 +1,25 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/test-support/infrastructure)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.10s
+     Running unittests lib.rs (target/debug/deps/wamn_test_infrastructure-7cd9c6883a87861a)
+
+running 8 tests
+test event_broker::tests::invalid_scope_and_repeated_durables_leave_no_broker_files ... ok
+test workload::tests::in_cluster_response_requires_the_exact_status_type_and_body_bytes ... ok
+test workload::tests::denial_event_must_name_the_exact_object_and_environment ... ok
+test workload::tests::workload_count_remains_separate_from_stream_settings ... ok
+test workload::tests::refused_environment_cannot_carry_a_host_or_ready_condition ... ok
+test event_broker::tests::runtime_roles_cannot_manage_streams_or_consumers ... ok
+test event_broker::tests::private_files_keep_passwords_out_of_debug_and_bind_the_inspected_server ... ok
+test workload::tests::endpoint_must_match_the_service_selected_host_and_ready_pod ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 44 filtered out; finished in 0.00s
+
