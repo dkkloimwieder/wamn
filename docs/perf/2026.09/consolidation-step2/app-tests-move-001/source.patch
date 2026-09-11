@@ -1,0 +1,75 @@
+diff --git a/tests/integration/src/acme_overlay_publication.rs b/apps/client_acme_receiving/tests/acme_overlay_publication.rs
+similarity index 100%
+rename from tests/integration/src/acme_overlay_publication.rs
+rename to apps/client_acme_receiving/tests/acme_overlay_publication.rs
+diff --git a/tests/integration/src/receiving_data_access.rs b/apps/wamn_receiving/tests/receiving_data_access.rs
+similarity index 100%
+rename from tests/integration/src/receiving_data_access.rs
+rename to apps/wamn_receiving/tests/receiving_data_access.rs
+diff --git a/tests/integration/src/receiving_publication.rs b/apps/wamn_receiving/tests/receiving_publication.rs
+similarity index 100%
+rename from tests/integration/src/receiving_publication.rs
+rename to apps/wamn_receiving/tests/receiving_publication.rs
+diff --git a/tests/conformance/tests/receiving_sqlx_verifier.rs b/apps/wamn_receiving/tests/receiving_sqlx_verifier.rs
+similarity index 100%
+rename from tests/conformance/tests/receiving_sqlx_verifier.rs
+rename to apps/wamn_receiving/tests/receiving_sqlx_verifier.rs
+diff --git a/tests/integration/src/wms_publication.rs b/apps/wamn_wms/tests/wms_publication.rs
+similarity index 100%
+rename from tests/integration/src/wms_publication.rs
+rename to apps/wamn_wms/tests/wms_publication.rs
+diff --git a/tests/integration/src/wms_runtime_live.rs b/apps/wamn_wms/tests/wms_runtime_live.rs
+similarity index 100%
+rename from tests/integration/src/wms_runtime_live.rs
+rename to apps/wamn_wms/tests/wms_runtime_live.rs
+diff --git a/tests/integration/src/wms_wiring_shape.rs b/apps/wamn_wms/tests/wms_wiring_shape.rs
+similarity index 100%
+rename from tests/integration/src/wms_wiring_shape.rs
+rename to apps/wamn_wms/tests/wms_wiring_shape.rs
+diff --git a/tests/conformance/Cargo.toml b/tests/conformance/Cargo.toml
+index a1d9654e..13a1fcc9 100644
+--- a/tests/conformance/Cargo.toml
++++ b/tests/conformance/Cargo.toml
+@@ -41,3 +41,7 @@ wat = "=1.252.0"
+ 
+ [lints]
+ workspace = true
++
++[[test]]
++name = "receiving_sqlx_verifier"
++path = "../../apps/wamn_receiving/tests/receiving_sqlx_verifier.rs"
+diff --git a/tests/integration/src/lib.rs b/tests/integration/src/lib.rs
+index 35385e5d..c8cf86fe 100644
+--- a/tests/integration/src/lib.rs
++++ b/tests/integration/src/lib.rs
+@@ -5,6 +5,7 @@
+ pub use wamn_test_infrastructure::ctl_process;
+ 
+ #[cfg(test)]
++#[path = "../../../apps/client_acme_receiving/tests/acme_overlay_publication.rs"]
+ mod acme_overlay_publication;
+ mod cdc_reader_process;
+ pub mod cdcbench;
+@@ -20,8 +21,10 @@ pub mod membershipproof;
+ pub mod provisionbench;
+ pub mod readerbench;
+ #[cfg(test)]
++#[path = "../../../apps/wamn_receiving/tests/receiving_data_access.rs"]
+ mod receiving_data_access;
+ #[cfg(test)]
++#[path = "../../../apps/wamn_receiving/tests/receiving_publication.rs"]
+ mod receiving_publication;
+ pub mod retention;
+ #[cfg(test)]
+@@ -35,8 +38,11 @@ pub mod trusted_http_route;
+ mod virtualized_std_guest;
+ pub mod walbench;
+ #[cfg(test)]
++#[path = "../../../apps/wamn_wms/tests/wms_publication.rs"]
+ mod wms_publication;
+ #[cfg(test)]
++#[path = "../../../apps/wamn_wms/tests/wms_runtime_live.rs"]
+ mod wms_runtime_live;
+ #[cfg(test)]
++#[path = "../../../apps/wamn_wms/tests/wms_wiring_shape.rs"]
+ mod wms_wiring_shape;

@@ -34,7 +34,7 @@ interface in A6; they live in the protocol (`docs/experiments/agent-authoring/pr
 | F18 | Test-set execution against a candidate wiring is being built on the management side; no handler yet. | beads `wamn-0h0g.8.5` (in_progress), `.8.5.4` (open) |
 | F19 | The loop's read seam and activated-endpoint publish exist; the loop console is the view-only client. | beads `wamn-10yt.10.26`, `.10.27` (closed), `wamn-dggp` |
 | F20 | Portfolio rule: simulators drive real routes; never seed the database. | `docs/poc/poc-application-portfolio.md:49` |
-| F21 | Authored SQL is verified by a hand-written per-package conformance test (native sibling + `cargo sqlx prepare --check`); there is no generic statement verifier in the generator or the loop. A new package's statements are first proven at runtime. | `tests/conformance/tests/receiving_sqlx_verifier.rs`, `docs/operations/build-and-test.md:236-249`, `docs/sqlx-data-access-spec.md:26-31`; no `prepare` under `crates/schema/*`, `services/ctl/src/dev` |
+| F21 | Authored SQL is verified by a hand-written per-package conformance test (native sibling + `cargo sqlx prepare --check`); there is no generic statement verifier in the generator or the loop. A new package's statements are first proven at runtime. | `apps/wamn_receiving/tests/receiving_sqlx_verifier.rs`, `docs/operations/build-and-test.md:236-249`, `docs/sqlx-data-access-spec.md:26-31`; no `prepare` under `crates/schema/*`, `services/ctl/src/dev` |
 | F22 | Component unit tests run natively: `cargo test --manifest-path components/Cargo.toml -p <crate> --all-targets`; wasip2 via `cargo check --target wasm32-wasip2`. | `docs/operations/build-and-test.md:239-242` |
 
 Consequences: a script cannot reach the activated release (F5, F6) → A0. The agent

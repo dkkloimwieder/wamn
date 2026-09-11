@@ -1,0 +1,343 @@
+{
+  "base": "e4257128341ebe3574028a88fa2c34e62e4ab694",
+  "moved": [
+    {
+      "module": "receiving_data_access",
+      "source": "tests/integration/src/receiving_data_access.rs",
+      "destination": "apps/wamn_receiving/tests/receiving_data_access.rs",
+      "sha256": "ed6aa7b35ce5d0407189c3d6c82dcc4425e13814295d14bf0337862d19e6a753",
+      "mode": "0o664",
+      "bytes": 56206,
+      "lines": 1472,
+      "tests": 2
+    },
+    {
+      "module": "receiving_publication",
+      "source": "tests/integration/src/receiving_publication.rs",
+      "destination": "apps/wamn_receiving/tests/receiving_publication.rs",
+      "sha256": "fef446a9fcaae7fdbb6fd20c40e0318a153dca16c92ae67feb1b06a932f6cfd5",
+      "mode": "0o664",
+      "bytes": 7345,
+      "lines": 201,
+      "tests": 1
+    },
+    {
+      "module": "acme_overlay_publication",
+      "source": "tests/integration/src/acme_overlay_publication.rs",
+      "destination": "apps/client_acme_receiving/tests/acme_overlay_publication.rs",
+      "sha256": "f60a54f3e5dbd2b801de1a8fe2027f894dc9283a56d3ade4fbdceb47f0f4429f",
+      "mode": "0o664",
+      "bytes": 10690,
+      "lines": 263,
+      "tests": 2
+    },
+    {
+      "module": "wms_publication",
+      "source": "tests/integration/src/wms_publication.rs",
+      "destination": "apps/wamn_wms/tests/wms_publication.rs",
+      "sha256": "30864a4b78c15fafe85fc26967bc0e941f30c8a5f76815f08ce21829dfe5e6b8",
+      "mode": "0o664",
+      "bytes": 9086,
+      "lines": 239,
+      "tests": 2
+    },
+    {
+      "module": "wms_wiring_shape",
+      "source": "tests/integration/src/wms_wiring_shape.rs",
+      "destination": "apps/wamn_wms/tests/wms_wiring_shape.rs",
+      "sha256": "9d98c0180fee754f32b5e024b40e4dc5a307ad53ee54a03b75fb6a0ea418ee54",
+      "mode": "0o664",
+      "bytes": 12886,
+      "lines": 308,
+      "tests": 7
+    },
+    {
+      "module": "wms_runtime_live",
+      "source": "tests/integration/src/wms_runtime_live.rs",
+      "destination": "apps/wamn_wms/tests/wms_runtime_live.rs",
+      "sha256": "d67bd56afb7f4ebb3042bd12859833b7d73773848a6fbef7f70b8bab8fb3c934",
+      "mode": "0o664",
+      "bytes": 28016,
+      "lines": 709,
+      "tests": 6
+    },
+    {
+      "module": "receiving_sqlx_verifier",
+      "source": "tests/conformance/tests/receiving_sqlx_verifier.rs",
+      "destination": "apps/wamn_receiving/tests/receiving_sqlx_verifier.rs",
+      "sha256": "8a686990543f24e61ada4d768af0b75c0c944cb08827f49d9783d81cbc3a480c",
+      "mode": "0o664",
+      "bytes": 14550,
+      "lines": 283,
+      "tests": 2
+    }
+  ],
+  "moved_file_bytes_and_modes_unchanged": true,
+  "total_moved_lines": 3475,
+  "test_cases": 22,
+  "only_content_change": "Six explicit module path attributes in tests/integration/src/lib.rs and one explicit existing test target path in tests/conformance/Cargo.toml.",
+  "cargo_metadata_identical": false,
+  "native_workspace_members": 40,
+  "rust_parse_commands": [
+    {
+      "path": "apps/wamn_receiving/tests/receiving_data_access.rs",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--emit",
+        "stdout",
+        "apps/wamn_receiving/tests/receiving_data_access.rs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "apps/wamn_receiving/tests/receiving_publication.rs",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--emit",
+        "stdout",
+        "apps/wamn_receiving/tests/receiving_publication.rs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "apps/client_acme_receiving/tests/acme_overlay_publication.rs",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--emit",
+        "stdout",
+        "apps/client_acme_receiving/tests/acme_overlay_publication.rs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "apps/wamn_wms/tests/wms_publication.rs",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--emit",
+        "stdout",
+        "apps/wamn_wms/tests/wms_publication.rs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "apps/wamn_wms/tests/wms_wiring_shape.rs",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--emit",
+        "stdout",
+        "apps/wamn_wms/tests/wms_wiring_shape.rs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "apps/wamn_wms/tests/wms_runtime_live.rs",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--emit",
+        "stdout",
+        "apps/wamn_wms/tests/wms_runtime_live.rs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "tests/integration/src/lib.rs",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--emit",
+        "stdout",
+        "tests/integration/src/lib.rs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "path": "apps/wamn_receiving/tests/receiving_sqlx_verifier.rs",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--emit",
+        "stdout",
+        "apps/wamn_receiving/tests/receiving_sqlx_verifier.rs"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "resolved_includes": [
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/wamn.json",
+      "resolved": "apps/wamn_receiving/wamn.json"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/migrations/0001_initial.sql",
+      "resolved": "apps/wamn_receiving/migrations/0001_initial.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/generated/sql/purchase_order/update.sql",
+      "resolved": "apps/wamn_receiving/generated/sql/purchase_order/update.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/command/record_receipt/claim_command.sql",
+      "resolved": "apps/wamn_receiving/command/record_receipt/claim_command.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/command/record_receipt/finalize_command.sql",
+      "resolved": "apps/wamn_receiving/command/record_receipt/finalize_command.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/command/record_receipt/find_replay.sql",
+      "resolved": "apps/wamn_receiving/command/record_receipt/find_replay.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/command/record_receipt/finish_purchase_order.sql",
+      "resolved": "apps/wamn_receiving/command/record_receipt/finish_purchase_order.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/command/record_receipt/insert_receipt.sql",
+      "resolved": "apps/wamn_receiving/command/record_receipt/insert_receipt.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/command/record_receipt/insert_receipt_line.sql",
+      "resolved": "apps/wamn_receiving/command/record_receipt/insert_receipt_line.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql",
+      "resolved": "apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/command/record_receipt/update_purchase_order_line.sql",
+      "resolved": "apps/wamn_receiving/command/record_receipt/update_purchase_order_line.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/command/record_receipt/validate_receipt_line.sql",
+      "resolved": "apps/wamn_receiving/command/record_receipt/validate_receipt_line.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/client_acme_receiving/migrations/0001_add_inspection_required.sql",
+      "resolved": "apps/client_acme_receiving/migrations/0001_add_inspection_required.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/client_acme_receiving/migrations/0002_quality_inspection.sql",
+      "resolved": "apps/client_acme_receiving/migrations/0002_quality_inspection.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/client_acme_receiving/generated/sql/purchase_order/get.sql",
+      "resolved": "apps/client_acme_receiving/generated/sql/purchase_order/get.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/client_acme_receiving/generated/sql/purchase_order/update.sql",
+      "resolved": "apps/client_acme_receiving/generated/sql/purchase_order/update.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/client_acme_receiving/query/quality_purchase_order_detail.sql",
+      "resolved": "apps/client_acme_receiving/query/quality_purchase_order_detail.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql",
+      "resolved": "apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/client_acme_receiving/command/create_inspection/insert_inspection.sql",
+      "resolved": "apps/client_acme_receiving/command/create_inspection/insert_inspection.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/client_acme_receiving/command/create_inspection/load_inspection.sql",
+      "resolved": "apps/client_acme_receiving/command/create_inspection/load_inspection.sql"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/wamn_receiving/generated/platform-policy/data-access.json",
+      "resolved": "apps/wamn_receiving/generated/platform-policy/data-access.json"
+    },
+    {
+      "module": "receiving_data_access",
+      "include": "../../../apps/client_acme_receiving/generated/platform-policy/data-access.json",
+      "resolved": "apps/client_acme_receiving/generated/platform-policy/data-access.json"
+    }
+  ],
+  "retained_platform_tests": [
+    "tests/integration/src/route_authentication_live.rs",
+    "tests/integration/tests/startup_burst_live.rs"
+  ],
+  "direct_readers_requiring_updates": [
+    {
+      "path": "docs/poc/agent-authoring-tooling-spec.md",
+      "line": 37,
+      "kind": "existing prose citation; root owns live docs",
+      "old": "tests/conformance/tests/receiving_sqlx_verifier.rs",
+      "new": "apps/wamn_receiving/tests/receiving_sqlx_verifier.rs"
+    }
+  ],
+  "builds_or_tests_run": false,
+  "index_scope": "Exactly seven R100 git mv entries; lib.rs and the conformance Cargo declaration remain unstaged.",
+  "cargo_metadata_equal_after_one_test_source_path_mapping": true,
+  "only_cargo_target_change": {
+    "old": "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911/tests/conformance/tests/receiving_sqlx_verifier.rs",
+    "new": "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911/tests/conformance/../../apps/wamn_receiving/tests/receiving_sqlx_verifier.rs",
+    "canonical_new": "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911/apps/wamn_receiving/tests/receiving_sqlx_verifier.rs"
+  },
+  "remaining_app_named_native_test_files_outside_apps": 0,
+  "direct_consumer_searches": [
+    {
+      "command": "rg -n -F: all seven old source paths, excluding dated evidence and experiment transcripts",
+      "executable_path_readers": [],
+      "prose_reader": "docs/poc/agent-authoring-tooling-spec.md:37"
+    },
+    {
+      "command": "rg --files crates services tests, filtered to receiving/wms/acme Rust names",
+      "remaining_test_files": [],
+      "retained_example": "crates/client/terminal/examples/wms_move.rs"
+    }
+  ],
+  "test_identity_scope": {
+    "integration_module_names_unchanged": [
+      "receiving_data_access",
+      "receiving_publication",
+      "acme_overlay_publication",
+      "wms_publication",
+      "wms_wiring_shape",
+      "wms_runtime_live"
+    ],
+    "conformance_target": {
+      "package": "wamn-proof-conformance",
+      "name": "receiving_sqlx_verifier",
+      "all_target_fields_except_source_path_unchanged": true
+    },
+    "source_test_cases_before": 22,
+    "source_test_cases_after": 22,
+    "executed_test_count": 0
+  }
+}
