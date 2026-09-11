@@ -1380,6 +1380,7 @@ try:
         if entry.get('auth'):
             pair = base64.b64decode(entry['auth'], validate=True).decode()
             redactions.update((pair, pair.split(':', 1)[1]))
+    redactions.add(Path(event_password_file).read_text())
     redactions = sorted((value for value in redactions if value), key=len, reverse=True)
 
     def redact(text):
@@ -1405,7 +1406,6 @@ try:
     stage = 'binary identity'
     with open(binary, 'rb') as built:
         result['binary_sha256'] = hashlib.file_digest(built, 'sha256').hexdigest()
-    redactions.add(Path(event_password_file).read_text())
     env = {'PATH': os.environ['PATH'], **urls, 'WAMN_EVT_NATS_URL': nats,
            'WAMN_EVT_ORG': event_org, 'WAMN_EVT_PROJECT': event_project,
            'WAMN_EVT_ENV': event_environment, 'WAMN_EVT_NATS_USERNAME': event_username,
