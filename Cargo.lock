@@ -6377,6 +6377,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
+ "object_store",
+ "pg_walstream",
  "reqwest",
  "serde_json",
  "tokio",
@@ -6384,7 +6386,9 @@ dependencies = [
  "uuid",
  "wamn-authoring-model",
  "wamn-catalog",
+ "wamn-cdc-reader",
  "wamn-control-provision",
+ "wamn-control-registry",
  "wamn-ctl",
  "wamn-execution-contract",
  "wamn-gate-harness",
