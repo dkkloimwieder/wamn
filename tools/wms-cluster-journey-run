@@ -166,7 +166,10 @@ app_probe_statement_spans=1
 # The JetStream stream the platform creates for this application's events.
 # WMS declares none (apps/wamn_wms/wamn.json), so nothing flows on it; it is
 # derived, not spelled, for the same reason as everywhere else.
-app_event_stream=EVT_${app_org}_${app_environment}
+app_event_stream=EVT_${#app_org}_${app_org}_${#app_project}_${app_project}_${#app_environment}_${app_environment}
+app_advisory_stream=WAMN_EVENT_ADVISORIES_${app_event_stream}
+app_stream_replicas=1
+app_dup_window_secs=120
 # The CDC materializer workload THIS application deploys. WMS sends nothing
 # through it; deploying it proves the overlay's fifth family and that an idle
 # materializer neither refuses nor fails.
@@ -767,7 +770,7 @@ run docker run --detach --name "$registry_container" --network kind \
 event_nats_directory=$work_dir/event-nats
 install -d -m 0700 "$event_nats_directory"
 python3 - "$event_nats_directory" "$app_org" "$app_project" \
-  "$app_environment" "$app_tenant" "$app_package_dir" <<'PY_EVENT_NATS'
+  "$app_environment" "$app_tenant" "$app_stream_replicas" "$app_dup_window_secs" "$app_package_dir" <<'PY_EVENT_NATS'
 import json
 import os
 from pathlib import Path
@@ -775,13 +778,15 @@ import re
 import secrets
 import sys
 
-out, org, project, environment, tenant, *app_directories = sys.argv[1:]
+out, org, project, environment, tenant, replicas, window, *app_directories = sys.argv[1:]
+replicas, window = int(replicas), int(window)
 out = Path(out)
 os.umask(0o077)
 if any(not re.fullmatch(r"[A-Za-z0-9_-]+", value)
        for value in (org, project, environment, tenant)):
     raise SystemExit("event-broker identity must use subject-safe tokens")
-stream = f"EVT_{org}_{environment}"
+stream = f"EVT_{len(org)}_{org}_{len(project)}_{project}_{len(environment)}_{environment}"
+advisory = f"WAMN_EVENT_ADVISORIES_{stream}"
 subject = f"evt.{org}.{project}.{environment}.>"
 tap = f"tap.{tenant}.{project}.{environment}.>"
 # Read registrations from the declarations in the selected app directories.
@@ -799,41 +804,60 @@ for app_directory in app_directories:
         durables.append(durable)
 if len(durables) != len(set(durables)):
     raise SystemExit("event registrations have colliding durable names")
+# WMS declares no event consumers. A new registration needs its declared policy here.
+if durables:
+    raise SystemExit("the WMS runner requires an explicit declared consumer configuration")
 materializer = [f"$JS.API.STREAM.INFO.{stream}"]
-admin = [subject, tap, f"$JS.API.STREAM.INFO.{stream}"]
-observer = [f"$JS.API.STREAM.INFO.{stream}", f"$JS.API.STREAM.MSG.GET.{stream}"]
-for durable in durables:
-    info = f"$JS.API.CONSUMER.INFO.{stream}.{durable}"
-    materializer += [info, f"$JS.API.CONSUMER.MSG.NEXT.{stream}.{durable}",
-                     f"$JS.ACK.{stream}.{durable}.>"]
-    admin += [info, f"$JS.API.CONSUMER.CREATE.{stream}.{durable}",
-              f"$JS.API.CONSUMER.CREATE.{stream}.{durable}.>"]
-    observer.append(info)
+provisioning = []
+runtime = [subject, tap]
 publisher = [subject]
-for retained_stream in (stream, "WAMN_EVENT_ADVISORIES"):
-    publisher += [f"$JS.API.STREAM.INFO.{retained_stream}",
-                  f"$JS.API.STREAM.CREATE.{retained_stream}"]
-# Shared advisory metadata grants are pending the owner's explicit scope ruling.
+observer = []
+for name in (stream, advisory):
+    provisioning += [f"$JS.API.STREAM.{operation}.{name}"
+                     for operation in ("INFO", "CREATE", "UPDATE", "DELETE")]
+    info = f"$JS.API.STREAM.INFO.{name}"
+    runtime.append(info)
+    publisher.append(info)
+    observer += [info, f"$JS.API.STREAM.MSG.GET.{name}"]
 users = []
-for role, publish in (("materializer", materializer), ("publisher", publisher),
-                      ("admin", admin), ("observer", observer)):
-    username = f"{role}_{org}_{project}_{environment}"
+for role, publish in (("provisioning", provisioning), ("runtime", runtime),
+                      ("publisher", publisher), ("materializer", materializer),
+                      ("observer", observer)):
+    username = f"{role}_{stream}"
     password = secrets.token_hex(32)
     (out / f"{role}-username").write_text(username)
     (out / f"{role}-password").write_text(password)
     subscriptions = [f"_INBOX_{username}.>"]
-    if role == "observer":
+    if role in ("runtime", "observer"):
         subscriptions.append(tap)
     users.append({"user": username, "password": password,
                   "permissions": {"publish": {"allow": publish},
                                   "subscribe": {"allow": subscriptions}}})
-(out / "nats.conf").write_text(json.dumps({"authorization": {"users": users}}))
+(out / "nats.conf").write_text(json.dumps({"http": "127.0.0.1:8222",
+                                           "authorization": {"users": users}}))
+# Native NATS configuration is used only by the retained startup-only arm.
+source = {"name": stream, "subjects": [subject], "storage": "file",
+          "num_replicas": replicas, "retention": "limits", "duplicate_window": window * 1_000_000_000,
+          "max_consumers": -1, "max_msgs": -1, "max_bytes": -1,
+          "max_msgs_per_subject": -1, "max_msg_size": -1, "compression": "none"}
+config = dict(source, name=advisory,
+              subjects=[f"$JS.EVENT.ADVISORY.CONSUMER.{kind}.{stream}.*"
+                        for kind in ("MAX_DELIVERIES", "MSG_TERMINATED")],
+              duplicate_window=604_800_000_000_000, max_age=604_800_000_000_000,
+              max_msgs_per_subject=1000)
+(out / "source.json").write_text(json.dumps(source))
+(out / "advisory.json").write_text(json.dumps(config))
+context = {"name": "bootstrap", "url": "nats://127.0.0.1:4222",
+           "user": (out / "provisioning-username").read_text(),
+           "password": (out / "provisioning-password").read_text(),
+           "inbox_prefix": "_INBOX_" + (out / "provisioning-username").read_text()}
+(out / "context.json").write_text(json.dumps(context))
 PY_EVENT_NATS
 nats_owned=true
 run docker run --detach --name "$nats_container" --network kind \
   --volume "$event_nats_directory/nats.conf:/etc/nats/event-nats.conf:ro" \
   nats:2.10-alpine --config /etc/nats/event-nats.conf \
-  --jetstream --store_dir /data --http_port 8222
+  --jetstream --store_dir /data
 # THE OBJECT STORE (wamn-362o.26): a named disposable MinIO beside the other
 # three, not deploy/infra/minio.yaml, which is install-once infrastructure for
 # the real cluster. The credential is minted by this journey and reaches the
@@ -869,8 +893,8 @@ fi
 
 nats_ready=false
 for _ in $(seq 1 60); do
-  if curl --silent --show-error --connect-timeout 2 --max-time 5 \
-      "http://$nats_ip:8222/healthz?js-enabled-only=true" \
+  if docker exec "$nats_container" wget -q -T 5 -O - \
+      'http://127.0.0.1:8222/healthz?js-enabled-only=true' \
       | jq -e '.status == "ok"' >/dev/null; then
     nats_ready=true
     break
@@ -961,7 +985,8 @@ binding = {"servers": server, "username": username,
 (root / "binding.json").write_text(json.dumps(binding))
 PY_EVENT_BINDING
 event_nats_publisher_username=$(<"$event_nats_directory/publisher-username")
-event_nats_admin_username=$(<"$event_nats_directory/admin-username")
+event_nats_runtime_username=$(<"$event_nats_directory/runtime-username")
+event_nats_provisioning_username=$(<"$event_nats_directory/provisioning-username")
 event_nats_observer_username=$(<"$event_nats_directory/observer-username")
 # The bucket blob-put writes into. An author may name an object but never a
 # container (the descriptor's own test), so the container exists before any
@@ -1414,6 +1439,9 @@ run_sensitive enable-cdc-project-env "$ctl" enable-cdc-project-env \
   --system-database-url "$system_url" --cluster route-auth-pg18 \
   --replication-password "$cdc_password" --db-host "$postgres_ip" --db-port 5432 \
   --namespace "$namespace" --secret-namespace "$namespace" \
+  --nats-url "$nats_url" --nats-username "$event_nats_provisioning_username" \
+  --nats-password-file "$event_nats_directory/provisioning-password" \
+  --stream-replicas "$app_stream_replicas" --dup-window-secs "$app_dup_window_secs" \
   --emit-role-sql "$cdc_role_sql" --emit-cdc-sql "$cdc_sql" --emit-secret "$cdc_secret"
 run_sensitive apply-cdc-role env PGPASSWORD=probe psql -v ON_ERROR_STOP=1 \
   -h "$postgres_ip" -p 5432 -U postgres -d postgres -f "$cdc_role_sql"
@@ -1445,15 +1473,15 @@ record_command env WAMN_SYSTEM_URL='<registry-reader credential redacted>' \
   WAMN_EVT_NATS_PASSWORD_FILE='<private publisher password file>' "$reader_binary" \
   --log-level info --org "$app_org" --project "$app_project" --env "$app_environment" \
   --nats-url "$nats_url" \
-  --sslmode disable --stream-replicas 1 --dup-window-secs 120 --feedback-secs 1 \
+  --sslmode disable --stream-replicas "$app_stream_replicas" --dup-window-secs "$app_dup_window_secs" --feedback-secs 1 \
   --stall-threshold-secs 30 --slot-poll-secs 0 --slot-safe-wal-warn-bytes 268435456
 WAMN_SYSTEM_URL="$registry_reader_url" WAMN_CDC_URL="$cdc_url" \
   WAMN_EVT_NATS_USERNAME="$event_nats_publisher_username" \
   WAMN_EVT_NATS_PASSWORD_FILE="$event_nats_directory/publisher-password" \
   "$reader_binary" --log-level info --org "$app_org" --project "$app_project" \
   --env "$app_environment" \
-  --nats-url "$nats_url" --sslmode disable --stream-replicas 1 \
-  --dup-window-secs 120 --feedback-secs 1 --stall-threshold-secs 30 \
+  --nats-url "$nats_url" --sslmode disable --stream-replicas "$app_stream_replicas" \
+  --dup-window-secs "$app_dup_window_secs" --feedback-secs 1 --stall-threshold-secs 30 \
   --slot-poll-secs 0 --slot-safe-wal-warn-bytes 268435456 \
   >"$evidence_dir/cdc-reader.log" 2>&1 &
 reader_pid=$!
@@ -1464,13 +1492,12 @@ for _ in $(seq 1 120); do
     echo "production CDC reader stopped before stream readiness" >&2
     exit 1
   fi
-  curl --silent --show-error --connect-timeout 2 --max-time 5 \
-    "http://$nats_ip:8222/jsz?streams=true&config=true" \
+  docker exec "$nats_container" wget -q -T 5 -O - \
+    'http://127.0.0.1:8222/jsz?streams=true&config=true' \
     >"$work_dir/nats-jsz.json"
-  if jq -e --arg stream "$app_event_stream" '
-      [.. | objects | .name? |
-       select(. == $stream or . == "WAMN_EVENT_ADVISORIES")] |
-      unique == ([$stream, "WAMN_EVENT_ADVISORIES"] | sort)
+  if jq -e --arg stream "$app_event_stream" --arg advisory "$app_advisory_stream" '
+      [.. | objects | .name? | select(. == $stream or . == $advisory)] |
+      unique == ([$stream, $advisory] | sort)
     ' >/dev/null "$work_dir/nats-jsz.json" &&
     grep -F -- 'walsender session open; draining' \
       "$evidence_dir/cdc-reader.log" >/dev/null; then
@@ -1486,6 +1513,16 @@ fi
 cp "$work_dir/nats-jsz.json" "$evidence_dir/nats-reader-ready.json"
 grep -F -- 'walsender session open; draining' "$evidence_dir/cdc-reader.log" \
   >"$evidence_dir/cdc-reader-ready.receipt"
+else
+  # The startup case does not enable CDC. Bootstrap owns its broker objects.
+  for configuration in source advisory; do
+    run docker run --rm --network "container:$nats_container" \
+      --volume "$event_nats_directory:/bootstrap:ro" \
+      --volume "$event_nats_directory/context.json:/etc/nats-client/nats/context/bootstrap.json:ro" \
+      --env XDG_CONFIG_HOME=/etc/nats-client --entrypoint nats natsio/nats-box:0.14.5 \
+      --context bootstrap --inbox-prefix "_INBOX_$event_nats_provisioning_username" \
+      stream add --config "/bootstrap/$configuration.json" --defaults
+  done
 fi
 
 run_sensitive print-release-env "$ctl" print-release-env \
@@ -1550,10 +1587,12 @@ for role_secret in event-nats materializer-nats; do
     record_command "${kube[@]}" -n "$namespace" create secret generic wamn-event-nats \
       '<private username/password files and declared event coordinates>'
     "${kube[@]}" -n "$namespace" create secret generic wamn-event-nats \
-      --from-file=username="$event_nats_directory/admin-username" \
-      --from-file=password="$event_nats_directory/admin-password" \
+      --from-file=username="$event_nats_directory/runtime-username" \
+      --from-file=password="$event_nats_directory/runtime-password" \
       --from-literal=org="$app_org" --from-literal=project="$app_project" \
       --from-literal=environment="$app_environment" \
+      --from-literal=stream_replicas="$app_stream_replicas" \
+      --from-literal=dup_window_secs="$app_dup_window_secs" \
       --dry-run=client -o json >"$credential_secret"
   else
     record_command "${kube[@]}" -n "$namespace" create secret generic wamn-materializer-nats \
