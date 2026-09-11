@@ -1,0 +1,58 @@
+   Compiling tokio v1.53.1
+   Compiling chrono v0.4.45
+   Compiling boon v0.6.1
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/dev/wamn/apps/platform/events/wire)
+   Compiling tokio-util v0.7.19
+   Compiling tokio-postgres v0.7.18
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/dev/wamn/crates/schema/introspection)
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling hashbrown v0.17.1
+   Compiling indexmap v2.14.0
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/crates/execution/run-state)
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/crates/schema/generator)
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/dev/wamn/crates/control/registry)
+   Compiling unsafe-libyaml v0.2.11
+   Compiling serde_yaml v0.9.34+deprecated
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/crates/control/provision)
+   Compiling wamn-test-infrastructure v0.1.0 (/home/kaalin/dev/wamn/test-support/infrastructure)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 23.32s
+     Running unittests lib.rs (target/debug/deps/wamn_test_infrastructure-10c734a3ca1c1777)
+
+running 25 tests
+test ctl_process::tests::command_preserves_the_ops_cli_boundary ... ok
+test ctl_process::tests::command_preserves_the_public_cli_boundary ... ok
+test rendering::tests::http_template_cannot_carry_a_second_route_configuration ... ok
+test rendering::tests::host_identity_matches_whole_names_and_accepts_equivalent_yaml_layouts ... ok
+test rendering::tests::host_identity_accepts_matching_apps_and_refuses_crossed_declarations ... ok
+test rendering::tests::http_workload_requires_the_service_workload_and_http_handler_once ... ok
+test rendering::tests::kind_configuration_keeps_three_nodes_without_host_port_mappings ... ok
+test rendering::tests::http_workload_renders_both_namespaces_all_claims_and_one_route ... ok
+test rendering::tests::host_object_credentials_must_match_the_selected_application ... ok
+test rendering::tests::http_workload_refuses_incomplete_claims_unknown_claims_and_duplicate_fields ... ok
+test rendering::tests::materializer_renders_each_identity_and_preserves_native_binding_and_retry ... ok
+test traces::tests::complete_request_with_or_without_executor_authority ... ok
+test traces::tests::each_single_request_span_and_authority_count_is_exact ... ok
+test traces::tests::empty_or_malformed_trace_is_refused ... ok
+test traces::tests::every_required_request_span_must_exist ... ok
+test traces::tests::missing_or_unexpected_executor_authority_is_refused ... ok
+test traces::tests::request_cannot_load_or_link_components ... ok
+test traces::tests::route_declares_the_exact_statement_count ... ok
+test rendering::tests::yaml_serialization_keeps_caller_values_as_single_values ... ok
+test rendering::tests::materializer_refuses_missing_identity_extra_subscription_fields_and_credentials ... ok
+test rendering::tests::startup_host_values_change_only_replica_counts ... ok
+test rendering::tests::host_values_keep_both_applications_separate_and_preserve_credentials ... ok
+test rendering::tests::workload_documents_refuse_missing_required_fields_and_wrong_types ... ok
+test rendering::tests::host_identity_reports_each_missing_repeated_or_wrong_claim ... ok
+test rendering::tests::host_values_refuse_missing_and_duplicate_owned_fields ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+

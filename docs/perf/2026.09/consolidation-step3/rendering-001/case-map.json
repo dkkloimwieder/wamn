@@ -1,0 +1,116 @@
+{
+  "host_values": {
+    "old_script": "tools/journey-host-values-proof",
+    "properties": {
+      "normal_and_startup_replica_only_difference": "startup_host_values_change_only_replica_counts",
+      "both_app_identities_and_role_secret_selection": "host_values_keep_both_applications_separate_and_preserve_credentials",
+      "direct_and_native_broker_secret_file_separation": "host_values_keep_both_applications_separate_and_preserve_credentials",
+      "object_store_secret_declared_in_both_directions": "host_object_credentials_must_match_the_selected_application",
+      "missing_role_reference_required_owned_fields_duplicate_env_or_host_group": "host_values_refuse_missing_and_duplicate_owned_fields"
+    },
+    "changed_validation": "Structured YAML fields replace expected template text. Duplicate keys fail deserialization. A repeated replicas value in an unrelated object is preserved because it is not the owned hostGroups field."
+  },
+  "http_workload": {
+    "old_script": "tools/journey-workload-proof",
+    "properties": {
+      "two_namespaces_image_all_five_claims_and_one_route": "http_workload_renders_both_namespaces_all_claims_and_one_route",
+      "missing_or_extra_claim_and_duplicate_claim_key": "http_workload_refuses_incomplete_claims_unknown_claims_and_duplicate_fields",
+      "exact_service_workload_http_interface_cardinality": "http_workload_requires_the_service_workload_and_http_handler_once",
+      "no_preexisting_second_route": "http_template_cannot_carry_a_second_route_configuration",
+      "required_field_types": "workload_documents_refuse_missing_required_fields_and_wrong_types"
+    },
+    "changed_validation": "Claims have named required fields and reject unknown keys. Template placeholder word counts and whitespace no longer determine validity. The default catalog remains a valid declared value."
+  },
+  "materializer": {
+    "old_script": "tools/journey-materializer-proof",
+    "properties": {
+      "workload_namespace_image_tenant_separate_event_triple_and_stream": "materializer_renders_each_identity_and_preserves_native_binding_and_retry",
+      "native_named_events_binding_registration_interfaces_authority_and_retry_limit": "materializer_renders_each_identity_and_preserves_native_binding_and_retry",
+      "caller_selected_poll_intervals": "materializer_renders_each_identity_and_preserves_native_binding_and_retry",
+      "missing_event_fields_unknown_legacy_fields_and_guest_broker_credentials": "materializer_refuses_missing_identity_extra_subscription_fields_and_credentials",
+      "missing_namespaces_workload_name_claims_and_image": "workload_documents_refuse_missing_required_fields_and_wrong_types"
+    },
+    "pending_c_compatibility": "Renderer accepts the caller-provided event stream unchanged. Tests use approved length-prefixed org/project/environment names. The template default is overwritten as a typed field, so the held C default-stream edit has no stale text dependency."
+  },
+  "kind": {
+    "old_callers": [
+      "tools/receiving-cluster-journey-run:623",
+      "tools/wms-cluster-journey-run:626"
+    ],
+    "property": "kind_configuration_keeps_three_nodes_without_host_port_mappings"
+  },
+  "new_structured_serialization_case": "yaml_serialization_keeps_caller_values_as_single_values",
+  "obsolete_bash_specific_cases": [
+    "Associative-array nameref names and intentional internal name collision.",
+    "Missing associative-array keys become required Rust fields.",
+    "Missing filesystem path belongs to the Rust caller which reads each template.",
+    "Byte hashes of YAML comments, indentation, and scalar quoting are replaced by parsed field assertions."
+  ],
+  "not_claimed": [
+    "Rust tests have not executed yet. Parent owns warm Cargo validation.",
+    "Old shell renderer and test scripts are still called. Parent owns final direct Rust caller integration and shell deletion.",
+    "No cluster or application execution ran."
+  ],
+  "legacy_measurement": [
+    {
+      "script": "tools/journey-host-values-proof",
+      "source_sha256": "6b1a66e160a6b32a4993de9dc25ff9d9113c5109e512ecd6e25c198b45402f25",
+      "command": [
+        "bash",
+        "/tmp/consolidation-rendering-before-20260911/host-values-cases.sh",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-rendering-20260911"
+      ],
+      "only_test_copy_change": "Retain the temporary output directory.",
+      "exit": 0,
+      "passed_checks": 30,
+      "failed_checks": 0
+    },
+    {
+      "script": "tools/journey-workload-proof",
+      "source_sha256": "0b98997218f2bb5f3c748773d0404aca7680d8e49345153749d24c7c55903e5f",
+      "command": [
+        "bash",
+        "/tmp/consolidation-rendering-before-20260911/workload-cases.sh",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-rendering-20260911"
+      ],
+      "only_test_copy_change": "Retain the temporary output directory.",
+      "exit": 0,
+      "passed_checks": 32,
+      "failed_checks": 0
+    },
+    {
+      "script": "tools/journey-materializer-proof",
+      "source_sha256": "ccdb67ca415033c42099b1011fbd507dad9f66dbdc9ebfa05f9e19f3de02c2de",
+      "command": [
+        "bash",
+        "/tmp/consolidation-rendering-before-20260911/materializer-cases.sh",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-rendering-20260911"
+      ],
+      "only_test_copy_change": "Retain the temporary output directory.",
+      "exit": 0,
+      "passed_checks": 44,
+      "failed_checks": 0
+    },
+    {
+      "script": "tools/journey-rendered-identity-proof",
+      "source_sha256": "970e3cbdd445a640f07a52f05615f90d37c179993e998dfeedc0383a7ae089cf",
+      "command": [
+        "bash",
+        "/tmp/consolidation-rendering-before-20260911/rendered-identity-cases.sh",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-rendering-20260911"
+      ],
+      "only_test_copy_change": "Retain the temporary output directory.",
+      "exit": 0,
+      "passed_checks": 17
+    }
+  ],
+  "host_identity": {
+    "old_script": "tools/journey-rendered-identity-proof",
+    "properties": {
+      "matching_and_crossed_application_declarations": "host_identity_accepts_matching_apps_and_refuses_crossed_declarations",
+      "each_missing_repeated_wrong_claim": "host_identity_reports_each_missing_repeated_or_wrong_claim",
+      "whole_key_match": "host_identity_matches_whole_names_and_accepts_equivalent_yaml_layouts"
+    },
+    "changed_validation": "Equivalent block and inline YAML forms are accepted. The old block-form refusal existed because the awk parser recognized inline text only. All three identity fields are required by the Rust input type."
+  }
+}

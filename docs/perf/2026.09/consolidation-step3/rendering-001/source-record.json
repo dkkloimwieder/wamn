@@ -1,0 +1,73 @@
+{
+  "base": "fa9f116c23f08145c0e0af23d7c03ac0fbe8371b",
+  "files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "0a1f9eda49412b55ceb972914d827551a4691600c742fc6c7c46545065c412b8",
+      "mode": "0o664"
+    },
+    {
+      "path": "Cargo.lock",
+      "sha256": "10e77a889a2b98d875cda5d640cca3610963b92df285f7b168afa8d2b3659012",
+      "mode": "0o664"
+    },
+    {
+      "path": "test-support/infrastructure/Cargo.toml",
+      "sha256": "93312480d1e4dade916c94038d00df11f81fd3bd49d6f13ae7c95b901f7874ac",
+      "mode": "0o664"
+    },
+    {
+      "path": "test-support/infrastructure/lib.rs",
+      "sha256": "fec4fabefb866e8b2b3ebe95c0d5f11a92e6a05ebbd02cfd91f05cefab5de7f8",
+      "mode": "0o664"
+    },
+    {
+      "path": "test-support/infrastructure/rendering.rs",
+      "sha256": "495937bbd95eb3ec335b198af3199e1801f7647ea0e15a87b8f56cb6d827c170",
+      "mode": "0o664"
+    },
+    {
+      "path": "test-support/infrastructure/rendering/tests.rs",
+      "sha256": "0b4259cb313be23373ee79e81b45c49a8fdf58788b0d6a08ff9255e90145d005",
+      "mode": "0o664"
+    },
+    {
+      "path": "test-support/infrastructure/scratch.rs",
+      "sha256": "25c2f4ec58c68c2cdcf974e5745ceb767bd5b432dd235803996f1b895dc71e59",
+      "mode": "0o664"
+    },
+    {
+      "path": "test-support/infrastructure/traces.rs",
+      "sha256": "5a5092966265c4815246c0a346db9543a082fd4da87f2727adfcdb9efe04a0ea",
+      "mode": "0o664"
+    }
+  ],
+  "rustfmt_check_exit": 0,
+  "git_diff_check_exit": 0,
+  "cargo_run": false,
+  "focused_command": "cargo test --locked --offline -p wamn-test-infrastructure --lib -- --nocapture",
+  "shell_deletions": "Parent owns caller replacement and deletion after direct Rust callers integrate.",
+  "rendering_test_names": [
+    "host_values_keep_both_applications_separate_and_preserve_credentials",
+    "startup_host_values_change_only_replica_counts",
+    "host_values_refuse_missing_and_duplicate_owned_fields",
+    "host_object_credentials_must_match_the_selected_application",
+    "http_workload_renders_both_namespaces_all_claims_and_one_route",
+    "http_workload_refuses_incomplete_claims_unknown_claims_and_duplicate_fields",
+    "http_workload_requires_the_service_workload_and_http_handler_once",
+    "materializer_renders_each_identity_and_preserves_native_binding_and_retry",
+    "materializer_refuses_missing_identity_extra_subscription_fields_and_credentials",
+    "yaml_serialization_keeps_caller_values_as_single_values",
+    "kind_configuration_keeps_three_nodes_without_host_port_mappings",
+    "workload_documents_refuse_missing_required_fields_and_wrong_types",
+    "http_template_cannot_carry_a_second_route_configuration",
+    "host_identity_accepts_matching_apps_and_refuses_crossed_declarations",
+    "host_identity_reports_each_missing_repeated_or_wrong_claim",
+    "host_identity_matches_whole_names_and_accepts_equivalent_yaml_layouts"
+  ],
+  "rendering_test_count": 16,
+  "trace_test_count": 7,
+  "scratch_change": "Existing type, helper and method bodies copied exactly. Public tuple/method visibility and Debug derive were added for existing callers.",
+  "commit": "993b314f0d2f271e8bd53198b27c0384e0fbbeaf",
+  "local_status_clean": true
+}
