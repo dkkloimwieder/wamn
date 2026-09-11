@@ -8,6 +8,7 @@ use serde_json::json;
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
+use wamn_control_provision::sql;
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker::{self, EventBroker};
 
@@ -138,10 +139,20 @@ impl Run {
         )
         .await?;
         let task = tokio::spawn(connection);
-        let query = postgres.simple_query("select 1").await;
+        let database = async {
+            postgres
+                .simple_query("select 1")
+                .await
+                .context("the disposable PostgreSQL did not answer a query")?;
+            postgres
+                .batch_execute(&sql::create_database_named_sql("wamn_system"))
+                .await
+                .context("create the pilot's disposable system database")
+        }
+        .await;
         drop(postgres);
         task.await??;
-        query.context("the disposable PostgreSQL did not answer a query")?;
+        database?;
         let wash = string(&mut Command::new(self.tree.join("tools/install-wash"))).await?;
         self.logged(
             Command::new(wash)
@@ -189,7 +200,7 @@ impl Run {
             .current_dir(self.directory.join("worktree"))
             .args([
                 "--system-database-url",
-                "postgresql://postgres:probe@127.0.0.1:54332/postgres",
+                "postgresql://postgres:probe@127.0.0.1:54332/wamn_system",
                 "--root",
             ])
             .arg(self.directory.join("env"))
