@@ -2440,20 +2440,8 @@ CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   2>&1 | tee "$evidence_dir/wms-runtime.log"
 assert_one_test_ran "$evidence_dir/wms-runtime.log" \
   contention_and_replay_through_the_composed_route
-# The receipt is matched anywhere on a line, not at line start: cargo's
-# --nocapture prints "test <name> ... " with no newline before the test's own
-# stdout, so run 9's receipt followed the test name on one line and a
-# line-anchored match found nothing (wamn-362o.48). Still exactly one.
-mapfile -t contention_lines < <(grep -oE 'WMS_CONTENTION_PASS movement_id=[0-9a-f-]{36}' "$evidence_dir/wms-runtime.log")
-[[ ${#contention_lines[@]} -eq 1 ]] || {
-  echo "the runtime assertions emitted ${#contention_lines[@]} pass receipts, want 1" >&2
-  exit 1
-}
-winning_movement_id=${contention_lines[0]#WMS_CONTENTION_PASS movement_id=}
-# THREE (wamn-362o.52): the other five operations, on the same fixture, after
-# the contention test has moved it. An operation counts as shipped when its
-# route has been hit; before this, admission, gate and release proved only
-# that the five were declared.
+cp -- "$(dirname -- "$journey_document")/wms-contention-result.json" "$evidence_dir/wms-contention-result.json"
+winning_movement_id=$(jq -er '.movement_id | select(test("^[0-9a-f-]{36}$"))' "$evidence_dir/wms-contention-result.json")
 record_command cargo test wms_runtime_live::the_remaining_operations_serve_their_released_routes \
   '<journey document with the runtime phase redacted>'
 WAMN_JOURNEY_DOCUMENT="$journey_document" \
@@ -2464,12 +2452,8 @@ CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   2>&1 | tee "$evidence_dir/wms-operations.log"
 assert_one_test_ran "$evidence_dir/wms-operations.log" \
   the_remaining_operations_serve_their_released_routes
-mapfile -t operations_lines < <(grep -oE 'WMS_OPERATIONS_PASS split_pallet_id=[0-9a-f-]{36}' "$evidence_dir/wms-operations.log")
-[[ ${#operations_lines[@]} -eq 1 ]] || {
-  echo "the operations assertions emitted ${#operations_lines[@]} pass receipts, want 1" >&2
-  exit 1
-}
-split_pallet_id=${operations_lines[0]#WMS_OPERATIONS_PASS split_pallet_id=}
+cp -- "$(dirname -- "$journey_document")/wms-operations-result.json" "$evidence_dir/wms-operations-result.json"
+split_pallet_id=$(jq -er '.split_pallet_id | select(test("^[0-9a-f-]{36}$"))' "$evidence_dir/wms-operations-result.json")
 # ONE LABEL, NAMED BY THE WINNER. The store's own client lists the prefix the
 # composed wiring writes under; the loser produced no movement, the plain
 # arm never sends the startup probe, and none of the five operations reaches
@@ -2561,11 +2545,9 @@ if [[ "$prove_partial_completion" == true ]]; then
     echo "failed to restore the owned labels bucket after the partial proof" >&2
     [[ $partial_status -ne 0 ]] || partial_status=1
   fi
-  sed -n 's/^WMS_PARTIAL_HTTP_RESPONSE //p' "$evidence_dir/wms-partial.log" \
-    >"$evidence_dir/wms-partial-http.json"
-  sed -n 's/^WMS_PARTIAL_COMPLETION_PASS //p' "$evidence_dir/wms-partial.log" \
-    >"$evidence_dir/wms-partial-response.receipt.json"
   [[ $partial_status -eq 0 ]] || exit "$partial_status"
+  cp -- "$(dirname -- "$partial_journey_document")/wms-partial-http.json" "$evidence_dir/wms-partial-http.json"
+  cp -- "$(dirname -- "$partial_journey_document")/wms-partial-result.json" "$evidence_dir/wms-partial-response.receipt.json"
   assert_one_test_ran "$evidence_dir/wms-partial.log" \
     committed_move_survives_label_store_failure
   jq -se 'length == 1 and .[0].status == 500' \

@@ -6368,10 +6368,14 @@ dependencies = [
  "reqwest",
  "serde_json",
  "tokio",
+ "tokio-postgres",
  "uuid",
  "wamn-catalog",
+ "wamn-control-provision",
+ "wamn-ctl",
  "wamn-execution-contract",
  "wamn-gate-harness",
+ "wamn-test-infrastructure",
 ]
 
 [[package]]

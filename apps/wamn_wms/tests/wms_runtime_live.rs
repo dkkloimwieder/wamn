@@ -14,23 +14,11 @@
 //! by construction (command-identity-from-claim), not by an early-return
 //! path.
 //!
-//! The label object is the journey's assertion, with the store's own client:
-//! this test prints `WMS_CONTENTION_PASS movement_id=<id>` and the journey
-//! lists the prefix the composed wiring writes under.
-//!
-//! THREE (wamn-362o.52). The other five operations serve their released
-//! routes: an operation counts as shipped when its route has been hit, and
-//! admission, gate and release together prove only that it was declared. On
-//! the same fixture, read where it stands, then adjust, split off a new
-//! pallet (its id from the claim, so a replay returns the same one), merge it
-//! back, and read the totals and the pages that follow; prints
-//! `WMS_OPERATIONS_PASS split_pallet_id=<id>`.
-//!
-//! THIS TEST ASSERTS AND NEVER PROVISIONS. Everything it needs crosses as
-//! fields of the journey document: where the route answers from here
-//! (`runtime.route_endpoint`), the fixture ids the journey seeded, the route
-//! host, and the route-caller PAT's file. No environment variable carries
-//! data; `WAMN_JOURNEY_DOCUMENT` names the file.
+//! These cases return structured results to the application test caller.
+//! Standalone ignored tests write those results beside the existing input
+//! document named by `WAMN_JOURNEY_DOCUMENT`.
+
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
@@ -141,6 +129,11 @@ fn item<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
 #[ignore = "requires the released WMS route on a disposable cluster, named by the journey document's runtime phase"]
 async fn contention_and_replay_through_the_composed_route() -> anyhow::Result<()> {
     let document = JourneyDocument::required()?;
+    let result = assert_contention_and_replay(&document).await?;
+    write_result(&result_directory()?, "wms-contention-result.json", &result)
+}
+
+pub(crate) async fn assert_contention_and_replay(document: &JourneyDocument) -> anyhow::Result<Value> {
     let runtime = document.runtime.as_ref().context(
         "the journey document carries no runtime phase: the route must be reachable and the \
          fixture seeded before these assertions run",
@@ -224,10 +217,7 @@ async fn contention_and_replay_through_the_composed_route() -> anyhow::Result<()
         "a replay returns the original result, not a second move: {replayed}"
     );
 
-    // On its own line: under --nocapture cargo prints "test <name> ... " with
-    // no newline before the test's stdout, and the journey reads this receipt.
-    println!("\nWMS_CONTENTION_PASS movement_id={movement_id}");
-    Ok(())
+    Ok(json!({"movement_id": movement_id}))
 }
 
 /// The `value` of the single item answering `request_id`, or the refusal as
@@ -271,6 +261,11 @@ fn uuid(value: &Value) -> anyhow::Result<String> {
 #[ignore = "requires the released WMS route on a disposable cluster, named by the journey document's runtime phase"]
 async fn the_remaining_operations_serve_their_released_routes() -> anyhow::Result<()> {
     let document = JourneyDocument::required()?;
+    let result = assert_remaining_operations(&document).await?;
+    write_result(&result_directory()?, "wms-operations-result.json", &result)
+}
+
+pub(crate) async fn assert_remaining_operations(document: &JourneyDocument) -> anyhow::Result<Value> {
     let runtime = document.runtime.as_ref().context(
         "the journey document carries no runtime phase: the route must be reachable and the \
          fixture seeded before these assertions run",
@@ -502,14 +497,20 @@ async fn the_remaining_operations_serve_their_released_routes() -> anyhow::Resul
         "the consumed filter finds exactly the merged pallet: {page}"
     );
 
-    println!("\nWMS_OPERATIONS_PASS split_pallet_id={new_pallet_id}");
-    Ok(())
+    Ok(json!({"split_pallet_id": new_pallet_id}))
 }
 
 #[tokio::test]
 #[ignore = "requires the released WMS route after its disposable labels bucket is removed"]
 async fn committed_move_survives_label_store_failure() -> anyhow::Result<()> {
     let document = JourneyDocument::required()?;
+    let (http, result) = assert_committed_move_after_label_failure(&document).await?;
+    let directory = result_directory()?;
+    write_result(&directory, "wms-partial-http.json", &http)?;
+    write_result(&directory, "wms-partial-result.json", &result)
+}
+
+pub(crate) async fn assert_committed_move_after_label_failure(document: &JourneyDocument) -> anyhow::Result<(Value, Value)> {
     let runtime = document
         .runtime
         .as_ref()
@@ -549,10 +550,7 @@ async fn committed_move_survives_label_store_failure() -> anyhow::Result<()> {
     let (status, text) = route
         .post_response(&client, "/inventory/move", &body)
         .await?;
-    println!(
-        "\nWMS_PARTIAL_HTTP_RESPONSE {}",
-        json!({"status":status.as_u16(),"body":text})
-    );
+    let http = json!({"status":status.as_u16(),"body":text});
     anyhow::ensure!(
         status == reqwest::StatusCode::INTERNAL_SERVER_ERROR,
         "the failed store returns HTTP500, got {status}: {text}"
@@ -632,16 +630,91 @@ async fn committed_move_survives_label_store_failure() -> anyhow::Result<()> {
             && after["status"] == expected["pallet_status"],
         "the later read proves the movement stayed committed: {after}"
     );
-    println!(
-        "\nWMS_PARTIAL_COMPLETION_PASS {}",
+    Ok((
+        http,
         json!({
             "request_id":request_id,"idempotency_key":key,"movement_id":movement_id,
             "pallet_id":runtime.pallet_id,"location_id":runtime.to_location_id,
             "row_version":revision+1,"pallet_status":before["status"],
             "command_requests":1,"effect_outcome":failure["effect_outcome"]
-        })
+        }),
+    ))
+}
+
+
+/// Check the label objects returned by the store's existing client.
+pub(crate) fn assert_single_label(objects: &[Value], movement_id: &str) -> anyhow::Result<()> {
+    let label_count = objects.len();
+    let label_key = objects.first().and_then(|object| object["key"].as_str()).unwrap_or("");
+    anyhow::ensure!(
+        label_count == 1 && label_key == movement_id,
+        "expected exactly one label object named {movement_id} under wms/, found {label_count}: {label_key}"
     );
     Ok(())
+}
+
+/// Check the committed rows after the label store refuses the write.
+pub(crate) async fn assert_committed_rows(
+    project: &tokio_postgres::Client,
+    expected: &Value,
+) -> anyhow::Result<Value> {
+    let command_key = expected["idempotency_key"].as_str().context("the result has a command key")?;
+    let pallet = expected["pallet_id"].as_str().context("the result has a pallet id")?;
+    let row = project.query_one(
+        r#"SELECT json_build_object(
+    'command_count', (SELECT count(*) FROM wms.inventory_move_command WHERE idempotency_key = $1),
+    'movement_count', (SELECT count(*) FROM wms.inventory_movement WHERE idempotency_key = $1),
+    'quantity_count', (SELECT count(*) FROM wms.pallet_quantity WHERE pallet_id = $2::text::uuid),
+    'command', (SELECT row_to_json(command) FROM (
+        SELECT movement_id, pallet_id, pallet_status, row_version
+        FROM wms.inventory_move_command WHERE idempotency_key = $1
+    ) AS command),
+    'movement', (SELECT row_to_json(movement) FROM (
+        SELECT id, idempotency_key, pallet_id, from_location_id, to_location_id, kind
+        FROM wms.inventory_movement WHERE idempotency_key = $1
+    ) AS movement),
+    'pallet', (SELECT row_to_json(pallet) FROM (
+        SELECT id, location_id, status, row_version FROM wms.pallet WHERE id = $2::text::uuid
+    ) AS pallet)
+);"#,
+        &[&command_key, &pallet],
+    ).await.context("read the committed WMS rows")?;
+    let observed: Value = row.get(0);
+    anyhow::ensure!(
+        observed["command_count"] == 1
+            && observed["movement_count"] == 1
+            && observed["quantity_count"] == 1
+            && observed["command"]["movement_id"] == expected["movement_id"]
+            && observed["command"]["pallet_id"] == expected["pallet_id"]
+            && observed["command"]["pallet_status"] == expected["pallet_status"]
+            && observed["command"]["row_version"] == expected["row_version"]
+            && observed["movement"]["idempotency_key"] == expected["idempotency_key"]
+            && observed["movement"]["pallet_id"] == expected["pallet_id"]
+            && observed["movement"]["to_location_id"] == expected["location_id"]
+            && observed["movement"]["from_location_id"] != observed["movement"]["to_location_id"]
+            && observed["movement"]["kind"] == "move"
+            && observed["pallet"]["id"] == expected["pallet_id"]
+            && observed["pallet"]["location_id"] == expected["location_id"]
+            && observed["pallet"]["status"] == expected["pallet_status"]
+            && observed["pallet"]["row_version"] == expected["row_version"],
+        "the WMS committed rows disagree with the response: {observed}"
+    );
+    Ok(observed)
+}
+
+fn result_directory() -> anyhow::Result<PathBuf> {
+    let document = std::env::var_os("WAMN_JOURNEY_DOCUMENT")
+        .context("WAMN_JOURNEY_DOCUMENT must name the existing test input")?;
+    let document = std::fs::canonicalize(document).context("resolve the test input path")?;
+    Ok(document.parent().context("the test input has a parent directory")?.to_owned())
+}
+
+pub(crate) fn write_result(directory: &Path, name: &str, result: &Value) -> anyhow::Result<()> {
+    let path = directory.join(name);
+    let file = std::fs::File::create(&path)
+        .with_context(|| format!("create test result {}", path.display()))?;
+    serde_json::to_writer_pretty(file, result)
+        .with_context(|| format!("write test result {}", path.display()))
 }
 
 #[cfg(test)]
