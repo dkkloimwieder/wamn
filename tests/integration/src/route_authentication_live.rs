@@ -2,8 +2,10 @@
 //! fresh disposable PostgreSQL 18 server.
 
 mod fresh_only;
+#[path = "../../../apps/client_acme_receiving/tests/overlay_compatibility.rs"]
 mod overlay_compatibility;
 mod p3_shell;
+#[path = "../../../apps/wamn_receiving/tests/postcommit.rs"]
 mod postcommit;
 mod session_client;
 
