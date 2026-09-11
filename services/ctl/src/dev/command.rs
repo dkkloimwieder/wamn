@@ -23,7 +23,6 @@ use super::{
 };
 
 const BUILD_COMPONENTS_TOOL: &str = "tools/build-components";
-const BUILD_PROFILE: &str = "m1";
 
 /// Inputs owned by the literal `wamn dev` product command.
 #[derive(Clone, Debug, Args)]
@@ -521,7 +520,8 @@ async fn run_watch_command(
                 .map(|package| package.root().to_owned()),
         )
         .collect::<Vec<_>>();
-    let component_roots = component_build_watch_roots(git.repository_root()).await?;
+    let component_roots =
+        component_build_watch_roots(git.repository_root(), &package_roots).await?;
     let repository_root = git.repository_root().to_owned();
     let native_files = [
         "Cargo.toml",
@@ -606,10 +606,14 @@ async fn wait_for_shutdown(receiver: &mut watch::Receiver<bool>) {
     }
 }
 
-async fn component_build_watch_roots(repository_root: &Path) -> anyhow::Result<Vec<PathBuf>> {
+async fn component_build_watch_roots(
+    repository_root: &Path,
+    package_roots: &[PathBuf],
+) -> anyhow::Result<Vec<PathBuf>> {
     let tool = repository_root.join(BUILD_COMPONENTS_TOOL);
     let output = Command::new(&tool)
-        .args(["watch-roots", BUILD_PROFILE])
+        .args(["watch-roots", "app"])
+        .args(package_roots)
         .kill_on_drop(true)
         .output()
         .await
@@ -626,8 +630,8 @@ async fn component_build_watch_roots(repository_root: &Path) -> anyhow::Result<V
     let roots: BuildWatchRoots = serde_json::from_slice(&output.stdout)
         .context("decode production component-build watch roots")?;
     anyhow::ensure!(
-        roots.profile == BUILD_PROFILE,
-        "production build owner returned profile {:?} instead of {BUILD_PROFILE:?}",
+        roots.profile == "app",
+        "production build owner returned profile {:?} instead of app",
         roots.profile
     );
     anyhow::ensure!(

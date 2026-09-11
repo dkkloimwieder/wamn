@@ -636,7 +636,7 @@ if [[ $(grep -c '^  - role:' "$kind_config") -ne 3 ]] ||
 fi
 
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  "$repo_root/tools/build-components" m1
+  "$repo_root/tools/build-components" proof
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
   cargo build --locked -p wamn-host -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker
 if [[ "$prove_generated_tui" == true ]]; then
@@ -656,7 +656,7 @@ for component in "${app_components[@]}"; do
   }
 done
 # The no-std guests come from their own workspace's release build, which
-# tools/build-components m1 drives; they are never virtualized.
+# tools/build-components proof drives; they are never virtualized.
 no_std_component_directory=$cargo_target_dir/wasm32-wasip2/release
 for component in "${app_no_std_components[@]}"; do
   [[ -s "$no_std_component_directory/$component.wasm" ]] || {

@@ -5,7 +5,6 @@
 pub mod catalog;
 pub mod invocation;
 pub mod kubernetes_gate_verdict;
-pub mod package_inventory;
 pub mod socketguard;
 
 #[cfg(test)]

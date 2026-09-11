@@ -94,28 +94,9 @@ fn run_state_live() {
     // `wamn_app` carrier to NOLOGIN/NOINHERIT/passwordless, so a drifted cluster
     // role cannot make the leg pass through ambient authority.
     //
-    // THE TWO WRITER ROLES BELOW ARE HAND-ROLLED, AND THAT IS A RULED DIVERGENCE
-    // (wamn-0h0g.20.15: accept the divergence, comment it, close at P3). Every other
-    // live bootstrap now mints them from the production builder; this one structurally
-    // cannot. `wamn-run-state` ships INSIDE the guest components
-    // (components/Cargo.toml:25), and `components` is a SEPARATE cargo workspace that
-    // has never heard of `wamn-control-provision`. On top of that,
-    // tests/conformance/tests/workspace_tiers.rs computes each tier's path-dependency
-    // closure KIND-BLIND — it filters on `dependency.path` alone and never on kind — so
-    // a DEV-dependency counts exactly like a real one, and adding the builder here reds
-    // `workspace_tier_membership_matches_live_classification` with "selected package
-    // wamn-control-provision missing from cargo metadata".
-    //
-    // THAT LAST CLAUSE IS REFUTED AS OF `wamn-0h0g.22.31`, and the writer-role divergence
-    // survives it anyway. `wamn-control-provision` is ALREADY a dev-dependency of this
-    // crate — `tests/admission_live.rs` has imported it since `wamn-0h0g.22.9` — and this
-    // file now imports it too, for the executor generation below;
-    // `workspace_tier_membership_matches_live_classification` was measured GREEN with both.
-    // So the barrier to minting the two writer roles from their builder is not the
-    // dependency edge. Whether to mint them is still `wamn-0h0g.20.15`'s call, untouched
-    // here. Teaching that closure to skip
-    // dev-dependencies was rejected: it weakens a conformance guard to make one test
-    // prettier.
+    // The two writer roles below use local SQL under wamn-0h0g.20.15.
+    // The production builder is already a development dependency, so the dependency
+    // graph does not prevent its use here. That issue still owns the choice.
     //
     // THE DRIFT CONTRACT. The `wamn_scenario_author` block below mirrors
     // `ensure_scenario_author_role_sql` in crates/schema/control/src/run_plane.rs, while

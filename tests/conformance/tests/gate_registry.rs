@@ -747,13 +747,10 @@ fn gate_evidence_terminology_has_no_legacy_aliases() {
     let root = repository_root();
     let governed_files = [
         "architecture/gate-registry.json",
-        "architecture/package-roles.json",
-        "architecture/workspace-tiers.json",
         "tests/conformance/src/lib.rs",
         "tests/conformance/src/kubernetes_gate_verdict.rs",
         "tests/conformance/tests/gate_registry.rs",
         "tests/conformance/tests/kubernetes_gate_runner.rs",
-        "tests/conformance/tests/workspace_tiers.rs",
         "tools/kubernetes-gate-run",
     ];
     let forbidden = [

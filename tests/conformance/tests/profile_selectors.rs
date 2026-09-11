@@ -6,15 +6,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
-use wamn_proof_conformance::package_inventory;
 
-const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const ROOT_MANIFEST: &str = "Cargo.toml";
 /// The guests live in more than one Cargo workspace. Feature unification is
 /// additive-only inside one invocation, so the `no_std` palette guests are
 /// isolated from the members that reach `serde_json/std` (wamn-0h0g.11.56).
 const COMPONENT_MANIFESTS: [&str; 2] = ["components/Cargo.toml", "components/no-std/Cargo.toml"];
-const PROFILE_TOOL: &str = "tools/profile";
 const COMPONENT_TOOL: &str = "tools/build-components";
 const COMPONENT_VIRTUALIZATION: &str = "tools/component-virtualization.json";
 
@@ -22,14 +19,12 @@ const COMPONENT_VIRTUALIZATION: &str = "tools/component-virtualization.json";
 struct CargoMetadata {
     packages: Vec<CargoPackage>,
     workspace_members: Vec<String>,
-    workspace_default_members: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CargoPackage {
     id: String,
     name: String,
-    features: BTreeMap<String, Vec<String>>,
     targets: Vec<CargoTarget>,
 }
 
@@ -45,14 +40,6 @@ fn repository_root() -> PathBuf {
         .and_then(Path::parent)
         .expect("conformance package must live at tests/conformance")
         .to_path_buf()
-}
-
-fn read_contract(root: &Path) -> Value {
-    let path = root.join(TIER_MANIFEST);
-    let source = fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    serde_json::from_str(&source)
-        .unwrap_or_else(|error| panic!("failed to parse {}: {error}", path.display()))
 }
 
 fn cargo_metadata_output(root: &Path, manifest: &str) -> Output {
@@ -98,104 +85,32 @@ fn names_for_ids(metadata: &CargoMetadata, ids: &[String]) -> Vec<String> {
         .collect()
 }
 
-fn string_array(contract: &Value, pointer: &str) -> Vec<String> {
-    contract
-        .pointer(pointer)
-        .unwrap_or_else(|| panic!("profile contract omitted {pointer}"))
-        .as_array()
-        .unwrap_or_else(|| panic!("profile contract {pointer} must be an array"))
-        .iter()
-        .map(|value| {
-            value
-                .as_str()
-                .unwrap_or_else(|| panic!("profile contract {pointer} must contain strings"))
-                .to_string()
-        })
-        .collect()
-}
-
-fn string_value<'a>(contract: &'a Value, pointer: &str) -> &'a str {
-    contract
-        .pointer(pointer)
-        .and_then(Value::as_str)
-        .unwrap_or_else(|| panic!("profile contract omitted string {pointer}"))
-}
-
-fn root_profile_packages(contract: &Value, metadata: &CargoMetadata, profile: &str) -> Vec<String> {
-    if matches!(profile, "full" | "ops") {
-        let tier = string_value(contract, "/profiles/root/full_inventory_tier");
-        return string_array(contract, &format!("/tiers/{tier}/root_packages"));
-    }
-
-    let mut selected = names_for_ids(metadata, &metadata.workspace_default_members);
-    selected.extend(string_array(contract, "/profiles/root/m1_additions"));
-    if matches!(profile, "m2" | "deploy") {
-        selected.extend(string_array(contract, "/profiles/root/m2_additions"));
-    }
-    if profile == "deploy" {
-        selected.extend(string_array(contract, "/profiles/root/deploy_additions"));
-    }
-    selected
-}
-
-/// The package half of every component inventory, derived the way
-/// `tools/build-components` derives it.
-///
-/// A package's own manifest names its components, so a tier list declares only
-/// the platform half and this supplies the rest. Deriving it here rather than
-/// pinning it is the whole point: a new package must not need an edit to a
-/// central file, and a guard that pinned the old list would put that edit back
-/// (wamn-10yt.10.39).
 fn package_components(root: &Path) -> Vec<String> {
-    package_inventory::component_names(root)
-        .into_iter()
-        .collect()
-}
-
-fn component_profile_packages(root: &Path, contract: &Value, profile: &str) -> Vec<String> {
-    let pointer = if profile == "m1" {
-        "/profiles/components/m1_inventory_tier"
-    } else {
-        "/profiles/components/proof_inventory_tier"
-    };
-    let tier = string_value(contract, pointer);
-    let mut packages = string_array(contract, &format!("/tiers/{tier}/component_packages"))
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    packages.extend(package_components(root));
-    packages.into_iter().collect()
+    let mut names = BTreeSet::new();
+    for entry in fs::read_dir(root.join("packages")).expect("read application packages") {
+        let path = entry
+            .expect("read application entry")
+            .path()
+            .join("wamn.json");
+        if path.is_file() {
+            let manifest: Value =
+                serde_json::from_slice(&fs::read(path).expect("read application manifest"))
+                    .expect("parse application manifest");
+            if let Some(components) = manifest.get("components").and_then(Value::as_object) {
+                names.extend(components.keys().map(|name| name.replace('_', "-")));
+            }
+        }
+    }
+    names.into_iter().collect()
 }
 
 fn set(values: &[String]) -> BTreeSet<String> {
     values.iter().cloned().collect()
 }
 
-fn assert_exact_set<T: AsRef<str>>(label: &str, actual: &[String], expected: &[T]) {
-    let actual = set(actual);
-    let expected = expected
-        .iter()
-        .map(|value| value.as_ref().to_owned())
-        .collect::<BTreeSet<_>>();
-    let extra = actual.difference(&expected).cloned().collect::<Vec<_>>();
-    let missing = expected.difference(&actual).cloned().collect::<Vec<_>>();
-    assert!(
-        extra.is_empty() && missing.is_empty(),
-        "{label} drifted; extra={extra:?}; missing={missing:?}"
-    );
-}
-
-fn assert_unique(label: &str, values: &[String]) {
-    assert_eq!(
-        values.len(),
-        set(values).len(),
-        "{label} contains a duplicate package"
-    );
-}
-
 #[test]
 fn virtualization_allowlist_matches_component_metadata() {
     let root = repository_root();
-    let contract = read_contract(&root);
     let virtualization: Value = serde_json::from_str(
         &fs::read_to_string(root.join(COMPONENT_VIRTUALIZATION))
             .expect("failed to read component virtualization contract"),
@@ -234,14 +149,6 @@ fn virtualization_allowlist_matches_component_metadata() {
             )
         })
         .collect::<BTreeMap<_, _>>();
-    // The platform half is declared; the package half is derived, exactly as
-    // tools/build-components derives it.
-    let mut product_components =
-        string_array(&contract, "/tiers/product_components/component_packages")
-            .into_iter()
-            .collect::<BTreeSet<_>>();
-    product_components.extend(package_components(&root));
-
     let artifacts = virtualization["artifacts"]
         .as_array()
         .expect("virtualization artifacts must be an array");
@@ -263,7 +170,6 @@ fn virtualization_allowlist_matches_component_metadata() {
 
         assert!(configured.insert(package_name.to_owned()));
         assert!(outputs.insert(output_file.to_owned()));
-        assert!(product_components.contains(package_name));
         assert_eq!(
             Path::new(raw_file)
                 .file_name()
@@ -295,221 +201,6 @@ fn virtualization_allowlist_matches_component_metadata() {
         assert_eq!(raw_file, format!("{}.wasm", cdylib_targets[0].name));
     }
     assert!(!configured.is_empty());
-}
-
-#[test]
-fn profile_contract_matches_locked_metadata() {
-    let root = repository_root();
-    let contract = read_contract(&root);
-    let root_output = cargo_metadata_output(&root, ROOT_MANIFEST);
-    let root_metadata = parse_metadata(&root_output, ROOT_MANIFEST);
-    let root_members = names_for_ids(&root_metadata, &root_metadata.workspace_members);
-    let mut component_members = Vec::new();
-    for manifest in COMPONENT_MANIFESTS {
-        let output = cargo_metadata_output(&root, manifest);
-        let metadata = parse_metadata(&output, manifest);
-        let members = names_for_ids(&metadata, &metadata.workspace_members);
-        assert_unique(manifest, &members);
-        component_members.extend(members);
-    }
-
-    // Every count and every name list below states the PLATFORM half only. A
-    // package declares its own components, so the derived half is added rather
-    // than written down, and adding a package moves none of these
-    // (wamn-10yt.10.39).
-    let derived = package_components(&root);
-    assert_eq!(root_members.len(), 40);
-    assert_eq!(component_members.len(), 21 + derived.len());
-    assert_unique("root workspace metadata", &root_members);
-    assert_unique("component workspace metadata", &component_members);
-
-    assert_exact_set(
-        "m1 additions",
-        &string_array(&contract, "/profiles/root/m1_additions"),
-        &["wamn-cdc-reader"],
-    );
-    assert_exact_set(
-        "m2 additions",
-        &string_array(&contract, "/profiles/root/m2_additions"),
-        &["wamn-dispatcher", "wamn-waker"],
-    );
-    assert_exact_set(
-        "deploy additions",
-        &string_array(&contract, "/profiles/root/deploy_additions"),
-        &[
-            "wamn-component-virtualizer",
-            "wamn-ctl",
-            "wamn-control-provision",
-            "wamn-control-registry",
-            "wamn-project-state",
-            "wamn-schema-control",
-            "wamn-schema-generator",
-            "wamn-schema-introspection",
-            "wamn-generated-client-acme-receiving-tui",
-            "wamn-generated-receiving-tui",
-            "wamn-generated-wms-tui",
-        ],
-    );
-    assert_eq!(
-        string_array(&contract, "/profiles/root/ops_features"),
-        ["wamn-ctl/ops"]
-    );
-    assert!(
-        root_metadata
-            .packages
-            .iter()
-            .find(|package| package.name == "wamn-ctl")
-            .expect("wamn-ctl must exist in locked metadata")
-            .features
-            .contains_key("ops"),
-        "wamn-ctl/ops must exist in locked metadata"
-    );
-
-    let profile_counts = [
-        ("m1", 20),
-        ("m2", 22),
-        ("deploy", 33),
-        ("full", 40),
-        ("ops", 40),
-    ];
-    let mut profiles = BTreeMap::new();
-    for (profile, expected_count) in profile_counts {
-        let packages = root_profile_packages(&contract, &root_metadata, profile);
-        assert_eq!(packages.len(), expected_count, "{profile} package count");
-        assert_unique(profile, &packages);
-        assert!(
-            set(&packages).is_subset(&set(&root_members)),
-            "{profile} selected a name outside locked metadata"
-        );
-        assert_eq!(
-            contract
-                .pointer(&format!("/profiles/root/expected_package_counts/{profile}"))
-                .and_then(Value::as_u64),
-            Some(expected_count as u64),
-            "{profile} manifest count"
-        );
-        profiles.insert(profile, packages);
-    }
-
-    let root_defaults = names_for_ids(&root_metadata, &root_metadata.workspace_default_members);
-    assert_eq!(
-        set(&profiles["m1"])
-            .difference(&set(&root_defaults))
-            .cloned()
-            .collect::<BTreeSet<_>>(),
-        string_array(&contract, "/profiles/root/m1_additions")
-            .into_iter()
-            .collect()
-    );
-    assert_eq!(set(&profiles["ops"]), set(&profiles["full"]));
-    assert_eq!(
-        set(&profiles["m2"])
-            .difference(&set(&profiles["m1"]))
-            .cloned()
-            .collect::<BTreeSet<_>>(),
-        ["wamn-dispatcher", "wamn-waker"]
-            .into_iter()
-            .map(str::to_string)
-            .collect()
-    );
-    assert_eq!(
-        set(&profiles["deploy"])
-            .difference(&set(&profiles["m2"]))
-            .cloned()
-            .collect::<BTreeSet<_>>(),
-        string_array(&contract, "/profiles/root/deploy_additions")
-            .into_iter()
-            .collect()
-    );
-    assert_eq!(
-        set(&profiles["deploy"]),
-        set(&string_array(
-            &contract,
-            "/tiers/fast_developer_native/root_packages"
-        ))
-    );
-    assert_eq!(set(&profiles["full"]), set(&root_members));
-
-    let component_m1 = component_profile_packages(&root, &contract, "m1");
-    let component_proof = component_profile_packages(&root, &contract, "proof");
-    let platform_and_packages = |platform: &[&str]| {
-        let mut expected = platform
-            .iter()
-            .map(|name| (*name).to_owned())
-            .collect::<Vec<_>>();
-        expected.extend(derived.iter().cloned());
-        expected
-    };
-    assert_exact_set(
-        "component m1",
-        &component_m1,
-        &platform_and_packages(&[
-            "blob-put",
-            "http-route",
-            "http-request",
-            "label-render",
-            "materializer",
-            "transform",
-        ]),
-    );
-    assert_exact_set(
-        "component proof",
-        &component_proof,
-        &platform_and_packages(&[
-            "blob-put",
-            "busyloop",
-            "connection-http-standard",
-            "http-route",
-            "http-request",
-            "label-render",
-            "label-template",
-            "materializer",
-            "sockprobe",
-            "sqlx-command",
-            "std-virtualization-probe",
-            "transform",
-            "wamn-client-acme-receiving-data-access",
-            "wamn-event-reg",
-            "wamn-event-wire",
-            "wamn-execution-contract",
-            "wamn-materializer",
-            "wamn-postgres-statements",
-            "wamn-postgres-sqlx",
-            "wamn-receiving-data-access",
-            "wamn-wms-data-access",
-        ]),
-    );
-    assert_eq!(set(&component_proof), set(&component_members));
-    assert_eq!(component_m1.len(), 6 + derived.len());
-    assert_eq!(component_proof.len(), 21 + derived.len());
-    assert_unique("component m1", &component_m1);
-    assert_unique("component proof", &component_proof);
-    assert_eq!(
-        set(&component_proof)
-            .difference(&set(&component_m1))
-            .cloned()
-            .collect::<BTreeSet<_>>(),
-        [
-            "busyloop",
-            "connection-http-standard",
-            "label-template",
-            "sockprobe",
-            "sqlx-command",
-            "std-virtualization-probe",
-            "wamn-client-acme-receiving-data-access",
-            "wamn-event-reg",
-            "wamn-event-wire",
-            "wamn-execution-contract",
-            "wamn-materializer",
-            "wamn-postgres-statements",
-            "wamn-postgres-sqlx",
-            "wamn-receiving-data-access",
-            "wamn-wms-data-access",
-        ]
-        .into_iter()
-        .map(str::to_string)
-        .collect()
-    );
 }
 
 fn scratch_directory(label: &str) -> PathBuf {
@@ -631,28 +322,14 @@ fn expected_metadata_invocation(root: &Path, manifest: &Path) -> Vec<String> {
     .into()
 }
 
-fn append_packages(arguments: &mut Vec<String>, packages: &[String]) {
-    for package in packages {
-        arguments.extend(["-p".to_string(), package.clone()]);
-    }
-}
-
 #[test]
 fn selector_tools_execute_exact_fake_cargo_argv() {
     let root = repository_root();
-    let contract = read_contract(&root);
-    let root_output = cargo_metadata_output(&root, ROOT_MANIFEST);
-    let root_metadata = parse_metadata(&root_output, ROOT_MANIFEST);
     let scratch = scratch_directory("argv");
     let fake_cargo = write_fake_cargo(&scratch);
     let capture = scratch.join("captured argv");
     let metadata_directory = scratch.join("canned metadata");
     fs::create_dir(&metadata_directory).expect("failed to create canned metadata directory");
-    write_fake_metadata(
-        &metadata_directory,
-        &root.join(ROOT_MANIFEST),
-        &root_output.stdout,
-    );
     let mut component_members = Vec::new();
     for manifest in COMPONENT_MANIFESTS {
         let output = cargo_metadata_output(&root, manifest);
@@ -661,50 +338,29 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
         write_fake_metadata(&metadata_directory, &root.join(manifest), &output.stdout);
     }
 
-    for profile in ["m1", "m2", "deploy", "full", "ops"] {
-        let _ = fs::remove_file(&capture);
-        let output = Command::new(root.join(PROFILE_TOOL))
-            .current_dir(&scratch)
-            .env("CARGO", &fake_cargo)
-            .env("WAMN_FAKE_CARGO_LOG", &capture)
-            .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
-            .arg(profile)
-            .output()
-            .unwrap_or_else(|error| panic!("failed to execute profile {profile}: {error}"));
-        assert_eq!(
-            output.status.code(),
-            Some(23),
-            "profile {profile}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        let packages = root_profile_packages(&contract, &root_metadata, profile);
-        let root_manifest = root.join(ROOT_MANIFEST);
-        let mut expected_run = vec![
-            root.display().to_string(),
-            "test".to_string(),
-            "--locked".to_string(),
-            "--offline".to_string(),
-            "--no-fail-fast".to_string(),
-            "--manifest-path".to_string(),
-            root_manifest.display().to_string(),
-        ];
-        append_packages(&mut expected_run, &packages);
-        if profile == "ops" {
-            expected_run.extend(["--features".to_string(), "wamn-ctl/ops".to_string()]);
-        }
-        assert_eq!(
-            captured_invocations(&capture),
-            vec![
-                expected_metadata_invocation(&root, &root_manifest),
-                expected_run
-            ],
-            "profile {profile} Cargo argv drifted"
-        );
-    }
-
-    for profile in ["m1", "proof"] {
-        let selected = component_profile_packages(&root, &contract, profile);
+    for profile in ["app", "proof"] {
+        let app = root.join("packages/receiving");
+        let application_arguments = if profile == "app" { vec![app] } else { vec![] };
+        let selected = if profile == "app" {
+            let manifest: Value = serde_json::from_slice(
+                &fs::read(application_arguments[0].join("wamn.json"))
+                    .expect("read Receiving manifest"),
+            )
+            .expect("parse Receiving manifest");
+            manifest["components"]
+                .as_object()
+                .expect("Receiving components")
+                .keys()
+                .map(|name| name.replace('_', "-"))
+                .collect::<Vec<_>>()
+        } else {
+            component_members
+                .iter()
+                .flat_map(|members| members.iter().cloned())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        };
         let first_package = component_members
             .iter()
             .find_map(|members| selected.iter().find(|package| members.contains(*package)))
@@ -718,6 +374,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
             .env("WAMN_FAKE_BUILD_STATUS", "0")
             .env("WAMN_FAKE_FAIL_PACKAGE", first_package)
             .arg(profile)
+            .args(&application_arguments)
             .output()
             .unwrap_or_else(|error| {
                 panic!("failed to execute component profile {profile}: {error}")
@@ -780,6 +437,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
             .env("WAMN_FAKE_CARGO_LOG", &capture)
             .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
             .args(["watch-roots", profile])
+            .args(&application_arguments)
             .output()
             .expect("failed to execute component watch roots");
         assert!(
@@ -789,11 +447,16 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
         );
         let roots: Value = serde_json::from_slice(&watch_roots.stdout)
             .expect("watch roots must be machine-readable JSON");
-        let expected_roots = COMPONENT_MANIFESTS.map(|manifest| {
-            manifest
-                .strip_suffix("/Cargo.toml")
-                .expect("component manifest must name a workspace")
-        });
+        let expected_roots = COMPONENT_MANIFESTS
+            .iter()
+            .zip(&component_members)
+            .filter(|(_, members)| selected.iter().any(|name| members.contains(name)))
+            .map(|(manifest, _)| {
+                manifest
+                    .strip_suffix("/Cargo.toml")
+                    .expect("component manifest must name a workspace")
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
             roots,
             serde_json::json!({"profile": profile, "workspace_roots": expected_roots}),
@@ -810,14 +473,14 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
 }
 
 #[test]
-fn component_build_distinguishes_absent_package_crates_from_inventory_drift() {
+fn component_build_requires_declared_app_crates_and_accepts_new_cargo_members() {
     let root = repository_root();
     let scratch = scratch_directory("component absence");
     let fake_cargo = write_fake_cargo(&scratch);
     let capture = scratch.join("captured argv");
     let metadata_directory = scratch.join("canned metadata");
     fs::create_dir(&metadata_directory).expect("failed to create canned metadata directory");
-    for relative in [COMPONENT_TOOL, TIER_MANIFEST, COMPONENT_VIRTUALIZATION] {
+    for relative in [COMPONENT_TOOL, COMPONENT_VIRTUALIZATION] {
         let destination = scratch.join(relative);
         fs::create_dir_all(destination.parent().expect("fixture file has a parent"))
             .expect("failed to create fixture directory");
@@ -865,17 +528,20 @@ fn component_build_distinguishes_absent_package_crates_from_inventory_drift() {
             "refusal must occur after metadata and before any build"
         );
     };
+    let new_app = new_package
+        .to_str()
+        .expect("application path must be UTF-8");
     for arguments in [
-        vec!["m1"],
+        vec!["app", new_app],
         vec!["proof"],
-        vec!["build-only", "m1"],
-        vec!["watch-roots", "m1"],
+        vec!["build-only", "app", new_app],
+        vec!["watch-roots", "app", new_app],
     ] {
         let absent = run(&arguments);
         assert_eq!(absent.status.code(), Some(65));
         assert_eq!(
             String::from_utf8_lossy(&absent.stderr),
-            "build-components: package component crates are absent from the declared component workspaces: fresh-component. Create each missing crate. Register each crate in a component workspace listed in architecture/workspace-tiers.json.\n"
+            "build-components: package component crates are absent from the declared component workspaces: fresh-component. Create each missing crate. Add each crate to its Cargo workspace members.\n"
         );
         assert_metadata_only();
     }
@@ -897,7 +563,7 @@ fn component_build_distinguishes_absent_package_crates_from_inventory_drift() {
         &scratch.join(COMPONENT_MANIFESTS[0]),
         &serde_json::to_vec(&metadata[0]).expect("metadata must serialize"),
     );
-    let present = run(&["m1"]);
+    let present = run(&["app", new_app]);
     assert_eq!(
         present.status.code(),
         Some(23),
@@ -913,34 +579,21 @@ fn component_build_distinguishes_absent_package_crates_from_inventory_drift() {
                 .any(|arguments| arguments == ["-p", "fresh-component"])
     }));
 
-    let mut contract = read_contract(&scratch);
-    let count = contract["source_inventory"]["component_workspaces"][0]["package_count"]
-        .as_u64()
-        .expect("workspace count must be an integer");
-    contract["source_inventory"]["component_workspaces"][0]["package_count"] = (count + 1).into();
-    fs::write(
-        scratch.join(TIER_MANIFEST),
-        serde_json::to_vec(&contract).expect("contract must serialize"),
-    )
-    .expect("failed to introduce inventory drift");
-    let drift = run(&["m1"]);
-    assert_eq!(drift.status.code(), Some(65));
-    assert_eq!(
-        String::from_utf8_lossy(&drift.stderr),
-        "build-components: component profile, canonical inventory, and locked metadata drifted\n"
-    );
-    assert_metadata_only();
-
-    fs::copy(root.join(TIER_MANIFEST), scratch.join(TIER_MANIFEST))
-        .expect("failed to restore inventory fixture");
     fs::remove_file(new_manifest).expect("failed to remove package declaration");
-    let undeclared = run(&["m1"]);
-    assert_eq!(undeclared.status.code(), Some(65));
+    let proof = run(&["proof"]);
     assert_eq!(
-        String::from_utf8_lossy(&undeclared.stderr),
-        "build-components: component profile, canonical inventory, and locked metadata drifted\n"
+        proof.status.code(),
+        Some(23),
+        "proof must build new Cargo members"
     );
-    assert_metadata_only();
+    assert!(captured_invocations(&capture).iter().any(|invocation| {
+        invocation
+            .get(1)
+            .is_some_and(|argument| argument == "build")
+            && invocation
+                .windows(2)
+                .any(|arguments| arguments == ["-p", "fresh-component"])
+    }));
     fs::remove_dir_all(&scratch).expect("failed to remove component absence fixture");
 }
 
@@ -1053,7 +706,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
         .env("WAMN_FAKE_BUILD_STATUS", "0")
         .env("WAMN_FAKE_VIRTUALIZER_STATUS", "0")
-        .arg("m1")
+        .arg("proof")
         .output()
         .expect("failed to execute component virtualization profile");
     assert!(
@@ -1139,6 +792,77 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         .map(|path| fs::read(path).expect("combined output must be readable"))
         .collect::<Vec<_>>();
     for normalized in &normalized_outputs {
+        fs::write(normalized, "preserved-other-app").expect("seed outputs before app build");
+    }
+    let receiving = root.join("packages/receiving");
+    let _ = fs::remove_file(&capture);
+    let app_build = Command::new(root.join(COMPONENT_TOOL))
+        .current_dir(&scratch)
+        .env("CARGO", &fake_cargo)
+        .env("WAMN_FAKE_CARGO_LOG", &capture)
+        .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
+        .env("WAMN_FAKE_BUILD_STATUS", "0")
+        .args(["build-only", "app"])
+        .arg(&receiving)
+        .output()
+        .expect("run Receiving build-only");
+    assert!(
+        app_build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&app_build.stderr)
+    );
+    let app_plan: Value =
+        serde_json::from_slice(&app_build.stdout).expect("parse app artifact plan");
+    assert_eq!(app_plan["profile"], "app");
+    assert_eq!(app_plan["applications"], serde_json::json!([receiving]));
+    let app_outputs = app_plan["virtualization"]["artifacts"]
+        .as_array()
+        .expect("app plan artifacts")
+        .iter()
+        .map(|artifact| PathBuf::from(artifact["output"].as_str().expect("app artifact output")))
+        .collect::<BTreeSet<_>>();
+    assert!(!app_outputs.is_empty());
+    assert!(
+        app_outputs.len() < normalized_outputs.len(),
+        "app must select fewer artifacts than proof"
+    );
+    assert!(
+        normalized_outputs.iter().all(|path| {
+            fs::read_to_string(path).expect("read output after app build") == "preserved-other-app"
+        }),
+        "app build-only must preserve all normalized outputs"
+    );
+    let app_plan_path = scratch.join("app-artifact-plan.json");
+    fs::write(&app_plan_path, &app_build.stdout).expect("write app artifact plan");
+    let app_virtualize = Command::new(root.join(COMPONENT_TOOL))
+        .current_dir(&scratch)
+        .env("CARGO", &fake_cargo)
+        .env("WAMN_FAKE_CARGO_LOG", &capture)
+        .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
+        .env("WAMN_FAKE_BUILD_STATUS", "31")
+        .env("WAMN_FAKE_VIRTUALIZER_STATUS", "0")
+        .arg("virtualize-only")
+        .arg(&app_plan_path)
+        .output()
+        .expect("run Receiving virtualization");
+    assert!(
+        app_virtualize.status.success(),
+        "{}",
+        String::from_utf8_lossy(&app_virtualize.stderr)
+    );
+    for (normalized, combined) in normalized_outputs.iter().zip(&combined_outputs) {
+        let actual = fs::read(normalized).expect("read normalized output after app virtualization");
+        if app_outputs.contains(normalized) {
+            assert_eq!(&actual, combined);
+        } else {
+            assert_eq!(
+                actual, b"preserved-other-app",
+                "app virtualization changed another app output"
+            );
+        }
+    }
+
+    for normalized in &normalized_outputs {
         fs::write(normalized, "preserved-build-only").expect("failed to seed a build-only output");
     }
     for stale in &stale_outputs {
@@ -1153,7 +877,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
         .env("WAMN_FAKE_BUILD_STATUS", "0")
         .env("WAMN_FAKE_VIRTUALIZER_STATUS", "29")
-        .args(["build-only", "m1"])
+        .args(["build-only", "proof"])
         .output()
         .expect("failed to execute build-only component profile");
     assert!(
@@ -1188,11 +912,17 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
 
     let artifact_plan: Value = serde_json::from_slice(&build_only.stdout)
         .expect("build-only stdout must be one machine-readable artifact plan");
-    assert_eq!(artifact_plan["profile"], "m1");
+    assert_eq!(artifact_plan["profile"], "proof");
+    assert_eq!(artifact_plan["applications"], serde_json::json!([]));
     let build_plan = artifact_plan["build"]
         .as_array()
         .expect("artifact plan must contain the Cargo selections");
-    let selected = component_profile_packages(&root, &read_contract(&root), "m1");
+    let selected = component_members
+        .values()
+        .flat_map(|members| members.iter().cloned())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     let mut expected_build_plan = Vec::new();
     for manifest in COMPONENT_MANIFESTS {
         for package in &selected {
@@ -1367,7 +1097,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
         .env("WAMN_FAKE_BUILD_STATUS", "0")
         .env("WAMN_FAKE_VIRTUALIZER_STATUS", "29")
-        .arg("m1")
+        .arg("proof")
         .output()
         .expect("failed to execute refusing component virtualization profile");
     assert_eq!(failed.status.code(), Some(29));
@@ -1407,13 +1137,25 @@ fn unknown_selector_modes_refuse_before_cargo() {
     let fake_cargo = write_fake_cargo(&scratch);
 
     for (tool, arguments, expected_message) in [
-        (PROFILE_TOOL, vec!["unknown"], "unknown profile"),
-        (COMPONENT_TOOL, vec!["unknown"], "unknown component profile"),
-        (PROFILE_TOOL, Vec::new(), "exactly one profile"),
         (
             COMPONENT_TOOL,
-            vec!["m1", "extra"],
-            "exactly one component profile",
+            vec!["unknown"],
+            "expected app APP_DIRECTORY... or proof",
+        ),
+        (
+            COMPONENT_TOOL,
+            vec!["m1"],
+            "expected app APP_DIRECTORY... or proof",
+        ),
+        (
+            COMPONENT_TOOL,
+            vec!["app"],
+            "app requires an application directory",
+        ),
+        (
+            COMPONENT_TOOL,
+            vec!["proof", "extra"],
+            "proof takes no application directories",
         ),
     ] {
         let capture = scratch.join(format!("{} capture", tool.replace('/', "-")));
@@ -1438,57 +1180,4 @@ fn unknown_selector_modes_refuse_before_cargo() {
     }
 
     fs::remove_dir_all(&scratch).expect("failed to remove refusal scratch directory");
-}
-
-/// wamn-0h0g.15.137.4: the needle set below is DERIVED from cargo metadata, so
-/// it inherits every ordinary-English package name in the workspace -- today
-/// `transform` and `http-request`. Nothing collides yet, but a comment in a
-/// selector tool reading "transform the manifest list" makes this guard report
-/// a hardcoded package name that is not there. Measured: it does, naming
-/// `tools/build-components` and `transform`.
-///
-/// THE COST IS DELIBERATE, the way a members-line change already is. Both
-/// alternatives were measured and are worse:
-///
-///   * comment-stripping the haystack cannot be done safely here -- both
-///     selector tools contain `$#`, so a line-based stripper deletes the
-///     executable line it sits on and blinds the guard silently;
-///   * a quote- or word-shaped needle wrapper misses the shapes that matter: a
-///     bare `m1 | proof | materializer)` case arm is a real hardcode this bare
-///     `contains` kills and a quoted shape would not;
-///   * an exclusion list of ordinary-English names is a HAND-WRITTEN needle set,
-///     which is precisely what deriving the set exists to avoid, and it would
-///     blind the guard on two of the eight component packages.
-///
-/// Nothing else kills the mutant this exists for. A tool that hardcodes a
-/// package list EQUAL to the canonical one passes every behavioural proof in
-/// this file, `selector_tools_execute_exact_fake_cargo_argv` included, and
-/// fails only here. So naming a package after an ordinary English word costs
-/// whoever adds it a rename or a fix to this guard. That is the price of the
-/// derivation, and it is the cheaper half of the trade.
-#[test]
-fn selector_tools_do_not_duplicate_canonical_package_inventory() {
-    let root = repository_root();
-    let root_output = cargo_metadata_output(&root, ROOT_MANIFEST);
-    let root_metadata = parse_metadata(&root_output, ROOT_MANIFEST);
-    let component_metadata = COMPONENT_MANIFESTS
-        .iter()
-        .map(|manifest| parse_metadata(&cargo_metadata_output(&root, manifest), manifest))
-        .collect::<Vec<_>>();
-
-    for tool in [PROFILE_TOOL, COMPONENT_TOOL] {
-        let source = fs::read_to_string(root.join(tool))
-            .unwrap_or_else(|error| panic!("failed to read {tool}: {error}"));
-        for package in root_metadata
-            .packages
-            .iter()
-            .chain(component_metadata.iter().flat_map(|one| &one.packages))
-        {
-            assert!(
-                !source.contains(&package.name),
-                "{tool} hardcodes {} instead of reading the canonical inventory",
-                package.name
-            );
-        }
-    }
 }

@@ -170,6 +170,12 @@ Use the same simple terms in comments and identifiers.
 If a term has more than one possible meaning, ask the owner.
 This instruction does not authorize a contract rename.
 
+Retire `m1` and update its callers.
+Do not move its component list into Cargo `default-members` or another profile.
+Application builds read component declarations from the named app manifests.
+Proof builds select all guest workspace members from Cargo.
+Both paths keep one Cargo invocation per guest to preserve digests.
+
 The materializer is platform infrastructure.
 Native C uses a platform-owned named NATS binding for it.
 Credentials apply to one environment and permit attachment only to its allowed streams.

@@ -631,7 +631,7 @@ if [[ $(grep -c '^  - role:' "$kind_config") -ne 3 ]] ||
 fi
 
 run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  "$repo_root/tools/build-components" m1
+  "$repo_root/tools/build-components" proof
 # THE HOST IS A RELEASE BUILD (wamn-0h0g.17.31). Through 6-throughput.md the
 # journey copied target/debug/wamn-host into its image and measured that: 15-33
 # ms of host CPU per request, a knee at four clients on a 2-core quota. The

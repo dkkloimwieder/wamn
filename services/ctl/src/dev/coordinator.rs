@@ -50,7 +50,6 @@ use crate::push_component::{
 use crate::push_release_manifest::PushReleaseManifestArgs;
 use crate::reconcile_package_data_access::ReconcilePackageDataAccessArgs;
 
-const BUILD_PROFILE: &str = "m1";
 const BUILD_TOOL: &str = "tools/build-components";
 const AUTHORING_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const COMPONENT_DECLARATION_PLACEHOLDER: &str = "__TENANT_ID__";
@@ -658,9 +657,15 @@ impl ProductionDevStageRunner {
 
     async fn build(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Build);
+        let roots = self
+            .package_inputs()?
+            .into_iter()
+            .map(|package| package.root)
+            .collect::<Vec<_>>();
         let tool = self.git.repository_root().join(BUILD_TOOL);
         let output = Command::new(&tool)
-            .args(["build-only", BUILD_PROFILE])
+            .args(["build-only", "app"])
+            .args(&roots)
             .kill_on_drop(true)
             .output()
             .await
@@ -681,11 +686,6 @@ impl ProductionDevStageRunner {
             bytes: output.stdout.into_boxed_slice(),
             plan,
         });
-        let roots = self
-            .package_inputs()?
-            .into_iter()
-            .map(|package| package.root)
-            .collect::<Vec<_>>();
         self.native_binaries = super::native_tui::build(self.git.repository_root(), &roots)
             .await
             .map_err(|source| {

@@ -9,6 +9,7 @@ import subprocess
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--evidence-dir', type=Path, required=True)
+parser.add_argument('--app-directory', type=Path, action='append', required=True)
 args = parser.parse_args()
 tree = Path.cwd().resolve()
 evidence = args.evidence_dir.resolve()
@@ -17,10 +18,12 @@ scratch = tree / 'target' / 'effects-response-profiles-001'
 scratch.mkdir(parents=True, exist_ok=False)
 commands = []
 statuses = []
-for profile in ('m1', 'proof'):
+for profile in ('app', 'proof'):
     env = os.environ.copy()
     env.update(CARGO_TARGET_DIR=str(scratch / profile), RUSTC_WRAPPER='')
     command = ['tools/build-components', 'build-only', profile]
+    if profile == 'app':
+        command.extend(str(path.resolve(strict=True)) for path in args.app_directory)
     with (evidence / f'{profile}.json').open('w') as plan:
         with (evidence / f'{profile}.log').open('w') as log:
             result = subprocess.run(command, env=env, stdout=plan, stderr=log)
@@ -31,7 +34,7 @@ for profile in ('m1', 'proof'):
 status = next((code for code in statuses if code), 0)
 if status == 0:
     env = os.environ.copy()
-    env.update(WAMN_DIGEST_PROFILE_M1_PLAN=str(evidence / 'm1.json'),
+    env.update(WAMN_DIGEST_PROFILE_APP_PLAN=str(evidence / 'app.json'),
                WAMN_DIGEST_PROFILE_PROOF_PLAN=str(evidence / 'proof.json'))
     command = ['cargo', 'test', '-p', 'wamn-proof-conformance', '--test',
                'guest_workspace_closure', '--locked', '--offline',
@@ -40,7 +43,7 @@ if status == 0:
     with (evidence / 'assertion.log').open('w') as log:
         result = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT)
     status = result.returncode
-    commands.append({'argv': command, 'WAMN_DIGEST_PROFILE_M1_PLAN': env['WAMN_DIGEST_PROFILE_M1_PLAN'],
+    commands.append({'argv': command, 'WAMN_DIGEST_PROFILE_APP_PLAN': env['WAMN_DIGEST_PROFILE_APP_PLAN'],
                      'WAMN_DIGEST_PROFILE_PROOF_PLAN': env['WAMN_DIGEST_PROFILE_PROOF_PLAN'],
                      'exit_code': status})
     print(f'cross-profile assertion: exit {status}', flush=True)

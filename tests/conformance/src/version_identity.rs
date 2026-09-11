@@ -29,16 +29,10 @@ const GOVERNED_JSON_SCHEMAS: &[GovernedJsonSchema] = &[
         path: "architecture/gate-registry.json",
     },
     GovernedJsonSchema {
-        path: "architecture/package-roles.json",
-    },
-    GovernedJsonSchema {
         path: "architecture/protected-writes.json",
     },
     GovernedJsonSchema {
         path: "architecture/state-owners.json",
-    },
-    GovernedJsonSchema {
-        path: "architecture/workspace-tiers.json",
     },
 ];
 
@@ -134,11 +128,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "tests/conformance/tests/package_architecture.rs",
-        exact: r#"if manifest.schema_version != "0.1" {"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "tests/conformance/tests/state_ownership.rs",
         exact: r#"if manifest.schema_version != "0.1" {"#,
         expected_count: 1,
@@ -151,16 +140,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     GovernedLiteral {
         path: "tests/conformance/tests/gate_registry.rs",
         exact: r#".contains("wamn-kubernetes-gate-verdict/v0.1")"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "tests/conformance/tests/workspace_tiers.rs",
-        exact: r#"assert_eq!(manifest.schema_version, "0.1");"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "tools/workspace-tier",
-        exact: r#".schema_version == "0.1""#,
         expected_count: 1,
     },
     GovernedLiteral {

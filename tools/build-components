@@ -2,9 +2,9 @@
 set -euo pipefail
 
 readonly WAMN_USAGE='usage:
-  tools/build-components m1 | proof
-  tools/build-components build-only m1 | proof
-  tools/build-components watch-roots m1 | proof
+  tools/build-components app APP_DIRECTORY... | proof
+  tools/build-components build-only app APP_DIRECTORY... | proof
+  tools/build-components watch-roots app APP_DIRECTORY... | proof
   tools/build-components virtualize-only ARTIFACT_PLAN'
 
 wamn_fail() {
@@ -23,40 +23,40 @@ WAMN_MODE='combined'
 WAMN_PROFILE=''
 WAMN_ARTIFACT_PLAN_PATH=''
 WAMN_SUPPLIED_ARTIFACT_PLAN=''
-case "$#:${1:-}" in
-  1:m1 | 1:proof)
-    WAMN_PROFILE="$1"
+declare -a WAMN_APPLICATIONS=()
+case "${1:-}" in
+  build-only | watch-roots)
+    WAMN_MODE="$1"
+    shift
     ;;
-  1:*)
-    wamn_usage_error "unknown component profile '$1'"
-    ;;
-  2:build-only)
-    WAMN_MODE='build-only'
-    WAMN_PROFILE="$2"
-    case "$WAMN_PROFILE" in
-      m1 | proof) ;;
-      *) wamn_usage_error "unknown component profile '$WAMN_PROFILE'" ;;
-    esac
-    ;;
-  2:watch-roots)
-    WAMN_MODE='watch-roots'
-    WAMN_PROFILE="$2"
-    case "$WAMN_PROFILE" in
-      m1 | proof) ;;
-      *) wamn_usage_error "unknown component profile '$WAMN_PROFILE'" ;;
-    esac
-    ;;
-  2:virtualize-only)
+  virtualize-only)
+    (($# == 2)) || wamn_usage_error 'virtualize-only requires one artifact plan'
     WAMN_MODE='virtualize-only'
     WAMN_ARTIFACT_PLAN_PATH="$2"
-    ;;
-  2:m1 | 2:proof)
-    wamn_usage_error 'exactly one component profile is required'
-    ;;
-  *)
-    wamn_usage_error 'expected a profile, build-only PROFILE, or virtualize-only ARTIFACT_PLAN'
+    shift 2
     ;;
 esac
+if [[ "$WAMN_MODE" != virtualize-only ]]; then
+  case "${1:-}" in
+    app)
+      (($# > 1)) || wamn_usage_error 'app requires an application directory'
+      WAMN_PROFILE='app'
+      shift
+      for application in "$@"; do
+        WAMN_APPLICATIONS+=("$(CDPATH= cd -- "$application" && pwd -P)") || {
+          wamn_usage_error "cannot read application directory $application"
+        }
+      done
+      ;;
+    proof)
+      (($# == 1)) || wamn_usage_error 'proof takes no application directories'
+      WAMN_PROFILE='proof'
+      ;;
+    *)
+      wamn_usage_error 'expected app APP_DIRECTORY... or proof'
+      ;;
+  esac
+fi
 readonly WAMN_MODE
 readonly WAMN_ARTIFACT_PLAN_PATH
 
@@ -68,9 +68,7 @@ readonly WAMN_REPOSITORY_ROOT="$(
   CDPATH= cd -- "$WAMN_TOOL_DIRECTORY/.." >/dev/null 2>&1
   pwd -P
 )"
-readonly WAMN_TIER_MANIFEST="$WAMN_REPOSITORY_ROOT/architecture/workspace-tiers.json"
 readonly WAMN_VIRTUALIZATION_MANIFEST="$WAMN_REPOSITORY_ROOT/tools/component-virtualization.json"
-readonly WAMN_PACKAGE_ROOT="$WAMN_REPOSITORY_ROOT/packages"
 readonly WAMN_CARGO="${CARGO:-cargo}"
 
 command -v jq >/dev/null 2>&1 || wamn_fail 127 'jq is required'
@@ -84,8 +82,12 @@ if [[ "$WAMN_MODE" == virtualize-only ]]; then
       def exact_keys($expected): keys | sort == ($expected | sort);
       select(length == 1)
       | .[0]
-      | select(exact_keys(["build", "profile", "virtualization"]))
-      | select(.profile == "m1" or .profile == "proof")
+      | select(exact_keys(["applications", "build", "profile", "virtualization"]))
+      | select(.profile == "app" or .profile == "proof")
+      | select(.applications | type == "array")
+      | select(all(.applications[]; type == "string" and startswith("/")))
+      | select(if .profile == "app" then (.applications | length > 0)
+               else (.applications | length == 0) end)
       | select(.build | type == "array" and length > 0)
       | select([.build[]
                 | select((exact_keys(["manifest", "packages"]) | not)
@@ -108,12 +110,10 @@ if [[ "$WAMN_MODE" == virtualize-only ]]; then
     ' "$WAMN_ARTIFACT_PLAN_PATH"
   )" || wamn_fail 65 "invalid artifact plan $WAMN_ARTIFACT_PLAN_PATH"
   WAMN_PROFILE="$(jq -r '.profile' <<<"$WAMN_SUPPLIED_ARTIFACT_PLAN")"
+  mapfile -t WAMN_APPLICATIONS < <(jq -r '.applications[]' <<<"$WAMN_SUPPLIED_ARTIFACT_PLAN")
 fi
 readonly WAMN_SUPPLIED_ARTIFACT_PLAN
 readonly WAMN_PROFILE
-[[ -r "$WAMN_TIER_MANIFEST" ]] || {
-  wamn_fail 65 "cannot read $WAMN_TIER_MANIFEST"
-}
 [[ -r "$WAMN_VIRTUALIZATION_MANIFEST" ]] || {
   wamn_fail 65 "cannot read $WAMN_VIRTUALIZATION_MANIFEST"
 }
@@ -128,47 +128,32 @@ else
 fi
 cd -- "$WAMN_REPOSITORY_ROOT"
 
-# The guests are split across more than one Cargo workspace, because Cargo
-# feature unification is additive-only within a single invocation and would
-# force std into the `no_std` guests. Read metadata once per declared workspace.
-# Each guest gets its own invocation so its dependency features do not depend
-# on the other guests selected by the profile. Reuse each workspace target.
-declare WAMN_MANIFEST_LIST
-WAMN_MANIFEST_LIST="$(
-  jq -er '.source_inventory.component_workspaces
-          | select(length > 0)
-          | .[].manifest' "$WAMN_TIER_MANIFEST"
-)" || wamn_fail 65 'canonical inventory declares no component workspace'
-readonly WAMN_MANIFEST_LIST
-mapfile -t WAMN_MANIFESTS <<<"$WAMN_MANIFEST_LIST"
-readonly WAMN_MANIFESTS
+# Separate Cargo workspaces keep no-std guests isolated from std features.
+readonly -a WAMN_MANIFESTS=(components/Cargo.toml components/no-std/Cargo.toml)
+readonly WAMN_MANIFEST_LIST="$(printf '%s\n' "${WAMN_MANIFESTS[@]}" | jq -Rn '[inputs]')"
+readonly WAMN_APPLICATION_LIST="$(printf '%s\n' "${WAMN_APPLICATIONS[@]}" | jq -Rn '[inputs | select(length > 0)]')"
 
-# The package half of every component inventory, derived rather than listed.
-#
-# This is an allowlist and not discovery, and it stays that way: nothing builds
-# unless something declares it. What changed is WHO declares the package half.
-# A package's own manifest names its components, so adding a package adds its
-# component, and no central file has to be edited to author one. Before this,
-# four rows across two files had to move and neither file belongs to any
-# package, which made a greenfield package impossible to author inside its own
-# paths (wamn-10yt.10.39).
-#
-# The platform half is still listed in architecture/workspace-tiers.json and
-# tools/component-virtualization.json, because a platform component has no
-# package to declare it.
+# Application manifests declare the components that need virtualization.
+# Proof builds select every Cargo member and read all application declarations.
+declare -a WAMN_APPLICATION_MANIFESTS=()
+if [[ "$WAMN_PROFILE" == app ]]; then
+  for application in "${WAMN_APPLICATIONS[@]}"; do
+    WAMN_APPLICATION_MANIFESTS+=("$application/wamn.json")
+  done
+else
+  for application in "$WAMN_REPOSITORY_ROOT"/{packages,apps}/*/wamn.json; do
+    [[ -f "$application" ]] || continue
+    WAMN_APPLICATION_MANIFESTS+=("$application")
+  done
+fi
 declare WAMN_PACKAGE_COMPONENTS
 WAMN_PACKAGE_COMPONENTS="$(
-  {
-    if [[ -d "$WAMN_PACKAGE_ROOT" ]]; then
-      for wamn_package_manifest in "$WAMN_PACKAGE_ROOT"/*/wamn.json; do
-        [[ -r "$wamn_package_manifest" ]] || continue
-        jq -er '(.components // {}) | keys[]' "$wamn_package_manifest" || {
-          wamn_fail 65 "cannot read components from $wamn_package_manifest"
-        }
-      done
-    fi
-  } | tr '_' '-' | sort -u | jq -Rn '[inputs | select(length > 0)]'
-)" || wamn_fail 65 'could not derive the package component set'
+  for application in "${WAMN_APPLICATION_MANIFESTS[@]}"; do
+    jq -er '(.components // {}) | keys[]' "$application" || {
+      wamn_fail 65 "cannot read components from $application"
+    }
+  done | tr '_' '-' | sort -u | jq -Rn '[inputs | select(length > 0)]'
+)" || wamn_fail 65 'could not read application component declarations'
 readonly WAMN_PACKAGE_COMPONENTS
 
 declare -a WAMN_METADATA=()
@@ -183,8 +168,7 @@ for manifest in "${WAMN_MANIFESTS[@]}"; do
 done
 readonly WAMN_METADATA
 
-# Distinguish a package declaration without a component workspace member from
-# inventory drift. Only declared members count; this does not discover crates.
+# Every application component must be a declared Cargo workspace member.
 declare WAMN_ABSENT_PACKAGE_COMPONENTS
 WAMN_ABSENT_PACKAGE_COMPONENTS="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -er -s \
@@ -197,55 +181,25 @@ WAMN_ABSENT_PACKAGE_COMPONENTS="$(
 )" || wamn_fail 65 'could not read component workspace membership from locked metadata'
 readonly WAMN_ABSENT_PACKAGE_COMPONENTS
 if [[ -n "$WAMN_ABSENT_PACKAGE_COMPONENTS" ]]; then
-  wamn_fail 65 "package component crates are absent from the declared component workspaces: $WAMN_ABSENT_PACKAGE_COMPONENTS. Create each missing crate. Register each crate in a component workspace listed in architecture/workspace-tiers.json."
+  wamn_fail 65 "package component crates are absent from the declared component workspaces: $WAMN_ABSENT_PACKAGE_COMPONENTS. Create each missing crate. Add each crate to its Cargo workspace members."
 fi
 
 declare WAMN_PLAN
 WAMN_PLAN="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -e -s --arg profile "$WAMN_PROFILE" \
+    --argjson manifests "$WAMN_MANIFEST_LIST" \
     --argjson package_components "$WAMN_PACKAGE_COMPONENTS" '
-    .[0] as $contract
-    | .[1:] as $metadata
-    | $contract.source_inventory.component_workspaces as $workspaces
-    | $contract.profiles.components as $profiles
-    | [$metadata[]
-       | (.packages | map({key: .id, value: .name}) | from_entries) as $names
-       | [.workspace_members[] | $names[.]]] as $membership
-    | ($membership | add) as $members
-    | (if $profile == "m1"
-       then $profiles.m1_inventory_tier
-       else $profiles.proof_inventory_tier
-       end) as $tier
-    | $contract.tiers[$tier].component_packages as $declared
-    | (($declared + $package_components) | unique) as $packages
-    | select($contract.schema_version == "0.1")
-    | select($workspaces | length == ($membership | length))
-    # The declared count is the PLATFORM half. Each workspace may also hold
-    # package components, and those are counted from what it actually contains,
-    # so a new package needs no edit here.
-    | select([range($workspaces | length) as $index
-              | ($package_components
-                 | map(select(. as $component
-                              | $membership[$index] | index($component) != null))
-                 | length) as $derived_here
-              | select(($membership[$index] | length)
-                       != ($workspaces[$index].package_count + $derived_here))]
-             | length == 0)
-    | select($members | length == (unique | length))
-    | select($declared | length == $profiles.expected_package_counts[$profile])
-    | select($declared | length == ($declared | unique | length))
-    # Every live member is either declared by the platform or declared by a
-    # package. Nothing undeclared builds; that fence did not move.
-    | select(((($contract.tiers[$profiles.proof_inventory_tier].component_packages
-                + $package_components) | unique) | sort)
-             == ($members | sort))
-    | [range($workspaces | length) as $index
-       | $packages[] as $package
-       | select($membership[$index] | index($package) != null)
-       | {manifest: $workspaces[$index].manifest, packages: [$package]}]
-    | select(([.[].packages] | add | length) == ($packages | length))
-  ' "$WAMN_TIER_MANIFEST" -
-)" || wamn_fail 65 'component profile, canonical inventory, and locked metadata drifted'
+    [to_entries[]
+     | .key as $index
+     | .value as $metadata
+     | $metadata.packages[]
+     | select(.id as $id | $metadata.workspace_members | index($id) != null)
+     | select($profile == "proof" or (.name as $name | $package_components | index($name) != null))
+     | {manifest: $manifests[$index], packages: [.name]}]
+    | sort_by(.manifest, .packages[0])
+    | select(length > 0)
+  '
+)" || wamn_fail 65 'component selection contains no Cargo workspace members'
 readonly WAMN_PLAN
 
 if [[ "$WAMN_MODE" == watch-roots ]]; then
@@ -267,7 +221,8 @@ fi
 declare WAMN_VIRTUALIZATION_PLAN
 WAMN_VIRTUALIZATION_PLAN="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -e -s \
-    --slurpfile tier "$WAMN_TIER_MANIFEST" \
+    --argjson manifests "$WAMN_MANIFEST_LIST" \
+    --argjson build "$WAMN_PLAN" \
     --slurpfile virtualization "$WAMN_VIRTUALIZATION_MANIFEST" \
     --argjson package_components "$WAMN_PACKAGE_COMPONENTS" \
     --arg profile "$WAMN_PROFILE" '
@@ -284,15 +239,8 @@ WAMN_VIRTUALIZATION_PLAN="$(
       and (split("/") | all(length > 0 and . != "." and . != ".."));
 
     . as $metadata
-    | $tier[0] as $contract
     | $virtualization[0] as $virtual
-    | $contract.source_inventory.component_workspaces as $workspaces
-    | (if $profile == "m1"
-       then $contract.profiles.components.m1_inventory_tier
-       else $contract.profiles.components.proof_inventory_tier
-       end) as $tier_name
-    | (($contract.tiers[$tier_name].component_packages + $package_components)
-       | unique) as $selected
+    | [$build[].packages[]] as $selected
     | select(($virtual | keys | sort)
              == (["artifacts", "output_subdirectory", "profile", "tool"] | sort))
     | select(($virtual.tool | keys | sort) == ["manifest", "package"])
@@ -300,9 +248,9 @@ WAMN_VIRTUALIZATION_PLAN="$(
     | select($virtual.output_subdirectory == ("virtualized/" + $virtual.profile))
     | select($virtual.tool.manifest | relative_path)
     | select($virtual.tool.package | type == "string" and length > 0)
-    | select($metadata | length == ($workspaces | length))
-    | [range($workspaces | length) as $index
-       | {manifest: $workspaces[$index].manifest,
+    | select($metadata | length == ($manifests | length))
+    | [range($manifests | length) as $index
+       | {manifest: $manifests[$index],
           metadata: $metadata[$index]}] as $owners
     # The package half of the allowlist, synthesized from the package manifests
     # rather than listed. The owning workspace is whichever one actually holds
@@ -336,10 +284,7 @@ WAMN_VIRTUALIZATION_PLAN="$(
                        or ($artifact.raw_file | basename | not)
                        or ($artifact.output_file | basename | not)
                        or ($artifact.raw_file | endswith(".wasm") | not)
-                       or ($artifact.output_file | endswith(".wasm") | not)
-                       or ((($contract.tiers.product_components.component_packages
-                             + $package_components) | unique)
-                           | index($artifact.package) == null))]
+                       or ($artifact.output_file | endswith(".wasm") | not))]
              | length == 0)
     | [$all_artifacts[] as $artifact
        | [$owners[] | select(.manifest == $artifact.workspace_manifest)] as $matching_owners
@@ -442,9 +387,10 @@ wamn_artifact_plan() {
 
   jq -nceS \
     --arg profile "$WAMN_PROFILE" \
+    --argjson applications "$WAMN_APPLICATION_LIST" \
     --argjson build "$WAMN_PLAN" \
     --argjson virtualization "$virtualization_plan" \
-    '{profile: $profile, build: $build, virtualization: $virtualization}'
+    '{profile: $profile, applications: $applications, build: $build, virtualization: $virtualization}'
 }
 
 WAMN_PENDING_OUTPUT=''
@@ -467,9 +413,8 @@ wamn_virtualize() {
   virtualizer_package="$(jq -r '.virtualization.tool.package' <<<"$artifact_plan")"
   count="$(jq -r '.virtualization.artifacts | length' <<<"$artifact_plan")"
 
-  # The profile directory is wholly owned output. Clear it only after the
-  # complete build plan and every raw digest have been validated, so a stale
-  # handoff cannot mutate the last known-good outputs.
+  # Clear outputs only after the full plan and every raw digest are valid.
+  # App builds own only their selected files. Proof owns the full directory.
   while IFS= read -r output; do
     directory="$(dirname -- "$output")"
     [[ -n "$directory" && "$directory" != / \
@@ -479,9 +424,16 @@ wamn_virtualize() {
     directories["$directory"]=1
   done < <(jq -r '.virtualization.artifacts[].output' <<<"$artifact_plan")
   for directory in "${!directories[@]}"; do
-    rm -rf -- "$directory"
+    if [[ "$WAMN_PROFILE" == proof ]]; then
+      rm -rf -- "$directory"
+    fi
     mkdir -p -- "$directory"
   done
+  if [[ "$WAMN_PROFILE" == app ]]; then
+    while IFS= read -r output; do
+      rm -f -- "$output"
+    done < <(jq -r '.virtualization.artifacts[].output' <<<"$artifact_plan")
+  fi
 
   trap wamn_cleanup_partial_output EXIT
   printf 'build-components: %s normalizes %s declared artifacts with profile %s\n' \
@@ -529,7 +481,7 @@ if [[ "$WAMN_MODE" == build-only ]]; then
 fi
 if [[ "$WAMN_MODE" == virtualize-only \
       && "$WAMN_SUPPLIED_ARTIFACT_PLAN" != "$WAMN_CURRENT_ARTIFACT_PLAN" ]]; then
-  wamn_fail 65 'artifact plan is stale or does not match the canonical component inventory'
+  wamn_fail 65 'artifact plan is stale or does not match the current component selection'
 fi
 
 wamn_virtualize "$WAMN_CURRENT_ARTIFACT_PLAN"

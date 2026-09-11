@@ -26,9 +26,7 @@ verifies. Host-built binaries cannot be `COPY`d into the image — the build
 stages are `rust:1.98-trixie` and the runtime stages `debian:trixie-slim`, and
 a host toolchain's glibc does not match.
 
-**Local Cargo success never substitutes for a named in-cluster gate of
-record.** `architecture/workspace-tiers.json` says the same thing in its
-`deployed_system_proof.command_semantics`.
+Local Cargo success never substitutes for a named in-cluster gate of record.
 
 The gate Job manifests are `deploy/gates/*-job.yaml`, applied per run and
 deleted after (`deploy/README.md`). The two live Job manifests are
@@ -84,10 +82,23 @@ For a debug guest build, name its package explicitly:
 cargo build --manifest-path components/Cargo.toml -p http-route --target wasm32-wasip2
 ```
 
-For the complete production or proof set, run `tools/build-components m1` or `tools/build-components proof`.
-The tool selects declared packages, builds release artifacts, and applies the fixed virtualization profile.
-It requires `jq` and builds one package at a time within each workspace.
-`tools/workspace-tier list|dry-run|run TIER WORKSPACE MODE` resolves tier selectors from `architecture/workspace-tiers.json`.
+For an app build, run `tools/build-components app packages/receiving`.
+Pass each app directory that the caller needs, including the resolved base apps for an overlay.
+The tool reads each app manifest to select its components.
+Cargo builds their dependencies, including generated data libraries.
+
+For a proof build, run `tools/build-components proof`.
+The tool selects all guest workspace members from Cargo metadata.
+Both commands build release artifacts and apply the fixed virtualization profile.
+Each guest gets one Cargo invocation, regardless of the caller.
+The tool requires `jq`.
+
+`build-only` accepts the same app directories or `proof` argument and writes an artifact plan to stdout.
+An artifact plan records the build inputs, output paths, and raw artifact hashes.
+`virtualize-only ARTIFACT_PLAN` reads that plan and refuses changed inputs or hashes before it changes outputs.
+An app build replaces only its selected outputs.
+A proof build replaces the complete output directory.
+`watch-roots app APP_DIRECTORY...` reads the selected dependencies without building them.
 
 ## Upstream release gate
 
@@ -401,8 +412,8 @@ cargo test --workspace --no-fail-fast > sweep.txt 2>&1
   analyse the file.
 - `--workspace` is required. Cargo otherwise selects default members only.
   Measured at `1bffa614` from `cargo metadata --no-deps`: **17 default members
-  of 35 workspace members.** The current `architecture/workspace-tiers.json`
-  `full_ci` tier carries all 36 current members.
+  of 35 workspace members.** The former tier inventory recorded 36 members at its later measurement.
+  `wamn-47wm.2.1` deletes that inventory. Cargo metadata owns the current membership.
   [relocation: `wamn-10yt.10.29` moved four guest-consumed rlibs out of the root
   workspace into `components/`; the live counts are now 17 default of 35 root
   members and 20 components members. The dated figures above are left as the
@@ -433,80 +444,23 @@ passed, 1 failed, 77 ignored, no compile errors.** The same one failure, still
 cargo test -p wamn-proof-conformance --no-fail-fast
 ```
 
-[Before `wamn-47wm.2.3`, the measured member-change procedure included three copied WIT location lists.]
+Cargo owns workspace membership and dependencies.
+Each application manifest owns its component declarations.
+Add a crate to its Cargo workspace and keep its lockfile current.
+An application component also needs its declaration in the app manifest.
+No copied package count, role list, tier, or build profile needs an update.
 
-**Cargo member changes still update the package inventories listed below,**
-all asserted against live `cargo metadata`, so a partial edit is red and a
-partial COMMIT is red even when the final tree is green (remeasured at
-`wamn-362o` adding two components: exactly ten files). Seven member
-inventories: (1) the workspace `Cargo.toml` members list, and for root also
-`[workspace.dependencies]`; (2) `architecture/package-roles.json`, one row
-`{workspace,name,manifest_path,role,target_class,bounded_context,deployable}`,
-unsorted, grouped by workspace then source directory, the optional eighth
-field `native` absent on non-native rows; (3) `architecture/workspace-tiers.json`
--- `source_inventory.package_count`, EVERY tier's `root_packages` and
-`component_packages` (sorted, unique, byte-lexicographic),
-`profiles.expected_package_counts`, and the prose in `selection.reason`,
-`command_semantics` and `bare_cargo_semantics.selected_packages`, the last
-checked by whole-token equality against the live count;
-(4) `tests/conformance/tests/package_architecture.rs` `ROOT_MEMBER_COUNT` and
-`COMPONENT_WORKSPACES[].member_count`;
-(5) `tests/conformance/tests/profile_selectors.rs` -- `root_members.len()`,
-`component_members.len()`, the m1 and proof expected name lists, the
-`profile_counts` table, and the proof-minus-m1 difference set;
-(6) `tests/conformance/tests/retained_root_outcomes.rs` `RETAINED_ROOTS`,
-asserted set-equal to `package-roles.json` across all three workspaces;
-(7) `tests/conformance/tests/repo_lint.rs` `ROOT_MEMBER_COUNT`,
-`COMPONENT_MEMBER_COUNT`, `NO_STD_MEMBER_COUNT`.
+`tools/build-components app APP_DIRECTORY...` reads the named app manifests and resolves their components through Cargo metadata.
+`tools/build-components proof` selects all members in the guest workspaces.
+The fixed virtualization policy still applies to its declared platform artifacts and to application components.
+These declarations control artifact transformation, not workspace membership.
+Generated operator crates remain native workspace members.
 
 WIT contract tests discover `.wit` files by their package headers and compare complete bytes with the owning contracts.
 The Node contract lives in `crates/execution/router/wit/package.wit`.
 The PostgreSQL contract lives in `crates/platform/runtime/wit/deps/wamn-postgres/package.wit`.
 The connection contract lives in `docs/reference/contracts/wamn-connection.wit`.
 New copies need no copied location list.
-
-Generated operator crates in `packages/*/generated/*-tui/` are native root members.
-Register them in sites (1) through (7).
-They add no WIT copies.
-The root has 40 members, and its default selects 19.
-The `deploy` selector has 33 members, while `m1` and `m2` retain 20 and 22.
-The `full` and `ops` selectors each have 40 members.
-
-**A component that a package declares moves none of the sites (2) to (7)**
-(`wamn-10yt.10.39`). `packages/<package>/wamn.json` names its components. The
-package half of every inventory above is derived from that file. This covers the
-tier lists, the per-workspace counts, the virtualization artifacts, and the
-`package-roles.json` row. The row's `bounded_context` is the declaring package's
-own model schema. Every number and name list in those files states the PLATFORM
-half only. One derivation per language owns this. In Rust it is
-`tests/conformance/src/package_inventory.rs`. In shell it is
-`tools/build-components` and `tools/workspace-tier`. Extend those. Do not write
-a second copy. Authoring such a package touches only `packages/<package>/`, the
-component crate directory, and two shared files in the components workspace.
-Those two are the `members` line in `components/Cargo.toml`, which is site (1),
-and `components/Cargo.lock`. Cargo owns the lockfile and regenerates it, but
-`cargo metadata --locked` refuses a stale one, so the new `[[package]]` stanza
-lands with the package (wamn-10yt.10.40). The allowlist stays CLOSED. A crate with no package manifest is refused by
-`tools/build-components` with `component profile, canonical inventory, and
-locked metadata drifted`, and `package_architecture.rs` reports it as
-unclassified. If a package's models carry more than one schema, the package has
-no single bounded context and the derivation refuses.
-
-**Tier placement** (from `workspace_tiers.rs`): `role=test` goes in `full_ci`
-and `deployed_system_proof`, excluded from `fast_developer_native`; a
-deployable cdylib guest goes in all four (`product_components`, `release`,
-`full_ci`, `deployed_system_proof`); a guest-consumed rlib (`adapter`/`guest`,
-`deployable: false`) goes in `full_ci` and `deployed_system_proof` only,
-because `release` asserts every member carries `cdylib` or `bin`. For
-components, `m1_inventory_tier` is `product_components` and
-`proof_inventory_tier` is `full_ci`. Baseline these gates BEFORE editing so an
-inherited red is not attributed to the change: this class rots in both
-directions. `profile_selectors.rs` and `workspace_tiers.rs` also assert the
-selector tools' SOURCE contains no canonical package name as a substring, so
-grep `tools/` before choosing a short name. A new guest needs
-`tools/component-virtualization.json` only if it must be virtualized; the
-allowlist test iterates declared artifacts only, so an omission is silent at
-gate time and shows up at deploy.
 
 **Conformance runs at the wave-end integrator pass, not per lane.** A lane
 runs the targeted `-p` selection its own change touches. Running the whole
@@ -816,9 +770,8 @@ effective_release_cleanup() {
 }
 trap effective_release_cleanup EXIT
 
-# The pinned digest is the `m1` profile's virtualized output. Another profile
-# builds other bytes and fails the guard below (wamn-10yt.61), so name it.
-tools/build-components m1
+# Each guest gets one Cargo invocation, so proof selection preserves its digest.
+tools/build-components proof
 test "$(sha256sum "$EFFECTIVE_RELEASE_BASE_COMPONENT" | cut -d ' ' -f 1)" = \
   "$EFFECTIVE_RELEASE_BASE_DIGEST"
 cargo build --manifest-path components/Cargo.toml --locked --offline \
@@ -930,7 +883,7 @@ Eight files carry the diffs: `crates/catalog/model/src/serving_manifest.rs`,
 wamn-0h0g.8.5.5 — the row stays because the table is a measurement dated to
 `1bffa614`, not a live inventory),
 `tests/conformance/tests/gate_registry.rs`,
-`tests/conformance/tests/retained_root_outcomes.rs`,
+`tests/conformance/tests/retained_root_outcomes.rs` (deleted by `wamn-47wm.2.1`),
 `tests/integration/src/trusted_http_route.rs`.
 
 This is **inventory item A on `wamn-0h0g.15.137`**, which records the same legs
@@ -3165,7 +3118,7 @@ for side in a b; do
   (
     cd "$GUEST_REPRO_SCRATCH/$side/tree"
     CARGO_TARGET_DIR="$GUEST_REPRO_SCRATCH/$side/target" RUSTC_WRAPPER= \
-      ./tools/build-components build-only m1 \
+      ./tools/build-components build-only proof \
       > "$GUEST_REPRO_EVIDENCE/$side-plan.json" \
       2> "$GUEST_REPRO_EVIDENCE/$side-build.log"
     CARGO_TARGET_DIR="$GUEST_REPRO_SCRATCH/$side/target" RUSTC_WRAPPER= \
@@ -3187,7 +3140,7 @@ rm -r -- "$GUEST_REPRO_SCRATCH"
 
 Run this comparison whenever a guest workspace gains a member or a build flag changes.
 A failure means that the artifacts still depend on the checkout path.
-Both sides build `m1`, so this comparison does not test differences between profiles.
+Both sides build `proof`, so this comparison does not test differences between app and proof selection.
 
 Cargo combines dependency features across packages in one invocation.
 With grouped builds, additional packages selected by `proof` changed the features used by guests also selected by `m1`.
@@ -3210,14 +3163,16 @@ GUEST_PROFILE_EVIDENCE="$GUEST_PROFILE_ROOT/docs/perf/$(date -u +%Y.%m)/guest-di
 mkdir -p -- "$HOME/.cache/wamn-lanes" "$GUEST_PROFILE_EVIDENCE"
 mkdir -- "$GUEST_PROFILE_SCRATCH"
 git rev-parse HEAD > "$GUEST_PROFILE_EVIDENCE/commit.txt"
-for profile in m1 proof; do
-  CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/$profile" RUSTC_WRAPPER= \
-    ./tools/build-components build-only "$profile" \
-    > "$GUEST_PROFILE_EVIDENCE/$profile.json" \
-    2> "$GUEST_PROFILE_EVIDENCE/$profile-build.log"
-done
+CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/app" RUSTC_WRAPPER= \
+  ./tools/build-components build-only app packages/receiving \
+  > "$GUEST_PROFILE_EVIDENCE/app.json" \
+  2> "$GUEST_PROFILE_EVIDENCE/app-build.log"
+CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/proof" RUSTC_WRAPPER= \
+  ./tools/build-components build-only proof \
+  > "$GUEST_PROFILE_EVIDENCE/proof.json" \
+  2> "$GUEST_PROFILE_EVIDENCE/proof-build.log"
 CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/test-target" \
-WAMN_DIGEST_PROFILE_M1_PLAN="$GUEST_PROFILE_EVIDENCE/m1.json" \
+WAMN_DIGEST_PROFILE_APP_PLAN="$GUEST_PROFILE_EVIDENCE/app.json" \
 WAMN_DIGEST_PROFILE_PROOF_PLAN="$GUEST_PROFILE_EVIDENCE/proof.json" \
   cargo test --locked --offline -p wamn-proof-conformance --test guest_workspace_closure \
   one_commit_built_under_two_profiles_yields_identical_guest_digests \
@@ -3430,7 +3385,7 @@ receiving_route_cleanup() {
 trap receiving_route_cleanup EXIT
 
 CARGO_TARGET_DIR="$RECEIVING_ROUTE_SCRATCH/target" \
-  "$RECEIVING_ROUTE_ROOT/tools/build-components" m1
+  "$RECEIVING_ROUTE_ROOT/tools/build-components" proof
 RECEIVING_ROUTE_COMPONENTS="$RECEIVING_ROUTE_SCRATCH/target/virtualized/std-empty-environment"
 # `cc4b407f` moved every guest to the release profile. It left this path
 # behind, so the `test -s` below has refused since 2026-09-04.
@@ -5087,6 +5042,11 @@ inventing replacements would be worse than the gap. Their classification,
 evidence, and decision mapping are still checked by that test.
 
 ## Measured: what the unselected M1 guests cost the `wamn dev` loop
+
+This section records the 2026-09-04 experiment and its commands.
+`wamn-47wm.2.1` retires `m1` and its tier inventory.
+The current build commands appear in the Build section above.
+Do not use the grouped Cargo commands below for current digest evidence.
 
 `wamn-10yt.10.25` asked whether the `wamn dev` watch loop spends enough time on
 M1 artifacts it never consumes to justify a package-scoped selector inside

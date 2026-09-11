@@ -1,26 +1,17 @@
 //! Exact repo-local lint coverage over all three Cargo workspaces.
 //! Fake Cargo covers runner argv and reporting, not runtime isolation behavior.
 
-use serde_json::Value;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
-use wamn_proof_conformance::package_inventory;
 
 const TOOL: &str = "tools/repo-lint";
 const HTTP_SOURCE: &str = "crates/platform/runtime/src/plugins/connection_http.rs";
 const HTTP_TRANSPORT: &str = "crates/platform/runtime/src/plugins/connection_http/transport.rs";
-const ROOT_MEMBER_COUNT: usize = 40;
-/// The component member counts are the PLATFORM half. A package declares its
-/// own components, so a component workspace also holds however many of those
-/// actually live in it, and adding a package must not move these numbers
-/// (wamn-10yt.10.39).
 const COMPONENT_MANIFEST: &str = "components/Cargo.toml";
-const COMPONENT_MEMBER_COUNT: usize = 17;
 const NO_STD_MANIFEST: &str = "components/no-std/Cargo.toml";
-const NO_STD_MEMBER_COUNT: usize = 4;
 const LEG_LABELS: [&str; 10] = [
     "connection HTTP scoped retained clients",
     "root rustfmt",
@@ -149,57 +140,9 @@ fn assert_leg_statuses(output: &Output, failure: Option<(&str, i32)>) {
     assert_eq!(leg_statuses(output), expected);
 }
 
-fn workspace_member_count(root: &Path, manifest: &Path) -> usize {
-    let output = Command::new(env!("CARGO"))
-        .current_dir(root)
-        .args([
-            "metadata",
-            "--manifest-path",
-            manifest
-                .to_str()
-                .expect("workspace manifest path must be UTF-8"),
-            "--locked",
-            "--offline",
-            "--no-deps",
-            "--format-version",
-            "1",
-        ])
-        .output()
-        .expect("run Cargo metadata");
-    assert!(
-        output.status.success(),
-        "Cargo metadata failed for {}:\n{}",
-        manifest.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let metadata: Value = serde_json::from_slice(&output.stdout).expect("parse Cargo metadata");
-    metadata["workspace_members"]
-        .as_array()
-        .expect("workspace_members must be an array")
-        .len()
-}
-
 #[test]
 fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
     let root = repository_root();
-    let root_manifest = root.join("Cargo.toml");
-    assert_eq!(
-        workspace_member_count(&root, &root_manifest),
-        ROOT_MEMBER_COUNT
-    );
-    // The declared counts are the PLATFORM half; each workspace also holds
-    // however many package components actually live in it.
-    for (relative, platform_count) in [
-        (COMPONENT_MANIFEST, COMPONENT_MEMBER_COUNT),
-        (NO_STD_MANIFEST, NO_STD_MEMBER_COUNT),
-    ] {
-        assert_eq!(
-            workspace_member_count(&root, &root.join(relative)),
-            platform_count + package_inventory::derived_component_count(&root, relative),
-            "{relative} platform member count plus its package components"
-        );
-    }
-
     let tool = root.join(TOOL);
     let metadata = fs::metadata(&tool).expect("read repo-lint metadata");
     assert_ne!(metadata.permissions().mode() & 0o111, 0);
@@ -226,7 +169,7 @@ fn repo_lint_uses_cargo_owned_workspace_selection_from_any_directory() {
     );
 
     let root_path = root.display().to_string();
-    let root_manifest_path = root_manifest.display().to_string();
+    let root_manifest_path = root.join("Cargo.toml").display().to_string();
     let component_manifest_path = root.join(COMPONENT_MANIFEST).display().to_string();
     let no_std_manifest_path = root.join(NO_STD_MANIFEST).display().to_string();
     assert_eq!(
