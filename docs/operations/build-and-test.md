@@ -176,11 +176,13 @@ No throughput benchmark is required for this startup change.
 ### `[NATIVE-B]` native application loading and dispatch
 
 `wamn-0ct2.2` owns native application loading, dispatch, and the unchanged public-API stop conditions.
-The B production integration is prepared. Its integrated correctness gates and deployed proofs remain pending.
+The completed B production implementation is integrated at `6f02d70d6b0a03b90160652df2d9c16c065010e3`.
 Released, nested, and candidate calls use native fresh stores with separate admitted facts and invocation authority.
 The [checkpoint report](../perf/2026.09/native-b-dispatch/report.md) separates runtime mechanics from production adoption.
 The [implementation checkpoint](../perf/2026.09/native-b-adoption/report.md) records admitted imports, native helpers, and authenticated nested calls.
-The [production report](../perf/2026.09/native-b-adoption/production-report.md) records the tracing correction, executed focused proofs, and pending final validation.
+The [production report](../perf/2026.09/native-b-adoption/production-report.md) records exact identities, executed correctness proofs, historical failures, and workspace limits.
+The owner prohibits benchmarks in this wave. B makes no performance claim.
+Commit `07c7a858c4452579b12e0ae25a4e61af2107c4eb` updates two source-inventory guards without changing production behavior.
 
 The scalar fixtures exercise public APIs through the production WAMN engine.
 They require no live database, broker, registry, cluster, or benchmark.
@@ -254,8 +256,12 @@ Require the existing lifecycle tests to observe trace revocation after completio
 Require the active-call owner test to retain its trace until native cancellation completes.
 Keep the exact root, child, and host-effect parentage assertions.
 Preserve failed receipts when changing the callback context implementation.
-The [corrected authenticated run](../perf/2026.09/native-b-adoption/production-authenticated-003/output.log) passes all six scenarios and its strict trace assertions.
-The [subsequent host run](../perf/2026.09/native-b-adoption/production-host-tests-003/output.log) records 52 passes, zero failures, zero ignored, and one filtered authenticated test.
+The [main authenticated run](../perf/2026.09/native-b-adoption/production-authenticated-main-001/output.log) passes all six scenarios and strict trace assertions at the production source.
+It reports one pass, zero failures, zero ignored, and 52 filtered tests.
+The [earlier focused host run](../perf/2026.09/native-b-adoption/production-host-tests-003/output.log) records 52 passes, zero failures, zero ignored, and one filtered authenticated test.
+The [deployed Receiving receipt](../perf/2026.09/native-b-adoption/production-receiving-002/receiving-correctness-journey.receipt) passes at the production source.
+Its prerequisite covers all 13 PAT routes and eight P3 protocol cases.
+The deployed receipts cover 19 histories, 129 steps, seven boundaries, and exact owned cleanup.
 
 For the authenticated nested proof, use a fresh disposable PostgreSQL 18 server without WAMN schemas or roles.
 Set `WAMN_NATIVE_B_AUTH_PG_URL` to its administrator connection URL through the environment.

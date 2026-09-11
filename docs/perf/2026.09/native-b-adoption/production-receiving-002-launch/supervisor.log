@@ -1,0 +1,29 @@
+{"evidence": "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/production-receiving-002-console", "exit_code": 0, "changed_during_run": []}
+    Finished `release` profile [optimized] target(s) in 0.11s
+    Finished `release` profile [optimized] target(s) in 0.10s
+    Finished `release` profile [optimized] target(s) in 0.09s
+    Finished `release` profile [optimized] target(s) in 0.09s
+    Finished `release` profile [optimized] target(s) in 0.09s
+    Finished `release` profile [optimized] target(s) in 0.06s
+    Finished `release` profile [optimized] target(s) in 0.07s
+    Finished `release` profile [optimized] target(s) in 0.05s
+    Finished `release` profile [optimized] target(s) in 0.05s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.23s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.18s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.93s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.75s
+  Executable tests/receiving_command_histories_live.rs (target/debug/deps/receiving_command_histories_live-c9c6546f4c8c682c)
+#26 296.6     Finished `release` profile [optimized] target(s) in 4m 56s
+#42 0.552     Finished `release` profile [optimized] target(s) in 0.25s
+#42 0.624     Finished `release` profile [optimized] target(s) in 0.05s
+#43 149.0     Finished `release` profile [optimized] target(s) in 2m 28s
+#40 149.1     Finished `release` profile [optimized] target(s) in 0.32s
+#45 149.8     Finished `release` profile [optimized] target(s) in 0.30s
+#44 150.5     Finished `release` profile [optimized] target(s) in 0.41s
+#44 150.9     Finished `release` profile [optimized] target(s) in 0.34s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.02s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 25.82s
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.34s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 1.54s

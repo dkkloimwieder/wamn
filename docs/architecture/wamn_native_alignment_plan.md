@@ -56,7 +56,7 @@ This boundary requires no exception for a named handler or palette.
 
 The original driver owned a compiled cache, `PreparedCache`, linker preparation, and `NodeInstance`, including their nested-call copies. [S4]
 The B integration replaces those mechanisms with public native loading and `DispatchTarget` / `GuestCall`. [S6, S7]
-Integrated production validation remains pending under `wamn-0ct2.2`.
+The production implementation is integrated at `6f02d70d6b0a03b90160652df2d9c16c065010e3` under `wamn-0ct2.2`.
 
 **Target:** WAMN resolves and authorizes the operation; native loading and dispatch own compilation reuse, instance lifecycle, deadline/abandonment handling and invocation metering. WAMN retains verified statement selection, capability authority, application outcomes and wiring traversal.
 
@@ -75,7 +75,8 @@ The application uses no service, warm pool, or separate workload per wiring node
 
 **Acceptance:** exact admitted component/operation; no invocation authority during start functions; nested caller and credential-kind preservation; permission/fresh-only refusals; exact verified statements; released and frozen-candidate binding checks; cleanup on success, refusal, trap, deadline and cancellation; memory refunds; no child extension of an enclosing deadline; bounded native metric labels; and truthful committed/uncertain outcomes.
 
-Prove compilation reuse through the native loader, including a shared digest under different release/operation facts: cached code must not substitute for checking those facts. Candidate bytes cannot enter a trusted digest cache merely by asserting that digest. Compare cold and steady runs with the manual baseline.
+Prove compilation reuse through the native loader, including a shared digest under different release/operation facts: cached code must not substitute for checking those facts. Candidate bytes cannot enter a trusted digest cache merely by asserting that digest.
+The owner prohibits benchmarks in this wave. B requires no new performance comparison and makes no performance improvement claim.
 
 A probe passing is not B complete. Each converted path loses its predecessor in the same landing. Completion requires released, nested and candidate invocation paths accounted for and the duplicate mechanisms above removed. Any blocked path retains one named owner and exit condition; do not call the whole replacement complete or retain two selectable lifecycles for the same path.
 
@@ -95,9 +96,10 @@ The shared `invocation_trace` carrier restores the host span and subscriber for 
 Native policy binds it under the existing invocation scope after initialization and revokes it with that scope.
 It supplies telemetry context only, with no guest interface, configuration, or authority rule.
 Other host paths retain ambient tracing, and guest logging retains its separate trace-context contract.
-The [authenticated proof](../perf/2026.09/native-b-adoption/production-authenticated-003/output.log) passes all six scenarios, including exact invocation and host-observation parentage.
+The [main authenticated proof](../perf/2026.09/native-b-adoption/production-authenticated-main-001/output.log) passes all six scenarios at the production source, including exact invocation and host-observation parentage.
 The [host tests](../perf/2026.09/native-b-adoption/production-host-tests-003/output.log) pass 52 cases with zero failures and one filtered authenticated test.
-Final integrated and deployed validation remains pending.
+The [deployed Receiving proof](../perf/2026.09/native-b-adoption/production-receiving-002/receiving-correctness-journey.receipt) passes at that production source.
+Its prerequisite covers 13 PAT routes and eight P3 protocol cases. The deployed receipts cover 19 histories, 129 steps, and seven boundaries.
 
 An outer absolute timeout encloses native dispatch and its response. Nested deadlines cannot exceed that bound.
 Both production Tokio runtimes select public `event_interval(1)` so repeated guest yields do not postpone timer polling.
@@ -114,9 +116,9 @@ B's [public dispatch checkpoint](../perf/2026.09/native-b-dispatch/report.md) te
 The historical checkpoint records a valid stop against the former per-dependency selection contract.
 The accepted trade above supersedes that contract. Admission rejects ambiguous imported providers before native resolution.
 The original failed experiment remains failed and does not block this approved substitution.
-The production integration implements the deletion contract in the B worktree.
-Its owning correctness gates and deployed proofs remain pending under `wamn-0ct2.2`.
-These focused results do not establish a completed landing.
+The completed production implementation satisfies the deletion contract for released, nested, and candidate calls.
+The [production report](../perf/2026.09/native-b-adoption/production-report.md) records exact identities, executed correctness proofs, historical failures, and workspace limits.
+The completed substitution does not enable warm reuse.
 
 #### B2. Warm reuse after B with its policy amendment
 
@@ -247,7 +249,8 @@ Keep the existing proof gaps visible: `wamn-10yt.74` owns the missing automation
 
 Reuse existing application journeys, authority tests and throughput benchmarks. Follow `docs/operations/build-and-test.md`'s named mutation, negative-control, distinguishing-step and live-test arming rules rather than create a second evidence policy. [S14] Test meaningful allowed/refused pairs through production code; a compiling adapter or empty test selection is not acceptance.
 
-Compare each performance-sensitive substitution with an identified unmodified **2.9 baseline** using comparable artifacts, features, profiles, resource limits and repeated measurements. Preserve 2.8 as historical cutover evidence. Record latency distributions, throughput, errors, CPU/memory and relevant connection/queue counts. Do not relax gate thresholds to obtain a pass or attribute noisy changes to P3/native code without evidence. For B2, run this comparison after the correctness landing. A noisy or neutral measurement does not block that landing.
+The owner prohibits benchmarks for the current B landing. Its correctness acceptance requires no new performance comparison, and B makes no performance claim.
+For a future authorized measurement, compare the substitution with an identified unmodified **2.9 baseline** using comparable artifacts, features, profiles and resource limits. Preserve 2.8 as historical cutover evidence. Record latency distributions, throughput, errors, CPU/memory and relevant connection/queue counts. Do not relax gate thresholds to obtain a pass or attribute noisy changes to P3/native code without evidence. For B2, run this comparison after the correctness landing. A noisy or neutral measurement does not block that landing.
 
 Each landed change includes the exact source/artifact identities, executed commands and counts, failing or unavailable legs, code removed, remaining deviations, and the ledger/recipe update. Hold shared-file ownership during overlapping changes and exclusive machine use during measurements. For B2, record the later comparison under the same issue. Changes must reduce total maintenance.
 

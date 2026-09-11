@@ -1,0 +1,1 @@
+["tools/receiving-cluster-journey-run", "--apply", "--receiving-correctness", "--evidence-dir", "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/production-receiving-002"]

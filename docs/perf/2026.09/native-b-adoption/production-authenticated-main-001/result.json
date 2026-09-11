@@ -1,0 +1,10 @@
+{
+  "command": [
+    "python3",
+    "/tmp/native-b-live-authority.py",
+    "/home/kaalin/dev/wamn/target/debug/deps/wamn_execution_host-7d3c59376e3a5fe5"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 7.247515086026397,
+  "changed_during_run": []
+}

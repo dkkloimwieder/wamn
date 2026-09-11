@@ -1,0 +1,10 @@
+{
+  "started_utc": "2026-09-11T05:28:38.876600+00:00",
+  "exit_code": 101,
+  "source_tree": "/home/kaalin/dev/wamn",
+  "expected_source": "07c7a858c4452579b12e0ae25a4e61af2107c4eb",
+  "target_policy": "CARGO_TARGET_DIR removed; main default target",
+  "finished_utc": "2026-09-11T05:30:33.052252+00:00",
+  "wall_seconds": 114.17566968098981,
+  "source_stable": true
+}

@@ -1,0 +1,8 @@
+{
+  "provenance": "Root supplied the prior tool-call argv, cwd, stdin, and exit code; recorded afterward, not an original on-disk command receipt.",
+  "cwd": "/home/kaalin/dev/wamn",
+  "argv": ["python3", "-"],
+  "stdin": "import importlib.util, json, pathlib, sys\nsys.dont_write_bytecode=True\npath=pathlib.Path('docs/perf/2026.09/ctc8-16-http-reuse/tools/compare-workspace.py').resolve()\nspec=importlib.util.spec_from_file_location('native_b_workspace_compare',path)\nmodule=importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\nmodule.REFERENCES={'nested_authority':module.MONTH/'ctc8-33-nested-authority/integrated-workspace-001/workspace-results.json'}\nsys.argv=[str(path),'--evidence-dir',str(module.MONTH/'native-b-adoption/integrated-workspace-001')]\nraise SystemExit(module.main())\n",
+  "exit_code": 2,
+  "rerun_note": "The retained comparator refuses existing output files. Preserve its completed results; this records the original invocation without rerunning it."
+}

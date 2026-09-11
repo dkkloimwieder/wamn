@@ -1,8 +1,10 @@
 # Native dispatch production integration
 
-Owner: `wamn-0ct2.2`. Status: implementation and validation remain in progress.
-This report records the corrected build, host tests, authenticated trace proof, and subsequent direct and nested HTTP proofs.
-Each passing row describes its recorded source and artifacts. These focused results do not establish a final passing B landing.
+Owner: `wamn-0ct2.2`. The production substitution and its owning correctness proofs are complete.
+One implementation per imported operation interface replaces selection of a provider for each dependency.
+Native execution replaces the manual implementation for released, nested, and candidate calls.
+The final workspace sweep retains 83 baseline failures and one unarmed fixture failure, which passes in its separate armed proof.
+Each result below names its actual source and artifacts. Git and Beads record publication status.
 
 The [implementation checkpoint](report.md) records the earlier helper proofs.
 The [B plan](../../../architecture/wamn_native_alignment_plan.md#b-replace-manual-guest-execution-including-its-duplicate-caches) retains the deletion contract and public-API boundary.
@@ -20,7 +22,11 @@ The [authenticated log](production-authenticated-003/output.log) identifies the 
 The [direct HTTP log](production-live-direct-003/output.log) identifies its integration binary, actual HTTP guest, fixture images, and runner.
 Its integration binary is SHA-256 `7e94502d699c73c8593866950c5920d577845995f9c150c603c7a9225f115304`.
 The unchanged HTTP guest is SHA-256 `dea43de0fbd76ea61df0fa153b81a2f72c4cc84e78e0382b97d7b073bd76b8ce`.
-Final landed source and artifact identities remain pending.
+Commit `6feb01aca9c8fcced0c4ec9d3f5958416d2cf371` introduces the production substitution.
+Commit `6f02d70d6b0a03b90160652df2d9c16c065010e3` corrects the WASI plugin declaration and supplies the deployed proof source.
+Commit `07c7a858c4452579b12e0ae25a4e61af2107c4eb` corrects only the direct-consumer test inventory.
+The final main sweep uses `07c7a858`, with unchanged production source from `6f02d70d`.
+The final documentation and evidence commit adds no production changes.
 
 ## Production mechanism
 
@@ -49,7 +55,7 @@ The observer proof uses the same public helper, with two invocation spans and tw
 Existing lifecycle proofs also require trace revocation, including cancellation and abandoned resolution.
 The corrected authenticated proof passes its exact parentage assertions and all six scenarios.
 The separate direct and nested HTTP proofs also pass after the callback restoration.
-Final integrated and deployed validation remains pending.
+The deployed Receiving proof passes. The [final workspace result](#final-workspace-result) records the remaining baseline and fixture failures.
 
 ## Recorded integration attempts
 
@@ -132,7 +138,7 @@ The [artifact receipt](production-runtime-tests-001/artifact-identities.json) id
 The [source check](production-source-check-001/output.log) covers 25 explicit owned Rust paths with `skip_children=true`, shell syntax, and scoped whitespace errors.
 An earlier recursive formatting attempt reached unchanged baseline formatting in `crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:779`.
 That file remains untouched. This report claims no whole-repository formatting result.
-The deployed proof and integrated workspace sweep remain pending.
+The deployed Receiving and final workspace results follow below.
 
 ## Initial Receiving correctness attempt
 
@@ -199,6 +205,99 @@ The [diagnostic cleanup](production-receiving-route-diagnostic-001/cleanup.json)
 The [corrected cleanup](production-receiving-route-002/cleanup.json) names project `wamn-receiving-route-8azli5co` and scratch directory `/tmp/wamn-receiving-route.8azli5co`.
 These receipts establish cleanup for the two local attempts only.
 
+## Deployed Receiving correctness result
+
+The [deployed journey receipt](production-receiving-002/receiving-correctness-journey.receipt) records a pass at source `6f02d70d6b0a03b90160652df2d9c16c065010e3`.
+The [wrapper result](production-receiving-002-console/result.json) records exit 0 in 661.93 seconds with no source changes during execution.
+Its [source receipt](production-receiving-002-console/source.json) and [command receipt](production-receiving-002-console/command.json) identify the executed source and exact gate invocation.
+The [final workspace result](#final-workspace-result) records the completed sweep and its limits.
+
+The prerequisite [route proof](production-receiving-002/production-route.log) passes one test with zero failures, zero ignored, and 80 filtered tests in 25.82 seconds.
+It covers all 13 PAT routes, the nested operation, and eight P3 protocol cases.
+The [deployed command-history proof](production-receiving-002/receiving-correctness.log) passes one test with zero failures, zero ignored, and five filtered tests in 1.54 seconds.
+The [summary](production-receiving-002/receiving-correctness-summary.json) records 16 generated histories, three explicit histories, and seven boundary cases.
+These are scenarios within the owning tests, not additional Rust test totals.
+
+The [JSONL receipts](production-receiving-002/receiving-correctness.jsonl) contain 19 passing histories and 129 completed steps.
+The steps comprise 72 `Receive`, 33 `Replay`, and 24 `Update` operations.
+Each history's `completed_steps` equals its recorded `history.steps` length.
+The histories and seven boundaries use 26 distinct fixture identifiers.
+The corpus uses seed `7701`, PostgreSQL version `180006`, and SHA-256 `d826dbbb091eef13c1935ce6e4a1fcf0fecddb71fdb844302a6bed0abd0a0287`.
+
+The seven passing boundaries are `invalid-status`, `mixed-envelope`, `competing-receipts`, `overlapping-replay`, `rollback-after-receipt-write`, `commit-withheld-application-response`, and `denied-then-authorized`.
+The withheld-response receipt identifies its boundary as `after HTTP bytes, before application result delivery`.
+The mixed envelope records two committed items and one refused item.
+These receipts preserve the exact scope of the deployed correctness result.
+
+The [component receipt](production-receiving-002/component-bytes.sha256) and image receipts identify the executed artifacts:
+
+| Artifact | SHA-256 |
+| --- | --- |
+| HTTP guest bytes | `33e08d96ece969573bb2dd153b8617d1d0755700fef168372a0d8b88a90b7da8` |
+| Receiving guest bytes | `a092149c1c8df8b4f74babf64122f9747d15d7b1a78b82b35cb6e496f98fd9a1` |
+| Overlay guest bytes | `d69ad067860bbc9cccf0c843475b75211ac7e9ce6e7e05a9d3a50918753a66ec` |
+| [Host image](production-receiving-002/host-image.json) | `16e587c47d91bcdde4a582daa4ac91f7492468737879aa2b590526ebc3e99f08` |
+| [Gates image](production-receiving-002/gates-image.json) | `d570a32c46d039658c7a8bea69c99fe41bd97f464f9b03c0e4d04ce13c623f85` |
+
+Both images carry the executed source label and the `release` build profile.
+The [HTTP push receipt](production-receiving-002/flow-http-push.json) identifies OCI digest `sha256:d7b2520eba9b123228fccebe35e74e5de5a5c780d5d31ebe8b0a22a9615d82bb`.
+The [deployment](production-receiving-002/flow-http-deployment.json) and [workload](production-receiving-002/flow-http-workload.json) both pin that digest.
+The workload is `flow-http-7754874c55-5785457ff`, UID `61e39e1e-018a-48b9-a3d9-72d6103e2145`.
+The [host deployment](production-receiving-002/host-deployment.json) pins release manifest `sha256:62de32341cfb39725f8e03adacb54d478e9421ae7f361384f6a86c9d8f1e829f`.
+
+The [cleanup receipt](production-receiving-002/cleanup.receipt) records `verdict=pass` for cluster `wamn-receiving-correctness` and its exact owned resources.
+The [commands](production-receiving-002/commands.log) record removal of containers `wamn-receiving-pg18-6f02d70d6b0a-3548194`, `wamn-receiving-registry-6f02d70d6b0a-3548194`, and `wamn-receiving-nats-6f02d70d6b0a-3548194`, including their volumes.
+They also record removal of image tags `wamn-host:receiving-6f02d70d6b0a-3548194-release` and `wamn-gates:receiving-6f02d70d6b0a-3548194-release`, plus `/tmp/tmp.Wb1A3rWHQB`.
+The failed Receiving 001 attempt remains failed and retains its separate image identities and cleanup receipt.
+
+## Final workspace result
+
+The [final main sweep](integrated-workspace-002/run.json) runs at `07c7a858c4452579b12e0ae25a4e61af2107c4eb` and exits 101 in 114.18 seconds.
+Its [source receipt](integrated-workspace-002/source-stability.json) records no changes during execution.
+The [results](integrated-workspace-002/workspace-results.json) report 2,245 test passes, six doctest passes, 84 failures, zero ignored tests, and two filtered schema regenerators.
+The 85 explicit self-skips remain unchanged from the baseline.
+Subtracting those skips leaves 2,166 reported passes, including doctests, but does not establish an exact executed count.
+
+The [comparison](integrated-workspace-002/workspace-comparison.json) uses the latest nested-authority baseline at `dd28c68cadf825fe9eec44f7ae2e24ab28b89442`.
+The [classification](workspace-comparison-002/classification.json) retains the exact causes and command provenance.
+Eighty-two failure identities and causes match exactly.
+One existing WIT-parser failure differs only in eight checkout path prefixes.
+The only added failure requires `WAMN_NATIVE_B_AUTH_PG_URL`, which the unarmed sweep deliberately omits.
+No test target or explicit self-skip identity changes.
+
+The [first sweep](integrated-workspace-001/workspace-results.json) reports two additional inventory failures.
+Its [classification](workspace-comparison-001/classification.json) retains those introduced failures as failures.
+Commit `07c7a858` removes the obsolete direct `wasmtime-wasi` consumer row without weakening the source-universe assertions.
+The [focused inventory proof](production-source-identity-001/output.log) passes all three tests.
+The final sweep also passes all three inventory tests.
+
+The [separate armed proof](production-authenticated-main-001/output.log) uses the main binary built from production source `6f02d70d6b0a03b90160652df2d9c16c065010e3`.
+Its SHA-256 is `3d72e55a7f6f756e21d2d701e164e69e2d7c8355e318098178a471d68e0d52bb`.
+It passes one test, with zero failures, zero ignored tests, and 52 filtered tests in 2.41 seconds.
+All six cases pass: permission refusal, fresh-only refusal, success, initialization deadline, execution deadline, and cancellation.
+The trace contains exactly two invocation spans and two host observations with the required parent relationships.
+Its [command](production-authenticated-main-001/command.json) and [result](production-authenticated-main-001/result.json) retain exact invocation and unchanged source.
+The log records removal of its exact owned PostgreSQL container.
+This separately armed result does not turn the unarmed workspace sweep into a passing run.
+
+## Removed code and remaining deviations
+
+The [final code inventory](production-code-inventory-002/inventory.json) compares published base `79879412` with tested source `07c7a858`.
+Its counts include implementation, tests, and documentation. They do not measure production-only code size.
+Native loading and dispatch replace the manual compiled cache, prepared cache, component linker, node instances, and store lifecycle.
+The same landing removes the obsolete manual epoch and store guards, direct WASI dependency, and replaced trace expectations.
+
+WAMN retains invocation authority, exact component provenance, statement authorization, wiring, truthful outcomes, and the enclosing deadline.
+Request authority ends with each invocation. Every call still uses a fresh store.
+Positive `poolSize` remains refused until B2 proves reuse, isolation, overflow, and retirement with `maxConcurrency = 1`.
+C remains a separate unfinished substitution. D retains resolved-IP enforcement, and F retains the exclusive PostgreSQL session implementation.
+Issues `.74` through `.76` remain open under their existing scope.
+
+Both compared sources use unmodified wasmCloud 2.9 at `68ebece9c537f8bb4b5c9999f274ec68d60f35a9` and Wasmtime 47.0.4.
+The final comparison records correctness against that identified baseline.
+No benchmark runs for this landing, and this report claims no performance improvement.
+The owner excludes a benchmark prerequisite. No additional performance gate blocks B.
+
 ## Cleanup and remaining evidence
 
 The [earlier authenticated log](production-authenticated-001/output.log) records removal of its exact owned PostgreSQL container.
@@ -207,10 +306,10 @@ The [corrected authenticated log](production-authenticated-003/output.log) recor
 The subsequent [direct](production-live-direct-003/output.log) and [nested](production-live-nested-002/output.log) logs record removal of their owned PostgreSQL and registry containers plus anonymous volumes.
 These receipts establish cleanup for those attempts only.
 
-Final integrated and deployed validation remains pending.
-The full workspace sweep runs after source integration, as the owning recipe requires. It does not run inside the worktree lane.
-The final report must tie the owning release, nested, candidate, and deployed proofs to their actual source and artifact identities.
-It must retain exact commands, counts, cleanup, remaining deviations, and the required identified 2.9 comparison.
-This report claims no new performance measurement or completed landing.
+The deployed Receiving proof passes. The [final workspace result](#final-workspace-result) records the remaining baseline and fixture failures.
+The full workspace sweep runs on main after source integration, as the owning recipe requires.
+The linked receipts retain commands, counts, source and artifact identities, cleanup, remaining deviations, and the identified 2.9 correctness comparison.
+No owned B build or live fixture remains active.
+Worktree cleanup follows publication of both Git and Dolt records. Publication status lives in Beads and Git.
 
 > **Stop condition:** a required context, candidate or loading boundary cannot be represented through public APIs. Record the exact obstacle before expanding the adapter. Do not copy internals or preserve duplicate machinery merely to report native adoption.

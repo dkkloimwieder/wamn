@@ -1,0 +1,716 @@
+{
+  "schema": "wamn-native-b-workspace-classification/v1",
+  "baseline": {
+    "source": "dd28c68cadf825fe9eec44f7ae2e24ab28b89442",
+    "counts": {
+      "test_targets": 194,
+      "test_nonempty_targets": 174,
+      "test_empty_targets": 20,
+      "test_failed_targets": 38,
+      "test_reported_passed": 2235,
+      "test_failed": 83,
+      "test_ignored": 0,
+      "test_measured": 0,
+      "test_filtered_out": 2,
+      "test_explicit_self_skip_count": 85,
+      "test_reported_passes_after_excluding_explicit_self_skips": 2150,
+      "doctest_targets": 37,
+      "doctest_nonempty_targets": 6,
+      "doctest_empty_targets": 31,
+      "doctest_failed_targets": 0,
+      "doctest_reported_passed": 6,
+      "doctest_failed": 0,
+      "doctest_ignored": 0,
+      "doctest_measured": 0,
+      "doctest_filtered_out": 0,
+      "doctest_explicit_self_skip_count": 0,
+      "doctest_reported_passes_after_excluding_explicit_self_skips": 6
+    },
+    "combined_reported_counts": {
+      "passed_including_doctests": 2241,
+      "failed_including_doctests": 83,
+      "passed_after_excluding_explicit_self_skips": 2156,
+      "executed_pass_count_is_exact": false
+    }
+  },
+  "current": {
+    "source": "6f02d70d6b0a03b90160652df2d9c16c065010e3",
+    "counts": {
+      "test_targets": 194,
+      "test_nonempty_targets": 174,
+      "test_empty_targets": 20,
+      "test_failed_targets": 40,
+      "test_reported_passed": 2243,
+      "test_failed": 86,
+      "test_ignored": 0,
+      "test_measured": 0,
+      "test_filtered_out": 2,
+      "test_explicit_self_skip_count": 85,
+      "test_reported_passes_after_excluding_explicit_self_skips": 2158,
+      "doctest_targets": 37,
+      "doctest_nonempty_targets": 6,
+      "doctest_empty_targets": 31,
+      "doctest_failed_targets": 0,
+      "doctest_reported_passed": 6,
+      "doctest_failed": 0,
+      "doctest_ignored": 0,
+      "doctest_measured": 0,
+      "doctest_filtered_out": 0,
+      "doctest_explicit_self_skip_count": 0,
+      "doctest_reported_passes_after_excluding_explicit_self_skips": 6
+    },
+    "combined_reported_counts": {
+      "passed_including_doctests": 2249,
+      "failed_including_doctests": 86,
+      "passed_after_excluding_explicit_self_skips": 2164,
+      "executed_pass_count_is_exact": false
+    },
+    "cargo_exit_code": 101,
+    "run": {
+      "started_utc": "2026-09-11T05:17:02.220122+00:00",
+      "exit_code": 101,
+      "source_tree": "/home/kaalin/dev/wamn",
+      "expected_source": "6f02d70d6b0a03b90160652df2d9c16c065010e3",
+      "target_policy": "CARGO_TARGET_DIR removed; main default target",
+      "finished_utc": "2026-09-11T05:22:53.265223+00:00",
+      "wall_seconds": 351.0454920839984,
+      "source_stable": true
+    }
+  },
+  "source_stability": {
+    "same_head": true,
+    "same_branch": true,
+    "same_scoped_status": true,
+    "same_capture_tools": true,
+    "added_inputs": [],
+    "removed_inputs": [],
+    "changed_inputs": [],
+    "stable_with_declared_exclusions": true
+  },
+  "exact_identity_and_cause_matches": [
+    [
+      "wamn-catalog",
+      "--test wiring_activation_live",
+      "the_terminal_document_reaches_a_converged_database_and_survives_the_column"
+    ],
+    [
+      "wamn-catalog",
+      "--test wiring_activation_live",
+      "wiring_activation_live"
+    ],
+    [
+      "wamn-control-provision",
+      "--test control_portable_store",
+      "current_database_connect_posture_is_exactly_scoped"
+    ],
+    [
+      "wamn-control-provision",
+      "--test identity_issuer_live",
+      "scoped_issuer_grants_and_generation_retirement_execute_on_postgres"
+    ],
+    [
+      "wamn-control-provision",
+      "--test session_role_reader_live",
+      "dedicated_session_reader_columns_and_generations_execute_on_postgres"
+    ],
+    [
+      "wamn-ctl",
+      "--lib",
+      "dev::verification_database::tests::disposable_postgres_proves_freshness_cleanup_and_confinement"
+    ],
+    [
+      "wamn-ctl",
+      "--lib",
+      "dev::verification_world::tests::lifecycle_bootstraps_then_accepts_packages_and_one_exact_admission"
+    ],
+    [
+      "wamn-ctl",
+      "--lib",
+      "publish_release::effective_release_live::fresh_base_and_overlay_mint_byte_identically_and_refuse_drift"
+    ],
+    [
+      "wamn-ctl",
+      "--lib",
+      "push_component::tests::production_publisher_and_puller_round_trip_exact_bytes"
+    ],
+    [
+      "wamn-ctl",
+      "--lib",
+      "push_release_manifest::tests::production_publisher_exact_retry_is_a_no_push"
+    ],
+    [
+      "wamn-ctl",
+      "--test author_wiring_gate_report_live",
+      "a_wiring_is_authored_only_under_a_green_report_for_its_own_hash"
+    ],
+    [
+      "wamn-ctl",
+      "--test bind_connection_live",
+      "bind_connection_round_trips_through_the_plugins_own_resolution"
+    ],
+    [
+      "wamn-ctl",
+      "--test effect_writer_generation_live",
+      "effect_writer_generation_lifecycle_is_exact_and_fail_closed"
+    ],
+    [
+      "wamn-ctl",
+      "--test identity_issuer_live",
+      "compiled_cli_publishes_rolls_back_and_retires_identity_generations"
+    ],
+    [
+      "wamn-ctl",
+      "--test management_admitter_generation_live",
+      "management_admitter_generation_lifecycle_converges_and_rotates"
+    ],
+    [
+      "wamn-ctl",
+      "--test pat_bootstrap_live",
+      "cli_bootstrap_mints_first_service_pats_over_https"
+    ],
+    [
+      "wamn-ctl",
+      "--test run_plane_live",
+      "effect_writer_cutover_live"
+    ],
+    [
+      "wamn-ctl",
+      "--test run_plane_live",
+      "failure_detail_cutover_live"
+    ],
+    [
+      "wamn-ctl",
+      "--test run_plane_live",
+      "frame_identity_cutover_live"
+    ],
+    [
+      "wamn-ctl",
+      "--test run_plane_live",
+      "partition_plane_active_lease_refusal_live"
+    ],
+    [
+      "wamn-ctl",
+      "--test run_plane_live",
+      "partition_plane_cutover_live"
+    ],
+    [
+      "wamn-ctl",
+      "--test run_plane_live",
+      "provisioner_minted_generation_live"
+    ],
+    [
+      "wamn-ctl",
+      "--test run_plane_live",
+      "two_plane_residency_live"
+    ],
+    [
+      "wamn-ctl",
+      "--test session_audience_live",
+      "compiled_cli_publishes_bound_session_targets_and_rotates_reader_generations"
+    ],
+    [
+      "wamn-host",
+      "--test native_lifecycle_live",
+      "rebuilt_host_probes_signals_and_scheduler_recovery"
+    ],
+    [
+      "wamn-identity",
+      "--test https_surface",
+      "identity_https_has_only_public_jwks_and_health"
+    ],
+    [
+      "wamn-identity",
+      "--test pat_issuance",
+      "operator_pat_issuance_over_https"
+    ],
+    [
+      "wamn-identity",
+      "--test session_exchange",
+      "session_exchange_uses_fresh_scoped_authority_without_session_state"
+    ],
+    [
+      "wamn-platform-identity",
+      "--test session_keys_live",
+      "session_key_lifecycle_on_postgres"
+    ],
+    [
+      "wamn-platform-identity",
+      "--test session_keys_live",
+      "signer_backend_loss_before_commit_does_not_issue_token"
+    ],
+    [
+      "wamn-proof-conformance",
+      "--test chart_seam_governance",
+      "receiving_pat_overlay_renders_a_complete_scoped_host"
+    ],
+    [
+      "wamn-proof-conformance",
+      "--test guest_workspace_closure",
+      "one_commit_built_in_two_checkouts_yields_identical_guest_digests"
+    ],
+    [
+      "wamn-proof-conformance",
+      "--test guest_workspace_closure",
+      "one_commit_built_under_two_profiles_yields_identical_guest_digests"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "claim_law_live::a_changed_request_under_a_live_key_refuses_with_idempotency_conflict"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "claim_law_live::a_claim_that_updates_on_conflict_fails_both_emitted_cases"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "claim_law_live::a_replay_returns_the_immutable_original_result_and_writes_nothing"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "hot_route_trace::tests::an_incoming_traceparent_reaches_the_outbound_socket_under_the_same_trace"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "provisionbench::tests::legacy_converges_database_authority_on_postgres"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "provisionbench::tests::project_env_replay_uses_the_stored_instance_suffix"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "receiving_data_access::tests::generated_update_ignores_ungranted_additive_columns"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::overlay_compatibility::installed_contract_observer_preserves_acls_and_refuses_changed_requirements"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::production_nested_fresh_only_requires_pat_and_observes_revocation"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::production_nested_session_call_preserves_original_caller"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::production_receiving_session_host_fixture"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::production_route_caller_authentication_and_operation_authorization"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::production_session_client_login_and_fresh_selection"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "router_tap_live::tests::the_released_router_bridge_emits_accepted_and_settled_previews"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "throughput_bench_live::tests::every_layer_ran_the_whole_sweep_and_its_knee_is_recorded"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "trusted_http_route::tests::nested_http_authorizes_child_and_preserves_original_caller"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "wms_runtime_live::committed_move_survives_label_store_failure"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "wms_runtime_live::contention_and_replay_through_the_composed_route"
+    ],
+    [
+      "wamn-proof-integration",
+      "--lib",
+      "wms_runtime_live::the_remaining_operations_serve_their_released_routes"
+    ],
+    [
+      "wamn-proof-integration",
+      "--test receiving_command_histories_live",
+      "production_receiving_command_histories"
+    ],
+    [
+      "wamn-proof-integration",
+      "--test startup_burst_live",
+      "production_http_start_burst_keeps_native_host_progress"
+    ],
+    [
+      "wamn-proof-system",
+      "--test deploy_platform_inventory",
+      "every_mounted_secret_is_declared_here_or_named_a_prerequisite"
+    ],
+    [
+      "wamn-run-state",
+      "--test admission_live",
+      "surviving_authority_matrix_live"
+    ],
+    [
+      "wamn-run-state",
+      "--test effect_writer_live",
+      "native_effect_writer_live"
+    ],
+    [
+      "wamn-run-state",
+      "--test run_state_live",
+      "run_state_live"
+    ],
+    [
+      "wamn-runtime",
+      "--lib",
+      "plugins::wamn_jetstream::tests::live_generic_guest_cannot_write_the_provisioned_tap_stream"
+    ],
+    [
+      "wamn-runtime",
+      "--lib",
+      "plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving"
+    ],
+    [
+      "wamn-runtime",
+      "--lib",
+      "plugins::wamn_postgres::types::tests::live_a_timestamptz_read_back_spells_exactly_what_the_canonicalizer_spells"
+    ],
+    [
+      "wamn-runtime",
+      "--lib",
+      "plugins::wamn_postgres::types::tests::live_every_carrier_that_passes_a_typed_value_as_text_matches_its_canonicalizer"
+    ],
+    [
+      "wamn-runtime",
+      "--test executor_platform_surface_live",
+      "executor_platform_surface_live"
+    ],
+    [
+      "wamn-runtime",
+      "--test production_claim_durable_live",
+      "production_claim_durable_live"
+    ],
+    [
+      "wamn-runtime",
+      "--test production_claim_live",
+      "production_claim_live"
+    ],
+    [
+      "wamn-runtime",
+      "--test release_manifest_source",
+      "a_published_release_pulls_back_byte_exact_and_welds_the_release_it_names"
+    ],
+    [
+      "wamn-runtime",
+      "--test session_route_authentication",
+      "sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_identity"
+    ],
+    [
+      "wamn-runtime",
+      "--test sqlx_transaction_live",
+      "sqlx_command_commits_rolls_back_and_obeys_current_user_rls"
+    ],
+    [
+      "wamn-runtime",
+      "--test wiring_doorbell_live",
+      "a_pointer_flip_makes_the_cache_serve_the_new_active_version"
+    ],
+    [
+      "wamn-scenario-worker",
+      "--test management_live",
+      "management_surface_authenticates_and_attributes_authoring_commands"
+    ],
+    [
+      "wamn-schema-introspection",
+      "--test postgres_live",
+      "an_exclusion_constraint_is_modelled_rather_than_refused"
+    ],
+    [
+      "wamn-schema-introspection",
+      "--test postgres_live",
+      "receiving_migration_round_trips_and_refuses_unsupported_server_objects"
+    ]
+  ],
+  "wit_diagnostic": {
+    "identity": [
+      "wamn-proof-conformance",
+      "--lib",
+      "version_identity::wamn_wit_packages_stay_at_mvp_version"
+    ],
+    "classification": "existing_failure_checkout_prefix_only",
+    "changed_message_count": 8,
+    "baseline_prefix": "/home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/",
+    "current_prefix": "/home/kaalin/dev/wamn/",
+    "all_other_cause_fields_equal": true,
+    "before": {
+      "failure_signatures": [
+        "Rust panic"
+      ],
+      "referenced_arming_inputs": [],
+      "causal_lines": [
+        "WAMN WIT package version drift:",
+        "/home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/docs/perf/2026.09/p3-http-cutover/post-build-001/client_acme_receiving.wit:19: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/docs/perf/2026.09/p3-http-cutover/post-build-001/client_acme_receiving.wit:96: WAMN package `wamn:node@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/docs/perf/2026.09/p3-http-cutover/post-build-001/http_route.wit:25: WAMN package `wamn:flow-http-routing@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/docs/perf/2026.09/p3-http-cutover/post-build-001/http_route.wit:82: WAMN package `wamn:router-delivery@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/docs/perf/2026.09/p3-http-cutover/post-build-001/receiving.wit:20: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/docs/perf/2026.09/p3-http-cutover/post-build-001/receiving.wit:97: WAMN package `wamn:node@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/docs/perf/2026.09/p3-http-cutover/post-build-001/wms.wit:19: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/docs/perf/2026.09/p3-http-cutover/post-build-001/wms.wit:97: WAMN package `wamn:node@0.1.0 {` must use @0.1.0"
+      ]
+    },
+    "after": {
+      "failure_signatures": [
+        "Rust panic"
+      ],
+      "referenced_arming_inputs": [],
+      "causal_lines": [
+        "WAMN WIT package version drift:",
+        "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/client_acme_receiving.wit:19: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/client_acme_receiving.wit:96: WAMN package `wamn:node@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/http_route.wit:25: WAMN package `wamn:flow-http-routing@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/http_route.wit:82: WAMN package `wamn:router-delivery@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/receiving.wit:20: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/receiving.wit:97: WAMN package `wamn:node@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/wms.wit:19: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+        "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/wms.wit:97: WAMN package `wamn:node@0.1.0 {` must use @0.1.0"
+      ]
+    }
+  },
+  "unarmed_native_b_auth": {
+    "identity": [
+      "wamn-execution-host",
+      "--lib",
+      "router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle"
+    ],
+    "classification": "missing_live_fixture",
+    "retained_comparator_cause": {
+      "failure_signatures": [],
+      "referenced_arming_inputs": [],
+      "causal_lines": []
+    },
+    "required_input": "WAMN_NATIVE_B_AUTH_PG_URL",
+    "input_absent_from_child_environment": true,
+    "raw_diagnostic": [
+      {
+        "log_line": 2028,
+        "text": "thread 'router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle' (3601020) panicked at crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs:574:10:"
+      },
+      {
+        "log_line": 2029,
+        "text": "real authenticated native proof: set WAMN_NATIVE_B_AUTH_PG_URL to this proof's fresh disposable PostgreSQL 18 server"
+      },
+      {
+        "log_line": 2030,
+        "text": ""
+      },
+      {
+        "log_line": 2031,
+        "text": "Caused by:"
+      },
+      {
+        "log_line": 2032,
+        "text": "    environment variable not found"
+      }
+    ]
+  },
+  "introduced_inventory_failures": [
+    {
+      "identity": [
+        "wamn-proof-conformance",
+        "--test wasmtime_source_identity",
+        "direct_wasmtime_consumers_inherit_workspace_source_contract"
+      ],
+      "classification": "introduced_stale_inventory_failure",
+      "status": "requires_source_fix",
+      "baseline_pass_log_line": 2986,
+      "current_diagnostic_start_log_line": 2800,
+      "current_diagnostic_end_log_line": 2806,
+      "cause": {
+        "failure_signatures": [
+          "Rust panic",
+          "assertion `left == right` failed: crates/execution/host/Cargo.toml [dependencies] must inherit `wasmtime-wasi` from the workspace"
+        ],
+        "referenced_arming_inputs": [],
+        "causal_lines": [
+          "assertion `left == right` failed: crates/execution/host/Cargo.toml [dependencies] must inherit `wasmtime-wasi` from the workspace",
+          "left: None",
+          "right: Some(\"{workspace=true}\")"
+        ]
+      },
+      "interpretation": "B removed the execution-host direct wasmtime-wasi dependency; the retained direct-consumer inventory still requires it. This failed sweep does not prove a fix."
+    },
+    {
+      "identity": [
+        "wamn-proof-conformance",
+        "--test wasmtime_source_identity",
+        "resolved_wasmtime_type_universe_is_single_and_canonical"
+      ],
+      "classification": "introduced_stale_inventory_failure",
+      "status": "requires_source_fix",
+      "baseline_pass_log_line": 2988,
+      "current_diagnostic_start_log_line": 2808,
+      "current_diagnostic_end_log_line": 2814,
+      "cause": {
+        "failure_signatures": [
+          "Rust panic",
+          "assertion `left == right` failed: retained direct Wasmtime consumers or their required host interfaces drifted"
+        ],
+        "referenced_arming_inputs": [],
+        "causal_lines": [
+          "assertion `left == right` failed: retained direct Wasmtime consumers or their required host interfaces drifted",
+          "left: {\"wamn-proof-conformance\": {\"wasmtime-wasi\"}, \"wamn-proof-integration\": {\"wasmtime-wasi\", \"wasmtime-wasi-http\"}, \"wamn-runtime\": {\"wasmtime\", \"wasmtime-wasi\", \"wasmtime-wasi-http\"}}",
+          "right: {\"wamn-execution-host\": {\"wasmtime-wasi\"}, \"wamn-proof-conformance\": {\"wasmtime-wasi\"}, \"wamn-proof-integration\": {\"wasmtime-wasi\", \"wasmtime-wasi-http\"}, \"wamn-runtime\": {\"wasmtime\", \"wasmtime-wasi\", \"wasmtime-wasi-http\"}}"
+        ]
+      },
+      "interpretation": "B removed the execution-host direct wasmtime-wasi dependency; the retained direct-consumer inventory still requires it. This failed sweep does not prove a fix."
+    }
+  ],
+  "explicit_self_skips": {
+    "baseline": 85,
+    "current": 85,
+    "identities_and_multiplicities_unchanged": true
+  },
+  "targets": {
+    "identities_and_multiplicities_unchanged": true,
+    "test_targets": 194,
+    "doctest_targets": 37
+  },
+  "comparator_exit_code": 2,
+  "proof_verdict": "not supplied",
+  "limitations": [
+    "The two introduced inventory failures require source fixes; no later focused result is asserted here.",
+    "Existing failures remain failures. Self-skips and reported passes do not establish executed live proofs.",
+    "The retained comparator and sweep logs are unchanged; the empty B-auth cause is resolved here from exact raw lines."
+  ],
+  "inputs": [
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/integrated-workspace-001/workspace-results.json",
+      "bytes": 328332,
+      "sha256": "54787deea6ab5d525ae2a38cae6163f82c1931a34606b5897774453344c66d46"
+    },
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/integrated-workspace-001/workspace-comparison.json",
+      "bytes": 79932,
+      "sha256": "6e0844025e15fc364ff2d3db79a757b107cbe9795a65bb28bdac5ace699399a8"
+    },
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/integrated-workspace-001/workspace.log",
+      "bytes": 298717,
+      "sha256": "2857904be3eaf7124f4b396db024817e2bef52ac305d13f08a70094029d90172"
+    },
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/integrated-workspace-001/source.txt",
+      "bytes": 41,
+      "sha256": "6df0f3c9c63af2e0f4164624dc2bcf0b9bf1842414cb544bdcfc5011baa5f0a9"
+    },
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/integrated-workspace-001/source-stability.json",
+      "bytes": 220,
+      "sha256": "325697b0a8f92852934f56765c88b15566a8f5edd02620a254532209b1e89ce9"
+    },
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/integrated-workspace-001/environment-names.json",
+      "bytes": 4068,
+      "sha256": "dba92119a6e68cc9da4fbe6fd939149ada3515466df47e57a963f0b7a9d6812d"
+    },
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/integrated-workspace-001/run.json",
+      "bytes": 367,
+      "sha256": "98145f100fbbc38fccadb6e5b1a32e69c1b564d7f8edb64d2279f70efe98045b"
+    },
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-33-nested-authority/integrated-workspace-001/workspace-results.json",
+      "bytes": 324082,
+      "sha256": "8c0aabae7b005377cac77ae1567ee677827bebe44d0e061d3b0d05058679eb93"
+    },
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-33-nested-authority/integrated-workspace-001/workspace.log",
+      "bytes": 306237,
+      "sha256": "257c8a569a2a39f99b5b8ddf00b099b81233d4fa45a80d06e6e0ed321a78682d"
+    },
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-33-nested-authority/integrated-workspace-001/source.txt",
+      "bytes": 41,
+      "sha256": "2fcfdbb207c06e10132a40664e3bb416c4110881da5cfe94b5ec4e06d8f8d861"
+    },
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/workspace-comparison-001/comparator-command.json",
+      "bytes": 1001,
+      "sha256": "6a519250334088585b9718046af56eb69e947f5b5edea5aab7a926b546d457e0"
+    },
+    {
+      "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/workspace-comparison-001/classify.py",
+      "bytes": 7903,
+      "sha256": "951e138c98be2da5b7038b68baf108171beff5506f0baab35053a00a302494cd"
+    }
+  ]
+}

@@ -88,9 +88,9 @@ The guest call, nested dispatch, and HTTP, PostgreSQL, and blob callbacks use
 that captured context while their futures run. Synchronous callbacks restore
 it only during the callback. Other host paths retain their ambient context.
 Guest-supplied logging trace context keeps its existing separate contract.
-The [authenticated native proof](perf/2026.09/native-b-adoption/production-authenticated-003/output.log)
-passes its exact root, child, and host-observation parent assertions.
-Final production validation remains pending.
+The [main authenticated native proof](perf/2026.09/native-b-adoption/production-authenticated-main-001/output.log)
+passes all six scenarios at `6f02d70d6b0a03b90160652df2d9c16c065010e3`.
+It retains exact root, child, and host-observation parent assertions.
 
 An application cleanup guard exists before native resolution starts. It clears
 WAMN bindings and invocation scopes after a cancelled or failed load and on
@@ -98,10 +98,13 @@ final owner drop. Shutdown serializes with authority registration. Candidate
 completion also calls the public native plugin-unbind API. No cleanup worker
 or second runtime owns this lifecycle.
 
-The B integration removes the manual compiled cache, `PreparedCache`, linker
-cloning, `NodeInstance`, and deadline-to-epoch conversion. Production integration
-validation remains pending under `wamn-0ct2.2`. Earlier checkpoint results do not
-establish the integrated release or candidate proofs.
+The completed B production implementation removes the manual compiled cache,
+`PreparedCache`, linker cloning, `NodeInstance`, and deadline-to-epoch conversion.
+The [deployed Receiving proof](perf/2026.09/native-b-adoption/production-receiving-002/receiving-correctness-journey.receipt)
+passes at the same production source. Its receipts cover 19 histories, 129 steps,
+and seven boundaries. The [production report](perf/2026.09/native-b-adoption/production-report.md)
+records exact proof identities, historical failures, and workspace limits.
+The owner prohibits benchmarks in this wave. B makes no performance claim.
 
 ### Composition: an edge carries the route envelope
 

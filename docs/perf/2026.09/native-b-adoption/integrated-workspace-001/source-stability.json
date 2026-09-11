@@ -1,0 +1,10 @@
+{
+  "same_head": true,
+  "same_branch": true,
+  "same_scoped_status": true,
+  "same_capture_tools": true,
+  "added_inputs": [],
+  "removed_inputs": [],
+  "changed_inputs": [],
+  "stable_with_declared_exclusions": true
+}

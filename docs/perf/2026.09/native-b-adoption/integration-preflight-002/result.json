@@ -1,0 +1,43 @@
+{
+  "schema": "wamn-native-b-integration-preflight/v1",
+  "captured_utc": "2026-09-11T05:06:52.938382+00:00",
+  "refs": {
+    "main": "79879412aceba021a5f77e273e6c1a21dff7dc34",
+    "incoming": "6f02d70d6b0a03b90160652df2d9c16c065010e3",
+    "earlier_b": "6feb01aca9c8fcced0c4ec9d3f5958416d2cf371",
+    "checkpoint": "a4545728256724deca98598d14bbaf4029a02dae"
+  },
+  "main_is_ancestor": true,
+  "incoming_changed_paths": 318,
+  "main_untracked_paths": 553,
+  "untracked_exact_path_collisions": 276,
+  "nonidentical_bytes": [],
+  "nonidentical_git_modes": [],
+  "nonidentical_filesystem_modes": [],
+  "other_collisions": [],
+  "tracked_edits": [
+    ".beads/interactions.jsonl",
+    ".beads/issues.jsonl"
+  ],
+  "staged_paths": [],
+  "tracked_edits_overlapping_incoming": [],
+  "provenance_counts": {
+    "earlier_b": {
+      "present": 209,
+      "main_matches_bytes_and_git_mode": 209
+    },
+    "checkpoint": {
+      "present": 59,
+      "main_matches_bytes_and_git_mode": 59
+    }
+  },
+  "lane_clean": true,
+  "sweep_wrapper": {
+    "path": "/tmp/native-b-main-sweep.py",
+    "sha256": "5b18f4988bf44aa8ce91a7534dbff17e070f3ee43f8eb6461a336c012125eb5c",
+    "blockers": [],
+    "checked": "Expected full main HEAD; current status allowlist covers Beads plus docs/perf and named TUI spec; unchanged retained command/arming filter and comparator; both schema regeneration exclusions still exist; CARGO_TARGET_DIR removed and TMPDIR explicitly under /tmp."
+  },
+  "integration_note": "This is a preflight, not integration authorization or deployed-gate evidence. Preserve only the exact listed collisions if clearance is needed; retain Beads edits and all other untracked paths. Recheck actual tip and collision bytes/modes before integration.",
+  "writes": "Only this fresh preflight evidence directory; no moves, integration, source edits, builds, tests, or Beads changes."
+}

@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "setsid",
+    "nohup",
+    "python3",
+    "/tmp/native-b-main-sweep.py",
+    "--expected-source",
+    "6f02d70d6b0a03b90160652df2d9c16c065010e3",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/integrated-workspace-001"
+  ],
+  "cwd": "/home/kaalin/dev/wamn"
+}

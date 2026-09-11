@@ -1,0 +1,12 @@
+{
+  "command": [
+    "tools/receiving-cluster-journey-run",
+    "--apply",
+    "--receiving-correctness",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/production-receiving-002"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 661.9322444780264,
+  "changed_during_run": []
+}

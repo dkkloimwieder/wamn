@@ -1,0 +1,6 @@
+{
+  "endpoint": "http://172.28.0.7:30910",
+  "host": "receiving.localhost",
+  "http_status": "404",
+  "curl_exit_code": 0
+}
