@@ -892,12 +892,12 @@ fn scan_repository_writers(
     repository: &Path,
     manifest: &Manifest,
 ) -> Result<Vec<Discovery>, String> {
-    let roots = manifest
-        .scan_policy
-        .roots
-        .iter()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
+    let mut roots = manifest.scan_policy.roots.clone();
+    // Cargo identifies the crates now below apps/. Authored package SQL keeps
+    // its existing application tests and remains in the separate claim scan.
+    roots.retain(|root| root != "apps");
+    roots.extend(application_crate_roots(repository)?);
+    let roots = roots.iter().map(String::as_str).collect::<Vec<_>>();
 
     let mut discoveries = Vec::new();
     for (relative, line, literal) in production_sql_fragments(repository, manifest, &roots)? {
@@ -912,6 +912,64 @@ fn scan_repository_writers(
         discoveries.extend(discover_writes(&relative, line, &literal));
     }
     Ok(discoveries)
+}
+
+fn application_crate_roots(repository: &Path) -> Result<BTreeSet<String>, String> {
+    #[derive(Deserialize)]
+    struct Workspace {
+        packages: Vec<Package>,
+        workspace_members: BTreeSet<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct Package {
+        id: String,
+        manifest_path: PathBuf,
+    }
+
+    let mut roots = BTreeSet::new();
+    for manifest in [
+        "Cargo.toml",
+        "apps/Cargo.toml",
+        "apps/platform/no-std/Cargo.toml",
+    ] {
+        let output = std::process::Command::new(env!("CARGO"))
+            .args([
+                "metadata",
+                "--format-version",
+                "1",
+                "--no-deps",
+                "--locked",
+                "--offline",
+                "--manifest-path",
+            ])
+            .arg(repository.join(manifest))
+            .current_dir(repository)
+            .output()
+            .map_err(|error| format!("read Cargo workspace {manifest}: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "read Cargo workspace {manifest}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let workspace: Workspace = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("parse Cargo workspace {manifest}: {error}"))?;
+        for package in workspace.packages {
+            if !workspace.workspace_members.contains(&package.id) {
+                continue;
+            }
+            let directory = package
+                .manifest_path
+                .parent()
+                .ok_or_else(|| format!("Cargo package {} has no directory", package.id))?;
+            let relative = relative_path(repository, directory)?;
+            if path_is_within(&relative, "apps") {
+                roots.insert(relative);
+            }
+        }
+    }
+    Ok(roots)
 }
 
 fn collect_files(
