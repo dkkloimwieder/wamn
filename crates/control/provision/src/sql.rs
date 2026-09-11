@@ -338,16 +338,9 @@ pub const MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS: [&str; 7] = [
 
 /// Catalog relations the executor-platform family reads (`wamn-0h0g.22.37`).
 ///
-/// The union over its four wiring-resolution statements in
-/// `wamn_runtime::plugins::wamn_postgres::wiring_resolution`: `ACTIVE_WIRING_SQL`
-/// (`wiring_activation`, `effective_release_heads`,
-/// `effective_release_packages`, `wirings`, `wiring_tombstones`,
-/// `component_library`), `RELEASE_WIRING_SQL`
-/// (`release_manifest_v3_snapshots`, `effective_release_packages`, `wirings`,
-/// `release_components`, `component_library`), `CANDIDATE_WIRING_SQL` and
-/// `RELEASE_COMPONENT_BINDINGS_READY_SQL` (the connection quartet). It is not
-/// derived from either admitter set: a change to one production caller must not
-/// silently widen another family.
+/// Released and candidate resolution read these through the platform pool.
+/// This grant set also retains activation and tombstone access; removal of the
+/// unused Active selector does not change credential authority.
 ///
 /// TABLE grain, not column grain — the [`grant_system_reader_surface_sql`]
 /// determination: this family holds no write privilege anywhere in `catalog`,
@@ -875,12 +868,9 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 /// Converge the stable executor-platform role to its exact claim surface
 /// (`wamn-0h0g.22.37`).
 ///
-/// Derived from the NINE production call sites that select
-/// `AuthorityClass::ExecutorPlatform`: four in
-/// `wamn_runtime::plugins::wamn_postgres::production_claim`, four in the same
-/// module's `wiring_resolution` sibling, and the wiring-doorbell `LISTEN` in
-/// `claims` — which holds a connection open and names no relation, so it adds
-/// nothing here.
+/// The production queries that select `AuthorityClass::ExecutorPlatform` live
+/// in `wamn_runtime::plugins::wamn_postgres::production_claim` and its
+/// `wiring_resolution` sibling.
 ///
 /// # The grains, and why each is the one it is
 ///

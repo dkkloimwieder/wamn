@@ -1,10 +1,8 @@
 //! Ignored live gates for the wiring relations (wamn-0h0g.18.2, .18.5).
 //!
-//! The sibling `wiring_storage.rs` pins what the DDL *says*. These prove what it
-//! *does*, which no pure test can reach: that the pointer flip and the rollback
-//! are one statement, that the doorbell rings on commit and only on commit, that
-//! a disabled or tombstoned pointer resolves to nothing, that an App generation
-//! can serve the read through the stable role's `SELECT`, and that a document
+//! These tests check that activation and rollback use one statement, aborted
+//! changes leave the stored activation unchanged, committed history survives,
+//! and an App generation can read through the stable role's `SELECT`. A document
 //! declaring an entry and terminals reaches a CONVERGED database and comes back
 //! out of `graph_json` with the same derived identity.
 //!
@@ -27,9 +25,8 @@ use std::process::{Command, Output, Stdio};
 use std::sync::{Mutex, MutexGuard};
 
 use wamn_catalog::{
-    WIRING_ACTIVATION_CHANNEL, WiringActivationNotice, WiringDocument, WiringEdge, WiringNode,
-    WiringTerminal, flip_activation, previous_confirmed_definition, record_activation_event,
-    resolve_active_wiring,
+    WiringDocument, WiringEdge, WiringNode, WiringTerminal, flip_activation,
+    previous_confirmed_definition, record_activation_event,
 };
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
@@ -113,40 +110,8 @@ fn refusal(url: &str, script: &str) -> String {
     stderr
 }
 
-/// Every doorbell payload psql reported, in the order the server delivered them.
-fn notices(stdout: &str) -> Vec<WiringActivationNotice> {
-    stdout
-        .lines()
-        .filter(|line| {
-            line.contains(&format!(
-                "Asynchronous notification \"{WIRING_ACTIVATION_CHANNEL}\""
-            ))
-        })
-        .map(|line| {
-            let payload = line
-                .split_once("with payload \"")
-                .expect("psql reports the payload")
-                .1
-                .rsplit_once("\" received from")
-                .expect("psql terminates the payload")
-                .0;
-            serde_json::from_str::<WiringActivationNotice>(payload)
-                .unwrap_or_else(|error| panic!("the doorbell payload {payload:?} parses: {error}"))
-        })
-        .collect()
-}
-
 fn hash(letter: char) -> String {
     format!("sha256:{}", String::from(letter).repeat(64))
-}
-
-/// `(hash, enabled)` of one delivered doorbell, for comparing whole sequences.
-fn rung(notice: &WiringActivationNotice) -> (String, bool) {
-    assert_eq!(notice.tenant_id, "t1");
-    assert_eq!(notice.package_id, "shop");
-    assert_eq!(notice.environment, "prod");
-    assert_eq!(notice.wiring_id, "orders-create");
-    (notice.confirmed_definition_hash.clone(), notice.enabled)
 }
 
 fn preamble(database: &str, app_generation: &str) -> String {
@@ -194,17 +159,15 @@ fn preamble(database: &str, app_generation: &str) -> String {
     )
 }
 
-/// `PREPARE` the four real builders under short names.
+/// `PREPARE` the three real builders under short names.
 fn prepared() -> String {
     format!(
         "PREPARE flip (text,text,text,text,boolean) AS {flip};\n\
          PREPARE record (text,text,text,boolean,text,text,text,text) AS {record};\n\
-         PREPARE prior (text,text,text,text) AS {prior};\n\
-         PREPARE resolve (text,text,text) AS {resolve};\n",
+         PREPARE prior (text,text,text,text) AS {prior};\n",
         flip = flip_activation(),
         record = record_activation_event(),
         prior = previous_confirmed_definition(),
-        resolve = resolve_active_wiring(),
     )
 }
 
@@ -219,11 +182,14 @@ fn activate(definition: &str, enabled: bool, reason: &str) -> String {
     )
 }
 
-/// The env-hot read, reported as `<label>=<version>` or `<label>=dark`.
+/// Read the stored activation hash and enabled flag for a transaction check.
 fn read(label: &str) -> String {
     format!(
-        "CREATE TEMP TABLE {label} AS EXECUTE resolve('shop','prod','orders-create');\n\
-         SELECT '{label}=' || coalesce((SELECT version::text FROM {label}), 'dark');\n"
+        "SELECT '{label}=' || confirmed_definition_hash || '|' || enabled::text \
+           FROM catalog.wiring_activation \
+          WHERE tenant_id = current_setting('app.tenant') \
+            AND package_id = 'shop' AND environment = 'prod' \
+            AND wiring_id = 'orders-create';\n"
     )
 }
 
@@ -236,10 +202,7 @@ fn wiring_activation_live() {
     let database = current_database(&url);
     let app_generation = app_generation(&database);
 
-    // One psql session throughout: it LISTENs before the first flip, so every
-    // doorbell the server delivers lands in this stdout in commit order.
     let mut script = preamble(&database, &app_generation);
-    script.push_str(&format!("LISTEN {WIRING_ACTIVATION_CHANNEL};\n"));
     script.push_str(&prepared());
 
     // The first activation is an INSERT; every later flip is an UPDATE of the
@@ -259,7 +222,7 @@ fn wiring_activation_live() {
     script.push_str(&activate(&hash('a'), true, "rollback to v1"));
     script.push_str(&read("rolled_back"));
 
-    // A flip that does not commit rings nothing and moves nothing.
+    // A flip that does not commit leaves the stored activation unchanged.
     script.push_str(&format!(
         "BEGIN;\nEXECUTE flip('shop','prod','orders-create','{b}',true);\nROLLBACK;\n",
         b = hash('b'),
@@ -272,25 +235,23 @@ fn wiring_activation_live() {
     script.push_str(&read("dark"));
     script.push_str(&activate(&hash('a'), true, "relight"));
 
-    // A tombstone retires the id even though the pointer row survives enabled.
-    script.push_str(
-        "INSERT INTO catalog.wiring_tombstones \
-                (tenant_id, package_id, environment, wiring_id, retired_at, reason) \
-         VALUES ('t1','shop','prod','orders-create',now(),'retired by test');\n",
-    );
-    script.push_str(&read("tombstoned"));
-    script.push_str("DELETE FROM catalog.wiring_tombstones;\n");
-
     // The serving generation inherits SELECT and nothing else from the stable
     // ACL role. Its `current_user` supplies the tenant authority; `app.tenant`
-    // remains only the resolve builder's matching data-value input.
+    // remains the matching data-value input.
     script.push_str(&format!(
         "BEGIN;\nSET LOCAL ROLE {app_generation};\nSET LOCAL app.tenant = '{TENANT}';\n\
          SELECT 'as_app_user=' || current_user;\n\
-         CREATE TEMP TABLE as_app AS EXECUTE resolve('shop','prod','orders-create');\n\
-         SELECT 'as_app=' || coalesce((SELECT version::text FROM as_app), 'dark');\nCOMMIT;\n"
+         {read}COMMIT;\n",
+        read = read("as_app"),
     ));
 
+    script.push_str(
+        "SELECT 'event=' || confirmed_definition_hash || '|' || enabled::text \
+           FROM catalog.wiring_activation_events \
+          WHERE tenant_id = current_setting('app.tenant') \
+            AND package_id = 'shop' AND environment = 'prod' \
+            AND wiring_id = 'orders-create' ORDER BY event_seq;\n",
+    );
     let stdout = success(&url, &script);
     let reported = |label: &str| {
         stdout
@@ -299,8 +260,16 @@ fn wiring_activation_live() {
             .unwrap_or_else(|| panic!("{label} was not reported\n{stdout}"))
     };
 
-    assert_eq!(reported("lit_v1"), "1", "the first activation serves v1");
-    assert_eq!(reported("lit_v2"), "2", "the second flip serves v2");
+    assert_eq!(
+        reported("lit_v1"),
+        format!("{}|true", hash('a')),
+        "the first activation stores v1"
+    );
+    assert_eq!(
+        reported("lit_v2"),
+        format!("{}|true", hash('b')),
+        "the second flip stores v2"
+    );
     assert_eq!(
         reported("prior"),
         hash('a'),
@@ -308,28 +277,23 @@ fn wiring_activation_live() {
     );
     assert_eq!(
         reported("rolled_back"),
-        "1",
+        format!("{}|true", hash('a')),
         "rollback is the same flip: one statement put v1 back"
     );
     assert_eq!(
         reported("after_abort"),
-        "1",
+        format!("{}|true", hash('a')),
         "a flip that did not commit moved nothing"
     );
     assert_eq!(
         reported("dark"),
-        "dark",
-        "a disabled pointer resolves to nothing"
-    );
-    assert_eq!(
-        reported("tombstoned"),
-        "dark",
-        "a retired wiring id stops resolving even with an enabled pointer"
+        format!("{}|false", hash('a')),
+        "the activation is disabled without losing its definition"
     );
     assert_eq!(
         reported("as_app"),
-        "1",
-        "the App generation serves the read through the stable role's SELECT grant"
+        format!("{}|true", hash('a')),
+        "the App generation reads the activation through the stable role's SELECT grant"
     );
     assert_eq!(
         reported("as_app_user"),
@@ -337,19 +301,20 @@ fn wiring_activation_live() {
         "the tenant authority must be the prepared App generation"
     );
 
-    // The doorbell rings on the INSERT and on every UPDATE, carries the flip's
-    // own hash and enabled flag, and stays silent for the aborted transaction.
-    let rings: Vec<(String, bool)> = notices(&stdout).iter().map(rung).collect();
+    let events: Vec<&str> = stdout
+        .lines()
+        .filter_map(|line| line.strip_prefix("event="))
+        .collect();
     assert_eq!(
-        rings,
+        events,
         vec![
-            (hash('a'), true),
-            (hash('b'), true),
-            (hash('a'), true),
-            (hash('a'), false),
-            (hash('a'), true),
+            format!("{}|true", hash('a')),
+            format!("{}|true", hash('b')),
+            format!("{}|true", hash('a')),
+            format!("{}|false", hash('a')),
+            format!("{}|true", hash('a')),
         ],
-        "five committed flips, five doorbells, and nothing for the rolled-back one\n{stdout}"
+        "five committed changes retain their activation history in order\n{stdout}"
     );
 
     // A definition whose package coordinate is absent from this environment's
@@ -493,8 +458,7 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
     script.push_str(
         "DROP TABLE catalog.wiring_activation_events, catalog.wiring_activation, \
                     catalog.wiring_tombstones, catalog.wirings CASCADE;\n\
-         DROP FUNCTION catalog.validate_wiring_activation();\n\
-         DROP FUNCTION catalog.notify_wiring_activation();\n",
+         DROP FUNCTION catalog.validate_wiring_activation();\n",
     );
     script.push_str(&probe("before"));
     script.push_str(converge_slice);

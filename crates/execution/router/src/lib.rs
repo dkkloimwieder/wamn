@@ -57,9 +57,7 @@ use serde_json::Value;
 #[doc(inline)]
 pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
 #[doc(inline)]
-pub use resolution::{
-    ActiveWiring, CacheInsert, Lookup, ResolutionToken, WiringCache, WiringCacheSnapshot,
-};
+pub use resolution::{ActiveWiring, CacheInsert, WiringCache, WiringCacheSnapshot};
 #[doc(inline)]
 pub use retry::{RetryPolicy, ThrottleKey};
 #[doc(inline)]

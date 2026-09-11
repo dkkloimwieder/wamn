@@ -66,10 +66,8 @@ mod statements;
 mod types;
 mod wiring_resolution;
 
-pub(crate) use pool::PlatformAsyncMessage;
 pub use wiring_resolution::{
-    ACTIVE_WIRING_SQL, CANDIDATE_WIRING_SQL, CandidateWiringResolution, RELEASE_WIRING_SQL,
-    ResolvedActiveWiring,
+    CANDIDATE_WIRING_SQL, CandidateWiringResolution, RELEASE_WIRING_SQL, ResolvedActiveWiring,
 };
 
 pub use claims::{

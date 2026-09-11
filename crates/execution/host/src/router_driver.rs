@@ -23,7 +23,7 @@ use wamn_catalog::{
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_event_wire::Causation;
 use wamn_router::{
-    ActiveWiring, CacheInsert, Delivery, ErrorDetail, Lookup, NodeError, NodeOutcome, Outcome,
+    ActiveWiring, CacheInsert, Delivery, ErrorDetail, NodeError, NodeOutcome, Outcome,
     RateLimitDetail, Step, WiringCache, WiringCacheSnapshot,
 };
 use wamn_runtime::component_artifact_source::{
@@ -45,7 +45,6 @@ use wamn_runtime::plugins::wamn_postgres::{
     VerifiedStatementSet, WamnPostgres,
 };
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
-use wamn_runtime::wiring_doorbell::WiringDoorbellListener;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
@@ -139,18 +138,6 @@ pub struct RouterDriverConfig {
     pub project: String,
     pub schema: Option<String>,
     pub cache_capacity: WiringCacheCapacity,
-}
-
-/// Which resolution authority one delivery carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WiringResolution {
-    /// A trusted attachment/registration resolved the current pointer. The DB
-    /// rechecks that exact version is still active.
-    Active,
-    /// The released attachment or queue admission already froze this immutable
-    /// version. A miss resolves that exact release wiring; pointer flips never
-    /// reinterpret it.
-    Frozen,
 }
 
 /// Why an originating caller cannot invoke a registered operation.
@@ -269,7 +256,6 @@ pub struct RouterDriverRequest {
     pub delivery_id: String,
     pub payload: serde_json::Value,
     pub caller_attached: bool,
-    pub resolution: WiringResolution,
     pub caller: Option<AuthenticatedCaller>,
     pub traceparent: Option<String>,
     pub tracestate: Option<String>,
@@ -535,7 +521,6 @@ pub struct RouterDriver {
     config: RouterDriverConfig,
     cache: Arc<WiringCache<CatalogFacts>>,
     native: tokio::sync::OnceCell<Arc<NativeApplication>>,
-    _doorbell: WiringDoorbellListener,
     started: Instant,
 }
 
@@ -573,11 +558,6 @@ impl RouterDriver {
             config.owner_prefix
         );
         let cache = Arc::new(WiringCache::new(config.cache_capacity.get()));
-        let doorbell = WiringDoorbellListener::postgres(
-            Arc::clone(&postgres),
-            Some(config.project.clone()),
-            Arc::clone(&cache),
-        )?;
         Ok(Self {
             engine,
             postgres,
@@ -590,7 +570,6 @@ impl RouterDriver {
             config,
             cache,
             native: tokio::sync::OnceCell::new(),
-            _doorbell: doorbell,
             started: Instant::now(),
         })
     }
@@ -624,12 +603,11 @@ impl RouterDriver {
                 delivery_id: format!("preload:{wiring_id}:{wiring_version}"),
                 payload: serde_json::Value::Null,
                 caller_attached: false,
-                resolution: WiringResolution::Frozen,
                 caller: None,
                 traceparent: None,
                 tracestate: None,
             };
-            let active = self.resolve_frozen(&request).await.with_context(|| {
+            let active = self.resolve(&request).await.with_context(|| {
                 format!("preload release wiring {wiring_id:?} version {wiring_version}")
             })?;
             self.validate_wiring_closure(&request, &active)?;
@@ -764,7 +742,6 @@ impl RouterDriver {
             // has no synchronous durable caller. The queue adapter keeps those
             // two facts separate when persisting the outcome.
             caller_attached: true,
-            resolution: WiringResolution::Frozen,
             caller: None,
             traceparent: request.traceparent,
             tracestate: request.tracestate,
@@ -992,87 +969,10 @@ impl RouterDriver {
                 "candidate-wiring-immutable-hash-mismatch",
             )
             .into()),
-            CacheInsert::Overtaken => unreachable!("exact-version insert has no pointer token"),
         }
     }
 
     async fn resolve(
-        &self,
-        request: &RouterDriverRequest,
-    ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
-        match request.resolution {
-            WiringResolution::Active => self.resolve_active(request).await,
-            WiringResolution::Frozen => self.resolve_frozen(request).await,
-        }
-    }
-
-    async fn resolve_active(
-        &self,
-        request: &RouterDriverRequest,
-    ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
-        let mounted_effective_release_id =
-            self.release.manifest().release.effective_release_id.get();
-        loop {
-            let token = match self.cache.get(
-                &request.tenant_id,
-                &request.package_id,
-                &request.environment,
-                mounted_effective_release_id,
-                &request.wiring_id,
-            ) {
-                Lookup::Hit(active) if active.version == request.wiring_version => {
-                    return Ok(active);
-                }
-                Lookup::Hit(_) => {
-                    self.cache.invalidate(
-                        &request.tenant_id,
-                        &request.package_id,
-                        &request.environment,
-                        &request.wiring_id,
-                    );
-                    continue;
-                }
-                Lookup::Miss(token) => token,
-            };
-            let resolved = self
-                .postgres
-                .resolve_active_wiring(
-                    &self.config.project,
-                    &request.tenant_id,
-                    &request.package_id,
-                    &request.environment,
-                    &request.wiring_id,
-                    request.wiring_version,
-                )
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("active-wiring-not-found"))?;
-            anyhow::ensure!(
-                resolved.effective_release_id == mounted_effective_release_id,
-                "active-wiring-effective-release-mismatch"
-            );
-            let facts = CatalogFacts::from_resolved(&resolved)?;
-            match self.cache.insert(
-                &request.tenant_id,
-                &request.package_id,
-                &request.environment,
-                mounted_effective_release_id,
-                &request.wiring_id,
-                resolved.version,
-                Arc::clone(&resolved.graph_hash),
-                resolved.wiring,
-                facts,
-                token,
-            ) {
-                CacheInsert::Installed(active) => return Ok(active),
-                CacheInsert::Overtaken => continue,
-                CacheInsert::HashMismatch => {
-                    anyhow::bail!("active-wiring-immutable-hash-mismatch")
-                }
-            }
-        }
-    }
-
-    async fn resolve_frozen(
         &self,
         request: &RouterDriverRequest,
     ) -> anyhow::Result<ActiveWiring<CatalogFacts>> {
@@ -1117,7 +1017,6 @@ impl RouterDriver {
             CacheInsert::HashMismatch => {
                 anyhow::bail!("release-wiring-immutable-hash-mismatch")
             }
-            CacheInsert::Overtaken => unreachable!("exact-version insert has no pointer token"),
         }
     }
 
@@ -1873,7 +1772,6 @@ mod tests {
             delivery_id: "delivery-9".to_owned(),
             payload: serde_json::json!({"id": 9}),
             caller_attached: true,
-            resolution: WiringResolution::Frozen,
             caller: None,
             traceparent: traceparent.map(str::to_owned),
             tracestate: traceparent.map(|_| "vendor=value".to_owned()),

@@ -32,11 +32,13 @@ This document wins every design conflict.
   flowrunner guest, execution plans/compiler, frames/call-flow, per-node durable
   facts and capture.
 - Rehost the proven frontier walk, port routing and error-edge semantics in one
-  host-native router shared by HTTP and queued execution. A delivery resolves an
-  active wiring, acquires a component instance per node, invokes its operation,
-  routes outputs and ends in `respond`, `emit` or discard under a hop limit.
-- Key wiring resolution by `(tenant, catalog, environment)`; the tenant identity
-  is mandatory even when environment names match.
+  host-native router shared by HTTP and queued execution. Each delivery resolves
+  the exact wiring version from its immutable release. The router invokes each
+  node and routes outputs to `respond`, `emit` or discard under a hop limit.
+- Key cached wirings by tenant, package, environment, effective release, wiring ID,
+  and version. Frozen candidates retain their exact admitted wiring and component
+  facts. The runtime does not follow mutable activation pointers or PostgreSQL
+  notifications. Activation writes, history, and validation remain in the catalog.
 - Use native wasmCloud loading and dispatch for released, nested, and frozen
   candidate node calls. Native code owns compilation reuse, component linking,
   store construction, and invocation duration metrics. The Wasmtime pooling

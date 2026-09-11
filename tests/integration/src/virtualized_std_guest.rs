@@ -15,15 +15,11 @@ mod tests {
     use http_body_util::{BodyExt as _, Full};
     use hyper::{Method, Request, StatusCode};
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-    use wamn_catalog::EffectiveReleaseId;
-    use wamn_execution_host::{
-        ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriverRequest, WiringResolution,
-    };
+    use wamn_execution_host::{ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriverRequest};
     use wamn_runtime::engine::build_engine;
     use wamn_runtime::plugins::flow_http_routing::FLOW_HTTP_ROUTING_ID;
     use wamn_runtime::plugins::wamn_jetstream::WamnJetstreamConfig;
     use wamn_runtime::plugins::{FlowHttpRouting, WamnJetstream};
-    use wamn_runtime::release_manifest::ReleaseManifestWeld;
     use wash_runtime::engine::InstancePolicy;
     use wash_runtime::engine::ctx::{Ctx, SharedCtx};
     use wash_runtime::engine::workload::{WorkloadComponent, WorkloadItem};
@@ -458,7 +454,7 @@ mod tests {
 
         let (upstream_base_url, served) = connection_origin().await?;
         let route = trusted_http_route::build(&RouteOptions {
-            database_url: database_url.clone(),
+            database_url,
             artifact_base,
             component_wasm,
             upstream_base_url,
@@ -466,111 +462,6 @@ mod tests {
         })
         .await
         .context("build the released virtualized probe route")?;
-
-        // Exercise both refusals before a positive Active lookup can populate
-        // the cache. Release 2 has the same package and exact node binding.
-        let (admin, connection) = tokio_postgres::connect(&database_url, tokio_postgres::NoTls)
-            .await
-            .context("connect the release-closure fixture admin")?;
-        let admin_driver = tokio::spawn(connection);
-        let mounted_release_id = route.release.release().effective_release_id;
-        let other_release_id = 2_i32;
-        for statement in [
-            "INSERT INTO catalog.effective_releases \
-                 (tenant_id, effective_release_id, environment, verified_publisher_principal) \
-             SELECT tenant_id, $2, environment, verified_publisher_principal \
-               FROM catalog.effective_releases \
-              WHERE tenant_id=$1 AND effective_release_id=$3",
-            "INSERT INTO catalog.effective_release_packages \
-                 (tenant_id, effective_release_id, package_id, package_version) \
-             SELECT tenant_id, $2, package_id, package_version \
-               FROM catalog.effective_release_packages \
-              WHERE tenant_id=$1 AND effective_release_id=$3",
-            "INSERT INTO catalog.release_components \
-                 (tenant_id, effective_release_id, wiring_package_id, wiring_package_version, \
-                  wiring_id, wiring_version, node_id, package_id, package_version, component_digest) \
-             SELECT tenant_id, $2, wiring_package_id, wiring_package_version, wiring_id, \
-                    wiring_version, node_id, package_id, package_version, component_digest \
-               FROM catalog.release_components \
-              WHERE tenant_id=$1 AND effective_release_id=$3",
-        ] {
-            assert_eq!(
-                admin
-                    .execute(
-                        statement,
-                        &[&TENANT, &other_release_id, &mounted_release_id]
-                    )
-                    .await?,
-                1,
-                "the owned route has one release, package, and node binding"
-            );
-        }
-        let select_head = "UPDATE catalog.effective_release_heads SET effective_release_id=$3 \
-                            WHERE tenant_id=$1 AND environment=$2";
-        assert_eq!(
-            admin
-                .execute(select_head, &[&TENANT, &ENVIRONMENT, &other_release_id])
-                .await?,
-            1
-        );
-        for (snapshot_present, expected) in [
-            (false, "active-wiring-not-found"),
-            (true, "active-wiring-effective-release-mismatch"),
-        ] {
-            if snapshot_present {
-                let mut manifest = route.release.manifest().clone();
-                manifest.release.effective_release_id = EffectiveReleaseId::new(2)?;
-                let other_release = ReleaseManifestWeld::load_canonical_bytes(
-                    &manifest.canonical_bytes(),
-                    "virtualized std guest release-closure control",
-                )?;
-                let canonical_bytes = other_release.manifest().canonical_bytes();
-                let manifest_digest = other_release.release().manifest_digest.as_str();
-                assert_eq!(
-                    admin
-                        .execute(
-                            "INSERT INTO catalog.release_manifest_v3_snapshots \
-                             (tenant_id, effective_release_id, manifest_digest, canonical_bytes) \
-                         VALUES ($1, $2, $3, $4)",
-                            &[
-                                &TENANT,
-                                &other_release_id,
-                                &manifest_digest,
-                                &canonical_bytes
-                            ],
-                        )
-                        .await?,
-                    1
-                );
-            }
-            let refusal = route
-                .driver
-                .execute(RouterDriverRequest {
-                    tenant_id: TENANT.to_owned(),
-                    package_id: PACKAGE.to_owned(),
-                    environment: ENVIRONMENT.to_owned(),
-                    wiring_id: WIRING_ID.to_owned(),
-                    wiring_version: WIRING_VERSION,
-                    delivery_id: format!("virtualized-release-control-{snapshot_present}"),
-                    payload: serde_json::json!({"proof": "environment"}),
-                    caller_attached: true,
-                    resolution: WiringResolution::Active,
-                    caller: None,
-                    traceparent: None,
-                    tracestate: None,
-                })
-                .await
-                .expect_err("an absent or differently mounted release must not serve");
-            assert_eq!(refusal.to_string(), expected);
-        }
-        assert_eq!(
-            admin
-                .execute(select_head, &[&TENANT, &ENVIRONMENT, &mounted_release_id])
-                .await?,
-            1
-        );
-        drop(admin);
-        admin_driver.abort();
 
         let delivery = route
             .driver
@@ -583,7 +474,6 @@ mod tests {
                 delivery_id: "virtualized-environment-proof".to_owned(),
                 payload: serde_json::json!({"proof": "environment"}),
                 caller_attached: true,
-                resolution: WiringResolution::Active,
                 caller: None,
                 traceparent: None,
                 tracestate: None,
@@ -610,7 +500,6 @@ mod tests {
                 delivery_id: "virtualized-connection-proof".to_owned(),
                 payload: serde_json::json!({"proof": "connection"}),
                 caller_attached: true,
-                resolution: WiringResolution::Active,
                 caller: None,
                 traceparent: None,
                 tracestate: None,

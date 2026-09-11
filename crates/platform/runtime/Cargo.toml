@@ -21,10 +21,6 @@ wamn-event-wire = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-pg-core = { workspace = true }
-# wamn-0h0g.16.15: the pointer-flip doorbell subscriber. The router crate
-# declares no DB, no pooling, no runtime and no clock, so the LISTEN connection
-# that rings its WiringCache cannot live there; it lives here beside the
-# process-owned platform pool.
 wamn-router = { workspace = true }
 # `tenant-key` and NOT `effect-writer-credential`: the shipped runtime needs the
 # framed scope digest to check a guest credential against the tenant it will

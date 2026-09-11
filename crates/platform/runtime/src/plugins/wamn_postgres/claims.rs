@@ -21,11 +21,10 @@ use wamn_event_wire::Causation;
 use wamn_run_state::AuthorityClass;
 
 use super::pool::{
-    CheckoutProbe, ClassCredentials, CredentialProvider, PlatformAsyncMessage, PlatformConnect,
-    PoolKey, PoolLifecycle, ProjectConfig, ProjectPool, ResolvedCredential,
-    StaticCredentialProvider, WamnPostgresConfig, credential_exactness_hook,
-    credential_generation_role, destroy_connection, session_statement_timeout_hook,
-    standard_conforming_strings_hook,
+    CheckoutProbe, ClassCredentials, CredentialProvider, PoolKey, PoolLifecycle, ProjectConfig,
+    ProjectPool, ResolvedCredential, StaticCredentialProvider, WamnPostgresConfig,
+    credential_exactness_hook, credential_generation_role, destroy_connection,
+    session_statement_timeout_hook, standard_conforming_strings_hook,
 };
 use super::resources::{StatementConnectionGuard, run_execute, run_query, run_verified_query};
 use super::statements::{StatementScopes, VerifiedStatement};
@@ -61,9 +60,6 @@ pub struct WamnPostgres {
     /// Host-owned claim, authorization, and plan-supply project pools. Keeping a
     /// distinct cache makes cross-lifecycle session reuse unrepresentable.
     platform_pools: std::sync::RwLock<HashMap<PoolKey, Arc<ProjectPool>>>,
-    platform_messages: tokio::sync::mpsc::UnboundedSender<PlatformAsyncMessage>,
-    platform_message_receiver:
-        std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<PlatformAsyncMessage>>>,
     /// component id → tenant claim.
     tenants: std::sync::RwLock<HashMap<String, String>>,
     /// component id → project id (which database). Absent ⇒ the default project.
@@ -733,13 +729,10 @@ impl WamnPostgres {
 
     /// Plugin over an explicit [`CredentialProvider`] (multi-project / tests).
     pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
-        let (platform_messages, platform_message_receiver) = tokio::sync::mpsc::unbounded_channel();
         Self {
             provider,
             guest_pools: std::sync::RwLock::new(HashMap::new()),
             platform_pools: std::sync::RwLock::new(HashMap::new()),
-            platform_messages,
-            platform_message_receiver: std::sync::Mutex::new(Some(platform_message_receiver)),
             tenants: std::sync::RwLock::new(HashMap::new()),
             projects: std::sync::RwLock::new(HashMap::new()),
             schemas: std::sync::RwLock::new(HashMap::new()),
@@ -828,7 +821,6 @@ impl WamnPostgres {
         cfg: &ResolvedCredential,
         class: AuthorityClass,
         project: &str,
-        platform_messages: &tokio::sync::mpsc::UnboundedSender<PlatformAsyncMessage>,
     ) -> anyhow::Result<Pool> {
         let lifecycle = PoolLifecycle::for_class(class);
         let pg_config: tokio_postgres::Config = cfg
@@ -838,14 +830,7 @@ impl WamnPostgres {
         let manager_config = ManagerConfig {
             recycling_method: RecyclingMethod::Fast,
         };
-        let mgr = match lifecycle {
-            PoolLifecycle::Guest => Manager::from_config(pg_config, NoTls, manager_config),
-            PoolLifecycle::Platform => Manager::from_connect(
-                pg_config,
-                PlatformConnect::new(platform_messages.clone()),
-                manager_config,
-            ),
-        };
+        let mgr = Manager::from_config(pg_config, NoTls, manager_config);
         let timeout = std::time::Duration::from_millis(cfg.wait_timeout_ms);
         Ok(Pool::builder(mgr)
             .max_size(lifecycle.max_size(cfg))
@@ -939,7 +924,7 @@ impl WamnPostgres {
         if let Some(pp) = pools.read().expect("pools lock poisoned").get(&key) {
             return Ok(pp.clone());
         }
-        let pp = match Self::build_pool(&cfg, class, project, &self.platform_messages) {
+        let pp = match Self::build_pool(&cfg, class, project) {
             Ok(pool) => Arc::new(ProjectPool {
                 pool,
                 statement_timeout_ms: cfg.statement_timeout_ms,
@@ -958,58 +943,6 @@ impl WamnPostgres {
         };
         let mut w = pools.write().expect("pools lock poisoned");
         Ok(w.entry(key).or_insert(pp).clone())
-    }
-
-    /// Take the one async-message stream driven by this instance's existing
-    /// platform pools. A second subscriber would be a second doorbell owner and
-    /// is refused before it can LISTEN.
-    pub(crate) fn take_platform_messages(
-        &self,
-    ) -> anyhow::Result<tokio::sync::mpsc::UnboundedReceiver<PlatformAsyncMessage>> {
-        self.platform_message_receiver
-            .lock()
-            .map_err(|_| anyhow::anyhow!("platform-message-receiver-lock-poisoned"))?
-            .take()
-            .ok_or_else(|| anyhow::anyhow!("platform-message-receiver-already-taken"))
-    }
-
-    /// Hold one existing platform-pool connection in LISTEN for the wiring
-    /// doorbell. The returned object stays checked out for the subscription's
-    /// lifetime; no direct connection or second pool is created.
-    pub(crate) async fn checkout_wiring_listener(
-        &self,
-        project: &str,
-    ) -> anyhow::Result<(Object, i32)> {
-        let (connection, _) = self
-            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let backend_pid = async {
-            connection
-                .batch_execute(&format!(
-                    "LISTEN {}",
-                    wamn_catalog::WIRING_ACTIVATION_CHANNEL
-                ))
-                .await
-                .context("LISTEN wiring activation through platform pool")?;
-            connection
-                .query_one("SELECT pg_backend_pid()", &[])
-                .await
-                .context("read wiring doorbell backend id")?
-                .try_get(0)
-                .context("decode wiring doorbell backend id")
-        }
-        .await;
-        match backend_pid {
-            Ok(backend_pid) => Ok((connection, backend_pid)),
-            Err(error) => {
-                // LISTEN is session state. A half-constructed listener may not
-                // return to the general platform pool even when the socket is
-                // otherwise healthy.
-                self.destroy(connection);
-                Err(error)
-            }
-        }
     }
 
     /// Register the tenant claim for a component id. The bench harness calls
@@ -2490,7 +2423,6 @@ mod tests {
     /// is the only thing that can reject this url, so its absence is visible.
     #[test]
     fn building_a_pool_requires_a_probeable_credential() {
-        let (messages, _rx) = tokio::sync::mpsc::unbounded_channel();
         let unprobeable = ResolvedCredential {
             // Parses as a manager config, but names no principal, so the
             // exactness hook cannot be built for it.
@@ -2502,13 +2434,8 @@ mod tests {
             row_limit: 10,
         };
         assert!(
-            WamnPostgres::build_pool(
-                &unprobeable,
-                AuthorityClass::GuestSql,
-                DEFAULT_PROJECT,
-                &messages,
-            )
-            .is_err(),
+            WamnPostgres::build_pool(&unprobeable, AuthorityClass::GuestSql, DEFAULT_PROJECT)
+                .is_err(),
             "a pool whose credential cannot be probed must not be built"
         );
     }
@@ -4329,10 +4256,6 @@ mod tests {
         // connection-unavailable) and confirm it is the R18 post_create hook —
         // not an auth/other failure that ALSO maps to connection-unavailable. The
         // control above already ruled out server-down; this pins the cause.
-        // Only `PoolLifecycle::Platform` wires the async-message sender through
-        // `PlatformConnect`; a guest pool never sends on it.
-        let (platform_messages, _platform_message_receiver) =
-            tokio::sync::mpsc::unbounded_channel();
         let pool = WamnPostgres::build_pool(
             &ResolvedCredential {
                 database_url: url,
@@ -4344,7 +4267,6 @@ mod tests {
             },
             AuthorityClass::GuestSql,
             DEFAULT_PROJECT,
-            &platform_messages,
         )
         // Hook ORDER matters to this test: R18 is pushed first, so a scs=off
         // server fails on standard_conforming_strings before the

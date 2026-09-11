@@ -16,7 +16,7 @@
 //! It needs three throwaway resources, all named by the caller: a superuser
 //! PostgreSQL database (the `catalog` schema is DROPped and reinstalled), an
 //! insecure OCI registry, and an upstream HTTP origin. Nothing here is stubbed —
-//! the wiring resolves through `ACTIVE_WIRING_SQL`, the component bytes come
+//! the wiring resolves through `RELEASE_WIRING_SQL`, the component bytes come
 //! back through the production OCI puller, and the effect leaves the process
 //! over a real socket.
 
@@ -891,7 +891,7 @@ mod tests {
     use wamn_execution_host::{
         CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
         CandidateWiringTarget, RouterDelivery, RouterDriver, RouterDriverConfig,
-        RouterDriverRequest, WiringCacheCapacity, WiringResolution,
+        RouterDriverRequest, WiringCacheCapacity,
     };
     use wamn_platform_identity::{
         assign_project_role, create_service, issue_pat, route_caller_subject,
@@ -1429,7 +1429,6 @@ mod tests {
             delivery_id: format!("reuse-{id}"),
             payload: serde_json::json!({"id": id}),
             caller_attached: true,
-            resolution: WiringResolution::Active,
             caller: None,
             traceparent: None,
             tracestate: None,
@@ -1881,7 +1880,6 @@ mod tests {
         for id in [23, 24] {
             let mut nested = request(id);
             nested.wiring_version = 2;
-            nested.resolution = WiringResolution::Frozen;
             nested.caller = Some(caller.clone());
             let accepted = receipt(
                 &mut origin,
@@ -1943,7 +1941,6 @@ mod tests {
         // declare that dependency. Presence in the release grants no authority.
         let mut undeclared = request(25);
         undeclared.wiring_version = 3;
-        undeclared.resolution = WiringResolution::Frozen;
         undeclared.caller = Some(caller.clone());
         let Err(refusal) = route.driver.execute(undeclared).await else {
             anyhow::bail!("the undeclared export acquired child authority");
@@ -1961,7 +1958,6 @@ mod tests {
         set_instance_status(&admin, "disabled").await?;
         let mut nested = request(26);
         nested.wiring_version = 2;
-        nested.resolution = WiringResolution::Frozen;
         nested.caller = Some(caller.clone());
         let failure = route
             .driver
@@ -1986,7 +1982,6 @@ mod tests {
         set_instance_status(&admin, "enabled").await?;
         let mut nested = request(27);
         nested.wiring_version = 2;
-        nested.resolution = WiringResolution::Frozen;
         nested.caller = Some(caller);
         let restored = receipt(
             &mut origin,

@@ -24,7 +24,7 @@ use crate::router_driver::{
     OperationRefusal, OperationRefusalKind, authorize_registered_operation,
 };
 use crate::router_response::{InterruptedResponse, PartialEvidence};
-use crate::{RouterDriver, RouterDriverRequest, WiringResolution};
+use crate::{RouterDriver, RouterDriverRequest};
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -177,7 +177,6 @@ impl RouterDeliveryBridge {
             delivery_id: delivery_id.clone(),
             payload,
             caller_attached: target.caller_attached,
-            resolution: target.resolution,
             caller,
             traceparent,
             tracestate,
@@ -465,7 +464,6 @@ struct ResolvedTarget {
     /// only when its welded auth policy explicitly names anonymous mode.
     anonymous_caller_permitted: Option<bool>,
     registered_operation: Option<String>,
-    resolution: WiringResolution,
 }
 
 fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<ResolvedTarget> {
@@ -484,7 +482,6 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                             == Some(AttachmentAuthPolicy::None),
                     ),
                     registered_operation: attachment.registered_operation.clone(),
-                    resolution: WiringResolution::Frozen,
                 })
         }
         SourceRef::Registration(id) => {
@@ -498,7 +495,6 @@ fn resolve_target(manifest: &ServingManifest, source: SourceRef<'_>) -> Option<R
                     caller_attached: false,
                     anonymous_caller_permitted: None,
                     registered_operation: None,
-                    resolution: WiringResolution::Frozen,
                 })
         }
     }
@@ -836,7 +832,6 @@ mod tests {
                 caller_attached: true,
                 anonymous_caller_permitted: Some(true),
                 registered_operation: None,
-                resolution: WiringResolution::Frozen,
             })
         );
         assert_eq!(
@@ -851,7 +846,6 @@ mod tests {
                 caller_attached: false,
                 anonymous_caller_permitted: None,
                 registered_operation: None,
-                resolution: WiringResolution::Frozen,
             })
         );
         assert_eq!(

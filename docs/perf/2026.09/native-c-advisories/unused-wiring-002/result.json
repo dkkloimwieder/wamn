@@ -1,0 +1,81 @@
+{
+  "bead": "wamn-0ct2.7",
+  "base": "7f15196add7160ba54d6d2d9fbe83d7c21066b55",
+  "status": "Final source checks",
+  "commands": [
+    {
+      "name": "format",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "--check",
+        "crates/catalog/model/src/lib.rs",
+        "crates/catalog/model/src/wiring_activation.rs",
+        "crates/catalog/model/tests/wiring_activation_live.rs",
+        "crates/control/provision/src/sql.rs",
+        "crates/execution/host/src/lib.rs",
+        "crates/execution/host/src/router_delivery.rs",
+        "crates/execution/host/src/router_driver.rs",
+        "crates/execution/router/src/lib.rs",
+        "crates/execution/router/src/resolution.rs",
+        "crates/execution/router/tests/resolution.rs",
+        "crates/platform/runtime/src/lib.rs",
+        "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs",
+        "crates/platform/runtime/src/plugins/wamn_postgres/mod.rs",
+        "crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs",
+        "crates/platform/runtime/tests/executor_platform_surface_live.rs",
+        "services/executor/src/lib.rs",
+        "tests/integration/src/hot_route_trace.rs",
+        "tests/integration/src/trusted_http_route.rs",
+        "tests/integration/src/virtualized_std_guest.rs"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "pool-format",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "--check",
+        "crates/platform/runtime/src/plugins/wamn_postgres/pool.rs"
+      ],
+      "exit_code": 1
+    },
+    {
+      "name": "whitespace",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0
+    },
+    {
+      "name": "grant-comment-format",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "--check",
+        "crates/control/provision/src/sql.rs"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "pool_format_failure": "Pre-existing session_statement_timeout_hook formatting. The formatter proposes exactly the same source delta before and after the deletion. That unrelated body is unchanged.",
+  "other_rust_files_format_passed": 19,
+  "retained_exact_comparisons": 18,
+  "catalog_tests": "The exact catalog test source hash is unchanged from unused-wiring-001; both std-only tests passed there.",
+  "dependency_backed_tests": "Root owns integrated Cargo tests; none run here.",
+  "comment_tail": "The final direct caller comment no longer counts the deleted PostgreSQL listener. Grant code is unchanged."
+}

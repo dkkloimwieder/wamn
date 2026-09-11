@@ -590,29 +590,6 @@ CREATE TRIGGER wiring_activation_valid
     BEFORE INSERT OR UPDATE ON catalog.wiring_activation
     FOR EACH ROW EXECUTE FUNCTION catalog.validate_wiring_activation();
 
-CREATE FUNCTION catalog.notify_wiring_activation()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    PERFORM pg_notify(
-        'wamn_wiring_activation',
-        json_build_object(
-            'tenant-id', NEW.tenant_id,
-            'package-id', NEW.package_id,
-            'environment', NEW.environment,
-            'wiring-id', NEW.wiring_id,
-            'enabled', NEW.enabled,
-            'confirmed-definition-hash', NEW.confirmed_definition_hash
-        )::text
-    );
-    RETURN NEW;
-END
-$$;
-CREATE TRIGGER wiring_activation_doorbell
-    AFTER INSERT OR UPDATE ON catalog.wiring_activation
-    FOR EACH ROW EXECUTE FUNCTION catalog.notify_wiring_activation();
-
 CREATE TABLE catalog.release_components (
     tenant_id             text NOT NULL CHECK (tenant_id <> ''),
     effective_release_id  int  NOT NULL CHECK (effective_release_id > 0),

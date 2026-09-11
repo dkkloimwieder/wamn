@@ -1828,7 +1828,6 @@
         "policy:wiring_activation_platform;command=all;permissive=true;roles=wamn_platform;using=true;check=true",
         "policy:wiring_activation_tenant;command=all;permissive=true;roles=wamn_app;using=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key();check=wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()",
         "row-security:enabled=true;forced=true",
-        "trigger:wiring_activation_doorbell;mode=origin;function=catalog.notify_wiring_activation();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER wiring_activation_doorbell AFTER INSERT OR UPDATE ON catalog.wiring_activation FOR EACH ROW EXECUTE FUNCTION catalog.notify_wiring_activation()",
         "trigger:wiring_activation_valid;mode=origin;function=catalog.validate_wiring_activation();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER wiring_activation_valid BEFORE INSERT OR UPDATE ON catalog.wiring_activation FOR EACH ROW EXECUTE FUNCTION catalog.validate_wiring_activation()"
       ]
     },

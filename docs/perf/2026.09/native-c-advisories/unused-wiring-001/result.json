@@ -1,0 +1,134 @@
+{
+  "bead": "wamn-0ct2.7",
+  "base": "7f15196add7160ba54d6d2d9fbe83d7c21066b55",
+  "change_type": "internal removal",
+  "commands": [
+    {
+      "name": "format",
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "--check",
+        "crates/catalog/model/src/lib.rs",
+        "crates/catalog/model/src/wiring_activation.rs",
+        "crates/catalog/model/tests/wiring_activation_live.rs",
+        "crates/control/provision/src/sql.rs",
+        "crates/execution/host/src/lib.rs",
+        "crates/execution/host/src/router_delivery.rs",
+        "crates/execution/host/src/router_driver.rs",
+        "crates/execution/router/src/lib.rs",
+        "crates/execution/router/src/resolution.rs",
+        "crates/execution/router/tests/resolution.rs",
+        "crates/platform/runtime/src/lib.rs",
+        "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs",
+        "crates/platform/runtime/src/plugins/wamn_postgres/mod.rs",
+        "crates/platform/runtime/src/plugins/wamn_postgres/pool.rs",
+        "crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs",
+        "crates/platform/runtime/tests/executor_platform_surface_live.rs",
+        "services/executor/src/lib.rs",
+        "tests/integration/src/hot_route_trace.rs",
+        "tests/integration/src/trusted_http_route.rs",
+        "tests/integration/src/virtualized_std_guest.rs"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "duration_seconds": 0.155
+    },
+    {
+      "name": "whitespace",
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "duration_seconds": 0.542
+    },
+    {
+      "name": "catalog-compile",
+      "argv": [
+        "rustc",
+        "--edition",
+        "2024",
+        "--test",
+        "crates/catalog/model/src/wiring_activation.rs",
+        "-o",
+        "/tmp/wamn-native-c-wiring-activation-tests"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "duration_seconds": 0.103
+    },
+    {
+      "name": "catalog-tests",
+      "argv": [
+        "/tmp/wamn-native-c-wiring-activation-tests",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "duration_seconds": 0.004
+    },
+    {
+      "name": "removed-source-references",
+      "argv": [
+        "rg",
+        "-n",
+        "\\bWiringResolution\\b|\\bresolve_frozen\\b|resolve_active_wiring|ACTIVE_WIRING_SQL|ResolutionToken|CacheInsert::Overtaken|PlatformAsyncMessage|PlatformConnect|wiring_doorbell|notify_wiring_activation|wiring_activation_doorbell",
+        "crates",
+        "services",
+        "tests",
+        "apps",
+        "deploy",
+        "architecture",
+        "--glob",
+        "*.rs",
+        "--glob",
+        "*.toml",
+        "--glob",
+        "*.sql",
+        "--glob",
+        "*.json"
+      ],
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "duration_seconds": 0.013
+    }
+  ],
+  "retained_exact_comparisons": 18,
+  "catalog_tests_passed": 2,
+  "dependency_backed_tests": "Not run in this worktree. Root owns the integrated Cargo test build.",
+  "live_tests": "Not run. No database or service was started.",
+  "existing_catalog_live_test_limits": [
+    "The first live test expects wiring-definition-not-current, while the unchanged validator emits wiring-activation-definition-not-in-effective-release.",
+    "The second live test searches for BEGIN/END WIRING STORAGE MIGRATION markers, absent from the baseline schema."
+  ],
+  "removed_test_subjects": [
+    "Active-pointer lookup and notification delivery/reconnect invalidation.",
+    "Active-only alternate-head refusal cases in the virtualized guest test."
+  ],
+  "retained_test_subjects": [
+    "Immutable version graph reuse, release/environment isolation, version coexistence and LRU eviction.",
+    "Committed activation history, rollback, aborted change, App read authority and denied App writes.",
+    "Released component facts and all executor-platform credential assertions.",
+    "Virtualized guest environment, connection, tracing and trap assertions."
+  ],
+  "root_test_commands": [
+    "cargo test -p wamn-router --lib --test resolution",
+    "cargo test -p wamn-runtime --all-features --lib plugins::wamn_postgres::",
+    "cargo test -p wamn-runtime --all-features --test executor_platform_surface_live --no-run",
+    "cargo test -p wamn-catalog --lib wiring_activation::tests::",
+    "cargo test -p wamn-catalog --test wiring_activation_live --no-run",
+    "cargo test -p wamn-execution-host --lib",
+    "cargo test -p wamn-proof-integration --no-run"
+  ],
+  "root_doc_delta": [
+    "Remove the deleted wiring_doorbell_live command row from docs/operations/build-and-test.md.",
+    "Record that all production delivery paths resolve the frozen release version. Activation data/history and validation remain; no replacement notification is introduced."
+  ],
+  "status": "Preliminary source checks. Final pool source restores its unrelated pre-existing formatting; see unused-wiring-002."
+}

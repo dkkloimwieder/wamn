@@ -14,7 +14,7 @@ pub use router_driver::{
     CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
     CandidateWiringTarget, DEFAULT_WIRING_CACHE_CAPACITY, RouterDelivery, RouterDriver,
     RouterDriverConfig, RouterDriverRequest, RouterDriverSnapshot, WIRING_CACHE_CAPACITY_ENV,
-    WiringCacheCapacity, WiringResolution,
+    WiringCacheCapacity,
 };
 
 /// Exercise the production attachment resolver and registered-operation guard

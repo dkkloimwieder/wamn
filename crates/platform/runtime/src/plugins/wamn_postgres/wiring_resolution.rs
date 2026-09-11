@@ -1,4 +1,4 @@
-//! Host-owned active-wiring resolution through the existing platform pool.
+//! Released and candidate wiring resolution through the existing platform pool.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -19,126 +19,8 @@ use crate::wiring_lowering::{
 
 use super::{CandidateBindingWorld, WamnPostgres};
 
-/// The single SQL snapshot behind a cache miss.
-pub const ACTIVE_WIRING_SQL: &str = "\
-WITH selected AS MATERIALIZED ( \
-    SELECT wiring.version, head.effective_release_id, member.package_version, \
-           wiring.graph_json, wiring.wiring_hash, \
-           convert_from(snapshot.canonical_bytes, 'UTF8')::jsonb AS manifest \
-      FROM catalog.wiring_activation AS active \
-      JOIN catalog.effective_release_heads AS head \
-        ON head.tenant_id = active.tenant_id \
-       AND head.environment = active.environment \
-      JOIN catalog.release_manifest_v3_snapshots AS snapshot \
-        ON snapshot.tenant_id = head.tenant_id \
-       AND snapshot.effective_release_id = head.effective_release_id \
-       AND convert_from(snapshot.canonical_bytes, 'UTF8')::jsonb \
-             #>> '{release,environment}' = $3 \
-      JOIN catalog.effective_release_packages AS member \
-        ON member.tenant_id = head.tenant_id \
-       AND member.effective_release_id = head.effective_release_id \
-       AND member.package_id = active.package_id \
-      JOIN catalog.wirings AS wiring \
-        ON wiring.tenant_id = active.tenant_id \
-       AND wiring.package_id = active.package_id \
-       AND wiring.package_version = member.package_version \
-       AND wiring.wiring_id = active.wiring_id \
-       AND wiring.version = $5 \
-       AND wiring.wiring_hash = active.confirmed_definition_hash \
-     WHERE active.tenant_id = $1 \
-       AND active.package_id = $2 \
-       AND active.environment = $3 \
-       AND active.wiring_id = $4 \
-       AND active.enabled \
-       AND NOT EXISTS ( \
-           SELECT 1 \
-             FROM catalog.wiring_tombstones AS dead \
-            WHERE dead.tenant_id = active.tenant_id \
-              AND dead.package_id = active.package_id \
-              AND dead.environment = active.environment \
-              AND dead.wiring_id = active.wiring_id \
-       ) \
-) \
-SELECT selected.version, \
-       selected.effective_release_id, \
-       selected.package_version, \
-       selected.graph_json::text, \
-       selected.wiring_hash, \
-       COALESCE( \
-           jsonb_agg( \
-               jsonb_build_object( \
-                   'node-id', member.node_id, \
-                   'component', jsonb_build_object( \
-                       'scope', jsonb_build_object( \
-                           'tenant-id', $1::text, \
-                           'package-id', component.package_id, \
-                           'package-version', component.package_version \
-                       ), \
-                       'component', component.component, \
-                       'interface-version', component.interface_version, \
-                       'operations', component.operations, \
-                       'component-digest', component.component_digest, \
-                       'imports', component.imports, \
-                       'imports-fingerprint', component.imports_fingerprint, \
-                       'effects', component.effects \
-                   ) \
-               ) ORDER BY member.node_id COLLATE \"C\" \
-           ) FILTER (WHERE member.node_id IS NOT NULL), \
-           '[]'::jsonb \
-       )::text AS node_components, \
-       COALESCE( \
-           (SELECT jsonb_agg( \
-               jsonb_build_object( \
-                   'scope', jsonb_build_object( \
-                       'tenant-id', $1::text, \
-                       'package-id', component.package_id, \
-                       'package-version', component.package_version \
-                   ), \
-                   'component', component.component, \
-                   'interface-version', component.interface_version, \
-                   'operations', component.operations, \
-                   'component-digest', component.component_digest, \
-                   'imports', component.imports, \
-                   'imports-fingerprint', component.imports_fingerprint, \
-                   'effects', component.effects \
-               ) ORDER BY projected.ordinality \
-            ) \
-              FROM jsonb_array_elements(selected.manifest -> 'components') \
-                   WITH ORDINALITY AS projected(definition, ordinality) \
-              JOIN catalog.effective_release_packages AS release_package \
-                ON release_package.tenant_id = $1 \
-               AND release_package.effective_release_id = selected.effective_release_id \
-               AND release_package.package_id = projected.definition ->> 'package-id' \
-              JOIN catalog.component_library AS component \
-                ON component.tenant_id = release_package.tenant_id \
-               AND component.package_id = release_package.package_id \
-               AND component.package_version = release_package.package_version \
-               AND component.component = projected.definition ->> 'component' \
-               AND component.interface_version = projected.definition ->> 'interface-version' \
-               AND component.component_digest = projected.definition ->> 'digest'), \
-           '[]'::jsonb \
-       )::text AS components, \
-       jsonb_array_length(selected.manifest -> 'components') AS manifest_component_count \
-  FROM selected \
-  LEFT JOIN catalog.release_components AS member \
-    ON member.tenant_id = $1 \
-   AND member.effective_release_id = selected.effective_release_id \
-   AND member.wiring_package_id = $2 \
-   AND member.wiring_package_version = selected.package_version \
-   AND member.wiring_id = $4 \
-   AND member.wiring_version = $5 \
-  LEFT JOIN catalog.component_library AS component \
-    ON component.tenant_id = member.tenant_id \
-   AND component.package_id = member.package_id \
-   AND component.package_version = member.package_version \
-   AND component.component_digest = member.component_digest \
- GROUP BY selected.version, selected.effective_release_id, \
-          selected.package_version, \
-          selected.graph_json, selected.wiring_hash, selected.manifest";
-
-/// The immutable-version snapshot behind a queued delivery. Unlike
-/// [`ACTIVE_WIRING_SQL`], this deliberately does not consult the mutable
-/// activation pointer: admission already froze the exact wiring version.
+/// The immutable-version snapshot behind a released delivery. Admission
+/// already froze the exact wiring version.
 /// Exact package membership and the verified format-1 snapshot keep that
 /// historical version scoped to the carried tenant/package/environment release.
 pub const RELEASE_WIRING_SQL: &str = "\
@@ -427,7 +309,7 @@ SELECT NOT EXISTS ( \
        ) \
 )";
 
-/// A typed active wiring ready for the router and component source.
+/// An immutable wiring and its resolved facts for the router and component source.
 #[derive(Debug, Clone)]
 pub struct ResolvedActiveWiring {
     pub version: u32,
@@ -460,92 +342,10 @@ impl ResolvedActiveWiring {
 }
 
 impl WamnPostgres {
-    /// Resolve and lower one exact active wiring version in one SQL snapshot.
+    /// Resolve the exact immutable wiring version frozen onto a delivery.
     ///
-    /// `Ok(None)` means the requested identity/version is not the enabled
-    /// pointer. Malformed or contradictory persisted facts are errors, never a
-    /// miss that a caller may reinterpret.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the complete activation key plus project are independent trusted coordinates"
-    )]
-    pub async fn resolve_active_wiring(
-        &self,
-        project: &str,
-        tenant_id: &str,
-        package_id: &str,
-        environment: &str,
-        wiring_id: &str,
-        wiring_version: u32,
-    ) -> anyhow::Result<Option<ResolvedActiveWiring>> {
-        anyhow::ensure!(wiring_version > 0, "active-wiring-version-zero");
-        let wiring_version = i32::try_from(wiring_version)
-            .context("active wiring version exceeds PostgreSQL int")?;
-        let (connection, policy) = self
-            .checkout_platform(project, AuthorityClass::ExecutorPlatform)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if let Err(error) = self
-            .begin_with_claims(
-                &connection,
-                AuthorityClass::ExecutorPlatform,
-                tenant_id,
-                None,
-                None,
-                None,
-                None,
-                None,
-                policy.statement_timeout_ms,
-            )
-            .await
-        {
-            self.destroy(connection);
-            return Err(anyhow::anyhow!(error.to_string()));
-        }
-
-        let params: [&(dyn ToSql + Sync); 5] = [
-            &tenant_id,
-            &package_id,
-            &environment,
-            &wiring_id,
-            &wiring_version,
-        ];
-        let selected = connection
-            .query_opt(ACTIVE_WIRING_SQL, &params)
-            .await
-            .context("query exact active wiring");
-        let result = match selected {
-            Ok(None) => Ok(None),
-            Ok(Some(row)) => {
-                decode_released_wiring(tenant_id, package_id, environment, wiring_id, &row)
-                    .map(Some)
-            }
-            Err(error) => Err(error),
-        };
-
-        match result {
-            Ok(resolved) => {
-                if let Err(error) = connection.batch_execute("COMMIT").await {
-                    self.destroy(connection);
-                    return Err(error).context("commit active wiring snapshot");
-                }
-                Ok(resolved)
-            }
-            Err(error) => {
-                if connection.batch_execute("ROLLBACK").await.is_err() {
-                    self.destroy(connection);
-                }
-                Err(error)
-            }
-        }
-    }
-
-    /// Resolve the exact immutable wiring version frozen onto a queued run.
-    ///
-    /// This path is intentionally independent of `wiring_activation`: a flip
-    /// after admission changes new direct deliveries, not history already
-    /// accepted by the queue. The exact format-1 release snapshot scopes the
-    /// version to the carried environment and release identity.
+    /// The format-1 release snapshot scopes the version to the carried
+    /// environment and release identity.
     #[expect(
         clippy::too_many_arguments,
         reason = "the frozen release and wiring coordinates are independent trusted facts"
@@ -1336,7 +1136,7 @@ mod tests {
 
     /// wamn-0h0g.21.11. The delivery path must refuse the fabricated purity
     /// claim, not merely the publication path. Deleting the call in
-    /// `resolve_active_wiring` leaves this failing.
+    /// `lower_resolved_wiring` leaves this failing.
     #[test]
     fn the_serving_path_refuses_an_effect_projection_no_validator_derived() {
         let served = vec![migration_defaulted(&["wamn:postgres/client@0.1.0"])];

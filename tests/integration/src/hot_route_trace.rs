@@ -33,7 +33,7 @@ mod tests {
     };
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tracing_subscriber::layer::SubscriberExt as _;
-    use wamn_execution_host::{RouterDriverRequest, WiringResolution};
+    use wamn_execution_host::RouterDriverRequest;
 
     use crate::trusted_http_route::{
         self, ENVIRONMENT, PACKAGE, RouteOptions, TENANT, WIRING_ID, WIRING_VERSION,
@@ -203,7 +203,6 @@ mod tests {
                 delivery_id: "hot-route-delivery-1".to_owned(),
                 payload: serde_json::json!({"id": 1}),
                 caller_attached: true,
-                resolution: WiringResolution::Active,
                 caller: None,
                 traceparent: Some(INCOMING_TRACEPARENT.to_owned()),
                 tracestate: None,

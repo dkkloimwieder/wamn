@@ -79,6 +79,10 @@ The host reads its private native configuration through `WAMN_MAT_NATS_BINDING_F
 Each environment's materializer credentials permit only its allowed stream, exact durable information, pull, acknowledgement, and private inbox subjects.
 The checkpoint removes custom WAMN delivery and settlement resources and payload dead-letter storage.
 WAMN retains release-registration checks, consumer preparation and drift refusal, derived publishing, and the separate scheduler doorbell.
+The unused active-wiring selector and PostgreSQL notification path are removed.
+Released deliveries and frozen candidates retain exact immutable resolution.
+The bounded cache keeps immutable versions and shares their compiled graphs.
+Activation writes, history, and validation remain in the catalog.
 The broker retains exhaustion and termination advisories instead of a second payload copy.
 An operator can retrieve an original payload only while the source stream retains it.
 

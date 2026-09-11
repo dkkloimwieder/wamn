@@ -4115,7 +4115,6 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | --- | --- | --- |
 | `crates/catalog/model/tests/wiring_activation_live.rs` | `WAMN_CATALOG_PG_URL` | `cargo test -p wamn-catalog --test wiring_activation_live -- --ignored` |
 | `crates/schema/introspection/tests/postgres_live.rs` | `WAMN_SCHEMA_INTROSPECTION_PG_URL` | `cargo test -p wamn-schema-introspection --test postgres_live -- --include-ignored --nocapture --test-threads=1` |
-| `crates/platform/runtime/tests/wiring_doorbell_live.rs` | `WAMN_CATALOG_PG_URL` | `cargo test -p wamn-runtime --test wiring_doorbell_live -- --ignored` |
 | `crates/platform/runtime/tests/executor_platform_surface_live.rs` | `WAMN_EXEC_PLATFORM_PG_URL` | `cargo test -p wamn-runtime --test executor_platform_surface_live -- --include-ignored` |
 | `crates/platform/runtime/tests/sqlx_transaction_live.rs` | `WAMN_SQLX_TRANSACTION_PG_URL` **and** `WAMN_SQLX_TRANSACTION_COMPONENT` | `cargo test -p wamn-runtime --test sqlx_transaction_live -- --include-ignored` |
 | `services/ctl/tests/effect_writer_generation_live.rs` | `WAMN_EFFECT_WRITER_PG18_URL` | `cargo test -p wamn-ctl --test effect_writer_generation_live -- --ignored --nocapture` |

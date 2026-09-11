@@ -21,7 +21,7 @@ use wamn_event_wire::Causation;
 use wamn_execution_host::{
     CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
     CandidateWiringTarget, RouterDriver, RouterDriverConfig, RouterDriverRequest,
-    RouterReadinessProbe, WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity, WiringResolution,
+    RouterReadinessProbe, WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
 };
 use wamn_run_state::FailKind;
 use wamn_runtime::component_artifact_source::{
@@ -679,7 +679,6 @@ async fn drain_one(
                     delivery_id: run_id.clone(),
                     payload,
                     caller_attached: router_caller_attached,
-                    resolution: WiringResolution::Frozen,
                     caller: None,
                     traceparent: None,
                     tracestate: None,

@@ -5,24 +5,13 @@
 //! need the same fixture: ONE provisioned executor-platform generation against
 //! the REAL `deploy/sql` schemas.
 //!
-//! PLAN SUPPLY. `wiring_resolution`'s three statements had NO LIVE GATE AT ALL,
-//! and the ELEVEN catalog relations they read were covered only by
-//! admission_live's schema-wide `has_table_privilege` totals. A grant asserted
-//! by a total with nothing running through it is the weakest proof this branch
-//! accepts, so each statement is executed here, verbatim, with bound
-//! parameters, as the minted generation. The union of the relations the three
-//! touch IS [`sql::EXECUTOR_PLATFORM_CATALOG_RELATIONS`]: activation, effective
-//! release heads and membership, wirings and tombstones plus the library
-//! (active); the v3 snapshot and release components (release); and the four
-//! connection relations (candidate).
+//! PLAN SUPPLY. The released and candidate wiring statements execute here with
+//! bound parameters under the minted executor-platform generation. The tests
+//! check exact component facts and distinguish legitimate empty results from
+//! missing row-level access.
 //!
-//! THE RAW STATEMENTS RATHER THAN `resolve_active_wiring` AND FRIENDS. Those
-//! wrappers decode and LOWER the result through `wiring_lowering`, which is a
-//! different owner with its own refusals — a lowering failure would arrive
-//! looking exactly like a grant failure, and a lowering that got stricter would
-//! red this gate for a reason that has nothing to do with the credential. What
-//! is unproven is whether these statements EXECUTE and RETURN under this
-//! credential, so that is what runs.
+//! The raw statements run without the resolution wrappers so lowering failures
+//! cannot hide which database access check failed.
 //!
 //! CREDENTIAL EXACTNESS. `credential_exactness_probe`'s wrong-database,
 //! wrong-tenant-binding and wrong-membership arms were unit-covered against a
@@ -44,7 +33,7 @@ use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_runtime::plugins::wamn_postgres::{
-    ACTIVE_WIRING_SQL, AclExpectation, AclTarget, AmbientCredentialState, CANDIDATE_WIRING_SQL,
+    AclExpectation, AclTarget, AmbientCredentialState, CANDIDATE_WIRING_SQL,
     CredentialConnectionKind, CredentialProbeErrorKind, CredentialProbePredicate,
     ExpectedCredentialIdentity, MembershipExpectation, MembershipMode, RELEASE_WIRING_SQL,
     credential_exactness_probe, explicit_credential_source,
@@ -69,8 +58,6 @@ const ENVIRONMENT: &str = "prod";
 const EFFECTIVE_RELEASE_ID: i32 = 1;
 const WIRING_ID: &str = "wiring-a";
 const WIRING_VERSION: i32 = 1;
-/// The retired pointer: enabled, well formed, and tombstoned.
-const DEAD_WIRING_ID: &str = "wiring-dead";
 
 fn digest(fill: &str) -> String {
     format!("sha256:{}", fill.repeat(64))
@@ -297,19 +284,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                (tenant_id,package_id,package_version,wiring_id,version, \
                 graph_json,wiring_hash) VALUES \
                ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{WIRING_ID}',{WIRING_VERSION}, \
-                '{live_graph}','{wiring_hash}'), \
-               ('{TENANT}','{PACKAGE_ID}','{PACKAGE_VERSION}','{DEAD_WIRING_ID}',{WIRING_VERSION}, \
-                '{dead_graph}','{dead_wiring_hash}'); \
-             INSERT INTO catalog.wiring_activation \
-               (tenant_id,package_id,environment,wiring_id,confirmed_definition_hash,enabled) \
-             VALUES \
-               ('{TENANT}','{PACKAGE_ID}','{ENVIRONMENT}','{WIRING_ID}','{wiring_hash}',true), \
-               ('{TENANT}','{PACKAGE_ID}','{ENVIRONMENT}','{DEAD_WIRING_ID}', \
-                '{dead_wiring_hash}',true); \
-             INSERT INTO catalog.wiring_tombstones \
-               (tenant_id,package_id,environment,wiring_id,reason) \
-             VALUES ('{TENANT}','{PACKAGE_ID}','{ENVIRONMENT}','{DEAD_WIRING_ID}', \
-                     'surface-proof'); \
+                '{live_graph}','{wiring_hash}'); \
              INSERT INTO catalog.release_components \
                (tenant_id,effective_release_id,wiring_package_id,wiring_package_version, \
                 wiring_id,wiring_version,node_id,package_id,package_version,component_digest) \
@@ -353,7 +328,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
                      '{WIRING_ID}',{WIRING_VERSION},'dispatched','{{}}'); \
              INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES ('{TENANT}','run-1');",
             live_graph = graph(WIRING_ID),
-            dead_graph = graph(DEAD_WIRING_ID),
         ))
         .await
         .context("seed the plan-supply fixture")?;
@@ -362,67 +336,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     let platform_url = generation_url(&admin_url, None)?;
     let generation = connect(&platform_url).await?;
     begin_claimed(&generation).await?;
-
-    let active = generation
-        .query(
-            ACTIVE_WIRING_SQL,
-            &[
-                &TENANT,
-                &PACKAGE_ID,
-                &ENVIRONMENT,
-                &WIRING_ID,
-                &WIRING_VERSION,
-            ],
-        )
-        .await
-        .context("the active-wiring snapshot must execute under the credential")?;
-    assert_eq!(
-        active.len(),
-        1,
-        "the enabled pointer resolved to no row under the executor credential"
-    );
-    assert_eq!(active[0].get::<_, i32>(0), WIRING_VERSION);
-    assert_eq!(active[0].get::<_, i32>(1), EFFECTIVE_RELEASE_ID);
-    assert_eq!(active[0].get::<_, String>(2), PACKAGE_VERSION);
-    assert_eq!(active[0].get::<_, String>(4), wiring_hash);
-    let components: Value = serde_json::from_str(&active[0].get::<_, String>(5))?;
-    assert_eq!(
-        components,
-        serde_json::json!([{
-            "scope": {
-                "tenant-id": TENANT, "package-id": PACKAGE_ID,
-                "package-version": PACKAGE_VERSION,
-            },
-            "component": "entity", "interface-version": "0.1", "operation": "create",
-            "registered-operation": null,
-            "component-digest": component_digest, "imports": [],
-            "imports-fingerprint": imports_fingerprint, "effects": [],
-            "input-ports": [], "output-ports": [], "parameters": [],
-        }]),
-        "the component library join produced no admitted fact"
-    );
-
-    // THE CONTROL THAT LEGITIMATELY READS ZERO. `wiring-dead` is a complete,
-    // ENABLED pointer at a well-formed definition whose hash matches — the only
-    // thing that withholds it is `catalog.wiring_tombstones`. A session that
-    // matched no policy would read zero here AND zero above; this one reads
-    // zero here and one above, on the same statement and the same connection.
-    let tombstoned = generation
-        .query(
-            ACTIVE_WIRING_SQL,
-            &[
-                &TENANT,
-                &PACKAGE_ID,
-                &ENVIRONMENT,
-                &DEAD_WIRING_ID,
-                &WIRING_VERSION,
-            ],
-        )
-        .await?;
-    assert!(
-        tombstoned.is_empty(),
-        "a retired wiring id resolved through its own tombstone"
-    );
 
     let manifest_digest: String = admin
         .query_one(
@@ -452,6 +365,8 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         1,
         "the frozen release version resolved to no row under the executor credential"
     );
+    assert_eq!(release[0].get::<_, i32>(0), WIRING_VERSION);
+    assert_eq!(release[0].get::<_, i32>(1), EFFECTIVE_RELEASE_ID);
     assert_eq!(release[0].get::<_, String>(2), PACKAGE_VERSION);
     assert_eq!(release[0].get::<_, String>(4), wiring_hash);
     let release_components: Value = serde_json::from_str(&release[0].get::<_, String>(5))?;
@@ -462,8 +377,20 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     );
     assert_eq!(release_components[0]["node-id"], "node");
     assert_eq!(
-        release_components[0]["component"]["component-digest"],
-        component_digest
+        release_components[0]["component"],
+        serde_json::json!({
+            "scope": {
+                "tenant-id": TENANT, "package-id": PACKAGE_ID,
+                "package-version": PACKAGE_VERSION,
+            },
+            "component": "entity", "interface-version": "0.1",
+            "operations": {
+                "create": {"input-ports": [], "output-ports": [], "parameters": []},
+            },
+            "component-digest": component_digest, "imports": [],
+            "imports-fingerprint": imports_fingerprint, "effects": [],
+        }),
+        "the component library join produced the wrong released fact"
     );
 
     // The release path's own legitimate zero: the same coordinates under a
