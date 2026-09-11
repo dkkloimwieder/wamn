@@ -329,6 +329,8 @@ async fn prove(
     project: &Client,
     lock: &Client,
     evidence: &mut Value,
+    nats: &async_nats::Client,
+    replay: &async_nats::Client,
 ) -> anyhow::Result<()> {
     let materializer = document
         .materializer
@@ -340,11 +342,6 @@ async fn prove(
         .retry(reqwest::retry::never())
         .timeout(Duration::from_secs(60))
         .build()?;
-    let nats = connect_event_proof_client(
-        &materializer.nats_url,
-        "WAMN_EVT_NATS_USERNAME",
-        "WAMN_EVT_NATS_PASSWORD_FILE",
-    ).await?;
     let jetstream = async_nats::jetstream::new(nats.clone());
     let mut events = jetstream.get_stream(MATERIALIZER_STREAM).await?;
     let mut taps = nats
@@ -405,11 +402,7 @@ async fn prove(
     let wait = dedup + Duration::from_secs(2);
     evidence["dedup_wait_ms"] = json!(wait.as_millis());
     tokio::time::sleep(wait).await;
-    let replay_publisher = async_nats::jetstream::new(connect_event_proof_client(
-        &materializer.nats_url,
-        "WAMN_EVT_NATS_REPLAY_USERNAME",
-        "WAMN_EVT_NATS_REPLAY_PASSWORD_FILE",
-    ).await?);
+    let replay_publisher = async_nats::jetstream::new(replay.clone());
     let replay = replay_publisher
         .publish_with_headers(
             original.subject.clone(),
@@ -617,13 +610,37 @@ async fn prove(
 #[ignore = "requires the disposable Receiving journey after its causal materializer baseline"]
 async fn production_materializer_preserves_replay_and_progress() -> anyhow::Result<()> {
     let document = JourneyDocument::required()?;
+    let materializer = document.materializer.as_ref()
+        .context("the journey omitted its materializer baseline")?;
+    let nats = connect_event_proof_client(
+        &materializer.nats_url,
+        "WAMN_EVT_NATS_USERNAME",
+        "WAMN_EVT_NATS_PASSWORD_FILE",
+    ).await?;
+    let replay = connect_event_proof_client(
+        &materializer.nats_url,
+        "WAMN_EVT_NATS_REPLAY_USERNAME",
+        "WAMN_EVT_NATS_REPLAY_PASSWORD_FILE",
+    ).await?;
+    assert_postcommit(
+        &document, "kind-wamn-receiving-postcommit", "wamn-receiving-postcommit", &nats, &replay,
+    ).await
+}
+
+pub(super) async fn assert_postcommit(
+    document: &JourneyDocument,
+    owned_context: &str,
+    owned_namespace: &str,
+    nats: &async_nats::Client,
+    replay: &async_nats::Client,
+) -> anyhow::Result<()> {
     let phase = document
         .postcommit
         .as_ref()
         .context("the journey omitted the armed postcommit phase")?;
     ensure!(
-        phase.context == "kind-wamn-receiving-postcommit"
-            && phase.namespace == "wamn-receiving-postcommit"
+        phase.context == owned_context
+            && phase.namespace == owned_namespace
             && phase.materializer_workload == "receiving-materializer"
             && phase.kubeconfig.is_file(),
         "post-commit proof requires the exact owned disposable Receiving materializer"
@@ -656,6 +673,8 @@ async fn production_materializer_preserves_replay_and_progress() -> anyhow::Resu
         project.as_ref(),
         lock.as_ref(),
         &mut evidence,
+        nats,
+        replay,
     )
     .await;
     project_task.abort();

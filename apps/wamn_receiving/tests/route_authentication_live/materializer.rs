@@ -35,15 +35,24 @@ pub(super) async fn connect_event_proof_client(
 #[ignore = "requires the disposable Receiving journey after its production materializer settles"]
 async fn production_materializer_consumes_the_causal_receipt_exactly_once() -> anyhow::Result<()> {
     let document = JourneyDocument::required()?;
-    let MaterializerPhase {
-        project_pg_url: project_url,
-        nats_url,
-        receipt_id,
-    } = document.materializer.context(
+    let phase = document.materializer.context(
         "the journey document carries no materializer phase: the route phase must \
          provision the project environment and the trigger must produce a receipt \
          before this test runs",
     )?;
+    let nats = connect_event_proof_client(
+        &phase.nats_url,
+        "WAMN_EVT_NATS_USERNAME",
+        "WAMN_EVT_NATS_PASSWORD_FILE",
+    ).await?;
+    assert_materializer_causation(&phase, nats).await
+}
+
+pub(super) async fn assert_materializer_causation(
+    phase: &MaterializerPhase,
+    nats: async_nats::Client,
+) -> anyhow::Result<()> {
+    let MaterializerPhase {project_pg_url: project_url, receipt_id, ..} = phase.clone();
     let (project, project_task) = connect(&project_url).await?;
 
     let registrations = project
@@ -73,13 +82,7 @@ async fn production_materializer_consumes_the_causal_receipt_exactly_once() -> a
         "installed event registration is not the exact Acme receipt binding: {registration_document}"
     );
 
-    let jetstream = async_nats::jetstream::new(
-        connect_event_proof_client(
-            &nats_url,
-            "WAMN_EVT_NATS_USERNAME",
-            "WAMN_EVT_NATS_PASSWORD_FILE",
-        ).await?,
-    );
+    let jetstream = async_nats::jetstream::new(nats);
     let mut stream = jetstream
         .get_stream(MATERIALIZER_STREAM)
         .await
