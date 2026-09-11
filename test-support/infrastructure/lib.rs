@@ -3,6 +3,7 @@
 //! MVP outcome: proof floor.
 
 pub mod ctl_process;
+pub mod declarations;
 
 pub mod rendering;
 pub mod scratch;

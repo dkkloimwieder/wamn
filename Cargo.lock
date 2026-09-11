@@ -6337,6 +6337,8 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tokio",
+ "wamn-authoring-model",
+ "wamn-catalog",
  "wamn-control-provision",
 ]
 
