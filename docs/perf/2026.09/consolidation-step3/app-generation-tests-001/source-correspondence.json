@@ -1,0 +1,51 @@
+{
+  "tested_commit": "f5ad982d7ca8bd3598bb617e89990ef3d535744d",
+  "extraction_commit": "b406a56b8090364b565ba24961a84a9d9eca1ac5",
+  "comparison_base": "965cd41835bd6e28b3f24b080392dac2dc53213e",
+  "files": {
+    "crates/schema/generator/tests/generation.rs": {
+      "recorded_sha256": "292fc176f5479edfe1e44303bbd0b7ef1068fcccb9fe5daab80db0ceb3691c7b",
+      "extraction_sha256": "292fc176f5479edfe1e44303bbd0b7ef1068fcccb9fe5daab80db0ceb3691c7b",
+      "tested_sha256": "292fc176f5479edfe1e44303bbd0b7ef1068fcccb9fe5daab80db0ceb3691c7b"
+    },
+    "crates/schema/generator/tests/support/generation.rs": {
+      "recorded_sha256": "223de908b8bd3a159ad6a5c836e3ec7a5f213cdb289f89960e0323991bc4545c",
+      "extraction_sha256": "223de908b8bd3a159ad6a5c836e3ec7a5f213cdb289f89960e0323991bc4545c",
+      "tested_sha256": "223de908b8bd3a159ad6a5c836e3ec7a5f213cdb289f89960e0323991bc4545c"
+    },
+    "apps/wamn_receiving/tests/generation.rs": {
+      "recorded_sha256": "a78f90ae53bb071b4db8eea2afc56730b9956aafd8e6e7214aaec98110b9c021",
+      "extraction_sha256": "a78f90ae53bb071b4db8eea2afc56730b9956aafd8e6e7214aaec98110b9c021",
+      "tested_sha256": "a78f90ae53bb071b4db8eea2afc56730b9956aafd8e6e7214aaec98110b9c021"
+    },
+    "apps/wamn_receiving/tests/Cargo.toml": {
+      "recorded_sha256": "156194981e130b18427047672b9f12f26fe9eb87f3291aa81ef4359ab100affa",
+      "extraction_sha256": "156194981e130b18427047672b9f12f26fe9eb87f3291aa81ef4359ab100affa",
+      "tested_sha256": "156194981e130b18427047672b9f12f26fe9eb87f3291aa81ef4359ab100affa"
+    }
+  },
+  "original_source": {
+    "965cd41835bd6e28b3f24b080392dac2dc53213e": "d478ac4e1712fa8fdcbd3af8d1619e3f6834e0a980d1ba420494df84f1f734ba",
+    "f5ad982d7ca8bd3598bb617e89990ef3d535744d^": "d478ac4e1712fa8fdcbd3af8d1619e3f6834e0a980d1ba420494df84f1f734ba"
+  },
+  "parse_records_match": true,
+  "all_60_test_names_pass_in_cargo_log": true,
+  "function_comparison_count": 89,
+  "changed_function_records": [
+    {
+      "name": "generic_custom_operation_path_preserves_shipped_receiving_bytes",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "433c50f4a9cf64920cf8d3bcf76ae82069db7829f74c7db51ff675e4b51aad47",
+      "body_after_sha256": "af5863e7e03a6c8adfd31cefd5c8af443f96dd92559c1f6d43c246ff84ec3659",
+      "path_only_change": true
+    }
+  ],
+  "all_89_function_bodies_match_recorded_hashes": true,
+  "single_body_change": {
+    "function": "generic_custom_operation_path_preserves_shipped_receiving_bytes",
+    "before": ".join(\"../../../apps/wamn_receiving\")",
+    "after": ".join(\"..\")"
+  }
+}

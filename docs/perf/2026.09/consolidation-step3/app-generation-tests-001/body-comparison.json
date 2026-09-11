@@ -1,0 +1,966 @@
+{
+  "base": "965cd41835bd6e28b3f24b080392dac2dc53213e",
+  "original_sha256": "d478ac4e1712fa8fdcbd3af8d1619e3f6834e0a980d1ba420494df84f1f734ba",
+  "functions": [
+    {
+      "name": "catalog",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "e71e817141b4e1e5c4eef4b8ceb56caa85e48f8109f15520a5489bb03994ccc8",
+      "body_after_sha256": "e71e817141b4e1e5c4eef4b8ceb56caa85e48f8109f15520a5489bb03994ccc8",
+      "path_only_change": false
+    },
+    {
+      "name": "receiving_catalog",
+      "test": false,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "380a8a33c22888b223c411fe6789cb8bd6d7223a8a279889fa9498bfdec0ac26",
+      "body_after_sha256": "380a8a33c22888b223c411fe6789cb8bd6d7223a8a279889fa9498bfdec0ac26",
+      "path_only_change": false
+    },
+    {
+      "name": "shipped_manifest",
+      "test": false,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "8d0eb7a7fcd47d347f649ee24c9345fdf7bac3a015be73d06cad01f53197660b",
+      "body_after_sha256": "8d0eb7a7fcd47d347f649ee24c9345fdf7bac3a015be73d06cad01f53197660b",
+      "path_only_change": false
+    },
+    {
+      "name": "projection_operation",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "ac5e86f566431f647f7bc160d62770a0108f4cd478d1cc3cc9026ff539d7a077",
+      "body_after_sha256": "ac5e86f566431f647f7bc160d62770a0108f4cd478d1cc3cc9026ff539d7a077",
+      "path_only_change": false
+    },
+    {
+      "name": "event_handler_operation",
+      "test": false,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "427ed645e1825066c4c382d94f51df0c8094a7bcbadf560aaaa3aa45b06cd6f2",
+      "body_after_sha256": "427ed645e1825066c4c382d94f51df0c8094a7bcbadf560aaaa3aa45b06cd6f2",
+      "path_only_change": false
+    },
+    {
+      "name": "generic_operation_sources",
+      "test": false,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "964ada30872be33d9cd3e4dcbdd30c0f8ca2ff84678d9b7a98486299201c35ae",
+      "body_after_sha256": "964ada30872be33d9cd3e4dcbdd30c0f8ca2ff84678d9b7a98486299201c35ae",
+      "path_only_change": false
+    },
+    {
+      "name": "generic_custom_operation_manifest",
+      "test": false,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "2fc2232027a06a31be6982940782d97ae403fd984bea1e9d41ee672ab76e71ae",
+      "body_after_sha256": "2fc2232027a06a31be6982940782d97ae403fd984bea1e9d41ee672ab76e71ae",
+      "path_only_change": false
+    },
+    {
+      "name": "shipped_generation",
+      "test": false,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "c8dc05f3fbd7d23c06427baab1fab90e9aae6992bd3ebe4ace486a6c6c6949cb",
+      "body_after_sha256": "c8dc05f3fbd7d23c06427baab1fab90e9aae6992bd3ebe4ace486a6c6c6949cb",
+      "path_only_change": false
+    },
+    {
+      "name": "table",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "5dd06b3ede5b9a2a17d71800f058c6cb31fbf0bc346809880b701923f5fe83ea",
+      "body_after_sha256": "5dd06b3ede5b9a2a17d71800f058c6cb31fbf0bc346809880b701923f5fe83ea",
+      "path_only_change": false
+    },
+    {
+      "name": "rebuilt_table",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "986b26d44ce9a3cc9b9a3b1161fff23f5049cb42de1395415d02e31d44f4e960",
+      "body_after_sha256": "986b26d44ce9a3cc9b9a3b1161fff23f5049cb42de1395415d02e31d44f4e960",
+      "path_only_change": false
+    },
+    {
+      "name": "replacing_table",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "5406ec328580eeb207bc0e560abe18a25eab1e0dace2751e7a83d0b3238611f6",
+      "body_after_sha256": "5406ec328580eeb207bc0e560abe18a25eab1e0dace2751e7a83d0b3238611f6",
+      "path_only_change": false
+    },
+    {
+      "name": "manifest",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "5bd0a9dcd2b8daf26cebb47e62e78123ed1077f262e4c16949d2db953fad0b96",
+      "body_after_sha256": "5bd0a9dcd2b8daf26cebb47e62e78123ed1077f262e4c16949d2db953fad0b96",
+      "path_only_change": false
+    },
+    {
+      "name": "run",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "7ff702b5991da281e789ca14aa469106ce3ccc77f6e8088f45c88fa8b3cb9b85",
+      "body_after_sha256": "7ff702b5991da281e789ca14aa469106ce3ccc77f6e8088f45c88fa8b3cb9b85",
+      "path_only_change": false
+    },
+    {
+      "name": "artifact_json",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "59014e8fd78037f33936d367b1ba5dec52f30a6f789a8d01f5b49163377aa1df",
+      "body_after_sha256": "59014e8fd78037f33936d367b1ba5dec52f30a6f789a8d01f5b49163377aa1df",
+      "path_only_change": false
+    },
+    {
+      "name": "statement_digest",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "62050bd29f73ca636db38130170f8f5a2383323aabdf4be43f42a1ecdb254ce4",
+      "body_after_sha256": "62050bd29f73ca636db38130170f8f5a2383323aabdf4be43f42a1ecdb254ce4",
+      "path_only_change": false
+    },
+    {
+      "name": "wamn_accessor",
+      "test": false,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "33df6c4b2ec55e9710eb6142fd7595a392d1f7abad1d88b49c6492d85efcb1e7",
+      "body_after_sha256": "33df6c4b2ec55e9710eb6142fd7595a392d1f7abad1d88b49c6492d85efcb1e7",
+      "path_only_change": false
+    },
+    {
+      "name": "accessor_bind",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "4451f4dd9c310a6904d58f90427f8c8616a73418f8f7ac44dde3309ee993f65a",
+      "body_after_sha256": "4451f4dd9c310a6904d58f90427f8c8616a73418f8f7ac44dde3309ee993f65a",
+      "path_only_change": false
+    },
+    {
+      "name": "assert_native_fixtures_match_parity",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "f606cdb2ff40ecf3209bfef2cf624e8b66afb59a6d5bd6ee7bb4bdc2dbb80cc0",
+      "body_after_sha256": "f606cdb2ff40ecf3209bfef2cf624e8b66afb59a6d5bd6ee7bb4bdc2dbb80cc0",
+      "path_only_change": false
+    },
+    {
+      "name": "object_named",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "c1fe043d5776dd31a2ba104b5cb0d9c5b203ee5214ca7eba963cf12b62812d29",
+      "body_after_sha256": "c1fe043d5776dd31a2ba104b5cb0d9c5b203ee5214ca7eba963cf12b62812d29",
+      "path_only_change": false
+    },
+    {
+      "name": "strict_manifest_and_ir_references_fail_loudly",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "0e4ab78c11d5accfefaf2c7e65a278efea4076338e7cebb71ab79e15a98064ce",
+      "body_after_sha256": "0e4ab78c11d5accfefaf2c7e65a278efea4076338e7cebb71ab79e15a98064ce",
+      "path_only_change": false
+    },
+    {
+      "name": "overlay_manifest",
+      "test": false,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "aeedc69bc60678fb3f98c7bc07aa85dbf0517a170644594ca38ed7ac0ce46888",
+      "body_after_sha256": "aeedc69bc60678fb3f98c7bc07aa85dbf0517a170644594ca38ed7ac0ce46888",
+      "path_only_change": false
+    },
+    {
+      "name": "overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "10f81aead77f1700907c636a93d9029c100a0b61babeb87f433d91397010c6d6",
+      "body_after_sha256": "10f81aead77f1700907c636a93d9029c100a0b61babeb87f433d91397010c6d6",
+      "path_only_change": false
+    },
+    {
+      "name": "dependency_composition_may_add_one_declared_post_call_projection",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "5143ccedda5309b6adde223f2483d479cfa0078d3ad82ac41c5fc1e37cbbaef6",
+      "body_after_sha256": "5143ccedda5309b6adde223f2483d479cfa0078d3ad82ac41c5fc1e37cbbaef6",
+      "path_only_change": false
+    },
+    {
+      "name": "overlay_vocabulary_refuses_ranges_opaque_digests_and_unknown_definitions",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "d8ed38b5b227bb5ded7bf5e3d0df1ccffbf458e671be0751b09485b21b266d17",
+      "body_after_sha256": "d8ed38b5b227bb5ded7bf5e3d0df1ccffbf458e671be0751b09485b21b266d17",
+      "path_only_change": false
+    },
+    {
+      "name": "exclusion_owner_fixture",
+      "test": false,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "762efca44eaebc01bcae2d63e32ab30fbd4a4d778599bddd1ad2e03435211540",
+      "body_after_sha256": "762efca44eaebc01bcae2d63e32ab30fbd4a4d778599bddd1ad2e03435211540",
+      "path_only_change": false
+    },
+    {
+      "name": "exclusion_owners_accept_the_package_and_a_declared_base",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "d8bb48ecfc51395f1caa5738af45aa3825d4324201180f5c7927841071ca1c8d",
+      "body_after_sha256": "d8bb48ecfc51395f1caa5738af45aa3825d4324201180f5c7927841071ca1c8d",
+      "path_only_change": false
+    },
+    {
+      "name": "exclusion_owners_reject_unknown_constraints",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "27a61056657080ce60b37296656d97ceb9cd1281967733839e22e143b170a3a6",
+      "body_after_sha256": "27a61056657080ce60b37296656d97ceb9cd1281967733839e22e143b170a3a6",
+      "path_only_change": false
+    },
+    {
+      "name": "exclusion_owners_reject_undeclared_owners",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "d312a701c594e1cdde1b2dded64d99ff9cb7e0a5b6b98ebc26456670ae81cbaa",
+      "body_after_sha256": "d312a701c594e1cdde1b2dded64d99ff9cb7e0a5b6b98ebc26456670ae81cbaa",
+      "path_only_change": false
+    },
+    {
+      "name": "custom_operation_kinds_visibility_permissions_and_registration_are_closed",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "59c180cf4e3cfc4b4751a6c6c8934dcc1474dd62291617942b35a2d10e71f852",
+      "body_after_sha256": "59c180cf4e3cfc4b4751a6c6c8934dcc1474dd62291617942b35a2d10e71f852",
+      "path_only_change": false
+    },
+    {
+      "name": "custom_sql_generated_rust_symbols_are_unique_before_emission",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "382813ddf4d7ef060cfa884e9146e8c70a71fac61c1d18dcd57747ec04e9e178",
+      "body_after_sha256": "382813ddf4d7ef060cfa884e9146e8c70a71fac61c1d18dcd57747ec04e9e178",
+      "path_only_change": false
+    },
+    {
+      "name": "parsed_manifest",
+      "test": false,
+      "destination": "crates/schema/generator/tests/support/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "ddabc0d08c512211c2454875bf116b5d94d9057deae44b4bdfbfac17118a5f85",
+      "body_after_sha256": "ddabc0d08c512211c2454875bf116b5d94d9057deae44b4bdfbfac17118a5f85",
+      "path_only_change": false
+    },
+    {
+      "name": "operation_error_details_are_required_closed_and_exact",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "0e9f01c0843ad133c30817413390cae95589d0ceb1b6d2e80a5fb347add3a154",
+      "body_after_sha256": "0e9f01c0843ad133c30817413390cae95589d0ceb1b6d2e80a5fb347add3a154",
+      "path_only_change": false
+    },
+    {
+      "name": "component_grouping_defaults_one_group_and_refuses_invalid_splits",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "b5c71796141bd38994b433b3c2a60423002e284bcccc8925543d0f6e3c6a949a",
+      "body_after_sha256": "b5c71796141bd38994b433b3c2a60423002e284bcccc8925543d0f6e3c6a949a",
+      "path_only_change": false
+    },
+    {
+      "name": "shared_operation_vocabulary_refuses_permission_identity_drift",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "55d451def6cfb018325c70c2749cf710223ba71ada92b26d10ec5ed2283c846a",
+      "body_after_sha256": "55d451def6cfb018325c70c2749cf710223ba71ada92b26d10ec5ed2283c846a",
+      "path_only_change": false
+    },
+    {
+      "name": "shared_operation_vocabulary_refuses_noncanonical_coordinates",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "c7a9ba56de3624ff62aa1f885ec9e93c3d9990f3416400acf61ed85fb864ebfc",
+      "body_after_sha256": "c7a9ba56de3624ff62aa1f885ec9e93c3d9990f3416400acf61ed85fb864ebfc",
+      "path_only_change": false
+    },
+    {
+      "name": "mutation_contract_refuses_server_owned_and_nonnullable_null",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "22e86460216402477423c73af5946049172a587e263a5fdf4aa9694bedea6812",
+      "body_after_sha256": "22e86460216402477423c73af5946049172a587e263a5fdf4aa9694bedea6812",
+      "path_only_change": false
+    },
+    {
+      "name": "operation_identity_errors_and_constraint_names_are_closed",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "dfc599d5c3f17e3239701570d3a0d991e230601b6dfc6388ec3cbf255d42eadc",
+      "body_after_sha256": "dfc599d5c3f17e3239701570d3a0d991e230601b6dfc6388ec3cbf255d42eadc",
+      "path_only_change": false
+    },
+    {
+      "name": "generation_is_byte_stable_and_emits_both_projection_siblings",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "97b5c0c91fa74b5eda9752637a1b6ba621ab131b6f95fed7a0e1c66b44e8ecb8",
+      "body_after_sha256": "97b5c0c91fa74b5eda9752637a1b6ba621ab131b6f95fed7a0e1c66b44e8ecb8",
+      "path_only_change": false
+    },
+    {
+      "name": "generated_operations_ship_a_result_contract_with_closed_domains",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "7e6ec75def11abf9cf8e298618965a41fd7bd330c1007d8ac273616e602416c2",
+      "body_after_sha256": "7e6ec75def11abf9cf8e298618965a41fd7bd330c1007d8ac273616e602416c2",
+      "path_only_change": false
+    },
+    {
+      "name": "update_returning_names_only_the_declared_model_columns",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "062c2aa4ed22a16b292e8e0450de66bdc7b944d990434854344d050da8a950d7",
+      "body_after_sha256": "062c2aa4ed22a16b292e8e0450de66bdc7b944d990434854344d050da8a950d7",
+      "path_only_change": false
+    },
+    {
+      "name": "wamn_accessors_are_structurally_derived_from_operations_and_ir",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "481865cd6a8310b6346340d33e89bcb945b05577de94ef96bb6ea88a0e5a90f9",
+      "body_after_sha256": "481865cd6a8310b6346340d33e89bcb945b05577de94ef96bb6ea88a0e5a90f9",
+      "path_only_change": false
+    },
+    {
+      "name": "weld_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "b467e9fec2eec3b4f6a6cdfa79865dedcdba475ca67e9d0f46448b72baaafad9",
+      "body_after_sha256": "b467e9fec2eec3b4f6a6cdfa79865dedcdba475ca67e9d0f46448b72baaafad9",
+      "path_only_change": false
+    },
+    {
+      "name": "explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "ba202ef1f6a26b257071fe14878fec767cedb8019bc7aa153bca37f96312118b",
+      "body_after_sha256": "ba202ef1f6a26b257071fe14878fec767cedb8019bc7aa153bca37f96312118b",
+      "path_only_change": false
+    },
+    {
+      "name": "generated_weld_has_one_strict_canonical_reader",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "3597d8d7f7849570cade4ec9b3d021e22c5278bb7cb934073cb9c167c529df86",
+      "body_after_sha256": "3597d8d7f7849570cade4ec9b3d021e22c5278bb7cb934073cb9c167c529df86",
+      "path_only_change": false
+    },
+    {
+      "name": "corpus_hash_uses_sorted_unambiguous_framing",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "02c64aa21c7c3317ab1875e910e8e967909385adf8d696895296c242da083e4c",
+      "body_after_sha256": "02c64aa21c7c3317ab1875e910e8e967909385adf8d696895296c242da083e4c",
+      "path_only_change": false
+    },
+    {
+      "name": "ordered_filters_and_query_variants_remain_structural_and_finite",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "8cc51986f125a21f11ccaac28450669541385d7aeae79cbac9aa0298fed7f3cb",
+      "body_after_sha256": "8cc51986f125a21f11ccaac28450669541385d7aeae79cbac9aa0298fed7f3cb",
+      "path_only_change": false
+    },
+    {
+      "name": "duplicate_filters_and_schema_qualified_authored_sql_refuse",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "e42186db9f307675f1ded19c46215d0aefbb50e5770b9353c2060306e0ee938a",
+      "body_after_sha256": "e42186db9f307675f1ded19c46215d0aefbb50e5770b9353c2060306e0ee938a",
+      "path_only_change": false
+    },
+    {
+      "name": "shipped_receiving_manifest_and_authored_corpus_generate_without_drift",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "4bef2c746cea45cac4e36133c1aec359ac75896c8d2e4c10289742df34d86830",
+      "body_after_sha256": "4bef2c746cea45cac4e36133c1aec359ac75896c8d2e4c10289742df34d86830",
+      "path_only_change": false
+    },
+    {
+      "name": "generic_custom_operation_path_preserves_shipped_receiving_bytes",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "433c50f4a9cf64920cf8d3bcf76ae82069db7829f74c7db51ff675e4b51aad47",
+      "body_after_sha256": "af5863e7e03a6c8adfd31cefd5c8af443f96dd92559c1f6d43c246ff84ec3659",
+      "path_only_change": true
+    },
+    {
+      "name": "fresh_only_public_operations_emit_policy_and_false_preserves_contract_bytes",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "fd7a2446fdccea50c3f744a5d4918155a1b2f0a17f3f6c10edbe27c2aa06284f",
+      "body_after_sha256": "fd7a2446fdccea50c3f744a5d4918155a1b2f0a17f3f6c10edbe27c2aa06284f",
+      "path_only_change": false
+    },
+    {
+      "name": "fresh_only_refuses_private_operations_and_non_boolean_flags",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "380af8aaa1d5e6566b976f0dc51fe490fd57bb225e6a69b663ff8ffda963a7ad",
+      "body_after_sha256": "380af8aaa1d5e6566b976f0dc51fe490fd57bb225e6a69b663ff8ffda963a7ad",
+      "path_only_change": false
+    },
+    {
+      "name": "generic_custom_operation_kinds_emit_typed_contracts_and_sql_siblings",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "4e5995f99a5b04f9ae86ef0d26533bd118786ff8338f8518a0df7075f987c003",
+      "body_after_sha256": "4e5995f99a5b04f9ae86ef0d26533bd118786ff8338f8518a0df7075f987c003",
+      "path_only_change": false
+    },
+    {
+      "name": "ownership_only_model_generates_without_fabricated_crud",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "0f468bdc1868114c290d83637cbcdbbb26b200b53f21e367a46e5cff2b09e787",
+      "body_after_sha256": "0f468bdc1868114c290d83637cbcdbbb26b200b53f21e367a46e5cff2b09e787",
+      "path_only_change": false
+    },
+    {
+      "name": "internal_relation_cdc_exclusion_is_closed_and_not_a_model",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "5c7dc4f5967ffd352f09d004406c29ad2d2428bfe191e29b58c1471396dbddd5",
+      "body_after_sha256": "5c7dc4f5967ffd352f09d004406c29ad2d2428bfe191e29b58c1471396dbddd5",
+      "path_only_change": false
+    },
+    {
+      "name": "command_privilege_declarations_match_sql_effects_and_row_locks",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "aac0d29a41d7be4ebee415f6c09614ad1d933c724e84c00cb214722e1fc979b6",
+      "body_after_sha256": "aac0d29a41d7be4ebee415f6c09614ad1d933c724e84c00cb214722e1fc979b6",
+      "path_only_change": false
+    },
+    {
+      "name": "command_privilege_mismatch_reports_returning_reads_and_declared_writes",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "023cf1d273d54362a1b8cc68f26aa4946a9d7ca1ef6957cbb1a4cf2e747934e7",
+      "body_after_sha256": "023cf1d273d54362a1b8cc68f26aa4946a9d7ca1ef6957cbb1a4cf2e747934e7",
+      "path_only_change": false
+    },
+    {
+      "name": "command_privilege_mismatch_reports_for_update_lock_and_declared_value",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "08890a1725c142c9196288df1fd185e619a1bc0396c2165e86267c36a36d8961",
+      "body_after_sha256": "08890a1725c142c9196288df1fd185e619a1bc0396c2165e86267c36a36d8961",
+      "path_only_change": false
+    },
+    {
+      "name": "shipped_command_source_map_parity_and_bind_fixtures_align_structurally",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "b2a270fa38939f304976d4f3cfcf121a28b21641e3baaba617035e8cae8b1cce",
+      "body_after_sha256": "b2a270fa38939f304976d4f3cfcf121a28b21641e3baaba617035e8cae8b1cce",
+      "path_only_change": false
+    },
+    {
+      "name": "custom_statement_declarations_drive_both_siblings_without_domain_tables",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "0612a5617c82fe5c0fe66cbd940ee410402106beb415e1fa3e1a9aa906d4052c",
+      "body_after_sha256": "0612a5617c82fe5c0fe66cbd940ee410402106beb415e1fa3e1a9aa906d4052c",
+      "path_only_change": false
+    },
+    {
+      "name": "custom_operation_ir_references_require_declared_fields_and_named_constraints",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "955615d467ef853b940cb1dd18cc2917746726162d06bd1a7c9f5866259e23fa",
+      "body_after_sha256": "955615d467ef853b940cb1dd18cc2917746726162d06bd1a7c9f5866259e23fa",
+      "path_only_change": false
+    },
+    {
+      "name": "additive_unused_column_on_consumed_relation_preserves_required_contract",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "640012d7b1f77c2fdf9a3a821ab19817739f444602ed7cc89de84d9ca8985877",
+      "body_after_sha256": "640012d7b1f77c2fdf9a3a821ab19817739f444602ed7cc89de84d9ca8985877",
+      "path_only_change": false
+    },
+    {
+      "name": "a_lineless_command_canonicalizes_without_a_line_profile",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "31c0629fd4fbde69937c41ee5890e8f5c5613f05944d201692a9a299fab4e805",
+      "body_after_sha256": "31c0629fd4fbde69937c41ee5890e8f5c5613f05944d201692a9a299fab4e805",
+      "path_only_change": false
+    },
+    {
+      "name": "a_line_profile_and_a_line_input_must_agree",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "3bb9173fc71fe48c71b3e1ca81cf5c3bf2833975a9925f87fcbe363548b1a6c4",
+      "body_after_sha256": "3bb9173fc71fe48c71b3e1ca81cf5c3bf2833975a9925f87fcbe363548b1a6c4",
+      "path_only_change": false
+    },
+    {
+      "name": "the_two_line_members_are_declared_together",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "1a7dfb89e5ecaccf2cb5cca6f041899e4e001cc4cabd88ebcbcec1c5f052942d",
+      "body_after_sha256": "1a7dfb89e5ecaccf2cb5cca6f041899e4e001cc4cabd88ebcbcec1c5f052942d",
+      "path_only_change": false
+    },
+    {
+      "name": "claim_columns",
+      "test": false,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "45817d3b2a10fa8350d1860b6881f84d4611ba5155c31e18c6ea79e2e88bf48a",
+      "body_after_sha256": "45817d3b2a10fa8350d1860b6881f84d4611ba5155c31e18c6ea79e2e88bf48a",
+      "path_only_change": false
+    },
+    {
+      "name": "claim_constraints",
+      "test": false,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "bc6eaf6e66d4f59f2cbd9a945e6ba4fd882d85911fda7057b6c383a836fbc8b8",
+      "body_after_sha256": "bc6eaf6e66d4f59f2cbd9a945e6ba4fd882d85911fda7057b6c383a836fbc8b8",
+      "path_only_change": false
+    },
+    {
+      "name": "claim_catalog_with",
+      "test": false,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "cc41f453e9d4aaedaad908e3d51dabf5829c7220d66d95a54a8b6c42126d2d96",
+      "body_after_sha256": "cc41f453e9d4aaedaad908e3d51dabf5829c7220d66d95a54a8b6c42126d2d96",
+      "path_only_change": false
+    },
+    {
+      "name": "claim_catalog",
+      "test": false,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "f82d5497427fb6453517ef6ba294e1b4bd01ec44bc9e8bcd2f0040e875a0726d",
+      "body_after_sha256": "f82d5497427fb6453517ef6ba294e1b4bd01ec44bc9e8bcd2f0040e875a0726d",
+      "path_only_change": false
+    },
+    {
+      "name": "claim_manifest",
+      "test": false,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "36d09491d2b574e5345c6306884bf8bc05daf6a525211289af9317b724141e02",
+      "body_after_sha256": "36d09491d2b574e5345c6306884bf8bc05daf6a525211289af9317b724141e02",
+      "path_only_change": false
+    },
+    {
+      "name": "generated_create_sql",
+      "test": false,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "047a2923fb075595d8151153af4256fec3294ca7c2edff153568140e9b3ce0e0",
+      "body_after_sha256": "047a2923fb075595d8151153af4256fec3294ca7c2edff153568140e9b3ce0e0",
+      "path_only_change": false
+    },
+    {
+      "name": "generated_create_takes_every_identity_from_the_claim",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "eb7938c59267af0a8351e55731df5ed109dfef2bd5e2cac828859127a18c423f",
+      "body_after_sha256": "eb7938c59267af0a8351e55731df5ed109dfef2bd5e2cac828859127a18c423f",
+      "path_only_change": false
+    },
+    {
+      "name": "generated_create_replay_writes_nothing",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "067ebb9c332dcce5e8fc657f6e68d69f489f9633d92b904988976c96dfe615dd",
+      "body_after_sha256": "067ebb9c332dcce5e8fc657f6e68d69f489f9633d92b904988976c96dfe615dd",
+      "path_only_change": false
+    },
+    {
+      "name": "generated_create_contracts_publish_the_claim_and_its_refusal",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "06ae261ceb1a05add72233e861ab1e325999dc7f0064daefec01ca75bbf00ca4",
+      "body_after_sha256": "06ae261ceb1a05add72233e861ab1e325999dc7f0064daefec01ca75bbf00ca4",
+      "path_only_change": false
+    },
+    {
+      "name": "every_generated_create_carries_the_two_claim_contract_tests",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "870f6101a9e0887b73dd113a173037c322973dd3dd27691a609618285d7baeed",
+      "body_after_sha256": "870f6101a9e0887b73dd113a173037c322973dd3dd27691a609618285d7baeed",
+      "path_only_change": false
+    },
+    {
+      "name": "only_a_create_carries_claim_contract_tests",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "ec2a4afa108ac5e5c3848d76b70e20926ac30b3e90279010d024d7075985b055",
+      "body_after_sha256": "ec2a4afa108ac5e5c3848d76b70e20926ac30b3e90279010d024d7075985b055",
+      "path_only_change": false
+    },
+    {
+      "name": "generated_create_pins_and_grants_its_claim_relation",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "ece34364d80bc01b82378004fd9c4ecde00ce80e6300debb0948dac0bd0a1c49",
+      "body_after_sha256": "ece34364d80bc01b82378004fd9c4ecde00ce80e6300debb0948dac0bd0a1c49",
+      "path_only_change": false
+    },
+    {
+      "name": "generated_create_refuses_a_claim_that_does_not_pre_generate_identity",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "973da9cc82f6fd6686f8a99706c0e1e0762bd9a346806b1c912c59efa452a151",
+      "body_after_sha256": "973da9cc82f6fd6686f8a99706c0e1e0762bd9a346806b1c912c59efa452a151",
+      "path_only_change": false
+    },
+    {
+      "name": "a_model_identity_the_claim_does_not_mint_refuses",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "d6524caa83b29a6212956332b062af9c80498f61395a2e2460e96ac9978406dd",
+      "body_after_sha256": "d6524caa83b29a6212956332b062af9c80498f61395a2e2460e96ac9978406dd",
+      "path_only_change": false
+    },
+    {
+      "name": "idempotency_conflict_is_closed_to_the_create",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "c81fb4b5039ecf4ed414635e720cbbea2a235ac6599e997c7db689e76e4ff59e",
+      "body_after_sha256": "c81fb4b5039ecf4ed414635e720cbbea2a235ac6599e997c7db689e76e4ff59e",
+      "path_only_change": false
+    },
+    {
+      "name": "an_authored_command_carries_the_two_claim_contract_tests",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "a0850e97a19cb50e4fa10d4e441848994e2aeaf0d5e9a856e9743471b4d3a096",
+      "body_after_sha256": "a0850e97a19cb50e4fa10d4e441848994e2aeaf0d5e9a856e9743471b4d3a096",
+      "path_only_change": false
+    },
+    {
+      "name": "claim_finalization_requires_one_returned_row",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "98315269159e0fb8f451a20066eaf680e03278ead1dae4cacbef5cea185a5da9",
+      "body_after_sha256": "98315269159e0fb8f451a20066eaf680e03278ead1dae4cacbef5cea185a5da9",
+      "path_only_change": false
+    },
+    {
+      "name": "a_command_that_declares_no_idempotence_refuses_and_names_all_three_remedies",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "e3663764f525404f8851d32a44c8d75b0b807e0223d5db2fbf4b05f4ab524815",
+      "body_after_sha256": "e3663764f525404f8851d32a44c8d75b0b807e0223d5db2fbf4b05f4ab524815",
+      "path_only_change": false
+    },
+    {
+      "name": "a_state_idempotent_command_carries_the_relation_its_version_guards",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "a8c93f9272a5c466f5d65a63d1d230178e97933940155f05da201cac9fe2484f",
+      "body_after_sha256": "a8c93f9272a5c466f5d65a63d1d230178e97933940155f05da201cac9fe2484f",
+      "path_only_change": false
+    },
+    {
+      "name": "a_command_riding_a_base_claim_carries_its_one_contract_test",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "e4a75b74b319cfdc77c7b2a6ab34e0bf17f94d89e50a905bdeea3334f239fe4e",
+      "body_after_sha256": "e4a75b74b319cfdc77c7b2a6ab34e0bf17f94d89e50a905bdeea3334f239fe4e",
+      "path_only_change": false
+    },
+    {
+      "name": "an_inherited_command_that_writes_its_own_row_is_told_to_declare_a_claim",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "9da22bd0d463b77f940a23e9598bc0a4f3ca6ddbd4cfced0a24b9a2635c7bd42",
+      "body_after_sha256": "9da22bd0d463b77f940a23e9598bc0a4f3ca6ddbd4cfced0a24b9a2635c7bd42",
+      "path_only_change": false
+    },
+    {
+      "name": "state_command",
+      "test": false,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "46612455d646f3f6f607e9e4bcaa536871b65b53f55e048b615ce256fec71245",
+      "body_after_sha256": "46612455d646f3f6f607e9e4bcaa536871b65b53f55e048b615ce256fec71245",
+      "path_only_change": false
+    },
+    {
+      "name": "each_declared_idempotence_value_admits_only_its_own_shape",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "8d54df48687224549fe94681af98acf775ea891e66d300c11b665c7cf387bf22",
+      "body_after_sha256": "8d54df48687224549fe94681af98acf775ea891e66d300c11b665c7cf387bf22",
+      "path_only_change": false
+    },
+    {
+      "name": "an_authored_claim_is_refused_unless_every_identity_comes_from_it",
+      "test": true,
+      "destination": "apps/wamn_receiving/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "2a0afe2ecaa4dd4ea6bc12f6950c6041faff104ed51461ba17d1347532151e93",
+      "body_after_sha256": "2a0afe2ecaa4dd4ea6bc12f6950c6041faff104ed51461ba17d1347532151e93",
+      "path_only_change": false
+    },
+    {
+      "name": "a_generated_operation_names_an_exclusion_violation_with_its_constraint",
+      "test": true,
+      "destination": "crates/schema/generator/tests/generation.rs",
+      "body_preserved": true,
+      "body_before_sha256": "b57051ab556314c16e65326d894de95553ec18979f416d3eea357a6fc634be2f",
+      "body_after_sha256": "b57051ab556314c16e65326d894de95553ec18979f416d3eea357a6fc634be2f",
+      "path_only_change": false
+    }
+  ],
+  "test_count": 60,
+  "app_tests": [
+    "a_command_riding_a_base_claim_carries_its_one_contract_test",
+    "a_command_that_declares_no_idempotence_refuses_and_names_all_three_remedies",
+    "a_line_profile_and_a_line_input_must_agree",
+    "a_lineless_command_canonicalizes_without_a_line_profile",
+    "a_state_idempotent_command_carries_the_relation_its_version_guards",
+    "additive_unused_column_on_consumed_relation_preserves_required_contract",
+    "an_authored_claim_is_refused_unless_every_identity_comes_from_it",
+    "an_authored_command_carries_the_two_claim_contract_tests",
+    "an_inherited_command_that_writes_its_own_row_is_told_to_declare_a_claim",
+    "claim_finalization_requires_one_returned_row",
+    "command_privilege_declarations_match_sql_effects_and_row_locks",
+    "command_privilege_mismatch_reports_for_update_lock_and_declared_value",
+    "command_privilege_mismatch_reports_returning_reads_and_declared_writes",
+    "custom_operation_ir_references_require_declared_fields_and_named_constraints",
+    "custom_operation_kinds_visibility_permissions_and_registration_are_closed",
+    "custom_statement_declarations_drive_both_siblings_without_domain_tables",
+    "dependency_composition_may_add_one_declared_post_call_projection",
+    "each_declared_idempotence_value_admits_only_its_own_shape",
+    "exclusion_owners_accept_the_package_and_a_declared_base",
+    "exclusion_owners_reject_undeclared_owners",
+    "exclusion_owners_reject_unknown_constraints",
+    "fresh_only_public_operations_emit_policy_and_false_preserves_contract_bytes",
+    "fresh_only_refuses_private_operations_and_non_boolean_flags",
+    "generic_custom_operation_kinds_emit_typed_contracts_and_sql_siblings",
+    "generic_custom_operation_path_preserves_shipped_receiving_bytes",
+    "internal_relation_cdc_exclusion_is_closed_and_not_a_model",
+    "operation_error_details_are_required_closed_and_exact",
+    "overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain",
+    "overlay_vocabulary_refuses_ranges_opaque_digests_and_unknown_definitions",
+    "ownership_only_model_generates_without_fabricated_crud",
+    "shipped_command_source_map_parity_and_bind_fixtures_align_structurally",
+    "shipped_receiving_manifest_and_authored_corpus_generate_without_drift",
+    "the_two_line_members_are_declared_together"
+  ],
+  "generator_tests": [
+    "a_generated_operation_names_an_exclusion_violation_with_its_constraint",
+    "a_model_identity_the_claim_does_not_mint_refuses",
+    "component_grouping_defaults_one_group_and_refuses_invalid_splits",
+    "corpus_hash_uses_sorted_unambiguous_framing",
+    "custom_sql_generated_rust_symbols_are_unique_before_emission",
+    "duplicate_filters_and_schema_qualified_authored_sql_refuse",
+    "every_generated_create_carries_the_two_claim_contract_tests",
+    "explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields",
+    "generated_create_contracts_publish_the_claim_and_its_refusal",
+    "generated_create_pins_and_grants_its_claim_relation",
+    "generated_create_refuses_a_claim_that_does_not_pre_generate_identity",
+    "generated_create_replay_writes_nothing",
+    "generated_create_takes_every_identity_from_the_claim",
+    "generated_operations_ship_a_result_contract_with_closed_domains",
+    "generated_weld_has_one_strict_canonical_reader",
+    "generation_is_byte_stable_and_emits_both_projection_siblings",
+    "idempotency_conflict_is_closed_to_the_create",
+    "mutation_contract_refuses_server_owned_and_nonnullable_null",
+    "only_a_create_carries_claim_contract_tests",
+    "operation_identity_errors_and_constraint_names_are_closed",
+    "ordered_filters_and_query_variants_remain_structural_and_finite",
+    "shared_operation_vocabulary_refuses_noncanonical_coordinates",
+    "shared_operation_vocabulary_refuses_permission_identity_drift",
+    "strict_manifest_and_ir_references_fail_loudly",
+    "update_returning_names_only_the_declared_model_columns",
+    "wamn_accessors_are_structurally_derived_from_operations_and_ir",
+    "weld_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables"
+  ],
+  "shared_helpers": [
+    "accessor_bind",
+    "artifact_json",
+    "assert_native_fixtures_match_parity",
+    "catalog",
+    "manifest",
+    "object_named",
+    "parsed_manifest",
+    "projection_operation",
+    "rebuilt_table",
+    "replacing_table",
+    "run",
+    "statement_digest",
+    "table"
+  ],
+  "shared_has_no_app_path_or_file_input": true,
+  "manifest_only_registers_existing_crate_test_target": true,
+  "files": {
+    "crates/schema/generator/tests/generation.rs": "292fc176f5479edfe1e44303bbd0b7ef1068fcccb9fe5daab80db0ceb3691c7b",
+    "crates/schema/generator/tests/support/generation.rs": "223de908b8bd3a159ad6a5c836e3ec7a5f213cdb289f89960e0323991bc4545c",
+    "apps/wamn_receiving/tests/generation.rs": "a78f90ae53bb071b4db8eea2afc56730b9956aafd8e6e7214aaec98110b9c021",
+    "apps/wamn_receiving/tests/Cargo.toml": "156194981e130b18427047672b9f12f26fe9eb87f3291aa81ef4359ab100affa"
+  },
+  "headers_formatted_without_changing_function_bodies": true,
+  "test_sets_after": {
+    "crates/schema/generator/tests/generation.rs": [
+      "strict_manifest_and_ir_references_fail_loudly",
+      "custom_sql_generated_rust_symbols_are_unique_before_emission",
+      "component_grouping_defaults_one_group_and_refuses_invalid_splits",
+      "shared_operation_vocabulary_refuses_permission_identity_drift",
+      "shared_operation_vocabulary_refuses_noncanonical_coordinates",
+      "mutation_contract_refuses_server_owned_and_nonnullable_null",
+      "operation_identity_errors_and_constraint_names_are_closed",
+      "generation_is_byte_stable_and_emits_both_projection_siblings",
+      "generated_operations_ship_a_result_contract_with_closed_domains",
+      "update_returning_names_only_the_declared_model_columns",
+      "wamn_accessors_are_structurally_derived_from_operations_and_ir",
+      "weld_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables",
+      "explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields",
+      "generated_weld_has_one_strict_canonical_reader",
+      "corpus_hash_uses_sorted_unambiguous_framing",
+      "ordered_filters_and_query_variants_remain_structural_and_finite",
+      "duplicate_filters_and_schema_qualified_authored_sql_refuse",
+      "generated_create_takes_every_identity_from_the_claim",
+      "generated_create_replay_writes_nothing",
+      "generated_create_contracts_publish_the_claim_and_its_refusal",
+      "every_generated_create_carries_the_two_claim_contract_tests",
+      "only_a_create_carries_claim_contract_tests",
+      "generated_create_pins_and_grants_its_claim_relation",
+      "generated_create_refuses_a_claim_that_does_not_pre_generate_identity",
+      "a_model_identity_the_claim_does_not_mint_refuses",
+      "idempotency_conflict_is_closed_to_the_create",
+      "a_generated_operation_names_an_exclusion_violation_with_its_constraint"
+    ],
+    "crates/schema/generator/tests/support/generation.rs": [],
+    "apps/wamn_receiving/tests/generation.rs": [
+      "overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain",
+      "dependency_composition_may_add_one_declared_post_call_projection",
+      "overlay_vocabulary_refuses_ranges_opaque_digests_and_unknown_definitions",
+      "exclusion_owners_accept_the_package_and_a_declared_base",
+      "exclusion_owners_reject_unknown_constraints",
+      "exclusion_owners_reject_undeclared_owners",
+      "custom_operation_kinds_visibility_permissions_and_registration_are_closed",
+      "operation_error_details_are_required_closed_and_exact",
+      "shipped_receiving_manifest_and_authored_corpus_generate_without_drift",
+      "generic_custom_operation_path_preserves_shipped_receiving_bytes",
+      "fresh_only_public_operations_emit_policy_and_false_preserves_contract_bytes",
+      "fresh_only_refuses_private_operations_and_non_boolean_flags",
+      "generic_custom_operation_kinds_emit_typed_contracts_and_sql_siblings",
+      "ownership_only_model_generates_without_fabricated_crud",
+      "internal_relation_cdc_exclusion_is_closed_and_not_a_model",
+      "command_privilege_declarations_match_sql_effects_and_row_locks",
+      "command_privilege_mismatch_reports_returning_reads_and_declared_writes",
+      "command_privilege_mismatch_reports_for_update_lock_and_declared_value",
+      "shipped_command_source_map_parity_and_bind_fixtures_align_structurally",
+      "custom_statement_declarations_drive_both_siblings_without_domain_tables",
+      "custom_operation_ir_references_require_declared_fields_and_named_constraints",
+      "additive_unused_column_on_consumed_relation_preserves_required_contract",
+      "a_lineless_command_canonicalizes_without_a_line_profile",
+      "a_line_profile_and_a_line_input_must_agree",
+      "the_two_line_members_are_declared_together",
+      "an_authored_command_carries_the_two_claim_contract_tests",
+      "claim_finalization_requires_one_returned_row",
+      "a_command_that_declares_no_idempotence_refuses_and_names_all_three_remedies",
+      "a_state_idempotent_command_carries_the_relation_its_version_guards",
+      "a_command_riding_a_base_claim_carries_its_one_contract_test",
+      "an_inherited_command_that_writes_its_own_row_is_told_to_declare_a_claim",
+      "each_declared_idempotence_value_admits_only_its_own_shape",
+      "an_authored_claim_is_refused_unless_every_identity_comes_from_it"
+    ]
+  },
+  "commit": "b406a56b8090364b565ba24961a84a9d9eca1ac5",
+  "branch_status": "",
+  "staged_and_committed_bytes_match": true
+}
