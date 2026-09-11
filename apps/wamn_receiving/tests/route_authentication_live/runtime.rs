@@ -392,7 +392,7 @@ pub(super) async fn build_journey_runtime(
         },
     )?);
     let jetstream = Arc::new(
-        WamnJetstream::new(WamnJetstreamConfig { nats_url: None })
+        WamnJetstream::new(WamnJetstreamConfig { nats_url: None, ..Default::default() })
             .with_release(Some(Arc::clone(&release))),
     );
     let bridge = Arc::new(RouterDeliveryBridge::new(
