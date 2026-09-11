@@ -2,30 +2,23 @@
 
 
 use std::collections::{BTreeSet};
-use std::io::Write as _;
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use http_body_util::{BodyExt as _};
-use opentelemetry::trace::TracerProvider as _;
-use serde_json::Value;
 use tokio_postgres::Client;
-use tracing_subscriber::layer::SubscriberExt as _;
 use wamn_catalog::{SERVING_MANIFEST_FORMAT_VERSION};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::project_env_membership::{self, ProjectEnvMembershipArgs};
 use wamn_ctl::provision_project_env;
-use wamn_gate_harness::journey::{JourneyDocument, MaterializerPhase, journey_document_schema_bytes, parse_journey_document};
+use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
 use wamn_execution_host::{authorize_attachment_for_test};
 use wamn_platform_identity::{PrincipalKind, assign_project_role, create_human, create_service, disable_principal, issue_pat, resolve_subject, revoke_pat, route_caller_subject};
 use wamn_runtime::plugins::flow_http_routing::{FlowHttpRouting, RouteAuthentication, RouteInFlightLimit};
 use wamn_runtime::plugins::wamn_postgres::{AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
-use wasmtime_wasi_http::p3::bindings::Service;
 
 use wamn_ctl::dev::environment::{ENVIRONMENT, ORG, PROJECT, TENANT, connect, generation_args, provision_route, reset_control_store, secret_value};
 use wamn_test_infrastructure::scratch::ScratchRoot;
@@ -37,6 +30,7 @@ const OTHER_ENVIRONMENT: &str = "prod";
 const ROUTE_CALLER_ROLE: &str = "route-caller";
 const ATTACHMENT_ID: &str = "receiving-purchase-order-get";
 const OPERATION: &str = "wamn-receiving:purchase-order/get@1.0.0";
+const BASE_COMPONENT: &str = "receiving";
 const RESIDUE: &str = "wamn-receiving:obsolete/operation@1.0.0";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
