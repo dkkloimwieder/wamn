@@ -1,0 +1,54 @@
+{
+  "added_failures": [],
+  "same_identity_changed_causes": [],
+  "previous_failures_now_passed": [
+    {
+      "identity": [
+        "wamn-ctl",
+        "--test dev_command",
+        "dev_up_refuses_an_ephemeral_gate_port_and_names_it"
+      ],
+      "previous_cause": "the ephemeral-port refusal does not name the address: error: the following required arguments were not provided:\n--event-nats-url <EVENT_NATS_URL>\n--event-nats-username <EVENT_NATS_USERNAME>\n--event-nats-password-file <EVENT_NATS_PASSWORD_FILE>\n--event-provisioning-username <EVENT_PROVISIONING_USERNAME>\n--event-provisioning-password-file <EVENT_PROVISIONING_PASSWORD_FILE>\n--stream-replicas <STREAM_REPLICAS>\n--dup-window-secs <DUP_WINDOW_SECS>\nUsage: wamn dev up --system-database-url <SYSTEM_DATABASE_URL> --root <ROOT> --scenario-worker-binary <SCENARIO_WORKER_BINARY> --nats-url <NATS_URL> --event-nats-url <EVENT_NATS_URL> --event-nats-username <EVENT_NATS_USERNAME> --event-nats-password-file <EVENT_NATS_PASSWORD_FILE> --event-provisioning-username <EVENT_PROVISIONING_USERNAME> --event-provisioning-password-file <EVENT_PROVISIONING_PASSWORD_FILE> --stream-replicas <STREAM_REPLICAS> --dup-window-secs <DUP_WINDOW_SECS> --tempo-query-url <TEMPO_QUERY_URL> --otel-exporter-otlp-endpoint <OTEL_EXPORTER_OTLP_ENDPOINT> --component-artifact-base <COMPONENT_ARTIFACT_BASE> --release-artifact-base <RELEASE_ARTIFACT_BASE> --registry-auth-file <REGISTRY_AUTH_FILE> --route-host <ROUTE_HOST> --flow-http-workload-image <FLOW_HTTP_WORKLOAD_IMAGE> --host-binary <HOST_BINARY> --package <PACKAGES> --gate-bind <GATE_BIND>\nFor more information, try '--help'.",
+      "current_result": {
+        "description": "tests/dev_command.rs",
+        "executable": "target/debug/deps/dev_command-7fbc35ffa44633c7",
+        "case_log_line": 1634,
+        "completion_log_line": 1634,
+        "status": "ok"
+      },
+      "disposition": "The same named case executed and passed in this run."
+    },
+    {
+      "identity": [
+        "wamn-proof-conformance",
+        "--test wasmtime_source_identity",
+        "resolved_wasmtime_type_universe_is_single_and_canonical"
+      ],
+      "previous_cause": "assertion `left == right` failed: retained direct Wasmtime consumers or their required host interfaces drifted\nleft: {\"wamn-proof-conformance\": {\"wasmtime-wasi\"}, \"wamn-proof-integration\": {\"wasmtime-wasi\", \"wasmtime-wasi-http\"}, \"wamn-receiving-tests\": {\"wasmtime-wasi\", \"wasmtime-wasi-http\"}, \"wamn-runtime\": {\"wasmtime\", \"wasmtime-wasi\", \"wasmtime-wasi-http\"}}\nright: {\"wamn-proof-conformance\": {\"wasmtime-wasi\"}, \"wamn-proof-integration\": {\"wasmtime-wasi\", \"wasmtime-wasi-http\"}, \"wamn-runtime\": {\"wasmtime\", \"wasmtime-wasi\", \"wasmtime-wasi-http\"}}",
+      "current_result": {
+        "description": "tests/wasmtime_source_identity.rs",
+        "executable": "target/debug/deps/wasmtime_source_identity-485e54a70a9c144a",
+        "case_log_line": 2677,
+        "completion_log_line": 2677,
+        "status": "ok"
+      },
+      "disposition": "The same named case executed and passed in this run."
+    },
+    {
+      "identity": [
+        "wamn-proof-system",
+        "--test deploy_platform_inventory",
+        "only_identity_receives_issuer_credentials_and_other_consumers_keep_their_classes"
+      ],
+      "previous_cause": "assertion `left == right` failed: values-host-default.yaml credential classes changed\nleft: {\"WAMN_EVT_DUP_WINDOW_SECS\": (\"wamn-event-nats\", \"dup_window_secs\"), \"WAMN_EVT_ENV\": (\"wamn-event-nats\", \"environment\"), \"WAMN_EVT_NATS_USERNAME\": (\"wamn-event-nats\", \"username\"), \"WAMN_EVT_ORG\": (\"wamn-event-nats\", \"org\"), \"WAMN_EVT_PROJECT\": (\"wamn-event-nats\", \"project\"), \"WAMN_EVT_STREAM_REPLICAS\": (\"wamn-event-nats\", \"stream_replicas\"), \"WAMN_PG_URL\": (\"wamn-host-db\", \"url\")}\nright: {\"WAMN_EVT_ENV\": (\"wamn-event-nats\", \"environment\"), \"WAMN_EVT_NATS_USERNAME\": (\"wamn-event-nats\", \"username\"), \"WAMN_EVT_ORG\": (\"wamn-event-nats\", \"org\"), \"WAMN_EVT_PROJECT\": (\"wamn-event-nats\", \"project\"), \"WAMN_PG_URL\": (\"wamn-host-db\", \"url\")}",
+      "current_result": {
+        "description": "tests/deploy_platform_inventory.rs",
+        "executable": "target/debug/deps/deploy_platform_inventory-d567c0e0e6b2ba7d",
+        "case_log_line": 2924,
+        "completion_log_line": 2924,
+        "status": "ok"
+      },
+      "disposition": "The same named case executed and passed in this run."
+    }
+  ]
+}

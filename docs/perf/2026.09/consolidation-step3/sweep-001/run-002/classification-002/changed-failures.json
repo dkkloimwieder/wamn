@@ -1,0 +1,1264 @@
+{
+  "added_failures": [
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev::config::tests::complete_config_reaches_every_declared_endpoint_once"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "bind semantic endpoint: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1317,
+        "completion_log_line": 1317,
+        "status": "ok"
+      },
+      "current_log_line": 1300,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/dev/config.rs:1887"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev::config::tests::unreachable_endpoint_names_only_its_key_and_sanitized_endpoint"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "reserve refused endpoint: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1328,
+        "completion_log_line": 1328,
+        "status": "ok"
+      },
+      "current_log_line": 1315,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/dev/config.rs:2294"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::keeps_a_pre_dispatch_http_refusal_distinct_from_a_gate_judgment"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1424,
+        "completion_log_line": 1424,
+        "status": "ok"
+      },
+      "current_log_line": 1413,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/dev_gate.rs:415"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::one_deadline_bounds_the_whole_http_exchange"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "bind stalled server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1425,
+        "completion_log_line": 1425,
+        "status": "ok"
+      },
+      "current_log_line": 1417,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/dev_gate.rs:645"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::posts_the_exact_gate_contract_with_bearer_auth"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1426,
+        "completion_log_line": 1426,
+        "status": "ok"
+      },
+      "current_log_line": 1421,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/dev_gate.rs:415"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::publishes_the_exact_gated_document_through_the_same_authenticated_endpoint"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1427,
+        "completion_log_line": 1427,
+        "status": "ok"
+      },
+      "current_log_line": 1425,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/dev_gate.rs:415"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::rejects_a_malformed_gate_response"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1428,
+        "completion_log_line": 1428,
+        "status": "ok"
+      },
+      "current_log_line": 1429,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/dev_gate.rs:415"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::rejects_a_wrong_command_echo_or_non_gate_outcome"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1429,
+        "completion_log_line": 1429,
+        "status": "ok"
+      },
+      "current_log_line": 1433,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/dev_gate.rs:415"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::returns_the_contracts_gate_refusal_without_redefining_it"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1430,
+        "completion_log_line": 1430,
+        "status": "ok"
+      },
+      "current_log_line": 1437,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/dev_gate.rs:415"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::transport_diagnostics_sanitize_the_url_and_never_leak_the_token"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "reserve unused address: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1431,
+        "completion_log_line": 1431,
+        "status": "ok"
+      },
+      "current_log_line": 1441,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/dev_gate.rs:674"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "pat_client::tests::https_issuance_does_not_redirect_retry_or_accept_large_bodies"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1443,
+        "completion_log_line": 1443,
+        "status": "ok"
+      },
+      "current_log_line": 1456,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/pat_client.rs:456"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "pat_client::tests::https_issuance_refuses_wrong_server_certificate"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1444,
+        "completion_log_line": 1444,
+        "status": "ok"
+      },
+      "current_log_line": 1460,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/pat_client.rs:456"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "pat_client::tests::https_issuance_uses_operator_certificate_and_exact_request"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1445,
+        "completion_log_line": 1445,
+        "status": "ok"
+      },
+      "current_log_line": 1464,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/src/pat_client.rs:456"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--test dev_command",
+        "a_gate_that_dies_before_listening_is_reported_against_its_port"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "the readiness refusal does not say the Gate died: the management Gate cannot take 127.0.0.1:18099: Operation not permitted (os error 1)",
+      "previous_result": {
+        "description": "tests/dev_command.rs",
+        "executable": "target/debug/deps/dev_command-7fbc35ffa44633c7",
+        "case_log_line": 1655,
+        "completion_log_line": 1655,
+        "status": "ok"
+      },
+      "current_log_line": 1690,
+      "source_evidence_keys": [
+        "bead5288:services/ctl/tests/dev_command.rs:163",
+        "bead5288:services/ctl/src/dev/environment.rs:772"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-executor",
+        "--lib",
+        "readiness::tests::native_probes_preserve_readiness_authority_and_report_starting_and_draining"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "called `Result::unwrap()` on an `Err` value: bind executor probes\nCaused by:\n0: failed to bind the probe listener on 127.0.0.1:0\n1: Operation not permitted (os error 1)",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_executor-2aaeb99d5f7f03fb",
+        "case_log_line": 2040,
+        "completion_log_line": 2040,
+        "status": "ok"
+      },
+      "current_log_line": 2063,
+      "source_evidence_keys": [
+        "bead5288:services/executor/src/readiness.rs:116"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-host",
+        "--bin wamn-host",
+        "host::tests::native_probe_termination_triggers_failure_and_cleanup"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "called `Result::unwrap()` on an `Err` value: failed to bind the probe listener on 127.0.0.1:0\nCaused by:\nOperation not permitted (os error 1)",
+      "previous_result": {
+        "description": "unittests src/main.rs",
+        "executable": "target/debug/deps/wamn_host-84a0f321714f680d",
+        "case_log_line": 2132,
+        "completion_log_line": 2132,
+        "status": "ok"
+      },
+      "current_log_line": 2169,
+      "source_evidence_keys": [
+        "bead5288:services/host/src/host.rs:1239"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-proof-system",
+        "--lib",
+        "traceproof::tests::http_get_returns_content_length_body_without_waiting_for_close"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "bind keep-alive fixture: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_system-2c2e2d4b166f0afd",
+        "case_log_line": 2965,
+        "completion_log_line": 2965,
+        "status": "ok"
+      },
+      "current_log_line": 3002,
+      "source_evidence_keys": [
+        "bead5288:tests/system/src/traceproof.rs:443"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-receiving-tui",
+        "--bin wamn-receiving",
+        "tests::the_real_transport_returns_a_redirect_without_following_it"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "redirect fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/main.rs",
+        "executable": "target/debug/deps/wamn_receiving-99236de13f413a1c",
+        "case_log_line": 3178,
+        "completion_log_line": 3178,
+        "status": "ok"
+      },
+      "current_log_line": 3259,
+      "source_evidence_keys": [
+        "bead5288:apps/wamn_receiving/ui/src/main.rs:121"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "expected_router::tests::a_missing_native_handle_still_returns_404"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "called `Result::unwrap()` on an `Err` value: Operation not permitted (os error 1)",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3509,
+        "completion_log_line": 3509,
+        "status": "ok"
+      },
+      "current_log_line": 3600,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/expected_router.rs:303"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "expected_router::tests::native_ingress_preserves_refusals_bind_transitions_and_application_404"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "bind native ingress: Operation not permitted (os error 1)",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3511,
+        "completion_log_line": 3511,
+        "status": "ok"
+      },
+      "current_log_line": 3606,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/expected_router.rs:207"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "expected_router::tests::no_release_keeps_native_unknown_host_behavior"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "called `Result::unwrap()` on an `Err` value: Operation not permitted (os error 1)",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3512,
+        "completion_log_line": 3512,
+        "status": "ok"
+      },
+      "current_log_line": 3610,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/expected_router.rs:316"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "lifecycle::tests::native_probes_answer_while_ingress_is_saturated_and_after_it_recovers"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "called `Result::unwrap()` on an `Err` value: Operation not permitted (os error 1)",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3515,
+        "completion_log_line": 3515,
+        "status": "ok"
+      },
+      "current_log_line": 3616,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/lifecycle.rs:137"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::deadline_while_waiting_for_a_response_head_refunds_request_admission"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3538,
+        "completion_log_line": 3538,
+        "status": "ok"
+      },
+      "current_log_line": 3642,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::every_client_identity_field_and_peer_separates_pools"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3540,
+        "completion_log_line": 3540,
+        "status": "ok"
+      },
+      "current_log_line": 3647,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::global_requests_refuse_without_queued_work_or_client_creation"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3541,
+        "completion_log_line": 3541,
+        "status": "ok"
+      },
+      "current_log_line": 3651,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::http2_multiplexes_eight_requests_on_one_socket_and_still_refuses_the_ninth"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3542,
+        "completion_log_line": 3542,
+        "status": "ok"
+      },
+      "current_log_line": 3655,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::idle_pool_retains_two_sockets_then_expires_them"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3543,
+        "completion_log_line": 3543,
+        "status": "ok"
+      },
+      "current_log_line": 3659,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::mutation_disconnect_status_and_redirect_never_replay"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3544,
+        "completion_log_line": 3544,
+        "status": "ok"
+      },
+      "current_log_line": 3663,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::oversized_requests_refuse_before_connecting"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3545,
+        "completion_log_line": 3545,
+        "status": "ok"
+      },
+      "current_log_line": 3667,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::response_body_headers_and_trailers_are_bounded_while_reading"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3546,
+        "completion_log_line": 3546,
+        "status": "ok"
+      },
+      "current_log_line": 3671,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::retired_client_leases_outlive_cache_entries_and_body_cancellation"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3547,
+        "completion_log_line": 3547,
+        "status": "ok"
+      },
+      "current_log_line": 3675,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::scoped_requests_are_shared_across_generations_until_bodies_finish"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3548,
+        "completion_log_line": 3548,
+        "status": "ok"
+      },
+      "current_log_line": 3679,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::socket_limits_include_idle_connections_and_all_generations"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3549,
+        "completion_log_line": 3549,
+        "status": "ok"
+      },
+      "current_log_line": 3683,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::tls_http1_and_http2_keep_logical_identity_and_reuse_connections"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3550,
+        "completion_log_line": 3550,
+        "status": "ok"
+      },
+      "current_log_line": 3687,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::trusted_certificate_for_a_different_logical_name_is_rejected"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3551,
+        "completion_log_line": 3551,
+        "status": "ok"
+      },
+      "current_log_line": 3691,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::warm_http_reuses_only_the_pinned_peer_and_never_caches_credentials"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3552,
+        "completion_log_line": 3552,
+        "status": "ok"
+      },
+      "current_log_line": 3695,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/src/plugins/connection_http/transport/tests.rs:60"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test release_manifest_source",
+        "a_conforming_stub_returns_the_exact_published_bytes"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "an ephemeral loopback port binds: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/release_manifest_source.rs",
+        "executable": "target/debug/deps/release_manifest_source-49d1c4914c4448e3",
+        "case_log_line": 3983,
+        "completion_log_line": 3983,
+        "status": "ok"
+      },
+      "current_log_line": 4146,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/release_manifest_source.rs:293"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test release_manifest_source",
+        "a_served_body_the_descriptor_undercounts_refuses_the_pull"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "an ephemeral loopback port binds: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/release_manifest_source.rs",
+        "executable": "target/debug/deps/release_manifest_source-49d1c4914c4448e3",
+        "case_log_line": 3993,
+        "completion_log_line": 3993,
+        "status": "ok"
+      },
+      "current_log_line": 4159,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/release_manifest_source.rs:293"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test release_manifest_source",
+        "a_served_body_the_named_digest_does_not_address_refuses_the_pull"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "an ephemeral loopback port binds: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/release_manifest_source.rs",
+        "executable": "target/debug/deps/release_manifest_source-49d1c4914c4448e3",
+        "case_log_line": 3994,
+        "completion_log_line": 3994,
+        "status": "ok"
+      },
+      "current_log_line": 4163,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/release_manifest_source.rs:293"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "body_stall_is_bounded_by_five_seconds_without_retry"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4008,
+        "completion_log_line": 4008,
+        "status": "ok"
+      },
+      "current_log_line": 4183,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "cancelled_request_releases_slot_without_resetting_its_interval"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4009,
+        "completion_log_line": 4009,
+        "status": "ok"
+      },
+      "current_log_line": 4188,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "complete_replacement_removes_absent_keys_including_an_empty_set"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4010,
+        "completion_log_line": 4010,
+        "status": "ok"
+      },
+      "current_log_line": 4192,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "configured_https_endpoint_and_exclusive_ca_are_the_only_trust_source"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4011,
+        "completion_log_line": 4011,
+        "status": "ok"
+      },
+      "current_log_line": 4196,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "delayed_in_window_age_is_anchored_at_start_and_hits_do_not_extend_it"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4012,
+        "completion_log_line": 4012,
+        "status": "ok"
+      },
+      "current_log_line": 4200,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "expired_malformed_and_ambiguous_age_are_refused"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4013,
+        "completion_log_line": 4013,
+        "status": "ok"
+      },
+      "current_log_line": 4204,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "invalid_or_private_key_documents_are_not_installed"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4014,
+        "completion_log_line": 4014,
+        "status": "ok"
+      },
+      "current_log_line": 4208,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "late_results_are_discarded_at_and_after_their_age_adjusted_deadline"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4015,
+        "completion_log_line": 4015,
+        "status": "ok"
+      },
+      "current_log_line": 4212,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "redirects_and_server_failures_are_not_followed_or_retried"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4016,
+        "completion_log_line": 4016,
+        "status": "ok"
+      },
+      "current_log_line": 4216,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "streaming_body_limit_accepts_exact_bound_and_refuses_the_next_byte"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4017,
+        "completion_log_line": 4017,
+        "status": "ok"
+      },
+      "current_log_line": 4220,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "two_warm_caches_fail_closed_at_deadline_when_endpoint_is_unavailable"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4018,
+        "completion_log_line": 4018,
+        "status": "ok"
+      },
+      "current_log_line": 4224,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "two_warm_caches_refuse_removed_key_with_endpoint_available"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4019,
+        "completion_log_line": 4019,
+        "status": "ok"
+      },
+      "current_log_line": 4228,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "varied_unknown_ids_share_one_inflight_slot_and_one_attempt_start_interval"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 4020,
+        "completion_log_line": 4020,
+        "status": "ok"
+      },
+      "current_log_line": 4232,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/session_keys.rs:117"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "age_rules_remain_separate_at_their_exact_boundaries"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4044,
+        "completion_log_line": 4044,
+        "status": "ok"
+      },
+      "current_log_line": 4277,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/support/session_fixture.rs:99"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "exact_org_and_environment_matrix_uses_one_configured_issuer_cache"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4045,
+        "completion_log_line": 4045,
+        "status": "ok"
+      },
+      "current_log_line": 4282,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/support/session_fixture.rs:99"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "pending_admission_rechecks_token_and_key_deadlines_after_permission_work"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4046,
+        "completion_log_line": 4046,
+        "status": "ok"
+      },
+      "current_log_line": 4286,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/support/session_fixture.rs:99"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "pinned_profile_refuses_before_fetch_and_claim_misses_never_gain_authority"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4047,
+        "completion_log_line": 4047,
+        "status": "ok"
+      },
+      "current_log_line": 4290,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/support/session_fixture.rs:99"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "token_age_is_read_after_a_delayed_key_fetch_not_before_it"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4048,
+        "completion_log_line": 4048,
+        "status": "ok"
+      },
+      "current_log_line": 4294,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/support/session_fixture.rs:99"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "two_local_verifiers_refuse_removed_key_by_deadline_with_and_without_jwks"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4049,
+        "completion_log_line": 4049,
+        "status": "ok"
+      },
+      "current_log_line": 4298,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/support/session_fixture.rs:99"
+      ]
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "unknown_key_ids_across_clones_share_the_issuer_refresh_budget"
+      ],
+      "classification": "socket_permission_refusal",
+      "cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "previous_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4050,
+        "completion_log_line": 4050,
+        "status": "ok"
+      },
+      "current_log_line": 4302,
+      "source_evidence_keys": [
+        "bead5288:crates/platform/runtime/tests/support/session_fixture.rs:99"
+      ]
+    }
+  ],
+  "same_identity_changed_causes": [
+    {
+      "identity": [
+        "wamn-proof-conformance",
+        "--test chart_seam_governance",
+        "receiving_pat_overlay_renders_a_complete_scoped_host"
+      ],
+      "before": {
+        "failure_signatures": [
+          "Rust panic",
+          "error: unable to recognize \"STDIN\": Get \"http://localhost:8080/api?timeout=32s\": dial tcp 127.0.0.1:8080: connect: connection refused"
+        ],
+        "referenced_arming_inputs": [],
+        "causal_lines": [
+          "Kubernetes decode failed: <klog-clock-pid> memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=32s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\"",
+          "error: unable to recognize \"STDIN\": Get \"http://localhost:8080/api?timeout=32s\": dial tcp 127.0.0.1:8080: connect: connection refused"
+        ]
+      },
+      "after": {
+        "failure_signatures": [
+          "Rust panic"
+        ],
+        "referenced_arming_inputs": [],
+        "causal_lines": [
+          "Helm render failed: Error: failed to perform \"FetchReference\" on source: Get \"https://ghcr.io/v2/wasmcloud/charts/runtime-operator/manifests/2.9.0\": dial tcp: lookup ghcr.io on 127.0.0.53:53: dial udp 127.0.0.53:53: socket: operation not permitted"
+        ]
+      }
+    }
+  ],
+  "previous_failures_now_passed": [
+    {
+      "identity": [
+        "wamn-ctl",
+        "--test dev_command",
+        "dev_up_refuses_an_ephemeral_gate_port_and_names_it"
+      ],
+      "previous_cause": "the ephemeral-port refusal does not name the address: error: the following required arguments were not provided:\n--event-nats-url <EVENT_NATS_URL>\n--event-nats-username <EVENT_NATS_USERNAME>\n--event-nats-password-file <EVENT_NATS_PASSWORD_FILE>\n--event-provisioning-username <EVENT_PROVISIONING_USERNAME>\n--event-provisioning-password-file <EVENT_PROVISIONING_PASSWORD_FILE>\n--stream-replicas <STREAM_REPLICAS>\n--dup-window-secs <DUP_WINDOW_SECS>\nUsage: wamn dev up --system-database-url <SYSTEM_DATABASE_URL> --root <ROOT> --scenario-worker-binary <SCENARIO_WORKER_BINARY> --nats-url <NATS_URL> --event-nats-url <EVENT_NATS_URL> --event-nats-username <EVENT_NATS_USERNAME> --event-nats-password-file <EVENT_NATS_PASSWORD_FILE> --event-provisioning-username <EVENT_PROVISIONING_USERNAME> --event-provisioning-password-file <EVENT_PROVISIONING_PASSWORD_FILE> --stream-replicas <STREAM_REPLICAS> --dup-window-secs <DUP_WINDOW_SECS> --tempo-query-url <TEMPO_QUERY_URL> --otel-exporter-otlp-endpoint <OTEL_EXPORTER_OTLP_ENDPOINT> --component-artifact-base <COMPONENT_ARTIFACT_BASE> --release-artifact-base <RELEASE_ARTIFACT_BASE> --registry-auth-file <REGISTRY_AUTH_FILE> --route-host <ROUTE_HOST> --flow-http-workload-image <FLOW_HTTP_WORKLOAD_IMAGE> --host-binary <HOST_BINARY> --package <PACKAGES> --gate-bind <GATE_BIND>\nFor more information, try '--help'.",
+      "current_result": {
+        "description": "tests/dev_command.rs",
+        "executable": "target/debug/deps/dev_command-7fbc35ffa44633c7",
+        "case_log_line": 1696,
+        "completion_log_line": 1696,
+        "status": "ok"
+      },
+      "disposition": "The same named case executed and passed in this run."
+    },
+    {
+      "identity": [
+        "wamn-proof-conformance",
+        "--test wasmtime_source_identity",
+        "resolved_wasmtime_type_universe_is_single_and_canonical"
+      ],
+      "previous_cause": "assertion `left == right` failed: retained direct Wasmtime consumers or their required host interfaces drifted\nleft: {\"wamn-proof-conformance\": {\"wasmtime-wasi\"}, \"wamn-proof-integration\": {\"wasmtime-wasi\", \"wasmtime-wasi-http\"}, \"wamn-receiving-tests\": {\"wasmtime-wasi\", \"wasmtime-wasi-http\"}, \"wamn-runtime\": {\"wasmtime\", \"wasmtime-wasi\", \"wasmtime-wasi-http\"}}\nright: {\"wamn-proof-conformance\": {\"wasmtime-wasi\"}, \"wamn-proof-integration\": {\"wasmtime-wasi\", \"wasmtime-wasi-http\"}, \"wamn-runtime\": {\"wasmtime\", \"wasmtime-wasi\", \"wasmtime-wasi-http\"}}",
+      "current_result": {
+        "description": "tests/wasmtime_source_identity.rs",
+        "executable": "target/debug/deps/wasmtime_source_identity-485e54a70a9c144a",
+        "case_log_line": 2771,
+        "completion_log_line": 2771,
+        "status": "ok"
+      },
+      "disposition": "The same named case executed and passed in this run."
+    },
+    {
+      "identity": [
+        "wamn-proof-system",
+        "--test deploy_platform_inventory",
+        "only_identity_receives_issuer_credentials_and_other_consumers_keep_their_classes"
+      ],
+      "previous_cause": "assertion `left == right` failed: values-host-default.yaml credential classes changed\nleft: {\"WAMN_EVT_DUP_WINDOW_SECS\": (\"wamn-event-nats\", \"dup_window_secs\"), \"WAMN_EVT_ENV\": (\"wamn-event-nats\", \"environment\"), \"WAMN_EVT_NATS_USERNAME\": (\"wamn-event-nats\", \"username\"), \"WAMN_EVT_ORG\": (\"wamn-event-nats\", \"org\"), \"WAMN_EVT_PROJECT\": (\"wamn-event-nats\", \"project\"), \"WAMN_EVT_STREAM_REPLICAS\": (\"wamn-event-nats\", \"stream_replicas\"), \"WAMN_PG_URL\": (\"wamn-host-db\", \"url\")}\nright: {\"WAMN_EVT_ENV\": (\"wamn-event-nats\", \"environment\"), \"WAMN_EVT_NATS_USERNAME\": (\"wamn-event-nats\", \"username\"), \"WAMN_EVT_ORG\": (\"wamn-event-nats\", \"org\"), \"WAMN_EVT_PROJECT\": (\"wamn-event-nats\", \"project\"), \"WAMN_PG_URL\": (\"wamn-host-db\", \"url\")}",
+      "current_result": {
+        "description": "tests/deploy_platform_inventory.rs",
+        "executable": "target/debug/deps/deploy_platform_inventory-d567c0e0e6b2ba7d",
+        "case_log_line": 3028,
+        "completion_log_line": 3028,
+        "status": "ok"
+      },
+      "disposition": "The same named case executed and passed in this run."
+    }
+  ]
+}

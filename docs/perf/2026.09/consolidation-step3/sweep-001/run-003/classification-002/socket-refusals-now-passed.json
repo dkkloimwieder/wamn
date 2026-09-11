@@ -1,0 +1,951 @@
+{
+  "source_changes_since_run2": [
+    "apps/wamn_wms/README.md"
+  ],
+  "cases": [
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev::config::tests::complete_config_reaches_every_declared_endpoint_once"
+      ],
+      "previous_cause": "bind semantic endpoint: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1294,
+        "completion_log_line": 1294,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev::config::tests::unreachable_endpoint_names_only_its_key_and_sanitized_endpoint"
+      ],
+      "previous_cause": "reserve refused endpoint: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1305,
+        "completion_log_line": 1305,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::keeps_a_pre_dispatch_http_refusal_distinct_from_a_gate_judgment"
+      ],
+      "previous_cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1401,
+        "completion_log_line": 1401,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::one_deadline_bounds_the_whole_http_exchange"
+      ],
+      "previous_cause": "bind stalled server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1402,
+        "completion_log_line": 1402,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::posts_the_exact_gate_contract_with_bearer_auth"
+      ],
+      "previous_cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1403,
+        "completion_log_line": 1403,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::publishes_the_exact_gated_document_through_the_same_authenticated_endpoint"
+      ],
+      "previous_cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1404,
+        "completion_log_line": 1404,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::rejects_a_malformed_gate_response"
+      ],
+      "previous_cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1405,
+        "completion_log_line": 1405,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::rejects_a_wrong_command_echo_or_non_gate_outcome"
+      ],
+      "previous_cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1406,
+        "completion_log_line": 1406,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::returns_the_contracts_gate_refusal_without_redefining_it"
+      ],
+      "previous_cause": "bind loopback server: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1407,
+        "completion_log_line": 1407,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "dev_gate::tests::transport_diagnostics_sanitize_the_url_and_never_leak_the_token"
+      ],
+      "previous_cause": "reserve unused address: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1408,
+        "completion_log_line": 1408,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "pat_client::tests::https_issuance_does_not_redirect_retry_or_accept_large_bodies"
+      ],
+      "previous_cause": "called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1420,
+        "completion_log_line": 1420,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "pat_client::tests::https_issuance_refuses_wrong_server_certificate"
+      ],
+      "previous_cause": "called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1421,
+        "completion_log_line": 1421,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--lib",
+        "pat_client::tests::https_issuance_uses_operator_certificate_and_exact_request"
+      ],
+      "previous_cause": "called `Result::unwrap()` on an `Err` value: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-57938387d1421168",
+        "case_log_line": 1422,
+        "completion_log_line": 1422,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-ctl",
+        "--test dev_command",
+        "a_gate_that_dies_before_listening_is_reported_against_its_port"
+      ],
+      "previous_cause": "the readiness refusal does not say the Gate died: the management Gate cannot take 127.0.0.1:18099: Operation not permitted (os error 1)",
+      "current_result": {
+        "description": "tests/dev_command.rs",
+        "executable": "target/debug/deps/dev_command-7fbc35ffa44633c7",
+        "case_log_line": 1632,
+        "completion_log_line": 1632,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-executor",
+        "--lib",
+        "readiness::tests::native_probes_preserve_readiness_authority_and_report_starting_and_draining"
+      ],
+      "previous_cause": "called `Result::unwrap()` on an `Err` value: bind executor probes\nCaused by:\n0: failed to bind the probe listener on 127.0.0.1:0\n1: Operation not permitted (os error 1)",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_executor-2aaeb99d5f7f03fb",
+        "case_log_line": 1995,
+        "completion_log_line": 1995,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-host",
+        "--bin wamn-host",
+        "host::tests::native_probe_termination_triggers_failure_and_cleanup"
+      ],
+      "previous_cause": "called `Result::unwrap()` on an `Err` value: failed to bind the probe listener on 127.0.0.1:0\nCaused by:\nOperation not permitted (os error 1)",
+      "current_result": {
+        "description": "unittests src/main.rs",
+        "executable": "target/debug/deps/wamn_host-84a0f321714f680d",
+        "case_log_line": 2087,
+        "completion_log_line": 2087,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-proof-system",
+        "--lib",
+        "traceproof::tests::http_get_returns_content_length_body_without_waiting_for_close"
+      ],
+      "previous_cause": "bind keep-alive fixture: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_system-2c2e2d4b166f0afd",
+        "case_log_line": 2908,
+        "completion_log_line": 2908,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tui",
+        "--bin wamn-receiving",
+        "tests::the_real_transport_returns_a_redirect_without_following_it"
+      ],
+      "previous_cause": "redirect fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/main.rs",
+        "executable": "target/debug/deps/wamn_receiving-99236de13f413a1c",
+        "case_log_line": 3155,
+        "completion_log_line": 3155,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "expected_router::tests::a_missing_native_handle_still_returns_404"
+      ],
+      "previous_cause": "called `Result::unwrap()` on an `Err` value: Operation not permitted (os error 1)",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3486,
+        "completion_log_line": 3486,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "expected_router::tests::native_ingress_preserves_refusals_bind_transitions_and_application_404"
+      ],
+      "previous_cause": "bind native ingress: Operation not permitted (os error 1)",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3488,
+        "completion_log_line": 3488,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "expected_router::tests::no_release_keeps_native_unknown_host_behavior"
+      ],
+      "previous_cause": "called `Result::unwrap()` on an `Err` value: Operation not permitted (os error 1)",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3489,
+        "completion_log_line": 3489,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "lifecycle::tests::native_probes_answer_while_ingress_is_saturated_and_after_it_recovers"
+      ],
+      "previous_cause": "called `Result::unwrap()` on an `Err` value: Operation not permitted (os error 1)",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3492,
+        "completion_log_line": 3492,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::deadline_while_waiting_for_a_response_head_refunds_request_admission"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3515,
+        "completion_log_line": 3515,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::every_client_identity_field_and_peer_separates_pools"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3517,
+        "completion_log_line": 3517,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::global_requests_refuse_without_queued_work_or_client_creation"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3518,
+        "completion_log_line": 3518,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::http2_multiplexes_eight_requests_on_one_socket_and_still_refuses_the_ninth"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3519,
+        "completion_log_line": 3519,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::idle_pool_retains_two_sockets_then_expires_them"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3520,
+        "completion_log_line": 3520,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::mutation_disconnect_status_and_redirect_never_replay"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3521,
+        "completion_log_line": 3521,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::oversized_requests_refuse_before_connecting"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3522,
+        "completion_log_line": 3522,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::response_body_headers_and_trailers_are_bounded_while_reading"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3523,
+        "completion_log_line": 3523,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::retired_client_leases_outlive_cache_entries_and_body_cancellation"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3524,
+        "completion_log_line": 3524,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::scoped_requests_are_shared_across_generations_until_bodies_finish"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3525,
+        "completion_log_line": 3525,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::socket_limits_include_idle_connections_and_all_generations"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3526,
+        "completion_log_line": 3526,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::tls_http1_and_http2_keep_logical_identity_and_reuse_connections"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3527,
+        "completion_log_line": 3527,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::trusted_certificate_for_a_different_logical_name_is_rejected"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3528,
+        "completion_log_line": 3528,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::connection_http::transport::tests::warm_http_reuses_only_the_pinned_peer_and_never_caches_credentials"
+      ],
+      "previous_cause": "test listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-14327ad3b9c13efe",
+        "case_log_line": 3529,
+        "completion_log_line": 3529,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test release_manifest_source",
+        "a_conforming_stub_returns_the_exact_published_bytes"
+      ],
+      "previous_cause": "an ephemeral loopback port binds: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/release_manifest_source.rs",
+        "executable": "target/debug/deps/release_manifest_source-49d1c4914c4448e3",
+        "case_log_line": 3960,
+        "completion_log_line": 3960,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test release_manifest_source",
+        "a_served_body_the_descriptor_undercounts_refuses_the_pull"
+      ],
+      "previous_cause": "an ephemeral loopback port binds: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/release_manifest_source.rs",
+        "executable": "target/debug/deps/release_manifest_source-49d1c4914c4448e3",
+        "case_log_line": 3970,
+        "completion_log_line": 3970,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test release_manifest_source",
+        "a_served_body_the_named_digest_does_not_address_refuses_the_pull"
+      ],
+      "previous_cause": "an ephemeral loopback port binds: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/release_manifest_source.rs",
+        "executable": "target/debug/deps/release_manifest_source-49d1c4914c4448e3",
+        "case_log_line": 3971,
+        "completion_log_line": 3971,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "body_stall_is_bounded_by_five_seconds_without_retry"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3985,
+        "completion_log_line": 3985,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "cancelled_request_releases_slot_without_resetting_its_interval"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3986,
+        "completion_log_line": 3986,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "complete_replacement_removes_absent_keys_including_an_empty_set"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3987,
+        "completion_log_line": 3987,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "configured_https_endpoint_and_exclusive_ca_are_the_only_trust_source"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3988,
+        "completion_log_line": 3988,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "delayed_in_window_age_is_anchored_at_start_and_hits_do_not_extend_it"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3989,
+        "completion_log_line": 3989,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "expired_malformed_and_ambiguous_age_are_refused"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3990,
+        "completion_log_line": 3990,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "invalid_or_private_key_documents_are_not_installed"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3991,
+        "completion_log_line": 3991,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "late_results_are_discarded_at_and_after_their_age_adjusted_deadline"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3992,
+        "completion_log_line": 3992,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "redirects_and_server_failures_are_not_followed_or_retried"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3993,
+        "completion_log_line": 3993,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "streaming_body_limit_accepts_exact_bound_and_refuses_the_next_byte"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3994,
+        "completion_log_line": 3994,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "two_warm_caches_fail_closed_at_deadline_when_endpoint_is_unavailable"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3995,
+        "completion_log_line": 3995,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "two_warm_caches_refuse_removed_key_with_endpoint_available"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3996,
+        "completion_log_line": 3996,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_keys",
+        "varied_unknown_ids_share_one_inflight_slot_and_one_attempt_start_interval"
+      ],
+      "previous_cause": "loopback listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_keys.rs",
+        "executable": "target/debug/deps/session_keys-11bf190353c882cc",
+        "case_log_line": 3997,
+        "completion_log_line": 3997,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "age_rules_remain_separate_at_their_exact_boundaries"
+      ],
+      "previous_cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4021,
+        "completion_log_line": 4021,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "exact_org_and_environment_matrix_uses_one_configured_issuer_cache"
+      ],
+      "previous_cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4022,
+        "completion_log_line": 4022,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "pending_admission_rechecks_token_and_key_deadlines_after_permission_work"
+      ],
+      "previous_cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4023,
+        "completion_log_line": 4023,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "pinned_profile_refuses_before_fetch_and_claim_misses_never_gain_authority"
+      ],
+      "previous_cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4024,
+        "completion_log_line": 4024,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "token_age_is_read_after_a_delayed_key_fetch_not_before_it"
+      ],
+      "previous_cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4025,
+        "completion_log_line": 4025,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "two_local_verifiers_refuse_removed_key_by_deadline_with_and_without_jwks"
+      ],
+      "previous_cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4026,
+        "completion_log_line": 4026,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test session_verifier",
+        "unknown_key_ids_across_clones_share_the_issuer_refresh_budget"
+      ],
+      "previous_cause": "fixture listener: Os { code: 1, kind: PermissionDenied, message: \"Operation not permitted\" }",
+      "current_result": {
+        "description": "tests/session_verifier.rs",
+        "executable": "target/debug/deps/session_verifier-360887ddda45a33f",
+        "case_log_line": 4027,
+        "completion_log_line": 4027,
+        "status": "ok"
+      },
+      "disposition": "The case reports a passing result in the host execution context."
+    }
+  ]
+}

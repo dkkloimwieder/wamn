@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "python3",
+    "-B",
+    "docs/perf/2026.09/consolidation-step3/sweep-001/tools/finalize-classification.py",
+    "--evidence-dir",
+    "docs/perf/2026.09/consolidation-step3/sweep-001/run-002",
+    "--reduction-dir",
+    "docs/perf/2026.09/consolidation-step3/sweep-001/run-002/reduction-001",
+    "--output-dir",
+    "docs/perf/2026.09/consolidation-step3/sweep-001/run-002/classification-001"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-sweep002-results-20260911",
+  "exit_code": 0,
+  "elapsed_seconds": 0.1839009530376643,
+  "script_sha256": "08547d77f32e50b9746ef558b0c5a28fca1e1b5771269deaa5407e8585d6d9e9"
+}

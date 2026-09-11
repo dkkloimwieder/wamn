@@ -1,0 +1,11 @@
+{
+  "argv": [
+    "python3",
+    "-B",
+    "docs/perf/2026.09/consolidation-step3/sweep-001/run-003/review-classification.py"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-sweep002-results-20260911",
+  "exit_code": 0,
+  "elapsed_seconds": 0.2993666839902289,
+  "script_sha256": "965679ac0e524e943e1af180fedf00ce8922eead2f74c3fba74a290707597f25"
+}

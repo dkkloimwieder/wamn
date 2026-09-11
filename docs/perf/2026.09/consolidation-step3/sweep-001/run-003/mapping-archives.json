@@ -1,0 +1,18 @@
+[
+  {
+    "archive": "source-before.json.gz",
+    "archive_bytes": 1070225,
+    "archive_sha256": "8075294ae70c16e04a8010563d55b0e960949fbb8b9ea2b3b71f0829d82d0a57",
+    "original": "source-before.json",
+    "original_bytes": 6982579,
+    "original_sha256": "88283dfa0afbcd7ca65dd9f338a301d1268e04cf5b50555da0c6213423f7a668"
+  },
+  {
+    "archive": "source-after.json.gz",
+    "archive_bytes": 1070225,
+    "archive_sha256": "8075294ae70c16e04a8010563d55b0e960949fbb8b9ea2b3b71f0829d82d0a57",
+    "original": "source-after.json",
+    "original_bytes": 6982579,
+    "original_sha256": "88283dfa0afbcd7ca65dd9f338a301d1268e04cf5b50555da0c6213423f7a668"
+  }
+]
