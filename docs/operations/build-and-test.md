@@ -344,8 +344,8 @@ cargo test -p wamn-cdc-reader -p wamn-ctl --lib --locked --offline \
 cargo test -p wamn-runtime --lib \
   --features wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats \
   --locked --offline plugins::wamn_jetstream::tests:: -- --nocapture
-tools/journey-host-values-proof
-tools/journey-materializer-proof
+cargo test -p wamn-test-infrastructure --lib --locked --offline \
+  rendering::tests:: -- --nocapture
 ```
 
 Before closing `wamn-0ct2.7`, execute the Receiving path with exact current artifacts and record the native binding's credential boundary.
@@ -387,7 +387,8 @@ wasm-tools validate --features all apps/target/wasm32-wasip2/debug/http_route.wa
 wasm-tools component wit apps/target/wasm32-wasip2/debug/http_route.wasm
 cargo test --manifest-path apps/Cargo.toml -p http-route \
   --test adversarial --locked --offline -- --nocapture --test-threads=1
-bash tools/journey-workload-proof
+cargo test -p wamn-test-infrastructure --lib --locked --offline \
+  rendering::tests::http_ -- --nocapture
 ```
 
 Require the exact `wasi:http/handler@0.3.0` export and retained WAMN imports.
@@ -3506,26 +3507,26 @@ test "$(curl --config "$RECEIVING_ROUTE_CURL_AUTH" --silent --show-error \
   --output /dev/null --write-out '%{http_code}' \
   "http://${RECEIVING_ROUTE_AUTHORITY}/v2/")" = 200
 
-# The test's inputs are ONE document, not a dozen environment variables. The
-# schema is generated from the Rust struct that reads the file and drift-tested
-# there; the writer reads the same schema, so a key this side invents or omits
-# is refused here, naming it, rather than by the Rust side after the build.
-source tools/journey-document.sh
-declare -A journey_spec=(
-  [system_pg_url]="postgresql://postgres:probe@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/wamn_system"
-  [component_directory]="$RECEIVING_ROUTE_COMPONENTS"
-  [compilation_cache_directory]="$RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY"
-  [flow_http_wasm]="$RECEIVING_ROUTE_FLOW_HTTP"
-  [component_artifact_base]="$RECEIVING_ROUTE_AUTHORITY/wamn/components"
-  [release_artifact_base]="$RECEIVING_ROUTE_AUTHORITY/wamn/releases"
-  [route_host]="$RECEIVING_ROUTE_HOST"
-  [registry_auth_file]="$RECEIVING_ROUTE_DOCKER_AUTH"
-  [host_secret_directory]="$RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY"
-  [host_secret_namespace]="$RECEIVING_ROUTE_SECRET_NAMESPACE"
-  [route_caller_secret_output]="$RECEIVING_ROUTE_CALLER_SECRET_OUTPUT"
-)
-write_journey_document journey_spec \
-  tests/integration/schema/wamn-journey.schema.json "$RECEIVING_ROUTE_JOURNEY_DOCUMENT"
+# The existing Rust parser requires all eleven document fields.
+jq -n \
+  --arg system_pg_url "postgresql://postgres:probe@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/wamn_system" \
+  --arg component_directory "$RECEIVING_ROUTE_COMPONENTS" \
+  --arg compilation_cache_directory "$RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY" \
+  --arg flow_http_wasm "$RECEIVING_ROUTE_FLOW_HTTP" \
+  --arg component_artifact_base "$RECEIVING_ROUTE_AUTHORITY/wamn/components" \
+  --arg release_artifact_base "$RECEIVING_ROUTE_AUTHORITY/wamn/releases" \
+  --arg route_host "$RECEIVING_ROUTE_HOST" \
+  --arg registry_auth_file "$RECEIVING_ROUTE_DOCKER_AUTH" \
+  --arg host_secret_directory "$RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY" \
+  --arg host_secret_namespace "$RECEIVING_ROUTE_SECRET_NAMESPACE" \
+  --arg route_caller_secret_output "$RECEIVING_ROUTE_CALLER_SECRET_OUTPUT" \
+  '{system_pg_url: $system_pg_url, component_directory: $component_directory,
+    compilation_cache_directory: $compilation_cache_directory, flow_http_wasm: $flow_http_wasm,
+    component_artifact_base: $component_artifact_base, release_artifact_base: $release_artifact_base,
+    route_host: $route_host, registry_auth_file: $registry_auth_file,
+    host_secret_directory: $host_secret_directory, host_secret_namespace: $host_secret_namespace,
+    route_caller_secret_output: $route_caller_secret_output}' \
+  >"$RECEIVING_ROUTE_JOURNEY_DOCUMENT"
 WAMN_JOURNEY_DOCUMENT="$RECEIVING_ROUTE_JOURNEY_DOCUMENT" \
 WAMN_JOURNEY_SCENARIO_WORKER_BIN="$RECEIVING_ROUTE_GATE_BIN" \
 WAMN_IDENTITY_BINARY="$RECEIVING_ROUTE_IDENTITY_BIN" \
@@ -3761,7 +3762,7 @@ The [startup exposure proof](../perf/2026.09/wasmcloud-2-9-cutover/live-receivin
 
 | Helper and receipt | Required proof and limit |
 |---|---|
-| `tools/journey-telemetry-proof`; `telemetry/receipt.json` | Within 120 seconds, collect both real PAT request traces with completed invocation spans and descendant PostgreSQL effects carrying the expected identity. Require native HTTP duration counts of at least two and PostgreSQL/JetStream counts of at least one. These histograms do not identify individual requests or measure guest CPU; HTTP egress injection and private runtime phases remain outside this proof. |
+| `test-support/infrastructure/traces/telemetry.rs` and `telemetry/result.json` | Within 120 seconds, collect both real PAT request traces with completed invocation spans and descendant PostgreSQL effects carrying the expected identity. Require native HTTP duration counts of at least two and PostgreSQL/JetStream counts of at least one. These histograms do not identify individual requests or measure guest CPU; HTTP egress injection and private runtime phases remain outside this proof. |
 | `tools/journey-startup-burst.py`; `startup-burst/result.json` | Start one fresh release host with empty private caches and the deployed explicit start limit. Submit cold and warm bursts of twice that limit through native RPCs. Require measured native handler overlap above the limit, heartbeat/probe progress during starts, and warm serving continuity. Replicas share one production HTTP digest and native compile deduplication; overlap measures queued demand, not active permit occupancy or CPU use. |
 | `tools/receiving-operator-recovery-run`; `operator-recovery/result.json` | Compare all five installed CRD schemas with the pinned distributed chart, allowing only recorded Kubernetes defaults. After 75 seconds of healthy fleet observation, stop only the chart's shared scheduler NATS for 150 seconds, observe the native fleet-deaf condition, restore it, then restart the operator on the same image. Each recovery requires fresh Host readiness and an exact successful application response within 120 seconds. Host identities/processes must persist; Workload UID changes are recorded. The external event NATS stays running. |
 
@@ -3793,50 +3794,23 @@ Producer implementation belongs to `wamn-10yt.74`, and active-work executor shut
 Idle executor shutdown and Receiving stream delivery do not stand in for those unproved paths.
 Do not restore retired grants, seed substitute queue rows, or introduce a producer API to make this cutover gate pass.
 
-**Run the ten harness proofs first. They cost a second and they stand in
-front of a twenty-five-minute cluster run.**
+Run the ordinary Rust tests before a cluster run.
 
 ```bash
-( for proof in tools/journey-{host-values,host-secrets,rendered-identity,workload,trace,materializer,probe,document,mint,throughput}-proof; do
-    "$proof" || exit
-  done )
+cargo test -p wamn-test-infrastructure --lib --locked --offline -- --nocapture
+cargo test -p wamn-proof-integration --lib --locked --offline journey_ -- --nocapture
+cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::cluster::measurement::tests -- --nocapture
+cargo test -p wamn-wms-tests --lib --locked --offline cluster::startup::tests -- --nocapture
 ```
 
-The explicit names select only the ten offline harness proofs. The live `journey-telemetry-proof` requires the running journey.
-The subshell and the bare `exit` are load-bearing, and the first draft of this
-line had neither. `for ...; do "$proof" || break; done` reports **exit 0 when a
-proof fails** — `break` succeeds, and the loop's status is the status of the
-last command it ran. Measured against three stub proofs, one of them failing:
-the `break` form printed the failure and exited 0; the subshell form printed it
-and exited 1. A command that stands in front of a twenty-five-minute cluster
-run, documented in the sentence that introduces the guards, silently disarmed.
-
-The journey's render and assert surface is lifted into ten shared harnesses,
-and each has an offline proof beside it — no cluster, no containers, no
-network, and the frozen cluster untouched. Together they are the whole
-regression net for that surface:
-
-| harness | proves |
-|---|---|
-| `journey-host-values.sh` | the host overlay renders, every derived secret anchor fires exactly once |
-| `journey-host-secrets.sh` | the declared role families match the emitted Secret set, and each Secret's shape |
-| `journey-rendered-identity.sh` | the overlay CLAIMS this application's identity — asserted, never rewritten |
-| `journey-workload.sh` | the workload manifest carries all five identity claims and one route host |
-| `journey-trace.sh` | a trace breakdown is complete, including this application's statement count |
-| `journey-materializer.sh` | the materializer manifest's eight identity values come from the declaration |
-| `journey-probe.sh` | the probe Job renders AND the rendered probe script actually runs |
-| `journey-document.sh` | the input document is written and amended against the schema the Rust struct generated |
-| `journey-mint.sh` | the declaration renders, the gate envelope and the per-family provisioning flags a shell mint needs |
-| `journey-throughput.sh` | a throughput step's Job renders per layer, digest-pinned, the PAT through Kubernetes expansion, AND the rendered pgbench script actually runs |
-
-Each pins Receiving's bytes by digest against the block it replaced, renders a
-second application's declaration to prove the block is generic rather than
-merely parameterized, and carries a negative control per guard. Every one has
-been mutation-tested on exit code.
-
-They are deliberately NOT a `cargo test`: they are shell over checked-in
-templates, and wiring them into the Rust gate would make a one-second check
-cost a build.
+`test-support/infrastructure` owns typed YAML rendering, declared Secret selection, component declarations, workload observations, and trace assertions.
+The existing `JourneyDocument` type and its strict parser remain in `test-support/harness/src/journey.rs`.
+The Receiving and WMS test modules own their request fields, retry outcomes, and application assertions.
+Receiving tests also retain throughput Job values, generated pgbench output, and credential order.
+These ordinary tests start no cluster or database.
+The generated script cases use private temporary directories and local test executables.
+The [dated retirement record](../perf/2026.09/consolidation-step3/journey-helper-retirement-001/result.md) names historical capture dependencies and test limits.
 
 `wamn-10yt.8` measures the published release with runtime-operator 2.9.0's native
 HTTP probes. The runner asserts `/livez` and `/readyz` on port `8081`, including
@@ -3949,11 +3923,11 @@ WAMN_THROUGHPUT_EVIDENCE_DIR=/tmp/wamn-receiving-throughput-evidence/throughput 
   -- --ignored --exact --nocapture
 ```
 
-The render is `tools/journey-throughput.sh`, proved offline by
-`tools/journey-throughput-proof` like the other harnesses; the index document
-the shell writes is strict on the Rust side (`deny_unknown_fields`) and its
-schema is checked in at `tests/integration/schema/wamn-throughput.schema.json`,
-regenerated with `wamn-throughput schema`.
+`apps/wamn_receiving/tests/route_authentication_live/cluster/measurement.rs` owns throughput Job rendering and the ordered credential runs.
+Its ordinary tests inspect the generated Job values and execute the generated pgbench output script with a local test executable.
+The existing strict index parser and result reader remain in `tests/integration/src/throughput_bench.rs`.
+Its schema remains at `tests/integration/schema/wamn-throughput.schema.json`.
+Regenerate it with `wamn-throughput schema`.
 
 For the fresh-auth comparison (`wamn-ctc8.12`), use `--fresh-auth-bench` instead of `--throughput`.
 This mode runs three sweeps for each credential: a service PAT and a human PAT with explicit environment membership.

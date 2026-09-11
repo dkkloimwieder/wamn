@@ -1,0 +1,133 @@
+{
+  "base": "01799b2f8346b0c75e41509ac5db01bc1a7c5586",
+  "deleted": [
+    {
+      "path": "tools/journey-document-proof",
+      "sha256": "7a5d2208adfff0815d3cdc081df093ac28f82acd645798e10d18d7e91db529f1",
+      "mode": "0o775",
+      "lines": 152
+    },
+    {
+      "path": "tools/journey-document.sh",
+      "sha256": "706a2ecace97510ed0a498df7247d7d309f48f52afb4345a039036d0b5c83c99",
+      "mode": "0o664",
+      "lines": 110
+    },
+    {
+      "path": "tools/journey-host-secrets-proof",
+      "sha256": "d1214d1467f990352fca486a2ad0f8800ffc5c7216f50478f1c2064254ea3fb6",
+      "mode": "0o775",
+      "lines": 140
+    },
+    {
+      "path": "tools/journey-host-secrets.sh",
+      "sha256": "2f89a736a0a3838875a7d4f95f290404d169f6c57d6bb2b48134b4cd9f51c356",
+      "mode": "0o775",
+      "lines": 91
+    },
+    {
+      "path": "tools/journey-host-values-proof",
+      "sha256": "6b1a66e160a6b32a4993de9dc25ff9d9113c5109e512ecd6e25c198b45402f25",
+      "mode": "0o775",
+      "lines": 225
+    },
+    {
+      "path": "tools/journey-host-values.sh",
+      "sha256": "949d8ba5e3850ba722b6d4901c0f2231ebe9d197ab12346897861545d8557a3b",
+      "mode": "0o775",
+      "lines": 229
+    },
+    {
+      "path": "tools/journey-materializer-proof",
+      "sha256": "ccdb67ca415033c42099b1011fbd507dad9f66dbdc9ebfa05f9e19f3de02c2de",
+      "mode": "0o775",
+      "lines": 210
+    },
+    {
+      "path": "tools/journey-materializer.sh",
+      "sha256": "b05a11a64c5bc61db47604099792deee3d6659ea9172f3e3f1c8b1252d2ce0e9",
+      "mode": "0o664",
+      "lines": 158
+    },
+    {
+      "path": "tools/journey-mint-proof",
+      "sha256": "956d54a60c36cc6b9a6bc55810e6f8b49a195944ec5feca60077e75730189dd9",
+      "mode": "0o775",
+      "lines": 132
+    },
+    {
+      "path": "tools/journey-mint.sh",
+      "sha256": "c367adca08717acae054f2ed519ed3844a5319b4c911b582bce66691b2175f31",
+      "mode": "0o664",
+      "lines": 120
+    },
+    {
+      "path": "tools/journey-probe-proof",
+      "sha256": "62350518e673480582d75c0faf7b3608f308522c38cbe6095377032177f7de8e",
+      "mode": "0o775",
+      "lines": 193
+    },
+    {
+      "path": "tools/journey-probe.sh",
+      "sha256": "6a715d980f3894357a1fe718443175ed0a1ea2a114f7473749aab9e167519c0b",
+      "mode": "0o664",
+      "lines": 147
+    },
+    {
+      "path": "tools/journey-rendered-identity-proof",
+      "sha256": "970e3cbdd445a640f07a52f05615f90d37c179993e998dfeedc0383a7ae089cf",
+      "mode": "0o775",
+      "lines": 126
+    },
+    {
+      "path": "tools/journey-rendered-identity.sh",
+      "sha256": "5b367ea58cac5137096d2e62c9bbf7d3091d1582ba6ec084e21324d973c932d6",
+      "mode": "0o775",
+      "lines": 70
+    },
+    {
+      "path": "tools/journey-telemetry-proof",
+      "sha256": "babf086759f801b9d8803ae383838f34a68673a1341e5ffecfb32452801fe152",
+      "mode": "0o775",
+      "lines": 188
+    },
+    {
+      "path": "tools/journey-throughput-proof",
+      "sha256": "5b8151598b4804f0c27df56f54622934e7f3fc4beaa7c293d2896c78b1c3c05d",
+      "mode": "0o775",
+      "lines": 169
+    },
+    {
+      "path": "tools/journey-throughput.sh",
+      "sha256": "fb62596c9e6b6eb6376a7aae805e5101503ea50938f4584afbd28208ef0fff0d",
+      "mode": "0o664",
+      "lines": 203
+    },
+    {
+      "path": "tools/journey-trace-proof",
+      "sha256": "ea90e0455fb48a378b7e1cb87efa6a4e62e64f7d75dcbe92cad320948782feba",
+      "mode": "0o775",
+      "lines": 122
+    },
+    {
+      "path": "tools/journey-trace.sh",
+      "sha256": "d3d6d8caacc7e37fa1e880ea834a057b13dbd6efd82bf18246bc0ad095682c11",
+      "mode": "0o775",
+      "lines": 66
+    },
+    {
+      "path": "tools/journey-workload-proof",
+      "sha256": "0b98997218f2bb5f3c748773d0404aca7680d8e49345153749d24c7c55903e5f",
+      "mode": "0o775",
+      "lines": 174
+    },
+    {
+      "path": "tools/journey-workload.sh",
+      "sha256": "823db6ffc5a053b158e53964bf30164cca4c147e9ada43be639227776e31f64a",
+      "mode": "0o775",
+      "lines": 178
+    }
+  ],
+  "retained_data": "Historical records and capture scripts stay unchanged.",
+  "validation": "Rustfmt and whitespace checks passed for the app test transfer. Root owns the test runs."
+}

@@ -1,0 +1,58 @@
+{
+  "commands": [
+    {
+      "command": [
+        "bash",
+        "--noprofile",
+        "--norc",
+        "-euc",
+        "# The test's inputs are ONE document, not a dozen environment variables. The\n# schema is generated from the Rust struct that reads the file and drift-tested\n# there; the writer reads the same schema, so a key this side invents or omits\n# is refused here, naming it, rather than by the Rust side after the build.\nsource /tmp/journey-document-comparison-gxnp7uw0/old-writer.sh\ndeclare -A journey_spec=(\n  [system_pg_url]=\"postgresql://postgres:probe@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/wamn_system\"\n  [component_directory]=\"$RECEIVING_ROUTE_COMPONENTS\"\n  [compilation_cache_directory]=\"$RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY\"\n  [flow_http_wasm]=\"$RECEIVING_ROUTE_FLOW_HTTP\"\n  [component_artifact_base]=\"$RECEIVING_ROUTE_AUTHORITY/wamn/components\"\n  [release_artifact_base]=\"$RECEIVING_ROUTE_AUTHORITY/wamn/releases\"\n  [route_host]=\"$RECEIVING_ROUTE_HOST\"\n  [registry_auth_file]=\"$RECEIVING_ROUTE_DOCKER_AUTH\"\n  [host_secret_directory]=\"$RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY\"\n  [host_secret_namespace]=\"$RECEIVING_ROUTE_SECRET_NAMESPACE\"\n  [route_caller_secret_output]=\"$RECEIVING_ROUTE_CALLER_SECRET_OUTPUT\"\n)\nwrite_journey_document journey_spec \\\n  tests/integration/schema/wamn-journey.schema.json \"$RECEIVING_ROUTE_JOURNEY_DOCUMENT\"\n"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "bash",
+        "--noprofile",
+        "--norc",
+        "-euc",
+        "# The existing Rust parser requires all eleven document fields.\njq -n \\\n  --arg system_pg_url \"postgresql://postgres:probe@127.0.0.1:${RECEIVING_ROUTE_PG_PORT}/wamn_system\" \\\n  --arg component_directory \"$RECEIVING_ROUTE_COMPONENTS\" \\\n  --arg compilation_cache_directory \"$RECEIVING_ROUTE_COMPILATION_CACHE_DIRECTORY\" \\\n  --arg flow_http_wasm \"$RECEIVING_ROUTE_FLOW_HTTP\" \\\n  --arg component_artifact_base \"$RECEIVING_ROUTE_AUTHORITY/wamn/components\" \\\n  --arg release_artifact_base \"$RECEIVING_ROUTE_AUTHORITY/wamn/releases\" \\\n  --arg route_host \"$RECEIVING_ROUTE_HOST\" \\\n  --arg registry_auth_file \"$RECEIVING_ROUTE_DOCKER_AUTH\" \\\n  --arg host_secret_directory \"$RECEIVING_ROUTE_SECRET_OUTPUT_DIRECTORY\" \\\n  --arg host_secret_namespace \"$RECEIVING_ROUTE_SECRET_NAMESPACE\" \\\n  --arg route_caller_secret_output \"$RECEIVING_ROUTE_CALLER_SECRET_OUTPUT\" \\\n  '{system_pg_url: $system_pg_url, component_directory: $component_directory,\n    compilation_cache_directory: $compilation_cache_directory, flow_http_wasm: $flow_http_wasm,\n    component_artifact_base: $component_artifact_base, release_artifact_base: $release_artifact_base,\n    route_host: $route_host, registry_auth_file: $registry_auth_file,\n    host_secret_directory: $host_secret_directory, host_secret_namespace: $host_secret_namespace,\n    route_caller_secret_output: $route_caller_secret_output}' \\\n  >\"$RECEIVING_ROUTE_JOURNEY_DOCUMENT\"\n"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "comparison": "Both commands produce the same eleven fields and values. Inputs are synthetic.",
+  "fields": [
+    "compilation_cache_directory",
+    "component_artifact_base",
+    "component_directory",
+    "flow_http_wasm",
+    "host_secret_directory",
+    "host_secret_namespace",
+    "registry_auth_file",
+    "release_artifact_base",
+    "route_caller_secret_output",
+    "route_host",
+    "system_pg_url"
+  ],
+  "synthetic_input_values": {
+    "PG_PORT": "12345",
+    "COMPONENTS": "/tmp/synthetic components",
+    "COMPILATION_CACHE_DIRECTORY": "/tmp/synthetic cache",
+    "FLOW_HTTP": "/tmp/synthetic http.wasm",
+    "AUTHORITY": "127.0.0.1:12346",
+    "HOST": "synthetic.localhost",
+    "DOCKER_AUTH": "/tmp/synthetic config.json",
+    "SECRET_OUTPUT_DIRECTORY": "/tmp/synthetic secrets",
+    "SECRET_NAMESPACE": "synthetic-namespace",
+    "CALLER_SECRET_OUTPUT": "/tmp/synthetic caller.json"
+  },
+  "old_command_sha256": "b4da8a682dec3464adb60fd1b6efef13c2dda097880ddded2290649fa721dcc3",
+  "current_command_sha256": "975d9cf729588ea6812167ed8ee81d1a06b5771632dbe8b610319de66a2add9e",
+  "services_started": 0,
+  "owned_temporary_directory_cleanup": "TemporaryDirectory removes only its own directory."
+}
