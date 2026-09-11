@@ -1,0 +1,12 @@
+
+running 7 tests
+test wms_wiring_shape::blob_put_locates_its_key_and_body_by_wiring_parameter ... ok
+test wms_wiring_shape::label_render_declares_the_envelope_on_both_ports ... ok
+test wms_wiring_shape::the_aggregate_excludes_consumed_pallets ... ok
+test wms_wiring_shape::the_composed_wiring_is_a_three_node_graph ... ok
+test wms_wiring_shape::the_move_result_carries_every_field_the_pallet_label_names ... ok
+test wms_wiring_shape::the_wirer_can_point_at_a_key_and_a_body ... ok
+test wms_wiring_shape::the_wirings_params_carry_the_mapping ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 74 filtered out; finished in 0.02s
+

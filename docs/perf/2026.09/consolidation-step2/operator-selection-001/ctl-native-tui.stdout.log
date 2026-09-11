@@ -1,0 +1,11 @@
+
+running 6 tests
+test dev::native_tui::tests::a_missing_selection_or_incomplete_resolved_graph_refuses ... ok
+test dev::native_tui::tests::artifacts_use_cargo_paths_and_require_every_selected_binary ... ok
+test dev::native_tui::tests::component_names_survive_a_directory_rename_and_collisions_refuse ... ok
+test dev::native_tui::tests::missing_relative_and_conflicting_executables_refuse ... ok
+test dev::native_tui::tests::selection_uses_the_declared_component_and_emitter_spelling ... ok
+test dev::native_tui::tests::watch_graph_follows_normal_and_build_dependencies_inside_the_repository ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 270 filtered out; finished in 0.03s
+

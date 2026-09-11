@@ -1,0 +1,61 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-proof-integration",
+    "--lib",
+    "publication",
+    "--",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "cases": [
+    {
+      "detail": "",
+      "name": "acme_overlay_publication::acme_direct_operations_and_private_handler_have_exact_publication_inputs",
+      "status": "ok"
+    },
+    {
+      "detail": "",
+      "name": "acme_overlay_publication::receipt_insert_registration_selects_one_private_owner_wiring",
+      "status": "ok"
+    },
+    {
+      "detail": "",
+      "name": "receiving_publication::package_owned_inputs_declare_the_exact_eight_route_closure",
+      "status": "ok"
+    },
+    {
+      "detail": "",
+      "name": "wms_publication::package_owned_inputs_declare_the_exact_shipped_route_closure",
+      "status": "ok"
+    },
+    {
+      "detail": "",
+      "name": "wms_publication::the_move_route_demands_exactly_what_the_command_requires",
+      "status": "ok"
+    }
+  ],
+  "compile_failure": false,
+  "cwd": "/home/kaalin/dev/wamn",
+  "ended_utc": "2026-09-11T13:59:10.411827+00:00",
+  "exit_code": 0,
+  "name": "integration-publication",
+  "seconds": 154.889,
+  "source_unchanged": true,
+  "started_utc": "2026-09-11T13:56:35.522932+00:00",
+  "stderr": "integration-publication.stderr.log",
+  "stdout": "integration-publication.stdout.log",
+  "summaries": [
+    {
+      "failed": 0,
+      "filtered": 76,
+      "ignored": 0,
+      "measured": 0,
+      "passed": 5
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-proof-integration",
+    "--lib",
+    "wms_wiring_shape",
+    "--",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "cases": [
+    {
+      "detail": "",
+      "name": "wms_wiring_shape::blob_put_locates_its_key_and_body_by_wiring_parameter",
+      "status": "ok"
+    },
+    {
+      "detail": "",
+      "name": "wms_wiring_shape::label_render_declares_the_envelope_on_both_ports",
+      "status": "ok"
+    },
+    {
+      "detail": "",
+      "name": "wms_wiring_shape::the_aggregate_excludes_consumed_pallets",
+      "status": "ok"
+    },
+    {
+      "detail": "",
+      "name": "wms_wiring_shape::the_composed_wiring_is_a_three_node_graph",
+      "status": "ok"
+    },
+    {
+      "detail": "",
+      "name": "wms_wiring_shape::the_move_result_carries_every_field_the_pallet_label_names",
+      "status": "ok"
+    },
+    {
+      "detail": "",
+      "name": "wms_wiring_shape::the_wirer_can_point_at_a_key_and_a_body",
+      "status": "ok"
+    },
+    {
+      "detail": "",
+      "name": "wms_wiring_shape::the_wirings_params_carry_the_mapping",
+      "status": "ok"
+    }
+  ],
+  "compile_failure": false,
+  "cwd": "/home/kaalin/dev/wamn",
+  "ended_utc": "2026-09-11T13:59:12.507891+00:00",
+  "exit_code": 0,
+  "name": "integration-wms-wiring",
+  "seconds": 1.271,
+  "source_unchanged": true,
+  "started_utc": "2026-09-11T13:59:11.236591+00:00",
+  "stderr": "integration-wms-wiring.stderr.log",
+  "stdout": "integration-wms-wiring.stdout.log",
+  "summaries": [
+    {
+      "failed": 0,
+      "filtered": 74,
+      "ignored": 0,
+      "measured": 0,
+      "passed": 7
+    }
+  ]
+}

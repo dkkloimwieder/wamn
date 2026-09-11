@@ -43,7 +43,7 @@ MARKER = b"// generated-operator-live restart "
 DRAFT_REFERENCE = "restart-reference-" + uuid.uuid4().hex
 ORDER_ID = str(uuid.uuid4())
 LOCATION_ID = str(uuid.uuid4())
-ORDER_NUMBER = "RESTART-" + uuid.uuid4().hex
+ORDER_NUMBER = "RESTART-" + uuid.uuid4().hex[:12]
 BINDING_KEYS = {b"WAMN_BASE_URL", b"WAMN_HOST", b"WAMN_TARGET_INSTANCE"}
 CHILD_SETUP = (
     "import fcntl, os, sys, termios; "

@@ -1,0 +1,30 @@
+ M .beads/interactions.jsonl
+ M .beads/issues.jsonl
+?? docs/perf/2026.09/claim-transaction/main-landing-001/
+?? docs/perf/2026.09/component-absence/main-landing-001/
+?? docs/perf/2026.09/consolidation-step2/operator-selection-001/
+?? docs/perf/2026.09/consolidation-step2/receiving-launcher-001/
+?? docs/perf/2026.09/ctc8-16-http-reuse/main-landing-002/
+?? docs/perf/2026.09/ctc8-33-nested-authority/main-landing-002/
+?? docs/perf/2026.09/ctc8-33-nested-authority/main-landing-003/
+?? docs/perf/2026.09/cursor-numeric-reason/main-landing-001/
+?? docs/perf/2026.09/exclusion-constraints/main-landing-001/
+?? docs/perf/2026.09/exclusion-owner/main-landing-001/
+?? docs/perf/2026.09/generate-privileges/main-landing-001/
+?? docs/perf/2026.09/generated-tui-recipe/main-landing-001/
+?? docs/perf/2026.09/guest-digest/main-landing-001/
+?? docs/perf/2026.09/native-alignment-plan-integration-001/
+?? docs/perf/2026.09/native-b-adoption/integration-003/
+?? docs/perf/2026.09/native-f-retained/
+?? docs/perf/2026.09/operator-fixture/main-landing-001/
+?? docs/perf/2026.09/receiving-error-contract/main-landing-001/
+?? docs/perf/2026.09/receiving-history-scope/main-landing-001/
+?? docs/perf/2026.09/receiving-postcommit/publication-001/
+?? docs/perf/2026.09/receiving-update-projection/main-landing-001/
+?? docs/perf/2026.09/wasmcloud-2-9-cutover/approved-commits-001/
+?? docs/perf/2026.09/wasmcloud-2-9-cutover/pending-final-evidence-001/
+?? docs/perf/2026.09/wasmcloud-2-9-cutover/pending-final-evidence-002/
+?? docs/perf/2026.09/wasmcloud-2-9-cutover/pending-final-evidence-003/
+?? docs/perf/2026.09/wasmcloud-2-9-cutover/performance-report-preparation-001/
+?? docs/perf/2026.09/wasmcloud-2-9-cutover/prepared-commit-001/
+?? docs/poc/generated-tui-spec.md

@@ -1,0 +1,34 @@
+{
+  "complete": true,
+  "passed": true,
+  "source_unchanged": true,
+  "command_count": 7,
+  "case_executions": {
+    "passed": 56,
+    "failed": 0,
+    "ignored": 3
+  },
+  "distinct_passed_cases": 50,
+  "not_executed": [
+    {
+      "package": "wamn-proof-integration",
+      "detail": ", requires the released WMS route after its disposable labels bucket is removed",
+      "name": "wms_runtime_live::committed_move_survives_label_store_failure",
+      "status": "ignored"
+    },
+    {
+      "package": "wamn-proof-integration",
+      "detail": ", requires the released WMS route on a disposable cluster, named by the journey document's runtime phase",
+      "name": "wms_runtime_live::contention_and_replay_through_the_composed_route",
+      "status": "ignored"
+    },
+    {
+      "package": "wamn-proof-integration",
+      "detail": ", requires the released WMS route on a disposable cluster, named by the journey document's runtime phase",
+      "name": "wms_runtime_live::the_remaining_operations_serve_their_released_routes",
+      "status": "ignored"
+    }
+  ],
+  "not_run_commands": [],
+  "source_head": "d09e9c571378c75bd2fdf4fe2efdcade64af7a12"
+}
