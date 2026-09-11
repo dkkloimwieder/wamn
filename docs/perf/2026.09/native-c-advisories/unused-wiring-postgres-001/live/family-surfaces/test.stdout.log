@@ -1,0 +1,13 @@
+
+running 3 tests
+test the_event_materializer_role_holds_exactly_its_two_catalog_reads ... FAILED
+test the_executor_platform_role_holds_exactly_its_measured_claim_surface ... ok
+test the_http_admitter_role_adds_exactly_the_fresh_permission_reads ... ok
+
+failures:
+
+failures:
+    the_event_materializer_role_holds_exactly_its_two_catalog_reads
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.45s
+

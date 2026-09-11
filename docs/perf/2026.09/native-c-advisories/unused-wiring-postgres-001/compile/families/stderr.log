@@ -1,0 +1,21 @@
+   Compiling serde v1.0.229
+   Compiling num-traits v0.2.19
+   Compiling serde_core v1.0.229
+   Compiling postgres-types v0.2.14
+   Compiling tokio-postgres v0.7.18
+   Compiling chrono v0.4.45
+   Compiling schemars v0.8.22
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/dev/wamn/apps/platform/execution/contract)
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/dev/wamn/apps/platform/events/wire)
+   Compiling serde_json v1.0.151
+   Compiling boon v0.6.1
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/dev/wamn/crates/schema/introspection)
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/dev/wamn/crates/control/registry)
+   Compiling jmespath v0.3.0
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/crates/catalog/model)
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/crates/execution/run-state)
+   Compiling wamn-event-reg v0.1.0 (/home/kaalin/dev/wamn/apps/platform/events/registration)
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/crates/schema/generator)
+   Compiling wamn-schema-control v0.1.0 (/home/kaalin/dev/wamn/crates/schema/control)
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/crates/control/provision)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.85s

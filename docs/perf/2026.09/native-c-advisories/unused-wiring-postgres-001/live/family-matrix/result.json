@@ -1,0 +1,7 @@
+{
+  "name": "family-matrix",
+  "test_exit_code": 0,
+  "cleanup": true,
+  "container_id": "f992dcc3bffc7937dfb16ad0019fee36aa620df902ada41955ed5e887760dd85",
+  "test_summary": "test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.51s"
+}

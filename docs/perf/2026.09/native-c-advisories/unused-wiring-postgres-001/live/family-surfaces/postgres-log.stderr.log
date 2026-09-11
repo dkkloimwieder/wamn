@@ -1,0 +1,22 @@
+initdb: warning: enabling "trust" authentication for local connections
+initdb: hint: You can change this by editing pg_hba.conf or using the option -A, or --auth-local and --auth-host, the next time you run initdb.
+2026-09-11 15:23:05.467 UTC [1] LOG:  starting PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
+2026-09-11 15:23:05.467 UTC [1] LOG:  listening on IPv4 address "0.0.0.0", port 5432
+2026-09-11 15:23:05.467 UTC [1] LOG:  listening on IPv6 address "::", port 5432
+2026-09-11 15:23:05.484 UTC [1] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
+2026-09-11 15:23:05.503 UTC [85] LOG:  database system was shut down at 2026-09-11 15:23:05 UTC
+2026-09-11 15:23:05.514 UTC [1] LOG:  database system is ready to accept connections
+2026-09-11 15:23:07.415 UTC [105] WARNING:  role "wamn_event_materializer" has not been granted membership in role "wamn_platform" by role "postgres"
+2026-09-11 15:23:07.415 UTC [105] CONTEXT:  SQL statement "REVOKE "wamn_platform" FROM "wamn_event_materializer""
+	PL/pgSQL function inline_code_block line 1 at SQL statement
+2026-09-11 15:23:07.418 UTC [105] WARNING:  role "wamn_materializer_3b49955b8dea9e22c8674d64f86c631214ccbe86_a" has not been granted membership in role "wamn_event_materializer" by role "postgres"
+2026-09-11 15:23:08.838 UTC [121] WARNING:  role "wamn_executor_platform" has not been granted membership in role "wamn_platform" by role "postgres"
+2026-09-11 15:23:08.838 UTC [121] CONTEXT:  SQL statement "REVOKE "wamn_platform" FROM "wamn_executor_platform""
+	PL/pgSQL function inline_code_block line 1 at SQL statement
+2026-09-11 15:23:08.842 UTC [121] WARNING:  role "wamn_exec_platform_1388de14e297bed6354b150736b50c3c07f343a1_a" has not been granted membership in role "wamn_executor_platform" by role "postgres"
+2026-09-11 15:23:09.289 UTC [132] ERROR:  permission denied for table runs
+2026-09-11 15:23:09.289 UTC [132] STATEMENT:  UPDATE wamn_run.runs SET input_json = '{"b":2}' WHERE run_id = 'r1';
+2026-09-11 15:23:10.379 UTC [142] WARNING:  role "wamn_http_admitter" has not been granted membership in role "wamn_platform" by role "postgres"
+2026-09-11 15:23:10.379 UTC [142] CONTEXT:  SQL statement "REVOKE "wamn_platform" FROM "wamn_http_admitter""
+	PL/pgSQL function inline_code_block line 1 at SQL statement
+2026-09-11 15:23:10.382 UTC [142] WARNING:  role "wamn_http_admitter_8385b959777f22ef2bed79f47fd94df13637d2e6_a" has not been granted membership in role "wamn_http_admitter" by role "postgres"

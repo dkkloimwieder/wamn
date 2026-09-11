@@ -1,0 +1,4 @@
+{
+  "WAMN_EXEC_PLATFORM_PG_URL": "postgresql://postgres:<fixture-password>@127.0.0.1:32984/postgres",
+  "inherited_PG_variables": "removed"
+}

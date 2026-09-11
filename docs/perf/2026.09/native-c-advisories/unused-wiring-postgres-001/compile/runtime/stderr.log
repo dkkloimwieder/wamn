@@ -1,0 +1,11 @@
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/dev/wamn/apps/platform/execution/contract)
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/dev/wamn/apps/platform/events/wire)
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/dev/wamn/crates/schema/introspection)
+   Compiling wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)
+   Compiling wamn-router v0.1.0 (/home/kaalin/dev/wamn/crates/execution/router)
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/crates/catalog/model)
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/crates/execution/run-state)
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/crates/schema/generator)
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/crates/control/provision)
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/crates/platform/runtime)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 43.42s

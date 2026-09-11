@@ -1,0 +1,18 @@
+{
+  "source": "d3c6788c6c4d3b5ccea2f0371b37f0548a7ac65f",
+  "runner_sha256": "6a1280eeb0982550e1b02d382fb4e457be036715dcf5786489b0f81a9d72f53b",
+  "binaries": {
+    "released-candidate": {
+      "path": "/home/kaalin/dev/wamn/target/debug/deps/executor_platform_surface_live-16e01ccc3c694714",
+      "sha256": "874f80756be0bb29dd991db932f2b9bc849c7962b9f8e50b5fc5756ad35a5c25"
+    },
+    "family-surfaces": {
+      "path": "/home/kaalin/dev/wamn/target/debug/deps/family_surface_grants-df25b85e4d41602b",
+      "sha256": "911e9fc9a6b9e0cbf2ab370a71b8c437287bfb9860c63642fa217b291697cc10"
+    },
+    "family-matrix": {
+      "path": "/home/kaalin/dev/wamn/target/debug/deps/family_denial_matrix-e85490a02603477d",
+      "sha256": "15a2c190ef83ed4beddf0bbcfad23cf293632a39afd469d7fa9c9388ee473d08"
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "bead": "wamn-0ct2.7",
+  "source": "d3c6788c6c4d3b5ccea2f0371b37f0548a7ac65f",
+  "compile_exit_codes": {
+    "runtime": 0,
+    "families": 0
+  },
+  "tests": {
+    "released_candidate": {
+      "passed": 0,
+      "failed": 1
+    },
+    "family_surfaces": {
+      "passed": 2,
+      "failed": 1
+    },
+    "family_matrix": {
+      "passed": 20,
+      "failed": 0
+    }
+  },
+  "executor_grant_replay": "passed; the existing executor test injected the three obsolete SELECT grants, converged the role again, checked the exact server ACL, and checked denials as the generation login",
+  "runtime_failure": {
+    "file": "crates/platform/runtime/tests/executor_platform_surface_live.rs",
+    "line": 448,
+    "actual_instance_revision": 2,
+    "expected_instance_revision": 1,
+    "source_diagnosis": "The schema default is 1 and the fixture explicitly increments revision. Both fixture increment and expected literal already exist in 7f15196a. Released rows, released component contents, foreign release refusal, candidate row and candidate binding counts passed before this assertion. Later candidate refusal and credential exactness assertions were not reached."
+  },
+  "family_surface_failure": {
+    "file": "crates/control/provision/tests/family_surface_grants.rs",
+    "line": 302,
+    "actual": "",
+    "expected": "receiving@1.0.0",
+    "source_diagnosis": "The event materializer ACL checks passed before the tenant row assertion. Its query sets app.tenant in a sibling CTE and filters on current_setting in the same statement. Evaluation order is a suspected cause, not independently reproduced in this run."
+  },
+  "source_unchanged": true,
+  "owned_containers_removed_and_absent": 3,
+  "optional_router_catalog_tests": "not run; root Cargo released immediately after PostgreSQL results for the required stage 2 sweep",
+  "runner_files": {
+    "capture-native-c-command.py": "4239acb71e1336aaf390e86b2d5ae2599996b6965d7ebc46313618cc838c4617",
+    "run-native-c-postgres-tests.py": "6a1280eeb0982550e1b02d382fb4e457be036715dcf5786489b0f81a9d72f53b"
+  }
+}

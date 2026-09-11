@@ -1,0 +1,4 @@
+{
+  "WAMN_DENIAL_MATRIX_PG_URL": "postgresql://postgres:<fixture-password>@127.0.0.1:32986/postgres",
+  "inherited_PG_variables": "removed"
+}

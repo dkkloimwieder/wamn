@@ -1,0 +1,28 @@
+{
+  "bead": "wamn-0ct2.7",
+  "source_unchanged": true,
+  "tests": [
+    {
+      "name": "released-candidate",
+      "test_exit_code": 101,
+      "cleanup": true,
+      "container_id": "f584c41caeebb6916b47a4b68c913c3afe95bd458941442941ed589dc6d7d3ff",
+      "test_summary": "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s"
+    },
+    {
+      "name": "family-surfaces",
+      "test_exit_code": 101,
+      "cleanup": true,
+      "container_id": "d2cfb4ecc91c07376171aae8798cd9c9bee10dba401ac4b778711e407a730494",
+      "test_summary": "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.45s"
+    },
+    {
+      "name": "family-matrix",
+      "test_exit_code": 0,
+      "cleanup": true,
+      "container_id": "f992dcc3bffc7937dfb16ad0019fee36aa620df902ada41955ed5e887760dd85",
+      "test_summary": "test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.51s"
+    }
+  ],
+  "passed": false
+}
