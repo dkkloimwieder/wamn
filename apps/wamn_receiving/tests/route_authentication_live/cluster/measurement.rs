@@ -1358,6 +1358,7 @@ mod tests {
         fs::write(
             &program,
             r#"#!/bin/sh
+set -eu
 printf '%s\n' "$@" >"$TEST_DIRECTORY/arguments"
 script_file=''
 previous=''
