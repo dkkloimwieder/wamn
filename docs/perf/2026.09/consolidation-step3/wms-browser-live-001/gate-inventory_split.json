@@ -1,0 +1,19 @@
+{
+  "body": {
+    "command-id": "gate-wamn_wms-inventory_split",
+    "outcome": {
+      "status": "completed",
+      "value": {
+        "command": "gate",
+        "result": {
+          "report-id": "sha256:09912d05e153e21099fffd2f19a2f732dbbe5453dc7d416b668ab6a5996fba2c",
+          "validated-draft": {
+            "validated-draft-id": "sha256:09912d05e153e21099fffd2f19a2f732dbbe5453dc7d416b668ab6a5996fba2c"
+          }
+        }
+      }
+    },
+    "schema-version": "0.1"
+  },
+  "document": "response"
+}

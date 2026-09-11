@@ -1,0 +1,14 @@
+{
+  "cluster": "wamn-wms-5c7377dcc0554244847d78afac98d3ad",
+  "completed": true,
+  "demo": true,
+  "failure": null,
+  "failure_capture": null,
+  "generated_terminal": false,
+  "partial_completion": false,
+  "private_files_removed": true,
+  "resource_cleanup": true,
+  "source": "04b72bd0d1cf87a170e44e65266f69208f045978",
+  "source_unchanged": true,
+  "startup": false
+}

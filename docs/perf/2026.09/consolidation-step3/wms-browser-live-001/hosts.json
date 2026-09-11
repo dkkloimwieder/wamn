@@ -1,0 +1,147 @@
+{
+  "apiVersion": "v1",
+  "items": [
+    {
+      "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+      "environment": "wamn-wms-5c7377dcc0554244847d78afac98d3ad",
+      "hostId": "f4cbbcb9-7ffe-4fd6-9ac7-440ee2325e72",
+      "hostname": "10.244.1.6",
+      "httpPort": 80,
+      "kind": "Host",
+      "metadata": {
+        "creationTimestamp": "2026-09-11T19:21:23Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/host-finalizer"
+        ],
+        "generation": 1,
+        "labels": {
+          "hostgroup": "default"
+        },
+        "name": "fabulous-control-3827",
+        "namespace": "wamn-system",
+        "resourceVersion": "1373",
+        "uid": "1c06eeb0-f91f-4070-9c2f-e651dd8890fa"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-11T19:21:24Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Reporting"
+          },
+          {
+            "lastTransitionTime": "2026-09-11T19:21:25Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Ready"
+          }
+        ],
+        "lastSeen": "2026-09-11T19:21:26Z",
+        "osArch": "x86_64",
+        "osKernel": "unix",
+        "osName": "linux",
+        "systemCPUUsage": "77.15356",
+        "systemMemoryFree": 2879787008,
+        "systemMemoryTotal": 65437421568,
+        "version": "2.9.0"
+      }
+    },
+    {
+      "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+      "environment": "wamn-wms-5c7377dcc0554244847d78afac98d3ad",
+      "hostId": "a629ccb2-d249-450c-b2af-552659c9d02e",
+      "hostname": "10.244.2.5",
+      "httpPort": 80,
+      "kind": "Host",
+      "metadata": {
+        "creationTimestamp": "2026-09-11T19:21:26Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/host-finalizer"
+        ],
+        "generation": 1,
+        "labels": {
+          "hostgroup": "default"
+        },
+        "name": "sloppy-blood-6209",
+        "namespace": "wamn-system",
+        "resourceVersion": "1389",
+        "uid": "41479eb8-9e7f-486b-8312-290ef0d6f605"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-11T19:21:26Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Reporting"
+          },
+          {
+            "lastTransitionTime": "2026-09-11T19:21:27Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Ready"
+          }
+        ],
+        "lastSeen": "2026-09-11T19:21:28Z",
+        "osArch": "x86_64",
+        "osKernel": "unix",
+        "osName": "linux",
+        "systemCPUUsage": "73.73737",
+        "systemMemoryFree": 2593374208,
+        "systemMemoryTotal": 65437421568,
+        "version": "2.9.0"
+      }
+    },
+    {
+      "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+      "environment": "wamn-wms-5c7377dcc0554244847d78afac98d3ad",
+      "hostId": "52c19678-7f53-4a39-b897-86bbe68bcd07",
+      "hostname": "10.244.2.6",
+      "httpPort": 80,
+      "kind": "Host",
+      "metadata": {
+        "creationTimestamp": "2026-09-11T19:21:25Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/host-finalizer"
+        ],
+        "generation": 1,
+        "labels": {
+          "hostgroup": "default"
+        },
+        "name": "testy-smoke-9300",
+        "namespace": "wamn-system",
+        "resourceVersion": "1381",
+        "uid": "432f7ab9-7b5e-4c33-9023-8154b23718db"
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-11T19:21:25Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Reporting"
+          },
+          {
+            "lastTransitionTime": "2026-09-11T19:21:26Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Ready"
+          }
+        ],
+        "lastSeen": "2026-09-11T19:21:27Z",
+        "osArch": "x86_64",
+        "osKernel": "unix",
+        "osName": "linux",
+        "systemCPUUsage": "72.75",
+        "systemMemoryFree": 2656448512,
+        "systemMemoryTotal": 65437421568,
+        "version": "2.9.0"
+      }
+    }
+  ],
+  "kind": "List",
+  "metadata": {
+    "resourceVersion": ""
+  }
+}

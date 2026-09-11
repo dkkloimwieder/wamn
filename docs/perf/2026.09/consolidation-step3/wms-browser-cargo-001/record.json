@@ -1,0 +1,28 @@
+{
+  "source_commit": "04b72bd0d1cf87a170e44e65266f69208f045978",
+  "source_directory": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+  "started_utc": "2026-09-11T19:13:52.043435+00:00",
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-wms-tests",
+    "--lib",
+    "cluster::wms_browser_demo",
+    "--",
+    "--exact",
+    "--ignored",
+    "--nocapture"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2",
+    "WAMN_WMS_EVIDENCE_DIR": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/wms-browser-live-001",
+    "WAMN_JOURNEY_HOLD_SECONDS": "1"
+  },
+  "exit_code": 0,
+  "elapsed_seconds": 493.863
+}

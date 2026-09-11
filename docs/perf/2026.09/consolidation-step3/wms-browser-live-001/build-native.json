@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "cargo",
+    "build",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-host",
+    "-p",
+    "wamn-ctl",
+    "-p",
+    "wamn-identity",
+    "-p",
+    "wamn-cdc-reader",
+    "-p",
+    "wamn-scenario-worker"
+  ],
+  "elapsed_seconds": 132.26777579,
+  "exit": 0,
+  "success": true
+}
