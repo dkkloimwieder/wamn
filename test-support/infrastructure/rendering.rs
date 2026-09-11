@@ -40,6 +40,8 @@ pub struct HostValuesInput {
     pub release_artifact_base: String,
     pub manifest_digest: String,
     pub nats_url: String,
+    pub stream_replicas: usize,
+    pub dup_window_secs: u64,
     pub event: EventIdentity,
     pub guest_secret_name: String,
     pub role_secrets: Vec<HostRoleSecret>,
@@ -169,12 +171,16 @@ pub fn render_host_values(
         }
         (Some(_), None) => bail!("host overlay has no declared object-store credentials volume"),
     }
+    let stream_replicas = input.stream_replicas.to_string();
+    let dup_window_secs = input.dup_window_secs.to_string();
     for (name, value) in [
         (
             "WAMN_COMPONENT_ARTIFACT_BASE",
             input.component_artifact_base.as_str(),
         ),
         ("WAMN_EVT_NATS_URL", input.nats_url.as_str()),
+        ("WAMN_EVT_STREAM_REPLICAS", stream_replicas.as_str()),
+        ("WAMN_EVT_DUP_WINDOW_SECS", dup_window_secs.as_str()),
         ("WAMN_EVT_ORG", input.event.org.as_str()),
         ("WAMN_EVT_PROJECT", input.event.project.as_str()),
         ("WAMN_EVT_ENV", input.event.environment.as_str()),

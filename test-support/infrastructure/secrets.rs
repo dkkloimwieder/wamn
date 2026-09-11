@@ -353,6 +353,8 @@ mod tests {
             release_artifact_base: "registry.test.invalid/releases".into(),
             manifest_digest: "sha256:test".into(),
             nats_url: "nats://nats.test.invalid:4222".into(),
+            stream_replicas: 1,
+            dup_window_secs: 120,
             event: EventIdentity {
                 org: "acme".into(),
                 project: "receiving".into(),

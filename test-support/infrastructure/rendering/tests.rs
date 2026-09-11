@@ -24,6 +24,8 @@ fn host_input(project: &str) -> HostValuesInput {
         release_artifact_base: "registry.test.invalid:5000/releases".into(),
         manifest_digest: "sha256:0123456789abcdef".into(),
         nats_url: "nats://nats.test.invalid:4222".into(),
+        stream_replicas: 1,
+        dup_window_secs: 120,
         event: event(project),
         guest_secret_name: "test-guest-sql".into(),
         role_secrets: [
@@ -74,6 +76,8 @@ fn host_values_keep_both_applications_separate_and_preserve_credentials() {
                 input.component_artifact_base.as_str(),
             ),
             ("WAMN_EVT_NATS_URL", input.nats_url.as_str()),
+            ("WAMN_EVT_STREAM_REPLICAS", "1"),
+            ("WAMN_EVT_DUP_WINDOW_SECS", "120"),
             ("WAMN_EVT_ORG", "acme"),
             ("WAMN_EVT_PROJECT", project),
             ("WAMN_EVT_ENV", "dev"),
