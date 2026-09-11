@@ -1,0 +1,27 @@
+{
+  "source_commit": "1925bea2ccacb28fc6cf768dd02c5a760b62aca3",
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "build",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-gates",
+    "--bin",
+    "wamn-gates"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "started_utc": "2026-09-11T22:17:53.612544+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 3.790903319953941,
+  "finished_utc": "2026-09-11T22:17:57.403566+00:00",
+  "binary": {
+    "path": "target/debug/wamn-gates",
+    "bytes": 281957520,
+    "sha256": "13f809d973d4018bc841ae71ac9a846889f3de741f806d013a2fcfe458e4e250"
+  }
+}

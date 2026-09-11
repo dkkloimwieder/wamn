@@ -1,0 +1,112 @@
+{
+  "original_root": "/home/kaalin/dev/wamn",
+  "copied_originals": [
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pilot-live-build-001/cargo.log",
+      "bytes": 136,
+      "sha256": "81f57b32f1b9a5485ee6baadf6028e8c7163fe5bdd0b97e769c8a46fab7cd83c",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pilot-live-build-001/command.json",
+      "bytes": 360,
+      "sha256": "8798c9398c42c68ea8ac460cdf06f5f22c67b1126a2b43c0597a0d635b0e6b51",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pilot-live-build-001/record.json",
+      "bytes": 476,
+      "sha256": "c9595f58366259c054c4d1f1843685df125ad00e3bd1dacd7af01eb599454a43",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pilot-live-build-002/cargo.log",
+      "bytes": 9233,
+      "sha256": "f9f2c145184a4b9565f650788a2a7c10864b3c8e71574f3d12ed832a0e18866f",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pilot-live-build-002/command.json",
+      "bytes": 348,
+      "sha256": "6f95691cd62113c077dcb1c37606c1104a798e380fec92f69ffde34be67a369b",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pilot-live-build-002/record.json",
+      "bytes": 623,
+      "sha256": "bd0f9e36f555508ca4b8474555de87436d4809604b1da384518fb601e3cf62b0",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pilot-live-build-003/cargo.log",
+      "bytes": 9136,
+      "sha256": "0fdd984eaddd2dde46576f2644ab6de1aa88de2e0da8911e889610218a5698c0",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pilot-live-build-003/command.json",
+      "bytes": 348,
+      "sha256": "d081f1b2e3738536dc7f18ffb683c0487280b9a4abd3746443229e287634a05c",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pilot-live-build-003/record.json",
+      "bytes": 623,
+      "sha256": "4303a2a4ff40e3dbfbaacae1d9707685e92dd9ae415bf95aff01111866a2c336",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    }
+  ],
+  "all_original_bytes_and_filesystem_modes_unchanged": true,
+  "reviewed_source": [
+    {
+      "path": "tests/integration/src/agent_pilot/runner/process.rs",
+      "source_commit": "1925bea2ccacb28fc6cf768dd02c5a760b62aca3",
+      "bytes": 19908,
+      "sha256": "f897ce76f6a657cc9a08962b837ce12d38a832fa7fb0c58df6688bf3722ab6cf"
+    },
+    {
+      "path": "tests/integration/src/agent_pilot/runner.rs",
+      "source_commit": "1925bea2ccacb28fc6cf768dd02c5a760b62aca3",
+      "bytes": 36248,
+      "sha256": "b19f598bfaaf9b1ffae693aeab9f63a4e52c8a331bfe3851216a71c0e1bedf41"
+    },
+    {
+      "path": "tools/agent-pilot-stub-driver",
+      "source_commit": "1925bea2ccacb28fc6cf768dd02c5a760b62aca3",
+      "bytes": 1155,
+      "sha256": "f477ed3c635fe94645ed9585c827ea0c36770aa3fbd338cefbf861f2f6323f71"
+    }
+  ],
+  "limits": [
+    "Build records do not contain a binary file mode or a tracked-source before/after comparison.",
+    "Source review is static. These build attempts did not execute a pilot lifecycle or a test.",
+    "No task, steps, credentials or private grading state was copied."
+  ]
+}
