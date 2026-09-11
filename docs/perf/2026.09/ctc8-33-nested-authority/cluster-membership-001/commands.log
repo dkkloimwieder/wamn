@@ -1,0 +1,57 @@
+2026-09-11T01:20:24Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/target RUSTC_WRAPPER= /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/tools/build-components m1 
+2026-09-11T01:21:44Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/target RUSTC_WRAPPER= cargo build --locked -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor 
+2026-09-11T01:23:31Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/Dockerfile --target host --tag wamn-host:receiving-3dda4324c6f4-3044261-release --label wamn.dev/source-head=3dda4324c6f494ae72e0466034632f09975ec42c --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910 
+2026-09-11T01:28:41Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/Dockerfile --target gates --tag wamn-gates:receiving-3dda4324c6f4-3044261-release --label wamn.dev/source-head=3dda4324c6f494ae72e0466034632f09975ec42c --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910 
+2026-09-11T01:41:52Z kind create cluster --name wamn-receiving-journey --config /tmp/tmp.3xADmltAXP/kind-config.yaml --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig 
+2026-09-11T01:42:30Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey wait --for=condition=Ready nodes --all --timeout=180s 
+2026-09-11T01:42:46Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey create namespace wamn-receiving-journey 
+2026-09-11T01:42:46Z kind load docker-image wamn-host:receiving-3dda4324c6f4-3044261-release --name wamn-receiving-journey 
+2026-09-11T01:43:07Z kind load docker-image wamn-gates:receiving-3dda4324c6f4-3044261-release --name wamn-receiving-journey 
+2026-09-11T01:43:35Z htpasswd \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T01:43:37Z postgres \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T01:43:38Z docker run --detach --name wamn-receiving-registry-3dda4324c6f4-3044261 --network kind --env REGISTRY_AUTH=htpasswd --env REGISTRY_AUTH_HTPASSWD_REALM=WAMN\ Receiving\ cluster\ journey --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd --volume /tmp/tmp.3xADmltAXP/htpasswd:/auth/htpasswd:ro registry:2 
+2026-09-11T01:43:39Z docker run --detach --name wamn-receiving-nats-3dda4324c6f4-3044261 --network kind nats:2.10-alpine --jetstream --store_dir /data --http_port 8222 
+2026-09-11T01:43:45Z psql \<owned\ PostgreSQL\ administrator\> CREATE\ DATABASE\ wamn_system 
+2026-09-11T01:43:46Z cargo test production_two_package_release_serves_all_thirteen_pat_routes \<journey\ document\ with\ disposable\ PostgreSQL\ and\ OCI\ inputs\ redacted\> 
+2026-09-11T01:49:26Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/route-caller-pat-kube.json 
+2026-09-11T01:49:29Z env DOCKER_CONFIG=\<private-registry-directory\> /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/.tools/wash/2.9.0/wash -o json oci push --insecure 172.28.0.9:5000/wamn/flow-http:receiving-3dda4324c6f4-3044261-release /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/target/wasm32-wasip2/release/http_route.wasm 
+2026-09-11T01:49:30Z env DOCKER_CONFIG=\<private-registry-directory\> /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/.tools/wash/2.9.0/wash -o json oci push --insecure 172.28.0.9:5000/wamn/materializer:receiving-3dda4324c6f4-3044261-release /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/target/wasm32-wasip2/release/materializer.wasm 
+2026-09-11T01:49:30Z print-release-env \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T01:49:31Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/host-secrets/guest-sql.json 
+2026-09-11T01:49:31Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/host-secrets/executor-platform.json 
+2026-09-11T01:49:31Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/host-secrets/identity-reader.json 
+2026-09-11T01:49:32Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/host-secrets/http-admitter.json 
+2026-09-11T01:49:32Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/host-secrets/event-materializer.json 
+2026-09-11T01:49:32Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey create secret generic wamn-registry-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=\<redacted\> --dry-run=client -o yaml 
+2026-09-11T01:49:33Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/registry-pull.yaml 
+2026-09-11T01:49:33Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/deploy/infra/cert-manager.yaml 
+2026-09-11T01:49:37Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey -n cert-manager wait --for=condition=Available deployment --all --timeout=240s 
+2026-09-11T01:49:49Z helm upgrade --install --create-namespace --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --kube-context kind-wamn-receiving-journey --namespace wamn-system wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 -f /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/deploy/infra/values-wamn.yaml -f /tmp/tmp.3xADmltAXP/operator-values.yaml --wait --timeout 5m 
+2026-09-11T01:50:38Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey -n wamn-system get deployment runtime-operator -o json 
+2026-09-11T01:50:38Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/runtime-operator-events-rbac.yaml 
+2026-09-11T01:50:39Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get role wamn-runtime-operator-events -o json 
+2026-09-11T01:50:39Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey get rolebinding wamn-runtime-operator-events -o json 
+2026-09-11T01:50:39Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/deploy/infra/tempo.yaml 
+2026-09-11T01:50:40Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/deploy/infra/otel-collector.yaml 
+2026-09-11T01:50:40Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey -n wamn-system wait --for=condition=Available deployment/tempo deployment/otel-collector --timeout=120s 
+2026-09-11T01:50:51Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/wasmcloud-ca-copy.json 
+2026-09-11T01:50:51Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/deploy/infra/wasmcloud-ca-issuer.yaml 
+2026-09-11T01:50:52Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=60s 
+2026-09-11T01:50:52Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/host-environment-certs.yaml 
+2026-09-11T01:50:52Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Ready certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s 
+2026-09-11T01:50:53Z helm upgrade --install --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --kube-context kind-wamn-receiving-journey --namespace wamn-receiving-journey wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 -f /tmp/tmp.3xADmltAXP/host-base.yaml -f /tmp/tmp.3xADmltAXP/host-overlay.yaml --wait --timeout 5m 
+2026-09-11T01:51:02Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey rollout status deployment/hostgroup-default --timeout=240s 
+2026-09-11T01:51:03Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/flow-http.yaml 
+2026-09-11T01:51:04Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Ready workloaddeployment/flow-http --timeout=240s 
+2026-09-11T01:51:06Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey create -f /tmp/tmp.3xADmltAXP/membershipproof-secret.json 
+2026-09-11T01:51:07Z /usr/local/bin/wamn-gates membershipproof --endpoint-url http://flow-http.wamn-receiving-journey.svc.cluster.local --host receiving.localhost --org acme --project receiving --env dev --tenant receiving-route-auth \<admin\ URLs\ supplied\ by\ ephemeral\ Secret\;\ ctl=/usr/local/bin/wamn-ctl\> 
+2026-09-11T01:51:07Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey apply -f /tmp/tmp.3xADmltAXP/membershipproof-job.yaml 
+2026-09-11T01:51:07Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey wait --for=condition=Complete job/membershipproof --timeout=720s 
+2026-09-11T01:51:12Z kubectl --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig --context kind-wamn-receiving-journey -n wamn-receiving-journey delete secret membershipproof-fixture 
+2026-09-11T01:51:12Z kind delete cluster --name wamn-receiving-journey --kubeconfig /tmp/tmp.3xADmltAXP/kubeconfig 
+2026-09-11T01:51:15Z docker rm --force --volumes wamn-receiving-pg18-3dda4324c6f4-3044261 
+2026-09-11T01:51:16Z docker rm --force --volumes wamn-receiving-registry-3dda4324c6f4-3044261 
+2026-09-11T01:51:16Z docker rm --force --volumes wamn-receiving-nats-3dda4324c6f4-3044261 
+2026-09-11T01:51:17Z docker image rm wamn-gates:receiving-3dda4324c6f4-3044261-release 
+2026-09-11T01:51:17Z docker image rm wamn-host:receiving-3dda4324c6f4-3044261-release 
+2026-09-11T01:51:17Z rm -rf -- /tmp/tmp.3xADmltAXP 

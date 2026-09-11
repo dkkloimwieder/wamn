@@ -49,3 +49,13 @@ The [deliberate bypass](mutation-bypass-001/mutation.patch) replaced the depende
 The [test failed](mutation-bypass-001/result.json) with exit 101 on the foreign-package assertion, not a build error.
 The [restored test](mutation-restored-001/result.json) passed after the source matched commit `e502c996` exactly.
 The restore used a fresh modification time, so Cargo rebuilt the corrected source.
+
+The [deployed gate](deployed-001/result.json) passed at commit `3dda4324` in 1852.883 seconds.
+Its [membership receipt](cluster-membership-001/membershipproof.receipt) records seven passing cases through the deployed host.
+The runner rebuilt both standard images and used the disposable `wamn-receiving-journey` cluster.
+The [cleanup receipt](cluster-membership-001/cleanup.receipt) records removal of its cluster, containers, and images.
+The evidence checksums passed.
+This gate proves deployed route authentication, not nested outbound dispatch or performance.
+
+Merge commit `be309de3` preserves the tested commit and incorporates the Receiving boundary at `b7275405`.
+That boundary changes proof code, its dependency, and test tooling, but no identity, runtime, driver, or service implementation.

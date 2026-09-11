@@ -1,0 +1,208 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "creationTimestamp": "2026-09-11T01:51:07Z",
+                "generateName": "membershipproof-",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "b1b14cb2-72b8-41eb-a153-e3b42f7e23dd",
+                    "batch.kubernetes.io/job-name": "membershipproof",
+                    "controller-uid": "b1b14cb2-72b8-41eb-a153-e3b42f7e23dd",
+                    "job-name": "membershipproof"
+                },
+                "name": "membershipproof-twssw",
+                "namespace": "wamn-receiving-journey",
+                "ownerReferences": [
+                    {
+                        "apiVersion": "batch/v1",
+                        "blockOwnerDeletion": true,
+                        "controller": true,
+                        "kind": "Job",
+                        "name": "membershipproof",
+                        "uid": "b1b14cb2-72b8-41eb-a153-e3b42f7e23dd"
+                    }
+                ],
+                "resourceVersion": "1948",
+                "uid": "f3ad2f2d-e720-4c4b-b344-c0af4359cb55"
+            },
+            "spec": {
+                "automountServiceAccountToken": false,
+                "containers": [
+                    {
+                        "args": [
+                            "--endpoint-url",
+                            "http://flow-http.wamn-receiving-journey.svc.cluster.local",
+                            "--host",
+                            "receiving.localhost",
+                            "--org",
+                            "acme",
+                            "--project",
+                            "receiving",
+                            "--env",
+                            "dev",
+                            "--tenant",
+                            "receiving-route-auth"
+                        ],
+                        "command": [
+                            "/usr/local/bin/wamn-gates",
+                            "membershipproof"
+                        ],
+                        "env": [
+                            {
+                                "name": "WAMN_SYSTEM_ADMIN_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "system-url",
+                                        "name": "membershipproof-fixture"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_PROJECT_ADMIN_URL",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "key": "project-url",
+                                        "name": "membershipproof-fixture"
+                                    }
+                                }
+                            },
+                            {
+                                "name": "WAMN_CTL_BIN",
+                                "value": "/usr/local/bin/wamn-ctl"
+                            }
+                        ],
+                        "image": "wamn-gates:receiving-3dda4324c6f4-3044261-release",
+                        "imagePullPolicy": "Never",
+                        "name": "membershipproof",
+                        "resources": {},
+                        "terminationMessagePath": "/dev/termination-log",
+                        "terminationMessagePolicy": "File"
+                    }
+                ],
+                "dnsPolicy": "ClusterFirst",
+                "enableServiceLinks": true,
+                "nodeName": "wamn-receiving-journey-worker2",
+                "preemptionPolicy": "PreemptLowerPriority",
+                "priority": 0,
+                "restartPolicy": "Never",
+                "schedulerName": "default-scheduler",
+                "securityContext": {},
+                "serviceAccount": "default",
+                "serviceAccountName": "default",
+                "terminationGracePeriodSeconds": 30,
+                "tolerations": [
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/not-ready",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    },
+                    {
+                        "effect": "NoExecute",
+                        "key": "node.kubernetes.io/unreachable",
+                        "operator": "Exists",
+                        "tolerationSeconds": 300
+                    }
+                ]
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T01:51:10Z",
+                        "observedGeneration": 1,
+                        "status": "False",
+                        "type": "PodReadyToStartContainers"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T01:51:07Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "True",
+                        "type": "Initialized"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T01:51:09Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "Ready"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T01:51:09Z",
+                        "observedGeneration": 1,
+                        "reason": "PodCompleted",
+                        "status": "False",
+                        "type": "ContainersReady"
+                    },
+                    {
+                        "lastProbeTime": null,
+                        "lastTransitionTime": "2026-09-11T01:51:07Z",
+                        "observedGeneration": 1,
+                        "status": "True",
+                        "type": "PodScheduled"
+                    }
+                ],
+                "containerStatuses": [
+                    {
+                        "containerID": "containerd://35b0bead16e31044822f27cec311c75e6e022f655c4ddaa679a110cae8c52364",
+                        "image": "docker.io/library/wamn-gates:receiving-3dda4324c6f4-3044261-release",
+                        "imageID": "docker.io/library/import-2026-09-11@sha256:f4bd418c7185f5e8841adf702eb1f96614df9da3c626565e1ce1596bdf98a327",
+                        "lastState": {},
+                        "name": "membershipproof",
+                        "ready": false,
+                        "resources": {},
+                        "restartCount": 0,
+                        "started": false,
+                        "state": {
+                            "terminated": {
+                                "containerID": "containerd://35b0bead16e31044822f27cec311c75e6e022f655c4ddaa679a110cae8c52364",
+                                "exitCode": 0,
+                                "finishedAt": "2026-09-11T01:51:08Z",
+                                "reason": "Completed",
+                                "startedAt": "2026-09-11T01:51:08Z"
+                            }
+                        },
+                        "user": {
+                            "linux": {
+                                "gid": 0,
+                                "supplementalGroups": [
+                                    0
+                                ],
+                                "uid": 0
+                            }
+                        }
+                    }
+                ],
+                "hostIP": "172.28.0.7",
+                "hostIPs": [
+                    {
+                        "ip": "172.28.0.7"
+                    }
+                ],
+                "observedGeneration": 1,
+                "phase": "Succeeded",
+                "podIP": "10.244.1.6",
+                "podIPs": [
+                    {
+                        "ip": "10.244.1.6"
+                    }
+                ],
+                "qosClass": "BestEffort",
+                "resources": {},
+                "startTime": "2026-09-11T01:51:07Z"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}
