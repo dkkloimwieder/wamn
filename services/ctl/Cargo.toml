@@ -86,6 +86,7 @@ wash-runtime = { workspace = true, features = ["washlet"] }
 wamn-run-state = { workspace = true }
 
 [dev-dependencies]
+wamn-test-infrastructure = { workspace = true }
 tokio-rustls = { workspace = true }
 wit-component = { version = "=0.252.0", features = ["dummy-module"] }
 wit-parser = "=0.252.0"
