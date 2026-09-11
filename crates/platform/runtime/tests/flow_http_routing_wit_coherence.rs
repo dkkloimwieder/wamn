@@ -80,7 +80,7 @@ fn the_flow_http_routing_copies_stay_byte_identical() {
 fn every_flow_http_routing_copy_is_registered() {
     let root = repo_root();
     let mut found = Vec::new();
-    for top in ["components", "crates", "services"] {
+    for top in ["apps", "crates", "services"] {
         collect_flow_copies(&root.join(top), &root, &mut found);
     }
     found.sort();
