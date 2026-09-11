@@ -5646,6 +5646,7 @@ dependencies = [
 name = "wamn-control-provision"
 version = "0.1.0"
 dependencies = [
+ "async-nats",
  "chrono",
  "hex",
  "serde",
@@ -5653,6 +5654,7 @@ dependencies = [
  "sha2 0.11.0",
  "url",
  "wamn-control-registry",
+ "wamn-event-wire",
  "wamn-pg-core",
  "wamn-run-state",
  "wamn-schema-control",
