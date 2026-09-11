@@ -1354,7 +1354,9 @@ mod tests {
             format!("receiving-throughput-test-{}", uuid::Uuid::new_v4()),
         ));
         fs::create_dir(directory.path()).unwrap();
-        let program = directory.path().join("pgbench");
+        let binaries = directory.path().join("bin");
+        fs::create_dir(&binaries).unwrap();
+        let program = binaries.join("pgbench");
         fs::write(
             &program,
             r#"#!/bin/sh
@@ -1390,11 +1392,7 @@ printf '0 1 471 0 1788644700 907135\n0 2 103 0 1788644700 907251\n' >"$TEST_DIRE
             .env("TEST_DIRECTORY", directory.path())
             .env(
                 "PATH",
-                format!(
-                    "{}:{}",
-                    directory.path().display(),
-                    std::env::var("PATH").unwrap()
-                ),
+                format!("{}:{}", binaries.display(), std::env::var("PATH").unwrap()),
             )
             .output()
             .unwrap();
