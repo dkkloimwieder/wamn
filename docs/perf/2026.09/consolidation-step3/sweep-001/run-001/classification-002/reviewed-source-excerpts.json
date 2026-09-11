@@ -1,0 +1,5472 @@
+{
+  "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs:491": {
+    "path": "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "eaa13ad223500c5fd983990f64ddb8b1ce4e6aa5ea8c153fb775e380647e8ed4",
+    "start_line": 483,
+    "end_line": 499,
+    "lines": [
+      {
+        "line": 483,
+        "text": "    );"
+      },
+      {
+        "line": 484,
+        "text": "    if let Some(trace) = trace {"
+      },
+      {
+        "line": 485,
+        "text": "        trace.assert_parentage(&fixture, caller);"
+      },
+      {
+        "line": 486,
+        "text": "    }"
+      },
+      {
+        "line": 487,
+        "text": "    println!(\"authenticated-native-case={scenario:?} result=pass\");"
+      },
+      {
+        "line": 488,
+        "text": "}"
+      },
+      {
+        "line": 489,
+        "text": ""
+      },
+      {
+        "line": 490,
+        "text": "async fn prove() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 491,
+        "text": "    let admin_url = std::env::var(URL_ENV).with_context(|| {"
+      },
+      {
+        "line": 492,
+        "text": "        format!(\"set {URL_ENV} to this proof's fresh disposable PostgreSQL 18 server\")"
+      },
+      {
+        "line": 493,
+        "text": "    })?;"
+      },
+      {
+        "line": 494,
+        "text": "    let (mut server, route) = authentication_fixture(&admin_url).await?;"
+      },
+      {
+        "line": 495,
+        "text": "    let parent_only = authenticated(&route, false).await;"
+      },
+      {
+        "line": 496,
+        "text": "    let permitted = authenticated(&route, true).await;"
+      },
+      {
+        "line": 497,
+        "text": "    for scenario in SCENARIOS {"
+      },
+      {
+        "line": 498,
+        "text": "        prove_case("
+      },
+      {
+        "line": 499,
+        "text": "            scenario,"
+      }
+    ]
+  },
+  "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs:38": {
+    "path": "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "eaa13ad223500c5fd983990f64ddb8b1ce4e6aa5ea8c153fb775e380647e8ed4",
+    "start_line": 30,
+    "end_line": 46,
+    "lines": [
+      {
+        "line": 30,
+        "text": "#[path = \"../../../../../../platform/runtime/tests/support/session_fixture.rs\"]"
+      },
+      {
+        "line": 31,
+        "text": "#[expect("
+      },
+      {
+        "line": 32,
+        "text": "    dead_code,"
+      },
+      {
+        "line": 33,
+        "text": "    reason = \"The shared issuer fixture also serves cache-expiry proofs.\""
+      },
+      {
+        "line": 34,
+        "text": ")]"
+      },
+      {
+        "line": 35,
+        "text": "mod session_fixture;"
+      },
+      {
+        "line": 36,
+        "text": "use session_fixture::{ORG, Server, claims, header, signed};"
+      },
+      {
+        "line": 37,
+        "text": ""
+      },
+      {
+        "line": 38,
+        "text": "const URL_ENV: &str = \"WAMN_NATIVE_B_AUTH_PG_URL\";"
+      },
+      {
+        "line": 39,
+        "text": "const PROJECT: &str = \"proof\";"
+      },
+      {
+        "line": 40,
+        "text": "const TENANT: &str = \"tenant-a\";"
+      },
+      {
+        "line": 41,
+        "text": "const ENVIRONMENT: &str = \"proof\";"
+      },
+      {
+        "line": 42,
+        "text": "const AUDIENCE: &str = \"urn:wamn:project-env:org-a:proof:proof:native-b\";"
+      },
+      {
+        "line": 43,
+        "text": "const ATTACHMENT: &str = \"native-proof-http\";"
+      },
+      {
+        "line": 44,
+        "text": "const PASSWORD: &str = \"native-b-disposable-proof-only\";"
+      },
+      {
+        "line": 45,
+        "text": "const TEST_NAME: &str = \"native_authenticated_nested_authority_and_lifecycle\";"
+      },
+      {
+        "line": 46,
+        "text": ""
+      }
+    ]
+  },
+  "apps/wamn_receiving/tests/route_authentication_live/cluster.rs:479": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live/cluster.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "4038dc7eb88fcd31bbc92d70b479e6d9cc48cefa840bab8cef8169e67b43d1f4",
+    "start_line": 471,
+    "end_line": 487,
+    "lines": [
+      {
+        "line": 471,
+        "text": ""
+      },
+      {
+        "line": 472,
+        "text": "async fn apply(cluster: &Resources, path: &Path) -> anyhow::Result<()> {"
+      },
+      {
+        "line": 473,
+        "text": "    checked(kubectl(cluster).args([\"apply\", \"-f\"]).arg(path)).await?;"
+      },
+      {
+        "line": 474,
+        "text": "    Ok(())"
+      },
+      {
+        "line": 475,
+        "text": "}"
+      },
+      {
+        "line": 476,
+        "text": ""
+      },
+      {
+        "line": 477,
+        "text": "async fn evidence_directory() -> anyhow::Result<PathBuf> {"
+      },
+      {
+        "line": 478,
+        "text": "    let path = PathBuf::from(std::env::var_os(\"WAMN_RECEIVING_EVIDENCE_DIR\").context("
+      },
+      {
+        "line": 479,
+        "text": "        \"WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf\","
+      },
+      {
+        "line": 480,
+        "text": "    )?);"
+      },
+      {
+        "line": 481,
+        "text": "    ensure!("
+      },
+      {
+        "line": 482,
+        "text": "        path.is_absolute() && !path.exists(),"
+      },
+      {
+        "line": 483,
+        "text": "        \"Receiving evidence must use a new absolute directory\""
+      },
+      {
+        "line": 484,
+        "text": "    );"
+      },
+      {
+        "line": 485,
+        "text": "    let parent = path"
+      },
+      {
+        "line": 486,
+        "text": "        .parent()"
+      },
+      {
+        "line": 487,
+        "text": "        .context(\"Receiving evidence has a parent\")?"
+      }
+    ]
+  },
+  "apps/wamn_wms/tests/cluster.rs:729": {
+    "path": "apps/wamn_wms/tests/cluster.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "c7542e799a325b3f02afc4a3eea74b72fac757c98e238f170ff0597d8f0ada7a",
+    "start_line": 721,
+    "end_line": 732,
+    "lines": [
+      {
+        "line": 721,
+        "text": "        \"--\","
+      },
+      {
+        "line": 722,
+        "text": "        \".\","
+      },
+      {
+        "line": 723,
+        "text": "        \":(exclude).beads/issues.jsonl\","
+      },
+      {
+        "line": 724,
+        "text": "        \":(exclude).beads/interactions.jsonl\","
+      },
+      {
+        "line": 725,
+        "text": "    ]))"
+      },
+      {
+        "line": 726,
+        "text": "    .await?;"
+      },
+      {
+        "line": 727,
+        "text": "    ensure!("
+      },
+      {
+        "line": 728,
+        "text": "        status.is_empty(),"
+      },
+      {
+        "line": 729,
+        "text": "        \"the WMS cluster case requires a clean source tree\""
+      },
+      {
+        "line": 730,
+        "text": "    );"
+      },
+      {
+        "line": 731,
+        "text": "    Ok(())"
+      },
+      {
+        "line": 732,
+        "text": "}"
+      }
+    ]
+  },
+  "5ef02888:test-support/harness/src/journey.rs:9": {
+    "path": "test-support/harness/src/journey.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "ca818c06246aa32e5bb066d68d7d4b9d193df14c0554d5ffee6ad01a3523e9a3",
+    "start_line": 1,
+    "end_line": 18,
+    "lines": [
+      {
+        "line": 1,
+        "text": "//! Shared input document for the Receiving and WMS test runs."
+      },
+      {
+        "line": 2,
+        "text": ""
+      },
+      {
+        "line": 3,
+        "text": "use std::path::{Path, PathBuf};"
+      },
+      {
+        "line": 4,
+        "text": ""
+      },
+      {
+        "line": 5,
+        "text": "use anyhow::Context as _;"
+      },
+      {
+        "line": 6,
+        "text": "use schemars::JsonSchema;"
+      },
+      {
+        "line": 7,
+        "text": "use serde::{Deserialize, Serialize};"
+      },
+      {
+        "line": 8,
+        "text": ""
+      },
+      {
+        "line": 9,
+        "text": "const JOURNEY_DOCUMENT_ENV: &str = \"WAMN_JOURNEY_DOCUMENT\";"
+      },
+      {
+        "line": 10,
+        "text": ""
+      },
+      {
+        "line": 11,
+        "text": "/// Sole field authority for the cluster journey's input document."
+      },
+      {
+        "line": 12,
+        "text": "///"
+      },
+      {
+        "line": 13,
+        "text": "/// An environment variable carries a process setting; data crosses a boundary"
+      },
+      {
+        "line": 14,
+        "text": "/// as a declared, schema'd artifact. This document replaced thirteen"
+      },
+      {
+        "line": 15,
+        "text": "/// `WAMN_*` environment variables that had grown one name at a time, each"
+      },
+      {
+        "line": 16,
+        "text": "/// encoding whatever its author was thinking about -- the application, the"
+      },
+      {
+        "line": 17,
+        "text": "/// test, the database -- until two PG18 URLs sat one segment apart in a flat"
+      },
+      {
+        "line": 18,
+        "text": "/// namespace with nothing to say they were different things. As fields they"
+      }
+    ]
+  },
+  "5ef02888:test-support/harness/src/journey.rs:117": {
+    "path": "test-support/harness/src/journey.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "ca818c06246aa32e5bb066d68d7d4b9d193df14c0554d5ffee6ad01a3523e9a3",
+    "start_line": 108,
+    "end_line": 126,
+    "lines": [
+      {
+        "line": 108,
+        "text": "    pub kubeconfig: PathBuf,"
+      },
+      {
+        "line": 109,
+        "text": "    pub context: String,"
+      },
+      {
+        "line": 110,
+        "text": "    pub namespace: String,"
+      },
+      {
+        "line": 111,
+        "text": "    pub materializer_workload: String,"
+      },
+      {
+        "line": 112,
+        "text": "    pub source_commit: String,"
+      },
+      {
+        "line": 113,
+        "text": "    pub statement_timeout_ms: u64,"
+      },
+      {
+        "line": 114,
+        "text": "}"
+      },
+      {
+        "line": 115,
+        "text": ""
+      },
+      {
+        "line": 116,
+        "text": "impl JourneyDocument {"
+      },
+      {
+        "line": 117,
+        "text": "    pub fn required() -> anyhow::Result<Self> {"
+      },
+      {
+        "line": 118,
+        "text": "        let path = std::env::var(JOURNEY_DOCUMENT_ENV)"
+      },
+      {
+        "line": 119,
+        "text": "            .ok()"
+      },
+      {
+        "line": 120,
+        "text": "            .filter(|value| !value.is_empty())"
+      },
+      {
+        "line": 121,
+        "text": "            .map(PathBuf::from)"
+      },
+      {
+        "line": 122,
+        "text": "            .with_context(|| format!(\"set {JOURNEY_DOCUMENT_ENV} to the test input document\"))?;"
+      },
+      {
+        "line": 123,
+        "text": "        let bytes = std::fs::read(&path).with_context(|| format!(\"read {}\", path.display()))?;"
+      },
+      {
+        "line": 124,
+        "text": "        parse_journey_document(&bytes)"
+      },
+      {
+        "line": 125,
+        "text": "            .with_context(|| format!(\"{} is not a valid journey document\", path.display()))"
+      },
+      {
+        "line": 126,
+        "text": "    }"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/route_authentication_live.rs:9": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "a20197e518c8cce87f2918b7062a23a0ae152d51218783fccfa4b5899d4567d6",
+    "start_line": 1,
+    "end_line": 24,
+    "lines": [
+      {
+        "line": 1,
+        "text": "//! Receiving application scenarios over real platform adapters."
+      },
+      {
+        "line": 2,
+        "text": ""
+      },
+      {
+        "line": 3,
+        "text": "#[path = \"../../../tests/integration/src/route_authentication_live/fresh_only.rs\"]"
+      },
+      {
+        "line": 4,
+        "text": "mod fresh_only;"
+      },
+      {
+        "line": 5,
+        "text": "mod cluster;"
+      },
+      {
+        "line": 6,
+        "text": "#[path = \"../../../tests/integration/tests/startup_burst_live.rs\"]"
+      },
+      {
+        "line": 7,
+        "text": "mod startup_burst;"
+      },
+      {
+        "line": 8,
+        "text": "#[path = \"receiving_command_histories_live.rs\"]"
+      },
+      {
+        "line": 9,
+        "text": "mod command_histories;"
+      },
+      {
+        "line": 10,
+        "text": "#[path = \"../../client_acme_receiving/tests/overlay_compatibility.rs\"]"
+      },
+      {
+        "line": 11,
+        "text": "mod overlay_compatibility;"
+      },
+      {
+        "line": 12,
+        "text": "#[path = \"../../../tests/integration/src/route_authentication_live/p3_shell.rs\"]"
+      },
+      {
+        "line": 13,
+        "text": "mod p3_shell;"
+      },
+      {
+        "line": 14,
+        "text": "#[path = \"postcommit.rs\"]"
+      },
+      {
+        "line": 15,
+        "text": "mod postcommit;"
+      },
+      {
+        "line": 16,
+        "text": "#[path = \"../../../tests/integration/src/route_authentication_live/session_client.rs\"]"
+      },
+      {
+        "line": 17,
+        "text": "mod session_client;"
+      },
+      {
+        "line": 18,
+        "text": "mod dev;"
+      },
+      {
+        "line": 19,
+        "text": "mod runtime;"
+      },
+      {
+        "line": 20,
+        "text": "mod routes;"
+      },
+      {
+        "line": 21,
+        "text": "mod sessions;"
+      },
+      {
+        "line": 22,
+        "text": "mod materializer;"
+      },
+      {
+        "line": 23,
+        "text": "mod environment;"
+      },
+      {
+        "line": 24,
+        "text": ""
+      }
+    ]
+  },
+  "5ef02888:services/ctl/tests/dev_command.rs:65": {
+    "path": "services/ctl/tests/dev_command.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "a2dc7e307f93a011061f60174ab9290e7b73c4194d03a429a75faef1395b1b63",
+    "start_line": 10,
+    "end_line": 120,
+    "lines": [
+      {
+        "line": 10,
+        "text": "#[test]"
+      },
+      {
+        "line": 11,
+        "text": "fn product_binary_exposes_only_the_development_command() {"
+      },
+      {
+        "line": 12,
+        "text": "    let output = output(&[\"--help\"]);"
+      },
+      {
+        "line": 13,
+        "text": "    assert!(output.status.success());"
+      },
+      {
+        "line": 14,
+        "text": "    let help = String::from_utf8(output.stdout).expect(\"help is UTF-8\");"
+      },
+      {
+        "line": 15,
+        "text": "    assert!(help.contains(\"dev\"));"
+      },
+      {
+        "line": 16,
+        "text": "    assert!(!help.contains(\"provision-project\"));"
+      },
+      {
+        "line": 17,
+        "text": "    assert!(!help.contains(\"publish-release\"));"
+      },
+      {
+        "line": 18,
+        "text": "}"
+      },
+      {
+        "line": 19,
+        "text": ""
+      },
+      {
+        "line": 20,
+        "text": "#[test]"
+      },
+      {
+        "line": 21,
+        "text": "fn development_command_requires_its_two_explicit_inputs_and_offers_watch() {"
+      },
+      {
+        "line": 22,
+        "text": "    let output = output(&[\"dev\", \"--help\"]);"
+      },
+      {
+        "line": 23,
+        "text": "    assert!(output.status.success());"
+      },
+      {
+        "line": 24,
+        "text": "    let help = String::from_utf8(output.stdout).expect(\"help is UTF-8\");"
+      },
+      {
+        "line": 25,
+        "text": "    for input in [\"--config <FILE>\", \"--overlay-root <DIRECTORY>\", \"--watch\"] {"
+      },
+      {
+        "line": 26,
+        "text": "        assert!(help.contains(input), \"development help omitted {input}\");"
+      },
+      {
+        "line": 27,
+        "text": "    }"
+      },
+      {
+        "line": 28,
+        "text": "}"
+      },
+      {
+        "line": 29,
+        "text": ""
+      },
+      {
+        "line": 30,
+        "text": "/// `up` is a subcommand of `dev`, and it names the two inputs the spawned Gate"
+      },
+      {
+        "line": 31,
+        "text": "/// added: the binary to spawn and the fixed port to spawn it on"
+      },
+      {
+        "line": 32,
+        "text": "/// (wamn-10yt.10.32)."
+      },
+      {
+        "line": 33,
+        "text": "#[test]"
+      },
+      {
+        "line": 34,
+        "text": "fn dev_up_names_the_scenario_worker_binary_and_its_fixed_port() {"
+      },
+      {
+        "line": 35,
+        "text": "    let output = output(&[\"dev\", \"up\", \"--help\"]);"
+      },
+      {
+        "line": 36,
+        "text": "    assert!(output.status.success());"
+      },
+      {
+        "line": 37,
+        "text": "    let help = String::from_utf8(output.stdout).expect(\"help is UTF-8\");"
+      },
+      {
+        "line": 38,
+        "text": "    for input in ["
+      },
+      {
+        "line": 39,
+        "text": "        \"--scenario-worker-binary\","
+      },
+      {
+        "line": 40,
+        "text": "        \"--gate-bind\","
+      },
+      {
+        "line": 41,
+        "text": "        \"--system-database-url\","
+      },
+      {
+        "line": 42,
+        "text": "        \"--root\","
+      },
+      {
+        "line": 43,
+        "text": "        \"--package\","
+      },
+      {
+        "line": 44,
+        "text": "    ] {"
+      },
+      {
+        "line": 45,
+        "text": "        assert!(help.contains(input), \"dev up help omitted {input}\");"
+      },
+      {
+        "line": 46,
+        "text": "    }"
+      },
+      {
+        "line": 47,
+        "text": "}"
+      },
+      {
+        "line": 48,
+        "text": ""
+      },
+      {
+        "line": 49,
+        "text": "/// Adding `up` must not have made the loop's own required input optional."
+      },
+      {
+        "line": 50,
+        "text": "#[test]"
+      },
+      {
+        "line": 51,
+        "text": "fn the_bare_development_command_still_requires_its_configuration() {"
+      },
+      {
+        "line": 52,
+        "text": "    let output = output(&[\"dev\", \"--overlay-root\", \"apps/client_acme_receiving\"]);"
+      },
+      {
+        "line": 53,
+        "text": "    assert!(!output.status.success());"
+      },
+      {
+        "line": 54,
+        "text": "    let stderr = String::from_utf8(output.stderr).expect(\"stderr is UTF-8\");"
+      },
+      {
+        "line": 55,
+        "text": "    assert!("
+      },
+      {
+        "line": 56,
+        "text": "        stderr.contains(\"--config\"),"
+      },
+      {
+        "line": 57,
+        "text": "        \"the missing-configuration refusal does not name --config: {stderr}\""
+      },
+      {
+        "line": 58,
+        "text": "    );"
+      },
+      {
+        "line": 59,
+        "text": "}"
+      },
+      {
+        "line": 60,
+        "text": ""
+      },
+      {
+        "line": 61,
+        "text": "/// The Gate is a spawned child now, so it cannot report back an ephemeral port"
+      },
+      {
+        "line": 62,
+        "text": "/// the way the in-process launch did. Port 0 is refused, the refusal NAMES the"
+      },
+      {
+        "line": 63,
+        "text": "/// address, and it lands before any credential is minted."
+      },
+      {
+        "line": 64,
+        "text": "#[test]"
+      },
+      {
+        "line": 65,
+        "text": "fn dev_up_refuses_an_ephemeral_gate_port_and_names_it() {"
+      },
+      {
+        "line": 66,
+        "text": "    let root = std::env::temp_dir().join(format!(\"wamn-dev-up-ephemeral-{}\", std::process::id()));"
+      },
+      {
+        "line": 67,
+        "text": "    let output = Command::new(env!(\"CARGO_BIN_EXE_wamn\"))"
+      },
+      {
+        "line": 68,
+        "text": "        .args(["
+      },
+      {
+        "line": 69,
+        "text": "            \"dev\","
+      },
+      {
+        "line": 70,
+        "text": "            \"up\","
+      },
+      {
+        "line": 71,
+        "text": "            \"--system-database-url\","
+      },
+      {
+        "line": 72,
+        "text": "            \"postgresql://postgres@127.0.0.1:1/postgres\","
+      },
+      {
+        "line": 73,
+        "text": "        ])"
+      },
+      {
+        "line": 74,
+        "text": "        .arg(\"--root\")"
+      },
+      {
+        "line": 75,
+        "text": "        .arg(&root)"
+      },
+      {
+        "line": 76,
+        "text": "        .args(["
+      },
+      {
+        "line": 77,
+        "text": "            \"--scenario-worker-binary\","
+      },
+      {
+        "line": 78,
+        "text": "            \"/nonexistent/wamn-scenario-worker\","
+      },
+      {
+        "line": 79,
+        "text": "            \"--gate-bind\","
+      },
+      {
+        "line": 80,
+        "text": "            \"127.0.0.1:0\","
+      },
+      {
+        "line": 81,
+        "text": "            \"--nats-url\","
+      },
+      {
+        "line": 82,
+        "text": "            \"nats://127.0.0.1:1\","
+      },
+      {
+        "line": 83,
+        "text": "            \"--tempo-query-url\","
+      },
+      {
+        "line": 84,
+        "text": "            \"http://127.0.0.1:1\","
+      },
+      {
+        "line": 85,
+        "text": "            \"--otel-exporter-otlp-endpoint\","
+      },
+      {
+        "line": 86,
+        "text": "            \"http://127.0.0.1:1\","
+      },
+      {
+        "line": 87,
+        "text": "            \"--component-artifact-base\","
+      },
+      {
+        "line": 88,
+        "text": "            \"127.0.0.1:1/wamn/components\","
+      },
+      {
+        "line": 89,
+        "text": "            \"--release-artifact-base\","
+      },
+      {
+        "line": 90,
+        "text": "            \"127.0.0.1:1/wamn/releases\","
+      },
+      {
+        "line": 91,
+        "text": "            \"--registry-auth-file\","
+      },
+      {
+        "line": 92,
+        "text": "            \"/nonexistent/.dockerconfigjson\","
+      },
+      {
+        "line": 93,
+        "text": "            \"--route-host\","
+      },
+      {
+        "line": 94,
+        "text": "            \"receiving.localhost\","
+      },
+      {
+        "line": 95,
+        "text": "            \"--flow-http-workload-image\","
+      },
+      {
+        "line": 96,
+        "text": "            \"127.0.0.1:1/wamn/flow-http:dev\","
+      },
+      {
+        "line": 97,
+        "text": "            \"--host-binary\","
+      },
+      {
+        "line": 98,
+        "text": "            \"/nonexistent/wamn-host\","
+      },
+      {
+        "line": 99,
+        "text": "            \"--package\","
+      },
+      {
+        "line": 100,
+        "text": "            \"apps/wamn_receiving\","
+      },
+      {
+        "line": 101,
+        "text": "        ])"
+      },
+      {
+        "line": 102,
+        "text": "        .output()"
+      },
+      {
+        "line": 103,
+        "text": "        .expect(\"run wamn dev up with an ephemeral gate port\");"
+      },
+      {
+        "line": 104,
+        "text": "    assert!(!output.status.success());"
+      },
+      {
+        "line": 105,
+        "text": "    let stderr = String::from_utf8(output.stderr).expect(\"stderr is UTF-8\");"
+      },
+      {
+        "line": 106,
+        "text": "    assert!("
+      },
+      {
+        "line": 107,
+        "text": "        stderr.contains(\"127.0.0.1:0\"),"
+      },
+      {
+        "line": 108,
+        "text": "        \"the ephemeral-port refusal does not name the address: {stderr}\""
+      },
+      {
+        "line": 109,
+        "text": "    );"
+      },
+      {
+        "line": 110,
+        "text": "    // The refusal precedes standup, so nothing was created to clean up."
+      },
+      {
+        "line": 111,
+        "text": "    assert!("
+      },
+      {
+        "line": 112,
+        "text": "        !root.exists(),"
+      },
+      {
+        "line": 113,
+        "text": "        \"wamn dev up created {} before settling its Gate address\","
+      },
+      {
+        "line": 114,
+        "text": "        root.display()"
+      },
+      {
+        "line": 115,
+        "text": "    );"
+      },
+      {
+        "line": 116,
+        "text": "}"
+      },
+      {
+        "line": 117,
+        "text": ""
+      },
+      {
+        "line": 118,
+        "text": "/// The Gate is a real child process, and readiness watches its port rather than"
+      },
+      {
+        "line": 119,
+        "text": "/// a route on it (wamn-10yt.10.32). Spawn something that is not a Gate and dies"
+      },
+      {
+        "line": 120,
+        "text": "/// at once: the refusal says so and NAMES the port readiness was watching."
+      }
+    ]
+  },
+  "5ef02888:services/ctl/src/dev/up.rs:71": {
+    "path": "services/ctl/src/dev/up.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "662f7377013c8570b1e88e708e4622848bd321d020168b6f55ca193ec69a72bb",
+    "start_line": 48,
+    "end_line": 94,
+    "lines": [
+      {
+        "line": 48,
+        "text": "    /// Address the authoring Gate listens on for the whole session."
+      },
+      {
+        "line": 49,
+        "text": "    ///"
+      },
+      {
+        "line": 50,
+        "text": "    /// A nameable port, not an ephemeral one: the configuration written here"
+      },
+      {
+        "line": 51,
+        "text": "    /// outlives the process that writes it."
+      },
+      {
+        "line": 52,
+        "text": "    #[arg(long, default_value = \"127.0.0.1:8088\")]"
+      },
+      {
+        "line": 53,
+        "text": "    gate_bind: String,"
+      },
+      {
+        "line": 54,
+        "text": ""
+      },
+      {
+        "line": 55,
+        "text": "    #[arg(long, env = \"WAMN_DEV_ENV_NATS_URL\")]"
+      },
+      {
+        "line": 56,
+        "text": "    nats_url: String,"
+      },
+      {
+        "line": 57,
+        "text": ""
+      },
+      {
+        "line": 58,
+        "text": "    /// Event broker endpoint, separate from the scheduler endpoint."
+      },
+      {
+        "line": 59,
+        "text": "    #[arg(long, env = \"WAMN_EVT_NATS_URL\")]"
+      },
+      {
+        "line": 60,
+        "text": "    event_nats_url: String,"
+      },
+      {
+        "line": 61,
+        "text": ""
+      },
+      {
+        "line": 62,
+        "text": "    /// Runtime credential for publication and the same environment's tap view."
+      },
+      {
+        "line": 63,
+        "text": "    #[arg(long, env = \"WAMN_EVT_NATS_USERNAME\")]"
+      },
+      {
+        "line": 64,
+        "text": "    event_nats_username: String,"
+      },
+      {
+        "line": 65,
+        "text": ""
+      },
+      {
+        "line": 66,
+        "text": "    #[arg(long, env = \"WAMN_EVT_NATS_PASSWORD_FILE\")]"
+      },
+      {
+        "line": 67,
+        "text": "    event_nats_password_file: PathBuf,"
+      },
+      {
+        "line": 68,
+        "text": ""
+      },
+      {
+        "line": 69,
+        "text": "    /// Credential that creates the declared event streams."
+      },
+      {
+        "line": 70,
+        "text": "    #[arg(long, env = \"WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME\")]"
+      },
+      {
+        "line": 71,
+        "text": "    event_provisioning_username: String,"
+      },
+      {
+        "line": 72,
+        "text": ""
+      },
+      {
+        "line": 73,
+        "text": "    #[arg(long, env = \"WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE\")]"
+      },
+      {
+        "line": 74,
+        "text": "    event_provisioning_password_file: PathBuf,"
+      },
+      {
+        "line": 75,
+        "text": ""
+      },
+      {
+        "line": 76,
+        "text": "    /// Declared NATS stream copies, separate from workload instances."
+      },
+      {
+        "line": 77,
+        "text": "    #[arg(long, env = \"WAMN_EVT_STREAM_REPLICAS\")]"
+      },
+      {
+        "line": 78,
+        "text": "    stream_replicas: usize,"
+      },
+      {
+        "line": 79,
+        "text": ""
+      },
+      {
+        "line": 80,
+        "text": "    #[arg(long, env = \"WAMN_EVT_DUP_WINDOW_SECS\")]"
+      },
+      {
+        "line": 81,
+        "text": "    dup_window_secs: u64,"
+      },
+      {
+        "line": 82,
+        "text": ""
+      },
+      {
+        "line": 83,
+        "text": "    #[arg(long, env = \"WAMN_DEV_ENV_TEMPO_QUERY_URL\")]"
+      },
+      {
+        "line": 84,
+        "text": "    tempo_query_url: String,"
+      },
+      {
+        "line": 85,
+        "text": ""
+      },
+      {
+        "line": 86,
+        "text": "    #[arg(long, env = \"WAMN_DEV_ENV_OTEL_EXPORTER_OTLP_ENDPOINT\")]"
+      },
+      {
+        "line": 87,
+        "text": "    otel_exporter_otlp_endpoint: String,"
+      },
+      {
+        "line": 88,
+        "text": ""
+      },
+      {
+        "line": 89,
+        "text": "    #[arg(long, env = \"WAMN_DEV_ENV_COMPONENT_ARTIFACT_BASE\")]"
+      },
+      {
+        "line": 90,
+        "text": "    component_artifact_base: String,"
+      },
+      {
+        "line": 91,
+        "text": ""
+      },
+      {
+        "line": 92,
+        "text": "    #[arg(long, env = \"WAMN_DEV_ENV_RELEASE_ARTIFACT_BASE\")]"
+      },
+      {
+        "line": 93,
+        "text": "    release_artifact_base: String,"
+      },
+      {
+        "line": 94,
+        "text": ""
+      }
+    ]
+  },
+  "5ef02888:tests/conformance/src/version_identity.rs:238": {
+    "path": "tests/conformance/src/version_identity.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "f1f10cfce9095957b4f0ea37314949eb3c7a329fa22d64f6abd740946da8b38d",
+    "start_line": 214,
+    "end_line": 262,
+    "lines": [
+      {
+        "line": 214,
+        "text": "        .iter()"
+      },
+      {
+        "line": 215,
+        "text": "        .filter(|package| {"
+      },
+      {
+        "line": 216,
+        "text": "            members.contains("
+      },
+      {
+        "line": 217,
+        "text": "                package[\"id\"]"
+      },
+      {
+        "line": 218,
+        "text": "                    .as_str()"
+      },
+      {
+        "line": 219,
+        "text": "                    .expect(\"package id in cargo metadata\"),"
+      },
+      {
+        "line": 220,
+        "text": "            )"
+      },
+      {
+        "line": 221,
+        "text": "        })"
+      },
+      {
+        "line": 222,
+        "text": "        .filter_map(|package| {"
+      },
+      {
+        "line": 223,
+        "text": "            let version = package[\"version\"]"
+      },
+      {
+        "line": 224,
+        "text": "                .as_str()"
+      },
+      {
+        "line": 225,
+        "text": "                .expect(\"package version in cargo metadata\");"
+      },
+      {
+        "line": 226,
+        "text": "            (version != MVP_CARGO_VERSION).then(|| {"
+      },
+      {
+        "line": 227,
+        "text": "                format!("
+      },
+      {
+        "line": 228,
+        "text": "                    \"workspace package {} is version {version}, expected {MVP_CARGO_VERSION}\","
+      },
+      {
+        "line": 229,
+        "text": "                    package[\"name\"]"
+      },
+      {
+        "line": 230,
+        "text": "                        .as_str()"
+      },
+      {
+        "line": 231,
+        "text": "                        .expect(\"package name in cargo metadata\")"
+      },
+      {
+        "line": 232,
+        "text": "                )"
+      },
+      {
+        "line": 233,
+        "text": "            })"
+      },
+      {
+        "line": 234,
+        "text": "        })"
+      },
+      {
+        "line": 235,
+        "text": "        .collect()"
+      },
+      {
+        "line": 236,
+        "text": "}"
+      },
+      {
+        "line": 237,
+        "text": ""
+      },
+      {
+        "line": 238,
+        "text": "fn tracked_wit_files(repository: &Path) -> Vec<PathBuf> {"
+      },
+      {
+        "line": 239,
+        "text": "    let output = Command::new(\"git\")"
+      },
+      {
+        "line": 240,
+        "text": "        .args([\"-C\"])"
+      },
+      {
+        "line": 241,
+        "text": "        .arg(repository)"
+      },
+      {
+        "line": 242,
+        "text": "        .args([\"ls-files\", \"-z\", \"--\", \"*.wit\"])"
+      },
+      {
+        "line": 243,
+        "text": "        .output()"
+      },
+      {
+        "line": 244,
+        "text": "        .expect(\"list tracked WIT files\");"
+      },
+      {
+        "line": 245,
+        "text": "    assert!("
+      },
+      {
+        "line": 246,
+        "text": "        output.status.success(),"
+      },
+      {
+        "line": 247,
+        "text": "        \"git ls-files failed:\\n{}\","
+      },
+      {
+        "line": 248,
+        "text": "        String::from_utf8_lossy(&output.stderr)"
+      },
+      {
+        "line": 249,
+        "text": "    );"
+      },
+      {
+        "line": 250,
+        "text": ""
+      },
+      {
+        "line": 251,
+        "text": "    output"
+      },
+      {
+        "line": 252,
+        "text": "        .stdout"
+      },
+      {
+        "line": 253,
+        "text": "        .split(|byte| *byte == 0)"
+      },
+      {
+        "line": 254,
+        "text": "        .filter(|path| !path.is_empty())"
+      },
+      {
+        "line": 255,
+        "text": "        .map(|path| std::str::from_utf8(path).expect(\"tracked WIT path must be valid UTF-8\"))"
+      },
+      {
+        "line": 256,
+        "text": "        .filter(|path| !Path::new(path).starts_with(\"docs/archive\"))"
+      },
+      {
+        "line": 257,
+        "text": "        .filter(|path| repository.join(path).is_file())"
+      },
+      {
+        "line": 258,
+        "text": "        .map(|path| repository.join(path))"
+      },
+      {
+        "line": 259,
+        "text": "        .collect()"
+      },
+      {
+        "line": 260,
+        "text": "}"
+      },
+      {
+        "line": 261,
+        "text": ""
+      },
+      {
+        "line": 262,
+        "text": "fn wamn_wit_package_violations(path: &Path, source: &str) -> (usize, Vec<String>) {"
+      }
+    ]
+  },
+  "5ef02888:tests/conformance/src/version_identity.rs:262": {
+    "path": "tests/conformance/src/version_identity.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "f1f10cfce9095957b4f0ea37314949eb3c7a329fa22d64f6abd740946da8b38d",
+    "start_line": 228,
+    "end_line": 296,
+    "lines": [
+      {
+        "line": 228,
+        "text": "                    \"workspace package {} is version {version}, expected {MVP_CARGO_VERSION}\","
+      },
+      {
+        "line": 229,
+        "text": "                    package[\"name\"]"
+      },
+      {
+        "line": 230,
+        "text": "                        .as_str()"
+      },
+      {
+        "line": 231,
+        "text": "                        .expect(\"package name in cargo metadata\")"
+      },
+      {
+        "line": 232,
+        "text": "                )"
+      },
+      {
+        "line": 233,
+        "text": "            })"
+      },
+      {
+        "line": 234,
+        "text": "        })"
+      },
+      {
+        "line": 235,
+        "text": "        .collect()"
+      },
+      {
+        "line": 236,
+        "text": "}"
+      },
+      {
+        "line": 237,
+        "text": ""
+      },
+      {
+        "line": 238,
+        "text": "fn tracked_wit_files(repository: &Path) -> Vec<PathBuf> {"
+      },
+      {
+        "line": 239,
+        "text": "    let output = Command::new(\"git\")"
+      },
+      {
+        "line": 240,
+        "text": "        .args([\"-C\"])"
+      },
+      {
+        "line": 241,
+        "text": "        .arg(repository)"
+      },
+      {
+        "line": 242,
+        "text": "        .args([\"ls-files\", \"-z\", \"--\", \"*.wit\"])"
+      },
+      {
+        "line": 243,
+        "text": "        .output()"
+      },
+      {
+        "line": 244,
+        "text": "        .expect(\"list tracked WIT files\");"
+      },
+      {
+        "line": 245,
+        "text": "    assert!("
+      },
+      {
+        "line": 246,
+        "text": "        output.status.success(),"
+      },
+      {
+        "line": 247,
+        "text": "        \"git ls-files failed:\\n{}\","
+      },
+      {
+        "line": 248,
+        "text": "        String::from_utf8_lossy(&output.stderr)"
+      },
+      {
+        "line": 249,
+        "text": "    );"
+      },
+      {
+        "line": 250,
+        "text": ""
+      },
+      {
+        "line": 251,
+        "text": "    output"
+      },
+      {
+        "line": 252,
+        "text": "        .stdout"
+      },
+      {
+        "line": 253,
+        "text": "        .split(|byte| *byte == 0)"
+      },
+      {
+        "line": 254,
+        "text": "        .filter(|path| !path.is_empty())"
+      },
+      {
+        "line": 255,
+        "text": "        .map(|path| std::str::from_utf8(path).expect(\"tracked WIT path must be valid UTF-8\"))"
+      },
+      {
+        "line": 256,
+        "text": "        .filter(|path| !Path::new(path).starts_with(\"docs/archive\"))"
+      },
+      {
+        "line": 257,
+        "text": "        .filter(|path| repository.join(path).is_file())"
+      },
+      {
+        "line": 258,
+        "text": "        .map(|path| repository.join(path))"
+      },
+      {
+        "line": 259,
+        "text": "        .collect()"
+      },
+      {
+        "line": 260,
+        "text": "}"
+      },
+      {
+        "line": 261,
+        "text": ""
+      },
+      {
+        "line": 262,
+        "text": "fn wamn_wit_package_violations(path: &Path, source: &str) -> (usize, Vec<String>) {"
+      },
+      {
+        "line": 263,
+        "text": "    let mut governed_count = 0;"
+      },
+      {
+        "line": 264,
+        "text": "    let mut violations = Vec::new();"
+      },
+      {
+        "line": 265,
+        "text": ""
+      },
+      {
+        "line": 266,
+        "text": "    for (line_index, line) in source.lines().enumerate() {"
+      },
+      {
+        "line": 267,
+        "text": "        let Some(declaration) = line.trim().strip_prefix(\"package \") else {"
+      },
+      {
+        "line": 268,
+        "text": "            continue;"
+      },
+      {
+        "line": 269,
+        "text": "        };"
+      },
+      {
+        "line": 270,
+        "text": "        let declaration = declaration"
+      },
+      {
+        "line": 271,
+        "text": "            .split_once(';')"
+      },
+      {
+        "line": 272,
+        "text": "            .map_or(declaration.trim(), |(package, _)| package.trim());"
+      },
+      {
+        "line": 273,
+        "text": "        let package_name = declaration"
+      },
+      {
+        "line": 274,
+        "text": "            .split_once('@')"
+      },
+      {
+        "line": 275,
+        "text": "            .map_or(declaration, |(name, _)| name);"
+      },
+      {
+        "line": 276,
+        "text": "        if !package_name.starts_with(\"wamn:\") {"
+      },
+      {
+        "line": 277,
+        "text": "            continue;"
+      },
+      {
+        "line": 278,
+        "text": "        }"
+      },
+      {
+        "line": 279,
+        "text": ""
+      },
+      {
+        "line": 280,
+        "text": "        governed_count += 1;"
+      },
+      {
+        "line": 281,
+        "text": "        let version = declaration.split_once('@').map(|(_, version)| version);"
+      },
+      {
+        "line": 282,
+        "text": "        if version != Some(MVP_WIT_VERSION) {"
+      },
+      {
+        "line": 283,
+        "text": "            violations.push(format!("
+      },
+      {
+        "line": 284,
+        "text": "                \"{}:{}: WAMN package `{declaration}` must use @{MVP_WIT_VERSION}\","
+      },
+      {
+        "line": 285,
+        "text": "                path.display(),"
+      },
+      {
+        "line": 286,
+        "text": "                line_index + 1"
+      },
+      {
+        "line": 287,
+        "text": "            ));"
+      },
+      {
+        "line": 288,
+        "text": "        }"
+      },
+      {
+        "line": 289,
+        "text": "    }"
+      },
+      {
+        "line": 290,
+        "text": ""
+      },
+      {
+        "line": 291,
+        "text": "    (governed_count, violations)"
+      },
+      {
+        "line": 292,
+        "text": "}"
+      },
+      {
+        "line": 293,
+        "text": ""
+      },
+      {
+        "line": 294,
+        "text": "fn governed_literal_violation(source: &str, identity: GovernedLiteral) -> Option<String> {"
+      },
+      {
+        "line": 295,
+        "text": "    let actual_count = source.matches(identity.exact).count();"
+      },
+      {
+        "line": 296,
+        "text": "    (actual_count != identity.expected_count).then(|| {"
+      }
+    ]
+  },
+  "5ef02888:docs/perf/2026.09/native-c-advisories/materializer-async-001/original-world.wit:33": {
+    "path": "docs/perf/2026.09/native-c-advisories/materializer-async-001/original-world.wit",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "c4ac324f9e4a22d57e79e34b22256244ea97d2c97a0c69559b142c0a08caf45a",
+    "start_line": 31,
+    "end_line": 35,
+    "lines": [
+      {
+        "line": 31,
+        "text": "  export wasi:cli/run@0.2.0;"
+      },
+      {
+        "line": 32,
+        "text": "}"
+      },
+      {
+        "line": 33,
+        "text": "package wamn:postgres@0.1.0 {"
+      },
+      {
+        "line": 34,
+        "text": "  interface types {"
+      },
+      {
+        "line": 35,
+        "text": "    variant sql-value {"
+      }
+    ]
+  },
+  "5ef02888:docs/perf/2026.09/native-c-advisories/materializer-async-001/repaired-world.wit:144": {
+    "path": "docs/perf/2026.09/native-c-advisories/materializer-async-001/repaired-world.wit",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "e6aae5700f0977cfb88f29c3b7ec2629ab5e9a6bdfda4f12dbebb9772c7e5185",
+    "start_line": 142,
+    "end_line": 146,
+    "lines": [
+      {
+        "line": 142,
+        "text": ""
+      },
+      {
+        "line": 143,
+        "text": ""
+      },
+      {
+        "line": 144,
+        "text": "package wamn:postgres@0.1.0 {"
+      },
+      {
+        "line": 145,
+        "text": "  /// Host-plugin interface for tenant-scoped Postgres access."
+      },
+      {
+        "line": 146,
+        "text": "  /// Security invariants (enforced by the HOST, invisible to the guest):"
+      }
+    ]
+  },
+  "5ef02888:tests/conformance/tests/wasmtime_source_identity.rs:18": {
+    "path": "tests/conformance/tests/wasmtime_source_identity.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "c6e59424ae0dcaecabab4b579ba6c5f257fe346a64865c0c7d42b5940172cbb3",
+    "start_line": 1,
+    "end_line": 48,
+    "lines": [
+      {
+        "line": 1,
+        "text": "//! Guards the workspace-owned Wasmtime and async-nats type universes."
+      },
+      {
+        "line": 2,
+        "text": ""
+      },
+      {
+        "line": 3,
+        "text": "use serde::Deserialize;"
+      },
+      {
+        "line": 4,
+        "text": "use std::collections::{BTreeMap, BTreeSet};"
+      },
+      {
+        "line": 5,
+        "text": "use std::fs;"
+      },
+      {
+        "line": 6,
+        "text": "use std::path::{Path, PathBuf};"
+      },
+      {
+        "line": 7,
+        "text": "use std::process::Command;"
+      },
+      {
+        "line": 8,
+        "text": "use std::sync::OnceLock;"
+      },
+      {
+        "line": 9,
+        "text": ""
+      },
+      {
+        "line": 10,
+        "text": "const CRATES_IO_SOURCE: &str = \"registry+https://github.com/rust-lang/crates.io-index\";"
+      },
+      {
+        "line": 11,
+        "text": "// The lockfile resolution and the workspace requirement are separate facts."
+      },
+      {
+        "line": 12,
+        "text": "// Upstream 2.9.0 declares 47.0.4; a later lockfile-only patch can resolve higher."
+      },
+      {
+        "line": 13,
+        "text": "const WASMTIME_RESOLVED: &str = \"47.0.4\";"
+      },
+      {
+        "line": 14,
+        "text": "const WASMTIME_REQUIREMENT: &str = \"47.0.4\";"
+      },
+      {
+        "line": 15,
+        "text": "const ASYNC_NATS_VERSION: &str = \"0.49.1\";"
+      },
+      {
+        "line": 16,
+        "text": ""
+      },
+      {
+        "line": 17,
+        "text": "// Native application dispatch removed execution/host's direct WASI dependency."
+      },
+      {
+        "line": 18,
+        "text": "const DIRECT_CONSUMERS: [(&str, &[(&str, &str)]); 3] = ["
+      },
+      {
+        "line": 19,
+        "text": "    ("
+      },
+      {
+        "line": 20,
+        "text": "        \"tests/conformance/Cargo.toml\","
+      },
+      {
+        "line": 21,
+        "text": "        &[(\"wasmtime-wasi\", \"dependencies\")],"
+      },
+      {
+        "line": 22,
+        "text": "    ),"
+      },
+      {
+        "line": 23,
+        "text": "    ("
+      },
+      {
+        "line": 24,
+        "text": "        \"crates/platform/runtime/Cargo.toml\","
+      },
+      {
+        "line": 25,
+        "text": "        &["
+      },
+      {
+        "line": 26,
+        "text": "            (\"wasmtime\", \"dependencies\"),"
+      },
+      {
+        "line": 27,
+        "text": "            (\"wasmtime-wasi\", \"dependencies\"),"
+      },
+      {
+        "line": 28,
+        "text": "            (\"wasmtime-wasi-http\", \"dependencies\"),"
+      },
+      {
+        "line": 29,
+        "text": "        ],"
+      },
+      {
+        "line": 30,
+        "text": "    ),"
+      },
+      {
+        "line": 31,
+        "text": "    // The live router-tap proof instantiates the P2 HTTP host surface directly;"
+      },
+      {
+        "line": 32,
+        "text": "    // unlike the deleted system traceproof dependency, this is a source-backed"
+      },
+      {
+        "line": 33,
+        "text": "    // consumer (wamn-0h0g.24.5)."
+      },
+      {
+        "line": 34,
+        "text": "    ("
+      },
+      {
+        "line": 35,
+        "text": "        \"tests/integration/Cargo.toml\","
+      },
+      {
+        "line": 36,
+        "text": "        &["
+      },
+      {
+        "line": 37,
+        "text": "            (\"wasmtime-wasi\", \"dependencies\"),"
+      },
+      {
+        "line": 38,
+        "text": "            (\"wasmtime-wasi-http\", \"dev-dependencies\"),"
+      },
+      {
+        "line": 39,
+        "text": "        ],"
+      },
+      {
+        "line": 40,
+        "text": "    ),"
+      },
+      {
+        "line": 41,
+        "text": "    // `tests/system/Cargo.toml` held a fifth row until `wamn-k9ea`. traceproof"
+      },
+      {
+        "line": 42,
+        "text": "    // reached `wasmtime-wasi-http` only to drive wash-runtime's P2/P3 `wasi:http`"
+      },
+      {
+        "line": 43,
+        "text": "    // host surfaces; re-aiming that gate at `wamn:connection/http` deleted the"
+      },
+      {
+        "line": 44,
+        "text": "    // last reference, so the dependency went with it. A row kept alive by"
+      },
+      {
+        "line": 45,
+        "text": "    // re-declaring a dead dependency asserts nothing."
+      },
+      {
+        "line": 46,
+        "text": "];"
+      },
+      {
+        "line": 47,
+        "text": ""
+      },
+      {
+        "line": 48,
+        "text": "#[derive(Debug, Deserialize)]"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/Cargo.toml:65": {
+    "path": "apps/wamn_receiving/tests/Cargo.toml",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "f1e837a01cd79f6aff9685e63b3797d790a6d6832081f56f6254d5bc20740a92",
+    "start_line": 53,
+    "end_line": 77,
+    "lines": [
+      {
+        "line": 53,
+        "text": "wamn-runtime = { workspace = true, features = [\"test-util\"] }"
+      },
+      {
+        "line": 54,
+        "text": "wamn-schema-control = { workspace = true }"
+      },
+      {
+        "line": 55,
+        "text": "wash-runtime = { workspace = true, features = [\"washlet\"] }"
+      },
+      {
+        "line": 56,
+        "text": "wasmtime-wasi = { workspace = true }"
+      },
+      {
+        "line": 57,
+        "text": "async-trait = { workspace = true }"
+      },
+      {
+        "line": 58,
+        "text": "wamn-client = { workspace = true }"
+      },
+      {
+        "line": 59,
+        "text": "wamn-receiving-tui = { workspace = true }"
+      },
+      {
+        "line": 60,
+        "text": "wamn-schema-generator = { workspace = true }"
+      },
+      {
+        "line": 61,
+        "text": "wamn-schema-introspection = { workspace = true }"
+      },
+      {
+        "line": 62,
+        "text": "wat = \"=1.252.0\""
+      },
+      {
+        "line": 63,
+        "text": "http-body-util = { workspace = true }"
+      },
+      {
+        "line": 64,
+        "text": "hyper = { workspace = true }"
+      },
+      {
+        "line": 65,
+        "text": "wasmtime-wasi-http = { workspace = true }"
+      },
+      {
+        "line": 66,
+        "text": ""
+      },
+      {
+        "line": 67,
+        "text": "wamn-authoring-model = { workspace = true }"
+      },
+      {
+        "line": 68,
+        "text": ""
+      },
+      {
+        "line": 69,
+        "text": "[[test]]"
+      },
+      {
+        "line": 70,
+        "text": "name = \"receiving_command_histories_live\""
+      },
+      {
+        "line": 71,
+        "text": "path = \"receiving_command_histories_live.rs\""
+      },
+      {
+        "line": 72,
+        "text": ""
+      },
+      {
+        "line": 73,
+        "text": "[[test]]"
+      },
+      {
+        "line": 74,
+        "text": "name = \"receiving_sqlx_verifier\""
+      },
+      {
+        "line": 75,
+        "text": "path = \"receiving_sqlx_verifier.rs\""
+      },
+      {
+        "line": 76,
+        "text": ""
+      },
+      {
+        "line": 77,
+        "text": "[lints]"
+      }
+    ]
+  },
+  "5ef02888:tests/system/tests/deploy_platform_inventory.rs:823": {
+    "path": "tests/system/tests/deploy_platform_inventory.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "983522efd0489cb23f906a94bbdf47cb3570204944b3bd8b84f986f2313edbf8",
+    "start_line": 806,
+    "end_line": 840,
+    "lines": [
+      {
+        "line": 806,
+        "text": "    assert_eq!(identity_image_consumers, [\"identity\"]);"
+      },
+      {
+        "line": 807,
+        "text": "    for (file, project) in ["
+      },
+      {
+        "line": 808,
+        "text": "        (\"values-host-default.yaml\", None),"
+      },
+      {
+        "line": 809,
+        "text": "        (\"values-host-receiving-pat.yaml\", Some(\"receiving\")),"
+      },
+      {
+        "line": 810,
+        "text": "        (\"values-host-wms-pat.yaml\", Some(\"wms\")),"
+      },
+      {
+        "line": 811,
+        "text": "    ] {"
+      },
+      {
+        "line": 812,
+        "text": "        let source = read(&root, file);"
+      },
+      {
+        "line": 813,
+        "text": "        let mut expected = BTreeMap::from(["
+      },
+      {
+        "line": 814,
+        "text": "            ("
+      },
+      {
+        "line": 815,
+        "text": "                \"WAMN_PG_URL\".to_owned(),"
+      },
+      {
+        "line": 816,
+        "text": "                (\"wamn-host-db\".to_owned(), \"url\".to_owned()),"
+      },
+      {
+        "line": 817,
+        "text": "            ),"
+      },
+      {
+        "line": 818,
+        "text": "            ("
+      },
+      {
+        "line": 819,
+        "text": "                \"WAMN_EVT_NATS_USERNAME\".to_owned(),"
+      },
+      {
+        "line": 820,
+        "text": "                (\"wamn-event-nats\".to_owned(), \"username\".to_owned()),"
+      },
+      {
+        "line": 821,
+        "text": "            ),"
+      },
+      {
+        "line": 822,
+        "text": "        ]);"
+      },
+      {
+        "line": 823,
+        "text": "        if project.is_none() {"
+      },
+      {
+        "line": 824,
+        "text": "            for (variable, key) in ["
+      },
+      {
+        "line": 825,
+        "text": "                (\"WAMN_EVT_ORG\", \"org\"),"
+      },
+      {
+        "line": 826,
+        "text": "                (\"WAMN_EVT_PROJECT\", \"project\"),"
+      },
+      {
+        "line": 827,
+        "text": "                (\"WAMN_EVT_ENV\", \"environment\"),"
+      },
+      {
+        "line": 828,
+        "text": "            ] {"
+      },
+      {
+        "line": 829,
+        "text": "                expected.insert("
+      },
+      {
+        "line": 830,
+        "text": "                    variable.to_owned(),"
+      },
+      {
+        "line": 831,
+        "text": "                    (\"wamn-event-nats\".to_owned(), key.to_owned()),"
+      },
+      {
+        "line": 832,
+        "text": "                );"
+      },
+      {
+        "line": 833,
+        "text": "            }"
+      },
+      {
+        "line": 834,
+        "text": "        }"
+      },
+      {
+        "line": 835,
+        "text": "        if let Some(project) = project {"
+      },
+      {
+        "line": 836,
+        "text": "            for (variable, class) in ["
+      },
+      {
+        "line": 837,
+        "text": "                (\"WAMN_SYSTEM_URL\", \"identity-reader\"),"
+      },
+      {
+        "line": 838,
+        "text": "                (\"WAMN_EXECUTOR_PLATFORM_PG_URL\", \"executor-platform\"),"
+      },
+      {
+        "line": 839,
+        "text": "                (\"WAMN_HTTP_ADMITTER_PG_URL\", \"http-admitter\"),"
+      },
+      {
+        "line": 840,
+        "text": "                (\"WAMN_EVENT_MATERIALIZER_PG_URL\", \"event-materializer\"),"
+      }
+    ]
+  },
+  "5ef02888:deploy/platform/values-host-default.yaml:194": {
+    "path": "deploy/platform/values-host-default.yaml",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "0a0ce77e0655081c677268026d5fc4748b836d1e2aa13ad27ff1c89e876d98e3",
+    "start_line": 178,
+    "end_line": 210,
+    "lines": [
+      {
+        "line": 178,
+        "text": "            secretKeyRef:"
+      },
+      {
+        "line": 179,
+        "text": "              name: wamn-event-nats"
+      },
+      {
+        "line": 180,
+        "text": "              key: org"
+      },
+      {
+        "line": 181,
+        "text": "              optional: false"
+      },
+      {
+        "line": 182,
+        "text": "        - name: WAMN_EVT_PROJECT"
+      },
+      {
+        "line": 183,
+        "text": "          valueFrom:"
+      },
+      {
+        "line": 184,
+        "text": "            secretKeyRef:"
+      },
+      {
+        "line": 185,
+        "text": "              name: wamn-event-nats"
+      },
+      {
+        "line": 186,
+        "text": "              key: project"
+      },
+      {
+        "line": 187,
+        "text": "              optional: false"
+      },
+      {
+        "line": 188,
+        "text": "        - name: WAMN_EVT_ENV"
+      },
+      {
+        "line": 189,
+        "text": "          valueFrom:"
+      },
+      {
+        "line": 190,
+        "text": "            secretKeyRef:"
+      },
+      {
+        "line": 191,
+        "text": "              name: wamn-event-nats"
+      },
+      {
+        "line": 192,
+        "text": "              key: environment"
+      },
+      {
+        "line": 193,
+        "text": "              optional: false"
+      },
+      {
+        "line": 194,
+        "text": "        - name: WAMN_EVT_STREAM_REPLICAS"
+      },
+      {
+        "line": 195,
+        "text": "          valueFrom:"
+      },
+      {
+        "line": 196,
+        "text": "            secretKeyRef:"
+      },
+      {
+        "line": 197,
+        "text": "              name: wamn-event-nats"
+      },
+      {
+        "line": 198,
+        "text": "              key: stream_replicas"
+      },
+      {
+        "line": 199,
+        "text": "              optional: false"
+      },
+      {
+        "line": 200,
+        "text": "        - name: WAMN_EVT_DUP_WINDOW_SECS"
+      },
+      {
+        "line": 201,
+        "text": "          valueFrom:"
+      },
+      {
+        "line": 202,
+        "text": "            secretKeyRef:"
+      },
+      {
+        "line": 203,
+        "text": "              name: wamn-event-nats"
+      },
+      {
+        "line": 204,
+        "text": "              key: dup_window_secs"
+      },
+      {
+        "line": 205,
+        "text": "              optional: false"
+      },
+      {
+        "line": 206,
+        "text": "      volumes:"
+      },
+      {
+        "line": 207,
+        "text": "        - name: event-nats"
+      },
+      {
+        "line": 208,
+        "text": "          secret:"
+      },
+      {
+        "line": 209,
+        "text": "            secretName: wamn-event-nats"
+      },
+      {
+        "line": 210,
+        "text": "            optional: false"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/receiving_data_access.rs:313": {
+    "path": "apps/wamn_receiving/tests/receiving_data_access.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "ed6aa7b35ce5d0407189c3d6c82dcc4425e13814295d14bf0337862d19e6a753",
+    "start_line": 304,
+    "end_line": 322,
+    "lines": [
+      {
+        "line": 304,
+        "text": "            \"updates changed unrelated stored state\""
+      },
+      {
+        "line": 305,
+        "text": "        );"
+      },
+      {
+        "line": 306,
+        "text": "        client.batch_execute(\"ROLLBACK\").await?;"
+      },
+      {
+        "line": 307,
+        "text": "        assert_fresh_receiving_schema(&client).await?;"
+      },
+      {
+        "line": 308,
+        "text": "        Ok(())"
+      },
+      {
+        "line": 309,
+        "text": "    }"
+      },
+      {
+        "line": 310,
+        "text": ""
+      },
+      {
+        "line": 311,
+        "text": "    #[tokio::test]"
+      },
+      {
+        "line": 312,
+        "text": "    #[ignore = \"requires a fresh disposable PostgreSQL 18 URL in WAMN_RECEIVING_PG_URL\"]"
+      },
+      {
+        "line": 313,
+        "text": "    async fn enum_and_optimistic_update_outcomes_hold_on_postgres_18() -> Result<()> {"
+      },
+      {
+        "line": 314,
+        "text": "        let url = std::env::var(\"WAMN_RECEIVING_PG_URL\")"
+      },
+      {
+        "line": 315,
+        "text": "            .context(\"WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database\")?;"
+      },
+      {
+        "line": 316,
+        "text": "        let mut client = connect(&url).await?;"
+      },
+      {
+        "line": 317,
+        "text": "        assert_postgres_18(&client).await?;"
+      },
+      {
+        "line": 318,
+        "text": "        assert_fresh_receiving_schema(&client).await?;"
+      },
+      {
+        "line": 319,
+        "text": "        client"
+      },
+      {
+        "line": 320,
+        "text": "            .batch_execute(\"CREATE SCHEMA receiving\")"
+      },
+      {
+        "line": 321,
+        "text": "            .await"
+      },
+      {
+        "line": 322,
+        "text": "            .context(\"create the Receiving schema\")?;"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/receiving_data_access.rs:147": {
+    "path": "apps/wamn_receiving/tests/receiving_data_access.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "ed6aa7b35ce5d0407189c3d6c82dcc4425e13814295d14bf0337862d19e6a753",
+    "start_line": 138,
+    "end_line": 156,
+    "lines": [
+      {
+        "line": 138,
+        "text": "        receipt_line_count: i64,"
+      },
+      {
+        "line": 139,
+        "text": "        first_received: String,"
+      },
+      {
+        "line": 140,
+        "text": "        second_received: String,"
+      },
+      {
+        "line": 141,
+        "text": "        purchase_order_status: String,"
+      },
+      {
+        "line": 142,
+        "text": "        row_version: i64,"
+      },
+      {
+        "line": 143,
+        "text": "    }"
+      },
+      {
+        "line": 144,
+        "text": ""
+      },
+      {
+        "line": 145,
+        "text": "    #[tokio::test]"
+      },
+      {
+        "line": 146,
+        "text": "    #[ignore = \"requires a fresh disposable PostgreSQL 18 URL in WAMN_RECEIVING_PG_URL\"]"
+      },
+      {
+        "line": 147,
+        "text": "    async fn generated_update_ignores_ungranted_additive_columns() -> Result<()> {"
+      },
+      {
+        "line": 148,
+        "text": "        use wamn_schema_generator::{"
+      },
+      {
+        "line": 149,
+        "text": "            DataAccessOverlay, DataAccessRelationInventory, derive_effective_data_access,"
+      },
+      {
+        "line": 150,
+        "text": "            render_effective_data_access_sql,"
+      },
+      {
+        "line": 151,
+        "text": "        };"
+      },
+      {
+        "line": 152,
+        "text": ""
+      },
+      {
+        "line": 153,
+        "text": "        let url = std::env::var(\"WAMN_RECEIVING_PG_URL\")"
+      },
+      {
+        "line": 154,
+        "text": "            .context(\"WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database\")?;"
+      },
+      {
+        "line": 155,
+        "text": "        let client = connect(&url).await?;"
+      },
+      {
+        "line": 156,
+        "text": "        assert_postgres_18(&client).await?;"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/receiving_command_histories_live.rs:905": {
+    "path": "apps/wamn_receiving/tests/receiving_command_histories_live.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "3167c75d6f50683e8844530fada5e6272d5e8a4c9c9ee6b08e497c5021402ded",
+    "start_line": 896,
+    "end_line": 914,
+    "lines": [
+      {
+        "line": 896,
+        "text": "    assert_state(&snapshot(db, &fixture).await?, [2, 0], \"open\", 2, 1)?;"
+      },
+      {
+        "line": 897,
+        "text": "    record("
+      },
+      {
+        "line": 898,
+        "text": "        evidence,"
+      },
+      {
+        "line": 899,
+        "text": "        json!({\"case\":\"denied-then-authorized\",\"fixture\":fixture.id.to_string(),\"result\":\"pass\"}),"
+      },
+      {
+        "line": 900,
+        "text": "    )"
+      },
+      {
+        "line": 901,
+        "text": "}"
+      },
+      {
+        "line": 902,
+        "text": ""
+      },
+      {
+        "line": 903,
+        "text": "#[test]"
+      },
+      {
+        "line": 904,
+        "text": "#[ignore = \"requires an owned disposable Receiving release and WAMN_RECEIVING_CORRECTNESS_DOCUMENT\"]"
+      },
+      {
+        "line": 905,
+        "text": "fn production_receiving_command_histories() -> Result<()> {"
+      },
+      {
+        "line": 906,
+        "text": "    let path = std::env::var_os(\"WAMN_RECEIVING_CORRECTNESS_DOCUMENT\")"
+      },
+      {
+        "line": 907,
+        "text": "        .context(\"WAMN_RECEIVING_CORRECTNESS_DOCUMENT must name the private fixture document\")?;"
+      },
+      {
+        "line": 908,
+        "text": "    let inputs: Inputs = serde_json::from_slice(&std::fs::read(path)?)?;"
+      },
+      {
+        "line": 909,
+        "text": "    assert_histories(inputs)"
+      },
+      {
+        "line": 910,
+        "text": "}"
+      },
+      {
+        "line": 911,
+        "text": ""
+      },
+      {
+        "line": 912,
+        "text": "pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {"
+      },
+      {
+        "line": 913,
+        "text": "    assert_histories_with_cancellation(inputs, pg_walstream::CancellationToken::new())"
+      },
+      {
+        "line": 914,
+        "text": "}"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/route_authentication_live/dev.rs:517": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live/dev.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "062cfce8b5bf952c08a07099daf8d5553e03de83984f11f8cf4a69893e7de2ce",
+    "start_line": 508,
+    "end_line": 526,
+    "lines": [
+      {
+        "line": 508,
+        "text": "    anyhow::ensure!("
+      },
+      {
+        "line": 509,
+        "text": "        !present,"
+      },
+      {
+        "line": 510,
+        "text": "        \"wamn dev left disposable verification database {database} behind\""
+      },
+      {
+        "line": 511,
+        "text": "    );"
+      },
+      {
+        "line": 512,
+        "text": "    Ok(())"
+      },
+      {
+        "line": 513,
+        "text": "}"
+      },
+      {
+        "line": 514,
+        "text": ""
+      },
+      {
+        "line": 515,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 516,
+        "text": "#[ignore = \"requires disposable PG18, NATS, authenticated OCI, and built wamn/host/flow-http binaries\"]"
+      },
+      {
+        "line": 517,
+        "text": "async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -> anyhow::Result<()>"
+      },
+      {
+        "line": 518,
+        "text": "{"
+      },
+      {
+        "line": 519,
+        "text": "    let system_url = required_journey(JOURNEY_URL_ENV)?;"
+      },
+      {
+        "line": 520,
+        "text": "    let inputs = DevJourneyInputs::required()?;"
+      },
+      {
+        "line": 521,
+        "text": "    let credentials = wamn_test_infrastructure::event_broker::Credentials {"
+      },
+      {
+        "line": 522,
+        "text": "        username: required_journey(\"WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME\")?,"
+      },
+      {
+        "line": 523,
+        "text": "        password_file: required_journey_path(\"WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE\")?,"
+      },
+      {
+        "line": 524,
+        "text": "    };"
+      },
+      {
+        "line": 525,
+        "text": "    let provisioning = wamn_test_infrastructure::event_broker::connect("
+      },
+      {
+        "line": 526,
+        "text": "        &credentials, &inputs.environment.event_nats_url,"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/route_authentication_live/dev.rs:5": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live/dev.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "062cfce8b5bf952c08a07099daf8d5553e03de83984f11f8cf4a69893e7de2ce",
+    "start_line": 1,
+    "end_line": 14,
+    "lines": [
+      {
+        "line": 1,
+        "text": "//! Receiving dev tests and helpers."
+      },
+      {
+        "line": 2,
+        "text": ""
+      },
+      {
+        "line": 3,
+        "text": "use super::*;"
+      },
+      {
+        "line": 4,
+        "text": ""
+      },
+      {
+        "line": 5,
+        "text": "pub(super) const JOURNEY_URL_ENV: &str = \"WAMN_ROUTE_PG18_URL\";"
+      },
+      {
+        "line": 6,
+        "text": "pub(super) const DEV_COMMAND_TIMEOUT: Duration = Duration::from_secs(12 * 60);"
+      },
+      {
+        "line": 7,
+        "text": "pub(super) const DEV_EXPECTED_MIGRATIONS: [(&str, &str, i32, &str); 3] = ["
+      },
+      {
+        "line": 8,
+        "text": "    ("
+      },
+      {
+        "line": 9,
+        "text": "        OVERLAY_PACKAGE_ID,"
+      },
+      {
+        "line": 10,
+        "text": "        OVERLAY_PACKAGE_VERSION,"
+      },
+      {
+        "line": 11,
+        "text": "        1,"
+      },
+      {
+        "line": 12,
+        "text": "        \"migrations/0001_add_inspection_required.sql\","
+      },
+      {
+        "line": 13,
+        "text": "    ),"
+      },
+      {
+        "line": 14,
+        "text": "    ("
+      }
+    ]
+  },
+  "5ef02888:tests/integration/src/route_authentication_live/fresh_only.rs:980": {
+    "path": "tests/integration/src/route_authentication_live/fresh_only.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "d88fa16e4407794e4d90b5dc0b42c16672b2573fec8b738053d3b4081260527b",
+    "start_line": 971,
+    "end_line": 989,
+    "lines": [
+      {
+        "line": 971,
+        "text": ""
+      },
+      {
+        "line": 972,
+        "text": "    #[derive(Default)]"
+      },
+      {
+        "line": 973,
+        "text": "    struct Calls {"
+      },
+      {
+        "line": 974,
+        "text": "        order: Vec<&'static str>,"
+      },
+      {
+        "line": 975,
+        "text": "        nested: Option<(NodeContext, String)>,"
+      },
+      {
+        "line": 976,
+        "text": "    }"
+      },
+      {
+        "line": 977,
+        "text": ""
+      },
+      {
+        "line": 978,
+        "text": "    #[tokio::test]"
+      },
+      {
+        "line": 979,
+        "text": "    #[ignore = \"requires WAMN_TENANT_KEY_PG_URL on a fresh disposable PostgreSQL 18 server\"]"
+      },
+      {
+        "line": 980,
+        "text": "    async fn counter_uses_login_tenant_without_a_guest_guc() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 981,
+        "text": "        use wamn_control_provision::sql::{"
+      },
+      {
+        "line": 982,
+        "text": "            ensure_app_acl_role_sql, ensure_db_owner_role_sql, prepare_workload_generation_sql,"
+      },
+      {
+        "line": 983,
+        "text": "        };"
+      },
+      {
+        "line": 984,
+        "text": "        use wamn_control_provision::tenant_key::authority_derivations_sql;"
+      },
+      {
+        "line": 985,
+        "text": "        use wamn_control_provision::workload_role::{"
+      },
+      {
+        "line": 986,
+        "text": "            WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,"
+      },
+      {
+        "line": 987,
+        "text": "        };"
+      },
+      {
+        "line": 988,
+        "text": "        use wamn_run_state::CredentialGeneration;"
+      },
+      {
+        "line": 989,
+        "text": ""
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/route_authentication_live/materializer.rs:36": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live/materializer.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "e63f57c0a09ac5aa42c3c82040326032bca3366d4db3141b2071574a36e10b05",
+    "start_line": 27,
+    "end_line": 45,
+    "lines": [
+      {
+        "line": 27,
+        "text": "        .custom_inbox_prefix(format!(\"_INBOX_{username}\"))"
+      },
+      {
+        "line": 28,
+        "text": "        .user_and_password(username, password)"
+      },
+      {
+        "line": 29,
+        "text": "        .connect(url)"
+      },
+      {
+        "line": 30,
+        "text": "        .await"
+      },
+      {
+        "line": 31,
+        "text": "        .context(\"connect to the disposable event plane with the scoped proof role\")"
+      },
+      {
+        "line": 32,
+        "text": "}"
+      },
+      {
+        "line": 33,
+        "text": ""
+      },
+      {
+        "line": 34,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 35,
+        "text": "#[ignore = \"requires the disposable Receiving journey after its production materializer settles\"]"
+      },
+      {
+        "line": 36,
+        "text": "async fn production_materializer_consumes_the_causal_receipt_exactly_once() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 37,
+        "text": "    let document = JourneyDocument::required()?;"
+      },
+      {
+        "line": 38,
+        "text": "    let phase = document.materializer.context("
+      },
+      {
+        "line": 39,
+        "text": "        \"the journey document carries no materializer phase: the route phase must \\"
+      },
+      {
+        "line": 40,
+        "text": "         provision the project environment and the trigger must produce a receipt \\"
+      },
+      {
+        "line": 41,
+        "text": "         before this test runs\","
+      },
+      {
+        "line": 42,
+        "text": "    )?;"
+      },
+      {
+        "line": 43,
+        "text": "    let nats = connect_event_proof_client("
+      },
+      {
+        "line": 44,
+        "text": "        &phase.nats_url,"
+      },
+      {
+        "line": 45,
+        "text": "        \"WAMN_EVT_NATS_USERNAME\","
+      }
+    ]
+  },
+  "5ef02888:apps/client_acme_receiving/tests/overlay_compatibility.rs:523": {
+    "path": "apps/client_acme_receiving/tests/overlay_compatibility.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "8e7febb81fb41046d39503811392a14f045cb9fd19172ca2f698a2f6bb7789c4",
+    "start_line": 514,
+    "end_line": 532,
+    "lines": [
+      {
+        "line": 514,
+        "text": "            .unwrap_err()"
+      },
+      {
+        "line": 515,
+        "text": "            .to_string()"
+      },
+      {
+        "line": 516,
+        "text": "            .contains(\"receiving.odd_probe.odd_probe_key\")"
+      },
+      {
+        "line": 517,
+        "text": "    );"
+      },
+      {
+        "line": 518,
+        "text": "}"
+      },
+      {
+        "line": 519,
+        "text": ""
+      },
+      {
+        "line": 520,
+        "text": "/// Narrow seam check; the paired journey remains the fresh-install proof."
+      },
+      {
+        "line": 521,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 522,
+        "text": "#[ignore = \"requires a fresh disposable PostgreSQL 18 server and retained evidence path\"]"
+      },
+      {
+        "line": 523,
+        "text": "async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirements()"
+      },
+      {
+        "line": 524,
+        "text": "-> anyhow::Result<()> {"
+      },
+      {
+        "line": 525,
+        "text": "    use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorKind, read_catalog};"
+      },
+      {
+        "line": 526,
+        "text": ""
+      },
+      {
+        "line": 527,
+        "text": "    let url = std::env::var(\"WAMN_OVERLAY_OBSERVER_DATABASE_URL\")?;"
+      },
+      {
+        "line": 528,
+        "text": "    let evidence_path = std::env::var(\"WAMN_OVERLAY_OBSERVER_EVIDENCE_FILE\")?;"
+      },
+      {
+        "line": 529,
+        "text": "    let (project, connection_task) = super::connect(&url).await?;"
+      },
+      {
+        "line": 530,
+        "text": "    let server = project.query_one(\"SELECT current_setting('server_version_num')::integer, current_database()::text, to_regnamespace('receiving') IS NULL AND to_regnamespace('catalog') IS NULL\", &[]).await?;"
+      },
+      {
+        "line": 531,
+        "text": "    let version: i32 = server.get(0);"
+      },
+      {
+        "line": 532,
+        "text": "    ensure!("
+      }
+    ]
+  },
+  "5ef02888:apps/client_acme_receiving/tests/overlay_compatibility.rs:527": {
+    "path": "apps/client_acme_receiving/tests/overlay_compatibility.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "8e7febb81fb41046d39503811392a14f045cb9fd19172ca2f698a2f6bb7789c4",
+    "start_line": 518,
+    "end_line": 536,
+    "lines": [
+      {
+        "line": 518,
+        "text": "}"
+      },
+      {
+        "line": 519,
+        "text": ""
+      },
+      {
+        "line": 520,
+        "text": "/// Narrow seam check; the paired journey remains the fresh-install proof."
+      },
+      {
+        "line": 521,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 522,
+        "text": "#[ignore = \"requires a fresh disposable PostgreSQL 18 server and retained evidence path\"]"
+      },
+      {
+        "line": 523,
+        "text": "async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirements()"
+      },
+      {
+        "line": 524,
+        "text": "-> anyhow::Result<()> {"
+      },
+      {
+        "line": 525,
+        "text": "    use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorKind, read_catalog};"
+      },
+      {
+        "line": 526,
+        "text": ""
+      },
+      {
+        "line": 527,
+        "text": "    let url = std::env::var(\"WAMN_OVERLAY_OBSERVER_DATABASE_URL\")?;"
+      },
+      {
+        "line": 528,
+        "text": "    let evidence_path = std::env::var(\"WAMN_OVERLAY_OBSERVER_EVIDENCE_FILE\")?;"
+      },
+      {
+        "line": 529,
+        "text": "    let (project, connection_task) = super::connect(&url).await?;"
+      },
+      {
+        "line": 530,
+        "text": "    let server = project.query_one(\"SELECT current_setting('server_version_num')::integer, current_database()::text, to_regnamespace('receiving') IS NULL AND to_regnamespace('catalog') IS NULL\", &[]).await?;"
+      },
+      {
+        "line": 531,
+        "text": "    let version: i32 = server.get(0);"
+      },
+      {
+        "line": 532,
+        "text": "    ensure!("
+      },
+      {
+        "line": 533,
+        "text": "        (180_000..190_000).contains(&version) && server.get::<_, bool>(2),"
+      },
+      {
+        "line": 534,
+        "text": "        \"observer check requires fresh PostgreSQL 18\""
+      },
+      {
+        "line": 535,
+        "text": "    );"
+      },
+      {
+        "line": 536,
+        "text": "    project"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/postcommit.rs:611": {
+    "path": "apps/wamn_receiving/tests/postcommit.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "5141ef4ab24f00e7f967891ec67b44c2432b919c611b1d912cfd99aaf49cfbe3",
+    "start_line": 602,
+    "end_line": 620,
+    "lines": [
+      {
+        "line": 602,
+        "text": "    ensure!("
+      },
+      {
+        "line": 603,
+        "text": "        registration_after == evidence[\"registration\"],"
+      },
+      {
+        "line": 604,
+        "text": "        \"post-commit proof changed its registration\""
+      },
+      {
+        "line": 605,
+        "text": "    );"
+      },
+      {
+        "line": 606,
+        "text": "    Ok(())"
+      },
+      {
+        "line": 607,
+        "text": "}"
+      },
+      {
+        "line": 608,
+        "text": ""
+      },
+      {
+        "line": 609,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 610,
+        "text": "#[ignore = \"requires the disposable Receiving journey after its causal materializer baseline\"]"
+      },
+      {
+        "line": 611,
+        "text": "async fn production_materializer_preserves_replay_and_progress() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 612,
+        "text": "    let document = JourneyDocument::required()?;"
+      },
+      {
+        "line": 613,
+        "text": "    let materializer = document.materializer.as_ref()"
+      },
+      {
+        "line": 614,
+        "text": "        .context(\"the journey omitted its materializer baseline\")?;"
+      },
+      {
+        "line": 615,
+        "text": "    let nats = connect_event_proof_client("
+      },
+      {
+        "line": 616,
+        "text": "        &materializer.nats_url,"
+      },
+      {
+        "line": 617,
+        "text": "        \"WAMN_EVT_NATS_USERNAME\","
+      },
+      {
+        "line": 618,
+        "text": "        \"WAMN_EVT_NATS_PASSWORD_FILE\","
+      },
+      {
+        "line": 619,
+        "text": "    ).await?;"
+      },
+      {
+        "line": 620,
+        "text": "    let replay = connect_event_proof_client("
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/route_authentication_live/routes.rs:14": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live/routes.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "a5ed7655b7eaa71bec15103541b47a4e980ab3a11cb0e12d39979b6cf7f35f4d",
+    "start_line": 5,
+    "end_line": 23,
+    "lines": [
+      {
+        "line": 5,
+        "text": ""
+      },
+      {
+        "line": 6,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 7,
+        "text": "#[ignore = \"requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts\"]"
+      },
+      {
+        "line": 8,
+        "text": "async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 9,
+        "text": "    receiving_pat_journey(&JourneyDocument::required()?, &journey_scenario_worker_binary()?, false).await.map(|_| ())"
+      },
+      {
+        "line": 10,
+        "text": "}"
+      },
+      {
+        "line": 11,
+        "text": ""
+      },
+      {
+        "line": 12,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 13,
+        "text": "#[ignore = \"requires the dedicated fresh-only disposable journey and copied package directory\"]"
+      },
+      {
+        "line": 14,
+        "text": "async fn production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes()"
+      },
+      {
+        "line": 15,
+        "text": "-> anyhow::Result<()> {"
+      },
+      {
+        "line": 16,
+        "text": "    receiving_pat_journey(&JourneyDocument::required()?, &journey_scenario_worker_binary()?, true).await.map(|_| ())"
+      },
+      {
+        "line": 17,
+        "text": "}"
+      },
+      {
+        "line": 18,
+        "text": ""
+      },
+      {
+        "line": 19,
+        "text": "pub(super) fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyhow::Result<()> {"
+      },
+      {
+        "line": 20,
+        "text": "    std::fs::create_dir(destination)?;"
+      },
+      {
+        "line": 21,
+        "text": "    for entry in std::fs::read_dir(source)? {"
+      },
+      {
+        "line": 22,
+        "text": "        let entry = entry?;"
+      },
+      {
+        "line": 23,
+        "text": "        let kind = entry.file_type()?;"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/route_authentication_live/routes.rs:8": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live/routes.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "a5ed7655b7eaa71bec15103541b47a4e980ab3a11cb0e12d39979b6cf7f35f4d",
+    "start_line": 1,
+    "end_line": 17,
+    "lines": [
+      {
+        "line": 1,
+        "text": "//! Receiving routes tests and helpers."
+      },
+      {
+        "line": 2,
+        "text": ""
+      },
+      {
+        "line": 3,
+        "text": "use super::*;"
+      },
+      {
+        "line": 4,
+        "text": ""
+      },
+      {
+        "line": 5,
+        "text": ""
+      },
+      {
+        "line": 6,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 7,
+        "text": "#[ignore = \"requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts\"]"
+      },
+      {
+        "line": 8,
+        "text": "async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 9,
+        "text": "    receiving_pat_journey(&JourneyDocument::required()?, &journey_scenario_worker_binary()?, false).await.map(|_| ())"
+      },
+      {
+        "line": 10,
+        "text": "}"
+      },
+      {
+        "line": 11,
+        "text": ""
+      },
+      {
+        "line": 12,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 13,
+        "text": "#[ignore = \"requires the dedicated fresh-only disposable journey and copied package directory\"]"
+      },
+      {
+        "line": 14,
+        "text": "async fn production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes()"
+      },
+      {
+        "line": 15,
+        "text": "-> anyhow::Result<()> {"
+      },
+      {
+        "line": 16,
+        "text": "    receiving_pat_journey(&JourneyDocument::required()?, &journey_scenario_worker_binary()?, true).await.map(|_| ())"
+      },
+      {
+        "line": 17,
+        "text": "}"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/route_authentication_live/sessions.rs:229": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live/sessions.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "2760acd2f70b76ad1e304d88667f6d35367c737b48483bfdc6396173ca444575",
+    "start_line": 220,
+    "end_line": 238,
+    "lines": [
+      {
+        "line": 220,
+        "text": "        Duration::from_secs(180),"
+      },
+      {
+        "line": 221,
+        "text": "        nested_session_caller(false, false),"
+      },
+      {
+        "line": 222,
+        "text": "    )"
+      },
+      {
+        "line": 223,
+        "text": "    .await"
+      },
+      {
+        "line": 224,
+        "text": "    .context(\"nested session proof exceeded 180 seconds\")?"
+      },
+      {
+        "line": 225,
+        "text": "}"
+      },
+      {
+        "line": 226,
+        "text": ""
+      },
+      {
+        "line": 227,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 228,
+        "text": "#[ignore = \"requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT\"]"
+      },
+      {
+        "line": 229,
+        "text": "async fn production_nested_fresh_only_requires_pat_and_observes_revocation() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 230,
+        "text": "    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, false))"
+      },
+      {
+        "line": 231,
+        "text": "        .await"
+      },
+      {
+        "line": 232,
+        "text": "        .context(\"nested fresh-only proof exceeded 180 seconds\")?"
+      },
+      {
+        "line": 233,
+        "text": "}"
+      },
+      {
+        "line": 234,
+        "text": ""
+      },
+      {
+        "line": 235,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 236,
+        "text": "#[ignore = \"requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT\"]"
+      },
+      {
+        "line": 237,
+        "text": "async fn production_session_client_login_and_fresh_selection() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 238,
+        "text": "    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, true))"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/route_authentication_live/sessions.rs:218": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live/sessions.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "2760acd2f70b76ad1e304d88667f6d35367c737b48483bfdc6396173ca444575",
+    "start_line": 209,
+    "end_line": 227,
+    "lines": [
+      {
+        "line": 209,
+        "text": "    project_task.abort();"
+      },
+      {
+        "line": 210,
+        "text": "    admin_task.abort();"
+      },
+      {
+        "line": 211,
+        "text": "    Ok(())"
+      },
+      {
+        "line": 212,
+        "text": "}"
+      },
+      {
+        "line": 213,
+        "text": ""
+      },
+      {
+        "line": 214,
+        "text": "/// The native driver uses a pinned loopback HTTPS port-forward, not cluster DNS."
+      },
+      {
+        "line": 215,
+        "text": "/// Separate deployed host Jobs prove cluster transport and key-removal bounds."
+      },
+      {
+        "line": 216,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 217,
+        "text": "#[ignore = \"requires the completed Receiving session fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT\"]"
+      },
+      {
+        "line": 218,
+        "text": "async fn production_nested_session_call_preserves_original_caller() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 219,
+        "text": "    tokio::time::timeout("
+      },
+      {
+        "line": 220,
+        "text": "        Duration::from_secs(180),"
+      },
+      {
+        "line": 221,
+        "text": "        nested_session_caller(false, false),"
+      },
+      {
+        "line": 222,
+        "text": "    )"
+      },
+      {
+        "line": 223,
+        "text": "    .await"
+      },
+      {
+        "line": 224,
+        "text": "    .context(\"nested session proof exceeded 180 seconds\")?"
+      },
+      {
+        "line": 225,
+        "text": "}"
+      },
+      {
+        "line": 226,
+        "text": ""
+      },
+      {
+        "line": 227,
+        "text": "#[tokio::test]"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/route_authentication_live/sessions.rs:9": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live/sessions.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "2760acd2f70b76ad1e304d88667f6d35367c737b48483bfdc6396173ca444575",
+    "start_line": 1,
+    "end_line": 18,
+    "lines": [
+      {
+        "line": 1,
+        "text": "//! Receiving sessions tests and helpers."
+      },
+      {
+        "line": 2,
+        "text": ""
+      },
+      {
+        "line": 3,
+        "text": "use super::*;"
+      },
+      {
+        "line": 4,
+        "text": ""
+      },
+      {
+        "line": 5,
+        "text": ""
+      },
+      {
+        "line": 6,
+        "text": "/// Prepare one session route without changing the checked-in PAT publication."
+      },
+      {
+        "line": 7,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 8,
+        "text": "#[ignore = \"requires the completed disposable Receiving journey and WAMN_SESSION_HOST_FIXTURE_OUTPUT\"]"
+      },
+      {
+        "line": 9,
+        "text": "async fn production_receiving_session_host_fixture() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 10,
+        "text": "    let inputs = JourneyDocument::required()?;"
+      },
+      {
+        "line": 11,
+        "text": "    let output = required_journey_path(\"WAMN_SESSION_HOST_FIXTURE_OUTPUT\")?;"
+      },
+      {
+        "line": 12,
+        "text": "    prepare_session_host_fixture(&inputs, &output).await"
+      },
+      {
+        "line": 13,
+        "text": "}"
+      },
+      {
+        "line": 14,
+        "text": ""
+      },
+      {
+        "line": 15,
+        "text": "pub(super) async fn prepare_session_host_fixture("
+      },
+      {
+        "line": 16,
+        "text": "    inputs: &JourneyDocument,"
+      },
+      {
+        "line": 17,
+        "text": "    output: &Path,"
+      },
+      {
+        "line": 18,
+        "text": ") -> anyhow::Result<()> {"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_receiving/tests/route_authentication_live/sessions.rs:237": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live/sessions.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "2760acd2f70b76ad1e304d88667f6d35367c737b48483bfdc6396173ca444575",
+    "start_line": 228,
+    "end_line": 246,
+    "lines": [
+      {
+        "line": 228,
+        "text": "#[ignore = \"requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT\"]"
+      },
+      {
+        "line": 229,
+        "text": "async fn production_nested_fresh_only_requires_pat_and_observes_revocation() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 230,
+        "text": "    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, false))"
+      },
+      {
+        "line": 231,
+        "text": "        .await"
+      },
+      {
+        "line": 232,
+        "text": "        .context(\"nested fresh-only proof exceeded 180 seconds\")?"
+      },
+      {
+        "line": 233,
+        "text": "}"
+      },
+      {
+        "line": 234,
+        "text": ""
+      },
+      {
+        "line": 235,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 236,
+        "text": "#[ignore = \"requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT\"]"
+      },
+      {
+        "line": 237,
+        "text": "async fn production_session_client_login_and_fresh_selection() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 238,
+        "text": "    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, true))"
+      },
+      {
+        "line": 239,
+        "text": "        .await"
+      },
+      {
+        "line": 240,
+        "text": "        .context(\"session client proof exceeded 180 seconds\")?"
+      },
+      {
+        "line": 241,
+        "text": "}"
+      },
+      {
+        "line": 242,
+        "text": ""
+      },
+      {
+        "line": 243,
+        "text": "pub(super) async fn nested_session_caller(fresh_only: bool, client_proof: bool) -> anyhow::Result<()> {"
+      },
+      {
+        "line": 244,
+        "text": "    assert_nested_session("
+      },
+      {
+        "line": 245,
+        "text": "        JourneyDocument::required()?,"
+      },
+      {
+        "line": 246,
+        "text": "        &required_journey(\"WAMN_IDENTITY_ISSUER\")?,"
+      }
+    ]
+  },
+  "5ef02888:tests/integration/tests/startup_burst_live.rs:319": {
+    "path": "tests/integration/tests/startup_burst_live.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "1da485c55d1ad040608231dd6fb43495b1773fb8927789d8bf4039cad20f7337",
+    "start_line": 310,
+    "end_line": 328,
+    "lines": [
+      {
+        "line": 310,
+        "text": "    } else {"
+      },
+      {
+        "line": 311,
+        "text": "        child.start_kill()?;"
+      },
+      {
+        "line": 312,
+        "text": "        timeout(CONTROL_BUDGET, child.wait()).await??;"
+      },
+      {
+        "line": 313,
+        "text": "        anyhow::bail!(\"proof host exceeded the existing host shutdown budget\")"
+      },
+      {
+        "line": 314,
+        "text": "    }"
+      },
+      {
+        "line": 315,
+        "text": "}"
+      },
+      {
+        "line": 316,
+        "text": ""
+      },
+      {
+        "line": 317,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 318,
+        "text": "#[ignore = \"requires the private completed Receiving fixture and rebuilt production host\"]"
+      },
+      {
+        "line": 319,
+        "text": "async fn production_http_start_burst_keeps_native_host_progress() -> Result<()> {"
+      },
+      {
+        "line": 320,
+        "text": "    let input_path = std::env::var_os(\"WAMN_STARTUP_BURST_INPUT\")"
+      },
+      {
+        "line": 321,
+        "text": "        .context(\"WAMN_STARTUP_BURST_INPUT must name the runner-owned fixture\")?;"
+      },
+      {
+        "line": 322,
+        "text": "    let inputs: Inputs = serde_json::from_slice(&std::fs::read(PathBuf::from(input_path))?)?;"
+      },
+      {
+        "line": 323,
+        "text": "    let credentials = Credentials {"
+      },
+      {
+        "line": 324,
+        "text": "        username: std::env::var(\"WAMN_EVT_NATS_USERNAME\")?,"
+      },
+      {
+        "line": 325,
+        "text": "        password_file: PathBuf::from("
+      },
+      {
+        "line": 326,
+        "text": "            std::env::var_os(\"WAMN_EVT_NATS_PASSWORD_FILE\")"
+      },
+      {
+        "line": 327,
+        "text": "                .context(\"the startup test requires its private NATS password file\")?,"
+      },
+      {
+        "line": 328,
+        "text": "        ),"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_wms/tests/wms_runtime_live.rs:505": {
+    "path": "apps/wamn_wms/tests/wms_runtime_live.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "1acc517ea16c050348d152c2fb4c187c4696c912f00cedd9dd93f54adb2f94a8",
+    "start_line": 496,
+    "end_line": 514,
+    "lines": [
+      {
+        "line": 496,
+        "text": "            && page[\"item\"][0][\"id\"] == new_pallet_id.as_str(),"
+      },
+      {
+        "line": 497,
+        "text": "        \"the consumed filter finds exactly the merged pallet: {page}\""
+      },
+      {
+        "line": 498,
+        "text": "    );"
+      },
+      {
+        "line": 499,
+        "text": ""
+      },
+      {
+        "line": 500,
+        "text": "    Ok(json!({\"split_pallet_id\": new_pallet_id}))"
+      },
+      {
+        "line": 501,
+        "text": "}"
+      },
+      {
+        "line": 502,
+        "text": ""
+      },
+      {
+        "line": 503,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 504,
+        "text": "#[ignore = \"requires the released WMS route after its disposable labels bucket is removed\"]"
+      },
+      {
+        "line": 505,
+        "text": "async fn committed_move_survives_label_store_failure() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 506,
+        "text": "    let document = JourneyDocument::required()?;"
+      },
+      {
+        "line": 507,
+        "text": "    let (http, result) = assert_committed_move_after_label_failure(&document).await?;"
+      },
+      {
+        "line": 508,
+        "text": "    let directory = result_directory()?;"
+      },
+      {
+        "line": 509,
+        "text": "    write_result(&directory, \"wms-partial-http.json\", &http)?;"
+      },
+      {
+        "line": 510,
+        "text": "    write_result(&directory, \"wms-partial-result.json\", &result)"
+      },
+      {
+        "line": 511,
+        "text": "}"
+      },
+      {
+        "line": 512,
+        "text": ""
+      },
+      {
+        "line": 513,
+        "text": "pub(crate) async fn assert_committed_move_after_label_failure(document: &JourneyDocument) -> anyhow::Result<(Value, Value)> {"
+      },
+      {
+        "line": 514,
+        "text": "    let runtime = document"
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_wms/tests/wms_runtime_live.rs:130": {
+    "path": "apps/wamn_wms/tests/wms_runtime_live.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "1acc517ea16c050348d152c2fb4c187c4696c912f00cedd9dd93f54adb2f94a8",
+    "start_line": 121,
+    "end_line": 139,
+    "lines": [
+      {
+        "line": 121,
+        "text": "        items[0][\"request_id\"] == request_id,"
+      },
+      {
+        "line": 122,
+        "text": "        \"the item answers request {request_id}: {}\","
+      },
+      {
+        "line": 123,
+        "text": "        items[0]"
+      },
+      {
+        "line": 124,
+        "text": "    );"
+      },
+      {
+        "line": 125,
+        "text": "    Ok(&items[0])"
+      },
+      {
+        "line": 126,
+        "text": "}"
+      },
+      {
+        "line": 127,
+        "text": ""
+      },
+      {
+        "line": 128,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 129,
+        "text": "#[ignore = \"requires the released WMS route on a disposable cluster, named by the journey document's runtime phase\"]"
+      },
+      {
+        "line": 130,
+        "text": "async fn contention_and_replay_through_the_composed_route() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 131,
+        "text": "    let document = JourneyDocument::required()?;"
+      },
+      {
+        "line": 132,
+        "text": "    let result = assert_contention_and_replay(&document).await?;"
+      },
+      {
+        "line": 133,
+        "text": "    write_result(&result_directory()?, \"wms-contention-result.json\", &result)"
+      },
+      {
+        "line": 134,
+        "text": "}"
+      },
+      {
+        "line": 135,
+        "text": ""
+      },
+      {
+        "line": 136,
+        "text": "pub(crate) async fn assert_contention_and_replay(document: &JourneyDocument) -> anyhow::Result<Value> {"
+      },
+      {
+        "line": 137,
+        "text": "    let runtime = document.runtime.as_ref().context("
+      },
+      {
+        "line": 138,
+        "text": "        \"the journey document carries no runtime phase: the route must be reachable and the \\"
+      },
+      {
+        "line": 139,
+        "text": "         fixture seeded before these assertions run\","
+      }
+    ]
+  },
+  "5ef02888:apps/wamn_wms/tests/wms_runtime_live.rs:262": {
+    "path": "apps/wamn_wms/tests/wms_runtime_live.rs",
+    "source": "5ef028880f4c83283ae344008bbb298adbd88003",
+    "sha256": "1acc517ea16c050348d152c2fb4c187c4696c912f00cedd9dd93f54adb2f94a8",
+    "start_line": 253,
+    "end_line": 271,
+    "lines": [
+      {
+        "line": 253,
+        "text": "    value"
+      },
+      {
+        "line": 254,
+        "text": "        .as_str()"
+      },
+      {
+        "line": 255,
+        "text": "        .filter(|id| id.len() == 36)"
+      },
+      {
+        "line": 256,
+        "text": "        .map(str::to_owned)"
+      },
+      {
+        "line": 257,
+        "text": "        .with_context(|| format!(\"a uuid: {value}\"))"
+      },
+      {
+        "line": 258,
+        "text": "}"
+      },
+      {
+        "line": 259,
+        "text": ""
+      },
+      {
+        "line": 260,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 261,
+        "text": "#[ignore = \"requires the released WMS route on a disposable cluster, named by the journey document's runtime phase\"]"
+      },
+      {
+        "line": 262,
+        "text": "async fn the_remaining_operations_serve_their_released_routes() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 263,
+        "text": "    let document = JourneyDocument::required()?;"
+      },
+      {
+        "line": 264,
+        "text": "    let result = assert_remaining_operations(&document).await?;"
+      },
+      {
+        "line": 265,
+        "text": "    write_result(&result_directory()?, \"wms-operations-result.json\", &result)"
+      },
+      {
+        "line": 266,
+        "text": "}"
+      },
+      {
+        "line": 267,
+        "text": ""
+      },
+      {
+        "line": 268,
+        "text": "pub(crate) async fn assert_remaining_operations(document: &JourneyDocument) -> anyhow::Result<Value> {"
+      },
+      {
+        "line": 269,
+        "text": "    let runtime = document.runtime.as_ref().context("
+      },
+      {
+        "line": 270,
+        "text": "        \"the journey document carries no runtime phase: the route must be reachable and the \\"
+      },
+      {
+        "line": 271,
+        "text": "         fixture seeded before these assertions run\","
+      }
+    ]
+  },
+  "b9fba07a:apps/wamn_receiving/tests/receiving_data_access.rs:313": {
+    "path": "apps/wamn_receiving/tests/receiving_data_access.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "ed6aa7b35ce5d0407189c3d6c82dcc4425e13814295d14bf0337862d19e6a753",
+    "start_line": 304,
+    "end_line": 322,
+    "lines": [
+      {
+        "line": 304,
+        "text": "            \"updates changed unrelated stored state\""
+      },
+      {
+        "line": 305,
+        "text": "        );"
+      },
+      {
+        "line": 306,
+        "text": "        client.batch_execute(\"ROLLBACK\").await?;"
+      },
+      {
+        "line": 307,
+        "text": "        assert_fresh_receiving_schema(&client).await?;"
+      },
+      {
+        "line": 308,
+        "text": "        Ok(())"
+      },
+      {
+        "line": 309,
+        "text": "    }"
+      },
+      {
+        "line": 310,
+        "text": ""
+      },
+      {
+        "line": 311,
+        "text": "    #[tokio::test]"
+      },
+      {
+        "line": 312,
+        "text": "    #[ignore = \"requires a fresh disposable PostgreSQL 18 URL in WAMN_RECEIVING_PG_URL\"]"
+      },
+      {
+        "line": 313,
+        "text": "    async fn enum_and_optimistic_update_outcomes_hold_on_postgres_18() -> Result<()> {"
+      },
+      {
+        "line": 314,
+        "text": "        let url = std::env::var(\"WAMN_RECEIVING_PG_URL\")"
+      },
+      {
+        "line": 315,
+        "text": "            .context(\"WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database\")?;"
+      },
+      {
+        "line": 316,
+        "text": "        let mut client = connect(&url).await?;"
+      },
+      {
+        "line": 317,
+        "text": "        assert_postgres_18(&client).await?;"
+      },
+      {
+        "line": 318,
+        "text": "        assert_fresh_receiving_schema(&client).await?;"
+      },
+      {
+        "line": 319,
+        "text": "        client"
+      },
+      {
+        "line": 320,
+        "text": "            .batch_execute(\"CREATE SCHEMA receiving\")"
+      },
+      {
+        "line": 321,
+        "text": "            .await"
+      },
+      {
+        "line": 322,
+        "text": "            .context(\"create the Receiving schema\")?;"
+      }
+    ]
+  },
+  "b9fba07a:apps/wamn_receiving/tests/receiving_data_access.rs:147": {
+    "path": "apps/wamn_receiving/tests/receiving_data_access.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "ed6aa7b35ce5d0407189c3d6c82dcc4425e13814295d14bf0337862d19e6a753",
+    "start_line": 138,
+    "end_line": 156,
+    "lines": [
+      {
+        "line": 138,
+        "text": "        receipt_line_count: i64,"
+      },
+      {
+        "line": 139,
+        "text": "        first_received: String,"
+      },
+      {
+        "line": 140,
+        "text": "        second_received: String,"
+      },
+      {
+        "line": 141,
+        "text": "        purchase_order_status: String,"
+      },
+      {
+        "line": 142,
+        "text": "        row_version: i64,"
+      },
+      {
+        "line": 143,
+        "text": "    }"
+      },
+      {
+        "line": 144,
+        "text": ""
+      },
+      {
+        "line": 145,
+        "text": "    #[tokio::test]"
+      },
+      {
+        "line": 146,
+        "text": "    #[ignore = \"requires a fresh disposable PostgreSQL 18 URL in WAMN_RECEIVING_PG_URL\"]"
+      },
+      {
+        "line": 147,
+        "text": "    async fn generated_update_ignores_ungranted_additive_columns() -> Result<()> {"
+      },
+      {
+        "line": 148,
+        "text": "        use wamn_schema_generator::{"
+      },
+      {
+        "line": 149,
+        "text": "            DataAccessOverlay, DataAccessRelationInventory, derive_effective_data_access,"
+      },
+      {
+        "line": 150,
+        "text": "            render_effective_data_access_sql,"
+      },
+      {
+        "line": 151,
+        "text": "        };"
+      },
+      {
+        "line": 152,
+        "text": ""
+      },
+      {
+        "line": 153,
+        "text": "        let url = std::env::var(\"WAMN_RECEIVING_PG_URL\")"
+      },
+      {
+        "line": 154,
+        "text": "            .context(\"WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database\")?;"
+      },
+      {
+        "line": 155,
+        "text": "        let client = connect(&url).await?;"
+      },
+      {
+        "line": 156,
+        "text": "        assert_postgres_18(&client).await?;"
+      }
+    ]
+  },
+  "b9fba07a:tests/integration/src/route_authentication_live/fresh_only.rs:980": {
+    "path": "tests/integration/src/route_authentication_live/fresh_only.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "f87e054309aa2f6613fbb5087b67c22a29a5c8c78bbbcb3d68920a542c30ee4b",
+    "start_line": 971,
+    "end_line": 989,
+    "lines": [
+      {
+        "line": 971,
+        "text": ""
+      },
+      {
+        "line": 972,
+        "text": "    #[derive(Default)]"
+      },
+      {
+        "line": 973,
+        "text": "    struct Calls {"
+      },
+      {
+        "line": 974,
+        "text": "        order: Vec<&'static str>,"
+      },
+      {
+        "line": 975,
+        "text": "        nested: Option<(NodeContext, String)>,"
+      },
+      {
+        "line": 976,
+        "text": "    }"
+      },
+      {
+        "line": 977,
+        "text": ""
+      },
+      {
+        "line": 978,
+        "text": "    #[tokio::test]"
+      },
+      {
+        "line": 979,
+        "text": "    #[ignore = \"requires WAMN_TENANT_KEY_PG_URL on a fresh disposable PostgreSQL 18 server\"]"
+      },
+      {
+        "line": 980,
+        "text": "    async fn counter_uses_login_tenant_without_a_guest_guc() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 981,
+        "text": "        use wamn_control_provision::sql::{"
+      },
+      {
+        "line": 982,
+        "text": "            ensure_app_acl_role_sql, ensure_db_owner_role_sql, prepare_workload_generation_sql,"
+      },
+      {
+        "line": 983,
+        "text": "        };"
+      },
+      {
+        "line": 984,
+        "text": "        use wamn_control_provision::tenant_key::authority_derivations_sql;"
+      },
+      {
+        "line": 985,
+        "text": "        use wamn_control_provision::workload_role::{"
+      },
+      {
+        "line": 986,
+        "text": "            WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,"
+      },
+      {
+        "line": 987,
+        "text": "        };"
+      },
+      {
+        "line": 988,
+        "text": "        use wamn_run_state::CredentialGeneration;"
+      },
+      {
+        "line": 989,
+        "text": ""
+      }
+    ]
+  },
+  "b9fba07a:tests/integration/src/route_authentication_live/overlay_compatibility.rs:539": {
+    "path": "tests/integration/src/route_authentication_live/overlay_compatibility.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "7b01060f94b9abb1dfc010d495fa644d1a8dae90216758884deef1cfcc229829",
+    "start_line": 530,
+    "end_line": 548,
+    "lines": [
+      {
+        "line": 530,
+        "text": "            .unwrap_err()"
+      },
+      {
+        "line": 531,
+        "text": "            .to_string()"
+      },
+      {
+        "line": 532,
+        "text": "            .contains(\"receiving.odd_probe.odd_probe_key\")"
+      },
+      {
+        "line": 533,
+        "text": "    );"
+      },
+      {
+        "line": 534,
+        "text": "}"
+      },
+      {
+        "line": 535,
+        "text": ""
+      },
+      {
+        "line": 536,
+        "text": "/// Narrow seam check; the paired journey remains the fresh-install proof."
+      },
+      {
+        "line": 537,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 538,
+        "text": "#[ignore = \"requires a fresh disposable PostgreSQL 18 server and retained evidence path\"]"
+      },
+      {
+        "line": 539,
+        "text": "async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirements()"
+      },
+      {
+        "line": 540,
+        "text": "-> anyhow::Result<()> {"
+      },
+      {
+        "line": 541,
+        "text": "    use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorKind, read_catalog};"
+      },
+      {
+        "line": 542,
+        "text": ""
+      },
+      {
+        "line": 543,
+        "text": "    let url = std::env::var(\"WAMN_OVERLAY_OBSERVER_DATABASE_URL\")?;"
+      },
+      {
+        "line": 544,
+        "text": "    let evidence_path = std::env::var(\"WAMN_OVERLAY_OBSERVER_EVIDENCE_FILE\")?;"
+      },
+      {
+        "line": 545,
+        "text": "    let (project, connection_task) = super::connect(&url).await?;"
+      },
+      {
+        "line": 546,
+        "text": "    let server = project.query_one(\"SELECT current_setting('server_version_num')::integer, current_database()::text, to_regnamespace('receiving') IS NULL AND to_regnamespace('catalog') IS NULL\", &[]).await?;"
+      },
+      {
+        "line": 547,
+        "text": "    let version: i32 = server.get(0);"
+      },
+      {
+        "line": 548,
+        "text": "    ensure!("
+      }
+    ]
+  },
+  "b9fba07a:tests/integration/src/route_authentication_live/postcommit.rs:633": {
+    "path": "tests/integration/src/route_authentication_live/postcommit.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "3dedcf03f434b9471a250bb8aabed0c4a7a7b47230e9d27f6c5334adc3da5b84",
+    "start_line": 624,
+    "end_line": 642,
+    "lines": [
+      {
+        "line": 624,
+        "text": "    ensure!("
+      },
+      {
+        "line": 625,
+        "text": "        registration_after == evidence[\"registration\"],"
+      },
+      {
+        "line": 626,
+        "text": "        \"post-commit proof changed its registration\""
+      },
+      {
+        "line": 627,
+        "text": "    );"
+      },
+      {
+        "line": 628,
+        "text": "    Ok(())"
+      },
+      {
+        "line": 629,
+        "text": "}"
+      },
+      {
+        "line": 630,
+        "text": ""
+      },
+      {
+        "line": 631,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 632,
+        "text": "#[ignore = \"requires the disposable Receiving journey after its causal materializer baseline\"]"
+      },
+      {
+        "line": 633,
+        "text": "async fn production_materializer_preserves_replay_and_progress() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 634,
+        "text": "    let document = JourneyDocument::required()?;"
+      },
+      {
+        "line": 635,
+        "text": "    let phase = document"
+      },
+      {
+        "line": 636,
+        "text": "        .postcommit"
+      },
+      {
+        "line": 637,
+        "text": "        .as_ref()"
+      },
+      {
+        "line": 638,
+        "text": "        .context(\"the journey omitted the armed postcommit phase\")?;"
+      },
+      {
+        "line": 639,
+        "text": "    ensure!("
+      },
+      {
+        "line": 640,
+        "text": "        phase.context == \"kind-wamn-receiving-postcommit\""
+      },
+      {
+        "line": 641,
+        "text": "            && phase.namespace == \"wamn-receiving-postcommit\""
+      },
+      {
+        "line": 642,
+        "text": "            && phase.materializer_workload == \"receiving-materializer\""
+      }
+    ]
+  },
+  "b9fba07a:tests/integration/src/route_authentication_live.rs:3402": {
+    "path": "tests/integration/src/route_authentication_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "881b3e87aee1051ade2977692f0c90edbbfc4a2ab60e3226bb5b227f6f059da0",
+    "start_line": 3393,
+    "end_line": 3411,
+    "lines": [
+      {
+        "line": 3393,
+        "text": "                '00000000-0000-0000-0000-000000000304', 1, \\"
+      },
+      {
+        "line": 3394,
+        "text": "                '00000000-0000-0000-0000-000000000101', 9.0000, 0.0000);\","
+      },
+      {
+        "line": 3395,
+        "text": "        )"
+      },
+      {
+        "line": 3396,
+        "text": "        .await"
+      },
+      {
+        "line": 3397,
+        "text": "        .context(\"seed the untouched materializer journey purchase order\")"
+      },
+      {
+        "line": 3398,
+        "text": "}"
+      },
+      {
+        "line": 3399,
+        "text": ""
+      },
+      {
+        "line": 3400,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 3401,
+        "text": "#[ignore = \"requires disposable PG18, NATS, authenticated OCI, and built wamn/host/flow-http binaries\"]"
+      },
+      {
+        "line": 3402,
+        "text": "async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -> anyhow::Result<()>"
+      },
+      {
+        "line": 3403,
+        "text": "{"
+      },
+      {
+        "line": 3404,
+        "text": "    // Keep the expensive product gate to one clean run. Engine tests"
+      },
+      {
+        "line": 3405,
+        "text": "    // `dirty_source_reaches_gate_then_refuses_before_publish` and"
+      },
+      {
+        "line": 3406,
+        "text": "    // `dirty_watch_suffix_refuses_before_its_first_provenance_stage`, plus the"
+      },
+      {
+        "line": 3407,
+        "text": "    // filesystem adapter's `filesystem_events_map_owned_inputs_and_ignore_generated_outputs`,"
+      },
+      {
+        "line": 3408,
+        "text": "    // own dirty-stop and affected-suffix behavior deterministically."
+      },
+      {
+        "line": 3409,
+        "text": "    let system_url = required_journey(JOURNEY_URL_ENV)?;"
+      },
+      {
+        "line": 3410,
+        "text": "    let inputs = DevJourneyInputs::required()?;"
+      },
+      {
+        "line": 3411,
+        "text": "    let repository = repository_root()?;"
+      }
+    ]
+  },
+  "b9fba07a:tests/integration/src/route_authentication_live.rs:5221": {
+    "path": "tests/integration/src/route_authentication_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "881b3e87aee1051ade2977692f0c90edbbfc4a2ab60e3226bb5b227f6f059da0",
+    "start_line": 5212,
+    "end_line": 5230,
+    "lines": [
+      {
+        "line": 5212,
+        "text": "           'receipt_lines', (SELECT jsonb_agg(to_jsonb(row) ORDER BY id) FROM receiving.receipt_line AS row), \\"
+      },
+      {
+        "line": 5213,
+        "text": "           'orders', (SELECT jsonb_agg(to_jsonb(row) ORDER BY id) FROM receiving.purchase_order AS row), \\"
+      },
+      {
+        "line": 5214,
+        "text": "           'order_lines', (SELECT jsonb_agg(to_jsonb(row) ORDER BY id) FROM receiving.purchase_order_line AS row))\","
+      },
+      {
+        "line": 5215,
+        "text": "        &[],"
+      },
+      {
+        "line": 5216,
+        "text": "    ).await.context(\"read committed Receipt state independently\")?.get(0))"
+      },
+      {
+        "line": 5217,
+        "text": "}"
+      },
+      {
+        "line": 5218,
+        "text": ""
+      },
+      {
+        "line": 5219,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 5220,
+        "text": "#[ignore = \"requires the disposable Receiving journey after its production materializer settles\"]"
+      },
+      {
+        "line": 5221,
+        "text": "async fn production_materializer_consumes_the_causal_receipt_exactly_once() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 5222,
+        "text": "    let document = JourneyDocument::required()?;"
+      },
+      {
+        "line": 5223,
+        "text": "    let MaterializerPhase {"
+      },
+      {
+        "line": 5224,
+        "text": "        project_pg_url: project_url,"
+      },
+      {
+        "line": 5225,
+        "text": "        nats_url,"
+      },
+      {
+        "line": 5226,
+        "text": "        receipt_id,"
+      },
+      {
+        "line": 5227,
+        "text": "    } = document.materializer.context("
+      },
+      {
+        "line": 5228,
+        "text": "        \"the journey document carries no materializer phase: the route phase must \\"
+      },
+      {
+        "line": 5229,
+        "text": "         provision the project environment and the trigger must produce a receipt \\"
+      },
+      {
+        "line": 5230,
+        "text": "         before this test runs\","
+      }
+    ]
+  },
+  "b9fba07a:tests/integration/src/route_authentication_live.rs:4562": {
+    "path": "tests/integration/src/route_authentication_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "881b3e87aee1051ade2977692f0c90edbbfc4a2ab60e3226bb5b227f6f059da0",
+    "start_line": 4553,
+    "end_line": 4571,
+    "lines": [
+      {
+        "line": 4553,
+        "text": "        Duration::from_secs(180),"
+      },
+      {
+        "line": 4554,
+        "text": "        nested_session_caller(false, false),"
+      },
+      {
+        "line": 4555,
+        "text": "    )"
+      },
+      {
+        "line": 4556,
+        "text": "    .await"
+      },
+      {
+        "line": 4557,
+        "text": "    .context(\"nested session proof exceeded 180 seconds\")?"
+      },
+      {
+        "line": 4558,
+        "text": "}"
+      },
+      {
+        "line": 4559,
+        "text": ""
+      },
+      {
+        "line": 4560,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 4561,
+        "text": "#[ignore = \"requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT\"]"
+      },
+      {
+        "line": 4562,
+        "text": "async fn production_nested_fresh_only_requires_pat_and_observes_revocation() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 4563,
+        "text": "    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, false))"
+      },
+      {
+        "line": 4564,
+        "text": "        .await"
+      },
+      {
+        "line": 4565,
+        "text": "        .context(\"nested fresh-only proof exceeded 180 seconds\")?"
+      },
+      {
+        "line": 4566,
+        "text": "}"
+      },
+      {
+        "line": 4567,
+        "text": ""
+      },
+      {
+        "line": 4568,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 4569,
+        "text": "#[ignore = \"requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT\"]"
+      },
+      {
+        "line": 4570,
+        "text": "async fn production_session_client_login_and_fresh_selection() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 4571,
+        "text": "    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, true))"
+      }
+    ]
+  },
+  "b9fba07a:tests/integration/src/route_authentication_live.rs:4551": {
+    "path": "tests/integration/src/route_authentication_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "881b3e87aee1051ade2977692f0c90edbbfc4a2ab60e3226bb5b227f6f059da0",
+    "start_line": 4542,
+    "end_line": 4560,
+    "lines": [
+      {
+        "line": 4542,
+        "text": "    project_task.abort();"
+      },
+      {
+        "line": 4543,
+        "text": "    admin_task.abort();"
+      },
+      {
+        "line": 4544,
+        "text": "    Ok(())"
+      },
+      {
+        "line": 4545,
+        "text": "}"
+      },
+      {
+        "line": 4546,
+        "text": ""
+      },
+      {
+        "line": 4547,
+        "text": "/// The native driver uses a pinned loopback HTTPS port-forward, not cluster DNS."
+      },
+      {
+        "line": 4548,
+        "text": "/// Separate deployed host Jobs prove cluster transport and key-removal bounds."
+      },
+      {
+        "line": 4549,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 4550,
+        "text": "#[ignore = \"requires the completed Receiving session fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT\"]"
+      },
+      {
+        "line": 4551,
+        "text": "async fn production_nested_session_call_preserves_original_caller() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 4552,
+        "text": "    tokio::time::timeout("
+      },
+      {
+        "line": 4553,
+        "text": "        Duration::from_secs(180),"
+      },
+      {
+        "line": 4554,
+        "text": "        nested_session_caller(false, false),"
+      },
+      {
+        "line": 4555,
+        "text": "    )"
+      },
+      {
+        "line": 4556,
+        "text": "    .await"
+      },
+      {
+        "line": 4557,
+        "text": "    .context(\"nested session proof exceeded 180 seconds\")?"
+      },
+      {
+        "line": 4558,
+        "text": "}"
+      },
+      {
+        "line": 4559,
+        "text": ""
+      },
+      {
+        "line": 4560,
+        "text": "#[tokio::test]"
+      }
+    ]
+  },
+  "b9fba07a:tests/integration/src/route_authentication_live.rs:4349": {
+    "path": "tests/integration/src/route_authentication_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "881b3e87aee1051ade2977692f0c90edbbfc4a2ab60e3226bb5b227f6f059da0",
+    "start_line": 4340,
+    "end_line": 4358,
+    "lines": [
+      {
+        "line": 4340,
+        "text": "    identity_task.abort();"
+      },
+      {
+        "line": 4341,
+        "text": "    project_task.abort();"
+      },
+      {
+        "line": 4342,
+        "text": "    admin_task.abort();"
+      },
+      {
+        "line": 4343,
+        "text": "    gate_stop"
+      },
+      {
+        "line": 4344,
+        "text": "}"
+      },
+      {
+        "line": 4345,
+        "text": ""
+      },
+      {
+        "line": 4346,
+        "text": "/// Prepare one session route without changing the checked-in PAT publication."
+      },
+      {
+        "line": 4347,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 4348,
+        "text": "#[ignore = \"requires the completed disposable Receiving journey and WAMN_SESSION_HOST_FIXTURE_OUTPUT\"]"
+      },
+      {
+        "line": 4349,
+        "text": "async fn production_receiving_session_host_fixture() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 4350,
+        "text": "    const SESSION_ATTACHMENT: &str = \"purchase-order-get-http\";"
+      },
+      {
+        "line": 4351,
+        "text": "    const SESSION_ROLE: &str = \"session-host-reader\";"
+      },
+      {
+        "line": 4352,
+        "text": "    const REQUEST_ID: &str = \"session-host-proof\";"
+      },
+      {
+        "line": 4353,
+        "text": "    const ORDER_ID: &str = \"00000000-0000-0000-0000-000000000301\";"
+      },
+      {
+        "line": 4354,
+        "text": "    const SESSION_RELEASE_ID: u32 = RELEASE_ID + 1;"
+      },
+      {
+        "line": 4355,
+        "text": ""
+      },
+      {
+        "line": 4356,
+        "text": "    let inputs = JourneyDocument::required()?;"
+      },
+      {
+        "line": 4357,
+        "text": "    let output = required_journey_path(\"WAMN_SESSION_HOST_FIXTURE_OUTPUT\")?;"
+      },
+      {
+        "line": 4358,
+        "text": "    anyhow::ensure!("
+      }
+    ]
+  },
+  "b9fba07a:tests/integration/src/route_authentication_live.rs:4570": {
+    "path": "tests/integration/src/route_authentication_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "881b3e87aee1051ade2977692f0c90edbbfc4a2ab60e3226bb5b227f6f059da0",
+    "start_line": 4561,
+    "end_line": 4579,
+    "lines": [
+      {
+        "line": 4561,
+        "text": "#[ignore = \"requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT\"]"
+      },
+      {
+        "line": 4562,
+        "text": "async fn production_nested_fresh_only_requires_pat_and_observes_revocation() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 4563,
+        "text": "    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, false))"
+      },
+      {
+        "line": 4564,
+        "text": "        .await"
+      },
+      {
+        "line": 4565,
+        "text": "        .context(\"nested fresh-only proof exceeded 180 seconds\")?"
+      },
+      {
+        "line": 4566,
+        "text": "}"
+      },
+      {
+        "line": 4567,
+        "text": ""
+      },
+      {
+        "line": 4568,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 4569,
+        "text": "#[ignore = \"requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT\"]"
+      },
+      {
+        "line": 4570,
+        "text": "async fn production_session_client_login_and_fresh_selection() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 4571,
+        "text": "    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, true))"
+      },
+      {
+        "line": 4572,
+        "text": "        .await"
+      },
+      {
+        "line": 4573,
+        "text": "        .context(\"session client proof exceeded 180 seconds\")?"
+      },
+      {
+        "line": 4574,
+        "text": "}"
+      },
+      {
+        "line": 4575,
+        "text": ""
+      },
+      {
+        "line": 4576,
+        "text": "async fn nested_session_caller(fresh_only: bool, client_proof: bool) -> anyhow::Result<()> {"
+      },
+      {
+        "line": 4577,
+        "text": "    const ROLE: &str = \"session-nested-caller\";"
+      },
+      {
+        "line": 4578,
+        "text": "    let overlay_attachment = JOURNEY_ATTACHMENTS"
+      },
+      {
+        "line": 4579,
+        "text": "        .iter()"
+      }
+    ]
+  },
+  "b9fba07a:tests/integration/src/route_authentication_live.rs:3528": {
+    "path": "tests/integration/src/route_authentication_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "881b3e87aee1051ade2977692f0c90edbbfc4a2ab60e3226bb5b227f6f059da0",
+    "start_line": 3519,
+    "end_line": 3537,
+    "lines": [
+      {
+        "line": 3519,
+        "text": ""
+      },
+      {
+        "line": 3520,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 3521,
+        "text": "#[ignore = \"requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts\"]"
+      },
+      {
+        "line": 3522,
+        "text": "async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 3523,
+        "text": "    receiving_pat_journey(false).await"
+      },
+      {
+        "line": 3524,
+        "text": "}"
+      },
+      {
+        "line": 3525,
+        "text": ""
+      },
+      {
+        "line": 3526,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 3527,
+        "text": "#[ignore = \"requires the dedicated fresh-only disposable journey and copied package directory\"]"
+      },
+      {
+        "line": 3528,
+        "text": "async fn production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes()"
+      },
+      {
+        "line": 3529,
+        "text": "-> anyhow::Result<()> {"
+      },
+      {
+        "line": 3530,
+        "text": "    receiving_pat_journey(true).await"
+      },
+      {
+        "line": 3531,
+        "text": "}"
+      },
+      {
+        "line": 3532,
+        "text": ""
+      },
+      {
+        "line": 3533,
+        "text": "fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyhow::Result<()> {"
+      },
+      {
+        "line": 3534,
+        "text": "    std::fs::create_dir(destination)?;"
+      },
+      {
+        "line": 3535,
+        "text": "    for entry in std::fs::read_dir(source)? {"
+      },
+      {
+        "line": 3536,
+        "text": "        let entry = entry?;"
+      },
+      {
+        "line": 3537,
+        "text": "        let kind = entry.file_type()?;"
+      }
+    ]
+  },
+  "b9fba07a:tests/integration/src/route_authentication_live.rs:3522": {
+    "path": "tests/integration/src/route_authentication_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "881b3e87aee1051ade2977692f0c90edbbfc4a2ab60e3226bb5b227f6f059da0",
+    "start_line": 3513,
+    "end_line": 3531,
+    "lines": [
+      {
+        "line": 3513,
+        "text": "    gate_stop?;"
+      },
+      {
+        "line": 3514,
+        "text": "    verification_cleanup?;"
+      },
+      {
+        "line": 3515,
+        "text": "    fixture_database_cleanup?;"
+      },
+      {
+        "line": 3516,
+        "text": "    role_cleanup?;"
+      },
+      {
+        "line": 3517,
+        "text": "    Ok(())"
+      },
+      {
+        "line": 3518,
+        "text": "}"
+      },
+      {
+        "line": 3519,
+        "text": ""
+      },
+      {
+        "line": 3520,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 3521,
+        "text": "#[ignore = \"requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts\"]"
+      },
+      {
+        "line": 3522,
+        "text": "async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 3523,
+        "text": "    receiving_pat_journey(false).await"
+      },
+      {
+        "line": 3524,
+        "text": "}"
+      },
+      {
+        "line": 3525,
+        "text": ""
+      },
+      {
+        "line": 3526,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 3527,
+        "text": "#[ignore = \"requires the dedicated fresh-only disposable journey and copied package directory\"]"
+      },
+      {
+        "line": 3528,
+        "text": "async fn production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes()"
+      },
+      {
+        "line": 3529,
+        "text": "-> anyhow::Result<()> {"
+      },
+      {
+        "line": 3530,
+        "text": "    receiving_pat_journey(true).await"
+      },
+      {
+        "line": 3531,
+        "text": "}"
+      }
+    ]
+  },
+  "b9fba07a:apps/wamn_wms/tests/wms_runtime_live.rs:511": {
+    "path": "apps/wamn_wms/tests/wms_runtime_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "d67bd56afb7f4ebb3042bd12859833b7d73773848a6fbef7f70b8bab8fb3c934",
+    "start_line": 502,
+    "end_line": 520,
+    "lines": [
+      {
+        "line": 502,
+        "text": "        \"the consumed filter finds exactly the merged pallet: {page}\""
+      },
+      {
+        "line": 503,
+        "text": "    );"
+      },
+      {
+        "line": 504,
+        "text": ""
+      },
+      {
+        "line": 505,
+        "text": "    println!(\"\\nWMS_OPERATIONS_PASS split_pallet_id={new_pallet_id}\");"
+      },
+      {
+        "line": 506,
+        "text": "    Ok(())"
+      },
+      {
+        "line": 507,
+        "text": "}"
+      },
+      {
+        "line": 508,
+        "text": ""
+      },
+      {
+        "line": 509,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 510,
+        "text": "#[ignore = \"requires the released WMS route after its disposable labels bucket is removed\"]"
+      },
+      {
+        "line": 511,
+        "text": "async fn committed_move_survives_label_store_failure() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 512,
+        "text": "    let document = JourneyDocument::required()?;"
+      },
+      {
+        "line": 513,
+        "text": "    let runtime = document"
+      },
+      {
+        "line": 514,
+        "text": "        .runtime"
+      },
+      {
+        "line": 515,
+        "text": "        .as_ref()"
+      },
+      {
+        "line": 516,
+        "text": "        .context(\"the journey needs its runtime phase\")?;"
+      },
+      {
+        "line": 517,
+        "text": "    let route = Route::from_document(&document, runtime)?;"
+      },
+      {
+        "line": 518,
+        "text": "    let client = reqwest::Client::builder()"
+      },
+      {
+        "line": 519,
+        "text": "        .timeout(std::time::Duration::from_secs(60))"
+      },
+      {
+        "line": 520,
+        "text": "        .build()"
+      }
+    ]
+  },
+  "b9fba07a:apps/wamn_wms/tests/wms_runtime_live.rs:142": {
+    "path": "apps/wamn_wms/tests/wms_runtime_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "d67bd56afb7f4ebb3042bd12859833b7d73773848a6fbef7f70b8bab8fb3c934",
+    "start_line": 133,
+    "end_line": 151,
+    "lines": [
+      {
+        "line": 133,
+        "text": "        items[0][\"request_id\"] == request_id,"
+      },
+      {
+        "line": 134,
+        "text": "        \"the item answers request {request_id}: {}\","
+      },
+      {
+        "line": 135,
+        "text": "        items[0]"
+      },
+      {
+        "line": 136,
+        "text": "    );"
+      },
+      {
+        "line": 137,
+        "text": "    Ok(&items[0])"
+      },
+      {
+        "line": 138,
+        "text": "}"
+      },
+      {
+        "line": 139,
+        "text": ""
+      },
+      {
+        "line": 140,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 141,
+        "text": "#[ignore = \"requires the released WMS route on a disposable cluster, named by the journey document's runtime phase\"]"
+      },
+      {
+        "line": 142,
+        "text": "async fn contention_and_replay_through_the_composed_route() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 143,
+        "text": "    let document = JourneyDocument::required()?;"
+      },
+      {
+        "line": 144,
+        "text": "    let runtime = document.runtime.as_ref().context("
+      },
+      {
+        "line": 145,
+        "text": "        \"the journey document carries no runtime phase: the route must be reachable and the \\"
+      },
+      {
+        "line": 146,
+        "text": "         fixture seeded before these assertions run\","
+      },
+      {
+        "line": 147,
+        "text": "    )?;"
+      },
+      {
+        "line": 148,
+        "text": "    let route = Route::from_document(&document, runtime)?;"
+      },
+      {
+        "line": 149,
+        "text": "    let client = reqwest::Client::builder()"
+      },
+      {
+        "line": 150,
+        "text": "        .timeout(std::time::Duration::from_secs(60))"
+      },
+      {
+        "line": 151,
+        "text": "        .build()"
+      }
+    ]
+  },
+  "b9fba07a:apps/wamn_wms/tests/wms_runtime_live.rs:272": {
+    "path": "apps/wamn_wms/tests/wms_runtime_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "d67bd56afb7f4ebb3042bd12859833b7d73773848a6fbef7f70b8bab8fb3c934",
+    "start_line": 263,
+    "end_line": 281,
+    "lines": [
+      {
+        "line": 263,
+        "text": "    value"
+      },
+      {
+        "line": 264,
+        "text": "        .as_str()"
+      },
+      {
+        "line": 265,
+        "text": "        .filter(|id| id.len() == 36)"
+      },
+      {
+        "line": 266,
+        "text": "        .map(str::to_owned)"
+      },
+      {
+        "line": 267,
+        "text": "        .with_context(|| format!(\"a uuid: {value}\"))"
+      },
+      {
+        "line": 268,
+        "text": "}"
+      },
+      {
+        "line": 269,
+        "text": ""
+      },
+      {
+        "line": 270,
+        "text": "#[tokio::test]"
+      },
+      {
+        "line": 271,
+        "text": "#[ignore = \"requires the released WMS route on a disposable cluster, named by the journey document's runtime phase\"]"
+      },
+      {
+        "line": 272,
+        "text": "async fn the_remaining_operations_serve_their_released_routes() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 273,
+        "text": "    let document = JourneyDocument::required()?;"
+      },
+      {
+        "line": 274,
+        "text": "    let runtime = document.runtime.as_ref().context("
+      },
+      {
+        "line": 275,
+        "text": "        \"the journey document carries no runtime phase: the route must be reachable and the \\"
+      },
+      {
+        "line": 276,
+        "text": "         fixture seeded before these assertions run\","
+      },
+      {
+        "line": 277,
+        "text": "    )?;"
+      },
+      {
+        "line": 278,
+        "text": "    let route = Route::from_document(&document, runtime)?;"
+      },
+      {
+        "line": 279,
+        "text": "    let client = reqwest::Client::builder()"
+      },
+      {
+        "line": 280,
+        "text": "        .timeout(std::time::Duration::from_secs(60))"
+      },
+      {
+        "line": 281,
+        "text": "        .build()"
+      }
+    ]
+  },
+  "b9fba07a:apps/wamn_receiving/tests/receiving_command_histories_live.rs:905": {
+    "path": "apps/wamn_receiving/tests/receiving_command_histories_live.rs",
+    "source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+    "sha256": "84c4f5db5bddf0fecab7a36a060a6f2d2590046816d1c4f2a61680dbab47cea8",
+    "start_line": 896,
+    "end_line": 914,
+    "lines": [
+      {
+        "line": 896,
+        "text": "    assert_state(&snapshot(db, &fixture).await?, [2, 0], \"open\", 2, 1)?;"
+      },
+      {
+        "line": 897,
+        "text": "    record("
+      },
+      {
+        "line": 898,
+        "text": "        evidence,"
+      },
+      {
+        "line": 899,
+        "text": "        json!({\"case\":\"denied-then-authorized\",\"fixture\":fixture.id.to_string(),\"result\":\"pass\"}),"
+      },
+      {
+        "line": 900,
+        "text": "    )"
+      },
+      {
+        "line": 901,
+        "text": "}"
+      },
+      {
+        "line": 902,
+        "text": ""
+      },
+      {
+        "line": 903,
+        "text": "#[test]"
+      },
+      {
+        "line": 904,
+        "text": "#[ignore = \"requires an owned disposable Receiving release and WAMN_RECEIVING_CORRECTNESS_DOCUMENT\"]"
+      },
+      {
+        "line": 905,
+        "text": "fn production_receiving_command_histories() -> Result<()> {"
+      },
+      {
+        "line": 906,
+        "text": "    let path = std::env::var_os(\"WAMN_RECEIVING_CORRECTNESS_DOCUMENT\")"
+      },
+      {
+        "line": 907,
+        "text": "        .context(\"WAMN_RECEIVING_CORRECTNESS_DOCUMENT must name the private fixture document\")?;"
+      },
+      {
+        "line": 908,
+        "text": "    let inputs: Inputs = serde_json::from_slice(&std::fs::read(path)?)?;"
+      },
+      {
+        "line": 909,
+        "text": "    ensure!("
+      },
+      {
+        "line": 910,
+        "text": "        (1..=64).contains(&inputs.cases),"
+      },
+      {
+        "line": 911,
+        "text": "        \"case count must be within 1..=64\""
+      },
+      {
+        "line": 912,
+        "text": "    );"
+      },
+      {
+        "line": 913,
+        "text": "    ensure!("
+      },
+      {
+        "line": 914,
+        "text": "        !inputs.component_digests.is_empty()"
+      }
+    ]
+  }
+}

@@ -1,0 +1,611 @@
+{
+  "added_exact_identities": [
+    {
+      "identity": [
+        "wamn-ctl",
+        "--test dev_command",
+        "dev_up_refuses_an_ephemeral_gate_port_and_names_it"
+      ],
+      "classification": "stale_test_inputs_or_expectations",
+      "cause": "the ephemeral-port refusal does not name the address: error: the following required arguments were not provided:\n--event-nats-url <EVENT_NATS_URL>\n--event-nats-username <EVENT_NATS_USERNAME>\n--event-nats-password-file <EVENT_NATS_PASSWORD_FILE>\n--event-provisioning-username <EVENT_PROVISIONING_USERNAME>\n--event-provisioning-password-file <EVENT_PROVISIONING_PASSWORD_FILE>\n--stream-replicas <STREAM_REPLICAS>\n--dup-window-secs <DUP_WINDOW_SECS>\nUsage: wamn dev up --system-database-url <SYSTEM_DATABASE_URL> --root <ROOT> --scenario-worker-binary <SCENARIO_WORKER_BINARY> --nats-url <NATS_URL> --event-nats-url <EVENT_NATS_URL> --event-nats-username <EVENT_NATS_USERNAME> --event-nats-password-file <EVENT_NATS_PASSWORD_FILE> --event-provisioning-username <EVENT_PROVISIONING_USERNAME> --event-provisioning-password-file <EVENT_PROVISIONING_PASSWORD_FILE> --stream-replicas <STREAM_REPLICAS> --dup-window-secs <DUP_WINDOW_SECS> --tempo-query-url <TEMPO_QUERY_URL> --otel-exporter-otlp-endpoint <OTEL_EXPORTER_OTLP_ENDPOINT> --component-artifact-base <COMPONENT_ARTIFACT_BASE> --release-artifact-base <RELEASE_ARTIFACT_BASE> --registry-auth-file <REGISTRY_AUTH_FILE> --route-host <ROUTE_HOST> --flow-http-workload-image <FLOW_HTTP_WORKLOAD_IMAGE> --host-binary <HOST_BINARY> --package <PACKAGES> --gate-bind <GATE_BIND>\nFor more information, try '--help'.",
+      "log_line": 1657,
+      "previous_identity": null,
+      "disposition": "The test command omits seven required event configuration arguments. Clap refuses before the expected ephemeral-port validation runs."
+    },
+    {
+      "identity": [
+        "wamn-proof-conformance",
+        "--test wasmtime_source_identity",
+        "resolved_wasmtime_type_universe_is_single_and_canonical"
+      ],
+      "classification": "stale_test_inputs_or_expectations",
+      "cause": "assertion `left == right` failed: retained direct Wasmtime consumers or their required host interfaces drifted\nleft: {\"wamn-proof-conformance\": {\"wasmtime-wasi\"}, \"wamn-proof-integration\": {\"wasmtime-wasi\", \"wasmtime-wasi-http\"}, \"wamn-receiving-tests\": {\"wasmtime-wasi\", \"wasmtime-wasi-http\"}, \"wamn-runtime\": {\"wasmtime\", \"wasmtime-wasi\", \"wasmtime-wasi-http\"}}\nright: {\"wamn-proof-conformance\": {\"wasmtime-wasi\"}, \"wamn-proof-integration\": {\"wasmtime-wasi\", \"wasmtime-wasi-http\"}, \"wamn-runtime\": {\"wasmtime\", \"wasmtime-wasi\", \"wasmtime-wasi-http\"}}",
+      "log_line": 2723,
+      "previous_identity": null,
+      "disposition": "The actual dependency map includes the extracted Receiving test crate. The expected map still lists only the three earlier consumers."
+    },
+    {
+      "identity": [
+        "wamn-proof-system",
+        "--test deploy_platform_inventory",
+        "only_identity_receives_issuer_credentials_and_other_consumers_keep_their_classes"
+      ],
+      "classification": "stale_test_inputs_or_expectations",
+      "cause": "assertion `left == right` failed: values-host-default.yaml credential classes changed\nleft: {\"WAMN_EVT_DUP_WINDOW_SECS\": (\"wamn-event-nats\", \"dup_window_secs\"), \"WAMN_EVT_ENV\": (\"wamn-event-nats\", \"environment\"), \"WAMN_EVT_NATS_USERNAME\": (\"wamn-event-nats\", \"username\"), \"WAMN_EVT_ORG\": (\"wamn-event-nats\", \"org\"), \"WAMN_EVT_PROJECT\": (\"wamn-event-nats\", \"project\"), \"WAMN_EVT_STREAM_REPLICAS\": (\"wamn-event-nats\", \"stream_replicas\"), \"WAMN_PG_URL\": (\"wamn-host-db\", \"url\")}\nright: {\"WAMN_EVT_ENV\": (\"wamn-event-nats\", \"environment\"), \"WAMN_EVT_NATS_USERNAME\": (\"wamn-event-nats\", \"username\"), \"WAMN_EVT_ORG\": (\"wamn-event-nats\", \"org\"), \"WAMN_EVT_PROJECT\": (\"wamn-event-nats\", \"project\"), \"WAMN_PG_URL\": (\"wamn-host-db\", \"url\")}",
+      "log_line": 2981,
+      "previous_identity": null,
+      "disposition": "The default host declares two stream configuration Secret keys. The expected map omits both WAMN_EVT_STREAM_REPLICAS and WAMN_EVT_DUP_WINDOW_SECS."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database\nCaused by:\nenvironment variable not found",
+      "log_line": 3005,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "receiving_data_access::tests::generated_update_ignores_ungranted_additive_columns"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database\nCaused by:\nenvironment variable not found",
+      "log_line": 3010,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "receiving_data_access::tests::generated_update_ignores_ungranted_additive_columns"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::default_case::released_routes_materializer_startup_and_environment_isolation"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3017,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::measurement_cases::receiving_fresh_authority"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3028,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::measurement_cases::receiving_throughput"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3030,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::measurement_cases::startup_and_steady_request_overhead"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3032,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::postcommit_case::additive_overlay_and_materializer_progress"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3040,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::postcommit_case::baseline_overlay_and_materializer_progress"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3042,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::postcommit_pair::unchanged_overlay_across_baseline_and_additive_installations"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3046,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::route_cases::command_histories"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3050,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::route_cases::human_membership_and_permission_revocation"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3052,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::session_cases::fresh_only_session_selection"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3054,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::session_cases::session_client_login_and_fresh_selection"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3056,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::session_cases::session_hosts_preserve_the_original_caller"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+      "log_line": 3058,
+      "previous_identity": null,
+      "disposition": "The required result directory is absent. The case refuses before its live setup starts."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::command_histories::production_receiving_command_histories"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_RECEIVING_CORRECTNESS_DOCUMENT must name the private fixture document",
+      "log_line": 3071,
+      "previous_identity": null,
+      "disposition": "The recorded required input is absent. This failure establishes no live application outcome."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::dev::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_ROUTE_PG18_URL for the disposable Receiving route journey",
+      "log_line": 3074,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_TENANT_KEY_PG_URL must arm this disposable proof\nCaused by:\nenvironment variable not found",
+      "log_line": 3079,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::materializer::production_materializer_consumes_the_causal_receipt_exactly_once"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT to the test input document",
+      "log_line": 3085,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::overlay_compatibility::installed_contract_observer_preserves_acls_and_refuses_changed_requirements"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: environment variable not found",
+      "log_line": 3087,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::overlay_compatibility::installed_contract_observer_preserves_acls_and_refuses_changed_requirements"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT to the test input document",
+      "log_line": 3090,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::routes::production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT to the test input document",
+      "log_line": 3093,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::routes::production_two_package_release_serves_all_thirteen_pat_routes"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT to the test input document",
+      "log_line": 3095,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::sessions::production_nested_fresh_only_requires_pat_and_observes_revocation"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT to the test input document",
+      "log_line": 3097,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_nested_fresh_only_requires_pat_and_observes_revocation"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::sessions::production_nested_session_call_preserves_original_caller"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT to the test input document",
+      "log_line": 3099,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_nested_session_call_preserves_original_caller"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::sessions::production_receiving_session_host_fixture"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT to the test input document",
+      "log_line": 3101,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_receiving_session_host_fixture"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::sessions::production_session_client_login_and_fresh_selection"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT to the test input document",
+      "log_line": 3103,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_session_client_login_and_fresh_selection"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::startup_burst::production_http_start_burst_keeps_native_host_progress"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_STARTUP_BURST_INPUT must name the runner-owned fixture",
+      "log_line": 3105,
+      "previous_identity": null,
+      "disposition": "The recorded required input is absent. This failure establishes no live application outcome."
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--test receiving_command_histories_live",
+        "production_receiving_command_histories"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_RECEIVING_CORRECTNESS_DOCUMENT must name the private fixture document",
+      "log_line": 3149,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--test receiving_command_histories_live",
+        "production_receiving_command_histories"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-wms-tests",
+        "--lib",
+        "cluster::generated_wms_terminal_reports_success_and_partial_completion"
+      ],
+      "classification": "setup_refusal",
+      "cause": "the WMS cluster case requires a clean source tree",
+      "log_line": 4693,
+      "previous_identity": null,
+      "disposition": "The source cleanliness check refuses before live setup. The captured source status remains part of this result."
+    },
+    {
+      "identity": [
+        "wamn-wms-tests",
+        "--lib",
+        "cluster::released_wms_routes"
+      ],
+      "classification": "setup_refusal",
+      "cause": "the WMS cluster case requires a clean source tree",
+      "log_line": 4695,
+      "previous_identity": null,
+      "disposition": "The source cleanliness check refuses before live setup. The captured source status remains part of this result."
+    },
+    {
+      "identity": [
+        "wamn-wms-tests",
+        "--lib",
+        "cluster::released_wms_routes_retain_committed_work_after_label_failure"
+      ],
+      "classification": "setup_refusal",
+      "cause": "the WMS cluster case requires a clean source tree",
+      "log_line": 4697,
+      "previous_identity": null,
+      "disposition": "The source cleanliness check refuses before live setup. The captured source status remains part of this result."
+    },
+    {
+      "identity": [
+        "wamn-wms-tests",
+        "--lib",
+        "cluster::restarted_wms_host_retains_compiled_code_and_bounded_request_overhead"
+      ],
+      "classification": "setup_refusal",
+      "cause": "the WMS cluster case requires a clean source tree",
+      "log_line": 4699,
+      "previous_identity": null,
+      "disposition": "The source cleanliness check refuses before live setup. The captured source status remains part of this result."
+    },
+    {
+      "identity": [
+        "wamn-wms-tests",
+        "--lib",
+        "cluster::wms_browser_demo"
+      ],
+      "classification": "setup_refusal",
+      "cause": "the WMS cluster case requires a clean source tree",
+      "log_line": 4704,
+      "previous_identity": null,
+      "disposition": "The source cleanliness check refuses before live setup. The captured source status remains part of this result."
+    },
+    {
+      "identity": [
+        "wamn-wms-tests",
+        "--lib",
+        "wms_runtime_live::committed_move_survives_label_store_failure"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT to the test input document",
+      "log_line": 4708,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::committed_move_survives_label_store_failure"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-wms-tests",
+        "--lib",
+        "wms_runtime_live::contention_and_replay_through_the_composed_route"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT to the test input document",
+      "log_line": 4710,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::contention_and_replay_through_the_composed_route"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    },
+    {
+      "identity": [
+        "wamn-wms-tests",
+        "--lib",
+        "wms_runtime_live::the_remaining_operations_serve_their_released_routes"
+      ],
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT to the test input document",
+      "log_line": 4715,
+      "previous_identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::the_remaining_operations_serve_their_released_routes"
+      ],
+      "disposition": "The case remains a failure under its app test owner. Its required live input remains absent."
+    }
+  ],
+  "same_identity_changed_cause": [
+    {
+      "identity": [
+        "wamn-proof-conformance",
+        "--lib",
+        "version_identity::wamn_wit_packages_stay_at_mvp_version"
+      ],
+      "before": {
+        "failure_signatures": [
+          "Rust panic"
+        ],
+        "referenced_arming_inputs": [],
+        "causal_lines": [
+          "WAMN WIT package version drift:",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/client_acme_receiving.wit:19: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/client_acme_receiving.wit:96: WAMN package `wamn:node@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/http_route.wit:25: WAMN package `wamn:flow-http-routing@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/http_route.wit:82: WAMN package `wamn:router-delivery@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/receiving.wit:20: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/receiving.wit:97: WAMN package `wamn:node@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/wms.wit:19: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/wms.wit:97: WAMN package `wamn:node@0.1.0 {` must use @0.1.0"
+        ]
+      },
+      "after": {
+        "failure_signatures": [
+          "Rust panic"
+        ],
+        "referenced_arming_inputs": [],
+        "causal_lines": [
+          "WAMN WIT package version drift:",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/native-c-advisories/materializer-async-001/original-world.wit:33: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/native-c-advisories/materializer-async-001/original-world.wit:80: WAMN package `wamn:jetstream@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/native-c-advisories/materializer-async-001/original-world.wit:188: WAMN package `wamn:flow-http-routing@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/native-c-advisories/materializer-async-001/original-world.wit:195: WAMN package `wamn:router-delivery@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/native-c-advisories/materializer-async-001/repaired-world.wit:41: WAMN package `wamn:flow-http-routing@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/native-c-advisories/materializer-async-001/repaired-world.wit:109: WAMN package `wamn:jetstream@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/native-c-advisories/materializer-async-001/repaired-world.wit:144: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/native-c-advisories/materializer-async-001/repaired-world.wit:838: WAMN package `wamn:router-delivery@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/client_acme_receiving.wit:19: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/client_acme_receiving.wit:96: WAMN package `wamn:node@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/http_route.wit:25: WAMN package `wamn:flow-http-routing@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/http_route.wit:82: WAMN package `wamn:router-delivery@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/receiving.wit:20: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/receiving.wit:97: WAMN package `wamn:node@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/wms.wit:19: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0",
+          "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/wms.wit:97: WAMN package `wamn:node@0.1.0 {` must use @0.1.0"
+        ]
+      }
+    }
+  ],
+  "additional_library_occurrences": [
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::command_histories::production_receiving_command_histories"
+      ],
+      "existing_target": "wamn-receiving-tests --test receiving_command_histories_live",
+      "source_evidence": "5ef02888:apps/wamn_receiving/tests/route_authentication_live.rs:9"
+    },
+    {
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::startup_burst::production_http_start_burst_keeps_native_host_progress"
+      ],
+      "existing_target": "wamn-proof-integration --test startup_burst_live",
+      "source_evidence": "5ef02888:apps/wamn_receiving/tests/route_authentication_live.rs:9"
+    }
+  ]
+}

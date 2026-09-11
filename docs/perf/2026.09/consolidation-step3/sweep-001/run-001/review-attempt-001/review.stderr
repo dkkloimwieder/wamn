@@ -1,0 +1,16 @@
+fatal: path 'tests/integration/src/postcommit.rs' does not exist in 'b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de'
+Traceback (most recent call last):
+  File "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-001/review-classification.py", line 131, in <module>
+    keys = [excerpt(source_path(old_identity[2], True), 'fn ' + old_identity[2].split('::')[-1] + '(', old_source),
+            ~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-001/review-classification.py", line 29, in excerpt
+    data = subprocess.check_output(['git', 'show', revision + ':' + path], cwd=root)
+  File "/usr/lib/python3.14/subprocess.py", line 473, in check_output
+    return run(*popenargs, stdout=PIPE, timeout=timeout, check=True,
+           ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+               **kwargs).stdout
+               ^^^^^^^^^
+  File "/usr/lib/python3.14/subprocess.py", line 578, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['git', 'show', 'b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de:tests/integration/src/postcommit.rs']' returned non-zero exit status 128.

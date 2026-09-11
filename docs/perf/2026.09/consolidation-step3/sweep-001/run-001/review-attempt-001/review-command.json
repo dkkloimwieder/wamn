@@ -1,0 +1,12 @@
+{
+  "command": [
+    "python3",
+    "-B",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-001/review-classification.py"
+  ],
+  "started_utc": "2026-09-11T21:11:17.989011+00:00",
+  "ended_utc": "2026-09-11T21:11:18.400245+00:00",
+  "elapsed_seconds": 0.4112342650187202,
+  "exit_code": 1,
+  "script_sha256": "01645d20c995ebd851c1732eaff8f9404be27e1fc81db780b4d8e13f4e2d6d1e"
+}

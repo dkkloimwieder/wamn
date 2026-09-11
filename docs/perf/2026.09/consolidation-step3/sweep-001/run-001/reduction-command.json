@@ -1,0 +1,14 @@
+{
+  "command": [
+    "python3",
+    "-B",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/tools/reduce-current.py",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-001",
+    "--output-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-001/reduction-001"
+  ],
+  "started_utc": "2026-09-11T21:02:11.379940+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 0.2226924870046787
+}
