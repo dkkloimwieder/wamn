@@ -694,7 +694,10 @@ impl PackageRoot {
         if relative.starts_with("publication/wirings") {
             return Some(DevStage::Generate);
         }
-        if relative == Path::new("publication/attachments.json") {
+        if relative == Path::new("publication/attachments.json")
+            || relative == Path::new("ui")
+            || relative == Path::new("ui/Cargo.toml")
+        {
             return Some(DevStage::Generate);
         }
         None
@@ -1793,6 +1796,12 @@ mod tests {
             Some(DevStage::Generate)
         );
         assert_eq!(package.stage(&root.join("README.md")), None);
+        assert_eq!(package.stage(&root.join("ui")), Some(DevStage::Generate));
+        assert_eq!(
+            package.stage(&root.join("ui/Cargo.toml")),
+            Some(DevStage::Generate)
+        );
+        assert_eq!(package.stage(&root.join("ui/src/lib.rs")), None);
     }
 
     #[tokio::test]

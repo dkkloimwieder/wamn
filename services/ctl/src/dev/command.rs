@@ -143,7 +143,7 @@ impl DevInvalidationSource for NativeInvalidations {
         // The engine calls next only after the prior run finishes. Metadata
         // never competes with the Build stage, and the first run can Generate
         // a missing native manifest before this refresh needs it.
-        let packages = super::native_tui::generated_packages(&self.package_roots)
+        let packages = super::native_tui::operator_packages(&self.package_roots)
             .map_err(|source| CommandInvalidationError::new("read native package names", source))?;
         if packages.iter().all(|package| {
             package

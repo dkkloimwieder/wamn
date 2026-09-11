@@ -2,6 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use std::io;
+use std::path::Path;
 
 use serde_json::Value;
 
@@ -123,6 +125,77 @@ pub fn component_contract(
     }
     selected.models.retain(|model| !model.operations.is_empty());
     Ok(selected)
+}
+
+/// An explicitly named UI binary that consumes a component's generated library.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperatorCrate {
+    /// Cargo package declared by the UI manifest.
+    pub cargo_package: String,
+    /// Binary declared by the UI manifest.
+    pub binary: String,
+}
+
+/// Read a component's explicit operator from its app's UI Cargo manifest.
+///
+/// Implicit Cargo binaries are not selected here. The current native build
+/// still builds packages through the repository workspace.
+///
+/// # Errors
+/// Refuses unreadable or invalid manifests and ambiguous explicit binaries.
+pub fn read_operator(package_root: &Path, component: &str) -> io::Result<Option<OperatorCrate>> {
+    let path = package_root.join("ui/Cargo.toml");
+    let source = match std::fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let manifest: toml::Value = toml::from_str(&source)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let generated = format!("wamn-generated-{}-tui", component.replace('_', "-"));
+    let consumes = manifest
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .is_some_and(|dependencies| {
+            dependencies.iter().any(|(name, dependency)| {
+                dependency
+                    .get("package")
+                    .and_then(toml::Value::as_str)
+                    .unwrap_or(name)
+                    == generated
+            })
+        });
+    if !consumes {
+        return Ok(None);
+    }
+    let Some(binaries) = manifest.get("bin").and_then(toml::Value::as_array) else {
+        return Ok(None);
+    };
+    let invalid = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{} must declare one named package and one named binary",
+                path.display()
+            ),
+        )
+    };
+    let [binary] = binaries.as_slice() else {
+        return Err(invalid());
+    };
+    let cargo_package = manifest
+        .get("package")
+        .and_then(|package| package.get("name"))
+        .and_then(toml::Value::as_str)
+        .ok_or_else(invalid)?;
+    let binary = binary
+        .get("name")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(invalid)?;
+    Ok(Some(OperatorCrate {
+        cargo_package: cargo_package.to_owned(),
+        binary: binary.to_owned(),
+    }))
 }
 
 /// Emit the selected component's operator beside its package client bindings.

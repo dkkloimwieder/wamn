@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove a generated operator's live launch, native restart, and cleanup.
+"""Test the Receiving operator's live launch, native restart, and cleanup.
 
 Consumes an already running disposable `wamn dev up` environment. This command
 runs the real development stages, including builds; reserve the machine first.
@@ -40,7 +40,10 @@ require, ProofError = terminal.require, terminal.ProofError
 STARTUP_TIMEOUT = 600.0
 UI_TIMEOUT = 20.0
 MARKER = b"// generated-operator-live restart "
-DRAFT_ID = "00000000-0000-0000-0000-000000000301"
+DRAFT_REFERENCE = "restart-reference-" + uuid.uuid4().hex
+ORDER_ID = str(uuid.uuid4())
+LOCATION_ID = str(uuid.uuid4())
+ORDER_NUMBER = "RESTART-" + uuid.uuid4().hex
 BINDING_KEYS = {b"WAMN_BASE_URL", b"WAMN_HOST", b"WAMN_TARGET_INSTANCE"}
 CHILD_SETUP = (
     "import fcntl, os, sys, termios; "
@@ -194,9 +197,9 @@ class LiveSession(terminal.Session):
     def activation(self):
         children = self.children()
         operators = [child for child in children
-                     if Path(child["executable"]).name == "wamn-receiving-tui"]
+                     if Path(child["executable"]).name == "wamn-receiving"]
         hosts = [child for child in children if child["executable"] == self.host_binary]
-        require(len(operators) <= 1, "two generated operator processes overlapped")
+        require(len(operators) <= 1, "two Receiving operator processes overlapped")
         require(len(hosts) <= 1, "two activation hosts overlapped")
         if len(operators) == len(hosts) == 1:
             try:
@@ -306,22 +309,54 @@ class SourceEdit:
         require(restored == self.original, "preserved concurrent native edits while removing only the proof marker")
 
 
-def open_purchase_order_get(session, from_location=False):
-    if from_location:
-        session.send(b"\x1b")
-        session.text("location operations")
-        session.send(b"\x1b")
-    session.text("Select a model")
-    session.send(b"\x1b[B\r")
-    session.text("purchase_order operations")
+def owned_rows(config, remove=False):
+    if remove:
+        sql = f"""BEGIN;
+DELETE FROM receiving.purchase_order WHERE id = '{ORDER_ID}';
+DELETE FROM receiving.location WHERE id = '{LOCATION_ID}';
+COMMIT;
+SELECT (SELECT count(*) FROM receiving.purchase_order WHERE id = '{ORDER_ID}')
+     + (SELECT count(*) FROM receiving.location WHERE id = '{LOCATION_ID}');"""
+    else:
+        sql = f"""BEGIN;
+INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id, created_at)
+SELECT '{ORDER_ID}', '{ORDER_NUMBER}', '{ORDER_ID}',
+       COALESCE(MIN(created_at), CURRENT_TIMESTAMP) - interval '1 second'
+FROM receiving.purchase_order WHERE true
+ON CONFLICT ON CONSTRAINT purchase_order_id_pkey DO NOTHING;
+INSERT INTO receiving.location (id, location_code)
+VALUES ('{LOCATION_ID}', '{ORDER_NUMBER}-LOC')
+ON CONFLICT ON CONSTRAINT location_id_pkey DO NOTHING;
+COMMIT;
+SELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1;"""
+    result = subprocess.run(
+        ["psql", "-X", "-A", "-t", "-q", "-v", "ON_ERROR_STOP=1"],
+        input=sql, text=True, capture_output=True, timeout=30,
+        env=dict(os.environ, PGDATABASE=config["target_database_url"], PGCONNECT_TIMEOUT="10"),
+    )
+    require(result.returncode == 0, "owned Receiving rows could not be prepared or removed")
+    require(result.stdout.strip() == ("0" if remove else ORDER_ID),
+            "owned Receiving rows remain or the owned purchase order is not first")
+
+
+def open_reference(session, config):
+    owned_rows(config)
+    session.send(b"\x1b[15~")  # F5 refreshes the composed purchase-order list.
+    session.text(ORDER_NUMBER)
     session.send(b"\r")
-    session.text("purchase_order / get (get)")
+    session.text("receiving / load_receipt_screen")
+    session.text("Receive into ")
+    session.send(b"\x1bOR")  # F3 opens the receipt-reference editor.
+    session.text("/value/receipt_reference")
+    session.text("Enter saves; Esc cancels")
 
 
-def read_key_absent(screen):
-    # Ratatui's panel border follows the value; it is not part of the field.
-    return any(re.fullmatch(r"│[ >]*/id \(uuid required\): Absent\s*│\s*", line)
-               for line in screen.splitlines())
+def reference_empty(screen):
+    rows = screen.splitlines()
+    for index, row in enumerate(rows[:-1]):
+        if "/value/receipt_reference" in row:
+            return rows[index + 1].strip(" │") == "_"
+    return False
 
 
 def host_diagnostics(session, config, activation, http=False):
@@ -362,26 +397,22 @@ def prove(session, config, edit, evidence):
     def started():
         nonlocal first
         first = session.activation()
-        return first is not None and "Select a model" in session.display.text()
+        return first is not None and "purchase_order / query" in session.display.text()
 
-    session.until(started, "first real activation and operator menu", timeout=STARTUP_TIMEOUT)
+    session.until(started, "first real activation and purchase-order screen", timeout=STARTUP_TIMEOUT)
     require(first["binding"]["WAMN_HOST"] == config["route_host"], "operator host differs from the served configuration")
     require(socket_open(first["binding"]), "first activation socket is not listening")
     evidence["first"] = first
     session.stable(first, 2.0)
-    session.open_location()
-    session.send(b"\x13")
     session.text("Succeeded.")
     session.text("0 rows")
-    evidence["empty_location_list"] = session.display.text()
-    require_clean_frame(evidence["empty_location_list"])
+    evidence["empty_purchase_order_list"] = session.display.text()
+    require_clean_frame(evidence["empty_purchase_order_list"])
+    open_reference(session, config)
     evidence["first_host_diagnostics"] = host_diagnostics(session, config, first, http=True)
-    open_purchase_order_get(session, from_location=True)
-    session.send(b"\r")
-    session.text("Enter saves; Esc cancels")
-    session.send(DRAFT_ID.encode() + b"\r")
-    session.until(lambda: DRAFT_ID in session.display.text()
-                  and "Enter saves; Esc cancels" not in session.display.text(), "saved draft UUID")
+    session.send(DRAFT_REFERENCE.encode() + b"\r")
+    session.until(lambda: DRAFT_REFERENCE in session.display.text()
+                  and "Enter saves; Esc cancels" not in session.display.text(), "saved receipt reference")
     evidence["draft_before_restart"] = session.display.text()
     restart_offset = len(session.output)
     edit.apply()
@@ -398,7 +429,7 @@ def prove(session, config, edit, evidence):
             return False
         require(all(observed.values()), "replacement launched before old operator, host, and socket were gone")
         second = candidate
-        return "Select a model" in session.display.text()
+        return "purchase_order / query" in session.display.text()
 
     session.until(restarted, "native rebuild and fresh activation", timeout=STARTUP_TIMEOUT)
     require(second["binding"]["WAMN_TARGET_INSTANCE"] != first["binding"]["WAMN_TARGET_INSTANCE"],
@@ -410,16 +441,18 @@ def prove(session, config, edit, evidence):
             "old terminal was not restored before the replacement entered")
     evidence["second"] = second
     evidence["retired_before_replacement"] = observed
-    open_purchase_order_get(session)
-    session.until(lambda: "No result yet." in session.display.text()
-                  and read_key_absent(session.display.text()), "fresh read draft")
+    session.text("Succeeded.")
+    open_reference(session, config)
+    session.until(lambda: reference_empty(session.display.text()), "fresh receipt-reference draft")
     screen = session.display.text()
-    require(DRAFT_ID not in screen and "Succeeded." not in screen and "Pending." not in screen,
+    require(DRAFT_REFERENCE not in screen and "Succeeded." not in screen and "Pending." not in screen,
             "old draft or submission state reached the replacement")
-    require(read_key_absent(screen), "replacement read retained its old record key")
-    require("No result yet." in screen, "replacement retained result data")
+    require(reference_empty(screen), "replacement retained its old receipt reference")
     require_clean_frame(screen)
     evidence["fresh_draft"] = screen
+    session.send(b"\x1b")
+    session.text("No result yet.")
+    require_clean_frame(session.display.text())
     session.stable(second, 3.0)
     require_clean_frame(session.display.text())
     evidence["second_host_diagnostics"] = host_diagnostics(session, config, second)
@@ -429,7 +462,7 @@ def prove(session, config, edit, evidence):
                   allow_exit=True, timeout=45.0)
     session.finish()
     require(not same_process(second["operator"]) and not same_process(second["host"]),
-            "q left the generated operator or activation host alive")
+            "q left the Receiving operator or activation host alive")
     require(not socket_open(second["binding"]), "q left the activation socket listening")
     require(all(Path(evidence[key]["path"]).is_file()
                 for key in ["first_host_diagnostics", "second_host_diagnostics"]),
@@ -451,7 +484,7 @@ def main():
     parser.add_argument("--evidence-dir", required=True, type=Path)
     args = parser.parse_args()
     signal.signal(signal.SIGTERM, interrupted)
-    session, edit, redactor, directory = None, None, None, None
+    session, edit, redactor, directory, config = None, None, None, None, None
     stopped = True
     evidence, failure = {}, None
     try:
@@ -494,6 +527,13 @@ def main():
             except Exception as error:
                 detail = str(error) if isinstance(error, ProofError) else type(error).__name__
                 failure = failure or f"process cleanup failed: {detail}"
+        if session and stopped and config:
+            try:
+                owned_rows(config, remove=True)
+                evidence["owned_rows_removed"] = True
+            except Exception as error:
+                detail = str(error) if isinstance(error, ProofError) else type(error).__name__
+                failure = failure or f"owned Receiving row cleanup failed: {detail}"
         if edit and stopped:
             try:
                 edit.restore()

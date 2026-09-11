@@ -10,8 +10,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
 use wamn_schema_generator::PackageManifest;
+use wamn_schema_generator::client_tui::read_operator;
 
-/// Generated names belong to the declared component.
+/// Operator targets belong to the declared component.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct NativePackage {
     pub root: PathBuf,
@@ -69,8 +70,8 @@ impl Error for NativeTuiError {
     }
 }
 
-/// Resolve generated names for the complete declared package closure.
-pub(super) fn generated_packages(roots: &[PathBuf]) -> Result<Vec<NativePackage>, NativeTuiError> {
+/// Resolve operator targets for the complete declared package closure.
+pub(super) fn operator_packages(roots: &[PathBuf]) -> Result<Vec<NativePackage>, NativeTuiError> {
     let mut packages = BTreeMap::new();
     let mut cargo_names = BTreeSet::new();
     for root in roots {
@@ -107,17 +108,33 @@ pub(super) fn generated_packages(roots: &[PathBuf]) -> Result<Vec<NativePackage>
                 ));
             }
             let slug = component.replace('_', "-");
+            let operator = read_operator(root, component).map_err(|source| {
+                NativeTuiError::with_source(
+                    "read declared UI operator",
+                    root.join("ui/Cargo.toml").display().to_string(),
+                    source,
+                )
+            })?;
+            let (cargo_package, binary) = operator.map_or_else(
+                || {
+                    (
+                        format!("wamn-generated-{slug}-tui"),
+                        format!("wamn-{slug}-tui"),
+                    )
+                },
+                |operator| (operator.cargo_package, operator.binary),
+            );
             let package = NativePackage {
                 root: root.clone(),
                 component: component.to_owned(),
-                cargo_package: format!("wamn-generated-{slug}-tui"),
-                binary: format!("wamn-{slug}-tui"),
+                cargo_package,
+                binary,
             };
             if packages.contains_key(component)
                 || !cargo_names.insert(package.cargo_package.clone())
             {
                 return Err(NativeTuiError::new(
-                    "select generated operator package",
+                    "select operator package",
                     format!("{component:?} is ambiguous in the declared package closure"),
                 ));
             }
@@ -132,23 +149,23 @@ pub(super) fn select_component(
     roots: &[PathBuf],
     selector: &str,
 ) -> Result<NativePackage, NativeTuiError> {
-    generated_packages(roots)?
+    operator_packages(roots)?
         .into_iter()
         .find(|package| package.component == selector)
         .ok_or_else(|| {
             NativeTuiError::new(
-                "select generated operator package",
+                "select operator package",
                 format!("{selector:?} is not a component in the declared package closure"),
             )
         })
 }
 
-/// Build all generated native clients through the root Cargo workspace.
+/// Build the selected native operators through the root Cargo workspace.
 pub(super) async fn build(
     repository_root: &Path,
     package_roots: &[PathBuf],
 ) -> Result<BTreeMap<String, PathBuf>, NativeTuiError> {
-    let packages = generated_packages(package_roots)?;
+    let packages = operator_packages(package_roots)?;
     if packages.is_empty() {
         return Ok(BTreeMap::new());
     }
@@ -167,13 +184,9 @@ pub(super) async fn build(
         command.arg("-p").arg(&package.cargo_package);
     }
     let output = command.output().await.map_err(|source| {
-        NativeTuiError::with_source(
-            "build generated operator packages",
-            "cannot start Cargo",
-            source,
-        )
+        NativeTuiError::with_source("build operator packages", "cannot start Cargo", source)
     })?;
-    require_success("build generated operator packages", &output)?;
+    require_success("build operator packages", &output)?;
     artifact_paths(&packages, &output.stdout)
 }
 
@@ -464,6 +477,10 @@ mod tests {
         );
         assert_eq!(selected.binary, "wamn-client-acme-receiving-tui");
         assert_eq!(selected.root, roots()[1]);
+        let receiving =
+            select_component(&roots(), "receiving").expect("select Receiving composition");
+        assert_eq!(receiving.cargo_package, "wamn-receiving-tui");
+        assert_eq!(receiving.binary, "wamn-receiving");
         assert!(select_component(&roots(), "wamn_receiving").is_err());
         assert!(select_component(&roots(), "../receiving").is_err());
         assert!(select_component(&roots(), "client-acme-receiving").is_err());
@@ -488,12 +505,12 @@ mod tests {
                 serde_json::to_vec(&manifest).unwrap(),
             )
             .unwrap();
-            let packages = generated_packages(&[root.clone()]).expect("read declared components");
+            let packages = operator_packages(&[root.clone()]).expect("read declared components");
             assert_eq!(packages.len(), names.len());
             let selected = select_component(&[root.clone()], "receiving").unwrap();
             assert_eq!(selected.cargo_package, "wamn-generated-receiving-tui");
             assert_eq!(selected.root, root);
-            assert!(generated_packages(&[root.clone(), roots()[0].clone()]).is_err());
+            assert!(operator_packages(&[root.clone(), roots()[0].clone()]).is_err());
         }
         for names in [
             vec!["Receiving"],
@@ -511,7 +528,7 @@ mod tests {
                 serde_json::to_vec(&manifest).unwrap(),
             )
             .unwrap();
-            assert!(generated_packages(&[root.clone()]).is_err());
+            assert!(operator_packages(&[root.clone()]).is_err());
         }
         std::fs::remove_dir_all(root).expect("remove fixture");
     }
@@ -530,13 +547,13 @@ mod tests {
 
     #[test]
     fn artifacts_use_cargo_paths_and_require_every_selected_binary() {
-        let packages = generated_packages(&roots()).expect("name packages");
+        let packages = operator_packages(&roots()).expect("name packages");
         let mut messages = vec![
             json!({"reason":"compiler-message", "message":{"rendered":"a diagnostic"}}),
             artifact("unrelated", &json!("/elsewhere/unrelated")),
             artifact(
-                "wamn-receiving-tui",
-                &json!("/custom-target/debug/wamn-receiving-tui"),
+                "wamn-receiving",
+                &json!("/custom-target/debug/wamn-receiving"),
             ),
             artifact(
                 "wamn-client-acme-receiving-tui",
@@ -548,7 +565,7 @@ mod tests {
             artifact_paths(&packages, &lines(&messages)).expect("read all emitted binaries");
         assert_eq!(
             found["receiving"],
-            Path::new("/custom-target/debug/wamn-receiving-tui")
+            Path::new("/custom-target/debug/wamn-receiving")
         );
         assert_eq!(found.len(), 2);
         messages.remove(3);
@@ -557,19 +574,19 @@ mod tests {
 
     #[test]
     fn missing_relative_and_conflicting_executables_refuse() {
-        let packages = generated_packages(&roots()[..1]).expect("name package");
-        for executable in [Value::Null, json!("target/debug/wamn-receiving-tui")] {
+        let packages = operator_packages(&roots()[..1]).expect("name package");
+        for executable in [Value::Null, json!("target/debug/wamn-receiving")] {
             assert!(
                 artifact_paths(
                     &packages,
-                    &lines(&[artifact("wamn-receiving-tui", &executable)])
+                    &lines(&[artifact("wamn-receiving", &executable)])
                 )
                 .is_err()
             );
         }
         let collision = [
-            artifact("wamn-receiving-tui", &json!("/one/operator")),
-            artifact("wamn-receiving-tui", &json!("/two/operator")),
+            artifact("wamn-receiving", &json!("/one/operator")),
+            artifact("wamn-receiving", &json!("/two/operator")),
         ];
         assert!(artifact_paths(&packages, &lines(&collision)).is_err());
         assert!(artifact_paths(&packages, b"not JSON\n").is_err());
@@ -578,6 +595,7 @@ mod tests {
     fn graph() -> Value {
         json!({
             "packages":[
+                {"id":"operator","name":"wamn-receiving-tui","manifest_path":"/repo/apps/wamn_receiving/ui/Cargo.toml"},
                 {"id":"app","name":"wamn-generated-receiving-tui","manifest_path":"/repo/apps/wamn_receiving/generated/receiving-tui/Cargo.toml"},
                 {"id":"client","name":"wamn-client","manifest_path":"/repo/crates/client/core/Cargo.toml"},
                 {"id":"build","name":"local-builder","manifest_path":"/repo/crates/build/Cargo.toml"},
@@ -586,6 +604,7 @@ mod tests {
                 {"id":"patched","name":"local-patch","manifest_path":"/repo/crates/local-patch/Cargo.toml"}
             ],
             "resolve":{"nodes":[
+                {"id":"operator","deps":[{"pkg":"app","dep_kinds":[{"kind":null}]}]},
                 {"id":"app","deps":[
                     {"pkg":"client","dep_kinds":[{"kind":null}]},
                     {"pkg":"build","dep_kinds":[{"kind":"build"}]},
@@ -605,7 +624,7 @@ mod tests {
     fn watch_graph_follows_normal_and_build_dependencies_inside_the_repository() {
         let inputs = dependency_roots(
             Path::new("/repo"),
-            &["wamn-generated-receiving-tui".to_owned()],
+            &["wamn-receiving-tui".to_owned()],
             &serde_json::to_vec(&graph()).expect("encode graph"),
         )
         .expect("read source dependency roots");
@@ -613,6 +632,7 @@ mod tests {
             inputs.directories,
             [
                 "/repo/apps/wamn_receiving/generated/receiving-tui",
+                "/repo/apps/wamn_receiving/ui",
                 "/repo/crates/build",
                 "/repo/crates/client/core",
                 "/repo/crates/local-patch"
@@ -635,7 +655,7 @@ mod tests {
 
     #[test]
     fn a_missing_selection_or_incomplete_resolved_graph_refuses() {
-        let selected = ["wamn-generated-receiving-tui".to_owned()];
+        let selected = ["wamn-receiving-tui".to_owned()];
         assert!(
             dependency_roots(
                 Path::new("/repo"),

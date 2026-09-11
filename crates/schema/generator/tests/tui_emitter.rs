@@ -4,7 +4,9 @@ use std::path::Path;
 use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, ResponseIr, RouteIr};
 use wamn_schema_generator::client_rust::emit_rust_client;
-use wamn_schema_generator::client_tui::{ClientTuiErrorKind, component_contract, emit_tui};
+use wamn_schema_generator::client_tui::{
+    ClientTuiErrorKind, component_contract, emit_tui, read_operator,
+};
 use wamn_schema_generator::{GeneratedFile, PackageManifest};
 
 fn release(package: &str) -> ClientContractIr {
@@ -132,6 +134,33 @@ fn shipped_operator_crates_are_deterministic_and_cover_each_callable_operation()
             }
         }
     }
+}
+
+#[test]
+fn explicit_ui_target_uses_its_dependency_and_refuses_ambiguous_binaries() {
+    let root = std::env::temp_dir().join(format!("wamn-explicit-ui-target-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("ui")).unwrap();
+    let ui = r#"[package]
+name = "warehouse-desk"
+[workspace]
+[[bin]]
+name = "dock-screen"
+path = "src/main.rs"
+[dependencies]
+screens = { package = "wamn-generated-receiving-tui", path = "../generated/receiving-tui" }
+"#;
+    std::fs::write(root.join("ui/Cargo.toml"), ui).unwrap();
+    let operator = read_operator(&root, "receiving").unwrap().unwrap();
+    assert_eq!(operator.cargo_package, "warehouse-desk");
+    assert_eq!(operator.binary, "dock-screen");
+    assert!(read_operator(&root, "reports").unwrap().is_none());
+    std::fs::write(
+        root.join("ui/Cargo.toml"),
+        format!("{ui}\n[[bin]]\nname = \"another-screen\"\n"),
+    )
+    .unwrap();
+    assert!(read_operator(&root, "receiving").is_err());
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
