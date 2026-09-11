@@ -7,8 +7,8 @@ jobs = 4
 # There is deliberately NO `rustc-wrapper` here. A build context must never
 # inherit a wrapper the image does not install. This file is COPYed into the
 # root Dockerfile's `root-recipe`, `root-source` and `component-toolchain`
-# stages and into the debug image `tools/rc-gate-run` generates, and none of
-# them installs sccache; a checked-in `rustc-wrapper = "sccache"` fails every
+# stages and into the debug image owned by `tests/integration/src/rc/Dockerfile`.
+# None of them installs sccache; a checked-in `rustc-wrapper = "sccache"` fails every
 # one of those stages at `sccache rustc -vV`, before compiling anything.
 #
 # sccache is a per-developer setting instead. To turn it on for yourself:
