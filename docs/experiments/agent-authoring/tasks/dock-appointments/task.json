@@ -9,14 +9,14 @@
     "route_host": "receiving.localhost"
   },
   "package_sources": [
-    "packages/receiving"
+    "apps/wamn_receiving"
   ],
   "overlay_root": "packages/dock",
   "allowed_paths": [
     "packages/dock/**",
     "components/application/dock/**",
-    "components/Cargo.toml",
-    "components/Cargo.lock"
+    "apps/Cargo.toml",
+    "apps/Cargo.lock"
   ],
   "grade": {
     "steps": "steps.json",

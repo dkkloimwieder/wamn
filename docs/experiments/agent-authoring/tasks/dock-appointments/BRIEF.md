@@ -35,7 +35,7 @@ CONSTRAINTS:
   report. Do not work around the platform.
 - Nobody will answer questions. Decide, record the decision, continue.
 
-TOOLS: `wamn` and `wamn-ctl` are on PATH. `curl` reaches the route host.
+TOOLS: `wamn` and `wamn-ctl-ops` are on PATH. `curl` reaches the route host.
 Postgres is reachable at the URLs in "$WAMN_DEV_CONFIG" for inspection only.
 
 REPORT.md (these headings, this order):
