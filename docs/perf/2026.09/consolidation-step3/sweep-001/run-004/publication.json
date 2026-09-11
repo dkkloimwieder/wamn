@@ -1,0 +1,99 @@
+{
+  "original_root": "/home/kaalin/dev/wamn",
+  "copy_root": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-sweep004-results-20260911",
+  "originals_preserved": true,
+  "raw_files": 15,
+  "raw_bytes": 2533111,
+  "files": [
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/capture-command.json",
+      "bytes": 153,
+      "sha256": "10c4e3f21c168e249da0c62f1a25e896760215484e7556ec37b90c92fa932a13",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/capture.py",
+      "bytes": 5291,
+      "sha256": "1ac718452c9ecc0117f20db351e78ce0dd71c1e7358d1bdfbb9a3f7288b1c885",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/command.json",
+      "bytes": 271,
+      "sha256": "29fde9e07c0e413dd2845d9fa1219e53517996ac1f80252d06faec397423b820",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/environment-names.json",
+      "bytes": 4032,
+      "sha256": "fc29a49024305595c997988e6b14c71601fdc1f94eefcf201a619a08127b53fd",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/exit-code.txt",
+      "bytes": 4,
+      "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/launch-command.json",
+      "bytes": 165,
+      "sha256": "c426108b35ff8f24331e9fd43b7c4b0e31285e3481a86c4f1f3d6bc7da307a12",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/mapping-archives.json",
+      "bytes": 657,
+      "sha256": "5b2d6067142ae1e735ddb9f6deee45bc9031789afdf973e6d7c05d201f5f0bd7",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/run.json",
+      "bytes": 312,
+      "sha256": "995fb0298850a3635f81f00e9b9a2f82093b1be4dcc113cc5d34c77af426bacc",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/source-after.json.gz",
+      "bytes": 1087503,
+      "sha256": "f0ca5cb4460dc6a6234055b090b1ec47bcc2a891161b3a5a60b57256c1b4d872",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/source-before.json.gz",
+      "bytes": 1087503,
+      "sha256": "f0ca5cb4460dc6a6234055b090b1ec47bcc2a891161b3a5a60b57256c1b4d872",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/source-stability.json",
+      "bytes": 409,
+      "sha256": "ce8b701fc47ce569d348ecc755593b2d2c2df4ed0289d89a4c17e641d3133e6c",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/source.txt",
+      "bytes": 41,
+      "sha256": "ab84ab1bcdac88660b7b3c91011c13027bd1d2a470610ed92e04da305a9474b7",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/status-after.txt",
+      "bytes": 17621,
+      "sha256": "f31ef0d48acb5c818ce6b62165b6a4f239f4fdb8245c7addf25539496973fd9e",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/status-before.txt",
+      "bytes": 16624,
+      "sha256": "bef517f34f36a203a36db2443e09bb19c1506d463467dc8493edc36e1a2ed680",
+      "mode": "0o664"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-004/workspace.log",
+      "bytes": 312525,
+      "sha256": "d1230cd67da4f3256f9dedd70cd81366fa7ed69cde8a08d09028f73c5ab23806",
+      "mode": "0o664"
+    }
+  ]
+}
