@@ -79,7 +79,100 @@ pub(super) async fn endpoint(cluster: &ReceivingCluster, name: &str) -> anyhow::
         cluster.resources.evidence.join(format!("{name}.json")),
         serde_json::to_vec_pretty(&objects)?,
     )?;
-    Ok(format!("http://{address}:{port}"))
+    fs::write(
+        cluster
+            .resources
+            .evidence
+            .join(format!("{name}-service.json")),
+        serde_json::to_vec_pretty(&observed)?,
+    )?;
+    let endpoint = format!("http://{address}:{port}");
+    ready(cluster, name, &endpoint).await?;
+    Ok(endpoint)
+}
+
+async fn ready(cluster: &ReceivingCluster, name: &str, endpoint: &str) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(15))
+        .build()?;
+    let mut attempts = Vec::new();
+    // The retained NodePort caller probes this transport before sending mutations.
+    // Service allocation alone does not establish that the node forwards traffic.
+    let result = tokio::time::timeout(Duration::from_secs(45), async {
+        for attempt in 0..=15 {
+            let response = async {
+                let response = client
+                    .get(format!("{endpoint}/no-such-route"))
+                    .header("Host", &cluster.inputs.route_host)
+                    .send()
+                    .await?;
+                let status = response.status().as_u16();
+                let content_type = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("")
+                    .to_owned();
+                let body = response.bytes().await?;
+                Ok::<_, reqwest::Error>((status, content_type, body))
+            }
+            .await;
+            match response {
+                Ok((status, content_type, body)) => {
+                    attempts.push(json!({"attempt":attempt,"status":status,
+                        "content_type":content_type,"body_hex":hex::encode(&body)}));
+                    if !matches!(status, 408 | 429 | 500 | 502 | 503 | 504) || attempt == 15 {
+                        return validate_response(status, &content_type, &body);
+                    }
+                }
+                Err(error) => {
+                    let timed_out = error.is_timeout();
+                    let error = anyhow::Error::new(error);
+                    attempts.push(json!({"attempt":attempt,"failure":format!("{error:#}")}));
+                    if attempt == 15 || !(timed_out || connection_refused(&error)) {
+                        return Err(error);
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        unreachable!("the final probe attempt returns its result")
+    })
+    .await
+    .context("the owned NodePort did not return its route response within 45 seconds")
+    .and_then(|result| result);
+    fs::write(
+        cluster
+            .resources
+            .evidence
+            .join(format!("{name}-readiness.json")),
+        serde_json::to_vec_pretty(&json!({"origin":"host-nodeport","endpoint":endpoint,
+            "host":cluster.inputs.route_host,"path":"/no-such-route","attempts":attempts,
+            "passed":result.is_ok(),"failure":result.as_ref().err().map(|error| format!("{error:#}"))}))?,
+    )?;
+    result
+}
+
+fn connection_refused(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused)
+    })
+}
+
+fn validate_response(status: u16, content_type: &str, body: &[u8]) -> anyhow::Result<()> {
+    ensure!(
+        status == 404
+            && content_type == "application/json"
+            && body == br#"{"error":{"code":"route-not-found"}}"#,
+        "the owned NodePort must return the released route's exact HTTP 404 response"
+    );
+    Ok(())
 }
 
 pub(super) async fn trigger(
@@ -149,4 +242,30 @@ pub(super) async fn trigger(
         })
     }).await.context("the two materializer HTTP commands exceeded 90 seconds")?
         .map(|phase| (phase, update_trace, receipt_trace))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readiness_requires_the_released_route_response() {
+        let body = br#"{"error":{"code":"route-not-found"}}"#;
+        validate_response(404, "application/json", body).unwrap();
+        assert!(validate_response(200, "application/json", body).is_err());
+        assert!(validate_response(404, "text/html", b"<h1>Not Found</h1>").is_err());
+        assert!(
+            validate_response(404, "application/json", br#"{"error":{"code":"other"}}"#).is_err()
+        );
+    }
+
+    #[test]
+    fn readiness_does_not_retry_other_connection_errors() {
+        let refused =
+            anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::ConnectionRefused))
+                .context("connect to the allocated NodePort");
+        assert!(connection_refused(&refused));
+        let denied = anyhow::Error::new(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(!connection_refused(&denied));
+    }
 }
