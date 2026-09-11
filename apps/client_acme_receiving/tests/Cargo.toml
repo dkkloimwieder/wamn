@@ -1,0 +1,20 @@
+[package]
+name = "wamn-client-acme-receiving-tests"
+description = "Acme Receiving application integration tests"
+workspace = "../../.."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+autotests = false
+
+[dev-dependencies]
+chrono = { workspace = true, features = ["std"] }
+sqlx = { version = "=0.9.0", default-features = false, features = ["chrono", "json", "macros", "postgres", "runtime-tokio", "rust_decimal", "uuid"] }
+uuid = { workspace = true }
+
+[[test]]
+name = "client_acme_sqlx_verifier"
+path = "client_acme_sqlx_verifier.rs"
+
+[lints]
+workspace = true

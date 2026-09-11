@@ -5602,6 +5602,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-client-acme-receiving-tests"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "sqlx",
+ "uuid",
+]
+
+[[package]]
 name = "wamn-client-terminal"
 version = "0.1.0"
 dependencies = [
