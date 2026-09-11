@@ -7,4 +7,5 @@ pub mod declarations;
 
 pub mod rendering;
 pub mod scratch;
+pub mod secrets;
 pub mod traces;
