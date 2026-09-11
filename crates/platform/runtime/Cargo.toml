@@ -10,6 +10,8 @@ test-util = []
 wasm_component_model_implements = ["wash-runtime/wasm_component_model_implements"]
 
 [dependencies]
+# Activation compares the native broker declarations from this library.
+wamn-control-provision = { workspace = true }
 boon = { workspace = true }
 object_store = { workspace = true }
 wash-runtime = { workspace = true }
@@ -71,11 +73,6 @@ base64 = { workspace = true }
 ring = { workspace = true }
 rcgen = { workspace = true }
 wamn-run-state = { workspace = true, features = ["native", "test-util"] }
-# wamn-0h0g.20.14: the live effect-authority proof bootstraps the two stable
-# effect-ledger ACL roles from the REAL provisioning builder rather than a copy,
-# so the proof cannot drift from the SQL production applies. Dev-only: the
-# shipped runtime links no provisioner.
-wamn-control-provision = { workspace = true }
 # M-TEST-UTIL: the release-manifest weld's test fixtures build manifests from
 # parts, which wamn-catalog gates behind `test-util`. A DEV-dependency feature
 # does not reach the production graph, so this crate's own build still cannot
