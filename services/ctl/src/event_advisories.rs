@@ -775,7 +775,7 @@ mod tests {
         };
         let retained_source = manager.update_stream(declared.clone()).await?;
         ensure!(
-            retained_source.cached_info().config == declared,
+            retained_source.config == declared,
             "the owned source expiry policy differs from its declaration"
         );
         let attached = materializer
