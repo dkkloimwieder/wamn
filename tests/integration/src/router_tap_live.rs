@@ -328,6 +328,7 @@ mod tests {
                     event_scope: Some(event_scope),
                     stream_replicas: Some(1),
                     dup_window_secs: Some(120),
+                    ..Default::default()
                 })
                 .with_release(Some(Arc::clone(&route.release))),
             );

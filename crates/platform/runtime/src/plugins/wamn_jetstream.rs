@@ -460,6 +460,10 @@ pub struct WamnJetstreamConfig {
     /// `None` ⇒ the plugin registers but every call returns
     /// `connection-unavailable`.
     pub nats_url: Option<String>,
+    /// Event-broker username paired with its private password file.
+    pub nats_username: Option<String>,
+    /// Private event-broker password file. Password bytes stay outside configuration.
+    pub nats_password_file: Option<PathBuf>,
     /// Trusted event coordinates, separate from tenant and database authority.
     pub event_scope: Option<Triple>,
     /// Declared NATS stream copies, separate from workload instances.
@@ -474,6 +478,8 @@ impl WamnJetstreamConfig {
     pub fn from_env() -> Self {
         Self {
             nats_url: std::env::var("WAMN_EVT_NATS_URL").ok(),
+            nats_username: std::env::var("WAMN_EVT_NATS_USERNAME").ok(),
+            nats_password_file: std::env::var_os("WAMN_EVT_NATS_PASSWORD_FILE").map(PathBuf::from),
             event_scope: match (
                 std::env::var("WAMN_EVT_ORG"),
                 std::env::var("WAMN_EVT_PROJECT"),
@@ -683,8 +689,8 @@ impl WamnJetstream {
             nats_url: cfg.nats_url,
             stream_replicas: cfg.stream_replicas,
             dup_window_secs: cfg.dup_window_secs,
-            nats_username: None,
-            nats_password_file: None,
+            nats_username: cfg.nats_username,
+            nats_password_file: cfg.nats_password_file,
             event_coordinates: cfg
                 .event_scope
                 .map_or_else(EventCoordinates::default, |scope| EventCoordinates {
@@ -702,11 +708,7 @@ impl WamnJetstream {
 
     /// Read the platform event coordinates, broker address, and host-owned credentials.
     pub fn from_env() -> Self {
-        let mut plugin = Self::new(WamnJetstreamConfig::from_env());
-        plugin.nats_username = std::env::var("WAMN_EVT_NATS_USERNAME").ok();
-        plugin.nats_password_file =
-            std::env::var_os("WAMN_EVT_NATS_PASSWORD_FILE").map(PathBuf::from);
-        plugin
+        Self::new(WamnJetstreamConfig::from_env())
     }
 
     /// Refuse a configured event connection until its streams match their declarations.
@@ -2146,6 +2148,7 @@ mod tests {
             event_scope: Some(scope),
             stream_replicas: Some(1),
             dup_window_secs: Some(120),
+            ..Default::default()
         });
         plugin
             .bind_derived_scope("component-1", "wamnjsderived", "app", "dev")

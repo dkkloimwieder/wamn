@@ -439,4 +439,266 @@ mod tests {
         advisory_cleanup?;
         Ok(())
     }
+
+    async fn monitored_broker_client(
+        credentials: &wamn_test_infrastructure::event_broker::Credentials,
+        server: &str,
+    ) -> anyhow::Result<(
+        async_nats::Client,
+        tokio::sync::mpsc::UnboundedReceiver<async_nats::ServerError>,
+    )> {
+        let (errors, received) = tokio::sync::mpsc::unbounded_channel();
+        let client = crate::event_streams::connection_options(
+            &credentials.username,
+            &credentials.password_file,
+        )?
+        .event_callback(move |event| {
+            let errors = errors.clone();
+            async move {
+                if let async_nats::Event::ServerError(error) = event {
+                    let _ = errors.send(error);
+                }
+            }
+        })
+        .connect(server)
+        .await?;
+        Ok((client, received))
+    }
+
+    async fn require_permission_denial(
+        errors: &mut tokio::sync::mpsc::UnboundedReceiver<async_nats::ServerError>,
+        subject: &str,
+    ) -> anyhow::Result<()> {
+        let error = tokio::time::timeout(Duration::from_secs(2), errors.recv())
+            .await?
+            .context("broker omitted its permission refusal")?;
+        let message = error.to_string();
+        ensure!(
+            message
+                .to_ascii_lowercase()
+                .contains("permissions violation")
+                && message.contains(subject),
+            "broker did not refuse the selected subject {subject}: {message}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires an owned nats-server executable via WAMN_NATIVE_C_NATS_BIN"]
+    async fn scoped_credentials_confine_management_delivery_and_monitoring() -> anyhow::Result<()> {
+        use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+        use std::process::Stdio;
+        use wamn_control_provision::events::advisory_stream_config;
+        use wamn_runtime::plugins::wamn_jetstream::{WamnJetstream, WamnJetstreamConfig};
+        use wamn_test_infrastructure::{event_broker, scratch::ScratchRoot};
+
+        let binary = std::env::var_os("WAMN_NATIVE_C_NATS_BIN")
+            .map(PathBuf::from)
+            .context("set WAMN_NATIVE_C_NATS_BIN to the owned nats-server executable")?;
+        ensure!(binary.is_file(), "NATS executable is absent");
+        let binary = binary
+            .canonicalize()
+            .context("resolve the owned NATS executable")?;
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos();
+        let root = ScratchRoot(
+            std::env::temp_dir().join(format!("native-c-scoped-{}-{nonce}", std::process::id())),
+        );
+        std::fs::DirBuilder::new().mode(0o700).create(root.path())?;
+        let scopes = [
+            Triple::new("acme", "receiving", "dev"),
+            Triple::new("acme", "wms", "dev"),
+            Triple::new("acme", "receiving", "prod"),
+        ];
+        let mut brokers = Vec::new();
+        let mut declarations = Vec::new();
+        let mut users = Vec::new();
+        for (index, scope) in scopes.iter().enumerate() {
+            let directory = root.path().join(index.to_string());
+            std::fs::DirBuilder::new().mode(0o700).create(&directory)?;
+            let source = source_stream_config(scope, 1, Duration::from_secs(120));
+            let advisory = advisory_stream_config(scope, 1);
+            let consumer = materializer_consumer_config(
+                "registered",
+                &format!(
+                    "evt.{}.{}.{}.item.update",
+                    scope.org, scope.project, scope.env
+                ),
+                Duration::from_secs(30),
+                2,
+            );
+            let broker = event_broker::prepare(
+                &directory,
+                scope,
+                "route-tenant",
+                &source,
+                &advisory,
+                &[consumer.clone()],
+            )?;
+            let mut configuration: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&broker.configuration)?)?;
+            users.append(
+                configuration["authorization"]["users"]
+                    .as_array_mut()
+                    .context("native broker configuration omitted its users")?,
+            );
+            declarations.push((source, advisory, consumer));
+            brokers.push(broker);
+        }
+        let configuration_path = root.path().join("nats.conf");
+        let configuration = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&configuration_path)?;
+        serde_json::to_writer(
+            configuration,
+            &serde_json::json!({
+                "authorization": { "users": users }
+            }),
+        )?;
+        let reserved = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let address = reserved.local_addr()?;
+        drop(reserved);
+        let server = format!("nats://{address}");
+        let log = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(root.path().join("nats.log"))?;
+        let mut child = tokio::process::Command::new(binary)
+            .current_dir(root.path())
+            .args(["--jetstream", "--addr", "127.0.0.1", "--port"])
+            .arg(address.port().to_string())
+            .arg("--store_dir")
+            .arg(root.path().join("data"))
+            .arg("--config")
+            .arg(&configuration_path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log.try_clone()?))
+            .stderr(Stdio::from(log))
+            .kill_on_drop(true)
+            .spawn()?;
+        let result = tokio::time::timeout(Duration::from_secs(90), async {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                ensure!(child.try_wait()?.is_none(), "owned NATS process exited before readiness");
+                if tokio::net::TcpStream::connect(address).await.is_ok() { break; }
+                ensure!(tokio::time::Instant::now() < deadline, "owned NATS process did not listen");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let mut managers = Vec::new();
+            for (scope, broker) in scopes.iter().zip(&brokers) {
+                let manager = async_nats::jetstream::new(event_broker::connect(&broker.provisioning, &server).await?);
+                let (_, _, consumer) = &declarations[managers.len()];
+                crate::event_streams::provision(&manager, scope, 1, Duration::from_secs(120), &[consumer.clone()]).await?;
+                crate::event_streams::provision(&manager, scope, 1, Duration::from_secs(120), &[consumer.clone()]).await?;
+                managers.push(manager);
+            }
+            let broker = &brokers[0];
+            let (source, advisory, consumer) = &declarations[0];
+            let active = || WamnJetstream::new(WamnJetstreamConfig {
+                nats_url: Some(server.clone()),
+                nats_username: Some(broker.runtime.username.clone()),
+                nats_password_file: Some(broker.runtime.password_file.clone()),
+                event_scope: Some(scopes[0].clone()),
+                stream_replicas: Some(1),
+                dup_window_secs: Some(120),
+            });
+            active().activate_events().await
+                .map_err(|error| anyhow::anyhow!("declared runtime activation failed: {error:?}"))?;
+            let runtime = async_nats::jetstream::new(event_broker::connect(&broker.runtime, &server).await?);
+            let materializer = async_nats::jetstream::new(event_broker::connect(&broker.materializer, &server).await?);
+            let attached = materializer.get_stream(&source.name).await?
+                .get_consumer::<PullConfig>("registered").await?;
+            let sequence = runtime.publish(consumer.filter_subject.clone(), "runtime payload".into()).await?.await?.sequence;
+            let message = fetch_one(&attached).await?.context("materializer did not read runtime publication")?;
+            ensure!(message.payload.as_ref() == b"runtime payload", "runtime payload changed");
+            message.ack_with(AckKind::Term).await.map_err(anyhow::Error::from_boxed)?;
+            let publisher = async_nats::jetstream::new(event_broker::connect(&broker.publisher, &server).await?);
+            publisher.publish(consumer.filter_subject.clone(), "publisher payload".into()).await?.await?;
+            let message = fetch_one(&attached).await?.context("materializer did not read publisher publication")?;
+            ensure!(message.payload.as_ref() == b"publisher payload", "publisher payload changed");
+            message.double_ack().await.map_err(anyhow::Error::from_boxed)?;
+            let (observer_client, mut observer_errors) = monitored_broker_client(&broker.observer, &server).await?;
+            let mut observer = async_nats::jetstream::new(observer_client);
+            observer.set_timeout(Duration::from_millis(500));
+            let mut retained = observer.get_stream(&advisory.name).await?;
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            while retained.info().await?.state.messages == 0 {
+                ensure!(tokio::time::Instant::now() < deadline, "termination metadata did not arrive");
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let records = retained_advisories(&observer, &retained, &source.name, "registered", 2).await?;
+            ensure!(records.len() == 1 && records[0].advisory.stream_seq == sequence, "observer read another delivery");
+            ensure!(matches!(&records[0].source, SourcePayload::Available { body, .. } if body == b"runtime payload"), "observer lost its permitted source payload");
+
+            for credentials in [&broker.runtime, &broker.publisher, &broker.materializer] {
+                let (client, mut errors) = monitored_broker_client(credentials, &server).await?;
+                let mut restricted = async_nats::jetstream::new(client);
+                restricted.set_timeout(Duration::from_millis(500));
+                ensure!(restricted.create_stream(source.clone()).await.is_err(), "runtime created a stream");
+                require_permission_denial(&mut errors, &format!("$JS.API.STREAM.CREATE.{}", source.name)).await?;
+                ensure!(restricted.update_stream(source.clone()).await.is_err(), "runtime updated a stream");
+                require_permission_denial(&mut errors, &format!("$JS.API.STREAM.UPDATE.{}", source.name)).await?;
+                ensure!(restricted.delete_stream(&source.name).await.is_err(), "runtime deleted a stream");
+                require_permission_denial(&mut errors, &format!("$JS.API.STREAM.DELETE.{}", source.name)).await?;
+                let stream = restricted.get_stream(&source.name).await?;
+                ensure!(stream.create_consumer_strict(consumer.clone()).await.is_err(), "runtime created a consumer");
+                require_permission_denial(&mut errors, &format!("$JS.API.CONSUMER.CREATE.{}.registered", source.name)).await?;
+                ensure!(stream.update_consumer(consumer.clone()).await.is_err(), "runtime updated a consumer");
+                require_permission_denial(&mut errors, &format!("$JS.API.CONSUMER.CREATE.{}.registered", source.name)).await?;
+                ensure!(stream.delete_consumer("registered").await.is_err(), "runtime deleted a consumer");
+                require_permission_denial(&mut errors, &format!("$JS.API.CONSUMER.DELETE.{}.registered", source.name)).await?;
+            }
+            let (runtime_client, mut runtime_errors) = monitored_broker_client(&broker.runtime, &server).await?;
+            let mut restricted_runtime = async_nats::jetstream::new(runtime_client.clone());
+            restricted_runtime.set_timeout(Duration::from_millis(500));
+            for (foreign_source, foreign_advisory, foreign_consumer) in &declarations[1..] {
+                let published = restricted_runtime.publish(foreign_consumer.filter_subject.clone(), "foreign payload".into()).await;
+                let refused = match published {
+                    Ok(acknowledgement) => acknowledgement.await.is_err(),
+                    Err(_) => true,
+                };
+                ensure!(refused, "runtime published into another environment");
+                require_permission_denial(&mut runtime_errors, &foreign_consumer.filter_subject).await?;
+                let subscription = runtime_client.subscribe(foreign_source.subjects[0].clone()).await?;
+                runtime_client.flush().await?;
+                require_permission_denial(&mut runtime_errors, &foreign_source.subjects[0]).await?;
+                drop(subscription);
+                let foreign = restricted_runtime.get_stream_no_info(&foreign_source.name).await?;
+                ensure!(foreign.get_consumer::<PullConfig>("registered").await.is_err(), "runtime attached to a foreign consumer");
+                require_permission_denial(&mut runtime_errors, &format!("$JS.API.CONSUMER.INFO.{}.registered", foreign_source.name)).await?;
+                for name in [&foreign_source.name, &foreign_advisory.name] {
+                    ensure!(observer.get_stream(name).await.is_err(), "observer read foreign stream metadata");
+                    require_permission_denial(&mut observer_errors, &format!("$JS.API.STREAM.INFO.{name}")).await?;
+                    let foreign = observer.get_stream_no_info(name).await?;
+                    ensure!(foreign.get_raw_message(1).await.is_err(), "observer read foreign retained data");
+                    require_permission_denial(&mut observer_errors, &format!("$JS.API.STREAM.MSG.GET.{name}")).await?;
+                }
+            }
+            let manager = &managers[0];
+            manager.update_stream(async_nats::jetstream::stream::Config { max_messages: 2, ..source.clone() }).await?;
+            ensure!(active().activate_events().await.is_err(), "runtime accepted changed stream configuration");
+            ensure!(manager.get_stream(&source.name).await?.cached_info().config.max_messages == 2, "runtime reconfigured the stream");
+            manager.update_stream(source.clone()).await?;
+            let stream = manager.get_stream(&source.name).await?;
+            stream.update_consumer(PullConfig { max_deliver: 3, ..consumer.clone() }).await?;
+            ensure!(crate::event_streams::provision(manager, &scopes[0], 1, Duration::from_secs(120), &[consumer.clone()]).await.is_err(), "provisioning accepted changed consumer configuration");
+            ensure!(stream.consumer_info("registered").await?.config.max_deliver == 3, "provisioning reconfigured the consumer");
+            stream.update_consumer(consumer.clone()).await?;
+            active().activate_events().await.map_err(|error| anyhow::anyhow!("restored activation failed: {error:?}"))?;
+            println!("NATIVE_C_SCOPED_PASS environments=3 provisioning=3 runtime_management_refusals=18 foreign_metadata_and_data_refusals=8 foreign_runtime_refusals=6");
+            Ok::<(), anyhow::Error>(())
+        }).await;
+        let kill = child.start_kill();
+        let reaped = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+        result.context("scoped native event test exceeded 90 seconds")??;
+        kill.context("stop the owned NATS process")?;
+        reaped
+            .context("owned NATS process did not exit within five seconds")?
+            .context("reap the owned NATS process")?;
+        Ok(())
+    }
 }
