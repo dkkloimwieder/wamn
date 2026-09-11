@@ -1,0 +1,75 @@
+{
+  "source_commit": "c8522e0ddecfff9230bdc723767e9bb1d150b445",
+  "bead": "wamn-47wm.4.2",
+  "change_type": "internal_refactor",
+  "source_sha256": {
+    "apps/wamn_wms/tests/cluster/bootstrap.rs": "7849ff163d9e6ad7250e302fe830623217e053403df3efe4379802caf3fadf3c",
+    "apps/wamn_wms/tests/environment.rs": "6197631de79ce1bc7a8f0cf5c2511d6a7d56f405ab438ee0160895f600e697c5"
+  },
+  "retained_inputs": {
+    "registry_username": "wamn-wms-journey",
+    "registry_password_bytes": 32,
+    "registry_password_helper_image": "httpd:2-alpine",
+    "registry_auth_fields": [
+      "username",
+      "password"
+    ],
+    "minio_access_key": "wamn-labels-store",
+    "minio_password_bytes": 32,
+    "minio_bucket": "labels",
+    "store_credential_keys": [
+      "ACCESS_KEY_ID",
+      "ACCESS_SECRET_KEY"
+    ],
+    "kind_template": "deploy/infra/kind-config.yaml"
+  },
+  "behavior": [
+    "Render the existing kind template through the shared typed function.",
+    "Read the explicitly supplied broker file and copy its bytes unchanged.",
+    "Send the registry password only through helper stdin.",
+    "Use private 0700 parent directories and create-new 0600 files.",
+    "Use the same generated MinIO credential for its server, bucket commands, host binding, and application client.",
+    "Parse only the restricted NetworkSettings output, requiring one allocated PostgreSQL port on 127.0.0.1."
+  ],
+  "checks": [
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "apps/wamn_wms/tests/cluster/bootstrap.rs",
+        "apps/wamn_wms/tests/environment.rs"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "bash",
+        "-n",
+        "tools/receiving-cluster-journey-run",
+        "tools/wms-cluster-journey-run"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "tests_added": [
+    "cluster::bootstrap::tests::docker_network_output_keeps_the_explicit_kind_address_and_loopback_port",
+    "cluster::bootstrap::tests::postgres_mapping_refuses_public_multiple_and_unallocated_ports"
+  ],
+  "execution": "No Cargo, Docker, kind, Helm, or services executed. Root will compile and execute after the concrete app driver is integrated."
+}

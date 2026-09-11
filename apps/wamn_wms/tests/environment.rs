@@ -36,9 +36,9 @@ pub const ORG: &str = "acme";
 pub const PROJECT: &str = "wms";
 pub const ENVIRONMENT: &str = "dev";
 pub const TENANT: &str = "wms-route-auth";
-const SCHEMA: &str = "wms";
+pub(super) const SCHEMA: &str = "wms";
 const CLUSTER: &str = "route-auth-pg18";
-const RELEASE_ID: u32 = 1;
+pub(super) const RELEASE_ID: u32 = 1;
 
 fn package_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
