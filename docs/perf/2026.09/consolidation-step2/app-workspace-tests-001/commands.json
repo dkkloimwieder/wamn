@@ -1,0 +1,82 @@
+[
+  {
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--test",
+      "tui_emitter",
+      "--",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "name": "generator-tui-emitter"
+  },
+  {
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--lib",
+      "materialize::tests::",
+      "--",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "name": "generator-materialize"
+  },
+  {
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-ctl",
+      "--lib",
+      "dev::native_tui::tests::",
+      "--",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "name": "ctl-native-tui"
+  },
+  {
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-ctl",
+      "--lib",
+      "ui::tests::",
+      "--",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "name": "ctl-ui"
+  },
+  {
+    "argv": [
+      "cargo",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-ctl",
+      "--lib",
+      "dev::watch::tests::package_artifacts_map_to_their_first_semantic_owner",
+      "--",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "name": "ctl-watch-owner"
+  }
+]

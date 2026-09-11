@@ -1,0 +1,46 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-schema-generator",
+    "--lib",
+    "materialize::tests::",
+    "--",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "cases": [
+    {
+      "detail": "",
+      "name": "materialize::tests::regeneration_keeps_the_declared_operator_and_does_not_restore_a_generated_main",
+      "status": "ok"
+    },
+    {
+      "detail": "",
+      "name": "materialize::tests::wrapper_and_split_paths_are_identical_without_reintrospection",
+      "status": "ok"
+    }
+  ],
+  "compile_failure": false,
+  "cwd": "/home/kaalin/dev/wamn",
+  "ended_utc": "2026-09-11T15:06:10.831707+00:00",
+  "exit_code": 0,
+  "name": "generator-materialize",
+  "seconds": 4.246,
+  "source_unchanged": true,
+  "started_utc": "2026-09-11T15:06:06.586188+00:00",
+  "stderr": "generator-materialize.stderr.log",
+  "stdout": "generator-materialize.stdout.log",
+  "summaries": [
+    {
+      "failed": 0,
+      "filtered": 50,
+      "ignored": 0,
+      "measured": 0,
+      "passed": 2
+    }
+  ]
+}

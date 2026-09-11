@@ -1,0 +1,423 @@
+{
+  "complete": true,
+  "not_run": [],
+  "passed": true,
+  "results": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-schema-generator",
+        "--test",
+        "tui_emitter",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "cases": [
+        {
+          "detail": "",
+          "name": "declared_operator_keeps_generated_library_bytes_without_a_launcher",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "event_handlers_are_excluded_and_deployment_values_are_supplied_at_launch",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "explicit_ui_target_uses_its_dependency_and_refuses_ambiguous_binaries",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "generation_resolves_an_app_workspace_before_its_native_crate_exists",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "invalid_paths_and_generated_module_collisions_are_refused",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "platform_and_revision_inputs_come_only_from_exact_declared_paths",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "queries_reference_their_own_result_schemas_and_preserve_distinct_error_cases",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "raw_schema_literals_preserve_quotes_without_becoming_rust_source",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "receiving_replay_and_wms_composed_completion_use_the_served_contract",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "screen_metadata_preserves_the_operation_freshness_requirement",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "screens_reference_the_same_collision_free_helpers_as_the_client",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "shipped_operator_crates_are_deterministic_and_cover_each_callable_operation",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "two_declared_components_render_only_their_owned_operations",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "unexposed_unsupported_and_composed_operations_keep_distinct_screens",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "workspace_package_and_binary_names_keep_the_reference_crate_distinct",
+          "status": "ok"
+        }
+      ],
+      "compile_failure": false,
+      "cwd": "/home/kaalin/dev/wamn",
+      "ended_utc": "2026-09-11T15:06:04.915448+00:00",
+      "exit_code": 0,
+      "name": "generator-tui-emitter",
+      "seconds": 4.41,
+      "source_unchanged": true,
+      "started_utc": "2026-09-11T15:06:00.505635+00:00",
+      "stderr": "generator-tui-emitter.stderr.log",
+      "stdout": "generator-tui-emitter.stdout.log",
+      "summaries": [
+        {
+          "failed": 0,
+          "filtered": 0,
+          "ignored": 0,
+          "measured": 0,
+          "passed": 15
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-schema-generator",
+        "--lib",
+        "materialize::tests::",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "cases": [
+        {
+          "detail": "",
+          "name": "materialize::tests::regeneration_keeps_the_declared_operator_and_does_not_restore_a_generated_main",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "materialize::tests::wrapper_and_split_paths_are_identical_without_reintrospection",
+          "status": "ok"
+        }
+      ],
+      "compile_failure": false,
+      "cwd": "/home/kaalin/dev/wamn",
+      "ended_utc": "2026-09-11T15:06:10.831707+00:00",
+      "exit_code": 0,
+      "name": "generator-materialize",
+      "seconds": 4.246,
+      "source_unchanged": true,
+      "started_utc": "2026-09-11T15:06:06.586188+00:00",
+      "stderr": "generator-materialize.stderr.log",
+      "stdout": "generator-materialize.stdout.log",
+      "summaries": [
+        {
+          "failed": 0,
+          "filtered": 50,
+          "ignored": 0,
+          "measured": 0,
+          "passed": 2
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-ctl",
+        "--lib",
+        "dev::native_tui::tests::",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "cases": [
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::a_missing_selection_or_incomplete_resolved_graph_refuses",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::an_independent_app_workspace_owns_its_target_and_native_watches",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::artifacts_use_cargo_paths_and_require_every_selected_binary",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::component_names_survive_a_directory_rename_and_collisions_refuse",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::missing_relative_and_conflicting_executables_refuse",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::selection_uses_the_declared_component_and_emitter_spelling",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::watch_graph_follows_normal_and_build_dependencies_inside_the_repository",
+          "status": "ok"
+        }
+      ],
+      "compile_failure": false,
+      "cwd": "/home/kaalin/dev/wamn",
+      "ended_utc": "2026-09-11T15:06:38.880696+00:00",
+      "exit_code": 0,
+      "name": "ctl-native-tui",
+      "seconds": 26.225,
+      "source_unchanged": true,
+      "started_utc": "2026-09-11T15:06:12.655928+00:00",
+      "stderr": "ctl-native-tui.stderr.log",
+      "stdout": "ctl-native-tui.stdout.log",
+      "summaries": [
+        {
+          "failed": 0,
+          "filtered": 270,
+          "ignored": 0,
+          "measured": 0,
+          "passed": 7
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-ctl",
+        "--lib",
+        "ui::tests::",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "cases": [
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::a_missing_selection_or_incomplete_resolved_graph_refuses",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::an_independent_app_workspace_owns_its_target_and_native_watches",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::artifacts_use_cargo_paths_and_require_every_selected_binary",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::component_names_survive_a_directory_rename_and_collisions_refuse",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::missing_relative_and_conflicting_executables_refuse",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::selection_uses_the_declared_component_and_emitter_spelling",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::native_tui::tests::watch_graph_follows_normal_and_build_dependencies_inside_the_repository",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::tui::tests::keys_navigate_and_only_the_quit_keys_ask_for_shutdown",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::tui::tests::observations_render_exact_trace_and_tap_facts",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::tui::tests::page_navigation_resets_and_vertical_scrolling_reveals_later_rows",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::tui::tests::pipeline_renders_all_stages_and_typed_gate_verdicts",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::tui::tests::release_renders_exact_carrier_memberships_operations_and_routes",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::tui::tests::the_release_page_and_status_line_name_the_held_environment",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "dev::tui::tests::the_status_line_survives_a_viewport_too_short_to_hold_content",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "ui::tests::a_model_named_generated_cannot_shadow_the_generated_dependency",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "ui::tests::all_screen_scaffolding_copies_every_function_without_frozen_metadata",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "ui::tests::an_existing_custom_crate_is_never_overwritten",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "ui::tests::multiple_components_require_an_explicit_selection",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "ui::tests::one_screen_scaffold_keeps_explicit_generated_fallbacks_and_live_specs",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "ui::tests::package_and_screen_selection_refuse_traversal_and_missing_names",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "ui::tests::stale_generated_source_refuses_before_creating_custom_files",
+          "status": "ok"
+        },
+        {
+          "detail": "",
+          "name": "ui::tests::the_app_directory_keeps_the_declared_component_dependency",
+          "status": "ok"
+        }
+      ],
+      "compile_failure": false,
+      "cwd": "/home/kaalin/dev/wamn",
+      "ended_utc": "2026-09-11T15:06:42.896611+00:00",
+      "exit_code": 0,
+      "name": "ctl-ui",
+      "seconds": 1.648,
+      "source_unchanged": true,
+      "started_utc": "2026-09-11T15:06:41.248800+00:00",
+      "stderr": "ctl-ui.stderr.log",
+      "stdout": "ctl-ui.stdout.log",
+      "summaries": [
+        {
+          "failed": 0,
+          "filtered": 255,
+          "ignored": 0,
+          "measured": 0,
+          "passed": 22
+        }
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-ctl",
+        "--lib",
+        "dev::watch::tests::package_artifacts_map_to_their_first_semantic_owner",
+        "--",
+        "--nocapture",
+        "--test-threads=1"
+      ],
+      "cases": [
+        {
+          "detail": "",
+          "name": "dev::watch::tests::package_artifacts_map_to_their_first_semantic_owner",
+          "status": "ok"
+        }
+      ],
+      "compile_failure": false,
+      "cwd": "/home/kaalin/dev/wamn",
+      "ended_utc": "2026-09-11T15:06:45.408815+00:00",
+      "exit_code": 0,
+      "name": "ctl-watch-owner",
+      "seconds": 0.636,
+      "source_unchanged": true,
+      "started_utc": "2026-09-11T15:06:44.772482+00:00",
+      "stderr": "ctl-watch-owner.stderr.log",
+      "stdout": "ctl-watch-owner.stdout.log",
+      "summaries": [
+        {
+          "failed": 0,
+          "filtered": 276,
+          "ignored": 0,
+          "measured": 0,
+          "passed": 1
+        }
+      ]
+    }
+  ],
+  "source_unchanged": true
+}

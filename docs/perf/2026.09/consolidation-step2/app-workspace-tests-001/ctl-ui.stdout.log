@@ -1,0 +1,27 @@
+
+running 22 tests
+test dev::native_tui::tests::a_missing_selection_or_incomplete_resolved_graph_refuses ... ok
+test dev::native_tui::tests::an_independent_app_workspace_owns_its_target_and_native_watches ... ok
+test dev::native_tui::tests::artifacts_use_cargo_paths_and_require_every_selected_binary ... ok
+test dev::native_tui::tests::component_names_survive_a_directory_rename_and_collisions_refuse ... ok
+test dev::native_tui::tests::missing_relative_and_conflicting_executables_refuse ... ok
+test dev::native_tui::tests::selection_uses_the_declared_component_and_emitter_spelling ... ok
+test dev::native_tui::tests::watch_graph_follows_normal_and_build_dependencies_inside_the_repository ... ok
+test dev::tui::tests::keys_navigate_and_only_the_quit_keys_ask_for_shutdown ... ok
+test dev::tui::tests::observations_render_exact_trace_and_tap_facts ... ok
+test dev::tui::tests::page_navigation_resets_and_vertical_scrolling_reveals_later_rows ... ok
+test dev::tui::tests::pipeline_renders_all_stages_and_typed_gate_verdicts ... ok
+test dev::tui::tests::release_renders_exact_carrier_memberships_operations_and_routes ... ok
+test dev::tui::tests::the_release_page_and_status_line_name_the_held_environment ... ok
+test dev::tui::tests::the_status_line_survives_a_viewport_too_short_to_hold_content ... ok
+test ui::tests::a_model_named_generated_cannot_shadow_the_generated_dependency ... ok
+test ui::tests::all_screen_scaffolding_copies_every_function_without_frozen_metadata ... ok
+test ui::tests::an_existing_custom_crate_is_never_overwritten ... ok
+test ui::tests::multiple_components_require_an_explicit_selection ... ok
+test ui::tests::one_screen_scaffold_keeps_explicit_generated_fallbacks_and_live_specs ... ok
+test ui::tests::package_and_screen_selection_refuse_traversal_and_missing_names ... ok
+test ui::tests::stale_generated_source_refuses_before_creating_custom_files ... ok
+test ui::tests::the_app_directory_keeps_the_declared_component_dependency ... ok
+
+test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 255 filtered out; finished in 1.04s
+
