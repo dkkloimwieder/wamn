@@ -1,0 +1,11 @@
+{
+  "bytes": 55967408,
+  "device": 66307,
+  "exact_build_commit": null,
+  "inode": 31995231,
+  "kind": "file",
+  "limit": "The exact build commit was not recorded. The run uses the existing binary and records its actual bytes.",
+  "mode": "0o775",
+  "path": "/home/kaalin/dev/wamn/target/debug/examples/wms_move",
+  "sha256": "7050209feeea17d8149c0a96c8632472ae45177f009e37d3104dfb78e9746d42"
+}

@@ -1,0 +1,10 @@
+{
+  "binary": "/home/kaalin/dev/wamn/target/debug/examples/wms_move",
+  "binary_sha256": "7050209feeea17d8149c0a96c8632472ae45177f009e37d3104dfb78e9746d42",
+  "driver_sha256": "a36163dbe63577c3042c06ab3f2b941e16388c53ecb784dd215b1cb0bc9ea250",
+  "partial_failure_source": "docs/perf/2026.09/effects-response/live-002/journey/wms-partial-http.json",
+  "partial_failure_source_sha256": "e3427b40c81c24e3526e8f2f8a7d0fd1df4ce06c6fffab9fec379f683e6a1602",
+  "platform_proof": false,
+  "preflight_sha256": "9a9ee15d4fa3a8b1210a8a36cf5d03286d3ba811cc5daa4c67d92606106776df",
+  "scope": "synthetic terminal preflight"
+}

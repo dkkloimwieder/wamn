@@ -1,0 +1,12 @@
+{
+  "binary_sha256": "7050209feeea17d8149c0a96c8632472ae45177f009e37d3104dfb78e9746d42",
+  "binary_unchanged": true,
+  "elapsed_seconds": 4.508828254009131,
+  "ended_utc": "2026-09-11T23:18:12.532412+00:00",
+  "exit_code": 0,
+  "source_head": "47391bbc237f2e760f5cddb8b2e8f54a417ccc1f",
+  "source_unchanged": true,
+  "started_utc": "2026-09-11T23:18:08.023564+00:00",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stdout_sha256": "c6155f38ee0ab110923a4f0cae14dd02e2655fcaf1a440cfb75a014be79342a1"
+}
