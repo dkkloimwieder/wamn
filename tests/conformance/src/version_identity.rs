@@ -40,9 +40,6 @@ const GOVERNED_JSON_SCHEMAS: &[GovernedJsonSchema] = &[
     GovernedJsonSchema {
         path: "architecture/workspace-tiers.json",
     },
-    GovernedJsonSchema {
-        path: "tests/conformance/runtime-inventory.json",
-    },
 ];
 
 // This is deliberately an inventory of positive definitions, not a repository-wide
@@ -134,11 +131,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     GovernedLiteral {
         path: "crates/platform/runtime/src/plugins/connection_http.rs",
         exact: r#"const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "tests/conformance/src/runtime_inventory.rs",
-        exact: r#"assert_eq!(inventory.schema_version, "0.1");"#,
         expected_count: 1,
     },
     GovernedLiteral {

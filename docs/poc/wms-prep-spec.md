@@ -129,6 +129,9 @@ allowlist. Replace the heuristic with declaration:
   a `bindgen!` of the full 16-method async contract with the feature off,
   with the probe itself proven live by a deliberate world-name break.
 
+  [2026-09-11: `wamn-47wm.2.2` removes the feature-policy inventory.
+  Cargo manifests retain the enabled features.]
+
   The outcome is stronger than the plan: upstream's blobstore backends never
   compile, so **"never a second registered runtime" becomes a structural
   impossibility** rather than a convention about not calling

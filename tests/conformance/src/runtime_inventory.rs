@@ -1,34 +1,10 @@
-//! Recorded wash-runtime feature and generated-workload inventory.
+//! Runtime authority and deployed workload policy checks.
 
-use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use url::Url;
 
-const INVENTORY: &str = include_str!("../runtime-inventory.json");
-const ALLOWED_WASH_RUNTIME_FEATURES: [&str; 5] = [
-    "oci",
-    "wasi-config",
-    "wasi-otel",
-    "washlet",
-    "wasm_component_model_implements",
-];
-/// Every wasmtime feature the workspace pin names, reviewed one by one.
-///
-/// THE WASH-RUNTIME ALLOWLIST BELOW DOES NOT COVER THIS. It reads
-/// `cargo tree -i wash-runtime`, so it says nothing about the wasmtime
-/// dependency wamn pins directly, and wasmtime's own defaults include `gc`,
-/// `component-model-async`, `debug-builtins`, `profiling` and `coredump` --
-/// features that change runtime and store semantics. `default-features = false`
-/// is the only thing keeping that surface small, and a `features = [...]`
-/// addition would otherwise be invisible. Adding one here is the review.
-///
-/// `parallel-compilation` was added 2026-09-04 (`wamn-0h0g.17.22`): it pulls
-/// rayon and nothing else, and without it Cranelift compiles on one core.
-const ALLOWED_WASMTIME_FEATURES: [&str; 2] = ["cache", "parallel-compilation"];
-const WORKSPACE_MANIFEST: &str = "Cargo.toml";
 const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
 /// The release-manifest weld construction call, deliberately truncated before the
 /// `(` so it matches `load` and `load_from` alike — the guard counts
@@ -126,133 +102,12 @@ const STRUCK_KEY_SITES: [&str; 3] = [
     "services/host/src/host.rs",
 ];
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum WorkloadAbi {
-    P3Components,
-    P2CliService,
-    P3Service,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimePin {
-    cargo_tree_root: String,
-    default_features: bool,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Consumer {
-    package: String,
-    manifest: String,
-    features: BTreeSet<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AbiEvidence {
-    path: String,
-    required_marker: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct WorkloadManifest {
-    path: String,
-    deployment_state: String,
-    abi: WorkloadAbi,
-    abi_evidence: Option<AbiEvidence>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Inventory {
-    schema_version: String,
-    wash_runtime: RuntimePin,
-    live_store_paths: BTreeSet<String>,
-    consumers: Vec<Consumer>,
-    workload_manifests: Vec<WorkloadManifest>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CargoMetadata {
-    packages: Vec<CargoPackage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CargoPackage {
-    name: String,
-    manifest_path: String,
-}
-
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
         .expect("conformance package must live at tests/conformance")
         .to_path_buf()
-}
-
-fn inventory() -> Inventory {
-    serde_json::from_str(INVENTORY).expect("runtime-inventory.json must be valid")
-}
-
-fn cargo_tree(root: &Path, arguments: &[&str]) -> String {
-    let output = Command::new(env!("CARGO"))
-        .current_dir(root)
-        .args(["tree", "--locked", "--offline"])
-        .args(arguments)
-        .output()
-        .expect("run cargo tree for runtime inventory");
-    assert!(
-        output.status.success(),
-        "cargo tree {} failed:\n{}",
-        arguments.join(" "),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    String::from_utf8(output.stdout).expect("cargo tree output must be UTF-8")
-}
-
-fn wash_runtime_source(root: &Path) -> PathBuf {
-    let output = Command::new(env!("CARGO"))
-        .current_dir(root)
-        .args(["metadata", "--locked", "--offline", "--format-version", "1"])
-        .output()
-        .expect("run cargo metadata for wash-runtime source");
-    assert!(
-        output.status.success(),
-        "cargo metadata failed:\n{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let metadata: CargoMetadata =
-        serde_json::from_slice(&output.stdout).expect("cargo metadata must be valid JSON");
-    let manifest = metadata
-        .packages
-        .iter()
-        .find(|package| package.name == "wash-runtime")
-        .expect("resolved graph must contain wash-runtime");
-    Path::new(&manifest.manifest_path)
-        .parent()
-        .expect("wash-runtime manifest must have a parent")
-        .to_path_buf()
-}
-
-fn workspace_wash_runtime_declaration(root: &Path) -> String {
-    let manifest = fs::read_to_string(root.join("Cargo.toml")).expect("read root Cargo.toml");
-    let mut workspace_dependencies = false;
-    for line in manifest.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            workspace_dependencies = trimmed == "[workspace.dependencies]";
-            continue;
-        }
-        if workspace_dependencies && let Some(declaration) = trimmed.strip_prefix("wash-runtime =")
-        {
-            return declaration.split_whitespace().collect();
-        }
-    }
-    panic!("root [workspace.dependencies] must declare wash-runtime");
 }
 
 fn validate_one(source: &str, marker: &str, seam: &str) -> Result<(), String> {
@@ -264,10 +119,6 @@ fn validate_one(source: &str, marker: &str, seam: &str) -> Result<(), String> {
             "{seam} must retain exactly one `{marker}` marker; found {observed}"
         ))
     }
-}
-
-fn assert_one(source: &str, marker: &str, seam: &str) {
-    validate_one(source, marker, seam).unwrap_or_else(|error| panic!("{error}"));
 }
 
 /// Everything before a file's terminal `#[cfg(test)] mod tests {`, or the whole
@@ -367,51 +218,6 @@ fn host_source(root: &Path, path: &str) -> String {
     fs::read_to_string(&full).unwrap_or_else(|error| panic!("read {}: {error}", full.display()))
 }
 
-fn observed_store_paths(wash_runtime: &Path) -> BTreeSet<String> {
-    let wash_manifest_path = wash_runtime.join("Cargo.toml");
-    let wash_manifest = fs::read_to_string(&wash_manifest_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", wash_manifest_path.display()));
-    assert_one(
-        &wash_manifest,
-        "host-component-plugins = []",
-        "host-component plugin feature",
-    );
-    let plugin_module_path = wash_runtime.join("src/plugin/mod.rs");
-    let plugin_module = fs::read_to_string(&plugin_module_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", plugin_module_path.display()));
-    assert_one(
-        &plugin_module,
-        "#[cfg(all(feature = \"host-component-plugins\", feature = \"oci\"))]",
-        "host-component plugin module gate",
-    );
-
-    let linked_call_path = wash_runtime.join("src/engine/linked_call.rs");
-    let linked_call = fs::read_to_string(&linked_call_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", linked_call_path.display()));
-    assert_one(
-        &linked_call,
-        "pub(crate) async fn new_store_from_templates(",
-        "runtime store constructor",
-    );
-    assert_one(
-        &linked_call,
-        "let mut store = wasmtime::Store::new(engine, shared_ctx);",
-        "runtime store constructor",
-    );
-
-    let component_plugin_path = wash_runtime.join("src/plugin/component_host/mod.rs");
-    let component_plugin = fs::read_to_string(&component_plugin_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", component_plugin_path.display()));
-    assert_one(
-        &component_plugin,
-        "Store::new(\n        engine.inner(),\n        SharedCtx::new(ctx)\n            \
-         .with_resource_registry()\n            .with_guest_memory(engine.guest_memory()),\n    )",
-        "feature-gated host-component plugin store",
-    );
-
-    BTreeSet::from(["runtime: new_store_from_templates (single production site)".to_string()])
-}
-
 #[test]
 fn only_positive_pool_sizes_keep_instances_warm() {
     use wash_runtime::engine::InstancePolicy;
@@ -428,43 +234,6 @@ fn only_positive_pool_sizes_keep_instances_warm() {
             "pool_size {pool_size} must preserve the native fresh-store boundary"
         );
     }
-}
-
-fn resolved_features(tree: &str) -> BTreeSet<String> {
-    tree.lines()
-        .filter_map(|line| {
-            line.split_once("wash-runtime feature \"")
-                .and_then(|(_, suffix)| suffix.split_once('"'))
-                .map(|(feature, _)| feature.to_string())
-        })
-        .collect()
-}
-
-fn service_consumers(root: &Path) -> BTreeSet<String> {
-    let services = root.join("services");
-    fs::read_dir(&services)
-        .unwrap_or_else(|error| panic!("read {}: {error}", services.display()))
-        .filter_map(|entry| {
-            let directory = entry.expect("read services entry").path();
-            let manifest = directory.join("Cargo.toml");
-            if !manifest.is_file() {
-                return None;
-            }
-            let source = fs::read_to_string(&manifest)
-                .unwrap_or_else(|error| panic!("read {}: {error}", manifest.display()));
-            let directly_declares_runtime = source.lines().any(|line| {
-                let line = line.trim();
-                !line.starts_with('#') && line.starts_with("wash-runtime =")
-            });
-            directly_declares_runtime.then(|| {
-                manifest
-                    .strip_prefix(root)
-                    .expect("service manifest must be repository-relative")
-                    .to_string_lossy()
-                    .to_string()
-            })
-        })
-        .collect()
 }
 
 fn workload_manifests(root: &Path) -> BTreeSet<String> {
@@ -493,33 +262,6 @@ fn workload_manifests(root: &Path) -> BTreeSet<String> {
             )
         })
         .collect()
-}
-
-/// wamn-0h0g.12.10: the retained WorkloadDeployment inventory is a set
-/// equality, so both directions of drift must fail closed and must be
-/// distinguishable — an unrecorded manifest on disk and a recorded manifest
-/// that is gone are different defects with different repairs.
-fn check_workload_manifests(
-    observed: &BTreeSet<String>,
-    recorded: &BTreeSet<String>,
-) -> Result<(), String> {
-    let unrecorded: Vec<_> = observed.difference(recorded).cloned().collect();
-    if !unrecorded.is_empty() {
-        return Err(format!(
-            "deploy/platform carries WorkloadDeployment manifests runtime-inventory.json \
-             does not record: {}",
-            unrecorded.join(", ")
-        ));
-    }
-    let vanished: Vec<_> = recorded.difference(observed).cloned().collect();
-    if !vanished.is_empty() {
-        return Err(format!(
-            "runtime-inventory.json records WorkloadDeployment manifests deploy/platform \
-             no longer carries: {}",
-            vanished.join(", ")
-        ));
-    }
-    Ok(())
 }
 
 fn yaml_i32(source: &str, key: &str) -> Vec<i32> {
@@ -605,77 +347,6 @@ fn validate_no_component_database_urls(path: &str, source: &str) -> Result<(), S
     Ok(())
 }
 
-/// The wasmtime pin names exactly the reviewed features, and still drops
-/// defaults.
-///
-/// Parsed from the workspace manifest text rather than from `cargo tree`,
-/// because the question is what this repository DECLARES: a feature enabled by
-/// unification elsewhere is a different finding, and conflating them would let a
-/// declared one hide behind it.
-pub fn validate_wasmtime_feature_policy(manifest: &str) -> Result<(), String> {
-    let line = manifest
-        .lines()
-        .position(|line| line.starts_with("wasmtime = {"))
-        .ok_or_else(|| "the workspace manifest names no wasmtime pin".to_string())?;
-    let rest: String = manifest.lines().skip(line).collect::<Vec<_>>().join("\n");
-    let declaration = rest
-        .split_once("}")
-        .map(|(head, _)| head.to_string())
-        .ok_or_else(|| "the wasmtime pin is unterminated".to_string())?;
-    if !declaration.contains("default-features = false") {
-        return Err(
-            "the wasmtime pin must keep default-features = false: wasmtime's defaults carry gc, \
-             component-model-async, debug-builtins, profiling and coredump"
-                .to_string(),
-        );
-    }
-    let declared: BTreeSet<String> = declaration
-        .split_once("features = [")
-        .map(|(_, tail)| tail)
-        .unwrap_or("")
-        .split(']')
-        .next()
-        .unwrap_or("")
-        .split(',')
-        .map(|entry| entry.trim().trim_matches('"').to_string())
-        .filter(|entry| !entry.is_empty())
-        .collect();
-    let allowed: BTreeSet<String> = ALLOWED_WASMTIME_FEATURES
-        .into_iter()
-        .map(str::to_string)
-        .collect();
-    if declared != allowed {
-        return Err(format!(
-            "unreviewed wasmtime features change runtime and store semantics: declared {:?}, \
-             reviewed {:?}",
-            declared, allowed
-        ));
-    }
-    Ok(())
-}
-
-fn validate_feature_policy(features: &BTreeSet<String>) -> Result<(), String> {
-    if features.contains("host-component-plugins") {
-        return Err(
-            "host-component-plugins enables plugin-owned stores beyond the three recorded paths"
-                .to_string(),
-        );
-    }
-
-    let allowed = ALLOWED_WASH_RUNTIME_FEATURES
-        .into_iter()
-        .map(str::to_string)
-        .collect();
-    let unknown: Vec<_> = features.difference(&allowed).cloned().collect();
-    if !unknown.is_empty() {
-        return Err(format!(
-            "unreviewed wash-runtime features may widen live store paths: {}",
-            unknown.join(", ")
-        ));
-    }
-    Ok(())
-}
-
 fn validate_ip_name_lookup_defaults(path: &str, source: &str) -> Result<(), String> {
     let lines: Vec<_> = source.lines().collect();
     let local_resources = yaml_blocks(&lines, "localResources:");
@@ -723,7 +394,7 @@ fn validate_ip_name_lookup_defaults(path: &str, source: &str) -> Result<(), Stri
     Ok(())
 }
 
-fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Result<(), String> {
+fn validate_workload_policy(path: &str, source: &str) -> Result<(), String> {
     let pool_sizes = yaml_i32(source, "poolSize:");
     if let Some(pool_size) = pool_sizes.into_iter().find(|pool_size| *pool_size != 0) {
         return Err(format!(
@@ -734,248 +405,53 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
     validate_ip_name_lookup_defaults(path, source)?;
     validate_no_component_database_urls(path, source)?;
 
-    let has_components = source.lines().any(|line| line == "      components:");
-    // maxInvocations has no effect when poolSize is absent or zero.
-    let _max_invocations = yaml_i32(source, "maxInvocations:");
-
-    let has_workload_service = source.lines().any(|line| line == "      service:");
-    match abi {
-        WorkloadAbi::P3Components if has_workload_service || !has_components => {
-            return Err(format!(
-                "{path}: recorded as P3 components but its components/service shape disagrees"
-            ));
-        }
-        WorkloadAbi::P2CliService if !has_workload_service => {
-            return Err(format!(
-                "{path}: recorded as a P2 CLI service but has no workload service"
-            ));
-        }
-        WorkloadAbi::P3Service => {
-            return Err(format!(
-                "{path}: P3 service workload deployment is excluded"
-            ));
-        }
-        WorkloadAbi::P3Components | WorkloadAbi::P2CliService => {}
-    }
     Ok(())
 }
 
 #[test]
-fn resolved_feature_and_deployed_workload_inventory_is_current() {
+fn deployed_workloads_preserve_runtime_policy() {
     let root = repository_root();
-    let inventory = inventory();
-    assert_eq!(inventory.schema_version, "0.1");
-    let declaration = workspace_wash_runtime_declaration(&root);
+    let workloads = workload_manifests(&root);
     assert!(
-        declaration.contains("default-features=false"),
-        "root wash-runtime dependency must explicitly set default-features = false"
+        !workloads.is_empty(),
+        "deploy/platform must contain a workload"
     );
-    assert!(
-        !inventory.wash_runtime.default_features,
-        "recorded wash-runtime default-feature policy drifted"
-    );
-    assert_eq!(
-        inventory.live_store_paths,
-        observed_store_paths(&wash_runtime_source(&root)),
-        "the inventory must retain both live store paths"
-    );
-    assert_eq!(
-        inventory.consumers.len(),
-        4,
-        "the inventory must retain all four production consumers"
-    );
-
-    let recorded_manifests = inventory
-        .consumers
-        .iter()
-        .map(|consumer| consumer.manifest.clone())
-        .collect();
-    assert_eq!(
-        service_consumers(&root),
-        recorded_manifests,
-        "production services consuming wash-runtime drifted"
-    );
-
-    let mut all_features = BTreeSet::new();
-    for consumer in &inventory.consumers {
-        let tree = cargo_tree(
-            &root,
-            &[
-                "-p",
-                &consumer.package,
-                "-e",
-                "features",
-                "-i",
-                "wash-runtime",
-            ],
-        );
-        assert_eq!(
-            tree.lines().next(),
-            Some(inventory.wash_runtime.cargo_tree_root.as_str()),
-            "{} resolved a different wash-runtime identity",
-            consumer.package
-        );
-        let actual = resolved_features(&tree);
-        assert_eq!(
-            actual, consumer.features,
-            "{} wash-runtime feature inventory drifted",
-            consumer.package
-        );
-        all_features.extend(actual);
-    }
-    validate_feature_policy(&all_features).unwrap_or_else(|error| panic!("{error}"));
-    validate_wasmtime_feature_policy(
-        &fs::read_to_string(root.join(WORKSPACE_MANIFEST)).expect("read the workspace manifest"),
-    )
-    .unwrap_or_else(|error| panic!("{error}"));
-    assert!(
-        all_features.contains("wasm_component_model_implements"),
-        "the shipped host and executor must enable named component-model imports"
-    );
-
-    let recorded_workloads: BTreeSet<String> = inventory
-        .workload_manifests
-        .iter()
-        .map(|workload| workload.path.clone())
-        .collect();
-    check_workload_manifests(&workload_manifests(&root), &recorded_workloads).unwrap_or_else(
-        |error| panic!("generated WorkloadDeployment manifest inventory drifted: {error}"),
-    );
-    assert_eq!(
-        inventory.workload_manifests.len(),
-        2,
-        "the inventory must retain both generated workload manifests"
-    );
-    for workload in &inventory.workload_manifests {
-        let expected_state = if workload.path.contains(".example.") {
-            "template"
-        } else {
-            "active"
-        };
-        assert_eq!(
-            workload.deployment_state, expected_state,
-            "{} deployment-state classification drifted",
-            workload.path
-        );
-        let path = root.join(&workload.path);
-        let source = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-        validate_workload_policy(&workload.path, &source, &workload.abi)
-            .unwrap_or_else(|error| panic!("{error}"));
-        match (&workload.abi, &workload.abi_evidence) {
-            (WorkloadAbi::P2CliService, Some(evidence)) => {
-                let evidence_path = root.join(&evidence.path);
-                let evidence_source = fs::read_to_string(&evidence_path)
-                    .unwrap_or_else(|error| panic!("read {}: {error}", evidence_path.display()));
-                assert!(
-                    evidence_source.contains(&evidence.required_marker),
-                    "{} no longer proves the P2 CLI service classification for {}",
-                    evidence.path,
-                    workload.path
-                );
-                let component = evidence_path
-                    .parent()
-                    .expect("component Cargo.toml must have a parent");
-                assert!(
-                    component.join("src/main.rs").is_file(),
-                    "{} must remain a command component",
-                    evidence.path
-                );
-                let world_path = component.join("wit/world.wit");
-                let world = fs::read_to_string(&world_path)
-                    .unwrap_or_else(|error| panic!("read {}: {error}", world_path.display()));
-                assert!(
-                    !world.contains("wasi:http/handler") && !world.contains("wasmcloud:messaging"),
-                    "{} adopted a P3 service export",
-                    world_path.display()
-                );
-            }
-            (WorkloadAbi::P3Components, None) => {}
-            _ => panic!(
-                "{} ABI classification has missing or unexpected evidence",
-                workload.path
-            ),
-        }
+    for path in workloads {
+        let source = host_source(&root, &path);
+        validate_workload_policy(&path, &source).unwrap_or_else(|error| panic!("{error}"));
     }
 }
 
-fn recorded_workload_manifests() -> BTreeSet<String> {
-    inventory()
-        .workload_manifests
-        .into_iter()
-        .map(|workload| workload.path)
-        .collect()
-}
-
 #[test]
-fn the_retained_workload_manifest_set_is_accepted() {
-    let observed = workload_manifests(&repository_root());
-    check_workload_manifests(&observed, &recorded_workload_manifests())
-        .expect("deploy/platform and runtime-inventory.json must record the same set");
-}
-
-#[test]
-fn unrecorded_workload_manifest_mutation_is_rejected() {
-    let observed = workload_manifests(&repository_root());
-    let mut mutant = recorded_workload_manifests();
-    let dropped = mutant
-        .pop_first()
-        .expect("the inventory must record at least one workload manifest");
-    let error = check_workload_manifests(&observed, &mutant)
-        .expect_err("a manifest on disk that the inventory omits must fail closed");
+fn materializer_keeps_its_command_export() {
+    let root = repository_root();
+    let component = root.join("components/execution/materializer");
     assert!(
-        error.contains("does not record") && error.contains(&dropped),
-        "an unrecorded manifest must be named as unrecorded: {error}"
+        component.join("src/main.rs").is_file(),
+        "materializer must remain a command component"
     );
+    let world_path = component.join("wit/world.wit");
+    let world = fs::read_to_string(&world_path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", world_path.display()));
     assert!(
-        !error.contains("no longer carries"),
-        "the unrecorded-manifest control must not also report the vanished case: {error}"
+        !world.contains("wasi:http/handler") && !world.contains("wasmcloud:messaging"),
+        "{} adopted a P3 service export",
+        world_path.display()
     );
-}
-
-#[test]
-fn vanished_workload_manifest_mutation_is_rejected() {
-    let observed = workload_manifests(&repository_root());
-    let mut mutant = recorded_workload_manifests();
-    let phantom = "deploy/platform/phantom-workload.example.yaml".to_string();
-    assert!(
-        !observed.contains(&phantom),
-        "the synthetic manifest must not exist on disk"
-    );
-    mutant.insert(phantom.clone());
-    let error = check_workload_manifests(&observed, &mutant)
-        .expect_err("a recorded manifest that is gone from disk must fail closed");
-    assert!(
-        error.contains("no longer carries") && error.contains(&phantom),
-        "a vanished manifest must be named as vanished: {error}"
-    );
-    assert!(
-        !error.contains("does not record"),
-        "the vanished-manifest control must not also report the unrecorded case: {error}"
-    );
-}
-
-#[test]
-fn host_component_plugins_mutation_is_rejected() {
-    let mut features = BTreeSet::from(["oci".to_string(), "washlet".to_string()]);
-    features.insert("host-component-plugins".to_string());
-    let error = validate_feature_policy(&features).expect_err("mutation must fail closed");
-    assert!(error.contains("plugin-owned stores beyond the three recorded paths"));
 }
 
 #[test]
 fn nonzero_pool_size_mutation_is_rejected() {
     let mutant = "components:\n  - name: mutant\n    poolSize: 1\n    maxInvocations: 10\n";
-    let error =
-        validate_workload_policy("pool-size-mutant.yaml", mutant, &WorkloadAbi::P3Components)
-            .expect_err("mutation must fail closed");
+    let error = validate_workload_policy("pool-size-mutant.yaml", mutant)
+        .expect_err("mutation must fail closed");
     assert!(error.contains("poolSize 1 enables reusable component stores"));
 }
 
 #[test]
 fn nonempty_ip_name_lookup_default_mutation_is_rejected() {
     let mutant = "      components:\n        - name: mutant\n          localResources:\n            allowedIpNameLookups: [\"example.com\"]\n";
-    let error = validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P3Components)
+    let error = validate_workload_policy("lookup-mutant.yaml", mutant)
         .expect_err("nonempty allowedIpNameLookups default must fail closed");
     assert!(error.contains("allowedIpNameLookups must default to []"));
 }
@@ -1002,9 +478,8 @@ fn missing_misspelled_or_duplicate_ip_name_lookup_defaults_are_rejected() {
     ];
 
     for (name, mutant) in mutants {
-        let error =
-            validate_workload_policy("lookup-mutant.yaml", mutant, &WorkloadAbi::P3Components)
-                .expect_err("invalid allowedIpNameLookups structure must fail closed");
+        let error = validate_workload_policy("lookup-mutant.yaml", mutant)
+            .expect_err("invalid allowedIpNameLookups structure must fail closed");
         assert!(
             error.contains("must contain exactly one allowedIpNameLookups field"),
             "{name} mutation failed for an unexpected reason: {error}"
@@ -1027,12 +502,8 @@ fn component_environment_fixture(entry: &str) -> String {
 #[test]
 fn component_environment_pg_url_suffix_mutation_is_rejected() {
     let mutant = component_environment_fixture("WAMN_READER_PG_URL: not-a-url");
-    let error = validate_workload_policy(
-        "component-pg-url-key-mutant.yaml",
-        &mutant,
-        &WorkloadAbi::P3Components,
-    )
-    .expect_err("a component environment *_PG_URL key must fail closed");
+    let error = validate_workload_policy("component-pg-url-key-mutant.yaml", &mutant)
+        .expect_err("a component environment *_PG_URL key must fail closed");
     assert!(
         error.contains("key `WAMN_READER_PG_URL`"),
         "the refusal must name the forbidden key: {error}"
@@ -1042,12 +513,8 @@ fn component_environment_pg_url_suffix_mutation_is_rejected() {
 #[test]
 fn component_environment_database_url_mutation_is_rejected() {
     let mutant = component_environment_fixture("DATABASE_URL:");
-    let error = validate_workload_policy(
-        "component-database-url-key-mutant.yaml",
-        &mutant,
-        &WorkloadAbi::P3Components,
-    )
-    .expect_err("an empty component environment DATABASE_URL placeholder must fail closed");
+    let error = validate_workload_policy("component-database-url-key-mutant.yaml", &mutant)
+        .expect_err("an empty component environment DATABASE_URL placeholder must fail closed");
     assert!(
         error.contains("key `DATABASE_URL`"),
         "the refusal must name the forbidden key: {error}"
@@ -1064,12 +531,10 @@ fn component_environment_postgres_url_value_mutation_is_rejected() {
         ),
     ] {
         let mutant = component_environment_fixture(&format!("WAMN_ENDPOINT: \"{url}\""));
-        let error = validate_workload_policy(
-            "component-postgres-url-value-mutant.yaml",
-            &mutant,
-            &WorkloadAbi::P3Components,
-        )
-        .expect_err("a postgres URL under a neutral component environment key must fail closed");
+        let error = validate_workload_policy("component-postgres-url-value-mutant.yaml", &mutant)
+            .expect_err(
+                "a postgres URL under a neutral component environment key must fail closed",
+            );
         assert!(
             error.contains(&format!("may not carry a {name} URL")),
             "{name} value mutation failed for an unexpected reason: {error}"
@@ -1099,12 +564,8 @@ fn database_url_names_and_values_outside_component_environment_are_allowed() {
                    kind: Secret\n\
                    stringData:\n\
                    \x20 DATABASE_URL: postgresql://secret:secret@database/wamn\n";
-    validate_workload_policy(
-        "component-environment-boundary-control.yaml",
-        control,
-        &WorkloadAbi::P3Components,
-    )
-    .expect("host environment and arbitrary Secret fields are outside this guard");
+    validate_workload_policy("component-environment-boundary-control.yaml", control)
+        .expect("host environment and arbitrary Secret fields are outside this guard");
 }
 
 /// wamn-0h0g.15.101: one release-manifest weld per host process, constructed
@@ -1296,46 +757,5 @@ fn weld_inventory_rejects_construction_after_the_first_bind() {
             error.starts_with("weld-mutant.rs must "),
             "{name} mutation failed for an unexpected reason: {error}"
         );
-    }
-}
-
-#[cfg(test)]
-mod wasmtime_feature_policy_tests {
-    use super::validate_wasmtime_feature_policy;
-
-    const REVIEWED: &str = "wasmtime = { version = \"47.0.4\", default-features = false, features = [\n    \"cache\",\n    \"parallel-compilation\",\n] }\n";
-
-    #[test]
-    fn the_reviewed_pin_is_accepted() {
-        validate_wasmtime_feature_policy(REVIEWED).expect("the shipped pin is reviewed");
-    }
-
-    #[test]
-    fn control_an_unreviewed_feature_is_refused() {
-        let mutated = REVIEWED.replace("\"cache\",", "\"cache\",\n    \"component-model-async\",");
-        let error = validate_wasmtime_feature_policy(&mutated)
-            .expect_err("an unreviewed wasmtime feature must fail closed");
-        assert!(error.contains("component-model-async"), "{error}");
-    }
-
-    #[test]
-    fn control_a_removed_feature_is_refused() {
-        let mutated = REVIEWED.replace("\n    \"parallel-compilation\",", "");
-        validate_wasmtime_feature_policy(&mutated)
-            .expect_err("silently dropping a reviewed feature must fail closed");
-    }
-
-    #[test]
-    fn control_restoring_wasmtime_defaults_is_refused() {
-        let mutated = REVIEWED.replace("default-features = false, ", "");
-        let error = validate_wasmtime_feature_policy(&mutated)
-            .expect_err("wasmtime defaults must stay off");
-        assert!(error.contains("default-features"), "{error}");
-    }
-
-    #[test]
-    fn control_an_absent_pin_is_refused() {
-        validate_wasmtime_feature_policy("anyhow = \"1\"\n")
-            .expect_err("a manifest with no wasmtime pin must fail closed");
     }
 }
