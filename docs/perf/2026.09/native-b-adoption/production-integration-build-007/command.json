@@ -1,0 +1,1 @@
+["env", "RUSTC_WRAPPER=", "cargo", "test", "-p", "wamn-proof-integration", "--lib", "--no-run", "--locked", "--offline"]

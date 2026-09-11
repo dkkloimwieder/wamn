@@ -134,6 +134,71 @@ An earlier recursive formatting attempt reached unchanged baseline formatting in
 That file remains untouched. This report claims no whole-repository formatting result.
 The deployed proof and integrated workspace sweep remain pending.
 
+## Initial Receiving correctness attempt
+
+The [initial Receiving route log](production-receiving-001/production-route.log) records a failure at source `6feb01aca9c8fcced0c4ec9d3f5958416d2cf371`.
+The exact test is `route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes`.
+It reports zero passes, one failure, zero ignored, and 80 filtered tests in 25.21 seconds.
+The first cold `acme-record-receipt` request returns HTTP 503 with `{"error":{"code":"execution-failed"}}`.
+
+The [command receipt](production-receiving-001/commands.log) records both image builds before this prerequisite route test.
+The [host image receipt](production-receiving-001/host-image.json) identifies `sha256:f7127cb04a65f272813a7b974571bf26a52d5a008b620c776d8b4c79a6b5c214`.
+The [gates image receipt](production-receiving-001/gates-image.json) identifies `sha256:a7ad5332abf5f53ee79201328277f6faba9d339d54913df37527cfc7bec5bd09`.
+Both image labels identify that same source commit and the `release` build profile.
+The command-history suite and deployed host proof never ran because the prerequisite failed.
+
+The generic response does not identify the underlying execution error.
+The 25.21-second duration covers the complete test, including setup, and does not establish a request timeout.
+The source-backed diagnosis found that the route harness captures tracing events without printing the complete execution error chain.
+The [diagnostic replay and correction below](#receiving-diagnosis-and-corrected-local-replay) establish the cause.
+The initial attempt remains failed.
+This attempt provides no command-history or deployed-host correctness result.
+
+The [cleanup receipt](production-receiving-001/cleanup.receipt) records `verdict=pass` for cluster `wamn-receiving-correctness` and its owned resources.
+The command receipt records removal of containers `wamn-receiving-pg18-6feb01aca9c8-3473967`, `wamn-receiving-registry-6feb01aca9c8-3473967`, and `wamn-receiving-nats-6feb01aca9c8-3473967`, including their volumes.
+It also records removal of image tags `wamn-host:receiving-6feb01aca9c8-3473967-release` and `wamn-gates:receiving-6feb01aca9c8-3473967-release`, plus the owned temporary directory.
+This cleanup result applies to the failed attempt only.
+
+## Receiving diagnosis and corrected local replay
+
+The [diagnostic log](production-receiving-route-diagnostic-001/output.log) identifies an incorrect native plugin request during workload resolution.
+`RouterDriver::load_application` copied every admitted component import into `host_interfaces`.
+This requested plugin providers for engine-supplied `wasi:io/poll@0.2.12`, `wasi:clocks/monotonic-clock@0.2.12`, and `wasi:clocks/wall-clock@0.2.12`.
+Native resolution refused those requests before executing the first operation.
+The captured failure names plugin resolution, not a deadline.
+
+The pinned upstream `wash-runtime/src/engine/mod.rs:743–775` adds WASI interfaces during native component initialization.
+Its `engine/workload.rs:2512–2573` interprets `host_interfaces` as requests for host plugins.
+The [production correction](production-integration-build-007/source.patch) removes the `facts.iter().flat_map(... fact.imports ...)` chain from `load_application`.
+It retains the `NativePolicy` world, the unchanged admission checks, and native linker ownership.
+The complete admitted import facts remain authority inputs. They are not a list of required plugin providers.
+
+[Build 006](production-integration-build-006/result.json) adds only trace-error context to the route proof and exits 0 without running tests.
+The [diagnostic source patch](production-receiving-route-diagnostic-001/source.patch) preserves that proof change against source `6feb01aca9c8fcced0c4ec9d3f5958416d2cf371`.
+The diagnostic reports zero passes, one failure, zero ignored, and 80 filtered tests in 22.42 seconds.
+Its [source and artifact receipt](production-receiving-route-diagnostic-001/source-before.json) identifies test binary SHA-256 `4d0d04bf2ddae63c98941ec427b8d739a756015a1a816c66106ed5f8ba9800b4`.
+Its [stability receipt](production-receiving-route-diagnostic-001/source-stability.json) records unchanged source and artifact hashes during execution.
+The [diagnostic recipe](production-receiving-route-diagnostic-001/recipe.sh) and [capture tool](production-receiving-route-diagnostic-001/capture.py) remain with the evidence.
+
+[Build 007](production-integration-build-007/result.json) exits 0 with stable source after the production correction.
+The [corrected local route log](production-receiving-route-002/output.log) reports one pass, zero failures, zero ignored, and 80 filtered tests in 22.52 seconds.
+The same exact test serves all 13 PAT routes, including the nested operation, and passes all eight P3 protocol cases.
+Those cases cover origin-form requests, early refusal of stalled bodies, body limits, transport errors, cancellation, and recovery.
+This local proof does not replace the command-history or deployed-host gates.
+
+The corrected [source-before receipt](production-receiving-route-002/source-before.json) and [source-after receipt](production-receiving-route-002/source-after.json) retain exact source and artifact hashes.
+The [stability receipt](production-receiving-route-002/source-stability.json) records unchanged HEAD, source hashes, artifact hashes, and worktree status during execution.
+The source remains commit `6feb01aca9c8fcced0c4ec9d3f5958416d2cf371` plus the [recorded patch](production-receiving-route-002/source.patch).
+The executed driver source is SHA-256 `676cdde28e6114618f53d53a99e21c053437f4bd9b64da25b201d61eb397bbbb`.
+The corrected test binary is SHA-256 `ab96ac12aeacf0cc1a42c4fe806ae841de821314c4b4bb5922a22cb45823118c`.
+A later unused-import removal changes source identity without changing runtime behavior.
+[Final-source Clippy](production-clippy-003/result.json) exits 0 in 69.01 seconds with unchanged source during execution.
+
+Both cleanup receipts record `compose_down_exit_code: 0` and `scratch_removed: true`.
+The [diagnostic cleanup](production-receiving-route-diagnostic-001/cleanup.json) names project `wamn-receiving-route-jwk0q3we` and scratch directory `/tmp/wamn-receiving-route.jwk0q3we`.
+The [corrected cleanup](production-receiving-route-002/cleanup.json) names project `wamn-receiving-route-8azli5co` and scratch directory `/tmp/wamn-receiving-route.8azli5co`.
+These receipts establish cleanup for the two local attempts only.
+
 ## Cleanup and remaining evidence
 
 The [earlier authenticated log](production-authenticated-001/output.log) records removal of its exact owned PostgreSQL container.

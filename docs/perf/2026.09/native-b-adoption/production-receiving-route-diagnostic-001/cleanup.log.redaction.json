@@ -1,0 +1,5 @@
+{
+  "scan": "Actual serialized fixture credentials, registry Basic auth, full PAT values, and PostgreSQL URL passwords; no blanket line removal.",
+  "redactions": [],
+  "output_sha256": "f561c62857defd036704506418469021dd06b5c15ed329efa515a9ec3590cb3d"
+}

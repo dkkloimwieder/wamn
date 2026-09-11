@@ -3754,7 +3754,21 @@ async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
         ),
     )
     .await?;
-    let value = successful_value(&response, "acme-record-receipt")?;
+    let value = successful_value(&response, "acme-record-receipt").with_context(|| {
+        let failures: Vec<_> = traces
+            .spans()
+            .into_iter()
+            .flat_map(|span| {
+                span.events
+                    .events
+                    .into_iter()
+                    .flat_map(|event| event.attributes)
+                    .filter(|attribute| attribute.key.as_str() == "error")
+                    .map(|attribute| attribute.value.to_string())
+            })
+            .collect();
+        format!("cold Receiving route trace errors: {failures:?}")
+    })?;
     let memory = response
         .extensions()
         .get::<JourneyGuestMemory>()

@@ -1,0 +1,17 @@
+{
+  "command": [
+    "env",
+    "RUSTC_WRAPPER=",
+    "cargo",
+    "test",
+    "-p",
+    "wamn-proof-integration",
+    "--lib",
+    "--no-run",
+    "--locked",
+    "--offline"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 8.137628501979634,
+  "changed_during_run": []
+}

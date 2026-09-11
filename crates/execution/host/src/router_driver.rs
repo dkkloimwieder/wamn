@@ -49,7 +49,6 @@ use wamn_runtime::wiring_doorbell::WiringDoorbellListener;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
-use wash_runtime::wit::WitInterface;
 
 mod native_call;
 mod native_policy;
@@ -1319,15 +1318,13 @@ impl RouterDriver {
             },
         )?;
         let world = policy.world();
+        // This list requests plugin binding. Native initialization already
+        // links WASI, so copying every admitted import here would require a
+        // second provider for clocks and polling that the engine supplies.
         let host_interfaces = world
             .imports
             .into_iter()
             .chain(world.exports)
-            .chain(facts.iter().flat_map(|fact| {
-                fact.imports
-                    .iter()
-                    .map(|name| WitInterface::from(name.as_str()))
-            }))
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();

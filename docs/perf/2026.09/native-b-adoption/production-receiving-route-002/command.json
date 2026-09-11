@@ -1,0 +1,15 @@
+{
+  "cwd": "/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910",
+  "argv": [
+    "bash",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/native-b-adoption/production-receiving-route-002/recipe.sh",
+    "/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/target/debug/deps/wamn_proof_integration-64b648fb55077e98",
+    "route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes",
+    "--ignored",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "authority": "/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/docs/operations/build-and-test.md",
+  "authority_sha256": "6ef8c4a56134d27190c8750aa78962a63d6ad44f5a00a35a72aeec6010a6111b"
+}
