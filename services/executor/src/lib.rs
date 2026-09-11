@@ -445,6 +445,10 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     });
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let jetstream = Arc::new(WamnJetstream::from_env());
+    jetstream
+        .activate_events()
+        .await
+        .map_err(|error| anyhow::anyhow!("activate declared event streams: {error:?}"))?;
     jetstream.bind_derived_scope(
         QUEUE_CLAIM_SCOPE,
         &scope.tenant_id,

@@ -722,9 +722,9 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
         "PREPARE uper (text,text,text,text,text,text,text,text,boolean) AS {upsert};\n\
          PREPARE geter (text,text,text) AS {select};\n\
          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev',\
-                      'EVT_demo_dev','wamn-cdc-demo--app--dev',NULL,true);\n\
+                      'EVT_4_demo_3_app_3_dev','wamn-cdc-demo--app--dev',NULL,true);\n\
          EXECUTE uper('demo','app','dev','wamn_cdc_demo__app__dev','wamn_cdc_demo__app__dev_v2',\
-                      'EVT_demo_dev','wamn-cdc-demo--app--dev',NULL,false);\n\
+                      'EVT_4_demo_3_app_3_dev','wamn-cdc-demo--app--dev',NULL,false);\n\
          CREATE TEMP TABLE reader_probe AS EXECUTE geter('demo','app','dev');\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM registry.event_readers\n\
@@ -733,14 +733,14 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
            ASSERT (SELECT slot FROM reader_probe)='wamn_cdc_demo__app__dev_v2'\n\
               AND (SELECT enabled FROM reader_probe)=false,\n\
              'the second upsert refreshed slot + enabled (ON CONFLICT DO UPDATE)';\n\
-           ASSERT (SELECT stream FROM reader_probe)='EVT_demo_dev'\n\
+           ASSERT (SELECT stream FROM reader_probe)='EVT_4_demo_3_app_3_dev'\n\
               AND (SELECT replication_secret_name FROM reader_probe)='wamn-cdc-demo--app--dev',\n\
              'select_event_reader_sql returns the stream + replication-Secret reference';\n\
          END $$;\n\
          DO $$ BEGIN BEGIN\n\
            INSERT INTO registry.event_readers\n\
                (org, project, env, publication, slot, stream, replication_secret_name)\n\
-             VALUES ('demo','app','prod','p','s','EVT_demo_prod','sec');\n\
+             VALUES ('demo','app','prod','p','s','EVT_4_demo_3_app_4_prod','sec');\n\
            ASSERT false, 'a registration for an unprovisioned project-env must be rejected (FK)';\n\
          EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;\n\
          DROP TABLE reader_probe;\n\

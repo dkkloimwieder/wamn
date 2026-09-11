@@ -1,4 +1,4 @@
-//! Host-owned registration provisioning and event publication.
+//! Host-owned registration activation and event publication.
 //!
 //! Native `wasmcloud:nats` owns materializer attachment, delivery and settlement.
 //! This module retains exact release-registration selection, durable drift
@@ -13,8 +13,10 @@ use std::time::Duration;
 use async_nats::HeaderMap;
 use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::Context;
+#[cfg(test)]
+use async_nats::jetstream::consumer::AckPolicy;
+use async_nats::jetstream::consumer::Config as StoredConsumerConfig;
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
-use async_nats::jetstream::consumer::{AckPolicy, Config as StoredConsumerConfig};
 use async_nats::jetstream::context::{GetStreamError, GetStreamErrorKind};
 #[cfg(test)]
 use futures_util::StreamExt as _;
@@ -22,6 +24,11 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tokio::sync::Mutex;
 use tracing::Instrument as _;
 use wamn_catalog::ServingManifest;
+use wamn_control_provision::events::{
+    advisory_stream_config, consumer_config_matches, materializer_consumer_config,
+    source_stream_config, stream_config_matches,
+};
+use wamn_control_registry::Triple;
 use wamn_control_registry::identifiers::{
     ExecutionTargetId, doorbell_subject, mvp_execution_target_id,
 };
@@ -433,7 +440,7 @@ fn prepare_router_tap(
     })
 }
 
-/// Link host-owned registration provisioning and the retained scheduler hint
+/// Link host-owned registration checks and the retained scheduler hint
 /// directly. The host path calls this from [`HostPlugin::on_workload_item_bind`];
 /// a Service (the materializer, l5i9.17) or a hand-built store links it the same
 /// way `wamn:postgres` is linked.
@@ -447,12 +454,18 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::
 // Plugin configuration
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct WamnJetstreamConfig {
     /// Data-plane NATS URL (deploy/infra/nats-jetstream.yaml Service `evt-nats`).
     /// `None` ⇒ the plugin registers but every call returns
     /// `connection-unavailable`.
     pub nats_url: Option<String>,
+    /// Trusted event coordinates, separate from tenant and database authority.
+    pub event_scope: Option<Triple>,
+    /// Declared NATS stream copies, separate from workload instances.
+    pub stream_replicas: Option<usize>,
+    /// Declared duplicate detection window in seconds.
+    pub dup_window_secs: Option<u64>,
 }
 
 impl WamnJetstreamConfig {
@@ -461,6 +474,22 @@ impl WamnJetstreamConfig {
     pub fn from_env() -> Self {
         Self {
             nats_url: std::env::var("WAMN_EVT_NATS_URL").ok(),
+            event_scope: match (
+                std::env::var("WAMN_EVT_ORG"),
+                std::env::var("WAMN_EVT_PROJECT"),
+                std::env::var("WAMN_EVT_ENV"),
+            ) {
+                (Ok(org), Ok(project), Ok(environment)) => {
+                    Some(Triple::new(org, project, environment))
+                }
+                _ => None,
+            },
+            stream_replicas: std::env::var("WAMN_EVT_STREAM_REPLICAS")
+                .ok()
+                .and_then(|value| value.parse().ok()),
+            dup_window_secs: std::env::var("WAMN_EVT_DUP_WINDOW_SECS")
+                .ok()
+                .and_then(|value| value.parse().ok()),
         }
     }
 }
@@ -471,6 +500,8 @@ impl WamnJetstreamConfig {
 
 pub struct WamnJetstream {
     nats_url: Option<String>,
+    stream_replicas: Option<usize>,
+    dup_window_secs: Option<u64>,
     nats_username: Option<String>,
     nats_password_file: Option<PathBuf>,
     /// Event coordinates come from the platform bootstrap, separately from DB authority.
@@ -607,7 +638,11 @@ fn prepare_derived_publication(
         event.op,
         &event.dedup_id,
     );
-    let expected_stream = stream_name(&coordinates.org, &coordinates.environment);
+    let expected_stream = stream_name(
+        &coordinates.org,
+        &coordinates.project,
+        &coordinates.environment,
+    );
     let body = serde_json::to_vec(&event).map_err(|error| {
         DerivedPublishError::new(
             DerivedPublishErrorKind::Serialization,
@@ -646,9 +681,17 @@ impl WamnJetstream {
     pub fn new(cfg: WamnJetstreamConfig) -> Self {
         Self {
             nats_url: cfg.nats_url,
+            stream_replicas: cfg.stream_replicas,
+            dup_window_secs: cfg.dup_window_secs,
             nats_username: None,
             nats_password_file: None,
-            event_coordinates: EventCoordinates::default(),
+            event_coordinates: cfg
+                .event_scope
+                .map_or_else(EventCoordinates::default, |scope| EventCoordinates {
+                    org: scope.org.into_boxed_str(),
+                    project: scope.project.into_boxed_str(),
+                    environment: scope.env.as_str().into(),
+                }),
             ctx: Mutex::new(None),
             doorbell_nats: None,
             execution_targets: std::sync::RwLock::new(HashMap::new()),
@@ -663,12 +706,48 @@ impl WamnJetstream {
         plugin.nats_username = std::env::var("WAMN_EVT_NATS_USERNAME").ok();
         plugin.nats_password_file =
             std::env::var_os("WAMN_EVT_NATS_PASSWORD_FILE").map(PathBuf::from);
-        plugin.event_coordinates = EventCoordinates {
-            org: std::env::var("WAMN_EVT_ORG").unwrap_or_default().into(),
-            project: std::env::var("WAMN_EVT_PROJECT").unwrap_or_default().into(),
-            environment: std::env::var("WAMN_EVT_ENV").unwrap_or_default().into(),
-        };
         plugin
+    }
+
+    /// Refuse a configured event connection until its streams match their declarations.
+    pub async fn activate_events(&self) -> Result<(), JsError> {
+        if self.nats_url.is_some() {
+            self.ensure_ctx().await?;
+        }
+        Ok(())
+    }
+
+    fn expected_event_streams(
+        &self,
+    ) -> Result<[async_nats::jetstream::stream::Config; 2], JsError> {
+        require_event_coordinates(&self.event_coordinates)
+            .map_err(|error| JsError::Other(error.to_string()))?;
+        let replicas = self
+            .stream_replicas
+            .filter(|replicas| (1..=5).contains(replicas))
+            .ok_or_else(|| {
+                JsError::Other(
+                    "WAMN_EVT_STREAM_REPLICAS must declare one to five NATS stream copies".into(),
+                )
+            })?;
+        let duplicate_window = self
+            .dup_window_secs
+            .filter(|seconds| *seconds > 0)
+            .map(Duration::from_secs)
+            .ok_or_else(|| {
+                JsError::Other(
+                    "WAMN_EVT_DUP_WINDOW_SECS must declare a positive duplicate window".into(),
+                )
+            })?;
+        let scope = Triple::new(
+            self.event_coordinates.org.as_ref(),
+            self.event_coordinates.project.as_ref(),
+            self.event_coordinates.environment.as_ref(),
+        );
+        Ok([
+            source_stream_config(&scope, replicas, duplicate_window),
+            advisory_stream_config(&scope, replicas),
+        ])
     }
 
     /// Attach the CONTROL-plane core-NATS client `doorbell.ring` publishes on
@@ -838,6 +917,7 @@ impl WamnJetstream {
             .nats_url
             .as_deref()
             .ok_or(JsError::ConnectionUnavailable)?;
+        let expected_streams = self.expected_event_streams()?;
         let options = match (&self.nats_username, &self.nats_password_file) {
             (Some(username), Some(path))
                 if !username.is_empty()
@@ -873,6 +953,18 @@ impl WamnJetstream {
             JsError::ConnectionUnavailable
         })?;
         let ctx = async_nats::jetstream::new(client);
+        for expected in expected_streams {
+            let stream = ctx
+                .get_stream(&expected.name)
+                .await
+                .map_err(|error| map_get_stream_err(&expected.name, &error))?;
+            if !stream_config_matches(&expected, &stream.cached_info().config) {
+                return Err(JsError::Other(format!(
+                    "event stream {:?} differs from its complete declaration",
+                    expected.name
+                )));
+            }
+        }
         *guard = Some(ctx.clone());
         Ok(ctx)
     }
@@ -1112,8 +1204,6 @@ fn map_get_stream_err(stream: &str, e: &GetStreamError) -> JsError {
 /// a held registration apart from a transient `connection-unavailable`.
 const UNREGISTERED_SOURCE: &str = "unregistered-source";
 const CONSUMER_CONFIG_DRIFT: &str = "registration-consumer-config-drift";
-// Fits the event broker's 1 MiB payload ceiling plus protocol overhead.
-const MAX_PULL_BYTES: i64 = 4 * 1024 * 1024;
 
 /// The `(entity, op)` tail of one event subject — the whole of a registration's
 /// identity that a subject can carry.
@@ -1158,7 +1248,12 @@ fn require_registration(
         coordinates.org, coordinates.project, coordinates.environment,
     );
     if manifest.release.environment.as_str() != coordinates.environment.as_ref()
-        || stream != stream_name(&coordinates.org, &coordinates.environment)
+        || stream
+            != stream_name(
+                &coordinates.org,
+                &coordinates.project,
+                &coordinates.environment,
+            )
         || !filter_subject.starts_with(&prefix)
     {
         return Err(format!(
@@ -1198,15 +1293,13 @@ fn exact_consumer_config_drift(
     requested: &registration::ConsumerConfig,
     stored: &StoredConsumerConfig,
 ) -> bool {
-    stored.ack_policy != AckPolicy::Explicit
-        || stored.filter_subject != requested.filter_subject
-        || !stored.filter_subjects.is_empty()
-        || stored.max_deliver != i64::from(requested.max_deliver)
-        || stored.ack_wait != Duration::from_millis(requested.ack_wait_ms)
-        || stored.max_ack_pending != 64
-        || stored.max_batch != 64
-        || stored.max_bytes != MAX_PULL_BYTES
-        || stored.max_waiting != 1
+    let expected = materializer_consumer_config(
+        &requested.durable,
+        &requested.filter_subject,
+        Duration::from_millis(requested.ack_wait_ms),
+        requested.max_deliver,
+    );
+    !consumer_config_matches(&expected, stored)
 }
 
 async fn prepare_consumer(
@@ -1234,23 +1327,10 @@ async fn prepare_consumer(
         .get_stream(&config.stream_name)
         .await
         .map_err(|error| map_get_stream_err(&config.stream_name, &error))?;
-    let pull = PullConfig {
-        durable_name: Some(config.durable.clone()),
-        ack_policy: AckPolicy::Explicit,
-        filter_subject: config.filter_subject.clone(),
-        ack_wait: Duration::from_millis(config.ack_wait_ms),
-        max_deliver: i64::from(config.max_deliver),
-        // One materializer batch is at most 64 messages and four MiB.
-        max_ack_pending: 64,
-        max_batch: 64,
-        max_bytes: MAX_PULL_BYTES,
-        max_waiting: 1,
-        ..Default::default()
-    };
     let consumer = stream
-        .get_or_create_consumer(&config.durable, pull)
+        .get_consumer::<PullConfig>(&config.durable)
         .await
-        .map_err(|error| JsError::Other(format!("prepare consumer: {error}")))?;
+        .map_err(|error| JsError::Other(format!("attach provisioned consumer: {error}")))?;
     if exact_consumer_config_drift(config, &consumer.cached_info().config) {
         return Err(JsError::Other(format!(
             "{CONSUMER_CONFIG_DRIFT}: durable {:?} differs from its bounded registration configuration",
@@ -1386,7 +1466,7 @@ mod tests {
         .expect("trusted scope and admitted selector prepare");
 
         assert_eq!(publication.subject, "evt.acme.receiving.dev.orders.update");
-        assert_eq!(publication.expected_stream, "EVT_acme_dev");
+        assert_eq!(publication.expected_stream, "EVT_4_acme_9_receiving_3_dev");
         assert_eq!(
             publication.message_id,
             derived_msg_id(
@@ -1437,7 +1517,7 @@ mod tests {
 
     #[test]
     fn derived_publication_refuses_an_unbound_or_partial_scope() {
-        let plugin = WamnJetstream::new(WamnJetstreamConfig { nats_url: None });
+        let plugin = WamnJetstream::new(WamnJetstreamConfig::default());
         assert_eq!(
             plugin
                 .required_derived_claim("component-1")
@@ -1489,7 +1569,7 @@ mod tests {
 
     #[tokio::test]
     async fn derived_publication_refuses_missing_or_foreign_event_coordinates_before_connect() {
-        let mut plugin = WamnJetstream::new(WamnJetstreamConfig { nats_url: None });
+        let mut plugin = WamnJetstream::new(WamnJetstreamConfig::default());
         plugin
             .bind_derived_scope(
                 "component-1",
@@ -1527,7 +1607,7 @@ mod tests {
 
     #[test]
     fn doorbell_registration_uses_the_mvp_target_adapter() {
-        let plugin = WamnJetstream::new(WamnJetstreamConfig { nats_url: None });
+        let plugin = WamnJetstream::new(WamnJetstreamConfig::default());
         assert!(mvp_execution_target_id("evil.>").is_err());
         assert!(plugin.execution_target_for("c1").is_none());
         let target = mvp_execution_target_id("tenant-a").expect("tenant-safe target");
@@ -1539,10 +1619,38 @@ mod tests {
     }
 
     #[test]
+    fn activation_requires_declared_stream_limits_separate_from_workload_instances() {
+        assert!(
+            WamnJetstream::new(WamnJetstreamConfig::default())
+                .expected_event_streams()
+                .is_err()
+        );
+        let mut plugin = WamnJetstream::new(WamnJetstreamConfig {
+            event_scope: Some(Triple::new("acme", "receiving", "dev")),
+            ..Default::default()
+        });
+        assert!(plugin.expected_event_streams().is_err());
+        plugin.stream_replicas = Some(3);
+        assert!(plugin.expected_event_streams().is_err());
+        plugin.dup_window_secs = Some(120);
+        let [source, advisories] = plugin.expected_event_streams().unwrap();
+        assert_eq!(source.num_replicas, 3);
+        assert_eq!(advisories.num_replicas, 3);
+        assert_eq!(source.duplicate_window, Duration::from_secs(120));
+        for replicas in [0, 6] {
+            plugin.stream_replicas = Some(replicas);
+            assert!(plugin.expected_event_streams().is_err());
+        }
+        plugin.stream_replicas = Some(1);
+        plugin.dup_window_secs = Some(0);
+        assert!(plugin.expected_event_streams().is_err());
+    }
+
+    #[test]
     fn config_from_env_reads_evt_nats_url() {
         // Only assert the None (absent) branch — reading the var back would race
         // other tests in-process; the skip-when-absent posture is the contract.
-        let cfg = WamnJetstreamConfig { nats_url: None };
+        let cfg = WamnJetstreamConfig::default();
         assert!(cfg.nats_url.is_none());
     }
 
@@ -1591,28 +1699,34 @@ mod tests {
         require_registration(
             Some(&manifest),
             &coordinates,
-            "EVT_acme_prod",
+            "EVT_4_acme_4_proj_4_prod",
             "cat",
             "r1",
             "evt.acme.proj.prod.receipts.>",
         )
         .expect("exact release registration admits");
-        assert!(
-            require_registration(
-                Some(&manifest),
-                &coordinates,
-                "EVT_foreign_prod",
-                "cat",
-                "r1",
-                "evt.acme.proj.prod.receipts.>",
-            )
-            .is_err()
-        );
+        for foreign_stream in [
+            stream_name("foreign", "proj", "prod"),
+            stream_name("acme", "other-project", "prod"),
+            stream_name("acme", "proj", "dev"),
+        ] {
+            assert!(
+                require_registration(
+                    Some(&manifest),
+                    &coordinates,
+                    &foreign_stream,
+                    "cat",
+                    "r1",
+                    "evt.acme.proj.prod.receipts.>",
+                )
+                .is_err()
+            );
+        }
         assert!(
             require_registration(
                 None,
                 &coordinates,
-                "EVT_acme_prod",
+                "EVT_4_acme_4_proj_4_prod",
                 "cat",
                 "r1",
                 "evt.acme.proj.prod.receipts.>"
@@ -1632,7 +1746,7 @@ mod tests {
                 require_registration(
                     Some(&manifest),
                     &coordinates,
-                    "EVT_acme_prod",
+                    "EVT_4_acme_4_proj_4_prod",
                     "cat",
                     "r1",
                     filter
@@ -1646,7 +1760,7 @@ mod tests {
             require_registration(
                 Some(&manifest),
                 &coordinates,
-                "EVT_acme_prod",
+                "EVT_4_acme_4_proj_4_prod",
                 "cat",
                 "r2",
                 "evt.acme.proj.prod.receipts.>"
@@ -1658,7 +1772,7 @@ mod tests {
             require_registration(
                 Some(&manifest),
                 &coordinates,
-                "EVT_acme_prod",
+                "EVT_4_acme_4_proj_4_prod",
                 "cat",
                 "r1",
                 "evt.acme.proj.prod.orders.>"
@@ -1670,7 +1784,7 @@ mod tests {
             require_registration(
                 Some(&manifest),
                 &coordinates,
-                "EVT_acme_prod",
+                "EVT_4_acme_4_proj_4_prod",
                 "other_package",
                 "r1",
                 "evt.acme.proj.prod.receipts.>"
@@ -1966,23 +2080,20 @@ mod tests {
     #[test]
     fn registration_consumer_refuses_changed_broker_bounds() {
         let requested = registration::ConsumerConfig {
-            stream_name: "EVT_acme_prod".into(),
+            stream_name: "EVT_4_acme_4_proj_4_prod".into(),
             durable: "mat_t1_cat_r1".into(),
             filter_subject: "evt.acme.proj.prod.receipts.>".into(),
             ack_wait_ms: 30_000,
             max_deliver: 5,
         };
-        let matching = StoredConsumerConfig {
-            ack_policy: AckPolicy::Explicit,
-            filter_subject: requested.filter_subject.clone(),
-            ack_wait: Duration::from_millis(requested.ack_wait_ms),
-            max_deliver: 5,
-            max_ack_pending: 64,
-            max_batch: 64,
-            max_bytes: MAX_PULL_BYTES,
-            max_waiting: 1,
-            ..Default::default()
-        };
+        use async_nats::jetstream::consumer::IntoConsumerConfig as _;
+        let matching = materializer_consumer_config(
+            &requested.durable,
+            &requested.filter_subject,
+            Duration::from_millis(requested.ack_wait_ms),
+            requested.max_deliver,
+        )
+        .into_consumer_config();
         assert!(!exact_consumer_config_drift(&requested, &matching));
 
         let unbounded = StoredConsumerConfig {
@@ -2005,8 +2116,6 @@ mod tests {
     // rides the materializer (l5i9.17).
     // -----------------------------------------------------------------------
 
-    use async_nats::jetstream::stream::{Config as StreamConfig, StorageType};
-
     #[tokio::test]
     async fn live_derived_publish_replay_converges_through_jetstream_dedup() {
         let Ok(url) = std::env::var("WAMN_EVT_NATS_URL") else {
@@ -2018,28 +2127,26 @@ mod tests {
 
         let client = async_nats::connect(&url).await.expect("connect");
         let ctx = async_nats::jetstream::new(client);
-        let stream = "EVT_wamnjsderived_dev";
+        let stream = "EVT_13_wamnjsderived_3_app_3_dev";
         let event_subject = "evt.wamnjsderived.app.dev.orders.update";
         let _ = ctx.delete_stream(stream).await;
-        ctx.create_stream(StreamConfig {
-            name: stream.into(),
-            subjects: vec!["evt.wamnjsderived.*.dev.>".into()],
-            storage: StorageType::File,
-            num_replicas: 1,
-            duplicate_window: Duration::from_secs(120),
-            ..Default::default()
-        })
-        .await
-        .expect("create derived stream");
+        let scope = Triple::new("wamnjsderived", "app", "dev");
+        let advisory_config = advisory_stream_config(&scope, 1);
+        let advisory_name = advisory_config.name.clone();
+        let _ = ctx.delete_stream(&advisory_name).await;
+        ctx.create_stream(source_stream_config(&scope, 1, Duration::from_secs(120)))
+            .await
+            .expect("provision derived stream");
+        ctx.create_stream(advisory_config)
+            .await
+            .expect("provision advisory stream");
 
-        let mut plugin = WamnJetstream::new(WamnJetstreamConfig {
+        let plugin = WamnJetstream::new(WamnJetstreamConfig {
             nats_url: Some(url),
+            event_scope: Some(scope),
+            stream_replicas: Some(1),
+            dup_window_secs: Some(120),
         });
-        plugin.event_coordinates = EventCoordinates {
-            org: "wamnjsderived".into(),
-            project: "app".into(),
-            environment: "dev".into(),
-        };
         plugin
             .bind_derived_scope("component-1", "wamnjsderived", "app", "dev")
             .expect("trusted scope binds");
@@ -2091,5 +2198,8 @@ mod tests {
         assert_eq!(stored[0].causation.depth, 3);
 
         ctx.delete_stream(stream).await.expect("cleanup");
+        ctx.delete_stream(advisory_name)
+            .await
+            .expect("advisory cleanup");
     }
 }

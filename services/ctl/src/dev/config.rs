@@ -43,6 +43,10 @@ const HTTP_ADMITTER_DATABASE_URL: &str = "http_admitter_database_url";
 const EVENT_MATERIALIZER_DATABASE_URL: &str = "event_materializer_database_url";
 const SCHEDULER_NATS_URL: &str = "scheduler_nats_url";
 const EVENT_NATS_URL: &str = "event_nats_url";
+const EVENT_NATS_USERNAME: &str = "event_nats_username";
+const EVENT_NATS_PASSWORD_FILE: &str = "event_nats_password_file";
+const STREAM_REPLICAS: &str = "stream_replicas";
+const DUP_WINDOW_SECS: &str = "dup_window_secs";
 const TEMPO_QUERY_URL: &str = "tempo_query_url";
 const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "otel_exporter_otlp_endpoint";
 const COMPONENT_ARTIFACT_BASE: &str = "component_artifact_base";
@@ -92,6 +96,10 @@ struct DevConfigDocument {
     event_materializer_database_url: String,
     scheduler_nats_url: String,
     event_nats_url: String,
+    event_nats_username: String,
+    event_nats_password_file: PathBuf,
+    stream_replicas: usize,
+    dup_window_secs: u64,
     tempo_query_url: String,
     otel_exporter_otlp_endpoint: String,
     component_artifact_base: String,
@@ -581,6 +589,10 @@ pub struct DevConfig {
     event_materializer_database_url: Box<str>,
     scheduler_nats_url: Box<str>,
     event_nats_url: Box<str>,
+    event_nats_username: Box<str>,
+    event_nats_password_file: PathBuf,
+    stream_replicas: usize,
+    dup_window_secs: u64,
     tempo_query_url: Box<str>,
     otel_exporter_otlp_endpoint: Box<str>,
     component_artifact_base: Box<str>,
@@ -644,6 +656,10 @@ impl fmt::Debug for DevConfig {
                 &self.sanitized_endpoint(SCHEDULER_NATS_URL),
             )
             .field(EVENT_NATS_URL, &self.sanitized_endpoint(EVENT_NATS_URL))
+            .field(EVENT_NATS_USERNAME, &self.event_nats_username)
+            .field(EVENT_NATS_PASSWORD_FILE, &self.event_nats_password_file)
+            .field(STREAM_REPLICAS, &self.stream_replicas)
+            .field(DUP_WINDOW_SECS, &self.dup_window_secs)
             .field(TEMPO_QUERY_URL, &self.sanitized_endpoint(TEMPO_QUERY_URL))
             .field(
                 OTEL_EXPORTER_OTLP_ENDPOINT,
@@ -766,6 +782,26 @@ impl DevConfig {
     /// Event-plane NATS endpoint passed to the local serving host.
     pub fn event_nats_url(&self) -> &str {
         &self.event_nats_url
+    }
+
+    /// Event username shared by local publication and its environment tap view.
+    pub fn event_nats_username(&self) -> &str {
+        &self.event_nats_username
+    }
+
+    /// Private event password file passed to the local serving host.
+    pub fn event_nats_password_file(&self) -> &Path {
+        &self.event_nats_password_file
+    }
+
+    /// Declared NATS stream copies, separate from workload instances.
+    pub fn stream_replicas(&self) -> usize {
+        self.stream_replicas
+    }
+
+    /// Declared source-stream duplicate window in seconds.
+    pub fn dup_window_secs(&self) -> u64 {
+        self.dup_window_secs
     }
 
     /// Tempo HTTP query endpoint used by the development read seam.
@@ -902,6 +938,10 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         event_materializer_database_url,
         scheduler_nats_url,
         event_nats_url,
+        event_nats_username,
+        event_nats_password_file,
+        stream_replicas,
+        dup_window_secs,
         tempo_query_url,
         otel_exporter_otlp_endpoint,
         component_artifact_base,
@@ -946,6 +986,33 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     )?;
     let scheduler_nats_url = nonempty_string(scheduler_nats_url, SCHEDULER_NATS_URL)?;
     let event_nats_url = nonempty_string(event_nats_url, EVENT_NATS_URL)?;
+    let event_nats_username = nonempty_string(event_nats_username, EVENT_NATS_USERNAME)?;
+    if !event_nats_username
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return Err(DevConfigError::new(
+            DevConfigErrorKind::InvalidValue,
+            EVENT_NATS_USERNAME,
+            "event username must be one broker token",
+        ));
+    }
+    let event_nats_password_file =
+        nonempty_path(event_nats_password_file, EVENT_NATS_PASSWORD_FILE)?;
+    if !(1..=5).contains(&stream_replicas) {
+        return Err(DevConfigError::new(
+            DevConfigErrorKind::InvalidValue,
+            STREAM_REPLICAS,
+            "NATS stream copies must be between one and five",
+        ));
+    }
+    if dup_window_secs == 0 {
+        return Err(DevConfigError::new(
+            DevConfigErrorKind::InvalidValue,
+            DUP_WINDOW_SECS,
+            "source-stream duplicate window must be positive",
+        ));
+    }
     let tempo_query_url = nonempty_string(tempo_query_url, TEMPO_QUERY_URL)?;
     let otel_exporter_otlp_endpoint =
         nonempty_string(otel_exporter_otlp_endpoint, OTEL_EXPORTER_OTLP_ENDPOINT)?;
@@ -1098,6 +1165,10 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         event_materializer_database_url,
         scheduler_nats_url,
         event_nats_url,
+        event_nats_username,
+        event_nats_password_file,
+        stream_replicas,
+        dup_window_secs,
         tempo_query_url,
         otel_exporter_otlp_endpoint,
         component_artifact_base,
@@ -1334,20 +1405,24 @@ fn json_value_matches_schema(schema: &Value, value: &Value) -> bool {
     match schema.get("type").and_then(Value::as_str) {
         Some("string") => value.is_string(),
         Some("boolean") => value.is_boolean(),
-        Some("integer") => value
-            .as_u64()
-            .and_then(|number| u32::try_from(number).ok())
-            .is_some_and(|number| {
-                let number = f64::from(number);
-                schema
-                    .get("minimum")
+        Some("integer") => value.as_u64().is_some_and(|number| {
+            if schema.get("format").and_then(Value::as_str) == Some("uint32")
+                && u32::try_from(number).is_err()
+            {
+                return false;
+            }
+            let number = value
+                .as_f64()
+                .expect("unsigned JSON integer has a numeric value");
+            schema
+                .get("minimum")
+                .and_then(Value::as_f64)
+                .is_none_or(|minimum| number >= minimum)
+                && schema
+                    .get("maximum")
                     .and_then(Value::as_f64)
-                    .is_none_or(|minimum| number >= minimum)
-                    && schema
-                        .get("maximum")
-                        .and_then(Value::as_f64)
-                        .is_none_or(|maximum| number <= maximum)
-            }),
+                    .is_none_or(|maximum| number <= maximum)
+        }),
         Some("array") => value.as_array().is_some_and(|values| {
             schema.get("items").is_some_and(|item| {
                 values
@@ -1776,6 +1851,10 @@ mod tests {
             (EVENT_MATERIALIZER_DATABASE_URL): format!("postgresql://materializer:materializer-secret@{}/target", addresses[7]),
             (SCHEDULER_NATS_URL): format!("nats://{}", addresses[8]),
             (EVENT_NATS_URL): format!("nats://{}", addresses[9]),
+            (EVENT_NATS_USERNAME): "dev_runtime",
+            (EVENT_NATS_PASSWORD_FILE): "/run/secrets/event-nats-password",
+            (STREAM_REPLICAS): 1,
+            (DUP_WINDOW_SECS): 120,
             (TEMPO_QUERY_URL): format!("http://{}", addresses[14]),
             (OTEL_EXPORTER_OTLP_ENDPOINT): format!("http://{}", addresses[15]),
             (COMPONENT_ARTIFACT_BASE): format!("{}/wamn/components", addresses[10]),
@@ -1836,6 +1915,46 @@ mod tests {
                 parse(&document).unwrap_err().kind(),
                 DevConfigErrorKind::InvalidValue
             );
+        }
+    }
+
+    #[test]
+    fn event_configuration_requires_credentials_and_explicit_stream_limits() {
+        let addresses = ["127.0.0.1:41000".parse().expect("test address"); ENDPOINT_COUNT];
+        let document = complete_document(&addresses);
+        let parsed = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
+        assert_eq!(parsed.event_nats_username(), "dev_runtime");
+        assert_eq!(parsed.stream_replicas(), 1);
+        assert_eq!(parsed.dup_window_secs(), 120);
+        let mut long_window = document.clone();
+        long_window[DUP_WINDOW_SECS] = json!(u64::from(u32::MAX) + 1);
+        let parsed = parse_config(&serde_json::to_vec(&long_window).unwrap()).unwrap();
+        assert_eq!(parsed.dup_window_secs(), u64::from(u32::MAX) + 1);
+        for (key, value) in [
+            (EVENT_NATS_USERNAME, json!("bad.user")),
+            (EVENT_NATS_PASSWORD_FILE, json!("")),
+            (STREAM_REPLICAS, json!(0)),
+            (STREAM_REPLICAS, json!(6)),
+            (DUP_WINDOW_SECS, json!(0)),
+            (EFFECTIVE_RELEASE_ID, json!(u64::from(u32::MAX) + 1)),
+        ] {
+            let mut invalid = document.clone();
+            invalid[key] = value;
+            let error = parse_config(&serde_json::to_vec(&invalid).unwrap()).unwrap_err();
+            assert_eq!(error.key(), key);
+            assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+        }
+        for key in [
+            EVENT_NATS_USERNAME,
+            EVENT_NATS_PASSWORD_FILE,
+            STREAM_REPLICAS,
+            DUP_WINDOW_SECS,
+        ] {
+            let mut missing = document.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            let error = parse_config(&serde_json::to_vec(&missing).unwrap()).unwrap_err();
+            assert_eq!(error.key(), key);
+            assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
         }
     }
 

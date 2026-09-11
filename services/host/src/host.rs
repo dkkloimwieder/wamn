@@ -811,6 +811,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .with_doorbell(doorbell_client)
             .with_release(release.clone()),
     );
+    jetstream
+        .activate_events()
+        .await
+        .map_err(|error| anyhow::anyhow!("activate declared event streams: {error:?}"))?;
     let flow_http =
         FlowHttpRouting::from_env(release.clone()).context("wamn:flow-http-routing plugin init")?;
     let flow_http = match (&route_auth_scope, &identity_reader) {
@@ -1124,7 +1128,7 @@ mod tests {
             ("username", "materializer"),
             ("password", "test-password"),
             ("inbox-prefix", "_INBOX_materializer"),
-            ("stream-allow", "EVT_acme_prod"),
+            ("stream-allow", "EVT_4_acme_9_receiving_4_prod"),
             ("subject-allow", "evt.acme.receiving.prod.>"),
         ]
         .into_iter()

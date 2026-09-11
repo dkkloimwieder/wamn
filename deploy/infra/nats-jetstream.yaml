@@ -1,8 +1,8 @@
 # Event-plane DATA-PLANE NATS (D19 v3 §5/§7 Phase 1; wamn-l5i9.7 [EVT-NATS]).
 #
 # A DEDICATED 3-node JetStream cluster (R3 file storage) that carries the CDC
-# event streams (EVT_<org>_prod / EVT_<org>_dev, subjects
-# evt.<org>.<project>.<env>.<entity>.<op>). It is DELIBERATELY SEPARATE from the
+# event streams for each organization, project, and environment, with subjects
+# evt.<org>.<project>.<env>.<entity>.<op>. It is DELIBERATELY SEPARATE from the
 # operator/control-plane NATS (Deployment `nats`, Service `nats`) that carries
 # only the dispatcher doorbell (wamn.doorbell.<tenant>) and the wasmCloud
 # control plane — that cluster is untouched by this manifest, and the
@@ -20,8 +20,12 @@
 # evt-nats-bootstrap with context.json. Both are required Secrets; this file
 # contains no passwords. The authorization file uses existing NATS users and
 # subject permissions on the shared account, with no anonymous/default user.
-# Give each environment separate materializer, publisher/admin and observer
-# users. The materializer may publish only exact stream/consumer INFO, consumer
+# Give each environment separate provisioning, materializer, publisher and
+# observer credentials. Only provisioning creates streams and consumers.
+# Runtime credentials cannot create, update or delete streams or consumers.
+# Observer permissions name only that environment's source and advisory
+# streams. Never grant global stream or consumer listing.
+# The materializer may publish only exact stream/consumer INFO, consumer
 # NEXT and ACK subjects, and subscribe only to its private inbox prefix. It
 # cannot create a stream/consumer or publish events. Other roles receive only
 # their required stream operations and their own _INBOX_<username>.> replies.
@@ -44,7 +48,7 @@ data:
     # each replica advertises a stable, unique identity in the RAFT groups.
     server_name: $POD_NAME
     listen: 0.0.0.0:4222
-    http: 0.0.0.0:8222
+    http: 127.0.0.1:8222
     # Preserve the default 1 MiB event ceiling explicitly for bounded native pulls.
     max_payload: 1048576
     include /etc/nats-authorization/authorization.conf
@@ -90,9 +94,6 @@ spec:
     - name: cluster
       port: 6222
       targetPort: 6222
-    - name: monitor
-      port: 8222
-      targetPort: 8222
 ---
 # Client service: what publishers/consumers/the reader connect to.
 # nats://evt-nats.wamn-system.svc.cluster.local:4222
@@ -111,9 +112,6 @@ spec:
     - name: client
       port: 4222
       targetPort: 4222
-    - name: monitor
-      port: 8222
-      targetPort: 8222
 ---
 apiVersion: apps/v1
 kind: StatefulSet
@@ -167,8 +165,6 @@ spec:
               containerPort: 4222
             - name: cluster
               containerPort: 6222
-            - name: monitor
-              containerPort: 8222
           volumeMounts:
             - name: config
               mountPath: /etc/nats-config
@@ -177,18 +173,17 @@ spec:
               readOnly: true
             - name: data
               mountPath: /data
-          # /healthz on the monitoring port reports overall + JetStream health.
+          # Only local administration can read unauthenticated broker metadata.
+          # The image supplies wget for the local health endpoint.
           readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 8222
+            exec:
+              command: [wget, -q, -T, "2", -O, /dev/null, "http://127.0.0.1:8222/healthz"]
             initialDelaySeconds: 5
             periodSeconds: 5
             failureThreshold: 6
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8222
+            exec:
+              command: [wget, -q, -T, "2", -O, /dev/null, "http://127.0.0.1:8222/healthz"]
             initialDelaySeconds: 15
             periodSeconds: 15
             failureThreshold: 6

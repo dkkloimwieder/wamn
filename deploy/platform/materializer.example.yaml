@@ -98,7 +98,7 @@ spec:
             wamn.postgres.authority: event-materializer
           environment:
             config:
-              WAMN_MAT_STREAM: EVT_morg_menv
+              WAMN_MAT_STREAM: EVT_4_morg_5_mproj_4_menv
               WAMN_MAT_ORG: morg
               WAMN_MAT_PROJECT: mproj
               WAMN_MAT_ENV: menv

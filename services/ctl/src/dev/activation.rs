@@ -646,8 +646,31 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
             "WAMN_EVT_NATS_URL".to_owned(),
             request.config.event_nats_url().to_owned(),
         ),
+        (
+            "WAMN_EVT_NATS_USERNAME".to_owned(),
+            request.config.event_nats_username().to_owned(),
+        ),
+        (
+            "WAMN_EVT_NATS_PASSWORD_FILE".to_owned(),
+            request
+                .config
+                .event_nats_password_file()
+                .display()
+                .to_string(),
+        ),
+        (
+            "WAMN_EVT_STREAM_REPLICAS".to_owned(),
+            request.config.stream_replicas().to_string(),
+        ),
+        (
+            "WAMN_EVT_DUP_WINDOW_SECS".to_owned(),
+            request.config.dup_window_secs().to_string(),
+        ),
         ("WAMN_EVT_ORG".to_owned(), event_identity.org.clone()),
-        ("WAMN_EVT_PROJECT".to_owned(), event_identity.project.clone()),
+        (
+            "WAMN_EVT_PROJECT".to_owned(),
+            event_identity.project.clone(),
+        ),
         (
             "WAMN_EVT_ENV".to_owned(),
             event_identity.environment.clone(),
@@ -1422,6 +1445,10 @@ mod tests {
                 "event_materializer_database_url": "postgresql://materializer:materializer-secret@127.0.0.1:41008/target",
                 "scheduler_nats_url": "nats://127.0.0.1:41009",
                 "event_nats_url": "nats://127.0.0.1:41010",
+                "event_nats_username": "dev_runtime",
+                "event_nats_password_file": "/run/secrets/event-nats-password",
+                "stream_replicas": 1,
+                "dup_window_secs": 120,
                 "tempo_query_url": "http://127.0.0.1:41015",
                 "otel_exporter_otlp_endpoint": "http://127.0.0.1:41016",
                 "component_artifact_base": "127.0.0.1:41011/wamn/components",
@@ -1732,6 +1759,16 @@ mod tests {
                     "WAMN_EVT_NATS_URL".to_owned(),
                     "nats://127.0.0.1:41010".to_owned(),
                 ),
+                (
+                    "WAMN_EVT_NATS_USERNAME".to_owned(),
+                    "dev_runtime".to_owned()
+                ),
+                (
+                    "WAMN_EVT_NATS_PASSWORD_FILE".to_owned(),
+                    "/run/secrets/event-nats-password".to_owned()
+                ),
+                ("WAMN_EVT_STREAM_REPLICAS".to_owned(), "1".to_owned()),
+                ("WAMN_EVT_DUP_WINDOW_SECS".to_owned(), "120".to_owned()),
                 ("WAMN_EVT_ORG".to_owned(), "acme".to_owned()),
                 ("WAMN_EVT_PROJECT".to_owned(), "receiving".to_owned()),
                 ("WAMN_EVT_ENV".to_owned(), "receiving-dev".to_owned()),

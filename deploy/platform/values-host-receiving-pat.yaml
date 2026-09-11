@@ -64,6 +64,8 @@ runtime:
         - { name: WAMN_EVT_ORG, value: acme }
         - { name: WAMN_EVT_PROJECT, value: receiving }
         - { name: WAMN_EVT_ENV, value: dev }
+        - { name: WAMN_EVT_STREAM_REPLICAS, value: "3" }
+        - { name: WAMN_EVT_DUP_WINDOW_SECS, value: "120" }
         - { name: WAMN_ORG, value: acme }
         - { name: WAMN_PROJECT, value: receiving }
         - { name: WAMN_SCHEMA, value: receiving }

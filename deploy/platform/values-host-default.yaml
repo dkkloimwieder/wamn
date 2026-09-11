@@ -191,6 +191,18 @@ runtime:
               name: wamn-event-nats
               key: environment
               optional: false
+        - name: WAMN_EVT_STREAM_REPLICAS
+          valueFrom:
+            secretKeyRef:
+              name: wamn-event-nats
+              key: stream_replicas
+              optional: false
+        - name: WAMN_EVT_DUP_WINDOW_SECS
+          valueFrom:
+            secretKeyRef:
+              name: wamn-event-nats
+              key: dup_window_secs
+              optional: false
       volumes:
         - name: event-nats
           secret:

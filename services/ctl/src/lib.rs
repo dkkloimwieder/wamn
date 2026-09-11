@@ -13,14 +13,15 @@ pub mod author_wiring;
 pub mod bind_connection;
 #[cfg(feature = "ops")]
 pub mod copy_project_env;
-#[cfg(feature = "ops")]
-pub mod event_advisories;
 pub mod dev;
 pub mod dev_gate;
 #[cfg(feature = "ops")]
 pub mod dump_project_env;
 pub mod enable_cdc_project_env;
 mod env_policies;
+#[cfg(feature = "ops")]
+pub mod event_advisories;
+pub mod event_streams;
 mod ident;
 pub mod identity_issuer;
 #[cfg(feature = "ops")]

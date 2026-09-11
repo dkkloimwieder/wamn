@@ -447,13 +447,15 @@ fn cdc_object_name_stem(org: &str, project: &str, env: &str) -> String {
     )
 }
 
-/// The JetStream stream a project-env's CDC envelopes land in:
-/// `EVT_<org>_<env>` (D19 v3 §5; the streambench-proven contract). Recorded in
-/// the reader registration — the row is the source the reader publishes by, so
-/// a policy refinement (e.g. a shared trials stream) is a data change, not a
-/// rename.
-pub fn event_stream_name(org: &str, env: &str) -> String {
-    format!("EVT_{org}_{env}")
+/// The source stream for one organization, project, and environment.
+/// Length prefixes keep coordinates with underscores distinct.
+pub fn event_stream_name(org: &str, project: &str, env: &str) -> String {
+    format!(
+        "EVT_{}_{org}_{}_{project}_{}_{env}",
+        org.len(),
+        project.len(),
+        env.len()
+    )
 }
 
 /// Validate that a `(org, project, env)` yields safe CDC names: the base
@@ -994,9 +996,26 @@ mod tests {
             cdc_object_name("org-a", "demo", "dev", INSTANCE),
             cdc_object_name("org", "a-demo", "dev", INSTANCE)
         );
-        // The stream name follows the D19 v3 contract.
-        assert_eq!(event_stream_name("acme", "prod"), "EVT_acme_prod");
-        assert_eq!(event_stream_name("org-a", "dev"), "EVT_org-a_dev");
+        assert_eq!(
+            event_stream_name("acme", "billing", "prod"),
+            "EVT_4_acme_7_billing_4_prod"
+        );
+        assert_ne!(
+            event_stream_name("acme", "billing", "prod"),
+            event_stream_name("acme", "demo", "prod")
+        );
+        assert_ne!(
+            event_stream_name("acme", "billing", "prod"),
+            event_stream_name("acme", "billing", "dev")
+        );
+        assert_ne!(
+            event_stream_name("a_b", "c", "dev"),
+            event_stream_name("a", "b_c", "dev")
+        );
+        assert_ne!(
+            event_stream_name("a", "b_c", "dev"),
+            event_stream_name("a", "b", "c_dev")
+        );
     }
 
     #[test]

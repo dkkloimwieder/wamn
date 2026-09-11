@@ -331,7 +331,7 @@ fn event_reader_registration_round_trips_with_a_secret_reference() {
         triple: Triple::new("acme", "billing", "dev"),
         publication: "wamn_cdc_acme__billing__dev".into(),
         slot: "wamn_cdc_acme__billing__dev".into(),
-        stream: "EVT_acme_dev".into(),
+        stream: "EVT_4_acme_7_billing_3_dev".into(),
         replication_secret: SecretRef::new("wamn-cdc-acme--billing--dev"),
         enabled: true,
     };

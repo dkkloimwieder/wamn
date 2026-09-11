@@ -447,7 +447,8 @@ CREATE TRIGGER project_envs_retire_instance
 -- per project-env with CDC enabled: the publication + failover replication slot
 -- the reader streams from (the `wamn_cdc_…` Postgres objects the
 -- enable-cdc-project-env overlay provisions), the JetStream stream envelopes
--- land in (`EVT_<org>_<env>` by default), and a REFERENCE to the reader's
+-- land in (one stream per organization, project, and environment), and a
+-- REFERENCE to the reader's
 -- replication-credential Secret (`wamn-cdc-<org>--<project>--<env>`).
 --
 -- INVARIANT 2 (no credentials, R8b): `replication_secret_name` (+ optional

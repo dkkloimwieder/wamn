@@ -252,14 +252,16 @@ impl<'de> Deserialize<'de> for Envelope {
     }
 }
 
-/// The bounded stream that retains broker delivery advisories.
-pub const DELIVERY_ADVISORY_STREAM: &str = "WAMN_EVENT_ADVISORIES";
+/// The advisory stream for one exact environment source stream.
+pub fn delivery_advisory_stream(source_stream: &str) -> String {
+    format!("WAMN_EVENT_ADVISORIES_{source_stream}")
+}
 
-/// Broker subjects for exhausted and terminated deliveries.
-pub const DELIVERY_ADVISORY_SUBJECTS: [&str; 2] = [
-    "$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.*.*",
-    "$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.*.*",
-];
+/// Broker advisory subjects for one exact environment source stream.
+pub fn delivery_advisory_subjects(source_stream: &str) -> [String; 2] {
+    ["MAX_DELIVERIES", "MSG_TERMINATED"]
+        .map(|kind| format!("$JS.EVENT.ADVISORY.CONSUMER.{kind}.{source_stream}.*"))
+}
 
 /// Maximum retained advisories on one broker subject.
 pub const DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT: i64 = 1_000;
@@ -311,7 +313,7 @@ impl Envelope {
 
 /// `<project>_<env>` — the `Nats-Msg-Id` prefix a project-env's events dedupe
 /// under (subject segments already isolate per-project, the id prefix keeps
-/// dedupe ids from colliding across projects inside one org+env stream).
+/// dedupe ids from colliding across declared project environments).
 pub fn project_env(project: &str, env: &str) -> String {
     format!("{project}_{env}")
 }
@@ -376,16 +378,20 @@ pub fn subject(org: &str, project: &str, env: &str, entity: &str, op: Op) -> Str
     )
 }
 
-/// The subject filter an org+env `EVT_` stream binds — every project's events
-/// for that org+env (`evt.<org>.*.<env>.>`).
-pub fn stream_subjects(org: &str, env: &str) -> String {
-    format!("evt.{org}.*.{env}.>")
+/// The event subject filter for one organization, project, and environment.
+pub fn stream_subjects(org: &str, project: &str, env: &str) -> String {
+    format!("evt.{org}.{project}.{env}.>")
 }
 
-/// `EVT_<org>_<env>` — the JetStream stream name a project-env's events land in
-/// (the registration default; one stream per org+env, D19 v3 §5).
-pub fn stream_name(org: &str, env: &str) -> String {
-    format!("EVT_{org}_{env}")
+/// The source stream for one organization, project, and environment.
+/// Length prefixes keep coordinates with underscores distinct.
+pub fn stream_name(org: &str, project: &str, env: &str) -> String {
+    format!(
+        "EVT_{}_{org}_{}_{project}_{}_{env}",
+        org.len(),
+        project.len(),
+        env.len()
+    )
 }
 
 /// Make a raw name safe as ONE subject token: NATS reserves `.` (separator),
@@ -543,14 +549,47 @@ mod tests {
     }
 
     #[test]
-    fn stream_binds_every_project_of_the_org_env() {
-        assert_eq!(stream_subjects("acme", "dev"), "evt.acme.*.dev.>");
+    fn stream_binds_only_the_declared_project_environment() {
+        assert_eq!(
+            stream_subjects("acme", "receiving", "dev"),
+            "evt.acme.receiving.dev.>"
+        );
+        let source = stream_name("acme", "receiving", "dev");
+        assert_eq!(
+            delivery_advisory_stream(&source),
+            "WAMN_EVENT_ADVISORIES_EVT_4_acme_9_receiving_3_dev"
+        );
+        assert_eq!(
+            delivery_advisory_subjects(&source),
+            [
+                "$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.EVT_4_acme_9_receiving_3_dev.*",
+                "$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.EVT_4_acme_9_receiving_3_dev.*",
+            ]
+        );
     }
 
     #[test]
-    fn stream_name_is_evt_org_env() {
-        assert_eq!(stream_name("acme", "dev"), "EVT_acme_dev");
-        assert_eq!(stream_name("acme", "prod"), "EVT_acme_prod");
+    fn stream_names_keep_all_declared_coordinates_distinct() {
+        assert_eq!(
+            stream_name("acme", "receiving", "dev"),
+            "EVT_4_acme_9_receiving_3_dev"
+        );
+        assert_ne!(
+            stream_name("acme", "receiving", "dev"),
+            stream_name("acme", "wms", "dev")
+        );
+        assert_ne!(
+            stream_name("acme", "receiving", "dev"),
+            stream_name("acme", "receiving", "prod")
+        );
+        assert_ne!(
+            stream_name("a_b", "c", "dev"),
+            stream_name("a", "b_c", "dev")
+        );
+        assert_ne!(
+            stream_name("a", "b_c", "dev"),
+            stream_name("a", "b", "c_dev")
+        );
     }
 
     #[test]

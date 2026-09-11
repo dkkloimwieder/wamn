@@ -3,9 +3,8 @@
 //! may be enabled long after provisioning, so it is its own overlay rather than
 //! a `provision-project-env` flag.
 //!
-//! Renders + records (the `provision-project-env` shape — no K8s client, no
-//! target-cluster connection); the runbook applies the emitted artifacts, in
-//! this order:
+//! Provisioning creates the declared broker objects and records the CDC reader.
+//! The runbook applies the emitted PostgreSQL and Kubernetes files in this order:
 //!
 //! 1. apply the emitted **replication-role SQL** to the target cluster's
 //!    superuser (any database — roles are cluster-global);
@@ -16,6 +15,10 @@
 //!    pinned from here — capture starts at CDC-enable, bounded by
 //!    `max_slot_wal_keep_size`), and the role's grants;
 //! 3. `kubectl apply -f` the emitted **replication-credential Secret**.
+//!
+//! This command also creates the declared source and advisory streams and
+//! materializer consumers with explicit event provisioning credentials.
+//! Existing broker objects must match their complete declarations.
 //!
 //! What this tool does directly (given `--system-database-url`): derive the
 //! target cluster from the org's placement, and record the
@@ -30,10 +33,11 @@
 //! R8b tier — distinct from the `wamn_app` query credential and the dispatch
 //! role. NOTE Postgres `REPLICATION` is cluster-wide: on a shared pool,
 //! input-side isolation rests on handing each reader only its own
-//! slot/publication/credentials (plus per-org NATS accounts on the output
-//! side); regulated tiers use dedicated clusters.
+//! slot/publication/credentials. Separate environment streams and broker
+//! credentials limit event access. Regulated tiers use dedicated clusters.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Args;
@@ -112,11 +116,33 @@ pub struct EnableCdcProjectEnvArgs {
     #[arg(long)]
     pub secret_namespace: Option<String>,
 
-    /// Override the JetStream stream recorded in the registration. Default:
-    /// `EVT_<org>_<env>` (D19 v3 §5; e.g. a shared trials stream is a data
-    /// override here, not a code change).
+    /// Exact environment source stream. Must match the declared coordinates.
     #[arg(long)]
     pub stream: Option<String>,
+
+    /// Event broker managed by this environment's provisioning credential.
+    #[arg(long, env = "WAMN_EVT_NATS_URL")]
+    pub nats_url: String,
+
+    /// Provisioning username. Runtime uses a separate restricted credential.
+    #[arg(long, env = "WAMN_EVT_NATS_USERNAME")]
+    pub nats_username: String,
+
+    /// Private file containing the provisioning password.
+    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE")]
+    pub nats_password_file: PathBuf,
+
+    /// NATS stream copies, separate from workload instances.
+    #[arg(long, env = "WAMN_EVT_STREAM_REPLICAS")]
+    pub stream_replicas: usize,
+
+    /// Declared duplicate detection window in seconds.
+    #[arg(long, env = "WAMN_EVT_DUP_WINDOW_SECS")]
+    pub dup_window_secs: u64,
+
+    /// One native NATS pull consumer configuration as JSON. Repeat as needed.
+    #[arg(long, value_name = "JSON")]
+    pub consumer_config: Vec<String>,
 
     /// Write the replication-role SQL (psql the TARGET cluster first — roles are
     /// cluster-global) here; `-` = stdout.
@@ -135,6 +161,14 @@ pub struct EnableCdcProjectEnvArgs {
 
 pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
     let triple = Triple::new(&args.org, &args.project, args.env.as_str());
+    let stream = event_stream_name(&args.org, &args.project, &args.env);
+    if args
+        .stream
+        .as_ref()
+        .is_some_and(|requested| requested != &stream)
+    {
+        anyhow::bail!("--stream must match this environment's source stream {stream}");
+    }
 
     // Validate the names (the base project-env rules + the assembled
     // `wamn_cdc_…` object name's 63-byte bound) before any effect.
@@ -146,6 +180,24 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
             args.schema
         );
     }
+
+    let consumers = args
+        .consumer_config
+        .iter()
+        .map(|json| {
+            serde_json::from_str::<async_nats::jetstream::consumer::pull::Config>(json)
+                .context("parse the declared native consumer configuration")
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let duplicate_window = Duration::from_secs(args.dup_window_secs);
+    crate::event_streams::validate_inputs(
+        &triple,
+        args.stream_replicas,
+        duplicate_window,
+        &consumers,
+    )?;
+    let broker_options =
+        crate::event_streams::connection_options(&args.nats_username, &args.nats_password_file)?;
 
     let system_url = args
         .system_database_url
@@ -169,10 +221,6 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
     let db_name = project_env_database_name(&args.org, &args.project, &args.env, &instance);
     let cdc_name = cdc_object_name(&args.org, &args.project, &args.env, &instance);
     let secret_name = project_env_cdc_secret_name(&args.org, &args.project, &args.env);
-    let stream = args
-        .stream
-        .clone()
-        .unwrap_or_else(|| event_stream_name(&args.org, &args.env));
     let db_host = args
         .db_host
         .clone()
@@ -184,6 +232,21 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
         args.db_port,
         &db_name,
     );
+
+    let broker = async_nats::jetstream::new(
+        broker_options
+            .connect(&args.nats_url)
+            .await
+            .context("connect the event provisioning credential")?,
+    );
+    crate::event_streams::provision(
+        &broker,
+        &triple,
+        args.stream_replicas,
+        duplicate_window,
+        &consumers,
+    )
+    .await?;
 
     // Render the artifacts the runbook applies.
     let role_sql = sql::ensure_replication_role_sql(&cdc_name, &args.replication_password);
@@ -343,6 +406,16 @@ mod tests {
             "billing",
             "--env",
             "dev",
+            "--nats-url",
+            "nats://127.0.0.1:4222",
+            "--nats-username",
+            "test_provision",
+            "--nats-password-file",
+            "/test/private/event-password",
+            "--stream-replicas",
+            "1",
+            "--dup-window-secs",
+            "120",
         ];
         assert!(
             TestCli::try_parse_from(base).is_err(),
@@ -356,6 +429,51 @@ mod tests {
                 .args
                 .replication_password,
             "probe"
+        );
+    }
+
+    #[test]
+    fn cdc_command_accepts_explicit_broker_and_native_consumer_declarations() {
+        let consumer = wamn_control_provision::events::materializer_consumer_config(
+            "mat_t_pkg_r1",
+            "evt.acme.billing.dev.invoice.>",
+            Duration::from_secs(30),
+            5,
+        );
+        let json = serde_json::to_string(&consumer).unwrap();
+        let parsed = TestCli::try_parse_from([
+            "test",
+            "--org",
+            "acme",
+            "--project",
+            "billing",
+            "--env",
+            "dev",
+            "--replication-password",
+            "test-password",
+            "--nats-url",
+            "nats://127.0.0.1:4222",
+            "--nats-username",
+            "test_provision",
+            "--nats-password-file",
+            "/test/private/event-password",
+            "--stream-replicas",
+            "1",
+            "--dup-window-secs",
+            "60",
+            "--consumer-config",
+            &json,
+        ])
+        .unwrap()
+        .args;
+        assert_eq!(parsed.stream_replicas, 1);
+        assert_eq!(parsed.dup_window_secs, 60);
+        assert_eq!(
+            serde_json::from_str::<async_nats::jetstream::consumer::pull::Config>(
+                &parsed.consumer_config[0]
+            )
+            .unwrap(),
+            consumer
         );
     }
 

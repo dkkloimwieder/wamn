@@ -91,9 +91,20 @@ impl DevObservationReaders {
                 "tenant, project, and environment must each be one NATS subject token",
             )
         })?;
+        let tap_options = crate::event_streams::connection_options(
+            config.event_nats_username(),
+            config.event_nats_password_file(),
+        )
+        .map_err(|source| {
+            DevObservationError::with_source(
+                "read router-tap credentials",
+                "event credentials refused the configured connection",
+                source,
+            )
+        })?;
         let tap_client = tokio::time::timeout(
             OBSERVATION_REQUEST_TIMEOUT,
-            async_nats::connect(config.event_nats_url()),
+            tap_options.connect(config.event_nats_url()),
         )
         .await
         .map_err(|source| {

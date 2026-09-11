@@ -55,6 +55,31 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_NATS_URL")]
     nats_url: String,
 
+    /// Event broker endpoint, separate from the scheduler endpoint.
+    #[arg(long, env = "WAMN_EVT_NATS_URL")]
+    event_nats_url: String,
+
+    /// Runtime credential for publication and the same environment's tap view.
+    #[arg(long, env = "WAMN_EVT_NATS_USERNAME")]
+    event_nats_username: String,
+
+    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE")]
+    event_nats_password_file: PathBuf,
+
+    /// Credential that creates the declared event streams.
+    #[arg(long, env = "WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME")]
+    event_provisioning_username: String,
+
+    #[arg(long, env = "WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE")]
+    event_provisioning_password_file: PathBuf,
+
+    /// Declared NATS stream copies, separate from workload instances.
+    #[arg(long, env = "WAMN_EVT_STREAM_REPLICAS")]
+    stream_replicas: usize,
+
+    #[arg(long, env = "WAMN_EVT_DUP_WINDOW_SECS")]
+    dup_window_secs: u64,
+
     #[arg(long, env = "WAMN_DEV_ENV_TEMPO_QUERY_URL")]
     tempo_query_url: String,
 
@@ -118,6 +143,11 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     let inputs = DevEnvironmentInputs {
         host_binary: args.host_binary,
         nats_url: args.nats_url,
+        event_nats_url: args.event_nats_url,
+        event_nats_username: args.event_nats_username,
+        event_nats_password_file: args.event_nats_password_file,
+        stream_replicas: args.stream_replicas,
+        dup_window_secs: args.dup_window_secs,
         tempo_query_url: args.tempo_query_url,
         otel_exporter_otlp_endpoint: args.otel_exporter_otlp_endpoint,
         flow_http_workload_image: args.flow_http_workload_image,
@@ -128,8 +158,31 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         package_sources,
     };
 
+    let broker_options = crate::event_streams::connection_options(
+        &args.event_provisioning_username,
+        &args.event_provisioning_password_file,
+    )?;
+    let broker = async_nats::jetstream::new(
+        broker_options
+            .connect(&inputs.event_nats_url)
+            .await
+            .context("connect event provisioning credential")?,
+    );
     let (admin, admin_task) = connect(&args.system_database_url).await?;
     let environment = provision(&args.system_database_url, admin.as_ref(), &args.root).await?;
+    let event_scope = wamn_control_registry::Triple::new(
+        &environment.identity.org,
+        &environment.identity.project,
+        environment.identity.environment.clone(),
+    );
+    crate::event_streams::provision(
+        &broker,
+        &event_scope,
+        inputs.stream_replicas,
+        std::time::Duration::from_secs(inputs.dup_window_secs),
+        &[],
+    )
+    .await?;
     // The Gate admits into the DURABLE project-environment database, the one
     // the host serves from. The verification database is a throwaway this
     // command deletes, so a Gate pointed at it publishes wirings that vanish,

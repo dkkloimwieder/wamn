@@ -466,7 +466,7 @@ pub struct ProjectEnv {
 
 /// A registered **CDC event reader** for a provisioned project-env (D19 v3,
 /// wamn-l5i9.9): which publication + failover replication slot it streams from,
-/// which JetStream stream its envelopes land in (`EVT_<org>_<env>` by default),
+/// which JetStream stream its envelopes land in (one per declared environment),
 /// and a [`SecretRef`] to its **replication** credential — a reference, never
 /// the material (R8b; the replication credential is its own tier, above the
 /// `wamn_app` query credential and the dispatch role).

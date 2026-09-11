@@ -1,16 +1,18 @@
 //! Read retained broker advisories and report whether their source payloads exist.
 
 use std::path::{Path, PathBuf};
+#[cfg(test)]
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
+#[cfg(test)]
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
-use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
 use async_nats::jetstream::stream::RawMessageErrorKind;
 use clap::Args;
+#[cfg(test)]
 use futures_util::StreamExt as _;
 use serde::Serialize;
-use wamn_event_wire::{DELIVERY_ADVISORY_STREAM, DeliveryAdvisory};
+use wamn_event_wire::{DeliveryAdvisory, delivery_advisory_stream};
 
 #[derive(Debug, Args)]
 pub struct EventAdvisoriesArgs {
@@ -124,80 +126,93 @@ pub async fn run(args: EventAdvisoriesArgs) -> anyhow::Result<()> {
     .context("connect to event-plane NATS")?;
     let jetstream = async_nats::jetstream::new(client);
     let stream = jetstream
-        .get_stream(DELIVERY_ADVISORY_STREAM)
+        .get_stream(delivery_advisory_stream(&args.stream))
         .await
         .context("open retained delivery advisories")?;
-    let consumer = stream
-        .create_consumer(PullConfig {
-            deliver_policy: DeliverPolicy::All,
-            ack_policy: AckPolicy::None,
-            filter_subjects: ["MAX_DELIVERIES", "MSG_TERMINATED"]
-                .map(|kind| {
-                    format!(
-                        "$JS.EVENT.ADVISORY.CONSUMER.{kind}.{}.{}",
-                        args.stream, args.consumer
-                    )
-                })
-                .to_vec(),
-            memory_storage: true,
-            num_replicas: 1,
-            inactive_threshold: Duration::from_secs(5),
-            ..Default::default()
-        })
-        .await
-        .context("create the ephemeral advisory reader")?;
-    let consumer_name = consumer.cached_info().name.clone();
-    let result = async {
-        let mut messages = consumer
-            .fetch()
-            .max_messages(args.limit)
-            .expires(Duration::from_secs(1))
-            .messages()
-            .await
-            .context("fetch retained advisories")?;
-        while let Some(message) = messages.next().await {
-            let message = message
-                .map_err(anyhow::Error::from_boxed)
-                .context("read a delivery advisory")?;
-            let advisory_sequence = message
-                .info()
-                .map_err(anyhow::Error::from_boxed)
-                .context("read advisory sequence")?
-                .stream_sequence;
-            let advisory = DeliveryAdvisory::from_slice(&message.payload)
-                .context("decode the broker delivery advisory")?;
-            if advisory.stream != args.stream || advisory.consumer != args.consumer {
-                bail!("broker advisory coordinates differ from the selected stream and consumer");
-            }
-            let source = source_payload(&jetstream, &advisory).await?;
-            println!(
-                "{}",
-                serde_json::to_string(&OperatorRecord {
-                    advisory_sequence,
-                    advisory,
-                    source
-                })?
-            );
-        }
-        Ok(())
+    for record in retained_advisories(
+        &jetstream,
+        &stream,
+        &args.stream,
+        &args.consumer,
+        args.limit,
+    )
+    .await?
+    {
+        println!("{}", serde_json::to_string(&record)?);
     }
-    .await;
-    let cleanup = stream
-        .delete_consumer(&consumer_name)
-        .await
-        .context("remove this invocation's ephemeral advisory reader");
-    result?;
-    cleanup?;
     Ok(())
+}
+
+async fn next_advisory(
+    stream: &async_nats::jetstream::stream::Stream,
+    subject: &str,
+    sequence: u64,
+) -> anyhow::Result<Option<async_nats::jetstream::message::StreamMessage>> {
+    match stream
+        .get_first_raw_message_by_subject(subject, sequence)
+        .await
+    {
+        Ok(message) => Ok(Some(message)),
+        Err(error) => match error.kind() {
+            RawMessageErrorKind::NoMessageFound => Ok(None),
+            RawMessageErrorKind::JetStream(server) if server.code() == 404 => Ok(None),
+            _ => Err(error).context("read the next retained delivery advisory"),
+        },
+    }
+}
+
+async fn retained_advisories(
+    jetstream: &async_nats::jetstream::Context,
+    stream: &async_nats::jetstream::stream::Stream,
+    source_stream: &str,
+    consumer: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<OperatorRecord>> {
+    let subjects = ["MAX_DELIVERIES", "MSG_TERMINATED"]
+        .map(|kind| format!("$JS.EVENT.ADVISORY.CONSUMER.{kind}.{source_stream}.{consumer}"));
+    let mut next = [
+        next_advisory(stream, &subjects[0], 1).await?,
+        next_advisory(stream, &subjects[1], 1).await?,
+    ];
+    let mut records = Vec::new();
+    while records.len() < limit {
+        let Some((index, _)) = next
+            .iter()
+            .enumerate()
+            .filter_map(|(index, message)| {
+                message.as_ref().map(|message| (index, message.sequence))
+            })
+            .min_by_key(|(_, sequence)| *sequence)
+        else {
+            break;
+        };
+        let message = next[index].take().expect("selected retained message");
+        let advisory = DeliveryAdvisory::from_slice(&message.payload)
+            .context("decode the broker delivery advisory")?;
+        if advisory.stream != source_stream || advisory.consumer != consumer {
+            bail!("broker advisory coordinates differ from the selected stream and consumer");
+        }
+        let source = source_payload(jetstream, &advisory).await?;
+        records.push(OperatorRecord {
+            advisory_sequence: message.sequence,
+            advisory,
+            source,
+        });
+        if records.len() < limit {
+            next[index] = next_advisory(stream, &subjects[index], message.sequence + 1).await?;
+        }
+    }
+    Ok(records)
 }
 
 #[cfg(test)]
 mod tests {
     use anyhow::ensure;
     use async_nats::jetstream::consumer::Consumer;
-    use async_nats::jetstream::stream::{Config as StreamConfig, StorageType};
     use async_nats::jetstream::{AckKind, Message};
-    use wamn_event_wire::{DELIVERY_ADVISORY_SUBJECTS, DeliveryAdvisoryKind};
+    use wamn_control_provision::events::{materializer_consumer_config, source_stream_config};
+    use wamn_control_registry::Triple;
+    use wamn_event_wire::{DeliveryAdvisoryKind, stream_name};
 
     use super::*;
 
@@ -250,37 +265,45 @@ mod tests {
         let url = std::env::var("WAMN_NATIVE_C_NATS_URL")
             .context("set WAMN_NATIVE_C_NATS_URL to this proof's disposable event broker")?;
         let jetstream = async_nats::jetstream::new(async_nats::connect(url).await?);
-        let source = jetstream
-            .create_stream(StreamConfig {
-                name: "C_ADVISORY_SOURCE".into(),
-                subjects: vec!["c.advisory.*".into()],
-                storage: StorageType::File,
-                max_messages: 8,
-                ..Default::default()
-            })
+        let source_name = stream_name("c-advisory", "app", "dev");
+        let advisory_name = delivery_advisory_stream(&source_name);
+        let scope = Triple::new("c-advisory", "app", "dev");
+        let duplicate_window = Duration::from_secs(120);
+        let consumers = [
+            materializer_consumer_config(
+                "exhausted",
+                "evt.c-advisory.app.dev.exhausted",
+                Duration::from_millis(100),
+                2,
+            ),
+            materializer_consumer_config(
+                "terminated",
+                "evt.c-advisory.app.dev.terminated",
+                Duration::from_secs(30),
+                2,
+            ),
+        ];
+        crate::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers)
             .await?;
-        let mut advisories = jetstream
-            .create_stream(StreamConfig {
-                name: DELIVERY_ADVISORY_STREAM.into(),
-                subjects: DELIVERY_ADVISORY_SUBJECTS.map(str::to_owned).to_vec(),
-                storage: StorageType::File,
-                max_messages: 8,
-                ..Default::default()
-            })
-            .await?;
+        let source = jetstream.get_stream(&source_name).await?;
+        let mut advisories = jetstream.get_stream(&advisory_name).await?;
         let result: anyhow::Result<()> = async {
-            let exhausted = source
-                .create_consumer(PullConfig {
-                    durable_name: Some("exhausted".into()),
-                    filter_subject: "c.advisory.exhausted".into(),
-                    ack_policy: AckPolicy::Explicit,
-                    ack_wait: Duration::from_millis(100),
-                    max_deliver: 2,
-                    ..Default::default()
-                })
-                .await?;
+            crate::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers).await?;
+            let declared_source = source_stream_config(&scope, 1, duplicate_window);
+            jetstream.update_stream(async_nats::jetstream::stream::Config {
+                max_messages: 1,
+                ..declared_source.clone()
+            }).await?;
+            ensure!(crate::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers).await.is_err(), "changed stream configuration was accepted");
+            ensure!(jetstream.get_stream(&source_name).await?.cached_info().config.max_messages == 1, "activation changed the stored stream configuration");
+            jetstream.update_stream(declared_source).await?;
+            source.update_consumer(PullConfig { max_deliver: 3, ..consumers[0].clone() }).await?;
+            ensure!(crate::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers).await.is_err(), "changed consumer configuration was accepted");
+            ensure!(source.consumer_info("exhausted").await?.config.max_deliver == 3, "activation changed the stored consumer configuration");
+            source.update_consumer(consumers[0].clone()).await?;
+            let exhausted = source.get_consumer::<PullConfig>("exhausted").await?;
             let exhausted_sequence = jetstream
-                .publish("c.advisory.exhausted", "exhausted payload".into())
+                .publish("evt.c-advisory.app.dev.exhausted", "exhausted payload".into())
                 .await?
                 .await?
                 .sequence;
@@ -303,24 +326,16 @@ mod tests {
             );
 
             let valid_sequence = jetstream
-                .publish("c.advisory.exhausted", "later valid payload".into())
+                .publish("evt.c-advisory.app.dev.exhausted", "later valid payload".into())
                 .await?.await?.sequence;
             let valid = fetch_one(&exhausted).await?.context("exhausted poison blocked the later valid message")?;
             ensure!(valid.info().map_err(anyhow::Error::from_boxed)?.stream_sequence == valid_sequence,
                 "consumer redelivered poison instead of the later valid message");
             valid.double_ack().await.map_err(anyhow::Error::from_boxed)?;
 
-            let terminated = source
-                .create_consumer(PullConfig {
-                    durable_name: Some("terminated".into()),
-                    filter_subject: "c.advisory.terminated".into(),
-                    ack_policy: AckPolicy::Explicit,
-                    max_deliver: 2,
-                    ..Default::default()
-                })
-                .await?;
+            let terminated = source.get_consumer::<PullConfig>("terminated").await?;
             let terminated_sequence = jetstream
-                .publish("c.advisory.terminated", "terminated payload".into())
+                .publish("evt.c-advisory.app.dev.terminated", "terminated payload".into())
                 .await?
                 .await?
                 .sequence;
@@ -342,13 +357,20 @@ mod tests {
             }
             let state = advisories.cached_info().state.clone();
             ensure!(state.messages == 2, "unexpected retained advisory count");
+            for (consumer, kind) in [("exhausted", DeliveryAdvisoryKind::MaxDeliver), ("terminated", DeliveryAdvisoryKind::Terminated)] {
+                let records = retained_advisories(&jetstream, &advisories, &source_name, consumer, 1).await?;
+                ensure!(records.len() == 1, "selected consumer advisory is missing");
+                ensure!(records[0].advisory.kind == kind, "selected consumer has another advisory kind");
+                ensure!(matches!(&records[0].source, SourcePayload::Available { .. }), "retained source payload is missing");
+            }
+            ensure!(advisories.info().await?.state.consumer_count == 0, "advisory reads created a consumer");
             let mut exhausted_seen = false;
             let mut terminated_seen = false;
             for sequence in state.first_sequence..=state.last_sequence {
                 let message = advisories.get_raw_message(sequence).await?;
                 let advisory = DeliveryAdvisory::from_slice(&message.payload)?;
                 ensure!(
-                    advisory.stream == "C_ADVISORY_SOURCE",
+                    advisory.stream == source_name,
                     "advisory names another source"
                 );
                 let expected = match advisory.kind {
@@ -399,14 +421,19 @@ mod tests {
                 advisories.info().await?.state.messages == 2,
                 "source deletion removed retained broker advisories"
             );
+            for consumer in ["exhausted", "terminated"] {
+                let records = retained_advisories(&jetstream, &advisories, &source_name, consumer, 100).await?;
+                ensure!(records.len() == 1, "retained advisory was lost after source deletion");
+                ensure!(matches!(&records[0].source, SourcePayload::Unavailable), "deleted source payload was reported as available");
+            }
             println!(
                 "NATIVE_C_ADVISORY_READER_PASS exhaustion=1 termination=1 available=2 unavailable=2 later_valid=1"
             );
             Ok(())
         }
         .await;
-        let source_cleanup = jetstream.delete_stream("C_ADVISORY_SOURCE").await;
-        let advisory_cleanup = jetstream.delete_stream(DELIVERY_ADVISORY_STREAM).await;
+        let source_cleanup = jetstream.delete_stream(&source_name).await;
+        let advisory_cleanup = jetstream.delete_stream(&advisory_name).await;
         result?;
         source_cleanup?;
         advisory_cleanup?;

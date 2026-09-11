@@ -299,7 +299,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     };
 
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream_name = event_stream_name(ORG, ENV); // EVT_rl0_dev
+    let stream_name = event_stream_name(ORG, PROJECT, ENV);
 
     // --- hermetic preamble (the M2 lesson: leftovers mask mutations) --------
     let admin = connect(&super_url).await;
@@ -531,6 +531,33 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     assert!(err.to_string().contains("disabled"), "got: {err:#}");
 
     register(true).await;
+    let err = run_with_token(
+        reader_args(&super_url, &cdc_name, proxied_nats.clone()),
+        CancellationToken::new(),
+    )
+    .await
+    .expect_err("a missing stream must refuse activation");
+    assert!(
+        err.to_string().contains("open provisioned event stream"),
+        "{err:#}"
+    );
+    assert!(
+        js.get_stream(&stream_name).await.is_err(),
+        "reader must not create its missing stream"
+    );
+    let scope = wamn_control_registry::Triple::new(ORG, PROJECT, ENV);
+    let source_config =
+        wamn_control_provision::events::source_stream_config(&scope, 1, Duration::from_secs(120));
+    let advisory_config = wamn_control_provision::events::advisory_stream_config(&scope, 1);
+    let advisory_name = advisory_config.name.clone();
+    let _ = js.delete_stream(&advisory_name).await;
+    js.create_stream(source_config)
+        .await
+        .expect("provision declared source stream");
+    js.create_stream(advisory_config)
+        .await
+        .expect("provision declared advisory stream");
+
     let err = tokio::time::timeout(
         Duration::from_secs(60),
         run_with_token(
@@ -965,6 +992,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
 
     // --- teardown: NO slot left behind --------------------------------------
     let _ = js.delete_stream(&stream_name).await;
+    let _ = js.delete_stream(&advisory_name).await;
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let active: bool = sys
