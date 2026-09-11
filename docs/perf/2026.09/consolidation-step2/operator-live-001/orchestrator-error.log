@@ -1,0 +1,7 @@
+Traceback (most recent call last):
+  File "/home/kaalin/[redacted]/wamn/docs/perf/2026.09/generated-tui-integration/live.py", line 417, in main
+    owned.run("generated-operator-live", proof_command, timeout=args.proof_timeout)
+    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kaalin/[redacted]/wamn/docs/perf/2026.09/generated-tui-integration/live.py", line 122, in run
+    raise ProofFailure(f"{name}: exit {status}; see private stage log")
+ProofFailure: generated-operator-live: exit 1; see private stage log

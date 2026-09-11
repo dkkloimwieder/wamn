@@ -1,0 +1,12 @@
+   Compiling futures-core v0.3.34
+   Compiling futures-sink v0.3.34
+   Compiling futures-task v0.3.34
+   Compiling slab v0.4.12
+   Compiling futures-channel v0.3.34
+   Compiling futures-util v0.3.34
+   Compiling wit-bindgen v0.61.1
+   Compiling futures-io v0.3.34
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/[redacted]/wamn/apps/platform/execution/contract)
+   Compiling futures v0.3.34
+   Compiling http-route v0.1.0 (/home/kaalin/[redacted]/wamn/apps/platform/ingress/http-route)
+    Finished `[redacted]` profile [unoptimized + debuginfo] target(s) in 3.87s
