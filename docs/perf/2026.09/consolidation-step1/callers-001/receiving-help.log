@@ -1,0 +1,29 @@
+usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--fresh-auth-bench] [--membershipproof] [--session-host-proof] [--fresh-only-proof] [--session-client-proof] [--receiving-correctness] [--receiving-postcommit baseline|additive] --evidence-dir DIR
+
+Without --apply, print the immutable plan and exit.
+
+  --apply              Build and run the journey, then tear down owned resources
+  --measure-startup    Measure cold/restart startup and two warm requests, then stop
+  --throughput         After the steady request, sweep concurrency 1..64 across the
+                       route, a no-DB route and the statement direct (implies
+                       --measure-startup); evidence under throughput/
+  --membershipproof    Prove human membership through deployed HTTP, then stop;
+                       cannot combine with startup or throughput measurement
+  --session-host-proof Prove session-key removal on two deployed hosts, with
+                       reachable and unavailable JWKS; cannot combine modes
+  --receiving-correctness Prove command histories, rollback, replay, authorization, and contention
+                         Cannot combine modes. Does not measure performance.
+  --receiving-postcommit BASE Prove unchanged overlay compatibility and materializer progress
+                         BASE is baseline or additive. Cannot combine modes.
+  --fresh-only-proof   Prove direct/nested session refusal, same-human PAT success, and
+                       next-request revocation and prior commits, plus the session-host proof
+  --session-client-proof Prove client login, session use, explicit PAT selection, and
+                         refusal handling. Cannot combine modes. Skips JWKS removal.
+  --fresh-auth-bench    Repeat the existing throughput sweep three times for each
+                       of service and human PATs; implies --throughput
+  --evidence-dir DIR   New directory retaining commands and machine evidence
+
+The correctness mode uses scratch cluster wamn-receiving-correctness. Other
+modes use wamn-receiving-journey. Every Kubernetes and Helm
+command carries its private kubeconfig and context. The frozen kind-wamn cluster
+is never a target.

@@ -1,0 +1,26 @@
+[
+  {
+    "name": "repo-lint-compile",
+    "argv": [
+      "rustc",
+      "--edition=2024",
+      "--test",
+      "tests/conformance/tests/repo_lint.rs",
+      "-o",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-inventories-20260911/target/consolidation-inventories/repo-lint-tests"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-inventories-20260911",
+    "CARGO_MANIFEST_DIR": "/home/kaalin/.cache/wamn-lanes/consolidation-inventories-20260911/tests/conformance",
+    "exit_code": 0
+  },
+  {
+    "name": "repo-lint-tests",
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-inventories-20260911/target/consolidation-inventories/repo-lint-tests",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-inventories-20260911",
+    "CARGO_MANIFEST_DIR": "/home/kaalin/.cache/wamn-lanes/consolidation-inventories-20260911/tests/conformance",
+    "exit_code": 0
+  }
+]

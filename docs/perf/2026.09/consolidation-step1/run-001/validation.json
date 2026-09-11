@@ -1,0 +1,17 @@
+{
+  "checks": "passed",
+  "raw_workspace_log_sha256": "b16db3437db0e569907ef089d1b33f170c2170853454d701104462370a8d8bbf",
+  "raw_workspace_log_unchanged_after_reduction": true,
+  "before_after_tracked_bytes_and_modes_equal": true,
+  "tracked_file_count": 25838,
+  "exact_command_matches_baseline": true,
+  "failure_rows": 84,
+  "explicit_skip_rows": 85,
+  "child_environment_name_changes": {
+    "added": [],
+    "removed": []
+  },
+  "unchanged_arming": true,
+  "reduction": "Imported the existing workspace-integration-preparation-001/classify.py classify function, ctc8-20-pat-service/main-landing-001/compare.py cause reducer, and receiving-postcommit/tools/compare_integrated_sweep.py compare function without edits or bytecode writes; separately inspected the actual nested native B panic.",
+  "source_receipt_format": "Complete maps were compared before reduction. Published receipts retain aggregate hashes, file counts, full status, and the empty per-path change list."
+}

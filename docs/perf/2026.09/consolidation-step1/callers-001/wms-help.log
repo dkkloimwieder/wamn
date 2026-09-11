@@ -1,0 +1,27 @@
+usage: wms-cluster-journey-run [--apply] --evidence-dir DIR
+
+Without --apply, print the immutable plan and exit.
+
+  --apply              Build and run the journey, then tear down owned resources
+  --measure-startup    Cold, restart-first and steady pallet.get requests with trace breakdowns
+  --prove-partial-completion  Prove a committed move survives a missing labels bucket
+  --prove-generated-tui  Drive the generated move form through success and partial completion
+  --demo               Hold the environment afterwards and serve the route at
+                       http://127.0.0.1:8080/ -- see THE DEMO below
+  --evidence-dir DIR   New directory retaining commands and machine evidence
+
+The fixed scratch cluster is wamn-wms-journey. Every Kubernetes and Helm
+command carries its private kubeconfig and context. The frozen kind-wamn cluster
+is never a target.
+
+THE DEMO. --demo changes three things and nothing else. The route's NodePort
+Service is pinned to 30950 instead of taking whatever Kubernetes allocates; that
+Service outlives the run instead of being deleted; and one nginx container is
+published on 127.0.0.1:8080, rewriting Host to the route host the release names.
+THE RELEASE, THE CLUSTER AND THE JOURNEY ARE UNTOUCHED. The proxy exists because
+a browser cannot reach the route otherwise: the route matches its host verbatim
+and a browser sends the port it dialled, port 80 is held by the frozen cluster,
+.localhost names resolve to ::1 here and docker does not forward an IPv6 publish
+on the kind network, and the runtime refuses a route host that carries a port as
+not a valid RFC 1123 hostname. Set WAMN_JOURNEY_HOLD_SECONDS to choose how long
+it is held; --demo defaults it to 3600.

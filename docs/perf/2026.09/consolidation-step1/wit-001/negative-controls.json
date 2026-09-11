@@ -1,0 +1,95 @@
+[
+  {
+    "copy": "components/data/receiving-data/wit/deps/wamn-node/package.wit",
+    "byte_offset": 9900,
+    "before_byte": 10,
+    "mutated_byte": 32,
+    "before_sha256": "4e06c115cf872768835d22c780c1fa9f896ed5561bef22533d81992f3e7024e3",
+    "mutated_sha256": "eb618dc912c422148ddcbf288ea1e199d9723f970ab79d53b10dd6896a313066",
+    "tests": [
+      {
+        "name": "every_copy_is_byte_identical_to_the_router_authority",
+        "command": [
+          "target/debug/node_wit_coherence_direct",
+          "--exact",
+          "every_copy_is_byte_identical_to_the_router_authority",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "exit_code": 101,
+        "seconds": 0.0051963700097985566,
+        "named_failure_observed": true,
+        "one_failure_observed": true
+      },
+      {
+        "name": "tests::all_vendored_node_abi_copies_match_the_source",
+        "command": [
+          "target/debug/invocation_wit_coherence_direct",
+          "--exact",
+          "tests::all_vendored_node_abi_copies_match_the_source",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "exit_code": 101,
+        "seconds": 0.0053084249957464635,
+        "named_failure_observed": true,
+        "one_failure_observed": true
+      },
+      {
+        "name": "node-restored",
+        "command": [
+          "target/debug/node_wit_coherence_direct",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "exit_code": 0
+      },
+      {
+        "name": "invocation-restored",
+        "command": [
+          "target/debug/invocation_wit_coherence_direct",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "exit_code": 0
+      }
+    ],
+    "restored_sha256": "4e06c115cf872768835d22c780c1fa9f896ed5561bef22533d81992f3e7024e3",
+    "mtime_restored": true
+  },
+  {
+    "copy": "components/data/receiving-data/wit/deps/wamn-postgres/package.wit",
+    "byte_offset": 6605,
+    "before_byte": 10,
+    "mutated_byte": 32,
+    "before_sha256": "53a3f5ffa4f02e15c6708d43f8bb7b6fb2f4ee29d2cc32ed3957cdd137655aaf",
+    "mutated_sha256": "502fd79f953fa2f192e87e19acc7f3aa265f68e431d20e9d54e164bd6fea514b",
+    "tests": [
+      {
+        "name": "every_copy_is_byte_identical_to_the_authority",
+        "command": [
+          "target/debug/postgres_wit_coherence_direct",
+          "--exact",
+          "every_copy_is_byte_identical_to_the_authority",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "exit_code": 101,
+        "seconds": 0.004675915988627821,
+        "named_failure_observed": true,
+        "one_failure_observed": true
+      },
+      {
+        "name": "postgres-restored",
+        "command": [
+          "target/debug/postgres_wit_coherence_direct",
+          "--nocapture",
+          "--test-threads=1"
+        ],
+        "exit_code": 0
+      }
+    ],
+    "restored_sha256": "53a3f5ffa4f02e15c6708d43f8bb7b6fb2f4ee29d2cc32ed3957cdd137655aaf",
+    "mtime_restored": true
+  }
+]

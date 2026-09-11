@@ -1,0 +1,53 @@
+{
+  "source": "34a4edf00e64d6164b6b8250182d3002772d0169",
+  "files": [
+    {
+      "path": "architecture/package-roles.json",
+      "sha256": "303776156935bdaf583c9358a6648927b9c9f771d8cbb97941378b867ec1840b",
+      "mode": "0o664",
+      "bytes": 22674
+    },
+    {
+      "path": "architecture/workspace-tiers.json",
+      "sha256": "21ee9fac8f9f08a7562e43b5d9d1292c7429866ed0a62f47a562169fc01707f5",
+      "mode": "0o664",
+      "bytes": 23790
+    },
+    {
+      "path": "tools/profile",
+      "sha256": "20d0ba792797c49c94090bbab38e669f55f6d54e6d9ec7faf774a8c9102a3bbe",
+      "mode": "0o775",
+      "bytes": 4521
+    },
+    {
+      "path": "tools/workspace-tier",
+      "sha256": "38af44e2c6c19566654cdddf89dbef672c5fd834f8f8e49b34d68b2169ea8db2",
+      "mode": "0o775",
+      "bytes": 10742
+    },
+    {
+      "path": "tests/conformance/tests/package_architecture.rs",
+      "sha256": "2c5d3c7b143636db08805dca92268f939bc9833207b9c0c250856daf3a82e1e8",
+      "mode": "0o664",
+      "bytes": 32725
+    },
+    {
+      "path": "tests/conformance/tests/workspace_tiers.rs",
+      "sha256": "5a83c1d3a1b18731dd33de65cb97240bd0a63e70ecb09d534de8457d1958ee32",
+      "mode": "0o664",
+      "bytes": 43081
+    },
+    {
+      "path": "tests/conformance/tests/retained_root_outcomes.rs",
+      "sha256": "c84eb042e44de1c26bf32f52b4e6407079e200c4b0c4a6eb7a74b0592032542d",
+      "mode": "0o664",
+      "bytes": 8243
+    },
+    {
+      "path": "tests/conformance/src/package_inventory.rs",
+      "sha256": "f7424a83c8a1b14bf3524b725412220bebaee57f8e13efa33982641cd9b61dc0",
+      "mode": "0o664",
+      "bytes": 11749
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "completed_command": 1,
+  "interrupted_command": 2,
+  "unstarted_command": 3,
+  "reason": "Per-package Cargo selection changed feature unification and began a redundant dependency build. Retained conformance policy and invocation tests will execute in the required integrated workspace sweep. No test result is claimed for the interrupted or unstarted commands.",
+  "signal": "SIGTERM",
+  "processes": [
+    3933277,
+    3944674,
+    3945790,
+    3946287
+  ]
+}

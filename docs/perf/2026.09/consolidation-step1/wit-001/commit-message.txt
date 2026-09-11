@@ -1,0 +1,9 @@
+refactor(wamn-47wm.2.3): discover WIT copies from package headers
+
+Remove copied WIT path lists and their registration tests.
+Compare every discovered Node, PostgreSQL, and connection copy with its source bytes.
+Include application source roots while excluding historical evidence.
+
+Direct rustc tests pass for the Node, PostgreSQL, and invocation sources.
+One-byte changes fail the named guards, and restored copies pass.
+The integrated Cargo sweep owns the connection target with its runtime bindings.

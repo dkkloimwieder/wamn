@@ -1,0 +1,10 @@
+{
+  ".beads/interactions.jsonl": {
+    "sha256": "3a90f19c911c98b08bd3bfdfe89e24832171382b76fcc8e4dd8184e1ca202029",
+    "mode": "0o664"
+  },
+  ".beads/issues.jsonl": {
+    "sha256": "d592db25f934f6f9c1cbcb601b7d2160eb1bab8fca97489eaa3a36c1aa5ef85d",
+    "mode": "0o644"
+  }
+}

@@ -176,6 +176,20 @@ Application builds read component declarations from the named app manifests.
 Proof builds select all guest workspace members from Cargo.
 Both paths keep one Cargo invocation per guest to preserve digests.
 
+Generated TUI crates use the declared component that exports the operations they render, followed by the role suffix `-tui`.
+The generator and its callers carry that component identity explicitly.
+When an app declares one component, that declaration identifies the target.
+Multiple components keep their separate declared names.
+Do not strip `wamn_` or infer a name from a directory.
+
+The guest workspace root moves to `apps/Cargo.toml`.
+Application guest crates live under their application homes, and shared guest code lives under `apps/platform/`.
+The native workspace remains at the repository root with `apps/` excluded from automatic membership.
+Keep explicit native application members and their native workspace ownership.
+Prove byte identity for all guests across two checkouts, including the app/proof comparison.
+Remint the affected pins in the same move commit and name the path change as the cause.
+The [layout probe](../perf/2026.09/consolidation-step2/member-probe-002/results.json) demonstrates why external guest workspace members cannot establish this property.
+
 The materializer is platform infrastructure.
 Native C uses a platform-owned named NATS binding for it.
 Credentials apply to one environment and permit attachment only to its allowed streams.
@@ -193,3 +207,5 @@ The integrated branch retains the original field.
 When the current architecture overview exists, move this charter to `docs/history/` with the specifications that it retires.
 Keep the historical evidence and the reasons for the change.
 Beads and git continue to own completion status.
+
+The [step 1 result](../perf/2026.09/consolidation-step1/report.md) records the retained sweep after inventory deletion.

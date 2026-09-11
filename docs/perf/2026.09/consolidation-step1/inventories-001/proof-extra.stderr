@@ -1,0 +1,6 @@
+usage:
+  tools/build-components app APP_DIRECTORY... | proof
+  tools/build-components build-only app APP_DIRECTORY... | proof
+  tools/build-components watch-roots app APP_DIRECTORY... | proof
+  tools/build-components virtualize-only ARTIFACT_PLAN
+build-components: proof takes no application directories

@@ -1,0 +1,9 @@
+{
+  "head": "e3c4e79f8735d07b837e61faf63f56a84acff4fd",
+  "wit_source_commit": "d7215f5c",
+  "wit_integrated_commit": "8a14661a",
+  "feature_source_commit": "7ac06b4a",
+  "feature_integrated_commit": "e3c4e79f",
+  "wit_hashes_and_modes_match": true,
+  "unrelated_tracked_dirt_preserved": true
+}

@@ -1,0 +1,44 @@
+{
+  "source_head": "34a4edf00e64d6164b6b8250182d3002772d0169",
+  "worktree": "/home/kaalin/.cache/wamn-lanes/consolidation-inventories-20260911",
+  "checks": [
+    {
+      "command": [
+        "bash",
+        "-n",
+        "tools/receiving-cluster-journey-run"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "bash",
+        "tools/receiving-cluster-journey-run",
+        "--help"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "bash",
+        "-n",
+        "tools/wms-cluster-journey-run"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "bash",
+        "tools/wms-cluster-journey-run",
+        "--help"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "files": {
+    "tools/receiving-cluster-journey-run": "29bb1e01687aabe121c17a28bad3ea41adf71487dea2ce465503cb2b22d3bb3e",
+    "tools/wms-cluster-journey-run": "f5066a345b9b0e9dae55f38e24baca30419d24a5d4cdee1ce20fa8da8a36d621",
+    "tests/conformance/tests/guest_workspace_closure.rs": "c48252692c19ed7317cc7c92fffedb59b4510f94cfbf2ccb6c05ca5874f32b2e"
+  },
+  "remaining_validation": "Run guest_workspace_closure through the integrated Cargo sweep. Real digest comparison still requires app/proof build evidence. No component builds, cluster runs, or Rust target builds ran for this bounded caller edit."
+}

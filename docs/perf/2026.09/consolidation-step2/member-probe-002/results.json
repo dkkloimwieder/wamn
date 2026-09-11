@@ -1,0 +1,65 @@
+{
+  "case": "Explicit external members with an ordinary Rust TypeId value from the data crate",
+  "results": [
+    {
+      "side": "a",
+      "command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-member-probe-20260911/a/components/Cargo.toml",
+        "--locked",
+        "--offline",
+        "--release",
+        "--target",
+        "wasm32-wasip2",
+        "-p",
+        "probe-guest",
+        "-vv"
+      ],
+      "exit": 0,
+      "metadata": [
+        [
+          "probe_data",
+          "da719bf5502f2d62"
+        ],
+        [
+          "probe_guest",
+          "689262080b883747"
+        ]
+      ],
+      "sha256": "9df87a975512c3938d0393bcebd4541ad87a81bb2644af67075c421591a8a2f0"
+    },
+    {
+      "side": "b",
+      "command": [
+        "cargo",
+        "build",
+        "--manifest-path",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-member-probe-20260911/b/components/Cargo.toml",
+        "--locked",
+        "--offline",
+        "--release",
+        "--target",
+        "wasm32-wasip2",
+        "-p",
+        "probe-guest",
+        "-vv"
+      ],
+      "exit": 0,
+      "metadata": [
+        [
+          "probe_data",
+          "066123adf0f058b9"
+        ],
+        [
+          "probe_guest",
+          "8bedb41fbad3f1ee"
+        ]
+      ],
+      "sha256": "b0f56a0627200c802ab1033bf9af8439cca65929823171e0566ea4a55912fbc6"
+    }
+  ],
+  "equal_digests": false,
+  "scope": "Synthetic Cargo correctness probe only; no claim of measured application digests."
+}

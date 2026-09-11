@@ -1,0 +1,58 @@
+[
+  {
+    "side": "a",
+    "command": [
+      "cargo",
+      "build",
+      "--manifest-path",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-member-probe-20260911/a/components/Cargo.toml",
+      "--offline",
+      "--release",
+      "--target",
+      "wasm32-wasip2",
+      "-p",
+      "probe-guest",
+      "-vv"
+    ],
+    "exit": 0,
+    "metadata": [
+      [
+        "probe_data",
+        "da719bf5502f2d62"
+      ],
+      [
+        "probe_guest",
+        "689262080b883747"
+      ]
+    ],
+    "sha256": "0a61910bb9b8a34ad0b2d8b62536eba93d4231da48287bf896ea00f66aedeb9e"
+  },
+  {
+    "side": "b",
+    "command": [
+      "cargo",
+      "build",
+      "--manifest-path",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-member-probe-20260911/b/components/Cargo.toml",
+      "--offline",
+      "--release",
+      "--target",
+      "wasm32-wasip2",
+      "-p",
+      "probe-guest",
+      "-vv"
+    ],
+    "exit": 0,
+    "metadata": [
+      [
+        "probe_data",
+        "066123adf0f058b9"
+      ],
+      [
+        "probe_guest",
+        "8bedb41fbad3f1ee"
+      ]
+    ],
+    "sha256": "0a61910bb9b8a34ad0b2d8b62536eba93d4231da48287bf896ea00f66aedeb9e"
+  }
+]

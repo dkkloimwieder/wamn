@@ -1,0 +1,15 @@
+{
+  "source_tree": "/home/kaalin/dev/wamn",
+  "source": "b1d40d80558cb58ea4c9e4580d0f46e7edf2fc5b",
+  "started_utc": "2026-09-11T11:48:25.216201+00:00",
+  "finished_utc": "2026-09-11T11:52:29.534848+00:00",
+  "elapsed_seconds": 244.31995404901681,
+  "duration_definition": "Runner subprocess elapsed wall time including setup and cleanup; not benchmark timing.",
+  "exit_code": 101,
+  "source_stable": true,
+  "runner": "docs/perf/2026.09/generated-tui-integration/tools/workspace.py",
+  "runner_sha256": "27c5eba50125c4a4e5b3b34ff0c8e5c293a96d39844660d249053b46c4206b63",
+  "runner_pid": 3953031,
+  "target_policy": "Unchanged retained runner removes CARGO_TARGET_DIR and uses root target; two build jobs. Root Cargo was idle before launch.",
+  "prelaunch_cargo_rustc_processes": []
+}

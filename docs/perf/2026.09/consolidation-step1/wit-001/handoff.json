@@ -1,0 +1,38 @@
+{
+  "bead": "wamn-47wm.2.3",
+  "commit": "180c9d140428b8cc242fe45dbf3dd1269adf8e9a",
+  "parent": "34a4edf00e64d6164b6b8250182d3002772d0169",
+  "worktree": "/home/kaalin/.cache/wamn-lanes/consolidation-wit-20260911",
+  "worktree_status": " M docs/operations/build-and-test.md\n",
+  "worktree_clean": false,
+  "files": {
+    "crates/platform/runtime/tests/connection_wit_coherence.rs": {
+      "sha256": "920f1ce407408d4c014c8ebcb492cafaa0c50b9305d514ac6f6facce9f68e43e",
+      "mode": "0o664"
+    },
+    "crates/platform/runtime/tests/node_wit_coherence.rs": {
+      "sha256": "86e15849d921682e21a1ab321bdaaa17ca71c1cbc834c345c16d6437832e323b",
+      "mode": "0o664"
+    },
+    "crates/platform/runtime/tests/postgres_wit_coherence.rs": {
+      "sha256": "d4a06941721754e391db2d32602b101ac34b284ea563317d059715d0d117221d",
+      "mode": "0o664"
+    },
+    "tests/conformance/src/invocation.rs": {
+      "sha256": "e716d6562a466915424ccfb805b0fbfcbe07dfe1c27c3cc89ae8b7995f045b32",
+      "mode": "0o664"
+    }
+  },
+  "validation": {
+    "direct_source_tests_passed": 5,
+    "direct_source_tests_ignored": 0,
+    "named_negative_failures": 3,
+    "restored_source_tests_passed": 5,
+    "wit_bytes_unchanged": true,
+    "git_diff_check": "passed",
+    "rustfmt": "applied to the four changed files"
+  },
+  "remaining_validation": "The integrated Cargo sweep must compile and execute connection_wit_coherence.rs with its unchanged wash_runtime binding macro. No cold runtime build ran in this lane.",
+  "code_mutation_scope": "Node and PostgreSQL vendored copies each changed one trailing newline byte to a space for the negative controls, then restored exact bytes and timestamps.",
+  "unexpected_external_change": "An unstaged docs/operations/build-and-test.md change appeared after the code commit. The root owns documentation and was notified; this lane preserved the file."
+}
