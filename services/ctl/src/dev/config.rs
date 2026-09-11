@@ -1757,7 +1757,7 @@ mod tests {
 
     fn repository_package(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../packages")
+            .join("../../apps")
             .join(name)
     }
 
@@ -1944,7 +1944,7 @@ mod tests {
     fn overlay_dependencies_resolve_by_coordinate_and_report_ignored_sources() {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
         let overlay_root = repository_package("client_acme_receiving");
-        let base_root = repository_package("receiving");
+        let base_root = repository_package("wamn_receiving");
         let ignored_root = overlay_root.clone();
         let mut document = complete_document(&addresses);
         document[PACKAGE_SOURCES] = json!([ignored_root, base_root]);
@@ -1964,7 +1964,7 @@ mod tests {
         assert_eq!(resolved.ignored_package_sources(), [overlay_root]);
         let base = &resolved.base_packages()[0];
         assert_eq!(base.alias(), "base_receiving");
-        assert_eq!(base.root(), repository_package("receiving"));
+        assert_eq!(base.root(), repository_package("wamn_receiving"));
         assert_eq!(base.manifest().package.id, "wamn_receiving");
         assert_eq!(
             base.component_digest().expected(),
@@ -2061,7 +2061,7 @@ mod tests {
     fn missing_and_ambiguous_dependencies_name_the_complete_search() {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
         let overlay_root = repository_package("client_acme_receiving");
-        let base_root = repository_package("receiving");
+        let base_root = repository_package("wamn_receiving");
         let expected = wamn_schema_generator::PackageManifest::from_slice(OVERLAY_MANIFEST)
             .expect("parse repository overlay")
             .base_dependencies
