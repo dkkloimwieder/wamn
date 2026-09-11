@@ -43,3 +43,9 @@ The [direct regression](live-direct-001/stdout.log) passed with its frozen-candi
 The first [Clippy run](clippy-001/result.json) passed across all targets of the four affected packages.
 It reported two new string-assignment warnings in the SQL test fixture, which the follow-up changes to `clone_into` address.
 Existing warnings remain outside this change.
+The [second Clippy run](clippy-002/result.json) passed without those two fixture warnings.
+
+The [deliberate bypass](mutation-bypass-001/mutation.patch) replaced the dependency path requirement with root membership alone.
+The [test failed](mutation-bypass-001/result.json) with exit 101 on the foreign-package assertion, not a build error.
+The [restored test](mutation-restored-001/result.json) passed after the source matched commit `e502c996` exactly.
+The restore used a fresh modification time, so Cargo rebuilt the corrected source.
