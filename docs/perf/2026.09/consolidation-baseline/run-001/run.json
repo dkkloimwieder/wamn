@@ -1,0 +1,12 @@
+{
+  "source_tree": "/home/kaalin/dev/wamn",
+  "source": "a0e833b9398c829030a055f5c38755aebd98d358",
+  "exit_code": 101,
+  "command_receipt_utc": "2026-09-11T10:51:20.341708+00:00",
+  "exit_receipt_utc": "2026-09-11T10:53:41.020905+00:00",
+  "seconds_between_command_and_exit_receipts": 140.67919731140137,
+  "duration_definition": "Receipt timestamp interval includes runner temporary-directory setup and cleanup. It is not benchmark timing.",
+  "source_stable": true,
+  "runner": "docs/perf/2026.09/generated-tui-integration/tools/workspace.py",
+  "runner_sha256": "27c5eba50125c4a4e5b3b34ff0c8e5c293a96d39844660d249053b46c4206b63"
+}

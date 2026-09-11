@@ -1,0 +1,2230 @@
+{
+  "source": "a0e833b9398c829030a055f5c38755aebd98d358",
+  "exit_code": 101,
+  "classification_counts": {
+    "missing_live_or_artifact_input": 81,
+    "source_scan_misparses_retained_wit_evidence": 1,
+    "unavailable_kubernetes_discovery": 1,
+    "deployment_prerequisite_declaration_mismatch": 1
+  },
+  "failures": [
+    {
+      "package": "wamn-catalog",
+      "cargo_target": "--test wiring_activation_live",
+      "name": "the_terminal_document_reaches_a_converged_database_and_survives_the_column",
+      "diagnostic_start_log_line": 541,
+      "diagnostic_end_log_line": 545,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_CATALOG_PG_URL to the throwaway superuser database: NotPresent",
+      "required_inputs": [
+        "WAMN_CATALOG_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-catalog",
+      "cargo_target": "--test wiring_activation_live",
+      "name": "wiring_activation_live",
+      "diagnostic_start_log_line": 546,
+      "diagnostic_end_log_line": 550,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_CATALOG_PG_URL to the throwaway superuser database: NotPresent",
+      "required_inputs": [
+        "WAMN_CATALOG_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-control-provision",
+      "cargo_target": "--test control_portable_store",
+      "name": "current_database_connect_posture_is_exactly_scoped",
+      "diagnostic_start_log_line": 1034,
+      "diagnostic_end_log_line": 1038,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_CONTROL_PORTABLE_PG_URL names a disposable PostgreSQL 18 database: NotPresent",
+      "required_inputs": [
+        "WAMN_CONTROL_PORTABLE_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-control-provision",
+      "cargo_target": "--test identity_issuer_live",
+      "name": "scoped_issuer_grants_and_generation_retirement_execute_on_postgres",
+      "diagnostic_start_log_line": 1157,
+      "diagnostic_end_log_line": 1162,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_IDENTITY_ISSUER_PG_URL: NotPresent",
+      "required_inputs": [
+        "WAMN_IDENTITY_ISSUER_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-control-provision",
+      "cargo_target": "--test session_role_reader_live",
+      "name": "dedicated_session_reader_columns_and_generations_execute_on_postgres",
+      "diagnostic_start_log_line": 1212,
+      "diagnostic_end_log_line": 1217,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_SESSION_ROLE_READER_PG_URL: NotPresent",
+      "required_inputs": [
+        "WAMN_SESSION_ROLE_READER_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--lib",
+      "name": "dev::verification_database::tests::disposable_postgres_proves_freshness_cleanup_and_confinement",
+      "diagnostic_start_log_line": 1439,
+      "diagnostic_end_log_line": 1443,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_DEV_VERIFICATION_PG_URL must name a disposable database: NotPresent",
+      "required_inputs": [
+        "WAMN_DEV_VERIFICATION_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--lib",
+      "name": "dev::verification_world::tests::lifecycle_bootstraps_then_accepts_packages_and_one_exact_admission",
+      "diagnostic_start_log_line": 1450,
+      "diagnostic_end_log_line": 1453,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_DEV_VERIFICATION_PG_URL must name a disposable PostgreSQL 18 database: NotPresent",
+      "required_inputs": [
+        "WAMN_DEV_VERIFICATION_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--lib",
+      "name": "publish_release::effective_release_live::fresh_base_and_overlay_mint_byte_identically_and_refuse_drift",
+      "diagnostic_start_log_line": 1545,
+      "diagnostic_end_log_line": 1548,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_EFFECTIVE_RELEASE_PROJECT_PG_URL names disposable PostgreSQL 18: NotPresent",
+      "required_inputs": [
+        "WAMN_EFFECTIVE_RELEASE_PROJECT_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--lib",
+      "name": "push_component::tests::production_publisher_and_puller_round_trip_exact_bytes",
+      "diagnostic_start_log_line": 1575,
+      "diagnostic_end_log_line": 1578,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_COMPONENT_ARTIFACT_BASE to a disposable HTTP registry/repository: NotPresent",
+      "required_inputs": [
+        "WAMN_COMPONENT_ARTIFACT_BASE"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--lib",
+      "name": "push_release_manifest::tests::production_publisher_exact_retry_is_a_no_push",
+      "diagnostic_start_log_line": 1593,
+      "diagnostic_end_log_line": 1596,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_RELEASE_MANIFEST_ARTIFACT_BASE to a disposable repository: NotPresent",
+      "required_inputs": [
+        "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test author_wiring_gate_report_live",
+      "name": "a_wiring_is_authored_only_under_a_green_report_for_its_own_hash",
+      "diagnostic_start_log_line": 1663,
+      "diagnostic_end_log_line": 1668,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_AUTHOR_WIRING_PROJECT_PG_URL names a disposable PostgreSQL 18 database: NotPresent",
+      "required_inputs": [
+        "WAMN_AUTHOR_WIRING_PROJECT_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test bind_connection_live",
+      "name": "bind_connection_round_trips_through_the_plugins_own_resolution",
+      "diagnostic_start_log_line": 1680,
+      "diagnostic_end_log_line": 1685,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_BIND_CONNECTION_PROJECT_PG_URL names a disposable PostgreSQL 18 database: NotPresent",
+      "required_inputs": [
+        "WAMN_BIND_CONNECTION_PROJECT_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test effect_writer_generation_live",
+      "name": "effect_writer_generation_lifecycle_is_exact_and_fail_closed",
+      "diagnostic_start_log_line": 1718,
+      "diagnostic_end_log_line": 1723,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_EFFECT_WRITER_PG18_URL to a disposable PG18 superuser URL: NotPresent",
+      "required_inputs": [
+        "WAMN_EFFECT_WRITER_PG18_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test identity_issuer_live",
+      "name": "compiled_cli_publishes_rolls_back_and_retires_identity_generations",
+      "diagnostic_start_log_line": 1743,
+      "diagnostic_end_log_line": 1747,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_IDENTITY_ISSUER_CLI_PG_URL: NotPresent",
+      "required_inputs": [
+        "WAMN_IDENTITY_ISSUER_CLI_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test management_admitter_generation_live",
+      "name": "management_admitter_generation_lifecycle_converges_and_rotates",
+      "diagnostic_start_log_line": 1761,
+      "diagnostic_end_log_line": 1766,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_MANAGEMENT_ADMITTER_PG18_URL to a disposable PG18 superuser URL: NotPresent",
+      "required_inputs": [
+        "WAMN_MANAGEMENT_ADMITTER_PG18_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test pat_bootstrap_live",
+      "name": "cli_bootstrap_mints_first_service_pats_over_https",
+      "diagnostic_start_log_line": 1790,
+      "diagnostic_end_log_line": 1797,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "assertion `left == right` failed: arm only a fresh disposable PostgreSQL server / left: Err(NotPresent) / right: Ok(\"1\")",
+      "required_inputs": [
+        "WAMN_PAT_BOOTSTRAP_ALLOW_SCHEMA_RESET"
+      ],
+      "source_evidence": "services/ctl/tests/pat_bootstrap_live.rs:21"
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test run_plane_live",
+      "name": "effect_writer_cutover_live",
+      "diagnostic_start_log_line": 1841,
+      "diagnostic_end_log_line": 1845,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database: NotPresent",
+      "required_inputs": [
+        "WAMN_CTL_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test run_plane_live",
+      "name": "failure_detail_cutover_live",
+      "diagnostic_start_log_line": 1848,
+      "diagnostic_end_log_line": 1851,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database: NotPresent",
+      "required_inputs": [
+        "WAMN_CTL_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test run_plane_live",
+      "name": "frame_identity_cutover_live",
+      "diagnostic_start_log_line": 1852,
+      "diagnostic_end_log_line": 1855,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database: NotPresent",
+      "required_inputs": [
+        "WAMN_CTL_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test run_plane_live",
+      "name": "partition_plane_active_lease_refusal_live",
+      "diagnostic_start_log_line": 1856,
+      "diagnostic_end_log_line": 1859,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database: NotPresent",
+      "required_inputs": [
+        "WAMN_CTL_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test run_plane_live",
+      "name": "partition_plane_cutover_live",
+      "diagnostic_start_log_line": 1860,
+      "diagnostic_end_log_line": 1863,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database: NotPresent",
+      "required_inputs": [
+        "WAMN_CTL_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test run_plane_live",
+      "name": "provisioner_minted_generation_live",
+      "diagnostic_start_log_line": 1864,
+      "diagnostic_end_log_line": 1867,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database: NotPresent",
+      "required_inputs": [
+        "WAMN_CTL_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test run_plane_live",
+      "name": "two_plane_residency_live",
+      "diagnostic_start_log_line": 1880,
+      "diagnostic_end_log_line": 1884,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database: NotPresent",
+      "required_inputs": [
+        "WAMN_CTL_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-ctl",
+      "cargo_target": "--test session_audience_live",
+      "name": "compiled_cli_publishes_bound_session_targets_and_rotates_reader_generations",
+      "diagnostic_start_log_line": 1902,
+      "diagnostic_end_log_line": 1906,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_SESSION_AUDIENCE_CLI_PG_URL: NotPresent",
+      "required_inputs": [
+        "WAMN_SESSION_AUDIENCE_CLI_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-execution-host",
+      "cargo_target": "--lib",
+      "name": "router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle",
+      "diagnostic_start_log_line": 2006,
+      "diagnostic_end_log_line": 2010,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "real authenticated native proof: set WAMN_NATIVE_B_AUTH_PG_URL to this proof's fresh disposable PostgreSQL 18 server / environment variable not found",
+      "required_inputs": [
+        "WAMN_NATIVE_B_AUTH_PG_URL"
+      ],
+      "source_evidence": "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs:574",
+      "parser_limit": "The retained reducer assigns the nested libtest FAILED line to this name. This entry uses the actual child panic and missing-input cause later in the raw log."
+    },
+    {
+      "package": "wamn-host",
+      "cargo_target": "--test native_lifecycle_live",
+      "name": "rebuilt_host_probes_signals_and_scheduler_recovery",
+      "diagnostic_start_log_line": 2168,
+      "diagnostic_end_log_line": 2170,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_HOST_LIVE_NATS_SERVER_BIN to the real NATS server binary",
+      "required_inputs": [
+        "WAMN_HOST_LIVE_NATS_SERVER_BIN"
+      ]
+    },
+    {
+      "package": "wamn-identity",
+      "cargo_target": "--test https_surface",
+      "name": "identity_https_has_only_public_jwks_and_health",
+      "diagnostic_start_log_line": 2199,
+      "diagnostic_end_log_line": 2206,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "assertion `left == right` failed: arm only an owned disposable cluster: this proof replaces platform schemas / left: Err(NotPresent) / right: Ok(\"1\")",
+      "required_inputs": [
+        "WAMN_IDENTITY_SERVICE_ALLOW_SCHEMA_RESET"
+      ],
+      "source_evidence": "services/identity/tests/https_surface.rs:78"
+    },
+    {
+      "package": "wamn-identity",
+      "cargo_target": "--test pat_issuance",
+      "name": "operator_pat_issuance_over_https",
+      "diagnostic_start_log_line": 2219,
+      "diagnostic_end_log_line": 2224,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "arm only an owned disposable cluster",
+      "required_inputs": [
+        "WAMN_PAT_ISSUANCE_ALLOW_SCHEMA_RESET"
+      ],
+      "source_evidence": "services/identity/tests/pat_issuance.rs:118"
+    },
+    {
+      "package": "wamn-identity",
+      "cargo_target": "--test session_exchange",
+      "name": "session_exchange_uses_fresh_scoped_authority_without_session_state",
+      "diagnostic_start_log_line": 2236,
+      "diagnostic_end_log_line": 2241,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "arm only an owned disposable cluster",
+      "required_inputs": [
+        "WAMN_SESSION_EXCHANGE_ALLOW_SCHEMA_RESET"
+      ],
+      "source_evidence": "services/identity/tests/session_exchange.rs:1074"
+    },
+    {
+      "package": "wamn-platform-identity",
+      "cargo_target": "--test session_keys_live",
+      "name": "session_key_lifecycle_on_postgres",
+      "diagnostic_start_log_line": 2304,
+      "diagnostic_end_log_line": 2310,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "assertion `left == right` failed: arm only an owned disposable database: this test replaces platform schemas / left: Err(NotPresent) / right: Ok(\"1\")",
+      "required_inputs": [
+        "WAMN_SESSION_KEYS_ALLOW_SCHEMA_RESET"
+      ],
+      "source_evidence": "crates/identity/platform/tests/session_keys_live.rs:390"
+    },
+    {
+      "package": "wamn-platform-identity",
+      "cargo_target": "--test session_keys_live",
+      "name": "signer_backend_loss_before_commit_does_not_issue_token",
+      "diagnostic_start_log_line": 2311,
+      "diagnostic_end_log_line": 2317,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "assertion `left == right` failed: arm only an owned disposable database: this test replaces platform schemas / left: Err(NotPresent) / right: Ok(\"1\")",
+      "required_inputs": [
+        "WAMN_SESSION_KEYS_ALLOW_SCHEMA_RESET"
+      ],
+      "source_evidence": "crates/identity/platform/tests/session_keys_live.rs:390"
+    },
+    {
+      "package": "wamn-proof-conformance",
+      "cargo_target": "--lib",
+      "name": "version_identity::wamn_wit_packages_stay_at_mvp_version",
+      "diagnostic_start_log_line": 2451,
+      "diagnostic_end_log_line": 2462,
+      "classification": "source_scan_misparses_retained_wit_evidence",
+      "cause": "The scan treats the trailing { in eight retained WIT package declarations as part of version 0.1.0 and reports version drift.",
+      "required_inputs": [],
+      "source_evidence": "tests/conformance/src/version_identity.rs:291",
+      "raw_diagnostics": [
+        {
+          "log_line": 2451,
+          "text": ""
+        },
+        {
+          "log_line": 2452,
+          "text": "thread 'version_identity::wamn_wit_packages_stay_at_mvp_version' (3870832) panicked at tests/conformance/src/version_identity.rs:459:5:"
+        },
+        {
+          "log_line": 2453,
+          "text": "WAMN WIT package version drift:"
+        },
+        {
+          "log_line": 2454,
+          "text": "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/client_acme_receiving.wit:19: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0"
+        },
+        {
+          "log_line": 2455,
+          "text": "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/client_acme_receiving.wit:96: WAMN package `wamn:node@0.1.0 {` must use @0.1.0"
+        },
+        {
+          "log_line": 2456,
+          "text": "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/http_route.wit:25: WAMN package `wamn:flow-http-routing@0.1.0 {` must use @0.1.0"
+        },
+        {
+          "log_line": 2457,
+          "text": "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/http_route.wit:82: WAMN package `wamn:router-delivery@0.1.0 {` must use @0.1.0"
+        },
+        {
+          "log_line": 2458,
+          "text": "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/receiving.wit:20: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0"
+        },
+        {
+          "log_line": 2459,
+          "text": "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/receiving.wit:97: WAMN package `wamn:node@0.1.0 {` must use @0.1.0"
+        },
+        {
+          "log_line": 2460,
+          "text": "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/wms.wit:19: WAMN package `wamn:postgres@0.1.0 {` must use @0.1.0"
+        },
+        {
+          "log_line": 2461,
+          "text": "/home/kaalin/dev/wamn/docs/perf/2026.09/p3-http-cutover/post-build-001/wms.wit:97: WAMN package `wamn:node@0.1.0 {` must use @0.1.0"
+        },
+        {
+          "log_line": 2462,
+          "text": "FAILED"
+        }
+      ]
+    },
+    {
+      "package": "wamn-proof-conformance",
+      "cargo_target": "--test chart_seam_governance",
+      "name": "receiving_pat_overlay_renders_a_complete_scoped_host",
+      "diagnostic_start_log_line": 2491,
+      "diagnostic_end_log_line": 2497,
+      "classification": "unavailable_kubernetes_discovery",
+      "cause": "kubectl cannot discover Kubernetes API types at localhost:8080 because KUBECONFIG=/dev/null and the connection is refused.",
+      "required_inputs": [],
+      "raw_diagnostics": [
+        {
+          "log_line": 2491,
+          "text": ""
+        },
+        {
+          "log_line": 2492,
+          "text": "thread 'receiving_pat_overlay_renders_a_complete_scoped_host' (3870899) panicked at tests/conformance/tests/chart_seam_governance.rs:168:5:"
+        },
+        {
+          "log_line": 2493,
+          "text": "Kubernetes decode failed: E0911 06:51:40.554443 3870934 memcache.go:265] \"Unhandled Error\" err=\"couldn't get current server API group list: Get \\\"http://localhost:8080/api?timeout=32s\\\": dial tcp 127.0.0.1:8080: connect: connection refused\""
+        },
+        {
+          "log_line": 2494,
+          "text": "error: unable to recognize \"STDIN\": Get \"http://localhost:8080/api?timeout=32s\": dial tcp 127.0.0.1:8080: connect: connection refused"
+        },
+        {
+          "log_line": 2495,
+          "text": ""
+        },
+        {
+          "log_line": 2496,
+          "text": "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"
+        },
+        {
+          "log_line": 2497,
+          "text": "FAILED"
+        }
+      ]
+    },
+    {
+      "package": "wamn-proof-conformance",
+      "cargo_target": "--test guest_workspace_closure",
+      "name": "one_commit_built_in_two_checkouts_yields_identical_guest_digests",
+      "diagnostic_start_log_line": 2583,
+      "diagnostic_end_log_line": 2587,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_DIGEST_REPRO_A must name the first checkout's artifacts",
+      "required_inputs": [
+        "WAMN_DIGEST_REPRO_A"
+      ]
+    },
+    {
+      "package": "wamn-proof-conformance",
+      "cargo_target": "--test guest_workspace_closure",
+      "name": "one_commit_built_under_two_profiles_yields_identical_guest_digests",
+      "diagnostic_start_log_line": 2588,
+      "diagnostic_end_log_line": 2591,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_DIGEST_PROFILE_M1_PLAN must name the m1 artifact plan",
+      "required_inputs": [
+        "WAMN_DIGEST_PROFILE_M1_PLAN"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "claim_law_live::a_changed_request_under_a_live_key_refuses_with_idempotency_conflict",
+      "diagnostic_start_log_line": 2808,
+      "diagnostic_end_log_line": 2812,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_CLAIM_LAW_PG_URL names a fresh disposable PostgreSQL 18 database / Caused by: / environment variable not found",
+      "required_inputs": [
+        "WAMN_CLAIM_LAW_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "claim_law_live::a_claim_that_updates_on_conflict_fails_both_emitted_cases",
+      "diagnostic_start_log_line": 2813,
+      "diagnostic_end_log_line": 2817,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_CLAIM_LAW_PG_URL names a fresh disposable PostgreSQL 18 database / Caused by: / environment variable not found",
+      "required_inputs": [
+        "WAMN_CLAIM_LAW_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "claim_law_live::a_replay_returns_the_immutable_original_result_and_writes_nothing",
+      "diagnostic_start_log_line": 2818,
+      "diagnostic_end_log_line": 2822,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_CLAIM_LAW_PG_URL names a fresh disposable PostgreSQL 18 database / Caused by: / environment variable not found",
+      "required_inputs": [
+        "WAMN_CLAIM_LAW_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "hot_route_trace::tests::an_incoming_traceparent_reaches_the_outbound_socket_under_the_same_trace",
+      "diagnostic_start_log_line": 2828,
+      "diagnostic_end_log_line": 2832,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_HOTROUTE_PG_URL to a throwaway db",
+      "required_inputs": [
+        "WAMN_HOTROUTE_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "provisionbench::tests::legacy_converges_database_authority_on_postgres",
+      "diagnostic_start_log_line": 2840,
+      "diagnostic_end_log_line": 2843,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_PG_ADMIN_URL must name a disposable PostgreSQL 18 instance: NotPresent",
+      "required_inputs": [
+        "WAMN_PG_ADMIN_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "provisionbench::tests::project_env_replay_uses_the_stored_instance_suffix",
+      "diagnostic_start_log_line": 2844,
+      "diagnostic_end_log_line": 2847,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_PG_ADMIN_URL must name a disposable PostgreSQL 18 instance: NotPresent",
+      "required_inputs": [
+        "WAMN_PG_ADMIN_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18",
+      "diagnostic_start_log_line": 2848,
+      "diagnostic_end_log_line": 2852,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database / Caused by: / environment variable not found",
+      "required_inputs": [
+        "WAMN_RECEIVING_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "receiving_data_access::tests::generated_update_ignores_ungranted_additive_columns",
+      "diagnostic_start_log_line": 2853,
+      "diagnostic_end_log_line": 2857,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database / Caused by: / environment variable not found",
+      "required_inputs": [
+        "WAMN_RECEIVING_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc",
+      "diagnostic_start_log_line": 2863,
+      "diagnostic_end_log_line": 2867,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_TENANT_KEY_PG_URL must arm this disposable proof / Caused by: / environment variable not found",
+      "required_inputs": [
+        "WAMN_TENANT_KEY_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::overlay_compatibility::installed_contract_observer_preserves_acls_and_refuses_changed_requirements",
+      "diagnostic_start_log_line": 2871,
+      "diagnostic_end_log_line": 2872,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: environment variable not found",
+      "required_inputs": [
+        "WAMN_OVERLAY_OBSERVER_DATABASE_URL"
+      ],
+      "source_evidence": "tests/integration/src/route_authentication_live/overlay_compatibility.rs:543"
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress",
+      "diagnostic_start_log_line": 2874,
+      "diagnostic_end_log_line": 2875,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_JOURNEY_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup",
+      "diagnostic_start_log_line": 2876,
+      "diagnostic_end_log_line": 2877,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_ROUTE_PG18_URL for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_ROUTE_PG18_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once",
+      "diagnostic_start_log_line": 2878,
+      "diagnostic_end_log_line": 2879,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_JOURNEY_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::production_nested_fresh_only_requires_pat_and_observes_revocation",
+      "diagnostic_start_log_line": 2880,
+      "diagnostic_end_log_line": 2881,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_JOURNEY_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::production_nested_session_call_preserves_original_caller",
+      "diagnostic_start_log_line": 2882,
+      "diagnostic_end_log_line": 2883,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_JOURNEY_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::production_receiving_session_host_fixture",
+      "diagnostic_start_log_line": 2884,
+      "diagnostic_end_log_line": 2885,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_JOURNEY_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::production_route_caller_authentication_and_operation_authorization",
+      "diagnostic_start_log_line": 2886,
+      "diagnostic_end_log_line": 2889,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_ROUTE_AUTH_PG18_URL must name a fresh disposable PostgreSQL 18 server: NotPresent",
+      "required_inputs": [
+        "WAMN_ROUTE_AUTH_PG18_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::production_session_client_login_and_fresh_selection",
+      "diagnostic_start_log_line": 2890,
+      "diagnostic_end_log_line": 2891,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_JOURNEY_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes",
+      "diagnostic_start_log_line": 2892,
+      "diagnostic_end_log_line": 2893,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_JOURNEY_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes",
+      "diagnostic_start_log_line": 2894,
+      "diagnostic_end_log_line": 2895,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_JOURNEY_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "router_tap_live::tests::the_released_router_bridge_emits_accepted_and_settled_previews",
+      "diagnostic_start_log_line": 2897,
+      "diagnostic_end_log_line": 2898,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_ROUTER_TAP_NATS_URL for the disposable router-tap proof",
+      "required_inputs": [
+        "WAMN_ROUTER_TAP_NATS_URL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "throughput_bench_live::tests::every_layer_ran_the_whole_sweep_and_its_knee_is_recorded",
+      "diagnostic_start_log_line": 2908,
+      "diagnostic_end_log_line": 2911,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_THROUGHPUT_EVIDENCE_DIR must point at a --throughput journey's throughput/ directory",
+      "required_inputs": [
+        "WAMN_THROUGHPUT_EVIDENCE_DIR"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "trusted_http_route::tests::nested_http_authorizes_child_and_preserves_original_caller",
+      "diagnostic_start_log_line": 2912,
+      "diagnostic_end_log_line": 2913,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET=1 for both disposable databases",
+      "required_inputs": [
+        "WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority",
+      "diagnostic_start_log_line": 2914,
+      "diagnostic_end_log_line": 2915,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET=1 for the disposable database",
+      "required_inputs": [
+        "WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports",
+      "diagnostic_start_log_line": 2916,
+      "diagnostic_end_log_line": 2917,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_STD_VIRTUALIZATION_COMPONENT_WASM for the virtualized std guest proof",
+      "required_inputs": [
+        "WAMN_STD_VIRTUALIZATION_COMPONENT_WASM"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal",
+      "diagnostic_start_log_line": 2918,
+      "diagnostic_end_log_line": 2919,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_STD_VIRTUALIZATION_SENTINEL for the virtualized std guest proof",
+      "required_inputs": [
+        "WAMN_STD_VIRTUALIZATION_SENTINEL"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "wms_runtime_live::committed_move_survives_label_store_failure",
+      "diagnostic_start_log_line": 2924,
+      "diagnostic_end_log_line": 2925,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_JOURNEY_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "wms_runtime_live::contention_and_replay_through_the_composed_route",
+      "diagnostic_start_log_line": 2926,
+      "diagnostic_end_log_line": 2927,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_JOURNEY_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--lib",
+      "name": "wms_runtime_live::the_remaining_operations_serve_their_released_routes",
+      "diagnostic_start_log_line": 2931,
+      "diagnostic_end_log_line": 2932,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_JOURNEY_DOCUMENT for the disposable Receiving route journey",
+      "required_inputs": [
+        "WAMN_JOURNEY_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--test receiving_command_histories_live",
+      "name": "production_receiving_command_histories",
+      "diagnostic_start_log_line": 3002,
+      "diagnostic_end_log_line": 3003,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_RECEIVING_CORRECTNESS_DOCUMENT must name the private fixture document",
+      "required_inputs": [
+        "WAMN_RECEIVING_CORRECTNESS_DOCUMENT"
+      ]
+    },
+    {
+      "package": "wamn-proof-integration",
+      "cargo_target": "--test startup_burst_live",
+      "name": "production_http_start_burst_keeps_native_host_progress",
+      "diagnostic_start_log_line": 3017,
+      "diagnostic_end_log_line": 3019,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: WAMN_STARTUP_BURST_INPUT must name the runner-owned fixture",
+      "required_inputs": [
+        "WAMN_STARTUP_BURST_INPUT"
+      ]
+    },
+    {
+      "package": "wamn-proof-system",
+      "cargo_target": "--test deploy_platform_inventory",
+      "name": "every_mounted_secret_is_declared_here_or_named_a_prerequisite",
+      "diagnostic_start_log_line": 3042,
+      "diagnostic_end_log_line": 3046,
+      "classification": "deployment_prerequisite_declaration_mismatch",
+      "cause": "deploy/platform mounts Secrets it neither declares nor names as a prerequisite: [(\"wamn-object-store-credentials-acme--wms--dev\", {\"values-host-wms-pat.yaml\"})]",
+      "required_inputs": [],
+      "source_evidence": "tests/system/tests/deploy_platform_inventory.rs:1040; deploy/platform/values-host-wms-pat.yaml:97"
+    },
+    {
+      "package": "wamn-run-state",
+      "cargo_target": "--test admission_live",
+      "name": "surviving_authority_matrix_live",
+      "diagnostic_start_log_line": 3273,
+      "diagnostic_end_log_line": 3278,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_RUN_STORE_PG_URL to the throwaway superuser database: NotPresent",
+      "required_inputs": [
+        "WAMN_RUN_STORE_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-run-state",
+      "cargo_target": "--test effect_writer_live",
+      "name": "native_effect_writer_live",
+      "diagnostic_start_log_line": 3290,
+      "diagnostic_end_log_line": 3295,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_RUN_STORE_PG_URL to a throwaway PostgreSQL database: NotPresent",
+      "required_inputs": [
+        "WAMN_RUN_STORE_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-run-state",
+      "cargo_target": "--test run_state_live",
+      "name": "run_state_live",
+      "diagnostic_start_log_line": 3330,
+      "diagnostic_end_log_line": 3335,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_RUN_STORE_PG_URL to the throwaway superuser database: NotPresent",
+      "required_inputs": [
+        "WAMN_RUN_STORE_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "cargo_target": "--lib",
+      "name": "plugins::wamn_jetstream::tests::live_generic_guest_cannot_write_the_provisioned_tap_stream",
+      "diagnostic_start_log_line": 3567,
+      "diagnostic_end_log_line": 3571,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_ROUTER_TAP_NATS_URL to the disposable provisioned NATS: NotPresent",
+      "required_inputs": [
+        "WAMN_ROUTER_TAP_NATS_URL"
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "cargo_target": "--lib",
+      "name": "plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving",
+      "diagnostic_start_log_line": 3620,
+      "diagnostic_end_log_line": 3623,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_POOL_LIFECYCLE_PG_URL to a disposable PostgreSQL database: NotPresent",
+      "required_inputs": [
+        "WAMN_POOL_LIFECYCLE_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "cargo_target": "--lib",
+      "name": "plugins::wamn_postgres::types::tests::live_a_timestamptz_read_back_spells_exactly_what_the_canonicalizer_spells",
+      "diagnostic_start_log_line": 3689,
+      "diagnostic_end_log_line": 3692,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_CARRIER_SPELLING_PG_URL to a disposable PostgreSQL 18 database",
+      "required_inputs": [
+        "WAMN_CARRIER_SPELLING_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "cargo_target": "--lib",
+      "name": "plugins::wamn_postgres::types::tests::live_every_carrier_that_passes_a_typed_value_as_text_matches_its_canonicalizer",
+      "diagnostic_start_log_line": 3693,
+      "diagnostic_end_log_line": 3696,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_CARRIER_SPELLING_PG_URL to a disposable PostgreSQL 18 database",
+      "required_inputs": [
+        "WAMN_CARRIER_SPELLING_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "cargo_target": "--test executor_platform_surface_live",
+      "name": "executor_platform_surface_live",
+      "diagnostic_start_log_line": 3778,
+      "diagnostic_end_log_line": 3783,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_EXEC_PLATFORM_PG_URL to a disposable superuser PostgreSQL url / Caused by: / environment variable not found",
+      "required_inputs": [
+        "WAMN_EXEC_PLATFORM_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "cargo_target": "--test production_claim_durable_live",
+      "name": "production_claim_durable_live",
+      "diagnostic_start_log_line": 3873,
+      "diagnostic_end_log_line": 3878,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_DURABLE_TIER_PG_URL to a disposable PostgreSQL database (a DIFFERENT one from WAMN_PRODUCTION_CLAIM_PG_URL: both suites install the same schema and drop it on teardown) / Caused by: / environment variable not found",
+      "required_inputs": [
+        "WAMN_DURABLE_TIER_PG_URL",
+        "WAMN_PRODUCTION_CLAIM_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "cargo_target": "--test production_claim_live",
+      "name": "production_claim_live",
+      "diagnostic_start_log_line": 3890,
+      "diagnostic_end_log_line": 3894,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_PRODUCTION_CLAIM_PG_URL to a disposable PostgreSQL database / Caused by: / environment variable not found",
+      "required_inputs": [
+        "WAMN_PRODUCTION_CLAIM_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "cargo_target": "--test release_manifest_source",
+      "name": "a_published_release_pulls_back_byte_exact_and_welds_the_release_it_names",
+      "diagnostic_start_log_line": 3921,
+      "diagnostic_end_log_line": 3925,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "this live leg requires WAMN_RELEASE_MANIFEST_ARTIFACT_BASE: the explicit <registry>/<repository> the release was pushed to",
+      "required_inputs": [
+        "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE"
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "cargo_target": "--test session_route_authentication",
+      "name": "sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_identity",
+      "diagnostic_start_log_line": 3961,
+      "diagnostic_end_log_line": 3966,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "Error: set WAMN_SESSION_ROUTE_PG18_URL to this proof's fresh disposable PG18 server / Caused by: / environment variable not found",
+      "required_inputs": [
+        "WAMN_SESSION_ROUTE_PG18_URL"
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "cargo_target": "--test sqlx_transaction_live",
+      "name": "sqlx_command_commits_rolls_back_and_obeys_current_user_rls",
+      "diagnostic_start_log_line": 3991,
+      "diagnostic_end_log_line": 3996,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_SQLX_TRANSACTION_PG_URL to a fresh PostgreSQL 18 superuser URL",
+      "required_inputs": [
+        "WAMN_SQLX_TRANSACTION_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-runtime",
+      "cargo_target": "--test wiring_doorbell_live",
+      "name": "a_pointer_flip_makes_the_cache_serve_the_new_active_version",
+      "diagnostic_start_log_line": 4008,
+      "diagnostic_end_log_line": 4013,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_CATALOG_PG_URL to the throwaway superuser database: NotPresent",
+      "required_inputs": [
+        "WAMN_CATALOG_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-scenario-worker",
+      "cargo_target": "--test management_live",
+      "name": "management_surface_authenticates_and_attributes_authoring_commands",
+      "diagnostic_start_log_line": 4090,
+      "diagnostic_end_log_line": 4094,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "set WAMN_PLATFORM_IDENTITY_PG_URL to a disposable PostgreSQL superuser URL: NotPresent",
+      "required_inputs": [
+        "WAMN_PLATFORM_IDENTITY_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-schema-introspection",
+      "cargo_target": "--test postgres_live",
+      "name": "an_exclusion_constraint_is_modelled_rather_than_refused",
+      "diagnostic_start_log_line": 4514,
+      "diagnostic_end_log_line": 4518,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_SCHEMA_INTROSPECTION_PG_URL must name a disposable PostgreSQL 18 server: NotPresent",
+      "required_inputs": [
+        "WAMN_SCHEMA_INTROSPECTION_PG_URL"
+      ]
+    },
+    {
+      "package": "wamn-schema-introspection",
+      "cargo_target": "--test postgres_live",
+      "name": "receiving_migration_round_trips_and_refuses_unsupported_server_objects",
+      "diagnostic_start_log_line": 4519,
+      "diagnostic_end_log_line": 4523,
+      "classification": "missing_live_or_artifact_input",
+      "cause": "WAMN_SCHEMA_INTROSPECTION_PG_URL must name a disposable PostgreSQL 18 server: NotPresent",
+      "required_inputs": [
+        "WAMN_SCHEMA_INTROSPECTION_PG_URL"
+      ]
+    }
+  ],
+  "explicit_self_skips": {
+    "count": 85,
+    "count_is_lower_bound": true,
+    "included_in_reported_test_passes": true,
+    "entries": [
+      {
+        "target_description": "unittests src/lib.rs",
+        "target_running_log_line": 560,
+        "name": "tests::pipelined_publish_lands_in_order_and_dedupes_live",
+        "diagnostic_log_line": 574,
+        "completion_log_line": 575,
+        "message": "WAMN_E1_NATS_URL unset \u2014 skipping E1 live JetStream gate",
+        "referenced_arming_inputs": [
+          "WAMN_E1_NATS_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/event_reader_live.rs",
+        "target_running_log_line": 598,
+        "name": "reader_streams_one_project_env_to_the_evt_stream",
+        "diagnostic_log_line": 601,
+        "completion_log_line": 602,
+        "message": "WAMN_READER_PG_URL unset \u2014 skipping the event-reader live gate",
+        "referenced_arming_inputs": [
+          "WAMN_READER_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/cdc.rs",
+        "target_running_log_line": 1017,
+        "name": "cdc_role_reads_only_the_classification_maps_and_still_decodes_tenant_tables",
+        "diagnostic_log_line": 1020,
+        "completion_log_line": 1021,
+        "message": "skipping cdc_role_reads_only_the_entity_map_and_still_decodes_tenant_tables (set WAMN_CDC_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_CDC_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/cdc.rs",
+        "target_running_log_line": 1017,
+        "name": "cdc_substrate_applies_and_is_idempotent_on_postgres",
+        "diagnostic_log_line": 1022,
+        "completion_log_line": 1023,
+        "message": "skipping cdc_substrate_applies_and_is_idempotent_on_postgres (set WAMN_CDC_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_CDC_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/control_portable_store.rs",
+        "target_running_log_line": 1027,
+        "name": "control_author_is_tenant_bound_and_exactly_scoped_on_postgres",
+        "diagnostic_log_line": 1030,
+        "completion_log_line": 1031,
+        "message": "skipping control_author_is_tenant_bound_and_exactly_scoped_on_postgres (set WAMN_CONTROL_PORTABLE_PG_URL)",
+        "referenced_arming_inputs": [
+          "WAMN_CONTROL_PORTABLE_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/control_portable_store.rs",
+        "target_running_log_line": 1027,
+        "name": "control_portable_store_enforces_the_current_record_on_postgres",
+        "diagnostic_log_line": 1032,
+        "completion_log_line": 1033,
+        "message": "skipping control_portable_store_enforces_the_current_record_on_postgres (set WAMN_CONTROL_PORTABLE_PG_URL)",
+        "referenced_arming_inputs": [
+          "WAMN_CONTROL_PORTABLE_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/control_portable_store.rs",
+        "target_running_log_line": 1027,
+        "name": "deployment_attestation_rust_binding_holds_on_postgres",
+        "diagnostic_log_line": 1039,
+        "completion_log_line": 1040,
+        "message": "skipping deployment_attestation_rust_binding_holds_on_postgres (set WAMN_CONTROL_PORTABLE_PG_URL)",
+        "referenced_arming_inputs": [
+          "WAMN_CONTROL_PORTABLE_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/control_storage.rs",
+        "target_running_log_line": 1050,
+        "name": "system_schema_applies_and_enforces_invariants_on_postgres",
+        "diagnostic_log_line": 1060,
+        "completion_log_line": 1061,
+        "message": "skipping system_schema_applies_and_enforces_invariants_on_postgres (set WAMN_REGISTRY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_REGISTRY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/database_owner.rs",
+        "target_running_log_line": 1068,
+        "name": "project_env_database_ownership_and_connect_are_scoped",
+        "diagnostic_log_line": 1071,
+        "completion_log_line": 1072,
+        "message": "skipping project_env_database_ownership_and_connect_are_scoped (set WAMN_PROVISION_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_PROVISION_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/deploy_sql_authority.rs",
+        "target_running_log_line": 1076,
+        "name": "the_platform_arm_admits_every_platform_family_from_the_server",
+        "diagnostic_log_line": 1079,
+        "completion_log_line": 1080,
+        "message": "skipping the_platform_arm_admits_every_platform_family_from_the_server (set WAMN_TENANT_FLOOR_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_TENANT_FLOOR_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/deploy_sql_authority.rs",
+        "target_running_log_line": 1076,
+        "name": "the_swept_floor_admits_only_the_connected_guest_on_postgres",
+        "diagnostic_log_line": 1082,
+        "completion_log_line": 1083,
+        "message": "skipping the_swept_floor_admits_only_the_connected_guest_on_postgres (set WAMN_TENANT_FLOOR_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_TENANT_FLOOR_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/deploy_sql_authority.rs",
+        "target_running_log_line": 1076,
+        "name": "the_two_scenario_author_emitters_agree_at_zero_memberships",
+        "diagnostic_log_line": 1084,
+        "completion_log_line": 1085,
+        "message": "skipping the_two_scenario_author_emitters_agree_at_zero_memberships (set WAMN_TENANT_FLOOR_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_TENANT_FLOOR_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/dump.rs",
+        "target_running_log_line": 1089,
+        "name": "dump_round_trips_a_seeded_database",
+        "diagnostic_log_line": 1092,
+        "completion_log_line": 1093,
+        "message": "skipping dump_round_trips_a_seeded_database (set WAMN_DUMP_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DUMP_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say",
+        "diagnostic_log_line": 1100,
+        "completion_log_line": 1101,
+        "message": "skipping a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "every_governed_relation_carries_the_tenant_key_expression_index",
+        "diagnostic_log_line": 1102,
+        "completion_log_line": 1103,
+        "message": "skipping every_governed_relation_carries_the_tenant_key_expression_index (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_authority_derivations_match_their_pinned_definition_digest",
+        "diagnostic_log_line": 1105,
+        "completion_log_line": 1106,
+        "message": "skipping the_authority_derivations_match_their_pinned_definition_digest (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_dispatch_reader_family_is_refused_the_other_families_operations",
+        "diagnostic_log_line": 1107,
+        "completion_log_line": 1108,
+        "message": "skipping the denial matrix row for DispatchReader (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_effect_writer_arm_reaches_exactly_its_four_run_plane_ledgers",
+        "diagnostic_log_line": 1109,
+        "completion_log_line": 1110,
+        "message": "skipping the_effect_writer_arm_reaches_exactly_its_four_run_plane_ledgers (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_effect_writer_family_is_refused_the_other_families_operations",
+        "diagnostic_log_line": 1111,
+        "completion_log_line": 1112,
+        "message": "skipping the denial matrix row for EffectWriter (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_event_materializer_family_is_refused_the_other_families_operations",
+        "diagnostic_log_line": 1113,
+        "completion_log_line": 1114,
+        "message": "skipping the denial matrix row for EventMaterializer (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_executor_platform_family_is_refused_the_other_families_operations",
+        "diagnostic_log_line": 1115,
+        "completion_log_line": 1116,
+        "message": "skipping the denial matrix row for ExecutorPlatform (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_guest_family_reads_its_own_tenant_and_only_its_own",
+        "diagnostic_log_line": 1117,
+        "completion_log_line": 1118,
+        "message": "skipping the_guest_family_reads_its_own_tenant_and_only_its_own (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_guest_sql_family_is_refused_the_other_families_operations",
+        "diagnostic_log_line": 1119,
+        "completion_log_line": 1120,
+        "message": "skipping the denial matrix row for App (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_http_admitter_family_is_refused_the_other_families_operations",
+        "diagnostic_log_line": 1121,
+        "completion_log_line": 1122,
+        "message": "skipping the denial matrix row for HttpAdmitter (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_management_admitter_family_is_refused_the_other_families_operations",
+        "diagnostic_log_line": 1123,
+        "completion_log_line": 1124,
+        "message": "skipping the denial matrix row for ManagementAdmitter (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_platform_group_members_are_exactly_the_derived_families",
+        "diagnostic_log_line": 1125,
+        "completion_log_line": 1126,
+        "message": "skipping the_platform_group_members_are_exactly_the_derived_families (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_retention_family_is_refused_the_other_families_operations",
+        "diagnostic_log_line": 1127,
+        "completion_log_line": 1128,
+        "message": "skipping the denial matrix row for Retention (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_run_plane_guards_are_still_public_execute",
+        "diagnostic_log_line": 1129,
+        "completion_log_line": 1130,
+        "message": "skipping the_run_plane_guards_are_still_public_execute (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_scenario_author_has_no_platform_membership_or_project_reads",
+        "diagnostic_log_line": 1131,
+        "completion_log_line": 1132,
+        "message": "skipping the_scenario_author_has_no_platform_membership_or_project_reads (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_service_reader_family_is_refused_the_other_families_operations",
+        "diagnostic_log_line": 1133,
+        "completion_log_line": 1134,
+        "message": "skipping the denial matrix row for ServiceReader (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_session_role_reader_is_refused_the_other_families_operations",
+        "diagnostic_log_line": 1135,
+        "completion_log_line": 1136,
+        "message": "skipping the denial matrix row for SessionRoleReader (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_denial_matrix.rs",
+        "target_running_log_line": 1097,
+        "name": "the_tenant_scoped_platform_member_reads_nothing_outside_its_grants",
+        "diagnostic_log_line": 1137,
+        "completion_log_line": 1138,
+        "message": "skipping the_tenant_scoped_platform_member_reads_nothing_outside_its_grants (set WAMN_DENIAL_MATRIX_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_DENIAL_MATRIX_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_surface_grants.rs",
+        "target_running_log_line": 1142,
+        "name": "the_event_materializer_role_holds_exactly_its_two_catalog_reads",
+        "diagnostic_log_line": 1145,
+        "completion_log_line": 1146,
+        "message": "skipping the_event_materializer_role_holds_exactly_its_two_catalog_reads (set WAMN_FAMILY_SURFACE_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_FAMILY_SURFACE_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_surface_grants.rs",
+        "target_running_log_line": 1142,
+        "name": "the_executor_platform_role_holds_exactly_its_measured_claim_surface",
+        "diagnostic_log_line": 1147,
+        "completion_log_line": 1148,
+        "message": "skipping the_executor_platform_role_holds_exactly_its_measured_claim_surface (set WAMN_FAMILY_SURFACE_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_FAMILY_SURFACE_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/family_surface_grants.rs",
+        "target_running_log_line": 1142,
+        "name": "the_http_admitter_role_adds_exactly_the_fresh_permission_reads",
+        "diagnostic_log_line": 1149,
+        "completion_log_line": 1150,
+        "message": "skipping the_http_admitter_role_adds_exactly_the_fresh_permission_reads (set WAMN_FAMILY_SURFACE_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_FAMILY_SURFACE_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/operation_grants.rs",
+        "target_running_log_line": 1171,
+        "name": "route_caller_grants_are_exact_residue_free_and_convergent_live",
+        "diagnostic_log_line": 1174,
+        "completion_log_line": 1175,
+        "message": "skipping route_caller_grants_are_exact_residue_free_and_convergent_live (set WAMN_OPERATION_GRANTS_PG18_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_OPERATION_GRANTS_PG18_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/ops_storage.rs",
+        "target_running_log_line": 1179,
+        "name": "ops_schema_applies_idempotently_after_core_on_postgres",
+        "diagnostic_log_line": 1184,
+        "completion_log_line": 1185,
+        "message": "skipping ops_schema_applies_idempotently_after_core_on_postgres (set WAMN_REGISTRY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_REGISTRY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/provision.rs",
+        "target_running_log_line": 1191,
+        "name": "provisioning_builders_apply_on_postgres",
+        "diagnostic_log_line": 1194,
+        "completion_log_line": 1195,
+        "message": "skipping provisioning_builders_apply_on_postgres (set WAMN_PROVISION_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_PROVISION_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/provision.rs",
+        "target_running_log_line": 1191,
+        "name": "the_platform_extensions_make_an_exclusion_constraint_reachable",
+        "diagnostic_log_line": 1196,
+        "completion_log_line": 1197,
+        "message": "skipping the_platform_extensions_make_an_exclusion_constraint_reachable (set WAMN_PROVISION_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_PROVISION_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/restore.rs",
+        "target_running_log_line": 1201,
+        "name": "restore_round_trips_and_clean_replaces_in_place",
+        "diagnostic_log_line": 1204,
+        "completion_log_line": 1205,
+        "message": "skipping restore gate (set WAMN_RESTORE_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_RESTORE_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/system_reader_grants.rs",
+        "target_running_log_line": 1240,
+        "name": "the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_other",
+        "diagnostic_log_line": 1243,
+        "completion_log_line": 1244,
+        "message": "skipping the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_other (set WAMN_REGISTRY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_REGISTRY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/system_reader_grants.rs",
+        "target_running_log_line": 1240,
+        "name": "the_registry_reader_holds_one_select_and_is_refused_everywhere_else",
+        "diagnostic_log_line": 1245,
+        "completion_log_line": 1246,
+        "message": "skipping the_registry_reader_holds_one_select_and_is_refused_everywhere_else (set WAMN_REGISTRY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_REGISTRY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/tenant_key_live.rs",
+        "target_running_log_line": 1250,
+        "name": "a_second_apply_leaves_the_definition_identical",
+        "diagnostic_log_line": 1253,
+        "completion_log_line": 1254,
+        "message": "skipping a_second_apply_leaves_the_definition_identical (set WAMN_TENANT_KEY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_TENANT_KEY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/tenant_key_live.rs",
+        "target_running_log_line": 1250,
+        "name": "the_bootstrap_and_literal_renderings_install_the_same_object",
+        "diagnostic_log_line": 1255,
+        "completion_log_line": 1256,
+        "message": "skipping the_bootstrap_and_literal_renderings_install_the_same_object (set WAMN_TENANT_KEY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_TENANT_KEY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/tenant_key_live.rs",
+        "target_running_log_line": 1250,
+        "name": "the_function_carries_the_flags_the_expression_index_requires",
+        "diagnostic_log_line": 1257,
+        "completion_log_line": 1258,
+        "message": "skipping the_function_carries_the_flags_the_expression_index_requires (set WAMN_TENANT_KEY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_TENANT_KEY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/tenant_key_live.rs",
+        "target_running_log_line": 1250,
+        "name": "the_guest_may_execute_the_derivation_and_may_not_replace_it",
+        "diagnostic_log_line": 1259,
+        "completion_log_line": 1260,
+        "message": "skipping the_guest_may_execute_the_derivation_and_may_not_replace_it (set WAMN_TENANT_KEY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_TENANT_KEY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/tenant_key_live.rs",
+        "target_running_log_line": 1250,
+        "name": "the_session_derivation_returns_the_key_of_the_connected_guest_login",
+        "diagnostic_log_line": 1261,
+        "completion_log_line": 1262,
+        "message": "skipping the_session_derivation_returns_the_key_of_the_connected_guest_login (set WAMN_TENANT_KEY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_TENANT_KEY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/tenant_key_live.rs",
+        "target_running_log_line": 1250,
+        "name": "the_sql_tenant_key_equals_the_rust_tenant_key",
+        "diagnostic_log_line": 1263,
+        "completion_log_line": 1264,
+        "message": "skipping the_sql_tenant_key_equals_the_rust_tenant_key (set WAMN_TENANT_KEY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_TENANT_KEY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "unittests src/lib.rs",
+        "target_running_log_line": 1331,
+        "name": "push_component::tests::the_environment_instance_decides_which_run_owns_a_component_fact",
+        "diagnostic_log_line": 1583,
+        "completion_log_line": 1584,
+        "message": "skipping environment-instance projection proof; WAMN_CTL_PG_URL is unset",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "unittests src/lib.rs",
+        "target_running_log_line": 1331,
+        "name": "push_component::tests::verification_projection_replays_refuses_drift_and_leaves_publish_project_noop",
+        "diagnostic_log_line": 1587,
+        "completion_log_line": 1588,
+        "message": "skipping publication projection proof; WAMN_CTL_PG_URL is unset",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/apply_package_live.rs",
+        "target_running_log_line": 1652,
+        "name": "exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix",
+        "diagnostic_log_line": 1655,
+        "completion_log_line": 1656,
+        "message": "skipping apply-package live proof; WAMN_CTL_PG_URL is unset",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/dispatch_reader_provisioning_live.rs",
+        "target_running_log_line": 1707,
+        "name": "dispatch_reader_provisioning_live",
+        "diagnostic_log_line": 1710,
+        "completion_log_line": 1711,
+        "message": "WAMN_CTL_PG_URL unset \u2014 skipping the wamn-0h0g.12.122 provisioning gate",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/guest_generation_live.rs",
+        "target_running_log_line": 1732,
+        "name": "guest_generations_are_per_tenant_and_carry_the_predicate_key",
+        "diagnostic_log_line": 1735,
+        "completion_log_line": 1736,
+        "message": "skipping guest_generation_live (set WAMN_GUEST_GENERATION_PG18_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_GUEST_GENERATION_PG18_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/package_data_access_live.rs",
+        "target_running_log_line": 1775,
+        "name": "an_author_recovers_from_a_failed_version_bump_in_either_direction",
+        "diagnostic_log_line": 1778,
+        "completion_log_line": 1779,
+        "message": "skipping package_data_access_live; WAMN_CTL_PG_URL is unset",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/package_data_access_live.rs",
+        "target_running_log_line": 1775,
+        "name": "installed_package_set_unions_a_real_app_generation_and_replays_noop",
+        "diagnostic_log_line": 1780,
+        "completion_log_line": 1781,
+        "message": "skipping package_data_access_live; WAMN_CTL_PG_URL is unset",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/package_data_access_live.rs",
+        "target_running_log_line": 1775,
+        "name": "reconciliation_leaves_every_platform_schema_grant_on_the_app_role_standing",
+        "diagnostic_log_line": 1782,
+        "completion_log_line": 1783,
+        "message": "skipping package_data_access_live; WAMN_CTL_PG_URL is unset",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/provisioning_order_live.rs",
+        "target_running_log_line": 1806,
+        "name": "a_refused_prepare_leaves_the_state_its_documentation_promises",
+        "diagnostic_log_line": 1809,
+        "completion_log_line": 1810,
+        "message": "skipping provisioning_order_live (set WAMN_PROVISIONING_ORDER_PG18_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_PROVISIONING_ORDER_PG18_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/provisioning_order_live.rs",
+        "target_running_log_line": 1806,
+        "name": "the_documented_provisioning_order_completes_end_to_end",
+        "diagnostic_log_line": 1811,
+        "completion_log_line": 1812,
+        "message": "skipping provisioning_order_live (set WAMN_PROVISIONING_ORDER_PG18_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_PROVISIONING_ORDER_PG18_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/publish_release_live.rs",
+        "target_running_log_line": 1816,
+        "name": "package_seal_and_attestation_winner_are_server_enforced",
+        "diagnostic_log_line": 1819,
+        "completion_log_line": 1820,
+        "message": "skipping publish-release live proof; WAMN_CTL_PG_URL is unset",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/replica_identity_live.rs",
+        "target_running_log_line": 1824,
+        "name": "package_registration_union_flips_exact_tables_and_unreadable_state_refuses",
+        "diagnostic_log_line": 1827,
+        "completion_log_line": 1828,
+        "message": "skipping RI live proof; WAMN_CTL_PG_URL is unset",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/run_plane_live.rs",
+        "target_running_log_line": 1832,
+        "name": "authoring_privileges_at_record_plan_no_repair_live",
+        "diagnostic_log_line": 1835,
+        "completion_log_line": 1836,
+        "message": "WAMN_CTL_PG_URL unset \u2014 skipping the authoring-privilege drift gate",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/run_plane_live.rs",
+        "target_running_log_line": 1832,
+        "name": "child_run_cutover_live",
+        "diagnostic_log_line": 1837,
+        "completion_log_line": 1838,
+        "message": "WAMN_CTL_PG_URL unset \u2014 skipping the child-run cutover gate",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/run_plane_live.rs",
+        "target_running_log_line": 1832,
+        "name": "dispatch_reader_read_surface_live",
+        "diagnostic_log_line": 1839,
+        "completion_log_line": 1840,
+        "message": "WAMN_CTL_PG_URL unset \u2014 skipping the dispatch-reader read-surface gate",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/run_plane_live.rs",
+        "target_running_log_line": 1832,
+        "name": "environment_policy_row_security_live",
+        "diagnostic_log_line": 1846,
+        "completion_log_line": 1847,
+        "message": "WAMN_CTL_PG_URL unset \u2014 skipping the environment-policy RLS gate",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/run_plane_live.rs",
+        "target_running_log_line": 1832,
+        "name": "reconcile_target_identity_guard_live",
+        "diagnostic_log_line": 1868,
+        "completion_log_line": 1869,
+        "message": "WAMN_CTL_PG_URL unset \u2014 skipping the run-plane target-identity gate",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/run_plane_live.rs",
+        "target_running_log_line": 1832,
+        "name": "registry_durability_schema_ensure_live",
+        "diagnostic_log_line": 1870,
+        "completion_log_line": 1871,
+        "message": "WAMN_CTL_PG_URL unset \u2014 skipping the registry durability migration gate",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/run_plane_live.rs",
+        "target_running_log_line": 1832,
+        "name": "rerun_lineage_cutover_live",
+        "diagnostic_log_line": 1872,
+        "completion_log_line": 1873,
+        "message": "WAMN_CTL_PG_URL unset \u2014 skipping the rerun-lineage cutover gate",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/run_plane_live.rs",
+        "target_running_log_line": 1832,
+        "name": "retired_effect_disposition_cutover_live",
+        "diagnostic_log_line": 1874,
+        "completion_log_line": 1875,
+        "message": "WAMN_CTL_PG_URL unset \u2014 skipping retired disposition cutover gate",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/run_plane_live.rs",
+        "target_running_log_line": 1832,
+        "name": "run_plane_reconcile_live",
+        "diagnostic_log_line": 1876,
+        "completion_log_line": 1877,
+        "message": "WAMN_CTL_PG_URL unset \u2014 skipping the wamn-1wdq run-plane gate",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/run_plane_live.rs",
+        "target_running_log_line": 1832,
+        "name": "stored_suite_cutover_live",
+        "diagnostic_log_line": 1878,
+        "completion_log_line": 1879,
+        "message": "WAMN_CTL_PG_URL unset \u2014 skipping the stored-suite cutover gate",
+        "referenced_arming_inputs": [
+          "WAMN_CTL_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/terminalize_effect_uncertain_live.rs",
+        "target_running_log_line": 1917,
+        "name": "terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live",
+        "diagnostic_log_line": 1920,
+        "completion_log_line": 1921,
+        "message": "WAMN_OPERATOR_TERMINALIZE_PG18_URL unset \u2014 skipping operator terminalization gate",
+        "referenced_arming_inputs": [
+          "WAMN_OPERATOR_TERMINALIZE_PG18_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/read_authority.rs",
+        "target_running_log_line": 1960,
+        "name": "dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it",
+        "diagnostic_log_line": 1963,
+        "completion_log_line": 1964,
+        "message": "skipping dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it (set WAMN_PROVISION_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_PROVISION_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/identity_live.rs",
+        "target_running_log_line": 2276,
+        "name": "platform_identity_round_trip_on_postgres",
+        "diagnostic_log_line": 2279,
+        "completion_log_line": 2280,
+        "message": "skipping platform_identity_round_trip_on_postgres (set WAMN_PLATFORM_IDENTITY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_PLATFORM_IDENTITY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/pat_live.rs",
+        "target_running_log_line": 2284,
+        "name": "platform_pat_round_trip_on_postgres",
+        "diagnostic_log_line": 2287,
+        "completion_log_line": 2288,
+        "message": "skipping platform_pat_round_trip_on_postgres (set WAMN_PLATFORM_IDENTITY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_PLATFORM_IDENTITY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/authority.rs",
+        "target_running_log_line": 2349,
+        "name": "a_project_still_owns_its_own_configuration",
+        "diagnostic_log_line": 2352,
+        "completion_log_line": 2353,
+        "message": "skipping a_project_still_owns_its_own_configuration (set WAMN_SYSSCHEMA_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_SYSSCHEMA_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/authority.rs",
+        "target_running_log_line": 2349,
+        "name": "author_sql_cannot_write_the_relations_that_authorize_it",
+        "diagnostic_log_line": 2354,
+        "completion_log_line": 2355,
+        "message": "skipping author_sql_cannot_write_the_relations_that_authorize_it (set WAMN_SYSSCHEMA_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_SYSSCHEMA_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/authority.rs",
+        "target_running_log_line": 2349,
+        "name": "the_audited_party_may_append_to_its_trail_but_not_rewrite_it",
+        "diagnostic_log_line": 2356,
+        "completion_log_line": 2357,
+        "message": "skipping the_audited_party_may_append_to_its_trail_but_not_rewrite_it (set WAMN_SYSSCHEMA_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_SYSSCHEMA_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/schema.rs",
+        "target_running_log_line": 2361,
+        "name": "app_schema_applies_and_enforces_isolation_on_postgres",
+        "diagnostic_log_line": 2364,
+        "completion_log_line": 2365,
+        "message": "skipping app_schema_applies_and_enforces_isolation_and_claims_on_postgres (set WAMN_SYSSCHEMA_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_SYSSCHEMA_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/store.rs",
+        "target_running_log_line": 3351,
+        "name": "run_state_schema_applies_and_isolates_on_postgres",
+        "diagnostic_log_line": 3358,
+        "completion_log_line": 3359,
+        "message": "skipping run_state_schema_applies_and_isolates_on_postgres (set WAMN_RUN_STORE_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_RUN_STORE_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "unittests src/lib.rs",
+        "target_running_log_line": 3365,
+        "name": "plugins::wamn_jetstream::tests::live_derived_publish_replay_converges_through_jetstream_dedup",
+        "diagnostic_log_line": 3565,
+        "completion_log_line": 3566,
+        "message": "skipping live_derived_publish_replay_converges_through_jetstream_dedup: WAMN_EVT_NATS_URL unset",
+        "referenced_arming_inputs": [
+          "WAMN_EVT_NATS_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "unittests src/lib.rs",
+        "target_running_log_line": 3365,
+        "name": "plugins::wamn_jetstream::tests::live_publish_dedupe_bind_fetch_ack",
+        "diagnostic_log_line": 3572,
+        "completion_log_line": 3573,
+        "message": "skipping live_publish_dedupe_bind_fetch_ack: WAMN_EVT_NATS_URL unset",
+        "referenced_arming_inputs": [
+          "WAMN_EVT_NATS_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "unittests src/lib.rs",
+        "target_running_log_line": 3365,
+        "name": "plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed",
+        "diagnostic_log_line": 3618,
+        "completion_log_line": 3619,
+        "message": "WAMN_SCS_OFF_PG_URL unset \u2014 skipping the wamn-2jkm.65 R18 live negative (boot a postgres:18 with -c standard_conforming_strings=off; see docs/operations/build-and-test.md [R18-NEG])",
+        "referenced_arming_inputs": [
+          "WAMN_SCS_OFF_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/management_live.rs",
+        "target_running_log_line": 4085,
+        "name": "empty_case_connection_component_without_release_or_binding_reports_zero_cases",
+        "diagnostic_log_line": 4088,
+        "completion_log_line": 4089,
+        "message": "skipping live connection Gate proof (set WAMN_PLATFORM_IDENTITY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_PLATFORM_IDENTITY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/management_live.rs",
+        "target_running_log_line": 4085,
+        "name": "management_surface_reconnects_after_the_verification_database_is_recreated",
+        "diagnostic_log_line": 4095,
+        "completion_log_line": 4096,
+        "message": "skipping management_surface_reconnects_after_the_verification_database_is_recreated (set WAMN_PLATFORM_IDENTITY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_PLATFORM_IDENTITY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      },
+      {
+        "target_description": "tests/management_live.rs",
+        "target_running_log_line": 4085,
+        "name": "nonempty_case_connection_component_without_release_or_binding_refuses_effect_posture",
+        "diagnostic_log_line": 4097,
+        "completion_log_line": 4098,
+        "message": "skipping live connection Gate proof (set WAMN_PLATFORM_IDENTITY_PG_URL to run)",
+        "referenced_arming_inputs": [
+          "WAMN_PLATFORM_IDENTITY_PG_URL"
+        ],
+        "reported_status": "ok",
+        "live_or_artifact_proof_executed": false
+      }
+    ]
+  },
+  "unresolved_classifications": [],
+  "prior_comparison": {
+    "source": "07c7a858c4452579b12e0ae25a4e61af2107c4eb",
+    "exact_failure_identities_and_normalized_causes": 84,
+    "changed_causes": [],
+    "added_failures": [],
+    "absent_failures": [],
+    "targets_and_self_skip_names_unchanged": true,
+    "limit": "The retained comparator omits the nested B-auth diagnostic. This classification separately resolves that actual raw-log cause."
+  },
+  "interpretation": "This run establishes the consolidation starting state. All 84 classified failures remain failures. Reported passes include 85 explicit self-skips and do not establish live proof. No live prerequisites are armed. Historical cutover labels in workspace-results.json are not current classifications.",
+  "reducer_input_token_limit": "The retained reducer recognizes the descriptive word PG18 as an input name. Current required_inputs exclude that word."
+}
