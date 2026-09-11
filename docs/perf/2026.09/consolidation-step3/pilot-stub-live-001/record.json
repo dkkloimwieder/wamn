@@ -1,0 +1,67 @@
+{
+  "source_commit": "1925bea2ccacb28fc6cf768dd02c5a760b62aca3",
+  "records": [
+    {
+      "phase": "up",
+      "source_commit": "1925bea2ccacb28fc6cf768dd02c5a760b62aca3",
+      "command": [
+        "/home/kaalin/dev/wamn/target/debug/wamn-gates",
+        "agent-pilot-run",
+        "--repository",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911",
+        "up",
+        "--run",
+        "901s",
+        "--agent",
+        "stub",
+        "--task",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911/docs/experiments/agent-authoring/tasks/dock-appointments",
+        "--commit",
+        "1925bea2ccacb28fc6cf768dd02c5a760b62aca3",
+        "--standup",
+        "dev-env"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911",
+      "environment": {
+        "XDG_CACHE_HOME": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911",
+        "XDG_STATE_HOME": "/home/kaalin/.local/state/wamn-pilot-stub-20260911",
+        "RUSTUP_TOOLCHAIN": "1.98.0",
+        "CARGO_BUILD_JOBS": "2",
+        "RUSTC_WRAPPER": ""
+      },
+      "started_utc": "2026-09-11T22:19:10.388441+00:00",
+      "exit_code": 10,
+      "elapsed_seconds": 869.8389976429753,
+      "finished_utc": "2026-09-11T22:33:40.227602+00:00"
+    },
+    {
+      "phase": "down",
+      "source_commit": "1925bea2ccacb28fc6cf768dd02c5a760b62aca3",
+      "command": [
+        "/home/kaalin/dev/wamn/target/debug/wamn-gates",
+        "agent-pilot-run",
+        "--repository",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911",
+        "down",
+        "--run",
+        "901s"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911",
+      "environment": {
+        "XDG_CACHE_HOME": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911",
+        "XDG_STATE_HOME": "/home/kaalin/.local/state/wamn-pilot-stub-20260911",
+        "RUSTUP_TOOLCHAIN": "1.98.0",
+        "CARGO_BUILD_JOBS": "2",
+        "RUSTC_WRAPPER": ""
+      },
+      "started_utc": "2026-09-11T22:33:40.227907+00:00",
+      "exit_code": 0,
+      "elapsed_seconds": 2.299268930044491,
+      "finished_utc": "2026-09-11T22:33:42.527248+00:00"
+    }
+  ],
+  "all_selected_commands_passed": false,
+  "binary_sha256_after": "13f809d973d4018bc841ae71ac9a846889f3de741f806d013a2fcfe458e4e250",
+  "source_head_after": "1925bea2ccacb28fc6cf768dd02c5a760b62aca3",
+  "source_status_after": ""
+}
