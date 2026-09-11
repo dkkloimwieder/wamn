@@ -1,0 +1,31 @@
+2026-09-11T20:06:44.115501Z  INFO wamn_cdc_reader: registration loaded publication="wamn_cdc_acme__receiving__dev__zipfvzzr" slot="wamn_cdc_acme__receiving__dev__zipfvzzr" stream="EVT_4_acme_9_receiving_3_dev"
+2026-09-11T20:06:44.117768Z  INFO async_nats::connector: connected successfully server=4222 max_payload=1048576
+2026-09-11T20:06:44.180367Z  INFO wamn_cdc_reader: preflight: slot healthy (resume position = confirmed LSN) slot="wamn_cdc_acme__receiving__dev__zipfvzzr" active=false confirmed_flush_lsn="0/33C03E8" wal_status="reserved"
+2026-09-11T20:06:44.180460Z  INFO pg_walstream::stream: Creating logical replication stream with retry support
+2026-09-11T20:06:44.180484Z  INFO pg_walstream::retry: Attempting to connect to PostgreSQL with retry logic
+2026-09-11T20:06:44.257474Z  INFO pg_walstream::retry: Successfully connected to PostgreSQL on attempt 1 after 76.968443ms
+2026-09-11T20:06:44.257534Z  INFO pg_walstream::stream: Starting logical replication stream
+2026-09-11T20:06:44.257543Z  INFO pg_walstream::stream: Initializing replication stream
+2026-09-11T20:06:44.257828Z  INFO pg_walstream::stream: System identification successful
+2026-09-11T20:06:44.257848Z  INFO pg_walstream::stream: Creating replication slot: wamn_cdc_acme__receiving__dev__zipfvzzr
+2026-09-11T20:06:44.258141Z  WARN pg_walstream::stream: Replication slot already exists, continuing
+2026-09-11T20:06:44.258176Z  INFO pg_walstream::stream: Replication stream initialized
+2026-09-11T20:06:44.258874Z  INFO pg_walstream::stream: Logical replication started with LSN: 0/0
+2026-09-11T20:06:44.258904Z  INFO wamn_cdc_reader: walsender session open; draining reopens=0
+2026-09-11T20:07:14.268959Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/388C1F0, flushed=0/0, applied=0/0, reply_requested=false
+2026-09-11T20:07:44.270233Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/388D4D0, flushed=0/0, applied=0/0, reply_requested=false
+2026-09-11T20:08:14.284930Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/388D8C8, flushed=0/0, applied=0/0, reply_requested=false
+2026-09-11T20:08:29.295432Z  INFO wamn_cdc_reader: entity resolved table=purchase_order relation_oid=18612 package_id="wamn_receiving" entity="purchase_order"
+2026-09-11T20:08:29.392684Z  INFO wamn_cdc_reader: CDC exclusion resolved table=record_receipt_command relation_oid=18663 package_id="wamn_receiving" relation="record_receipt_command"
+2026-09-11T20:08:29.454952Z  INFO wamn_cdc_reader: entity resolved table=receipt relation_oid=18681 package_id="wamn_receiving" entity="receipt"
+2026-09-11T20:08:29.515035Z  INFO wamn_cdc_reader: entity resolved table=receipt_line relation_oid=18710 package_id="wamn_receiving" entity="receipt_line"
+2026-09-11T20:08:29.575157Z  INFO wamn_cdc_reader: entity resolved table=purchase_order_line relation_oid=18634 package_id="wamn_receiving" entity="purchase_order_line"
+2026-09-11T20:08:29.576538Z  INFO wamn::event_reader: CDC exclusions committed excluded_by_relation={"wamn_receiving::record_receipt_command": 2}
+2026-09-11T20:08:44.303185Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/388E530, flushed=0/388E4F8, applied=0/388E4F8, reply_requested=false
+2026-09-11T20:09:14.323435Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/3891C58, flushed=0/388E4F8, applied=0/388E4F8, reply_requested=false
+2026-09-11T20:09:44.332021Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/3891D88, flushed=0/388E4F8, applied=0/388E4F8, reply_requested=false
+2026-09-11T20:10:14.360908Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/3891DC0, flushed=0/388E4F8, applied=0/388E4F8, reply_requested=false
+2026-09-11T20:10:29.862888Z  INFO wamn::event_reader: drain summary commits=3 events_published=5 deduped=0 excluded_by_relation={"wamn_receiving::record_receipt_command": 2} ending="shutdown"
+2026-09-11T20:10:29.863033Z  INFO pg_walstream::connection::native::connection: Sent standby status update: received=0/3891DC0, flushed=0/388E4F8, applied=0/388E4F8, reply_requested=false
+2026-09-11T20:10:29.863060Z  INFO pg_walstream::stream: Stopping logical replication stream (last received LSN: 0/3891DC0)
+2026-09-11T20:10:29.863069Z  INFO wamn_cdc_reader: shutdown requested; exiting cleanly reopens=0 commits=3

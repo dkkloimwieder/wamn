@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911/tools/rc-gate-run",
+    "clusters"
+  ],
+  "cwd": null,
+  "source": "7f5fb77accf3382c406c067a52dc4e0e057e955c",
+  "stderr": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/rc-live-002/cleanup-clusters.stderr.log",
+  "stdout": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/rc-live-002/cleanup-clusters.log"
+}

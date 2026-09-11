@@ -1,0 +1,36 @@
+2026-09-11T20:08:13.068140Z  INFO native descriptor limits initialized descriptor_soft_limit=Some(2147483584) default_max_connections=32768 default_max_http_ingress_connections=32768
+2026-09-11T20:08:13.231019Z  INFO connected to NATS
+2026-09-11T20:08:13.231390Z  INFO host memory resolved max_guest_memory=4GiB guest_memory_mode="count" default_heap_memory=256MiB core_instances=512 memories=512 pool_reservation=128GiB
+2026-09-11T20:08:14.948690Z  INFO synchronous release preload completed synchronous_wirings=13 component_digests=2 elapsed_ms=1683
+2026-09-11T20:08:14.948730Z  INFO release preload completed; component cache warm
+2026-09-11T20:08:14.965611Z  INFO wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing) router_delivery=true
+2026-09-11T20:08:14.965659Z  INFO wamn-host welded to its release effective_release_id=1 manifest_digest=sha256:52feceaa7255c21a354995ea59ad6056edef22c929467fe4adad2c90c4cf5bb3
+2026-09-11T20:08:14.965705Z  INFO probe server listening addr=0.0.0.0:8081
+2026-09-11T20:08:14.965771Z  INFO HTTP server listening addr=0.0.0.0:80 protocol="HTTP"
+2026-09-11T20:08:14.965828Z  INFO Starting WASI OTel plugin endpoint=http://otel-collector.wamn-system.svc.cluster.local:4317 protocol="grpc"
+2026-09-11T20:08:14.966849Z  INFO WASI OTel plugin started
+2026-09-11T20:08:14.966936Z  INFO Host started host_id="f9cc4350-0c55-436d-92bf-21c2088ba23f" friendly_name="nondescript-tax-0170" host_name="10.244.1.6" labels={"hostgroup": "default"} version="2.9.0" max_concurrent_starts=4
+2026-09-11T20:08:14.967105Z  INFO Host provides interfaces count=11 interfaces=["wasi:cli/stderr,terminal-stdin,terminal-stdout,terminal-stderr,terminal-output,environment,exit,stdin,stdout,terminal-input@0.2.0", "wasi:clocks/wall-clock,monotonic-clock@0.2.0", "wasi:clocks/monotonic-clock,wall-time@0.2.0", "wasi:filesystem/preopens,types@0.2.0", "wasi:http/handler,types@0.3.0", "wasi:http/incoming-handler,types,outgoing-handler@0.2.0", "wasi:io/streams,error,poll@0.2.0", "wasi:random/insecure,random,insecure-seed@0.2.0", "wasi:random/random@0.2.0", "wasi:sockets/tcp,udp,instance-network,ip-name-lookup,tcp-create-socket,udp-create-socket,network@0.2.0", "wasmcloud:nats/kv-handler,jetstream-handler,core-handler@0.1.0"]
+2026-09-11T20:08:14.967325Z  INFO wamn-host runtime startup completed elapsed_ms=1899 cleanup_budget_secs=57
+2026-09-11T20:08:21.183836Z  INFO workload_start{workload_id=d6f9cfae-f8a7-4d25-a29d-53fb9a3b0500 workload.name="flow-http-6ccf646c8d-69ff9df689" workload.namespace="wamn-receiving-f88928c32e044d419e79727f885365ac"}: Starting workload workload_id="d6f9cfae-f8a7-4d25-a29d-53fb9a3b0500" namespace="wamn-receiving-f88928c32e044d419e79727f885365ac" name="flow-http-6ccf646c8d-69ff9df689"
+2026-09-11T20:08:21.369386Z  INFO workload_stop{workload_id=d6f9cfae-f8a7-4d25-a29d-53fb9a3b0500}: Stopping workload workload_id="d6f9cfae-f8a7-4d25-a29d-53fb9a3b0500"
+2026-09-11T20:08:21.454943Z  INFO workload_start{workload_id=5b2090e2-d0ec-4f5e-871d-6ffbd06eb0ea workload.name="flow-http-5d6bcb8b58-6956bf475b" workload.namespace="wamn-receiving-f88928c32e044d419e79727f885365ac"}: Starting workload workload_id="5b2090e2-d0ec-4f5e-871d-6ffbd06eb0ea" namespace="wamn-receiving-f88928c32e044d419e79727f885365ac" name="flow-http-5d6bcb8b58-6956bf475b"
+2026-09-11T20:08:26.310225Z  INFO workload_start{workload_id=17bd4d0f-5b83-46c0-ada5-e441a4506ce3 workload.name="receiving-materializer-79795d47c8-dc8cf5c9c" workload.namespace="wamn-receiving-f88928c32e044d419e79727f885365ac"}: Starting workload workload_id="17bd4d0f-5b83-46c0-ada5-e441a4506ce3" namespace="wamn-receiving-f88928c32e044d419e79727f885365ac" name="receiving-materializer-79795d47c8-dc8cf5c9c"
+2026-09-11T20:08:26.624592Z  INFO workload_start{workload_id=17bd4d0f-5b83-46c0-ada5-e441a4506ce3 workload.name="receiving-materializer-79795d47c8-dc8cf5c9c" workload.namespace="wamn-receiving-f88928c32e044d419e79727f885365ac"}:workload_start_reserved:resolve_workload{workload.id="17bd4d0f-5b83-46c0-ada5-e441a4506ce3" workload.name="receiving-materializer-79795d47c8-dc8cf5c9c" workload.namespace="wamn-receiving-f88928c32e044d419e79727f885365ac"}:bind_plugins:plugin_on_workload_bind{plugin_id="wasmcloud-nats"}: opened NATS connection workload_id="17bd4d0f-5b83-46c0-ada5-e441a4506ce3" binding="events" servers="nats://172.28.0.10:4222" auth="user-password" server_version="2.10.29"
+wamn::materializer up: stream=EVT_4_acme_9_receiving_3_dev filter=evt.acme.receiving.dev.*.* tenant=receiving-route-auth batch=64 fetch_ms=500 max_deliver=5 max_sweeps=0
+2026-09-11T20:08:26.640161Z ERROR service execution failed err=error while executing at wasm backtrace:
+    0:  0x83714 - <unknown>!<wasm function 7>
+    1:  0x1c51f - <unknown>!<wasm function 332>
+    2:   0xd338 - <unknown>!<wasm function 129>
+    3:   0x64e1 - <unknown>!<wasm function 74>
+    4:  0x15706 - <unknown>!<wasm function 203>
+    5:  0x18aec - <unknown>!<wasm function 272>
+    6:  0x61734 - <unknown>!<wasm function 1168>
+    7:   0x9560 - <unknown>!<wasm function 85>
+    8:   0x3094 - <unknown>!<wasm function 53> retries=5
+2026-09-11T20:08:26.640204Z ERROR service execution failed err=wasm trap: cannot enter component instance retries=4
+2026-09-11T20:08:26.640213Z ERROR service execution failed err=wasm trap: cannot enter component instance retries=3
+2026-09-11T20:08:26.640219Z ERROR service execution failed err=wasm trap: cannot enter component instance retries=2
+2026-09-11T20:08:26.640226Z ERROR service execution failed err=wasm trap: cannot enter component instance retries=1
+2026-09-11T20:08:26.640232Z ERROR service execution failed err=wasm trap: cannot enter component instance retries=0
+2026-09-11T20:08:26.640238Z  WARN max restarts reached, service will not be restarted

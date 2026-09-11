@@ -1,0 +1,122 @@
+{
+  "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+  "kind": "WorkloadDeployment",
+  "metadata": {
+    "annotations": {
+      "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"runtime.wasmcloud.dev/v1alpha1\",\"kind\":\"WorkloadDeployment\",\"metadata\":{\"annotations\":{},\"name\":\"flow-http\",\"namespace\":\"wamn-receiving-f88928c32e044d419e79727f885365ac\"},\"spec\":{\"replicas\":1,\"template\":{\"spec\":{\"components\":[{\"image\":\"172.28.0.9:5000/wamn/flow-http@sha256:e3611524cb66c8771cf74219d07e9a857b97994b5cc35d143618406a696168ec\",\"imagePullPolicy\":\"Always\",\"localResources\":{\"allowedIpNameLookups\":[],\"config\":{\"wamn.catalog\":\"default\",\"wamn.environment\":\"wamn-receiving-f88928c32e044d419e79727f885365ac\",\"wamn.project\":\"receiving\",\"wamn.schema\":\"receiving\",\"wamn.tenant\":\"receiving-route-auth\"}},\"name\":\"flow-http\"}],\"environment\":\"wamn-receiving-f88928c32e044d419e79727f885365ac\",\"hostInterfaces\":[{\"config\":{\"host\":\"receiving.localhost\"},\"interfaces\":[\"handler\"],\"namespace\":\"wasi\",\"package\":\"http\",\"version\":\"0.3.0\"},{\"interfaces\":[\"routing\"],\"namespace\":\"wamn\",\"package\":\"flow-http-routing\",\"version\":\"0.1.0\"},{\"interfaces\":[\"delivery\"],\"namespace\":\"wamn\",\"package\":\"router-delivery\",\"version\":\"0.1.0\"}],\"hostSelector\":{\"hostgroup\":\"default\"},\"kubernetes\":{\"service\":{\"name\":\"flow-http\"}}}}}}\n"
+    },
+    "creationTimestamp": "2026-09-11T20:08:20Z",
+    "generation": 1,
+    "name": "flow-http",
+    "namespace": "wamn-receiving-f88928c32e044d419e79727f885365ac",
+    "resourceVersion": "1393",
+    "uid": "2866be48-0f9a-4691-a5d8-5f4928763937"
+  },
+  "spec": {
+    "deployPolicy": "RollingUpdate",
+    "replicas": 1,
+    "template": {
+      "spec": {
+        "components": [
+          {
+            "image": "172.28.0.9:5000/wamn/flow-http@sha256:e3611524cb66c8771cf74219d07e9a857b97994b5cc35d143618406a696168ec",
+            "imagePullPolicy": "Always",
+            "localResources": {
+              "allowedIpNameLookups": [],
+              "config": {
+                "wamn.catalog": "default",
+                "wamn.environment": "wamn-receiving-f88928c32e044d419e79727f885365ac",
+                "wamn.project": "receiving",
+                "wamn.schema": "receiving",
+                "wamn.tenant": "receiving-route-auth"
+              }
+            },
+            "name": "flow-http"
+          }
+        ],
+        "environment": "wamn-receiving-f88928c32e044d419e79727f885365ac",
+        "hostInterfaces": [
+          {
+            "config": {
+              "host": "receiving.localhost"
+            },
+            "interfaces": [
+              "handler"
+            ],
+            "namespace": "wasi",
+            "package": "http",
+            "version": "0.3.0"
+          },
+          {
+            "interfaces": [
+              "routing"
+            ],
+            "namespace": "wamn",
+            "package": "flow-http-routing",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "delivery"
+            ],
+            "namespace": "wamn",
+            "package": "router-delivery",
+            "version": "0.1.0"
+          }
+        ],
+        "hostSelector": {
+          "hostgroup": "default"
+        },
+        "kubernetes": {
+          "service": {
+            "name": "flow-http"
+          }
+        }
+      }
+    }
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-09-11T20:08:20Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Artifact"
+      },
+      {
+        "lastTransitionTime": "2026-09-11T20:08:21Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Sync"
+      },
+      {
+        "lastTransitionTime": "2026-09-11T20:08:21Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Deploy"
+      },
+      {
+        "lastTransitionTime": "2026-09-11T20:08:21Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Scale"
+      },
+      {
+        "lastTransitionTime": "2026-09-11T20:08:21Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Ready"
+      }
+    ],
+    "currentReplicaSet": {
+      "name": "flow-http-5d6bcb8b58"
+    },
+    "currentReplicas": 1,
+    "replicas": {
+      "current": 1,
+      "expected": 1,
+      "ready": 1
+    },
+    "selector": "runtime.wasmcloud.dev/workload-deployment=flow-http"
+  }
+}

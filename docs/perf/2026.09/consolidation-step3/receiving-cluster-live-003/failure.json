@@ -1,0 +1,4 @@
+{
+  "failure": "causal receipt and inspection events did not both reach EVT_4_acme_9_receiving_3_dev",
+  "verdict": "fail"
+}

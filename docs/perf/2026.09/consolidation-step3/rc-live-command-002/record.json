@@ -1,0 +1,27 @@
+{
+  "source_commit": "7f5fb77accf3382c406c067a52dc4e0e057e955c",
+  "source_directory": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "run",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-gates",
+    "--bin",
+    "wamn-gates",
+    "--",
+    "rc",
+    "--apply",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/rc-live-002"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "started_utc": "2026-09-11T20:06:13.354845+00:00",
+  "exit_code": 1,
+  "elapsed_seconds": 287.95441749098245
+}

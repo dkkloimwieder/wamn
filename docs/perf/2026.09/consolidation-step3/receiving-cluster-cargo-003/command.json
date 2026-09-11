@@ -1,0 +1,25 @@
+{
+  "source_commit": "e440fb18a75560d8877c828832e9d4f021b8e21e",
+  "source_directory": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-receiving-tests",
+    "--lib",
+    "route_authentication_live::cluster::default_case::released_routes_materializer_startup_and_environment_isolation",
+    "--",
+    "--exact",
+    "--ignored",
+    "--nocapture"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2",
+    "WAMN_RECEIVING_EVIDENCE_DIR": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/receiving-cluster-live-003"
+  },
+  "started_utc": "2026-09-11T20:02:46.907512+00:00"
+}
