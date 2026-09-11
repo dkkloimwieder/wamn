@@ -683,20 +683,54 @@ test "$MATERIALIZE_CHECKED" \
 # was written to find was already in the tree, unseen. Filed, not fixed here:
 # regenerating a package's artifacts is not this arm's change.
 
-# Normal builds consume the committed .sqlx evidence without a database.
-SQLX_OFFLINE=true cargo test -p wamn-proof-conformance \
+# Normal builds read each app's committed tests/.sqlx cache without a database.
+SQLX_OFFLINE=true cargo test -p wamn-receiving-tests \
   --test receiving_sqlx_verifier --locked --offline
+SQLX_OFFLINE=true cargo test -p wamn-client-acme-receiving-tests \
+  --test client_acme_sqlx_verifier --locked --offline
 cargo test --manifest-path apps/Cargo.toml \
   -p wamn-receiving-data-access --all-targets --locked --offline
 cargo check --manifest-path apps/Cargo.toml \
   -p wamn-receiving-data-access --target wasm32-wasip2 --locked --offline
 
-# On the disposable database, compile the native sibling and verify metadata.
+# On the disposable database, compile both native targets and compare metadata.
 env -u SQLX_OFFLINE DATABASE_URL="$RECEIVING_SQLX_DATABASE_URL" cargo test \
-  -p wamn-proof-conformance --test receiving_sqlx_verifier \
+  -p wamn-receiving-tests --test receiving_sqlx_verifier \
   --no-run --locked --offline
-cargo sqlx prepare --check --workspace -D "$RECEIVING_SQLX_DATABASE_URL" -- \
-  --package wamn-proof-conformance --test receiving_sqlx_verifier
+env -u SQLX_OFFLINE DATABASE_URL="$RECEIVING_SQLX_DATABASE_URL" cargo test \
+  -p wamn-client-acme-receiving-tests --test client_acme_sqlx_verifier \
+  --no-run --locked --offline
+(
+  cd apps/wamn_receiving/tests
+  CARGO_NET_OFFLINE=true cargo sqlx prepare --check -D "$RECEIVING_SQLX_DATABASE_URL" -- \
+    --test receiving_sqlx_verifier --locked --offline
+)
+(
+  cd apps/client_acme_receiving/tests
+  CARGO_NET_OFFLINE=true cargo sqlx prepare --check -D "$RECEIVING_SQLX_DATABASE_URL" -- \
+    --test client_acme_sqlx_verifier --locked --offline
+)
+```
+
+SQLx selects `.sqlx` from the current package directory.
+The `--check` command compares that cache with temporary output under Cargo's target directory.
+It leaves the committed cache unchanged.
+
+If you change SQL, regenerate its app cache with the matching command below.
+Use the same disposable database URL.
+Then run that app's `--check` command again.
+
+```bash
+(
+  cd apps/wamn_receiving/tests
+  CARGO_NET_OFFLINE=true cargo sqlx prepare -D "$RECEIVING_SQLX_DATABASE_URL" -- \
+    --test receiving_sqlx_verifier --locked --offline
+)
+(
+  cd apps/client_acme_receiving/tests
+  CARGO_NET_OFFLINE=true cargo sqlx prepare -D "$RECEIVING_SQLX_DATABASE_URL" -- \
+    --test client_acme_sqlx_verifier --locked --offline
+)
 ```
 
 Run the two temporary, hash-guarded mutants in the same shell before cleanup.
@@ -714,7 +748,7 @@ RECEIVING_SQL_BASELINE_SHA="$(sha256sum "$RECEIVING_SQL_FILE" | cut -d ' ' -f 1)
     's/\Q    purchase_order.updated_at\E/    purchase_order.missing_receiving_column AS updated_at/' \
     "$RECEIVING_SQL_FILE"
   if env -u SQLX_OFFLINE DATABASE_URL="$RECEIVING_SQLX_DATABASE_URL" cargo test \
-      -p wamn-proof-conformance --test receiving_sqlx_verifier \
+      -p wamn-receiving-tests --test receiving_sqlx_verifier \
       --no-run --locked --offline; then
     echo "broken-column mutant unexpectedly compiled" >&2
     exit 1
@@ -723,7 +757,7 @@ RECEIVING_SQL_BASELINE_SHA="$(sha256sum "$RECEIVING_SQL_FILE" | cut -d ' ' -f 1)
 test "$(sha256sum "$RECEIVING_SQL_FILE" | cut -d ' ' -f 1)" = \
   "$RECEIVING_SQL_BASELINE_SHA"
 env -u SQLX_OFFLINE DATABASE_URL="$RECEIVING_SQLX_DATABASE_URL" cargo test \
-  -p wamn-proof-conformance --test receiving_sqlx_verifier \
+  -p wamn-receiving-tests --test receiving_sqlx_verifier \
   --no-run --locked --offline
 
 RECEIVING_GENERATOR_FILE=crates/schema/generator/src/generate.rs
