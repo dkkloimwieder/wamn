@@ -505,6 +505,8 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
             "GRANT INSERT ON TABLE wamn_run.runs TO {stable};\n\
              GRANT UPDATE (input_json) ON TABLE wamn_run.runs TO {stable};\n\
              GRANT SELECT ON TABLE wamn_run.environment_policies TO {stable};\n\
+             GRANT SELECT ON TABLE catalog.effective_release_heads, \
+               catalog.wiring_activation, catalog.wiring_tombstones TO {stable};\n\
              GRANT EXECUTE ON FUNCTION \
                wamn_run.require_management_admission_authority() TO {stable};\n"
         ),
@@ -547,6 +549,9 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
         "catalog.packages",
         "catalog.package_migrations",
         "catalog.effective_releases",
+        "catalog.effective_release_heads",
+        "catalog.wiring_activation",
+        "catalog.wiring_tombstones",
         "catalog.event_registrations",
         "wamn_run.environment_policies",
         "wamn_run.operator_run_actions",
