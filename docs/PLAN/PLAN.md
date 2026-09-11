@@ -40,6 +40,8 @@ It replaces custom materializer delivery and settlement with the platform-owned 
 Registration checks, drift refusal, derived publishing, and the separate scheduler doorbell remain.
 Live correctness, authority and pressure tests and the integrated retained workspace test run remain pending.
 Coordinate its source integration with the application moves under `wamn-47wm` before building final artifacts and updating their digest pins.
+The owner requires separate source and advisory streams for each organization, project, and environment.
+Observers use that environment's credentials and cannot read another environment.
 
 ## Exploration or decision required
 
@@ -47,7 +49,7 @@ Do not claim the dependent implementation until its row is resolved in Beads.
 
 | Owner | Required answer |
 |---|---|
-| `wamn-0ct2.7` | Permit platform-wide advisory metadata for observers, or retain separate advisory streams for each environment. |
+| `wamn-0ct2.7` | Can platform provisioning create the streams, with runtime credentials unable to create or reconfigure them? |
 | `.15.180` | Carry the recovered conflicting run id without exposing it through anonymous HTTP, or keep separate result types. |
 | `.12.151` | Keep the two release-membership conflict vocabularies or converge both tiers on one typed refusal. |
 | `.13.42` | Post-MVP only: customer-hosted router residency and signed-release trust. |

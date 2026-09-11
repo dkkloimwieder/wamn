@@ -140,7 +140,12 @@ The reviewed [source checkpoint of 2026-09-11](../perf/2026.09/native-c-advisori
 It uses the platform-owned native `events` binding, private host configuration, scoped broker credentials, and retained exhaustion and termination advisories.
 Registration checks, drift refusal, derived publishing and the separate scheduler doorbell remain.
 The earlier `.4` report and `.6` alternative retain their historical context.
-Live correctness, authority and pressure tests, the observer metadata decision, and the integrated retained workspace test run remain pending.
+The owner requires separate source and advisory streams for each declared organization, project, and environment.
+Monitoring uses that environment's credentials and cannot read another environment.
+Source review found that an allowed stream creation request can name a foreign stream as a data source.
+The proposed correction puts stream creation in platform provisioning and removes that permission from runtime credentials.
+That ownership decision remains open under `wamn-0ct2.7`, and the environment changes remain outside the integrated branch.
+Live application correctness, delivery pressure, and the integrated retained workspace test run remain pending.
 
 **Observation:** 2.9's `wasmcloud:nats` provides broker-aware publish, pull and acknowledgement functionality with host-owned credentials and scoped grants. The historical justification that upstream lacks these mechanics is no longer sufficient. WAMN nevertheless has additional release-registration, causation and namespace rules. Native plugin internals are not all public reuse APIs. [S7, S8]
 
