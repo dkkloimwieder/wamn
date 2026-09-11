@@ -10,6 +10,10 @@ path = "lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+async-nats = { workspace = true, features = ["jetstream", "server_2_10"] }
+hex = { workspace = true }
+ring = { workspace = true }
+wamn-control-registry = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }

@@ -6334,6 +6334,9 @@ name = "wamn-test-infrastructure"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-nats",
+ "hex",
+ "ring",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -6342,6 +6345,7 @@ dependencies = [
  "wamn-authoring-model",
  "wamn-catalog",
  "wamn-control-provision",
+ "wamn-control-registry",
 ]
 
 [[package]]
