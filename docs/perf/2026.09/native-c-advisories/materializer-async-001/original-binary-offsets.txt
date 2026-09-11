@@ -1,0 +1,46 @@
+           | 2d 70 6f 6c
+           | 6c 5d 00 03
+    0x1ef9 | 05 24 72 6f | import [func 15] Import { module: "$root", name: "[waitable-set-wait]", ty: Func(3) }
+           | 6f 74 13 5b
+           | 77 61 69 74
+           | 61 62 6c 65
+   0x1c51c | 41 08       | i32_const value:8
+   0x1c51e | 6a          | i32_add
+   0x1c51f | 10 8f 80 80 | call function_index:15
+           | 80 00      
+   0x1c525 | 36 02 00    | i32_store memarg:MemArg { align: 2, max_align: 2, offset: 0, memory: 0 }
+   0x1c528 | 20 00       | local_get local_index:0
+   0x83710 | 20 01       | local_get local_index:1
+   0x83712 | 41 07       | i32_const value:7
+   0x83714 | 11 04 00    | call_indirect type_index:4 table_index:0
+   0x83717 | 0b          | end
+============== func 8 ====================
+   0x83718 | 21          | size of function
+ 0x83bbf | 00 00 01 00 | alias [core func 10] CoreInstanceExport { kind: Func, instance_index: 0, name: "6" }
+         | 01 36      
+ 0x83bc5 | 00 00 01 00 | alias [core func 11] CoreInstanceExport { kind: Func, instance_index: 0, name: "7" }
+         | 01 37      
+ 0x83bcb | 08 05       | canonical function section
+ 0x83bcd | 04          | 4 count
+ 0x8464d | 08 11       | canonical function section
+ 0x8464f | 03          | 3 count
+ 0x84650 | 01 00 0e 04 | [core func 58] Lower { func_index: 14, options: [Memory(0), Realloc(52), UTF8, Async] }
+         | 03 00 04 34
+         | 00 06      
+ 0x8465a | 21 00 00    | [core func 59] WaitableSetPoll { cancellable: false, memory: 0 }
+ 0x8465d | 20 00 00    | [core func 60] WaitableSetWait { cancellable: false, memory: 0 }
+ 0x84660 | 06 0c       | component alias section
+ 0x84662 | 01          | 1 count
+ 0x84663 | 01 00 03 07 | alias [func 15] InstanceExport { kind: Func, instance_index: 3, name: "prepare" }
+ 0x84a23 | 08 06       | canonical function section
+ 0x84a25 | 01          | 1 count
+ 0x84a26 | 00 00 51 00 | [func 35] Lift { core_func_index: 81, type_index: 57, options: [] }
+         | 39         
+ 0x84a2b | 04 3f       | [component 0] inline size
+   0x84a2d | 00 61 73 6d | version 13 (Component)
+ 0x84a84 | 0b 18       | component export section
+ 0x84a86 | 01          | 1 count
+ 0x84a87 | 00 12 77 61 | export ComponentExport { name: ComponentExternName { name: "wasi:cli/run@0.2.0", implements: None, version_suffix: None, external_id: None }, kind: Instance, index: 26, ty: None }
+         | 73 69 3a 63
+         | 6c 69 2f 72
+         | 75 6e 40 30

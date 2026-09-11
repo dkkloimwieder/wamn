@@ -29,6 +29,17 @@ use wamn::router_delivery::delivery::{
 use wasmcloud::nats::types::HeaderEntry as Header;
 use wit_bindgen::block_on;
 
+struct Component;
+
+impl exports::wasi::cli::run::Guest for Component {
+    async fn run() -> Result<(), ()> {
+        main();
+        Ok(())
+    }
+}
+
+export!(Component);
+
 struct Config {
     stream: String,
     org: String,

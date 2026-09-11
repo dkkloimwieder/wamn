@@ -1,0 +1,144 @@
+{
+  "bead": "wamn-0ct2.7",
+  "source_base": "1c4a2676375a6757c17f5b7e12f2c01d104ff7ce",
+  "failed_live_source": "e440fb18a75560d8877c828832e9d4f021b8e21e",
+  "binary": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/wasm32-wasip2/release/materializer.wasm",
+  "binary_sha256_before": "04ddf5788331f15833db31a8274f05ed5e41469783c8bd9ede3ab2401162132f",
+  "binary_sha256_after": "04ddf5788331f15833db31a8274f05ed5e41469783c8bd9ede3ab2401162132f",
+  "live_records_sha256": {
+    "docs/perf/2026.09/consolidation-step3/receiving-cluster-live-003/component-bytes.sha256": "76644b02eb17376ca24df02ae61290a12122dcc4f91c68bcf89e95622351dfeb",
+    "docs/perf/2026.09/consolidation-step3/receiving-cluster-live-003/source.json": "f0288f11ae3c82dffb86bf0ad2357a0b30ae15a2112753150cedc8822003c69e",
+    "docs/perf/2026.09/consolidation-step3/receiving-cluster-live-003/result.json": "bff9759e6bf3869635194dc3b90d3c91eb9f7158bf734487a8bd32fb7ae7e9f7",
+    "docs/perf/2026.09/consolidation-step3/receiving-cluster-live-003/failure-pod-hostgroup-default-69c5b46fd5-f87sh.log": "cdec25d5b7a5cb64525ea216c3d937b60b3d4944a90fda02e90174ea1290ac21",
+    "docs/perf/2026.09/consolidation-step3/receiving-cluster-live-003/failure-pod-hostgroup-default-69c5b46fd5-pvqtl.log": "b413420c387f284d808e170012b4b05939b0e47d07ab18097e5efce8c9f21b0c"
+  },
+  "upstream_cli": {
+    "source": "/home/kaalin/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wasmtime-wasi-47.0.4/src/p3/wit/deps/cli.wit",
+    "sha256": "04b2de3bf344052c78080f3c5320442132b4e7c20b42633a92b8400b6d29ab0d",
+    "adopted_run_interface_verbatim": true,
+    "adopted_path": "apps/platform/execution/materializer/wit/deps/wasi-cli/package.wit",
+    "adopted_sha256": "ddda0cdddb8e3d4dfdcf86c6e4b132637454a795ee3cc664d3dcc4ea751a2041"
+  },
+  "existing_rust_body_bytes_unchanged": true,
+  "commands": [
+    {
+      "argv": [
+        "/home/kaalin/.cargo/bin/wasm-tools",
+        "dump",
+        "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/wasm32-wasip2/release/materializer.wasm"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-materializer-async-20260911",
+      "exit_code": 0,
+      "elapsed_seconds": 0.34874395898077637,
+      "stdout_sha256": "82b1f6afbd5d1dd4888f6d6b73d65d00cd42c94069305adc5b1dd3fcb1cb3393",
+      "stderr": "",
+      "stdout_retained": "address excerpts only; complete stdout hash above",
+      "stdout_file": "original-binary-offsets.txt"
+    },
+    {
+      "argv": [
+        "/home/kaalin/.cargo/bin/wasm-tools",
+        "component",
+        "wit",
+        "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/wasm32-wasip2/release/materializer.wasm"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-materializer-async-20260911",
+      "exit_code": 0,
+      "elapsed_seconds": 0.013239272986538708,
+      "stdout_sha256": "c4ac324f9e4a22d57e79e34b22256244ea97d2c97a0c69559b142c0a08caf45a",
+      "stderr": "",
+      "stdout_file": "original-world.wit"
+    },
+    {
+      "argv": [
+        "/home/kaalin/.cargo/bin/wasm-tools",
+        "component",
+        "wit",
+        "apps/platform/execution/materializer/wit"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-materializer-async-20260911",
+      "exit_code": 0,
+      "elapsed_seconds": 0.0029942970140837133,
+      "stdout_sha256": "e6aae5700f0977cfb88f29c3b7ec2629ab5e9a6bdfda4f12dbebb9772c7e5185",
+      "stderr": "",
+      "stdout_file": "repaired-world.wit"
+    },
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "apps/platform/execution/materializer/src/main.rs"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-materializer-async-20260911",
+      "exit_code": 0,
+      "elapsed_seconds": 0.03125164599623531,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-materializer-async-20260911",
+      "exit_code": 0,
+      "elapsed_seconds": 0.5016468759858981,
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr": ""
+    }
+  ],
+  "limits": [
+    "No Cargo build, test execution, service launch, or broker permission change.",
+    "The trapped component is stripped; no DWARF source-line information is present.",
+    "Canonical wait mapping and the synchronous CLI export identify the native boundary; the host log does not print the inner trap cause.",
+    "Repaired binary metadata and live validation remain pending."
+  ],
+  "repaired_source_sha256": {
+    "apps/platform/execution/materializer/Cargo.toml": "f0a799291c3e48b87edea233f63b4a056fe46262bacdfbb3cee5b836588ff14f",
+    "apps/platform/execution/materializer/src/main.rs": "ec7eafee0319448fc713ac4ac6dcf6f99216fa8d1baa71e8902911ed0491d734",
+    "apps/platform/execution/materializer/wit/world.wit": "422a8d86361b8abef069fbb200402415d439bbb7b1a0fb56130cc522d5874901",
+    "apps/platform/execution/materializer/wit/deps/wasi-cli/package.wit": "ddda0cdddb8e3d4dfdcf86c6e4b132637454a795ee3cc664d3dcc4ea751a2041"
+  },
+  "active_pin_search": {
+    "argv": [
+      "git",
+      "-c",
+      "core.fsmonitor=false",
+      "-c",
+      "core.pager=cat",
+      "grep",
+      "-l",
+      "04ddf5788331f15833db31a8274f05ed5e41469783c8bd9ede3ab2401162132f",
+      "--",
+      "apps",
+      "crates",
+      "services",
+      "tests",
+      "tools",
+      "deploy",
+      "architecture"
+    ],
+    "exit_code": 1,
+    "matches": []
+  },
+  "source_review": {
+    "async_task_can_block": "wasmtime47.0.4/src/runtime/component/concurrent.rs:5584",
+    "nested_task_state_restored": "wit-bindgen0.61.1/src/rt/async_support.rs:313",
+    "independent_review": "baseline_proofs read-only review found no changed upstream signature or task-state refusal; live validation required"
+  },
+  "retained_test_names": [
+    "source_event_id_requires_one_exact_header",
+    "cdc_decode_refuses_either_half_of_package_entity_identity",
+    "derived_origin_decodes_separately_from_the_cdc_envelope",
+    "unknown_source_package_refusal_has_a_typed_literal_and_counter",
+    "known_package_mismatch_is_counted_per_registration",
+    "router_completion_matrix_separates_deterministic_poison_from_retry",
+    "batch_payload_preserves_fetch_order",
+    "a_batch_propagates_the_deepest_parent_only_with_one_truthful_root",
+    "a_batch_with_mixed_roots_mints_a_new_root",
+    "a_batch_with_any_missing_parent_mints_a_new_root"
+  ]
+}

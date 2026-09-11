@@ -2,6 +2,7 @@
 name = "materializer"
 version.workspace = true
 edition.workspace = true
+autobins = false
 
 [dependencies]
 wit-bindgen = { workspace = true, features = ["async"] }
@@ -12,8 +13,9 @@ wamn-materializer = { workspace = true }
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 
-# A COMMAND component (wasi:cli/run via `main`), not a cdylib: the Service
-# workload shape (E12) runs it in the host's restart loop.
+[lib]
+crate-type = ["cdylib"]
+path = "src/main.rs"
 
 [lints]
 workspace = true

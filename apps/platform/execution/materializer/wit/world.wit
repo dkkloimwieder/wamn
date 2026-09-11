@@ -18,4 +18,6 @@ world materializer {
   import wamn:jetstream/registration@0.1.0;
   import events: wasmcloud:nats/jetstream@0.1.0;
   import wamn:router-delivery/delivery@0.1.0;
+
+  export wasi:cli/run@0.3.0;
 }
