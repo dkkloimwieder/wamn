@@ -910,6 +910,7 @@ fn production_receiving_command_histories() -> Result<()> {
 }
 
 pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(600);
     ensure!(
         (1..=64).contains(&inputs.cases),
         "case count must be within 1..=64"
@@ -976,9 +977,8 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let db = runtime.block_on(connect(&inputs.project_pg_url))?;
-    let version: String = runtime
-        .block_on(db.client.query_one("SHOW server_version_num", &[]))?
+    let db = run_before(&runtime, deadline, connect(&inputs.project_pg_url))?;
+    let version: String = run_before(&runtime, deadline, db.client.query_one("SHOW server_version_num", &[]))?
         .get(0);
     ensure!(
         version.parse::<u32>()? >= 180_000,
@@ -1001,7 +1001,7 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
             "REC-ROLLBACK","REC-LOST-RESPONSE","REC-REVISION","REC-AUTHORITY"]}),
     )?;
     if let Some(selected) = &inputs.history {
-        runtime.block_on(explicit_history(
+        run_before(&runtime, deadline, explicit_history(
             &db.client,
             &route,
             selected,
@@ -1014,7 +1014,7 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
         return Ok(());
     }
     for example in model::examples() {
-        runtime.block_on(explicit_history(
+        run_before(&runtime, deadline, explicit_history(
             &db.client,
             &route,
             &example,
@@ -1038,7 +1038,7 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
             if failures.borrow().infrastructure.is_some() {
                 return Ok(());
             }
-            let result = runtime.block_on(history(
+            let result = run_before(&runtime, deadline, history(
                 &db.client,
                 &route,
                 &case,
@@ -1058,7 +1058,7 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
             )?;
         }
         if let TestError::Fail(reason, minimized) = error {
-            let reproduction = runtime.block_on(reproduce_history(
+            let reproduction = run_before(&runtime, deadline, reproduce_history(
                 &db.client,
                 &route,
                 &minimized,
@@ -1087,7 +1087,7 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
         }
         return Err(anyhow::anyhow!("REC-HISTORY generation aborted: {error}"));
     }
-    runtime.block_on(async {
+    run_before(&runtime, deadline, async {
         invalid_status(&db.client, &route, &mut evidence).await?;
         mixed_items(&db.client, &route, &mut evidence).await?;
         competing_receipts(&db.client, &route, &inputs, &mut evidence, false).await?;
@@ -1106,6 +1106,23 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
         inputs.cases
     );
     Ok(())
+}
+
+// The former cluster subprocess had this same overall deadline.
+fn run_before<T, E>(
+    runtime: &tokio::runtime::Runtime,
+    deadline: tokio::time::Instant,
+    operation: impl std::future::Future<Output = std::result::Result<T, E>>,
+) -> Result<T>
+where
+    E: Into<anyhow::Error>,
+{
+    runtime.block_on(async {
+        tokio::time::timeout_at(deadline, operation)
+            .await
+            .context("the Receiving command histories exceeded 600 seconds")?
+            .map_err(Into::into)
+    })
 }
 
 #[test]
