@@ -426,9 +426,6 @@ impl Run {
                 .map(|pid| format!("process {pid}")),
         );
         let _ = self.logged(&mut self.lifecycle("down")).await;
-        let _ = self
-            .logged(git(&self.tree).args(["worktree", "prune"]))
-            .await;
         if self.args.discard_worktree && self.directory.join("worktree").is_dir() {
             let _ = self
                 .logged(
@@ -494,7 +491,6 @@ impl Run {
                 .await;
         }
         fs::remove_dir_all(&self.directory)?;
-        let _ = output(git(&self.tree).args(["worktree", "prune"])).await;
         let Some(target) = target else {
             return Ok(());
         };
