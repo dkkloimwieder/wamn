@@ -998,42 +998,47 @@ impl http::Host for ActiveCtx<'_> {
         &mut self,
         request: Request,
     ) -> wash_runtime::wasmtime::Result<Result<Response, ConnectionError>> {
-        let plugin = plugin_of(self)?;
-        let span = http_span(&plugin, self.component_id.as_ref());
-        // Declared before the effect so it outlives the instrumented future. A
-        // send dropped mid-flight records `cancelled` through this guard.
-        let evidence = plugin
-            .invocation(self.component_id.as_ref())
-            .and_then(|invocation| invocation.effects);
-        let mut observed = EffectOutcomeGuard::new(&span, evidence);
-        let started = std::time::Instant::now();
-        let result = plugin
-            .send(self.component_id.as_ref(), &request)
-            .instrument(span)
-            .await;
-        record_effect_ms(
-            &HTTP_EFFECT_DURATION_MS,
-            EFFECT_OPERATION,
-            "send",
-            &plugin.project,
-            started.elapsed(),
-        );
-        let outcome = http_outcome(&result);
-        observed.settle(outcome, result.is_err());
-        if let Err(error) = &result {
-            let invocation = plugin.invocation(self.component_id.as_ref());
-            tracing::warn!(
-                error = ?error,
-                effect.outcome = outcome.label(),
-                wiring_id = invocation.as_ref().map(|value| value.wiring_id.as_str()),
-                wiring_version = invocation.as_ref().map(|value| value.wiring_version),
-                node_id = invocation.as_ref().map(|value| value.node_id.as_str()),
-                occurrence = invocation.as_ref().map(|value| value.occurrence),
-                store_alias = request.requirement,
-                "trusted HTTP effect failed"
-            );
-        }
-        Ok(result)
+        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        trace
+            .run(async move {
+                let plugin = plugin_of(self)?;
+                let span = http_span(&plugin, self.component_id.as_ref());
+                // Declared before the effect so it outlives the instrumented future. A
+                // send dropped mid-flight records `cancelled` through this guard.
+                let evidence = plugin
+                    .invocation(self.component_id.as_ref())
+                    .and_then(|invocation| invocation.effects);
+                let mut observed = EffectOutcomeGuard::new(&span, evidence);
+                let started = std::time::Instant::now();
+                let result = plugin
+                    .send(self.component_id.as_ref(), &request)
+                    .instrument(span)
+                    .await;
+                record_effect_ms(
+                    &HTTP_EFFECT_DURATION_MS,
+                    EFFECT_OPERATION,
+                    "send",
+                    &plugin.project,
+                    started.elapsed(),
+                );
+                let outcome = http_outcome(&result);
+                observed.settle(outcome, result.is_err());
+                if let Err(error) = &result {
+                    let invocation = plugin.invocation(self.component_id.as_ref());
+                    tracing::warn!(
+                        error = ?error,
+                        effect.outcome = outcome.label(),
+                        wiring_id = invocation.as_ref().map(|value| value.wiring_id.as_str()),
+                        wiring_version = invocation.as_ref().map(|value| value.wiring_version),
+                        node_id = invocation.as_ref().map(|value| value.node_id.as_str()),
+                        occurrence = invocation.as_ref().map(|value| value.occurrence),
+                        store_alias = request.requirement,
+                        "trusted HTTP effect failed"
+                    );
+                }
+                Ok(result)
+            })
+            .await
     }
 }
 

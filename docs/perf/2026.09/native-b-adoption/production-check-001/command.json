@@ -1,0 +1,1 @@
+["cargo", "check", "-p", "wamn-execution-host", "--all-targets", "--locked", "--offline", "--target-dir", "target"]

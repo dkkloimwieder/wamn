@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Proof for tools/journey-trace.sh. No cluster: the function reads one JSON
 # file. Traces are synthesised, so every condition can be violated in isolation
-# -- which is the only way to know each of the twelve is load-bearing.
+# Each required span and forbidden loading phase has its own control.
 set -euo pipefail
 
 repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
@@ -30,9 +30,7 @@ def span(name, cls=None):
     return s
 spans = []
 for n in ("wamn.route.authenticate", "wamn.router.resolve",
-          "wamn.component.cache_hit",
-          "wamn.component.linker_setup", "wamn.component.link",
-          "wamn.component.instantiate"):
+          "wamn.component.invoke"):
     if n != omit:
         spans.append(span(n))
 if omit != "acquire:callable-http":
@@ -73,9 +71,7 @@ check "control: an unexpected executor acquisition is refused" $?
 check "control: a missing executor acquisition is refused" $?
 
 echo "4. every platform span is load-bearing"
-for span in wamn.route.authenticate wamn.router.resolve wamn.component.cache_hit \
-            wamn.component.linker_setup \
-            wamn.component.link wamn.component.instantiate wamn.postgres; do
+for span in wamn.route.authenticate wamn.router.resolve wamn.component.invoke wamn.postgres; do
   trace "$work/omit.json" 1 1 "$span"
   ! trace_is_complete "$work/omit.json" true 1 2>/dev/null
   check "control: a trace missing $span is refused" $?
@@ -87,10 +83,8 @@ for cls in callable-http guest-sql; do
 done
 
 echo "4b. the preload's own evidence: a served request pulls and compiles nothing"
-# The complement of the cache_hit assertion. Without these two the guard would
-# accept a request that fell back to pulling, which is exactly the regression
-# the release preload exists to prevent (docs/perf/2026.09/1-component-cache.md).
-for span in wamn.component.pull wamn.component.compile; do
+# Native loading and resolution belong to release readiness.
+for span in wamn.component.pull load_component_bytes resolve_workload link_components; do
   trace "$work/regress.json" 1 1 "" "{\"name\":\"$span\",\"attributes\":[]}"
   ! trace_is_complete "$work/regress.json" true 1 2>/dev/null
   check "control: a served trace that does $span is refused" $?
@@ -100,9 +94,7 @@ echo "5. counts are exact, not at-least — for EVERY count, not a sample"
 # One duplicate control per span proved only that span's count. Relaxing any
 # OTHER == 1 to >= 1 survived, because nothing duplicated it. A count is only
 # shown exact by duplicating the thing it counts, so every one gets its own.
-for span in wamn.route.authenticate wamn.router.resolve wamn.component.cache_hit \
-            wamn.component.linker_setup \
-            wamn.component.link wamn.component.instantiate; do
+for span in wamn.route.authenticate wamn.router.resolve wamn.component.invoke; do
   trace "$work/dup.json" 1 1 "" "{\"name\":\"$span\",\"attributes\":[]}"
   ! trace_is_complete "$work/dup.json" true 1 2>/dev/null
   check "control: $span appearing twice is refused" $?

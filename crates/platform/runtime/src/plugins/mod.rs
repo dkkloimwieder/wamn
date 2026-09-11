@@ -1,6 +1,7 @@
 pub mod connection_http;
 pub(crate) mod effect_span;
 pub mod flow_http_routing;
+pub mod invocation_trace;
 pub mod wamn_blobstore;
 pub mod wamn_credentials;
 pub mod wamn_jetstream;

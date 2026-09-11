@@ -5778,7 +5778,6 @@ dependencies = [
  "wamn-router",
  "wamn-runtime",
  "wash-runtime",
- "wasmtime-wasi",
  "wat",
 ]
 

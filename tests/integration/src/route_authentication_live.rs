@@ -1823,53 +1823,40 @@ fn assert_nested_record_receipt_trace(
     assert_postgres_descendants(spans, trace_id, overlay);
 }
 
-fn assert_cold_nested_acquisition(
+fn assert_native_nested_acquisition(
     spans: &[SpanData],
     trace_id: &str,
     overlay_digest: &str,
     base_digest: &str,
 ) {
-    let mut evidence = Vec::new();
-    for phase in [
-        "wamn.component.pull",
-        "wamn.component.compile",
-        "wamn.component.linker_setup",
-        "wamn.component.link",
-        "wamn.component.instantiate",
-    ] {
-        let observed = spans
-            .iter()
-            .filter(|span| {
-                span.name == phase && span.span_context.trace_id().to_string() == trace_id
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            observed.len(),
-            2,
-            "cold nested trace {trace_id} must prepare both exact components during {phase}"
-        );
-        let elapsed_ms = observed
-            .iter()
-            .filter_map(|span| span.end_time.duration_since(span.start_time).ok())
-            .map(|duration| duration.as_millis())
-            .sum::<u128>();
-        evidence.push(format!("{phase}={elapsed_ms}ms"));
-    }
-    for phase in ["wamn.component.pull", "wamn.component.compile"] {
-        let digests = spans
-            .iter()
-            .filter(|span| {
-                span.name == phase && span.span_context.trace_id().to_string() == trace_id
-            })
-            .filter_map(|span| span_attribute(span, "wamn.component_digest"))
-            .collect::<BTreeSet<_>>();
-        assert_eq!(
-            digests,
-            BTreeSet::from([overlay_digest.to_owned(), base_digest.to_owned()]),
-            "cold nested trace {trace_id} prepared the wrong component during {phase}"
+    // The native workload loads the full release once. Other admitted nodes can
+    // appear in that preload, while this invocation executes exactly two nodes.
+    let loaded = spans
+        .iter()
+        .filter(|span| span.name == "wamn.component.pull")
+        .filter_map(|span| span_attribute(span, "wamn.component_digest"))
+        .collect::<BTreeSet<_>>();
+    for digest in [overlay_digest, base_digest] {
+        assert!(
+            loaded.contains(digest),
+            "native release never loaded {digest}"
         );
     }
-    println!("RECEIVING_COLD_NESTED_PHASES {}", evidence.join(" "));
+    let invoked = trace_component_invocations(spans, trace_id);
+    assert_eq!(
+        invoked.len(),
+        2,
+        "native nested call must execute two nodes"
+    );
+    let digests = invoked
+        .iter()
+        .filter_map(|span| span_attribute(span, "wamn.component_digest"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        digests,
+        BTreeSet::from([overlay_digest.to_owned(), base_digest.to_owned()]),
+        "native nested call executed the wrong admitted components"
+    );
 }
 
 fn assert_nested_permission_denial_trace(
@@ -4259,7 +4246,7 @@ async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
         &caller_principal_id,
         "pat",
     );
-    assert_cold_nested_acquisition(&spans, &cold_nested_trace, overlay_digest, base_digest);
+    assert_native_nested_acquisition(&spans, &cold_nested_trace, overlay_digest, base_digest);
     assert_nested_permission_denial_trace(
         &spans,
         &denied_nested_trace,

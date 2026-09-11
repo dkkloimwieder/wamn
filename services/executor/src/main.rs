@@ -3,6 +3,9 @@
 //! Pre-split this ran as `wamn-host run-worker`; the flags are unchanged, the
 //! `run-worker` subcommand literal is gone (single-purpose binary).
 
+// The native dispatch future exceeds the default compiler layout query depth.
+#![recursion_limit = "256"]
+
 use std::str::FromStr as _;
 
 use clap::Parser;
@@ -21,6 +24,7 @@ struct Cli {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let runtime = tokio::runtime::Builder::new_multi_thread()
+        .event_interval(1)
         .enable_all()
         .build()?;
     let result = runtime.block_on(async_main(cli));

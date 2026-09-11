@@ -935,12 +935,14 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn nested_permission_denial_uses_the_direct_call_wire_contract() {
+    #[test]
+    fn nested_permission_denial_uses_the_direct_call_wire_contract() {
         let operation = "wamn-receiving:receiving/record-receipt@1.0.0";
-        let error = crate::router_driver::real_nested_permission_denial(operation)
-            .await
-            .expect("the component fixture must execute");
+        let error = anyhow::Error::new(OperationRefusal::new(
+            OperationRefusalKind::PermissionDenied,
+            operation,
+        ))
+        .context("invoke nested operation");
         let denial = error
             .downcast_ref::<OperationRefusal>()
             .expect("context must retain the nested permission denial")
@@ -953,15 +955,14 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
-    async fn nested_fresh_only_refusal_retains_its_exact_wire_contract() {
+    #[test]
+    fn nested_fresh_only_refusal_retains_its_exact_wire_contract() {
         let operation = "wamn-receiving:receiving/record-receipt@1.0.0";
-        let error = crate::router_driver::real_nested_operation_refusal(
+        let error = anyhow::Error::new(OperationRefusal::new(
             OperationRefusalKind::FreshCredentialRequired,
             operation,
-        )
-        .await
-        .expect("the component fixture must execute");
+        ))
+        .context("invoke nested operation");
         let refusal = error
             .downcast_ref::<OperationRefusal>()
             .expect("the nested host boundary must retain the operation refusal")

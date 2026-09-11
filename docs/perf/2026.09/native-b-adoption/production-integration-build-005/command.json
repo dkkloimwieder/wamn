@@ -1,0 +1,1 @@
+["cargo", "test", "-p", "wamn-proof-integration", "-p", "wamn-execution-host", "--lib", "--no-run", "--locked", "--offline", "--target-dir", "target"]

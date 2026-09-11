@@ -1,0 +1,22 @@
+{
+  "command": [
+    "cargo",
+    "clippy",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-runtime",
+    "-p",
+    "wamn-execution-host",
+    "-p",
+    "wamn-proof-integration",
+    "-p",
+    "wamn-host",
+    "-p",
+    "wamn-executor",
+    "--all-targets"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 33.53083289397182,
+  "changed_during_run": []
+}

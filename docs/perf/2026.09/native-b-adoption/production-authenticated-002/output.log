@@ -1,0 +1,44 @@
+{"container": "da7d97c00556710b01d2ff7485853e5a76ffd77cb3fb70d9dd833f8a27618da6", "name": "wamn-native-b-auth-071783bf4069", "image": "sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14", "binary": "/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/target/debug/deps/wamn_execution_host-4690cf64566aba61", "binary_sha256": "3fd7584d60a9821db4bfa29f7bba8068cda31dbf4afbd66ae8230d320f0d3979", "test": "router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle"}
+
+running 1 test
+test router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle ... FAILED
+
+failures:
+
+failures:
+    router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 52 filtered out; finished in 0.39s
+
+
+thread 'router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle' (3399718) panicked at crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs:522:9:
+router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle: exit status: 101
+
+running 1 test
+authenticated-native-case=PermissionDenied result=pass
+authenticated-native-case=FreshOnly result=pass
+test router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle ... FAILED
+
+failures:
+
+failures:
+    router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 52 filtered out; finished in 0.38s
+
+
+
+thread 'router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle' (3399720) panicked at crates/execution/host/src/router_driver/native_policy/tests/trace.rs:86:9:
+assertion `left == right` failed: exactly one root and one child invocation
+  left: 1
+ right: 2
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+{"removed_owned_container": "da7d97c00556710b01d2ff7485853e5a76ffd77cb3fb70d9dd833f8a27618da6"}
+Traceback (most recent call last):
+  File "/tmp/native-b-live-authority.py", line 49, in <module>
+    assert result.returncode==0, f'test exited {result.returncode}'
+           ^^^^^^^^^^^^^^^^^^^^
+AssertionError: test exited 101

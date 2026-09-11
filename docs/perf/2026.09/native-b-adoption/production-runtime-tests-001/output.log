@@ -1,0 +1,569 @@
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/crates/catalog/model)
+   Compiling wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/crates/schema/generator)
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/crates/control/provision)
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/crates/platform/runtime)
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+  |
+7 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:56:7
+   |
+56 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:131:1
+    |
+131 | / pub struct ConnectionHttp {
+132 | |     postgres: Arc<WamnPostgres>,
+133 | |     transport: Arc<HttpTransport>,
+134 | |     vault: Arc<WamnCredentials>,
+...   |
+151 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+152 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+    |
+544 | / pub struct WamnJetstream {
+545 | |     nats_url: Option<String>,
+546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+...   |
+569 | |     dlq_depth: Arc<DeadLetterDepth>,
+570 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+     |
+1209 | / pub struct JsConsumer {
+1210 | |     consumer: Consumer<PullConfig>,
+1211 | |     dead_letter: Option<DeadLetterIdentity>,
+1212 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+     |
+1216 | / pub struct JsMessage {
+1217 | |     msg: async_nats::jetstream::Message,
+1218 | |     dead_letter: Option<DeadLetterIdentity>,
+1219 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:55:1
+    |
+ 55 | / pub struct WamnPostgres {
+ 56 | |     /// Resolves a project id → its database connection + policy.
+ 57 | |     provider: Arc<dyn CredentialProvider>,
+ 58 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+121 | |     pub(super) bind_counters: super::BindCounters,
+122 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+    |
+339 | / pub struct StaticCredentialProvider {
+340 | |     projects: HashMap<String, ProjectConfig>,
+341 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+    |
+514 | / pub struct K8sSecretProvider {
+515 | |     pub namespace: String,
+516 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+    |
+145 | / pub struct WiringDoorbellListener {
+146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+147 | |     task: tokio::task::JoinHandle<()>,
+148 | | }
+    | |_^
+
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+  |
+7 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: `wamn-runtime` (lib) generated 16 warnings
+warning: `wamn-runtime` (lib test) generated 14 warnings (13 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 17s
+     Running unittests src/lib.rs (target/debug/deps/wamn_runtime-3754c2d7c8fc1e06)
+
+running 339 tests
+test component_admission::tests::a_wrapper_reaching_an_effect_through_a_declared_dependency_is_not_effect_free ... ok
+test component_admission::tests::a_wrapper_whose_whole_closure_is_effect_free_keeps_the_effect_free_case_path ... ok
+test component_admission::tests::actual_unadmitted_component_import_refuses ... ok
+test component_admission::tests::an_async_lifted_run_on_async_handler_is_admitted ... ok
+test component_admission::tests::connection_authority_without_a_declared_alias_refuses ... ok
+test component_admission::tests::declaration_and_byte_handler_export_sets_must_match_exactly ... ok
+test component_admission::tests::effects_record_only_the_imports_that_leave_the_host ... ok
+test component_admission::tests::exact_bytes_mint_digest_and_normalized_fact_without_io ... ok
+test component_admission::tests::exact_operation_dependency_is_byte_verified_and_admitted ... ok
+test component_admission::tests::malformed_component_bytes_refuse_before_facts_are_minted ... ok
+test component_admission::tests::multi_export_admission_proves_global_union_and_preserves_attachment ... ok
+test component_admission::tests::operation_dependency_import_must_have_the_handler_signature ... ok
+test component_admission::tests::operation_dependency_inventory_refuses_missing_extra_and_mismatch ... ok
+test component_admission::tests::operation_export_must_have_the_live_handler_signature ... ok
+test component_admission::tests::registered_capabilities_are_platform_imports_whatever_their_namespace ... ok
+test component_artifact::tests::ambient_or_mutable_references_refuse ... ok
+test component_artifact::tests::artifact_reference_is_derived_only_from_an_explicit_base_and_digest ... ok
+test component_artifact::tests::canonical_config_carries_only_digest_stable_admission_facts ... ok
+test component_artifact::tests::component_artifact_wire_literals_are_pinned ... ok
+test component_artifact_source::tests::bodies_are_independently_verified_before_component_bytes_return ... ok
+test component_artifact_source::tests::invalid_admitted_digest_refuses_before_network_io_without_echoing_it ... ok
+test component_artifact_source::tests::manifest_must_match_both_descriptors_and_exactly_one_layer ... ok
+test component_artifact_source::tests::source_configuration_is_explicit_and_redacts_rejected_credentials ... ok
+test component_artifact_source::tests::transport_integrity_errors_are_not_classified_as_unavailable ... ok
+test connection_authority::tests::resolved_target_outside_base_is_refused ... ok
+test engine::tests::a_configured_memory_cap_moves_the_pooling_ceiling ... ok
+test engine::tests::a_declared_allowlist_still_gates_what_the_address_floor_permits ... ok
+test engine::tests::a_relative_compilation_cache_path_is_refused ... ok
+test engine::tests::a_serving_engine_persists_compiled_components_in_its_declared_cache ... ok
+test engine::tests::cancelling_a_guest_waiting_in_a_host_call_releases_its_memory ... ok
+test engine::tests::capacity_and_unknown_pooling_environment_knobs_fail_closed ... ok
+test engine::tests::configured_slots_bound_concurrent_live_instances ... ok
+test engine::tests::count_mode_accounts_for_concurrent_stores_and_keeps_the_heap_ceiling ... ok
+test engine::tests::dropping_a_store_after_a_guest_start_trap_releases_its_memory ... ok
+test engine::tests::dropping_a_store_after_epoch_interruption_releases_its_memory ... ok
+test engine::tests::enforce_mode_refuses_aggregate_growth_until_another_store_releases_memory ... ok
+test engine::tests::residency_and_decommit_environment_knobs_are_permitted ... ok
+test engine::tests::the_address_floor_denies_link_local_metadata_cluster_and_private_ranges ... ok
+test engine::tests::the_host_socket_policy_enforces_egress_rather_than_counting_it ... ok
+test engine::tests::the_production_engine_pools_at_the_default_platform_ceiling ... ok
+test engine::tests::zero_native_budgets_are_refused ... ok
+test expected_router::tests::a_missing_native_handle_still_returns_404 ... ok
+test expected_router::tests::both_outgoing_http_versions_keep_native_host_policy ... ok
+test expected_router::tests::native_ingress_preserves_refusals_bind_transitions_and_application_404 ... ok
+test expected_router::tests::no_release_keeps_native_unknown_host_behavior ... ok
+test lifecycle::tests::cleanup_timeout_and_original_failure_remain_failures ... ok
+test lifecycle::tests::missing_first_beat_fails_without_creating_a_beat ... ok
+test lifecycle::tests::native_probes_answer_while_ingress_is_saturated_and_after_it_recovers ... ok
+test lifecycle::tests::startup_requires_a_beat_and_stale_detection_preserves_the_native_boundary ... ok
+test plugins::connection_http::tests::a_guest_supplied_traceparent_is_not_overwritten ... ok
+test plugins::connection_http::tests::a_lost_response_never_reads_as_effect_uncertain ... ok
+test plugins::connection_http::tests::a_timed_out_effect_span_carries_the_timeout_outcome ... ok
+test plugins::connection_http::tests::a_timeout_never_reads_as_a_refusal_before_dispatch ... ok
+test plugins::connection_http::tests::a_transport_failure_in_flight_never_reads_as_a_timeout ... ok
+test plugins::connection_http::tests::a_valid_http_snapshot_is_refused_against_another_capabilitys_descriptor ... ok
+test plugins::connection_http::tests::a_wiring_failure_names_the_refused_effect_and_not_the_command ... ok
+test plugins::connection_http::tests::an_effect_span_names_its_originating_wiring_position_and_executing_package ... ok
+test plugins::connection_http::tests::an_effect_span_names_the_executing_component_and_the_node_operation ... ok
+test plugins::connection_http::tests::an_unbound_component_records_the_wiring_keys_empty ... ok
+test plugins::connection_http::tests::bound_http_failure_evidence_uses_the_existing_classifier_and_resets_on_rebind ... ok
+test plugins::connection_http::tests::component_grain_snapshot_refuses_each_missing_authority_layer ... ok
+test plugins::connection_http::tests::guest_headers_cannot_spoof_the_host_owned_idempotency_key ... ok
+test plugins::connection_http::tests::release_closure_requires_the_exact_component_and_wiring_version_hash ... ok
+test plugins::connection_http::tests::released_nested_effects_require_the_exact_operation_dependency_path ... ok
+test plugins::connection_http::tests::revoked_invocation_refuses_send_and_can_be_rebound ... ok
+test plugins::connection_http::tests::the_effect_span_is_injected_onto_the_outbound_request ... ok
+test plugins::connection_http::tests::the_pinned_contract_literal_matches_the_descriptor ... ok
+test plugins::connection_http::tests::the_two_details_that_dispatched_nothing_are_refused_before_dispatch ... ok
+test plugins::connection_http::tests::two_calls_to_the_same_capability_from_different_wirings_record_distinguishable_spans ... ok
+test plugins::connection_http::tests::two_effects_under_different_node_operations_of_one_component_record_distinguishable_spans ... ok
+test plugins::connection_http::transport::tests::deadline_while_waiting_for_a_response_head_refunds_request_admission ... ok
+test plugins::connection_http::transport::tests::error_display_and_debug_do_not_expose_sources ... ok
+test plugins::connection_http::transport::tests::every_client_identity_field_and_peer_separates_pools ... ok
+test plugins::connection_http::transport::tests::global_requests_refuse_without_queued_work_or_client_creation ... ok
+test plugins::connection_http::transport::tests::http2_multiplexes_eight_requests_on_one_socket_and_still_refuses_the_ninth ... ok
+test plugins::connection_http::transport::tests::idle_pool_retains_two_sockets_then_expires_them ... ok
+test plugins::connection_http::transport::tests::mutation_disconnect_status_and_redirect_never_replay ... ok
+test plugins::connection_http::transport::tests::oversized_requests_refuse_before_connecting ... ok
+test plugins::connection_http::transport::tests::response_body_headers_and_trailers_are_bounded_while_reading ... ok
+test plugins::connection_http::transport::tests::retired_client_leases_outlive_cache_entries_and_body_cancellation ... ok
+test plugins::connection_http::transport::tests::scoped_requests_are_shared_across_generations_until_bodies_finish ... ok
+test plugins::connection_http::transport::tests::socket_limits_include_idle_connections_and_all_generations ... ok
+test plugins::connection_http::transport::tests::tls_http1_and_http2_keep_logical_identity_and_reuse_connections ... ok
+test plugins::connection_http::transport::tests::trusted_certificate_for_a_different_logical_name_is_rejected ... ok
+test plugins::connection_http::transport::tests::warm_http_reuses_only_the_pinned_peer_and_never_caches_credentials ... ok
+test plugins::effect_span::tests::a_dropped_unsettled_guard_contributes_one_cancelled_attempt ... ok
+test plugins::effect_span::tests::a_responded_backend_refusal_is_failed_evidence ... ok
+test plugins::effect_span::tests::ack_lag_clamps_a_publish_stamped_in_the_future ... ok
+test plugins::effect_span::tests::ack_lag_on_the_plain_bind_path_leaves_the_registration_keys_empty ... ok
+test plugins::effect_span::tests::ack_lag_records_the_message_age_under_its_registration ... ok
+test plugins::effect_span::tests::an_answer_that_never_reached_the_guest_records_response_lost ... ok
+test plugins::effect_span::tests::an_attempt_with_no_recorded_outcome_records_effect_uncertain ... ok
+test plugins::effect_span::tests::an_effect_abandoned_before_it_settled_records_cancelled ... ok
+test plugins::effect_span::tests::an_effect_the_far_side_answered_records_responded ... ok
+test plugins::effect_span::tests::an_effect_the_platform_declined_records_refused_before_dispatch ... ok
+test plugins::effect_span::tests::an_effect_whose_deadline_elapsed_records_timeout ... ok
+test plugins::effect_span::tests::no_outcome_word_claims_a_command_was_undone ... ok
+test plugins::effect_span::tests::one_failure_survives_successes_but_never_another_failure ... ok
+test plugins::flow_http_routing::tests::a_mapping_whose_wire_value_is_unknown_fails_its_attachment_closed ... ok
+test plugins::flow_http_routing::tests::a_matching_method_and_authority_serves_the_release_attachment ... ok
+test plugins::flow_http_routing::tests::a_method_or_authority_that_matches_nothing_serves_no_route ... ok
+test plugins::flow_http_routing::tests::a_present_raw_body_limit_never_falls_back_when_malformed ... ok
+test plugins::flow_http_routing::tests::a_process_without_a_release_refuses_instead_of_serving_an_empty_route_set ... ok
+test plugins::flow_http_routing::tests::a_wildcard_host_attachment_is_served_for_any_authority ... ok
+test plugins::flow_http_routing::tests::an_attachment_without_a_serviceable_route_is_skipped_and_the_rest_still_serve ... ok
+test plugins::flow_http_routing::tests::authored_input_schema_and_raw_body_limit_stay_with_their_owners ... ok
+test plugins::flow_http_routing::tests::bearer_parsing_has_one_success_shape_and_one_opaque_refusal_class ... ok
+test plugins::flow_http_routing::tests::canonical_schema_hash_deduplicates_reordered_schemas_and_isolates_distinct_ones ... ok
+test plugins::flow_http_routing::tests::expected_hosts_follow_the_serviceable_projection_without_wildcard_expansion ... ok
+test plugins::flow_http_routing::tests::invalid_schema_and_nonmatching_payload_share_the_exact_refusal ... ok
+test plugins::flow_http_routing::tests::omitted_projection_fields_defer_to_their_real_authority ... ok
+test plugins::flow_http_routing::tests::only_an_externally_selectable_pat_attachment_requires_route_authentication ... ok
+test plugins::flow_http_routing::tests::only_the_attachment_kinds_that_carry_an_http_route_are_served ... ok
+test plugins::flow_http_routing::tests::originating_caller_keeps_exact_permissions_only ... ok
+test plugins::flow_http_routing::tests::pat_mode_is_recognized_and_an_absent_backend_is_one_generic_outage ... ok
+test plugins::flow_http_routing::tests::route_limit_is_nonzero_and_has_one_chart_default ... ok
+test plugins::flow_http_routing::tests::route_slots_are_independent_shed_without_queueing_and_release_on_drop ... ok
+test plugins::flow_http_routing::tests::session_and_pat_authorities_follow_only_the_released_modes ... ok
+test plugins::flow_http_routing::tests::the_welded_manifest_is_the_only_source_the_plugin_reads ... ok
+test plugins::wamn_blobstore::binding::tests::a_binding_carries_a_handle_and_never_a_secret ... ok
+test plugins::wamn_blobstore::binding::tests::a_snapshot_without_a_credential_handle_refuses ... ok
+test plugins::wamn_blobstore::binding::tests::an_absent_coordinate_refuses_rather_than_widening ... ok
+test plugins::wamn_blobstore::binding::tests::an_authorized_snapshot_yields_its_coordinates ... ok
+test plugins::wamn_blobstore::binding::tests::an_empty_coordinate_is_treated_as_absent ... ok
+test plugins::wamn_blobstore::binding::tests::an_http_binding_does_not_resolve_as_blobstore ... ok
+test plugins::wamn_blobstore::binding::tests::each_missing_authority_layer_refuses ... ok
+test plugins::wamn_blobstore::confinement::tests::a_double_dot_inside_a_name_is_not_a_traversal ... ok
+test plugins::wamn_blobstore::confinement::tests::a_trailing_prefix_slash_does_not_double_the_separator ... ok
+test plugins::wamn_blobstore::confinement::tests::an_empty_prefix_is_allowed_and_keeps_the_key_verbatim ... ok
+test plugins::wamn_blobstore::confinement::tests::an_ordinary_key_lands_under_the_prefix ... ok
+test plugins::wamn_blobstore::confinement::tests::an_over_long_key_is_refused_before_and_after_prefixing ... ok
+test plugins::wamn_blobstore::confinement::tests::every_escape_route_is_refused ... ok
+test plugins::wamn_blobstore::confinement::tests::every_resolved_key_sits_under_the_prefix ... ok
+test plugins::wamn_blobstore::host::tests::a_blobstore_error_that_responded_supplies_failure_evidence_but_success_does_not ... ok
+test plugins::wamn_blobstore::host::tests::a_body_lost_after_the_object_was_found_records_response_lost ... ok
+test plugins::wamn_blobstore::host::tests::a_confinement_refusal_and_a_missing_object_do_not_read_alike ... ok
+test plugins::wamn_blobstore::host::tests::a_host_side_refusal_records_refused_before_dispatch ... ok
+test plugins::wamn_blobstore::host::tests::an_effect_that_returned_records_responded ... ok
+test plugins::wamn_blobstore::host::tests::an_unplaceable_backend_failure_records_effect_uncertain ... ok
+test plugins::wamn_blobstore::intake::tests::a_chunk_that_would_cross_the_ceiling_is_refused_whole ... ok
+test plugins::wamn_blobstore::intake::tests::a_complete_body_commits_verbatim ... ok
+test plugins::wamn_blobstore::intake::tests::a_truncated_stream_yields_a_refusal_and_no_bytes ... ok
+test plugins::wamn_blobstore::intake::tests::the_ceiling_refuses_naming_the_limit_and_what_was_observed ... ok
+test plugins::wamn_blobstore::intake::tests::the_only_route_to_the_bytes_is_commit ... ok
+test plugins::wamn_blobstore::intake::tests::the_standard_ceiling_is_the_documented_constant ... ok
+test plugins::wamn_blobstore::plugin::tests::a_blobstore_effect_span_names_the_invocation_it_was_raised_under ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_cannot_retarget_its_frozen_origin ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_closure_carries_its_own_coordinates ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_closure_handed_a_manifest_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_closure_with_no_frozen_binding_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_from_another_wiring_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_that_disagrees_with_the_frozen_binding_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_that_matches_the_frozen_binding_is_admitted ... ok
+test plugins::wamn_blobstore::plugin::tests::a_manifest_for_another_tenant_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_manifest_without_the_invoked_package_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_nested_blobstore_effect_requires_its_roots_dependency_grant ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_resolves_through_the_mounted_manifest ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_the_manifest_carries_is_admitted ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_the_manifest_does_not_carry_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_without_a_manifest_refuses ... ok
+test plugins::wamn_blobstore::store::tests::a_redelivery_overwrites_rather_than_duplicating ... ok
+test plugins::wamn_blobstore::store::tests::a_traversal_key_is_refused_before_the_store_is_touched ... ok
+test plugins::wamn_blobstore::store::tests::clear_empties_only_the_bound_prefix ... ok
+test plugins::wamn_blobstore::store::tests::debug_does_not_render_the_store_handle ... ok
+test plugins::wamn_blobstore::store::tests::deleting_an_absent_object_succeeds ... ok
+test plugins::wamn_blobstore::store::tests::getting_an_absent_object_is_no_such_object ... ok
+test plugins::wamn_blobstore::store::tests::head_reports_size_and_a_real_timestamp ... ok
+test plugins::wamn_blobstore::store::tests::listing_returns_author_relative_keys_and_never_the_prefix ... ok
+test plugins::wamn_blobstore::store::tests::put_get_delete_list_round_trip ... ok
+test plugins::wamn_blobstore::store::tests::two_prefixes_on_one_store_are_isolated ... ok
+test plugins::wamn_blobstore::wit_error::tests::a_confinement_breach_is_access_denied ... ok
+test plugins::wamn_blobstore::wit_error::tests::a_denied_backend_is_access_denied ... ok
+test plugins::wamn_blobstore::wit_error::tests::a_lost_body_is_other_and_tells_the_guest_to_re_read ... ok
+test plugins::wamn_blobstore::wit_error::tests::a_missing_object_is_no_such_object_from_either_route ... ok
+test plugins::wamn_blobstore::wit_error::tests::a_refused_verb_is_other_and_names_the_verb ... ok
+test plugins::wamn_blobstore::wit_error::tests::an_incomplete_body_is_other_and_says_nothing_was_written ... ok
+test plugins::wamn_blobstore::wit_error::tests::over_the_ceiling_is_quota_exceeded ... ok
+test plugins::wamn_credentials::tests::credentials_file_parses_the_nested_project_shape ... ok
+test plugins::wamn_credentials::tests::from_file_snapshots_material_for_the_process_lifetime ... ok
+test plugins::wamn_credentials::tests::resolution_is_project_scoped ... ok
+test plugins::wamn_credentials::tests::resolve_distinguishes_no_source_from_unknown_name ... ok
+test plugins::wamn_jetstream::tests::a_preview_is_redacted_and_bounded_before_it_can_reach_the_wire ... ok
+test plugins::wamn_jetstream::tests::a_release_less_host_admits_no_consumer_bind ... ok
+test plugins::wamn_jetstream::tests::config_from_env_reads_evt_nats_url ... ok
+test plugins::wamn_jetstream::tests::derived_publication_refuses_a_noncanonical_package_identity ... ok
+test plugins::wamn_jetstream::tests::derived_publication_refuses_an_unbound_or_partial_scope ... ok
+test plugins::wamn_jetstream::tests::derived_publication_uses_only_the_bound_scope_and_admitted_selector ... ok
+test plugins::wamn_jetstream::tests::doorbell_registration_uses_the_mvp_target_adapter ... ok
+test plugins::wamn_jetstream::tests::every_minted_tap_subject_falls_inside_the_gated_namespace ... ok
+test plugins::wamn_jetstream::tests::exact_registration_bind_mints_the_host_owned_dlq_identity ... ok
+test plugins::wamn_jetstream::tests::exact_registration_consumer_keeps_transport_redelivery_armed ... ok
+test plugins::wamn_jetstream::tests::from_header_map_expands_multi_value ... ok
+test plugins::wamn_jetstream::tests::from_header_map_none_is_empty ... ok
+test plugins::wamn_jetstream::tests::generic_publish_cannot_name_the_host_owned_event_namespace ... ok
+test plugins::wamn_jetstream::tests::generic_publish_cannot_name_the_reserved_dlq_namespace ... ok
+test plugins::wamn_jetstream::tests::generic_publish_refuses_every_reserved_namespace_before_the_wire ... ok
+test plugins::wamn_jetstream::tests::header_round_trip_preserves_pairs_and_order ... ok
+test plugins::wamn_jetstream::tests::live_derived_publish_replay_converges_through_jetstream_dedup ... skipping live_derived_publish_replay_converges_through_jetstream_dedup: WAMN_EVT_NATS_URL unset
+ok
+test plugins::wamn_jetstream::tests::live_generic_guest_cannot_write_the_provisioned_tap_stream ... ignored, requires a disposable NATS provisioned with checked-in WAMN_TAP
+test plugins::wamn_jetstream::tests::live_publish_dedupe_bind_fetch_ack ... skipping live_publish_dedupe_bind_fetch_ack: WAMN_EVT_NATS_URL unset
+ok
+test plugins::wamn_jetstream::tests::message_meta_carries_seq_and_delivered ... ok
+test plugins::wamn_jetstream::tests::message_meta_clamps_negative_delivered ... ok
+test plugins::wamn_jetstream::tests::nack_positive_delay_is_deferred ... ok
+test plugins::wamn_jetstream::tests::nack_zero_delay_is_immediate ... ok
+test plugins::wamn_jetstream::tests::only_a_source_the_serving_release_registers_admits_a_consumer ... ok
+test plugins::wamn_jetstream::tests::publish_ack_maps_fields_and_duplicate ... ok
+test plugins::wamn_jetstream::tests::the_dlq_depth_samples_counter_tells_an_empty_subject_from_a_stopped_observer ... ok
+test plugins::wamn_jetstream::tests::the_preview_record_is_frozen_for_its_named_consumer ... ok
+test plugins::wamn_jetstream::tests::the_preview_record_refuses_unknown_versions_and_fields ... ok
+test plugins::wamn_logging::tests::clearing_a_claim_returns_the_scope_to_the_unregistered_sentinel ... ok
+test plugins::wamn_logging::tests::ingest_enriches_from_host_claim_over_guest_context ... ok
+test plugins::wamn_logging::tests::parse_w3c_traceparent_valid_absent_garbage ... ok
+test plugins::wamn_logging::tests::traceparent_sets_trace_id_on_record ... ok
+test plugins::wamn_postgres::claims::tests::a_guest_credential_resolves_for_its_own_tenant_and_no_other ... ok
+test plugins::wamn_postgres::claims::tests::a_platform_checkout_refuses_the_guest_authority ... ok
+test plugins::wamn_postgres::claims::tests::a_serving_host_binds_its_credential_to_the_declared_project ... ok
+test plugins::wamn_postgres::claims::tests::a_serving_host_refuses_an_invalid_declared_project ... ok
+test plugins::wamn_postgres::claims::tests::an_explicit_project_credential_refuses_a_second_source ... ok
+test plugins::wamn_postgres::claims::tests::bench_pipelined_claim_flight ... ok
+test plugins::wamn_postgres::claims::tests::building_a_pool_requires_a_probeable_credential ... ok
+test plugins::wamn_postgres::claims::tests::candidate_binding_world_requires_complete_canonical_unique_rows ... ok
+test plugins::wamn_postgres::claims::tests::candidate_effect_snapshot_pins_instance_and_generation_without_fallback ... ok
+test plugins::wamn_postgres::claims::tests::causation_emit_sql_escapes_single_quotes_in_the_run_id ... ok
+test plugins::wamn_postgres::claims::tests::causation_emit_sql_pins_the_transactional_wamn_message ... ok
+test plugins::wamn_postgres::claims::tests::claim_sql_is_fully_bound_with_no_interpolation ... ok
+test plugins::wamn_postgres::claims::tests::clear_component_claims_reaps_all_registries_for_the_workload ... ok
+test plugins::wamn_postgres::claims::tests::effect_authority_has_no_run_plan_frame_or_legacy_requirement_fallback ... ok
+test plugins::wamn_postgres::claims::tests::effect_authority_resolves_exact_wiring_component_and_store_alias ... ok
+test plugins::wamn_postgres::claims::tests::effect_snapshot_checks_out_under_the_callable_http_authority ... ok
+test plugins::wamn_postgres::claims::tests::effect_snapshot_refuses_a_component_with_no_bound_tenant ... ok
+test plugins::wamn_postgres::claims::tests::effect_snapshot_refuses_a_tenant_that_disagrees_with_the_bound_claim ... ok
+test plugins::wamn_postgres::claims::tests::guard_allows_non_wamn_logical_messages_and_normal_sql ... ok
+test plugins::wamn_postgres::claims::tests::guard_allows_normal_statements_and_current_setting ... ok
+test plugins::wamn_postgres::claims::tests::guard_rejects_guest_causation_forgery ... ok
+test plugins::wamn_postgres::claims::tests::guard_rejects_set_and_reset_variants ... ok
+test plugins::wamn_postgres::claims::tests::guard_rejects_set_config_anywhere ... ok
+test plugins::wamn_postgres::claims::tests::guest_and_platform_pool_caches_remain_distinct_under_interleaving ... ok
+test plugins::wamn_postgres::claims::tests::live_a_cold_connection_parses_inside_the_claim_transaction ... ok
+test plugins::wamn_postgres::claims::tests::live_a_second_tenant_is_refused_rather_than_served_the_first_tenants_rows ... ok
+test plugins::wamn_postgres::claims::tests::live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim ... ok
+test plugins::wamn_postgres::claims::tests::live_bound_claims_are_injection_inert_and_txn_local ... ok
+test plugins::wamn_postgres::claims::tests::live_compiled_per_user_policy_permits_the_injected_caller ... ok
+test plugins::wamn_postgres::claims::tests::live_connect_asserts_standard_conforming_strings ... ok
+test plugins::wamn_postgres::claims::tests::live_guest_cannot_override_the_injected_role_or_user_claim ... ok
+test plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed ... WAMN_SCS_OFF_PG_URL unset — skipping the wamn-2jkm.65 R18 live negative (boot a postgres:18 with -c standard_conforming_strings=off; see docs/operations/build-and-test.md [R18-NEG])
+ok
+test plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving ... ignored, requires WAMN_POOL_LIFECYCLE_PG_URL for a disposable PostgreSQL database
+test plugins::wamn_postgres::claims::tests::manifest_digest_shape_matches_the_run_plane_check ... ok
+test plugins::wamn_postgres::claims::tests::operation_permissions_reuse_only_the_callable_http_authority ... ok
+test plugins::wamn_postgres::claims::tests::set_and_clear_current_run_is_per_component ... ok
+test plugins::wamn_postgres::claims::tests::the_composed_credential_becomes_the_default_project ... ok
+test plugins::wamn_postgres::claims::tests::user_operation_permissions_reuse_only_the_callable_http_authority ... ok
+test plugins::wamn_postgres::claims::tests::validate_claims_rejects_malformed_identities ... ok
+test plugins::wamn_postgres::claims::tests::workload_binding_selects_only_the_materializer_authority ... ok
+test plugins::wamn_postgres::credential_exactness::tests::exact_source_rejects_an_ambient_conflict_without_disclosure ... ok
+test plugins::wamn_postgres::credential_exactness::tests::listener_uses_the_same_expected_identity_contract ... ok
+test plugins::wamn_postgres::credential_exactness::tests::membership_and_acl_mismatches_are_distinct_predicates ... ok
+test plugins::wamn_postgres::credential_exactness::tests::pooled_and_listener_paths_run_the_same_complete_query_contract ... ok
+test plugins::wamn_postgres::credential_exactness::tests::pooled_identity_refuses_each_wrong_database_fact ... ok
+test plugins::wamn_postgres::credential_exactness::tests::source_and_probe_debug_are_redacted ... ok
+test plugins::wamn_postgres::credential_exactness::tests::source_user_database_and_tenant_swaps_refuse ... ok
+test plugins::wamn_postgres::pool::tests::a_class_with_no_configured_credential_is_refused_not_defaulted ... ok
+test plugins::wamn_postgres::pool::tests::a_credential_file_that_names_no_class_or_an_unknown_one_is_refused ... ok
+test plugins::wamn_postgres::pool::tests::a_rotated_credential_is_a_different_pool_key ... ok
+test plugins::wamn_postgres::pool::tests::an_unlisted_project_does_not_borrow_another_projects_credential ... ok
+test plugins::wamn_postgres::pool::tests::configured_database_waits_are_finite_and_nonzero ... ok
+test plugins::wamn_postgres::pool::tests::each_authority_class_authenticates_with_its_own_configured_credential ... ok
+test plugins::wamn_postgres::pool::tests::every_authority_probes_for_its_own_acl_role ... ok
+test plugins::wamn_postgres::pool::tests::from_env_ignores_an_ambient_database_url ... 
+running 1 test
+test plugins::wamn_postgres::pool::tests::from_env_ignores_an_ambient_database_url ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 338 filtered out; finished in 0.00s
+
+ok
+test plugins::wamn_postgres::pool::tests::one_configured_url_names_every_class_explicitly ... ok
+test plugins::wamn_postgres::pool::tests::project_config_names_each_lifecycle_budget_and_refuses_the_retired_key ... ok
+test plugins::wamn_postgres::pool::tests::standard_conforming_strings_check ... ok
+test plugins::wamn_postgres::pool::tests::the_authority_class_selects_the_cache ... ok
+test plugins::wamn_postgres::pool::tests::the_credential_generation_is_the_login_role_the_url_carries ... ok
+test plugins::wamn_postgres::pool::tests::the_default_config_is_registered_under_the_default_project ... ok
+test plugins::wamn_postgres::pool::tests::the_exactness_hook_refuses_a_url_that_names_no_credential ... ok
+test plugins::wamn_postgres::pool::tests::the_exactness_hook_refuses_an_unbound_project ... ok
+test plugins::wamn_postgres::pool::tests::the_guest_tenant_check_reads_the_credential_the_guest_would_connect_with ... ok
+test plugins::wamn_postgres::pool::tests::two_authorities_never_share_a_pool_key ... ok
+test plugins::wamn_postgres::production_claim::tests::callerless_discard_completes_without_caller_projection ... ok
+test plugins::wamn_postgres::production_claim::tests::candidate_emit_is_a_stored_observable_not_a_boundary_effect ... ok
+test plugins::wamn_postgres::production_claim::tests::candidate_janitor_failure_body_names_the_frozen_wiring ... ok
+test plugins::wamn_postgres::production_claim::tests::candidate_projection_is_exactly_what_the_decoder_indexes ... ok
+test plugins::wamn_postgres::production_claim::tests::candidate_respond_is_stored_without_fabricating_a_durable_caller ... ok
+test plugins::wamn_postgres::production_claim::tests::detached_respond_still_has_no_result_owner ... ok
+test plugins::wamn_postgres::production_claim::tests::durable_respond_carries_the_host_terminal_node_through_completion ... ok
+test plugins::wamn_postgres::production_claim::tests::first_emit_verdict_wins_over_later_frontier_failure_or_cancellation ... ok
+test plugins::wamn_postgres::production_claim::tests::generic_refusal_body_is_exact_and_message_free ... ok
+test plugins::wamn_postgres::production_claim::tests::janitor_failure_body_uses_host_jcs_not_database_json_text ... ok
+test plugins::wamn_postgres::production_claim::tests::lease_grant_uses_a_fresh_post_fence_clock ... ok
+test plugins::wamn_postgres::production_claim::tests::lease_grant_verifies_release_and_mints_manifest_on_the_existing_write ... ok
+test plugins::wamn_postgres::production_claim::tests::lease_renewal_is_generation_fenced_and_uses_a_fresh_clock ... ok
+test plugins::wamn_postgres::production_claim::tests::missing_and_corrupt_wiring_identity_are_dedicated_stable_refusals ... ok
+test plugins::wamn_postgres::production_claim::tests::package_scope_requires_at_least_one_canonical_identity ... ok
+test plugins::wamn_postgres::production_claim::tests::router_failure_maps_once_to_run_and_caller_truth ... ok
+test plugins::wamn_postgres::production_claim::tests::running_outcome_is_refused_even_if_it_carries_a_verdict ... ok
+test plugins::wamn_postgres::production_claim::tests::the_default_class_never_reaches_the_crash_floor_arms ... ok
+test plugins::wamn_postgres::resources::tests::explicit_statement_run_restores_only_after_success ... ok
+test plugins::wamn_postgres::statements::tests::activation_exposes_only_the_selected_operation_and_revoke_closes_it ... ok
+test plugins::wamn_postgres::statements::tests::bind_mismatch_reports_expected_and_observed_shapes ... ok
+test plugins::wamn_postgres::statements::tests::binding_refuses_a_digest_that_does_not_name_the_exact_sql_bytes ... ok
+test plugins::wamn_postgres::statements::tests::exact_scope_cleanup_preserves_a_scope_with_the_same_prefix ... ok
+test plugins::wamn_postgres::statements::tests::result_mismatch_reports_the_column_contract ... ok
+test plugins::wamn_postgres::tests::binding_config_admits_only_the_exact_materializer_authority ... ok
+test plugins::wamn_postgres::tests::named_postgres_import_carries_its_own_project ... ok
+test plugins::wamn_postgres::tests::named_postgres_import_requires_a_valid_project ... ok
+test plugins::wamn_postgres::types::tests::live_a_timestamptz_read_back_spells_exactly_what_the_canonicalizer_spells ... ignored, requires WAMN_CARRIER_SPELLING_PG_URL for a disposable PostgreSQL 18 database
+test plugins::wamn_postgres::types::tests::live_every_carrier_that_passes_a_typed_value_as_text_matches_its_canonicalizer ... ignored, requires WAMN_CARRIER_SPELLING_PG_URL for a disposable PostgreSQL 18 database
+test plugins::wamn_postgres::types::tests::numeric_decode_basic ... ok
+test plugins::wamn_postgres::types::tests::param_text_encoding ... ok
+test plugins::wamn_postgres::types::tests::the_timestamptz_canonicalizer_spells_utc_rfc3339_with_six_fractional_digits_and_a_z ... ok
+test plugins::wamn_postgres::wiring_resolution::tests::candidate_query_rederives_the_complete_binding_world_without_activation ... ok
+test plugins::wamn_postgres::wiring_resolution::tests::queued_query_uses_release_snapshot_and_never_the_active_pointer ... ok
+test plugins::wamn_postgres::wiring_resolution::tests::readiness_query_requires_the_exact_component_grain_and_live_binding ... ok
+test plugins::wamn_postgres::wiring_resolution::tests::resolved_response_preserves_the_frozen_contract_and_requires_committed_facts ... ok
+test plugins::wamn_postgres::wiring_resolution::tests::same_digest_nodes_keep_exact_target_package_identity ... ok
+test plugins::wamn_postgres::wiring_resolution::tests::the_serving_path_admits_a_projection_its_imports_derive ... ok
+test plugins::wamn_postgres::wiring_resolution::tests::the_serving_path_refuses_an_effect_projection_no_validator_derived ... ok
+test release_manifest::tests::a_re_indented_manifest_refuses ... ok
+test release_manifest::tests::a_trailing_newline_on_the_manifest_refuses ... ok
+test release_manifest::tests::a_well_formed_mount_loads_and_verifies_once ... ok
+test release_manifest::tests::an_absent_manifest_refuses ... ok
+test release_manifest::tests::an_unsupported_format_refuses_with_the_frozen_literal ... ok
+test release_manifest::tests::both_identity_halves_come_from_the_verified_content ... ok
+test release_manifest::tests::bytes_that_are_not_a_manifest_refuse ... ok
+test release_manifest_artifact::tests::mutable_or_ambient_reference_refuses ... ok
+test release_manifest_artifact::tests::reference_is_derived_from_only_the_explicit_base_and_manifest_digest ... ok
+test release_manifest_artifact::tests::release_manifest_artifact_wire_literals_are_pinned ... ok
+test release_manifest_source::tests::a_body_the_layer_descriptor_overstates_refuses_as_a_size_mismatch ... ok
+test release_manifest_source::tests::a_body_the_named_digest_does_not_address_refuses_as_a_digest_mismatch ... ok
+test wiring_doorbell::tests::a_flip_in_another_environment_does_not_touch_this_one ... ok
+test wiring_doorbell::tests::a_flip_invalidates_exactly_the_pointer_it_names ... ok
+test wiring_doorbell::tests::a_flip_invalidates_the_coordinate_across_resident_release_scopes ... ok
+test wiring_doorbell::tests::a_reconnect_drops_every_pointer_because_the_gap_is_unknowable ... ok
+test wiring_doorbell::tests::a_resolution_in_flight_across_a_doorbell_ring_cannot_reinstall_the_stale_pointer ... ok
+test wiring_doorbell::tests::an_unreadable_payload_drops_the_whole_cache_rather_than_guessing ... ok
+test wiring_doorbell::tests::another_tenants_or_packages_flip_leaves_this_process_alone ... ok
+test wiring_doorbell::tests::taking_a_wiring_dark_invalidates_like_any_other_flip ... ok
+test wiring_doorbell::tests::the_next_delivery_serves_the_new_version_and_a_rollback_is_a_hit ... ok
+test wiring_doorbell::tests::the_subscriber_reads_the_ddls_kebab_case_keys_and_only_those ... ok
+
+test result: ok. 335 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 1.55s
+
+     Running tests/native_dispatch_binding.rs (target/debug/deps/native_dispatch_binding-f09ecc55ea6704f4)
+
+running 2 tests
+test admission_refuses_ambiguous_imported_providers_before_native_resolution ... fixture root: sha256:7c101d862b0b6dc314486f77cc2a08c3f16f1219561d91b49da40a33e062c830
+fixture child: sha256:d171875a49133d99d97ea868260e4c6512dadfd83aebf34a10b945a94f9e6cca
+ok
+test host_export_binding_keeps_the_nested_policy_shim ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/native_dispatch_deadline.rs (target/debug/deps/native_dispatch_deadline-1b46304e3b558369)
+
+running 5 tests
+test native_call_deadline_alone_does_not_bound_root_start ... ok
+test native_dispatch_cancellation_releases_capacity ... ok
+test native_export_obeys_enclosing_deadline ... ok
+test native_linked_start_obeys_enclosing_deadline ... ok
+test native_root_start_obeys_enclosing_deadline ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.39s
+

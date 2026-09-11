@@ -9,6 +9,7 @@ use anyhow::Context as _;
 use serde_json::json;
 use tokio::time::{Instant, timeout};
 use tokio_postgres::{Client, NoTls};
+use tracing::{Instrument as _, instrument::WithSubscriber as _};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
@@ -22,6 +23,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::session_verifier::SessionVerifier;
 
+use super::trace::TraceProof;
 use super::{BUDGET, CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, ROOT};
 use super::{OperationRefusal, OperationRefusalKind, invoke_native};
 
@@ -288,6 +290,7 @@ async fn prove_case(scenario: Scenario, caller: &AuthenticatedCaller) {
     )
     .await;
     let target = fixture.target().await;
+    let trace = (scenario == Scenario::Success).then(|| TraceProof::new(&fixture, caller));
     let deadline = Instant::now()
         + if matches!(
             scenario,
@@ -317,7 +320,18 @@ async fn prove_case(scenario: Scenario, caller: &AuthenticatedCaller) {
                 .is_cancelled()
         );
     } else {
-        let result = invoke_native(&target, request).await;
+        let invocation = invoke_native(&target, request);
+        let result = match &trace {
+            // The dispatcher exists only while the caller polls. Native must
+            // explicitly carry it and the span into its spawned guest task.
+            Some(trace) => {
+                invocation
+                    .instrument(trace.span.clone())
+                    .with_subscriber(trace.dispatcher.clone())
+                    .await
+            }
+            None => invocation.await,
+        };
         match scenario {
             Scenario::Success => {
                 let emission = result
@@ -417,6 +431,11 @@ async fn prove_case(scenario: Scenario, caller: &AuthenticatedCaller) {
             fixture.request(deadline).acquisition.claims.release
         );
         let invocation = event.invocation.expect("host invocation");
+        assert_eq!(
+            invocation.origin,
+            fixture.request(deadline).acquisition.invocation.origin,
+            "nested execution preserves its distinct wiring owner and original root component"
+        );
         assert_eq!(invocation.wiring_id, "trusted-wiring");
         assert_eq!(invocation.wiring_version, 1);
         assert_eq!(invocation.node_id, "trusted-node");
@@ -462,6 +481,9 @@ async fn prove_case(scenario: Scenario, caller: &AuthenticatedCaller) {
             .expect("bindings lock")
             .is_empty()
     );
+    if let Some(trace) = trace {
+        trace.assert_parentage(&fixture, caller);
+    }
     println!("authenticated-native-case={scenario:?} result=pass");
 }
 
@@ -521,9 +543,15 @@ fn native_authenticated_nested_authority_and_lifecycle() {
                 "subprocess executed {scenario:?}"
             );
         }
+        assert_eq!(
+            stdout
+                .matches("authenticated-native-trace result=pass")
+                .count(),
+            1
+        );
         for receipt in stdout
             .lines()
-            .filter(|line| line.starts_with("authenticated-native-case="))
+            .filter(|line| line.starts_with("authenticated-native-"))
         {
             println!("{receipt}");
         }

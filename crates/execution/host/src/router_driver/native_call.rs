@@ -8,11 +8,12 @@ use anyhow::Context as _;
 use tokio::sync::oneshot;
 use tokio::time::{Instant, timeout_at};
 use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
+use wamn_runtime::plugins::invocation_trace::InvocationTrace;
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::engine::dispatch::{DispatchTarget, GuestCall, GuestCallFuture};
 use wash_runtime::wasmtime::component::{Accessor, Instance, TypedFunc};
 
-use super::native_policy::NativePolicy;
+use super::native_workload::NativeApplication;
 use super::{NodeAcquisition, next_scope, node_types};
 
 #[cfg(test)]
@@ -29,7 +30,7 @@ pub(super) struct NativeInvocation {
     pub(super) deadline: Instant,
     pub(super) acquisition: NodeAcquisition,
     pub(super) caller: Option<AuthenticatedCaller>,
-    pub(super) policy: Arc<NativePolicy>,
+    pub(super) application: Arc<NativeApplication>,
 }
 
 impl fmt::Debug for NativeInvocation {
@@ -46,6 +47,7 @@ struct NativeCall {
     request: NativeInvocation,
     reply: oneshot::Sender<Result<node_types::Emission, node_types::NodeError>>,
     failure: NativeCallFailure,
+    trace: InvocationTrace,
 }
 
 /// Restore the native identity after the request's capability scope is revoked.
@@ -78,11 +80,13 @@ impl GuestCall for NativeCall {
         accessor: &Accessor<SharedCtx>,
         instance: Instance,
     ) -> GuestCallFuture<'_> {
-        Box::pin(async move {
+        let trace = self.trace.clone();
+        Box::pin(trace.run(async move {
             let Self {
                 request,
                 reply,
                 failure,
+                ..
             } = *self;
             anyhow::ensure!(
                 Instant::now() < request.deadline,
@@ -101,7 +105,7 @@ impl GuestCall for NativeCall {
             };
             // Declared after active_scope, so authority is revoked before the
             // native component identity is restored, including cancellation.
-            let _authority = request.policy.activate(
+            let _authority = request.application.policy.activate(
                 &active_scope.component_id,
                 &scope,
                 &request,
@@ -139,6 +143,8 @@ impl GuestCall for NativeCall {
                 "native-node-deadline-exceeded"
             );
             // call_concurrent owns its parameters and performs post-return.
+            // The unmoved application field stays owned by this call future
+            // while native abandonment stops a cancelled caller's guest.
             let (outcome,) = run
                 .call_concurrent(accessor, (request.context, request.input))
                 .await
@@ -151,7 +157,7 @@ impl GuestCall for NativeCall {
                 .send(outcome)
                 .map_err(|_| anyhow::anyhow!("native-node-response-abandoned"))?;
             Ok(refused)
-        })
+        }))
     }
 }
 
@@ -210,6 +216,10 @@ pub(super) async fn invoke_native(
                 request,
                 reply,
                 failure: Arc::clone(&failure),
+                // Native starts a separate task. Carry the existing invocation
+                // span and subscriber into its GuestCall instead of creating
+                // another invocation span or relying on executor-local state.
+                trace: InvocationTrace::capture(),
             })
             .await
         {

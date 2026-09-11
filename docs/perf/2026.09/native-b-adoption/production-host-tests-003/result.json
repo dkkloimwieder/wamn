@@ -1,0 +1,13 @@
+{
+  "command": [
+    "target/debug/deps/wamn_execution_host-4690cf64566aba61",
+    "--include-ignored",
+    "--nocapture",
+    "--test-threads=1",
+    "--skip",
+    "native_authenticated_nested_authority_and_lifecycle"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 1.9376474340097047,
+  "changed_during_run": []
+}

@@ -16,7 +16,6 @@ wamn-execution-contract = { workspace = true }
 wamn-router = { workspace = true }
 wamn-runtime = { workspace = true, features = ["wasm_component_model_implements"] }
 wash-runtime = { workspace = true }
-wasmtime-wasi = { workspace = true }
 futures-util = { workspace = true }
 anyhow = { workspace = true }
 boon = { workspace = true }

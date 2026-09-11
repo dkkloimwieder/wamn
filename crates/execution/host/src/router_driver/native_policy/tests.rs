@@ -14,8 +14,9 @@ use wamn_catalog::{
     ServingComponent, ServingComponentOperation, ServingManifest, ServingRelease,
 };
 use wamn_runtime::component_admission::component_digest;
+use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
-    ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation,
+    ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation, ConnectionOrigin,
 };
 use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
@@ -27,7 +28,7 @@ use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::dispatch::DispatchTarget;
-use wash_runtime::engine::workload::WorkloadItem;
+use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin::{HostPlugin, PluginBindings, WitInterfaces};
 use wash_runtime::types::LocalResources;
@@ -35,13 +36,15 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 use super::super::native_call::{NativeInvocation, invoke_native};
 use super::super::native_workload::{
-    NativeComponent, NativeWorkload, NativeWorkloadSpec, load_native_workload,
+    NativeApplication, NativeComponent, NativeWorkload, NativeWorkloadSpec, load_native_application,
 };
 use super::super::{NodeAcquisition, OperationRefusal, OperationRefusalKind, node_types};
 use super::{NATIVE_POLICY_ID, NativePolicy, NativePolicyResources, new_native_policy};
 
 #[path = "tests/authenticated.rs"]
 mod authenticated;
+#[path = "tests/trace.rs"]
+mod trace;
 
 const ROOT: &str = "root:entry/run@1.0.0";
 const CHILD: &str = "child:entry/run@1.0.0";
@@ -189,11 +192,18 @@ struct Observation {
     deadline: Option<Instant>,
 }
 
+#[derive(Debug, Default)]
+struct ResolutionPause {
+    entered: Notify,
+    policy: Mutex<Option<Arc<NativePolicy>>>,
+}
+
 #[derive(Debug)]
 struct Observe {
     policy: Arc<NativePolicy>,
     events: Arc<Mutex<Vec<Observation>>>,
     entered: Arc<Notify>,
+    resolution_pause: Option<Arc<ResolutionPause>>,
 }
 
 #[async_trait::async_trait]
@@ -226,37 +236,63 @@ impl HostPlugin for Observe {
             move |mut store: wash_runtime::wasmtime::StoreContextMut<'_, SharedCtx>,
                   (phase,): (u32,)| {
                 let active = extract_active_ctx(store.data_mut());
-                let scope = active.ctx.component_id.to_string();
-                let native_identity = policy
-                    .bindings
-                    .read()
-                    .expect("bindings lock")
-                    .contains_key(&scope);
-                let claims = policy.resources.postgres.session_claims(&scope);
-                let invocation = policy.resources.blobstore.invocation(&scope);
-                let authority = policy
-                    .invocations
-                    .lock()
-                    .expect("invocation lock")
-                    .get(&scope)
-                    .cloned();
-                let caller = authority.as_ref().and_then(|entry| entry.caller.clone());
-                let deadline = authority.as_ref().map(|entry| entry.deadline);
-                events.lock().expect("observations lock").push(Observation {
-                    phase,
-                    scope,
-                    native_identity,
-                    claims,
-                    invocation,
-                    caller,
-                    deadline,
-                });
-                if phase == 1 {
-                    entered.notify_one();
-                }
-                Ok(())
+                let trace = wamn_runtime::plugins::invocation_trace::invocation_trace(&active);
+                trace.in_scope(|| {
+                    let scope = active.ctx.component_id.to_string();
+                    let native_identity = policy
+                        .bindings
+                        .read()
+                        .expect("bindings lock")
+                        .contains_key(&scope);
+                    let claims = policy.resources.postgres.session_claims(&scope);
+                    let invocation = policy.resources.blobstore.invocation(&scope);
+                    let _effect = invocation
+                        .as_ref()
+                        .filter(|_| phase == 1)
+                        .map(|invocation| {
+                            tracing::info_span!("proof.host.observe",
+                                wamn.operation = %invocation.operation,
+                                wamn.component_digest = %invocation.component_digest,
+                            )
+                            .entered()
+                        });
+                    let authority = policy
+                        .invocations
+                        .lock()
+                        .expect("invocation lock")
+                        .get(&scope)
+                        .cloned();
+                    let caller = authority.as_ref().and_then(|entry| entry.caller.clone());
+                    let deadline = authority.as_ref().map(|entry| entry.deadline);
+                    events.lock().expect("observations lock").push(Observation {
+                        phase,
+                        scope,
+                        native_identity,
+                        claims,
+                        invocation,
+                        caller,
+                        deadline,
+                    });
+                    if phase == 1 {
+                        entered.notify_one();
+                    }
+                    Ok(())
+                })
             },
         )?;
+        Ok(())
+    }
+
+    async fn on_workload_resolved(
+        &self,
+        _workload: &ResolvedWorkload,
+        _component_id: &str,
+    ) -> anyhow::Result<()> {
+        if let Some(pause) = &self.resolution_pause {
+            *pause.policy.lock().expect("pause policy lock") = Some(Arc::clone(&self.policy));
+            pause.entered.notify_one();
+            std::future::pending::<()>().await;
+        }
         Ok(())
     }
 }
@@ -303,6 +339,7 @@ struct Fixture {
     engine: Arc<Engine>,
     policy: Arc<NativePolicy>,
     workload: Arc<NativeWorkload>,
+    application: Arc<NativeApplication>,
     root: AdmittedComponent,
     events: Arc<Mutex<Vec<Observation>>>,
     entered: Arc<Notify>,
@@ -315,6 +352,15 @@ impl Fixture {
     }
 
     async fn build(case: Case, child: Option<(Case, bool)>, registered_root: bool) -> Self {
+        Self::build_with_pause(case, child, registered_root, None).await
+    }
+
+    async fn build_with_pause(
+        case: Case,
+        child: Option<(Case, bool)>,
+        registered_root: bool,
+        resolution_pause: Option<Arc<ResolutionPause>>,
+    ) -> Self {
         let root_bytes = component_bytes(ROOT, case);
         let mut native = Vec::new();
         let dependencies = if let Some((child_case, fresh_only)) = child {
@@ -407,6 +453,7 @@ impl Fixture {
             NativePolicyResources {
                 connection_http: Arc::new(ConnectionHttp::new(
                     Arc::clone(&postgres),
+                    Arc::new(HttpTransport::new().expect("HTTP transport")),
                     Arc::clone(&vault),
                     "tenant-a",
                     "proof",
@@ -435,42 +482,41 @@ impl Fixture {
             policy: Arc::clone(&policy),
             events: Arc::clone(&events),
             entered: Arc::clone(&entered),
+            resolution_pause,
         });
         let plugins: HashMap<&'static str, Arc<dyn HostPlugin>> = HashMap::from([
             (NATIVE_POLICY_ID, Arc::clone(&policy) as Arc<dyn HostPlugin>),
             (observer.id(), observer as Arc<dyn HostPlugin>),
         ]);
         let engine = Arc::new(wamn_runtime::build_engine(&[]).expect("production native engine"));
-        let workload = Arc::new(
-            load_native_workload(
-                Arc::clone(&engine),
-                NativeWorkloadSpec {
-                    id: "native-policy-proof".into(),
-                    namespace: "proof".into(),
-                    name: "native-policy-proof".into(),
-                    components: native,
-                    local_resources: LocalResources::default(),
-                    host_interfaces: vec![
-                        WitInterface::from(ROOT),
-                        WitInterface::from(CHILD),
-                        WitInterface::from(OBSERVE),
-                        WitInterface::from("wamn:node/types@0.1.0"),
-                    ],
-                },
-                &plugins,
-                &PluginBindings::new(),
-                &Meters::new(MeterKind::Off),
-            )
-            .await
-            .expect("load and resolve the real node ABI"),
-        );
-        policy
-            .bind_workload(&workload)
-            .expect("bind native nested target owner");
+        let application = load_native_application(
+            Arc::clone(&engine),
+            NativeWorkloadSpec {
+                id: "native-policy-proof".into(),
+                namespace: "proof".into(),
+                name: "native-policy-proof".into(),
+                components: native,
+                local_resources: LocalResources::default(),
+                host_interfaces: vec![
+                    WitInterface::from(ROOT),
+                    WitInterface::from(CHILD),
+                    WitInterface::from(OBSERVE),
+                    WitInterface::from("wamn:node/types@0.1.0"),
+                ],
+            },
+            Arc::clone(&policy),
+            &plugins,
+            &PluginBindings::new(),
+            &Meters::new(MeterKind::Off),
+        )
+        .await
+        .expect("load and resolve the real node ABI");
+        let workload = Arc::clone(&application.workload);
         Self {
             engine,
             policy,
             workload,
+            application,
             root,
             events,
             entered,
@@ -497,7 +543,7 @@ impl Fixture {
             input: r#"[{"value":37}]"#.into(),
             deadline,
             caller: None,
-            policy: Arc::clone(&self.policy),
+            application: Arc::clone(&self.application),
             context: node_types::NodeContext {
                 wiring_id: "forged-guest-wiring".into(),
                 wiring_version: 999,
@@ -521,6 +567,14 @@ impl Fixture {
                     ..SessionClaims::default()
                 },
                 invocation: ConnectionInvocation {
+                    origin: ConnectionOrigin {
+                        wiring_package_id: "workflow".into(),
+                        package_id: "root".into(),
+                        component_digest: self.root.component_digest.clone(),
+                        component: "node".into(),
+                        interface_version: self.root.interface_version.clone(),
+                        operation: ROOT.into(),
+                    },
                     package_id: "root".into(),
                     wiring_id: "trusted-wiring".into(),
                     wiring_version: 1,
@@ -555,6 +609,10 @@ impl Fixture {
         })
         .await
         .expect("native cancellation revokes authority and returns all guest memory");
+        assert!(
+            self.policy.traces.is_empty(),
+            "native completion releases every invocation trace"
+        );
         for event in self.events.lock().expect("observations lock").iter() {
             assert!(
                 self.policy
@@ -697,6 +755,10 @@ async fn prove(case: Case) {
 }
 
 fn isolated(name: &str, case: Case) {
+    isolated_proof(name, prove(case));
+}
+
+fn isolated_proof(name: &str, proof: impl std::future::Future<Output = ()>) {
     let full_name = format!("router_driver::native_policy::tests::{name}");
     if std::env::var(CHILD_MARKER).as_deref() != Ok(name) {
         let output = Command::new(std::env::current_exe().expect("test executable"))
@@ -729,7 +791,7 @@ fn isolated(name: &str, case: Case) {
         .enable_all()
         .build()
         .expect("isolated native runtime");
-    runtime.block_on(prove(case));
+    runtime.block_on(proof);
     drop(runtime);
     done.send(()).expect("finish watchdog");
     watchdog.join().expect("join watchdog");
@@ -768,5 +830,153 @@ fn native_node_cancellation_revokes_invocation_authority() {
     isolated(
         "native_node_cancellation_revokes_invocation_authority",
         Case::Cancellation,
+    );
+}
+
+#[tokio::test]
+async fn native_application_cancelled_resolution_clears_partial_bindings() {
+    let pause = Arc::new(ResolutionPause::default());
+    let loading = tokio::spawn(Fixture::build_with_pause(
+        Case::Success,
+        None,
+        false,
+        Some(Arc::clone(&pause)),
+    ));
+    timeout(CLEANUP, pause.entered.notified())
+        .await
+        .expect("resolution reaches its public notification hook");
+    let policy = pause
+        .policy
+        .lock()
+        .expect("pause policy lock")
+        .clone()
+        .expect("binding policy receipt");
+    assert!(!policy.bindings.read().expect("bindings lock").is_empty());
+    assert!(
+        policy.traces.is_empty(),
+        "resolution creates no invocation trace"
+    );
+    assert!(
+        policy
+            .invocations
+            .lock()
+            .expect("invocation lock")
+            .is_empty()
+    );
+    loading.abort();
+    assert!(
+        timeout(CLEANUP, loading)
+            .await
+            .expect("cancel pending resolution")
+            .is_err_and(|error| error.is_cancelled())
+    );
+    assert!(
+        policy.bindings.read().expect("bindings lock").is_empty(),
+        "the retained policy cannot retain bindings from abandoned resolution"
+    );
+    assert!(
+        policy
+            .invocations
+            .lock()
+            .expect("invocation lock")
+            .is_empty()
+    );
+    assert!(
+        policy.traces.is_empty(),
+        "abandoned resolution retains no trace"
+    );
+    assert!(
+        policy.application.get().is_none(),
+        "an abandoned load publishes no owner"
+    );
+}
+
+async fn prove_call_owner() {
+    let fixture = Fixture::new(Case::Cancellation).await;
+    let owner = Arc::downgrade(&fixture.application);
+    let engine = Arc::clone(&fixture.engine);
+    let policy = Arc::clone(&fixture.policy);
+    let events = Arc::clone(&fixture.events);
+    let entered = Arc::clone(&fixture.entered);
+    let target = fixture.target().await;
+    let request = fixture.request(Instant::now() + Duration::from_secs(30));
+    let task = tokio::spawn(async move { invoke_native(&target, request).await });
+    drop(fixture);
+    timeout(CLEANUP, entered.notified())
+        .await
+        .expect("actual native handler holds the application");
+    assert!(
+        owner.upgrade().is_some(),
+        "the call owns the application after its driver owner drops"
+    );
+    assert_eq!(policy.invocations.lock().expect("invocation lock").len(), 1);
+    assert!(
+        !policy.traces.is_empty(),
+        "the active call retains its trace"
+    );
+    task.abort();
+    assert!(
+        timeout(CLEANUP, task)
+            .await
+            .expect("cancel caller")
+            .expect_err("caller cancellation")
+            .is_cancelled()
+    );
+    timeout(CLEANUP, async {
+        while owner.upgrade().is_some() || engine.guest_memory().in_use() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("native guest abandonment releases the final application owner and memory");
+    assert!(policy.bindings.read().expect("bindings lock").is_empty());
+    assert!(
+        policy
+            .invocations
+            .lock()
+            .expect("invocation lock")
+            .is_empty()
+    );
+    assert!(
+        policy.traces.is_empty(),
+        "cancelled work releases its trace"
+    );
+    for event in events.lock().expect("observations lock").iter() {
+        assert!(
+            policy
+                .resources
+                .postgres
+                .session_claims(&event.scope)
+                .is_none()
+        );
+        assert!(
+            policy
+                .resources
+                .blobstore
+                .invocation(&event.scope)
+                .is_none()
+        );
+        assert!(
+            policy
+                .resources
+                .logging
+                .claim_snapshot(&event.scope)
+                .is_none()
+        );
+        assert!(
+            policy
+                .resources
+                .postgres
+                .activate_statement_operation(&event.scope, ROOT)
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn native_application_call_retains_owner_until_guest_cancellation() {
+    isolated_proof(
+        "native_application_call_retains_owner_until_guest_cancellation",
+        prove_call_owner(),
     );
 }

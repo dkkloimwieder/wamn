@@ -37,25 +37,27 @@ This document wins every design conflict.
   routes outputs and ends in `respond`, `emit` or discard under a hop limit.
 - Key wiring resolution by `(tenant, catalog, environment)`; the tenant identity
   is mandatory even when environment names match.
-- Use per-component-digest pools across wirings. The Wasmtime pooling allocator
-  is already enabled, but the repository's instance pool is still unwired and
-  its 512-slot limit is hard-coded. Fresh instances remain the rule; memory reuse
-  waits for explicit affinity/windowed-state semantics. Pool sizing becomes a
-  measured deployment value.
-- **A `Linker<T>` holds definitions only and is shared per digest; all
-  per-request state lives in `Store<T>`'s data and is read through
-  `StoreContextMut`.** Ratified 2026-09-04. No per-digest object may hold
-  per-request state; a plugin that cannot be written that way stays per request
-  and the smaller win is taken. A plugin's bind is therefore two calls, not one
-  hook: scope-keyed registration once per request, linker entries once per
-  digest. That split is what lets the driver seal one `InstancePre` per digest
-  and instantiate from it on every request (`wamn-0h0g.17.15`,
-  `perf/2026.09/1c-instance-pre.md`).
+- Use native wasmCloud loading and dispatch for released, nested, and frozen
+  candidate node calls. Native code owns compilation reuse, component linking,
+  store construction, and invocation duration metrics. The Wasmtime pooling
+  allocator remains enabled. Every call receives a fresh store.
+- Keep `poolSize` unset or zero. Admission continues to reject positive values.
+  B2 requires tenant isolation, separation of request state from warmed stores,
+  `maxConcurrency = 1`, and ephemeral fallback when the pool is full.
+  Its implementation and resource rules must land with the execution-model and
+  ledger amendments. No benchmark is a prerequisite for B2.
+- Keep complete admitted component facts separate from compiled bytes. Each
+  fact owns its immutable statements and host bindings. The native compilation
+  cache uses the digest of bytes that WAMN checks before loading.
+- Register request authority only after native initialization. A unique scope
+  carries the caller, claims, statements, causation, and effect authority.
+  The store's active identity names that scope during the call. Cleanup revokes
+  the scope and restores the native component identity on every exit.
 - Keep WAC composition only as a demand-gated fusion optimization for measured
-  hot, pure pipelines; the default preserves shared pools and router-edge taps.
+  hot, pure pipelines. The default preserves fresh stores and router-edge taps.
 
 One `wamn-execution-host` driver serves HTTP and queued execution through the
-uniform `wamn:node` seam and existing digest-keyed pool; services depend inward
+uniform `wamn:node` seam and native fresh-store dispatch. Services depend inward
 on execution-host, runtime, catalog and router. `to_port` is enforced whenever a
 target has multiple inputs and may be omitted only for a single-input target.
 
@@ -63,6 +65,43 @@ Native alignment B (`wamn-0ct2.2`), owner decision 2026-09-10, requires one admi
 The fully qualified interface token includes its version. Admission retains exact package and artifact provenance without per-dependency provider selection.
 Export-only interfaces can repeat. Wiring selects palette nodes by their complete admitted facts, so their shared `wamn:node/handler` export needs no uniqueness rule.
 The [B plan](architecture/wamn_native_alignment_plan.md#b-replace-manual-guest-execution-including-its-duplicate-caches) owns the native production substitution and deletion contract.
+
+The driver retains one `NativeApplication` for its immutable released component
+set. A candidate retains one application for its full traversal. Neither path
+creates a native workload per wiring node. Exact repeated facts share a native
+component identity. Distinct authority facts remain separate even when their
+component bytes match.
+
+One absolute deadline covers node acquisition, native initialization, execution,
+and nested calls. A child cannot extend it. The host and executor use Tokio's
+public `event_interval(1)` to poll timers after repeated guest yields.
+Native dispatch owns guest abandonment and memory release. WAMN retains the
+application owner inside the actual guest call until native work releases it.
+
+Native host callbacks restore their invocation trace through the shared
+`invocation_trace` carrier. It holds the host span and subscriber under the
+existing invocation scope. Native policy installs it after initialization and
+revokes it with that scope on every exit. It exposes no guest interface,
+configuration, or authorization rule.
+
+The guest call, nested dispatch, and HTTP, PostgreSQL, and blob callbacks use
+that captured context while their futures run. Synchronous callbacks restore
+it only during the callback. Other host paths retain their ambient context.
+Guest-supplied logging trace context keeps its existing separate contract.
+The [authenticated native proof](perf/2026.09/native-b-adoption/production-authenticated-003/output.log)
+passes its exact root, child, and host-observation parent assertions.
+Final production validation remains pending.
+
+An application cleanup guard exists before native resolution starts. It clears
+WAMN bindings and invocation scopes after a cancelled or failed load and on
+final owner drop. Shutdown serializes with authority registration. Candidate
+completion also calls the public native plugin-unbind API. No cleanup worker
+or second runtime owns this lifecycle.
+
+The B integration removes the manual compiled cache, `PreparedCache`, linker
+cloning, `NodeInstance`, and deadline-to-epoch conversion. Production integration
+validation remains pending under `wamn-0ct2.2`. Earlier checkpoint results do not
+establish the integrated release or candidate proofs.
 
 ### Composition: an edge carries the route envelope
 
@@ -85,8 +124,8 @@ component model permits the `async` canonical option only on an `async func`
 type (the validator refuses an async lift of `handler.run`), and a
 synchronously-lifted export cannot block on an async import (blob-put's first
 execution trapped on exactly that). The router dispatches on whichever handler
-interface a node exports and drives both through `call_async`; admission
-admits the async lift on `async-handler` alone. Named for what it is, not
+interface a node exports and drives both through native `GuestCall` and
+`call_concurrent`. Admission admits the async lift on `async-handler` alone. Named for what it is, not
 versioned: nothing outside this tree consumes the node ABI. blob-put is the
 first consumer; streaming capabilities and MQTT remain future consumers. The
 P3 HTTP shell exports `wasi:http/handler@0.3.0` separately from this node ABI.

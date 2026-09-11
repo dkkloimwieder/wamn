@@ -1,0 +1,12 @@
+{
+  "command": [
+    "env",
+    "WAMN_HTTP_REUSE_TEST_BINARY=/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/target/debug/deps/wamn_proof_integration-64b648fb55077e98",
+    "bash",
+    "docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh",
+    "trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 14.050077556981705,
+  "changed_during_run": []
+}

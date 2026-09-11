@@ -173,11 +173,15 @@ It retains source and binary hashes, exact commands, logs, case results and pare
 This proof covers startup and native defaults, with no engine, workload or network execution claim.
 No throughput benchmark is required for this startup change.
 
-### `[NATIVE-B]` public dispatch checkpoint
+### `[NATIVE-B]` native application loading and dispatch
 
-`wamn-0ct2.2` owns the native dispatch substitution and its stop conditions.
+`wamn-0ct2.2` owns native application loading, dispatch, and the unchanged public-API stop conditions.
+The B production integration is prepared. Its integrated correctness gates and deployed proofs remain pending.
+Released, nested, and candidate calls use native fresh stores with separate admitted facts and invocation authority.
 The [checkpoint report](../perf/2026.09/native-b-dispatch/report.md) separates runtime mechanics from production adoption.
 The [implementation checkpoint](../perf/2026.09/native-b-adoption/report.md) records admitted imports, native helpers, and authenticated nested calls.
+The [production report](../perf/2026.09/native-b-adoption/production-report.md) records the tracing correction, executed focused proofs, and pending final validation.
+
 The scalar fixtures exercise public APIs through the production WAMN engine.
 They require no live database, broker, registry, cluster, or benchmark.
 
@@ -193,7 +197,8 @@ Require two binding cases and five deadline cases, with no ignored cases.
 The positive deadline cases require memory return and a subsequent successful call.
 The isolated runtime selects Tokio's public `event_interval(1)` so that repeated guest yields cannot postpone timer polling.
 The report retains the failed default-scheduler run and its isolated diagnostic.
-This prospective embedding setting does not change the production runtimes.
+The host and executor production runtimes now select the same public `event_interval(1)`.
+Make sure that initialization and nested execution obey the same absolute deadline as their parent call.
 The native-only deadline control requires observed initialization after its deadline and watchdog exit 124.
 That expected child exit counts as a passing negative control, not a crashed positive case.
 The binding cases require host allowance, host refusal, and a direct child initialization trap.
@@ -219,6 +224,39 @@ The node tests must preserve typed nested permission refusals and revoke invocat
 Nonterminating initialization must obey the enclosing deadline without receiving invocation authority.
 The readiness cases must observe native initialization, leave the application handler uncalled, and return guest memory after initializer traps or deadlines.
 
+The source defines 14 `router_driver::native_` tests. The command above selects 13 and excludes the armed database test.
+These source counts are not passing results. Record the executed counts from each command.
+Three loader tests cover repeated facts, ambiguous imported providers, and altered bytes.
+Three readiness tests cover initialization without handler execution, initializer traps, and initializer deadlines.
+Five node tests cover success, typed permission refusal, initialization deadlines, execution deadlines, and cancellation.
+Two application tests cover cancellation during resolution and owner retention until native guest cancellation completes.
+The armed proof also covers root, nested child, and guest-issued host observations under the original trace.
+
+Require the following ownership and trace tests:
+
+- `native_application_cancelled_resolution_clears_partial_bindings`
+- `native_application_call_retains_owner_until_guest_cancellation`
+- `native_authenticated_nested_authority_and_lifecycle`
+
+Make sure that an abandoned load leaves no policy bindings, invocation authority, or registered trace context.
+Make sure that actual guest work retains the application until native cancellation releases it.
+Make sure that shutdown cannot leave a late authority registration.
+Require one `wamn.component.invoke` span per executed operation, with exact component identity and correct parentage.
+Do not manufacture cache-hit, linker, or manual-instantiation spans for the removed lifecycle.
+
+The shared `invocation_trace` carrier holds each host span and subscriber under its existing invocation scope.
+Native policy installs it after initialization and revokes it through the existing cleanup guard.
+It exposes no guest interface, configuration, or authority.
+Nested dispatch and HTTP, PostgreSQL, and blob callbacks restore it before creating their existing effect spans.
+The observer fixture uses the same production helper. Other host paths retain ambient context.
+
+Require the existing lifecycle tests to observe trace revocation after completion, cancellation, and abandoned resolution.
+Require the active-call owner test to retain its trace until native cancellation completes.
+Keep the exact root, child, and host-effect parentage assertions.
+Preserve failed receipts when changing the callback context implementation.
+The [corrected authenticated run](../perf/2026.09/native-b-adoption/production-authenticated-003/output.log) passes all six scenarios and its strict trace assertions.
+The [subsequent host run](../perf/2026.09/native-b-adoption/production-host-tests-003/output.log) records 52 passes, zero failures, zero ignored, and one filtered authenticated test.
+
 For the authenticated nested proof, use a fresh disposable PostgreSQL 18 server without WAMN schemas or roles.
 Set `WAMN_NATIVE_B_AUTH_PG_URL` to its administrator connection URL through the environment.
 The fixture installs the existing catalog and application schemas plus the scoped HTTP admission role.
@@ -231,13 +269,20 @@ cargo test -p wamn-execution-host --lib --locked --offline \
 ```
 
 Require all six scenarios: permission refusal, session fresh-only refusal, permitted nested execution, child initialization deadline, child execution deadline, and cancellation.
-Require the original caller and credential kind, distinct invocation scopes, no initialization of refused children, and complete authority revocation.
+Require the original caller and credential kind, distinct invocation scopes, and complete authority revocation.
+Make sure that refused children never initialize.
+Make sure that nested effects retain the original connection identity and name the executing child separately.
+Require the permitted case to retain trace parentage, caller attributes, and exact digests across both native tasks.
+Require its `authenticated-native-trace result=pass invocations=2 host_observations=2` receipt.
 Remove only the owned disposable server after the proof.
-These checks do not replace the released and candidate production paths or their deployed proof required for B's substitution.
+These focused tests do not replace the released and candidate production gates or the deployed Receiving proof.
+Make sure that served traces perform no native component load, workload resolution, or component linking.
+Make sure that the owning gates retain exact SQL, effect outcomes, shared memory accounting, and cleanup after failure.
 
 Retain the source and artifact hashes, command, counts, and complete output.
-A passing checkpoint does not close B or prove the application node path.
-Do not change the production lifecycle while a required public-API boundary remains blocked.
+A passing checkpoint does not close B or establish an integrated production result.
+Keep `poolSize` unset or zero and retain the admission refusal of positive values until B2 lands its complete policy.
+If a required public-API boundary remains blocked, stop and record the exact obstacle.
 
 ### `[NATIVE-C]` native NATS source checkpoint
 
@@ -494,8 +539,13 @@ cargo test -p wamn-ctl \
 cargo test -p wamn-ctl \
   component_dependencies_expand_the_exact_release_closure_and_refuse_cycles \
   --lib --locked --offline
-cargo test -p wamn-execution-host \
-  nested_permission_denial --lib --locked --offline
+cargo test -p wamn-execution-host --lib --locked --offline \
+  router_driver::native_policy::tests::native_nested_permission_refusal_revokes_invocation_authority \
+  -- --exact
+# The separate wire mapping keeps the direct-call refusal envelope.
+cargo test -p wamn-execution-host --lib --locked --offline \
+  router_delivery::tests::nested_permission_denial_uses_the_direct_call_wire_contract \
+  -- --exact
 
 set -euo pipefail
 RECEIVING_PG_CONTAINER=wamn-receiving-pg18
@@ -3304,12 +3354,16 @@ reconciliation, push, fourteen wiring gates/authorships, one exact two-package
 release mint/attestation/load, thirteen PAT routes, and PostgreSQL effects. It
 asserts the overlay registration's exact owner/source/entity/operation set and
 proves the overlay `record_receipt` span invokes its pinned base digest with the
-same originating principal. That nested route is the first package invocation
-against an empty disposable Wasmtime cache; the gate proves both exact
-components are pulled and compiled before the parent execution clock, then
-fresh-linked and instantiated. The deferred CDC/materializer leg is not part
-of this route journey. Its PostgreSQL 18 server and authenticated plain-HTTP
-registry are disposable and loopback-only. The Docker auth document must carry
+same originating principal. The native application acquires the complete
+released component closure once against an empty disposable Wasmtime cache.
+Its preload must include both exact overlay and base digests, alongside other
+admitted components. The nested request must invoke exactly those two nodes
+with their exact operation, caller, and parent-span identities.
+Native dispatch gives each node a fresh store. Served request traces must
+contain no component pull, native byte load, workload resolution, or component
+linking. The deferred CDC/materializer leg is not part of this route journey.
+Its PostgreSQL 18 server and authenticated plain-HTTP registry are disposable
+and loopback-only. The Docker auth document must carry
 explicit non-empty `username` and `password` fields for the exact registry
 authority; credentials exist only in the scratch directory and are not printed.
 
@@ -3329,7 +3383,7 @@ grammar as a direct invocation:
 
 ```bash
 cargo test -p wamn-execution-host --lib --locked --offline \
-  router_driver::tests::nested_permission_denial_survives_the_real_component_boundary \
+  router_driver::native_policy::tests::native_nested_permission_refusal_revokes_invocation_authority \
   -- --exact
 ```
 

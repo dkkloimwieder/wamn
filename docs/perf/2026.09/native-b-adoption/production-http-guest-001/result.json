@@ -1,0 +1,17 @@
+{
+  "command": [
+    "cargo",
+    "build",
+    "--manifest-path",
+    "components/no-std/Cargo.toml",
+    "-p",
+    "http-request",
+    "--target",
+    "wasm32-wasip2",
+    "--locked",
+    "--offline"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 19.295312130998354,
+  "changed_during_run": []
+}

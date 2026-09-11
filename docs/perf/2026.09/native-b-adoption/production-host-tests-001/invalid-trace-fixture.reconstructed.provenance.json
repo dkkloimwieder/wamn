@@ -1,0 +1,10 @@
+{
+  "classification": "reconstruction, not an original source snapshot",
+  "original_path": "crates/execution/host/src/router_driver/native_policy/tests/trace.rs",
+  "reason": "The untracked failed fixture was overwritten before the preservation request. The runner did not capture that file or record its original hash.",
+  "recovery": "Replayed the original conversation tool call heredoc (cat > crates/execution/host/src/router_driver/native_policy/tests/trace.rs) into /tmp/native-invalid-trace-fixture.rs, then applied the original rustfmt options.",
+  "format_command": "rustfmt --edition 2024 --config skip_children=true /tmp/native-invalid-trace-fixture.rs",
+  "reconstructed_sha256": "5d37baf96b87fe79607cd333c9207982a218cdb4c1d43483a52978a08bc56b75",
+  "original_sha256": null,
+  "original_byte_equality": "not established"
+}

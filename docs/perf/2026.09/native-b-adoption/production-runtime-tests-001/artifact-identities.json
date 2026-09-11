@@ -1,0 +1,8 @@
+{
+  "capture": "After completed execution, before another build in this target.",
+  "sha256": {
+    "target/debug/deps/wamn_runtime-3754c2d7c8fc1e06": "deefc26f838e8a16f87e7108bdbd74b6e5557b4a7f00b1dbf105a8d8f63279a1",
+    "target/debug/deps/native_dispatch_binding-f09ecc55ea6704f4": "de8d38d62daaacb74c1abeb4e492df14e832623ae821e7e054922fff45327890",
+    "target/debug/deps/native_dispatch_deadline-1b46304e3b558369": "c0a273960ea4da40a6e07bf2d11befa36576373bbbaf33def8e7f3ad1c760fd9"
+  }
+}

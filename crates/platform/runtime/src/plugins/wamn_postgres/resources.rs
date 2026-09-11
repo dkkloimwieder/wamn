@@ -481,21 +481,26 @@ impl client::Host for ActiveCtx<'_> {
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let span = db_span(&plugin, &component_id, "query");
-        let project = plugin.project_for(&component_id);
-        let t0 = std::time::Instant::now();
-        let result = plugin
-            .one_shot(&component_id, &sql, &params, true)
-            .instrument(span)
-            .await;
-        record_query_ms("query", &project, t0.elapsed());
-        Ok(match result {
-            Ok(OneShotResult::Rows(rs)) => Ok(rs),
-            Ok(OneShotResult::Count(_)) => unreachable!("one_shot(want_rows) returns rows"),
-            Err(e) => Err(e),
-        })
+        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        trace
+            .run(async move {
+                let plugin = plugin_of(self)?;
+                let component_id = self.component_id.to_string();
+                let span = db_span(&plugin, &component_id, "query");
+                let project = plugin.project_for(&component_id);
+                let t0 = std::time::Instant::now();
+                let result = plugin
+                    .one_shot(&component_id, &sql, &params, true)
+                    .instrument(span)
+                    .await;
+                record_query_ms("query", &project, t0.elapsed());
+                Ok(match result {
+                    Ok(OneShotResult::Rows(rs)) => Ok(rs),
+                    Ok(OneShotResult::Count(_)) => unreachable!("one_shot(want_rows) returns rows"),
+                    Err(e) => Err(e),
+                })
+            })
+            .await
     }
 
     async fn execute(
@@ -503,43 +508,55 @@ impl client::Host for ActiveCtx<'_> {
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let span = db_span(&plugin, &component_id, "execute");
-        let project = plugin.project_for(&component_id);
-        let t0 = std::time::Instant::now();
-        let result = plugin
-            .one_shot(&component_id, &sql, &params, false)
-            .instrument(span)
-            .await;
-        record_query_ms("execute", &project, t0.elapsed());
-        Ok(match result {
-            Ok(OneShotResult::Count(n)) => Ok(n),
-            Ok(OneShotResult::Rows(_)) => unreachable!("one_shot(!want_rows) returns count"),
-            Err(e) => Err(e),
-        })
+        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        trace
+            .run(async move {
+                let plugin = plugin_of(self)?;
+                let component_id = self.component_id.to_string();
+                let span = db_span(&plugin, &component_id, "execute");
+                let project = plugin.project_for(&component_id);
+                let t0 = std::time::Instant::now();
+                let result = plugin
+                    .one_shot(&component_id, &sql, &params, false)
+                    .instrument(span)
+                    .await;
+                record_query_ms("execute", &project, t0.elapsed());
+                Ok(match result {
+                    Ok(OneShotResult::Count(n)) => Ok(n),
+                    Ok(OneShotResult::Rows(_)) => {
+                        unreachable!("one_shot(!want_rows) returns count")
+                    }
+                    Err(e) => Err(e),
+                })
+            })
+            .await
     }
 
     async fn begin(
         &mut self,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgTransaction>, PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = plugin.project_for(&component_id);
-        let span = db_span(&plugin, &component_id, "begin");
-        let t0 = std::time::Instant::now();
+        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        trace
+            .run(async move {
+                let plugin = plugin_of(self)?;
+                let component_id = self.component_id.to_string();
+                let project = plugin.project_for(&component_id);
+                let span = db_span(&plugin, &component_id, "begin");
+                let t0 = std::time::Instant::now();
 
-        // Both round trips — the pool checkout and the claim-stamping BEGIN —
-        // are the one effect, so one span covers both.
-        let opened = begin_transaction(&plugin, &component_id, &project)
-            .instrument(span)
-            .await;
-        record_query_ms("begin", &project, t0.elapsed());
-        let txn = match opened {
-            Ok(opened) => opened,
-            Err(e) => return Ok(Err(e)),
-        };
-        Ok(Ok(self.table.push(txn)?))
+                // Both round trips — the pool checkout and the claim-stamping BEGIN —
+                // are the one effect, so one span covers both.
+                let opened = begin_transaction(&plugin, &component_id, &project)
+                    .instrument(span)
+                    .await;
+                record_query_ms("begin", &project, t0.elapsed());
+                let txn = match opened {
+                    Ok(opened) => opened,
+                    Err(e) => return Ok(Err(e)),
+                };
+                Ok(Ok(self.table.push(txn)?))
+            })
+            .await
     }
 }
 
@@ -551,21 +568,26 @@ impl bindings::named_imports::wamn::postgres::client::Host for ActiveCtx<'_> {
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = id.project().to_string();
-        let span = db_span_for_project(&plugin, &component_id, &project, "query");
-        let t0 = std::time::Instant::now();
-        let result = plugin
-            .one_shot_for_project(&component_id, &project, &sql, &params, true)
-            .instrument(span)
-            .await;
-        record_query_ms("query", &project, t0.elapsed());
-        Ok(match result {
-            Ok(OneShotResult::Rows(rs)) => Ok(rs),
-            Ok(OneShotResult::Count(_)) => unreachable!("one_shot(want_rows) returns rows"),
-            Err(e) => Err(e),
-        })
+        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        trace
+            .run(async move {
+                let plugin = plugin_of(self)?;
+                let component_id = self.component_id.to_string();
+                let project = id.project().to_string();
+                let span = db_span_for_project(&plugin, &component_id, &project, "query");
+                let t0 = std::time::Instant::now();
+                let result = plugin
+                    .one_shot_for_project(&component_id, &project, &sql, &params, true)
+                    .instrument(span)
+                    .await;
+                record_query_ms("query", &project, t0.elapsed());
+                Ok(match result {
+                    Ok(OneShotResult::Rows(rs)) => Ok(rs),
+                    Ok(OneShotResult::Count(_)) => unreachable!("one_shot(want_rows) returns rows"),
+                    Err(e) => Err(e),
+                })
+            })
+            .await
     }
 
     async fn execute(
@@ -574,40 +596,52 @@ impl bindings::named_imports::wamn::postgres::client::Host for ActiveCtx<'_> {
         sql: String,
         params: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = id.project().to_string();
-        let span = db_span_for_project(&plugin, &component_id, &project, "execute");
-        let t0 = std::time::Instant::now();
-        let result = plugin
-            .one_shot_for_project(&component_id, &project, &sql, &params, false)
-            .instrument(span)
-            .await;
-        record_query_ms("execute", &project, t0.elapsed());
-        Ok(match result {
-            Ok(OneShotResult::Count(n)) => Ok(n),
-            Ok(OneShotResult::Rows(_)) => unreachable!("one_shot(!want_rows) returns count"),
-            Err(e) => Err(e),
-        })
+        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        trace
+            .run(async move {
+                let plugin = plugin_of(self)?;
+                let component_id = self.component_id.to_string();
+                let project = id.project().to_string();
+                let span = db_span_for_project(&plugin, &component_id, &project, "execute");
+                let t0 = std::time::Instant::now();
+                let result = plugin
+                    .one_shot_for_project(&component_id, &project, &sql, &params, false)
+                    .instrument(span)
+                    .await;
+                record_query_ms("execute", &project, t0.elapsed());
+                Ok(match result {
+                    Ok(OneShotResult::Count(n)) => Ok(n),
+                    Ok(OneShotResult::Rows(_)) => {
+                        unreachable!("one_shot(!want_rows) returns count")
+                    }
+                    Err(e) => Err(e),
+                })
+            })
+            .await
     }
 
     async fn begin(
         &mut self,
         id: super::NamedProject,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgTransaction>, PgError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = id.project().to_string();
-        let span = db_span_for_project(&plugin, &component_id, &project, "begin");
-        let t0 = std::time::Instant::now();
-        let opened = begin_transaction(&plugin, &component_id, &project)
-            .instrument(span)
-            .await;
-        record_query_ms("begin", &project, t0.elapsed());
-        match opened {
-            Ok(txn) => Ok(Ok(self.table.push(txn)?)),
-            Err(e) => Ok(Err(e)),
-        }
+        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        trace
+            .run(async move {
+                let plugin = plugin_of(self)?;
+                let component_id = self.component_id.to_string();
+                let project = id.project().to_string();
+                let span = db_span_for_project(&plugin, &component_id, &project, "begin");
+                let t0 = std::time::Instant::now();
+                let opened = begin_transaction(&plugin, &component_id, &project)
+                    .instrument(span)
+                    .await;
+                record_query_ms("begin", &project, t0.elapsed());
+                match opened {
+                    Ok(txn) => Ok(Ok(self.table.push(txn)?)),
+                    Err(e) => Ok(Err(e)),
+                }
+            })
+            .await
     }
 }
 
@@ -618,24 +652,29 @@ async fn txn_query(
     sql: String,
     params: Vec<SqlValue>,
 ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-    let plugin = plugin_of(ctx)?;
-    let component_id = ctx.component_id.to_string();
-    let span = db_span_for_project(&plugin, &component_id, project, "txn.query");
-    let txn = ctx.table.get(&rep)?;
-    let row_limit = txn.row_limit;
-    let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
-    let t0 = std::time::Instant::now();
-    let out = with_txn_conn(&state, &destroyed, |conn| async move {
-        let r = run_query(&conn, &sql, &params, row_limit).await;
-        // run_query maps errors already; re-split for with_txn_conn's
-        // fatal/statement distinction by probing conn liveness.
-        (conn, flatten_mapped(r))
-    })
-    .instrument(span)
-    .await
-    .and_then(|r| r);
-    record_query_ms("txn.query", project, t0.elapsed());
-    Ok(out)
+    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    trace
+        .run(async move {
+            let plugin = plugin_of(ctx)?;
+            let component_id = ctx.component_id.to_string();
+            let span = db_span_for_project(&plugin, &component_id, project, "txn.query");
+            let txn = ctx.table.get(&rep)?;
+            let row_limit = txn.row_limit;
+            let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
+            let t0 = std::time::Instant::now();
+            let out = with_txn_conn(&state, &destroyed, |conn| async move {
+                let r = run_query(&conn, &sql, &params, row_limit).await;
+                // run_query maps errors already; re-split for with_txn_conn's
+                // fatal/statement distinction by probing conn liveness.
+                (conn, flatten_mapped(r))
+            })
+            .instrument(span)
+            .await
+            .and_then(|r| r);
+            record_query_ms("txn.query", project, t0.elapsed());
+            Ok(out)
+        })
+        .await
 }
 
 async fn txn_execute(
@@ -645,21 +684,26 @@ async fn txn_execute(
     sql: String,
     params: Vec<SqlValue>,
 ) -> wash_runtime::wasmtime::Result<Result<u64, PgError>> {
-    let plugin = plugin_of(ctx)?;
-    let component_id = ctx.component_id.to_string();
-    let span = db_span_for_project(&plugin, &component_id, project, "txn.execute");
-    let txn = ctx.table.get(&rep)?;
-    let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
-    let t0 = std::time::Instant::now();
-    let out = with_txn_conn(&state, &destroyed, |conn| async move {
-        let r = run_execute(&conn, &sql, &params).await;
-        (conn, flatten_mapped(r))
-    })
-    .instrument(span)
-    .await
-    .and_then(|r| r);
-    record_query_ms("txn.execute", project, t0.elapsed());
-    Ok(out)
+    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    trace
+        .run(async move {
+            let plugin = plugin_of(ctx)?;
+            let component_id = ctx.component_id.to_string();
+            let span = db_span_for_project(&plugin, &component_id, project, "txn.execute");
+            let txn = ctx.table.get(&rep)?;
+            let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
+            let t0 = std::time::Instant::now();
+            let out = with_txn_conn(&state, &destroyed, |conn| async move {
+                let r = run_execute(&conn, &sql, &params).await;
+                (conn, flatten_mapped(r))
+            })
+            .instrument(span)
+            .await
+            .and_then(|r| r);
+            record_query_ms("txn.execute", project, t0.elapsed());
+            Ok(out)
+        })
+        .await
 }
 
 async fn txn_open_cursor(
@@ -669,41 +713,46 @@ async fn txn_open_cursor(
     sql: String,
     params: Vec<SqlValue>,
 ) -> wash_runtime::wasmtime::Result<Result<Resource<PgCursor>, PgError>> {
-    // A cursor over `SELECT set_config('app.tenant', …)` would execute the
-    // override on fetch; guard the same surface as query/execute (wamn-cjv.2).
-    if let Err(e) = reject_claim_mutation(&sql) {
-        return Ok(Err(e));
-    }
-    let plugin = plugin_of(ctx)?;
-    let component_id = ctx.component_id.to_string();
-    let span = db_span_for_project(&plugin, &component_id, project, "txn.open_cursor");
-    let txn = ctx.table.get_mut(&rep)?;
-    txn.cursor_seq += 1;
-    let name = format!("wamn_c{}", txn.cursor_seq);
-    let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
-    let declare = format!("DECLARE {name} CURSOR FOR {sql}");
-    let t0 = std::time::Instant::now();
-    let result = with_txn_conn(&state, &destroyed, |conn| async move {
-        let r = async {
-            let stmt = conn.prepare(&declare).await?;
-            let wrapped: Vec<PgParam> = params.iter().map(|p| PgParam(p.clone())).collect();
-            conn.execute_raw(&stmt, wrapped.iter().map(|p| p as &dyn ToSql))
-                .await
-        }
-        .await;
-        (conn, r)
-    })
-    .instrument(span)
-    .await;
-    record_query_ms("txn.open_cursor", project, t0.elapsed());
-    Ok(match result {
-        Ok(_) => Ok(ctx.table.push(PgCursor {
-            state,
-            destroyed,
-            name,
-        })?),
-        Err(e) => Err(e),
-    })
+    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    trace
+        .run(async move {
+            // A cursor over `SELECT set_config('app.tenant', …)` would execute the
+            // override on fetch; guard the same surface as query/execute (wamn-cjv.2).
+            if let Err(e) = reject_claim_mutation(&sql) {
+                return Ok(Err(e));
+            }
+            let plugin = plugin_of(ctx)?;
+            let component_id = ctx.component_id.to_string();
+            let span = db_span_for_project(&plugin, &component_id, project, "txn.open_cursor");
+            let txn = ctx.table.get_mut(&rep)?;
+            txn.cursor_seq += 1;
+            let name = format!("wamn_c{}", txn.cursor_seq);
+            let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
+            let declare = format!("DECLARE {name} CURSOR FOR {sql}");
+            let t0 = std::time::Instant::now();
+            let result = with_txn_conn(&state, &destroyed, |conn| async move {
+                let r = async {
+                    let stmt = conn.prepare(&declare).await?;
+                    let wrapped: Vec<PgParam> = params.iter().map(|p| PgParam(p.clone())).collect();
+                    conn.execute_raw(&stmt, wrapped.iter().map(|p| p as &dyn ToSql))
+                        .await
+                }
+                .await;
+                (conn, r)
+            })
+            .instrument(span)
+            .await;
+            record_query_ms("txn.open_cursor", project, t0.elapsed());
+            Ok(match result {
+                Ok(_) => Ok(ctx.table.push(PgCursor {
+                    state,
+                    destroyed,
+                    name,
+                })?),
+                Err(e) => Err(e),
+            })
+        })
+        .await
 }
 
 async fn txn_finish(
@@ -712,20 +761,25 @@ async fn txn_finish(
     rep: Resource<PgTransaction>,
     verb: &'static str,
 ) -> wash_runtime::wasmtime::Result<Result<(), PgError>> {
-    let plugin = plugin_of(ctx)?;
-    let component_id = ctx.component_id.to_string();
-    let op = match verb {
-        "COMMIT" => "txn.commit",
-        "ROLLBACK" => "txn.rollback",
-        _ => unreachable!("transaction finish verb is fixed"),
-    };
-    let span = db_span_for_project(&plugin, &component_id, project, op);
-    let txn = ctx.table.get(&rep)?;
-    let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
-    let t0 = std::time::Instant::now();
-    let result = finish_txn(&state, &destroyed, verb).instrument(span).await;
-    record_query_ms(op, project, t0.elapsed());
-    Ok(result)
+    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    trace
+        .run(async move {
+            let plugin = plugin_of(ctx)?;
+            let component_id = ctx.component_id.to_string();
+            let op = match verb {
+                "COMMIT" => "txn.commit",
+                "ROLLBACK" => "txn.rollback",
+                _ => unreachable!("transaction finish verb is fixed"),
+            };
+            let span = db_span_for_project(&plugin, &component_id, project, op);
+            let txn = ctx.table.get(&rep)?;
+            let (state, destroyed) = (txn.state.clone(), txn.destroyed.clone());
+            let t0 = std::time::Instant::now();
+            let result = finish_txn(&state, &destroyed, verb).instrument(span).await;
+            record_query_ms(op, project, t0.elapsed());
+            Ok(result)
+        })
+        .await
 }
 
 async fn txn_drop(
@@ -754,34 +808,39 @@ async fn cursor_fetch(
     rep: Resource<PgCursor>,
     max_rows: u32,
 ) -> wash_runtime::wasmtime::Result<Result<RowSet, PgError>> {
-    let plugin = plugin_of(ctx)?;
-    let component_id = ctx.component_id.to_string();
-    let span = db_span_for_project(&plugin, &component_id, project, "cursor.fetch");
-    let cursor = ctx.table.get(&rep)?;
-    let (state, destroyed, name) = (
-        cursor.state.clone(),
-        cursor.destroyed.clone(),
-        cursor.name.clone(),
-    );
-    let t0 = std::time::Instant::now();
-    let fetched = with_txn_conn(&state, &destroyed, |conn| async move {
-        let r = async {
-            let sql = format!("FETCH FORWARD {max_rows} FROM {name}");
-            let stmt = conn.prepare(&sql).await?;
-            let columns = columns_of(&stmt);
-            let rows = conn.query(&stmt, &[]).await?;
-            Ok::<_, tokio_postgres::Error>((columns, rows))
-        }
-        .await;
-        (conn, r)
-    })
-    .instrument(span)
-    .await;
-    record_query_ms("cursor.fetch", project, t0.elapsed());
-    Ok(fetched.and_then(|(columns, rows)| {
-        let rows = rows.iter().map(decode_row).collect::<Result<Vec<_>, _>>()?;
-        Ok(RowSet { columns, rows })
-    }))
+    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    trace
+        .run(async move {
+            let plugin = plugin_of(ctx)?;
+            let component_id = ctx.component_id.to_string();
+            let span = db_span_for_project(&plugin, &component_id, project, "cursor.fetch");
+            let cursor = ctx.table.get(&rep)?;
+            let (state, destroyed, name) = (
+                cursor.state.clone(),
+                cursor.destroyed.clone(),
+                cursor.name.clone(),
+            );
+            let t0 = std::time::Instant::now();
+            let fetched = with_txn_conn(&state, &destroyed, |conn| async move {
+                let r = async {
+                    let sql = format!("FETCH FORWARD {max_rows} FROM {name}");
+                    let stmt = conn.prepare(&sql).await?;
+                    let columns = columns_of(&stmt);
+                    let rows = conn.query(&stmt, &[]).await?;
+                    Ok::<_, tokio_postgres::Error>((columns, rows))
+                }
+                .await;
+                (conn, r)
+            })
+            .instrument(span)
+            .await;
+            record_query_ms("cursor.fetch", project, t0.elapsed());
+            Ok(fetched.and_then(|(columns, rows)| {
+                let rows = rows.iter().map(decode_row).collect::<Result<Vec<_>, _>>()?;
+                Ok(RowSet { columns, rows })
+            }))
+        })
+        .await
 }
 
 fn cursor_drop(
@@ -988,45 +1047,56 @@ impl statement_wit::Host for ActiveCtx<'_> {
         statement_digest: String,
         binds: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let active = plugin.active_statement_set(&component_id);
-        let statement = match resolve_statement(active.as_deref(), &statement_digest, &binds) {
-            Ok(statement) => statement,
-            Err(error) => return Ok(Err(error)),
-        };
-        let project = plugin.project_for(&component_id);
-        let span = db_span_for_project(&plugin, &component_id, &project, "statement.run");
-        let started = std::time::Instant::now();
-        let result = plugin
-            .one_shot_statement(&component_id, &statement_digest, &statement, &binds)
-            .instrument(span)
-            .await;
-        record_query_ms("statement.run", &project, started.elapsed());
-        Ok(result)
+        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        trace
+            .run(async move {
+                let plugin = plugin_of(self)?;
+                let component_id = self.component_id.to_string();
+                let active = plugin.active_statement_set(&component_id);
+                let statement =
+                    match resolve_statement(active.as_deref(), &statement_digest, &binds) {
+                        Ok(statement) => statement,
+                        Err(error) => return Ok(Err(error)),
+                    };
+                let project = plugin.project_for(&component_id);
+                let span = db_span_for_project(&plugin, &component_id, &project, "statement.run");
+                let started = std::time::Instant::now();
+                let result = plugin
+                    .one_shot_statement(&component_id, &statement_digest, &statement, &binds)
+                    .instrument(span)
+                    .await;
+                record_query_ms("statement.run", &project, started.elapsed());
+                Ok(result)
+            })
+            .await
     }
 
     async fn begin(
         &mut self,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<PgStatementTransaction>, StatementError>>
     {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = plugin.project_for(&component_id);
-        let statements = plugin.active_statement_set(&component_id);
-        let span = db_span_for_project(&plugin, &component_id, &project, "statement.begin");
-        let started = std::time::Instant::now();
-        let opened = begin_statement_transaction(&plugin, &component_id, &project)
-            .instrument(span)
-            .await;
-        record_query_ms("statement.begin", &project, started.elapsed());
-        match opened {
-            Ok(transaction) => Ok(Ok(self.table.push(PgStatementTransaction {
-                transaction,
-                statements,
-            })?)),
-            Err(error) => Ok(Err(StatementError::Postgres(error))),
-        }
+        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        trace
+            .run(async move {
+                let plugin = plugin_of(self)?;
+                let component_id = self.component_id.to_string();
+                let project = plugin.project_for(&component_id);
+                let statements = plugin.active_statement_set(&component_id);
+                let span = db_span_for_project(&plugin, &component_id, &project, "statement.begin");
+                let started = std::time::Instant::now();
+                let opened = begin_statement_transaction(&plugin, &component_id, &project)
+                    .instrument(span)
+                    .await;
+                record_query_ms("statement.begin", &project, started.elapsed());
+                match opened {
+                    Ok(transaction) => Ok(Ok(self.table.push(PgStatementTransaction {
+                        transaction,
+                        statements,
+                    })?)),
+                    Err(error) => Ok(Err(StatementError::Postgres(error))),
+                }
+            })
+            .await
     }
 }
 
@@ -1037,44 +1107,55 @@ impl statement_wit::HostTransaction for ActiveCtx<'_> {
         statement_digest: String,
         binds: Vec<SqlValue>,
     ) -> wash_runtime::wasmtime::Result<Result<RowSet, StatementError>> {
-        let plugin = plugin_of(self)?;
-        let component_id = self.component_id.to_string();
-        let project = plugin.project_for(&component_id);
-        let transaction = self.table.get(&rep)?;
-        let statement =
-            match resolve_statement(transaction.statements.as_deref(), &statement_digest, &binds) {
-                Ok(statement) => statement,
-                Err(error) => return Ok(Err(error)),
-            };
-        let state = Arc::clone(&transaction.transaction.state);
-        let destroyed = Arc::clone(&transaction.transaction.destroyed);
-        let row_limit = transaction.transaction.row_limit;
-        let connection = match take_conn(&state) {
-            Ok(connection) => StatementConnectionGuard::new(connection, Arc::clone(&destroyed)),
-            Err(error) => return Ok(Err(StatementError::Postgres(error))),
-        };
-        let span = db_span_for_project(&plugin, &component_id, &project, "statement.txn.run");
-        let started = std::time::Instant::now();
-        let result = run_verified_query(
-            connection.connection(),
-            &statement_digest,
-            &statement,
-            &binds,
-            row_limit,
-        )
-        .instrument(span)
-        .await;
-        record_query_ms("statement.txn.run", &project, started.elapsed());
+        let trace = crate::plugins::invocation_trace::invocation_trace(self);
+        trace
+            .run(async move {
+                let plugin = plugin_of(self)?;
+                let component_id = self.component_id.to_string();
+                let project = plugin.project_for(&component_id);
+                let transaction = self.table.get(&rep)?;
+                let statement = match resolve_statement(
+                    transaction.statements.as_deref(),
+                    &statement_digest,
+                    &binds,
+                ) {
+                    Ok(statement) => statement,
+                    Err(error) => return Ok(Err(error)),
+                };
+                let state = Arc::clone(&transaction.transaction.state);
+                let destroyed = Arc::clone(&transaction.transaction.destroyed);
+                let row_limit = transaction.transaction.row_limit;
+                let connection = match take_conn(&state) {
+                    Ok(connection) => {
+                        StatementConnectionGuard::new(connection, Arc::clone(&destroyed))
+                    }
+                    Err(error) => return Ok(Err(StatementError::Postgres(error))),
+                };
+                let span =
+                    db_span_for_project(&plugin, &component_id, &project, "statement.txn.run");
+                let started = std::time::Instant::now();
+                let result = run_verified_query(
+                    connection.connection(),
+                    &statement_digest,
+                    &statement,
+                    &binds,
+                    row_limit,
+                )
+                .instrument(span)
+                .await;
+                record_query_ms("statement.txn.run", &project, started.elapsed());
 
-        if statement_run_disposition(&result) == StatementRunDisposition::Destroy {
-            if let Ok(mut transaction) = state.lock() {
-                transaction.finished = true;
-            }
-            drop(connection);
-        } else {
-            connection.restore(&state);
-        }
-        Ok(result)
+                if statement_run_disposition(&result) == StatementRunDisposition::Destroy {
+                    if let Ok(mut transaction) = state.lock() {
+                        transaction.finished = true;
+                    }
+                    drop(connection);
+                } else {
+                    connection.restore(&state);
+                }
+                Ok(result)
+            })
+            .await
     }
 
     async fn commit(
@@ -1115,25 +1196,30 @@ async fn statement_txn_finish(
     rep: Resource<PgStatementTransaction>,
     verb: &'static str,
 ) -> wash_runtime::wasmtime::Result<Result<(), StatementError>> {
-    let plugin = plugin_of(ctx)?;
-    let component_id = ctx.component_id.to_string();
-    let project = plugin.project_for(&component_id);
-    let operation = match verb {
-        "COMMIT" => "statement.txn.commit",
-        "ROLLBACK" => "statement.txn.rollback",
-        _ => unreachable!("transaction finish verb is fixed"),
-    };
-    let span = db_span_for_project(&plugin, &component_id, &project, operation);
-    let transaction = ctx.table.get(&rep)?;
-    let state = Arc::clone(&transaction.transaction.state);
-    let destroyed = Arc::clone(&transaction.transaction.destroyed);
-    let started = std::time::Instant::now();
-    let result = finish_statement_txn(&state, &destroyed, verb)
-        .instrument(span)
+    let trace = crate::plugins::invocation_trace::invocation_trace(ctx);
+    trace
+        .run(async move {
+            let plugin = plugin_of(ctx)?;
+            let component_id = ctx.component_id.to_string();
+            let project = plugin.project_for(&component_id);
+            let operation = match verb {
+                "COMMIT" => "statement.txn.commit",
+                "ROLLBACK" => "statement.txn.rollback",
+                _ => unreachable!("transaction finish verb is fixed"),
+            };
+            let span = db_span_for_project(&plugin, &component_id, &project, operation);
+            let transaction = ctx.table.get(&rep)?;
+            let state = Arc::clone(&transaction.transaction.state);
+            let destroyed = Arc::clone(&transaction.transaction.destroyed);
+            let started = std::time::Instant::now();
+            let result = finish_statement_txn(&state, &destroyed, verb)
+                .instrument(span)
+                .await
+                .map_err(StatementError::Postgres);
+            record_query_ms(operation, &project, started.elapsed());
+            Ok(result)
+        })
         .await
-        .map_err(StatementError::Postgres);
-    record_query_ms(operation, &project, started.elapsed());
-    Ok(result)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

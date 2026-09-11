@@ -6,14 +6,10 @@
 # Returns 0 when the collected OTLP trace shows a complete request. Reads only
 # its three arguments; touches no cluster; returns rather than exits.
 #
-# EVERYTHING HERE IS PLATFORM SHAPE EXCEPT ONE NUMBER. Authenticate, resolve,
-# pull, compile, linker-setup, link, instantiate, and the callable-http and
-# guest-sql authority acquisitions hold for ANY caller: they are what the host
-# does to serve a routed request at all. The statement count is the route's
-# OWN, which is why it is a parameter and not a literal -- a consumer whose
-# route issues eight statements would otherwise fail inside an assertion whose
-# name and message both sound like platform machinery ("trace is incomplete"),
-# and would go looking in the wrong place.
+# Authentication, native invocation, and authority acquisition describe a
+# served request. The route supplies its expected statement count.
+# Release readiness loads and links the native application before serving.
+# A served request must not reload its components or resolve its workload.
 #
 # expect_executor distinguishes the two arms: a serving host that resolves an
 # exact released wiring on demand acquires the executor-platform authority
@@ -52,19 +48,11 @@ trace_is_complete() {
                attr(.; "wamn.authority_class") == $class)] | length;
     count_named("wamn.route.authenticate") == 1 and
     count_named("wamn.router.resolve") == 1 and
-    # THE PRELOAD MOVED THE COLD WORK TO STARTUP, so a served request pulls and
-    # compiles NOTHING and hits the digest-keyed component cache instead. This
-    # asserted pull == 1 and compile == 1 until 2026-09-04, describing the world
-    # before the release preload existed; the restart-first arm never reached
-    # this check to say so, because its probe gave up first. Asserting the three
-    # together is strictly stronger than the old pair: it fails both if the
-    # preload stops working AND if a request starts pulling again.
-    count_named("wamn.component.cache_hit") == 1 and
+    count_named("wamn.component.invoke") == 1 and
     count_named("wamn.component.pull") == 0 and
-    count_named("wamn.component.compile") == 0 and
-    count_named("wamn.component.linker_setup") == 1 and
-    count_named("wamn.component.link") == 1 and
-    count_named("wamn.component.instantiate") == 1 and
+    count_named("load_component_bytes") == 0 and
+    count_named("resolve_workload") == 0 and
+    count_named("link_components") == 0 and
     count_acquired("callable-http") == 1 and
     count_acquired("guest-sql") == 1 and
     count_named("wamn.postgres") > 0 and

@@ -391,36 +391,42 @@ where
     T: 'static,
     F: std::future::Future<Output = Result<R, StoreError>>,
 {
-    use tracing::Instrument as _;
+    let trace = accessor
+        .with(|mut access| crate::plugins::invocation_trace::invocation_trace(&access.get()));
+    trace
+        .run(async move {
+            use tracing::Instrument as _;
 
-    let (plugin, component_id) = plugin_and_caller(accessor)?;
-    let span = super::plugin::blobstore_span(&plugin, &component_id, operation);
-    // Declared before the effect so it outlives the instrumented future. An
-    // effect dropped mid-flight records `cancelled` through this guard.
-    let evidence = plugin
-        .invocation(&component_id)
-        .and_then(|invocation| invocation.effects);
-    let mut observed = EffectOutcomeGuard::new(&span, evidence);
-    let started = std::time::Instant::now();
-    let outcome = effect.instrument(span).await;
-    crate::plugins::effect_span::record_effect_ms(
-        &crate::plugins::effect_span::BLOBSTORE_DURATION_MS,
-        crate::plugins::effect_span::EFFECT_OPERATION,
-        operation,
-        &plugin.project,
-        started.elapsed(),
-    );
-    let observation = store_outcome(outcome.as_ref().err());
-    observed.settle(observation, outcome.is_err());
-    if let Err(error) = &outcome {
-        tracing::warn!(
-            effect.operation = operation,
-            effect.outcome = observation.label(),
-            error = %error,
-            "blobstore effect failed"
-        );
-    }
-    Ok(outcome)
+            let (plugin, component_id) = plugin_and_caller(accessor)?;
+            let span = super::plugin::blobstore_span(&plugin, &component_id, operation);
+            // Declared before the effect so it outlives the instrumented future. An
+            // effect dropped mid-flight records `cancelled` through this guard.
+            let evidence = plugin
+                .invocation(&component_id)
+                .and_then(|invocation| invocation.effects);
+            let mut observed = EffectOutcomeGuard::new(&span, evidence);
+            let started = std::time::Instant::now();
+            let outcome = effect.instrument(span).await;
+            crate::plugins::effect_span::record_effect_ms(
+                &crate::plugins::effect_span::BLOBSTORE_DURATION_MS,
+                crate::plugins::effect_span::EFFECT_OPERATION,
+                operation,
+                &plugin.project,
+                started.elapsed(),
+            );
+            let observation = store_outcome(outcome.as_ref().err());
+            observed.settle(observation, outcome.is_err());
+            if let Err(error) = &outcome {
+                tracing::warn!(
+                    effect.operation = operation,
+                    effect.outcome = observation.label(),
+                    error = %error,
+                    "blobstore effect failed"
+                );
+            }
+            Ok(outcome)
+        })
+        .await
 }
 
 /// Resolve one store alias into its confined container, live.

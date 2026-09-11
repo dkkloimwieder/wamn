@@ -1,0 +1,9 @@
+{
+  "command": [
+    "python3",
+    "/tmp/native-b-source-check.py"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 0.32939238200196996,
+  "changed_during_run": []
+}

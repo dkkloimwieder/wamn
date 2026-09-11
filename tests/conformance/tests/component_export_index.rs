@@ -1,12 +1,9 @@
-//! Cross-component fencing proof for the driver's node instances
-//! (wamn-0h0g.17.8).
+//! Cross-component export-index fencing (wamn-0h0g.17.8).
 //!
-//! The production driver stores the generated `bindings::Node` descriptor in
-//! each `NodeInstance`; it does not keep a parallel export-name cache. Wasmtime
-//! backs those generated descriptors with `ComponentExportIndex`. This proof
-//! pins the security property that makes that representation safe: an index
-//! minted by one compiled component cannot resolve against another component,
-//! even when both export the same name.
+//! Native node dispatch resolves the handler export from the current instance.
+//! This proof retains Wasmtime's underlying `ComponentExportIndex` boundary:
+//! an index minted by one compiled component cannot resolve against another
+//! component, even when both export the same name.
 
 use wamn_runtime::engine::build_engine;
 use wash_runtime::engine::Engine;
@@ -53,4 +50,4 @@ fn export_index_from_one_digest_does_not_resolve_against_another() {
 
 // wamn-hopk R5: a test that split router_driver.rs on two source markers and
 // grepped the slice is deleted, along with the marker-drift hazard its own
-// comment documented. The behavioural arm above instantiates real components.
+// comment documented. The behavioural arm above compiles real components.

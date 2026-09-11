@@ -1,0 +1,17 @@
+test=trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority
+postgres=wamn-http-reuse.2wxG87qa-pg
+registry=wamn-http-reuse.2wxG87qa-registry
+/wamn-http-reuse.2wxG87qa-pg sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14
+/wamn-http-reuse.2wxG87qa-registry sha256:26b2eb03618e749084668eaff68cff8f81dda12d06ac641be7a6398b82a6f25b
+7e94502d699c73c8593866950c5920d577845995f9c150c603c7a9225f115304  /home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/target/debug/deps/wamn_proof_integration-64b648fb55077e98
+dea43de0fbd76ea61df0fa153b81a2f72c4cc84e78e0382b97d7b073bd76b8ce  /home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/components/no-std/target/wasm32-wasip2/debug/http_request.wasm
+e4109bd6296af6a39f02a4310f3e4b95ad340c3ed6e562941d22a00b5ad903f6  /home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh
+
+running 1 test
+test trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 8.61s
+
+PASS exact named live test: trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority
+removed owned container and anonymous volumes: wamn-http-reuse.2wxG87qa-registry
+removed owned container and anonymous volumes: wamn-http-reuse.2wxG87qa-pg

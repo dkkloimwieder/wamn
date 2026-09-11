@@ -40,6 +40,7 @@ enum Command {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let runtime = tokio::runtime::Builder::new_multi_thread()
+        .event_interval(1)
         .enable_all()
         .build()?;
     let result = runtime.block_on(async_main(cli));

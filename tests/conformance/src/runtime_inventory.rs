@@ -30,15 +30,6 @@ const ALLOWED_WASH_RUNTIME_FEATURES: [&str; 5] = [
 const ALLOWED_WASMTIME_FEATURES: [&str; 2] = ["cache", "parallel-compilation"];
 const WORKSPACE_MANIFEST: &str = "Cargo.toml";
 const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
-/// The one production store the execution host creates, and the file that holds
-/// it. `18ba72b6` deleted the host plan-supply path this used to name, leaving
-/// `crates/execution/host/src/lib.rs` a module-declaration file; the surviving
-/// store is the router driver's, created per invocation.
-const EXECUTION_HOST_STORE_CONSTRUCTOR: &str = "let mut store = Store::new(\n                engine.inner(),\n                \
-     SharedCtx::new(ctx).with_guest_memory(engine.guest_memory()),\n            );\n            \
-     wash_runtime::engine::guest_memory::install_memory_limiter(&mut store);";
-const EXECUTION_HOST_STORE_FILE: &str = "crates/execution/host/src/router_driver.rs";
-
 /// The release-manifest weld construction call, deliberately truncated before the
 /// `(` so it matches `load` and `load_from` alike — the guard counts
 /// *construction*, not one spelling of it.
@@ -279,35 +270,8 @@ fn assert_one(source: &str, marker: &str, seam: &str) {
     validate_one(source, marker, seam).unwrap_or_else(|error| panic!("{error}"));
 }
 
-fn production_execution_host_source(source: &str) -> Result<&str, String> {
-    let test_modules = source.matches(CFG_TEST_MODULE).count();
-    if test_modules != 1 {
-        return Err(format!(
-            "ExecutionHost source must retain exactly one terminal `{CFG_TEST_MODULE}` module; \
-             found {test_modules}"
-        ));
-    }
-    let (production, _) = source
-        .split_once(CFG_TEST_MODULE)
-        .expect("the counted cfg(test) module must split");
-    Ok(production)
-}
-
-fn validate_execution_host_store_constructor(source: &str) -> Result<(), String> {
-    let production = production_execution_host_source(source)?;
-    validate_one(
-        production,
-        EXECUTION_HOST_STORE_CONSTRUCTOR,
-        "production ExecutionHost store constructor",
-    )
-}
-
 /// Everything before a file's terminal `#[cfg(test)] mod tests {`, or the whole
-/// file when it has none.
-///
-/// Unlike [`production_execution_host_source`], which pins a seam to a file that
-/// must always carry a test module, both shapes are legitimate for the host weld
-/// sites: the wash host carries no test module and the execution host carries one.
+/// file when it has none. Both shapes are valid for the host weld sites.
 fn production_half<'a>(source: &'a str, seam: &str) -> Result<&'a str, String> {
     match source.matches(CFG_TEST_MODULE).count() {
         0 => Ok(source),
@@ -403,7 +367,7 @@ fn host_source(root: &Path, path: &str) -> String {
     fs::read_to_string(&full).unwrap_or_else(|error| panic!("read {}: {error}", full.display()))
 }
 
-fn observed_store_paths(root: &Path, wash_runtime: &Path) -> BTreeSet<String> {
+fn observed_store_paths(wash_runtime: &Path) -> BTreeSet<String> {
     let wash_manifest_path = wash_runtime.join("Cargo.toml");
     let wash_manifest = fs::read_to_string(&wash_manifest_path)
         .unwrap_or_else(|error| panic!("read {}: {error}", wash_manifest_path.display()));
@@ -445,15 +409,7 @@ fn observed_store_paths(root: &Path, wash_runtime: &Path) -> BTreeSet<String> {
         "feature-gated host-component plugin store",
     );
 
-    let execution_path = root.join(EXECUTION_HOST_STORE_FILE);
-    let execution = fs::read_to_string(&execution_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", execution_path.display()));
-    validate_execution_host_store_constructor(&execution).unwrap_or_else(|error| panic!("{error}"));
-
-    BTreeSet::from([
-        "runtime: new_store_from_templates (single production site)".to_string(),
-        "wamn: ExecutionHost store (crates/execution/host)".to_string(),
-    ])
+    BTreeSet::from(["runtime: new_store_from_templates (single production site)".to_string()])
 }
 
 #[test]
@@ -804,133 +760,6 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
     Ok(())
 }
 
-/// The manual-store deadline conversion mirrors a wash-runtime constant, and
-/// the two must move together (`wamn-k9ea`, narrowed by `wamn-6evd`).
-///
-/// wash-runtime owns the epoch ticker and keeps its cadence `pub(crate)`, so
-/// WAMN cannot import it and compare. `router_driver.rs` therefore restates the
-/// value to turn a millisecond deadline into ticks. If upstream retunes its
-/// ticker and this restatement stays behind, **every node deadline silently
-/// rescales** — a 30 ms budget becomes 30 ticks of whatever the new cadence is —
-/// and nothing else in the tree notices, because both halves still compile and
-/// every deadline still fires eventually.
-///
-/// # Why this one reads source text (`wamn-hopk` R5)
-///
-/// R5 forbids tests that read source files as text, with ONE exemption: an
-/// identity pin on a named artifact. This is that exemption, and it is narrowed
-/// to earn it — it compares the two cadences' VALUES, not their spellings, so
-/// upstream reformatting, a visibility change or a renamed type cannot break it,
-/// while an actual retune still fails it.
-///
-/// It qualifies because neither of R5's alternatives exists. The compiler cannot
-/// carry the rule: `EPOCH_TICK` is `pub(crate)` upstream, so there is no linkable
-/// surface. A behavioural test cannot either: this is a constant-equality
-/// question, and timing a ticker to infer its period measures the scheduler.
-///
-/// **Re-converge trigger:** when upstream exposes the constant publicly, import
-/// it, compare it directly, and DELETE this scan. Checked at every tagged-release
-/// upgrade — see `docs/architecture/native-alignment-ledger.md`.
-#[test]
-fn the_manual_store_epoch_tick_still_mirrors_the_runtime_ticker() {
-    /// The upstream declaration, spelled without its visibility so a
-    /// `pub(crate)` to `pub` change does not read as a missing constant — that
-    /// change is the re-converge trigger, not a failure.
-    const RUNTIME_DECL: &str = "const EPOCH_TICK: Duration";
-    const MANUAL_STORE_DECL: &str = "const MANUAL_STORE_EPOCH_TICK: Duration";
-
-    let root = repository_root();
-    let engine_path = wash_runtime_source(&root).join("src/engine/mod.rs");
-    let engine = fs::read_to_string(&engine_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", engine_path.display()));
-
-    let driver_path = root.join(EXECUTION_HOST_STORE_FILE);
-    let driver = fs::read_to_string(&driver_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", driver_path.display()));
-
-    let upstream = epoch_millis(&engine, RUNTIME_DECL, "wash-runtime src/engine/mod.rs");
-    let ours = epoch_millis(&driver, MANUAL_STORE_DECL, EXECUTION_HOST_STORE_FILE);
-
-    assert_eq!(
-        upstream, ours,
-        "the epoch cadence drifted: wash-runtime ticks every {upstream} ms and \
-         router_driver.rs still converts deadlines at {ours} ms, so EVERY node \
-         deadline is rescaled by {upstream}/{ours}"
-    );
-}
-
-/// The millisecond value of the one `Duration::from_millis(..)` constant `decl`
-/// declares in `source`.
-///
-/// Reads the VALUE, never the line: this is what keeps the epoch pin an identity
-/// pin rather than a spelling assertion (`wamn-hopk` R5). Exactly one
-/// declaration must match, so a second one cannot shadow a drifted first.
-fn epoch_millis(source: &str, decl: &str, origin: &str) -> u64 {
-    let declarations = source.matches(decl).count();
-    assert_eq!(
-        declarations, 1,
-        "{origin} must declare `{decl}` exactly once; found {declarations}"
-    );
-    let tail = &source[source
-        .find(decl)
-        .expect("the counted declaration is present")..];
-    let open = tail
-        .find("from_millis(")
-        .unwrap_or_else(|| panic!("{origin}: `{decl}` is no longer a from_millis constant"))
-        + "from_millis(".len();
-    let rest = &tail[open..];
-    let close = rest
-        .find(')')
-        .unwrap_or_else(|| panic!("{origin}: `{decl}` has no closing paren"));
-    rest[..close]
-        .trim()
-        .replace('_', "")
-        .parse::<u64>()
-        .unwrap_or_else(|error| panic!("{origin}: `{decl}` millis do not parse: {error}"))
-}
-
-/// `epoch_millis` reads the VALUE, so the spellings upstream is free to change
-/// cannot break the pin — which is the whole difference between an identity pin
-/// and the whole-line text match this replaced (`wamn-6evd`).
-#[test]
-fn the_epoch_pin_survives_upstream_reformatting_but_not_a_retune() {
-    const DECL: &str = "const EPOCH_TICK: Duration";
-    for (label, source) in [
-        (
-            "pub(crate), as upstream spells it today",
-            "pub(crate) const EPOCH_TICK: Duration = Duration::from_millis(10);",
-        ),
-        (
-            "made public — the re-converge trigger, not a failure",
-            "pub const EPOCH_TICK: Duration = Duration::from_millis(10);",
-        ),
-        (
-            "rustfmt split across lines",
-            "const EPOCH_TICK: Duration =\n    Duration::from_millis(10);",
-        ),
-        (
-            "underscore-separated literal",
-            "const EPOCH_TICK: Duration = Duration::from_millis(1_0);",
-        ),
-    ] {
-        assert_eq!(
-            epoch_millis(source, DECL, "fixture"),
-            10,
-            "reformatting changed the read value: {label}"
-        );
-    }
-
-    assert_eq!(
-        epoch_millis(
-            "const EPOCH_TICK: Duration = Duration::from_millis(25);",
-            DECL,
-            "fixture"
-        ),
-        25,
-        "a real retune must still be read, and read exactly"
-    );
-}
-
 #[test]
 fn resolved_feature_and_deployed_workload_inventory_is_current() {
     let root = repository_root();
@@ -947,7 +776,7 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
     );
     assert_eq!(
         inventory.live_store_paths,
-        observed_store_paths(&root, &wash_runtime_source(&root)),
+        observed_store_paths(&wash_runtime_source(&root)),
         "the inventory must retain both live store paths"
     );
     assert_eq!(
@@ -1276,50 +1105,6 @@ fn database_url_names_and_values_outside_component_environment_are_allowed() {
         &WorkloadAbi::P3Components,
     )
     .expect("host environment and arbitrary Secret fields are outside this guard");
-}
-
-#[test]
-fn execution_host_inventory_ignores_cfg_test_store_constructor() {
-    let source = format!(
-        "{EXECUTION_HOST_STORE_CONSTRUCTOR}\n\
-         {CFG_TEST_MODULE}\n\
-             {EXECUTION_HOST_STORE_CONSTRUCTOR}\n\
-         }}\n"
-    );
-    assert_eq!(
-        source.matches(EXECUTION_HOST_STORE_CONSTRUCTOR).count(),
-        2,
-        "fixture must contain identical production and test-only constructors"
-    );
-    validate_execution_host_store_constructor(&source)
-        .expect("the cfg(test) constructor must not widen the production inventory");
-}
-
-#[test]
-fn execution_host_inventory_rejects_removed_or_duplicated_production_constructor() {
-    let test_module = format!(
-        "{CFG_TEST_MODULE}\n\
-             {EXECUTION_HOST_STORE_CONSTRUCTOR}\n\
-         }}\n"
-    );
-    let removed = validate_execution_host_store_constructor(&test_module)
-        .expect_err("removing the production ExecutionHost constructor must fail");
-    assert!(
-        removed.ends_with("found 0"),
-        "removed-constructor failure must report the production count: {removed}"
-    );
-
-    let duplicated = format!(
-        "{EXECUTION_HOST_STORE_CONSTRUCTOR}\n\
-         {EXECUTION_HOST_STORE_CONSTRUCTOR}\n\
-         {test_module}"
-    );
-    let duplicate = validate_execution_host_store_constructor(&duplicated)
-        .expect_err("duplicating the production ExecutionHost constructor must fail");
-    assert!(
-        duplicate.ends_with("found 2"),
-        "duplicate-constructor failure must report the production count: {duplicate}"
-    );
 }
 
 /// wamn-0h0g.15.101: one release-manifest weld per host process, constructed

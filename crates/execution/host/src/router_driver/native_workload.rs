@@ -18,6 +18,8 @@ use wash_runtime::plugin::{HostPlugin, PluginBindings};
 use wash_runtime::types::{Component, LocalResources, Workload};
 use wash_runtime::wit::WitInterface;
 
+use super::native_policy::NativePolicy;
+
 #[cfg(test)]
 mod tests;
 
@@ -44,6 +46,49 @@ pub(super) struct NativeWorkloadSpec {
 pub(super) struct NativeWorkload {
     pub(super) resolved: ResolvedWorkload,
     pub(super) facts_by_component_id: BTreeMap<String, AdmittedComponent>,
+}
+
+/// One release or candidate lifetime, retained by every native call it owns.
+#[derive(Debug)]
+pub(super) struct NativeApplication {
+    // Cleanup runs before the workload fields drop. The policy contains only
+    // synchronous WAMN registries; this application has no service or warm pool.
+    _cleanup: NativePolicyCleanup,
+    pub(super) workload: Arc<NativeWorkload>,
+    pub(super) policy: Arc<NativePolicy>,
+}
+
+#[derive(Debug)]
+struct NativePolicyCleanup(Arc<NativePolicy>);
+
+impl Drop for NativePolicyCleanup {
+    fn drop(&mut self) {
+        self.0.shutdown();
+    }
+}
+
+/// Load one application with a fresh policy and cancellation-safe ownership.
+///
+/// The guard precedes resolution because native rollback covers returned errors,
+/// but dropping a pending resolution does not run the plugin unbind callbacks.
+pub(super) async fn load_native_application(
+    engine: Arc<Engine>,
+    spec: NativeWorkloadSpec,
+    policy: Arc<NativePolicy>,
+    plugins: &HashMap<&'static str, Arc<dyn HostPlugin>>,
+    plugin_bindings: &PluginBindings,
+    meters: &Meters,
+) -> anyhow::Result<Arc<NativeApplication>> {
+    let cleanup = NativePolicyCleanup(Arc::clone(&policy));
+    let workload =
+        Arc::new(load_native_workload(engine, spec, plugins, plugin_bindings, meters).await?);
+    let application = Arc::new(NativeApplication {
+        _cleanup: cleanup,
+        workload,
+        policy,
+    });
+    application.policy.bind_application(&application)?;
+    Ok(application)
 }
 
 /// Identify a complete admitted fact before native plugin binding begins.

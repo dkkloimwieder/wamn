@@ -76,7 +76,8 @@ impl PreparedResponse {
                     .node(node_id)
                     .context("declared committed node is absent")?;
                 let operation = resolved
-                    .component_by_digest(&node.component)
+                    .node_components
+                    .get(node_id)
                     .and_then(|component| component.operation(&node.operation))
                     .context("declared committed operation is absent")?;
                 let schema = operation

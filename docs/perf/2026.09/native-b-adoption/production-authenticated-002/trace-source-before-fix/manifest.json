@@ -1,0 +1,21 @@
+{
+  "purpose": "Source preserved before the authorized production-authenticated-002 trace propagation fix",
+  "comparison_to_executed_source": "Not independently established by this capture; parent owns executed source receipt",
+  "files": [
+    {
+      "source_path": "crates/execution/host/src/router_driver/native_call.rs",
+      "copy": "native_call.rs.txt",
+      "sha256": "d8c6ff09e2855f6f203c19018bc840d7eb75b60e36019a73d1219cb899719ab8"
+    },
+    {
+      "source_path": "crates/execution/host/src/router_driver/native_policy.rs",
+      "copy": "native_policy.rs.txt",
+      "sha256": "c15a272eaca2df01b05162801aac5210f0af1f2cf0d4532ae10cb377606f56b4"
+    },
+    {
+      "source_path": "crates/execution/host/src/router_driver/native_policy/tests/trace.rs",
+      "copy": "trace.rs.txt",
+      "sha256": "470bf2b3295090ad45ae8b90e025075542e088bc80a323caa70b60d6a7ddf226"
+    }
+  ]
+}

@@ -5,8 +5,7 @@
     "default_features": false
   },
   "live_store_paths": [
-    "runtime: new_store_from_templates (single production site)",
-    "wamn: ExecutionHost store (crates/execution/host)"
+    "runtime: new_store_from_templates (single production site)"
   ],
   "consumers": [
     {

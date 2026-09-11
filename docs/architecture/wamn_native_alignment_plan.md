@@ -22,14 +22,16 @@ The reviewed tree uses direct upstream 2.9.0 with one Wasmtime 47.0.4 family. It
 
 | Native mechanism | WAMN position at the review baseline |
 |---|---|
-| **2.8 engine sizing and epoch interruption** | Native engine/ticker and pooling allocator; WAMN configures heap/instance capacity and deadlines for manual stores. |
+| **2.8 engine sizing and epoch interruption** | Native engine, ticker, and pooling allocator. WAMN configures heap and instance capacity. B delegates application store and deadline mechanics to native dispatch. |
 | **Native socket policy and OCI trust** | Public policy configuration with WAMN's enforced destination restrictions and configured trust roots. |
 | **2.9 guest-memory accounting** | Native shared budget and limiter include WAMN-created application stores. Production remains **Count**, not aggregate refusal. |
 | **2.9 lifecycle** | Native probes, liveness, ingress connection limits, bounded startup retry, drain signaling and telemetry flushing are wired into WAMN's services. |
 | **2.9 startup and metrics** | Native concurrent-start control and duration metering are selected for the native host path. |
 | **Zero-patch routing** | The expected-host router adapter supplies 503 during an expected host's unbound interval. Accepted missing-handle/alias limitations remain; exact former patch parity is not required. |
 
-These are path-specific integrations. Native startup limits do not automatically bound WAMN's separate component compilation pipeline; native metering does not automatically measure its direct `TypedFunc` calls. Allocator reuse, compiled-artifact reuse, HTTP connection reuse and live guest-state reuse are different controls. [S1, S3, S4]
+These integrations apply to specific paths. Native startup limits and component compilation are separate controls.
+B selects native duration metering for application `GuestCall` dispatch.
+Allocator reuse, compiled-artifact reuse, HTTP connection reuse, and live guest-state reuse remain separate controls. [S1, S3, S4]
 
 ## 3. Recommended changes
 
@@ -52,11 +54,16 @@ A dependency's exact package, version, and artifact digest still establish prove
 Export-only interfaces can repeat. Wiring selects palette nodes by their exact admitted facts, so shared `wamn:node/handler` exports remain valid.
 This boundary requires no exception for a named handler or palette.
 
-**Observation:** 2.9 exposes `DispatchTarget` / `GuestCall` and native digest-based component loading/caching. WAMN still owns `RouterDriver`'s compiled cache, `PreparedCache`, linker/pre-instantiation work and `NodeInstance`, including nested calls. Dispatch alone does not move loading into the native cache. [S4, S6, S7]
+The original driver owned a compiled cache, `PreparedCache`, linker preparation, and `NodeInstance`, including their nested-call copies. [S4]
+The B integration replaces those mechanisms with public native loading and `DispatchTarget` / `GuestCall`. [S6, S7]
+Integrated production validation remains pending under `wamn-0ct2.2`.
 
 **Target:** WAMN resolves and authorizes the operation; native loading and dispatch own compilation reuse, instance lifecycle, deadline/abandonment handling and invocation metering. WAMN retains verified statement selection, capability authority, application outcomes and wiring traversal.
 
-First prove one actual application node and a nested registered-operation call with **fresh stores**. Map the admitted release into a native `ResolvedWorkload` using existing deployment facts. Do not deploy every wiring node separately or introduce a competing workload model.
+The production path keeps one native application for the immutable release and one for each complete candidate traversal.
+Wiring nodes select exact admitted facts within that application.
+Native resolution owns linking and preparation. Every dispatched node receives a fresh store.
+The application uses no service, warm pool, or separate workload per wiring node.
 
 **Deletion contract for B's completed substitution:**
 
@@ -74,13 +81,42 @@ A probe passing is not B complete. Each converted path loses its predecessor in 
 
 Owner ruling, 2026-09-10: preserve one enclosing deadline across guest initialization, execution and nested calls. A child cannot extend that deadline. Native dispatch instantiates before its response timeout starts, so that response timer alone is insufficient. Prove bounded execution of a nonterminating start function. If public APIs cannot preserve this guarantee, record the exact obstacle and stop. Do not use private access. [S4, S6, S20]
 
+The native loader checks every supplied byte buffer against its declared SHA-256 digest before native cache access.
+A component's native name derives from its complete admitted fact, separately from the byte digest.
+Exact repeated facts share one component identity. Distinct facts remain separate even when their bytes match.
+Release and candidate lookups compare complete facts before dispatch.
+
+WAMN binds invocation authority after initialization and revokes it on success, refusal, trap, deadline, or cancellation.
+Nested calls retain the caller, credential kind, and original connection identity while naming the executing child separately.
+The actual `GuestCall` retains the application owner and the existing invocation trace context.
+
+Wasmtime drives host callbacks outside the guest-call future's tracing scope.
+The shared `invocation_trace` carrier restores the host span and subscriber for nested dispatch and HTTP, PostgreSQL, and blob callbacks.
+Native policy binds it under the existing invocation scope after initialization and revokes it with that scope.
+It supplies telemetry context only, with no guest interface, configuration, or authority rule.
+Other host paths retain ambient tracing, and guest logging retains its separate trace-context contract.
+The [authenticated proof](../perf/2026.09/native-b-adoption/production-authenticated-003/output.log) passes all six scenarios, including exact invocation and host-observation parentage.
+The [host tests](../perf/2026.09/native-b-adoption/production-host-tests-003/output.log) pass 52 cases with zero failures and one filtered authenticated test.
+Final integrated and deployed validation remains pending.
+
+An outer absolute timeout encloses native dispatch and its response. Nested deadlines cannot exceed that bound.
+Both production Tokio runtimes select public `event_interval(1)` so repeated guest yields do not postpone timer polling.
+Native abandonment owns guest shutdown and memory release. WAMN no longer converts milliseconds to private epoch ticks.
+
+The unique application cleanup guard exists before resolution and survives through publication and active calls.
+Its synchronous shutdown serializes with authority registration and clears WAMN scopes and component bindings.
+Candidate completion also awaits public plugin unbinding. The policy holds only a weak application reference, so ownership forms no cycle.
+These mechanisms add no cleanup worker, private API access, or second compilation cache.
+
 **Stop condition:** a required context, candidate or loading boundary cannot be represented through public APIs. Record the exact obstacle before expanding the adapter. Do not copy internals or preserve duplicate machinery merely to report native adoption.
 
 B's [public dispatch checkpoint](../perf/2026.09/native-b-dispatch/report.md) tests the deadline and exact component selection boundaries.
 The historical checkpoint records a valid stop against the former per-dependency selection contract.
 The accepted trade above supersedes that contract. Admission rejects ambiguous imported providers before native resolution.
 The original failed experiment remains failed and does not block this approved substitution.
-The production substitution and its deletion contract remain open under `wamn-0ct2.2`.
+The production integration implements the deletion contract in the B worktree.
+Its owning correctness gates and deployed proofs remain pending under `wamn-0ct2.2`.
+These focused results do not establish a completed landing.
 
 #### B2. Warm reuse after B with its policy amendment
 

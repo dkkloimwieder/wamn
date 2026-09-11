@@ -1,0 +1,22 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "wamn-execution-host",
+    "--lib",
+    "--locked",
+    "--offline",
+    "--target-dir",
+    "target",
+    "--",
+    "--include-ignored",
+    "--nocapture",
+    "--test-threads=1",
+    "--skip",
+    "native_authenticated_nested_authority_and_lifecycle"
+  ],
+  "exit_code": 101,
+  "elapsed_seconds": 31.522510053007863,
+  "changed_during_run": []
+}

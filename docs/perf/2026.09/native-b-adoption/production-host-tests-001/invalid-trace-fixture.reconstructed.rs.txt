@@ -1,0 +1,147 @@
+//! Native tasks retain the caller's trace through nested guest and host calls.
+
+use std::sync::Arc;
+
+use opentelemetry::trace::{
+    SpanContext, SpanId, TraceContextExt as _, TraceFlags, TraceId, TraceState, TracerProvider as _,
+};
+use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider, SpanData};
+use tokio::time::Instant;
+use tracing::{Instrument as _, instrument::WithSubscriber as _};
+use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+use tracing_subscriber::layer::SubscriberExt as _;
+
+use super::{CHILD, CLEANUP, Case, Fixture, ROOT, invoke_native, isolated_proof};
+
+fn attribute<'a>(span: &'a SpanData, key: &str) -> Option<&'a str> {
+    span.attributes.iter().find_map(|attribute| {
+        if attribute.key.as_str() == key
+            && let opentelemetry::Value::String(value) = &attribute.value
+        {
+            Some(value.as_str())
+        } else {
+            None
+        }
+    })
+}
+
+async fn prove() {
+    // Registration policy has separate authenticated proofs. These two
+    // unregistered node operations make trace propagation hermetic.
+    let fixture = Fixture::build_with_pause(
+        Case::NestedRefusal,
+        Some((Case::Success, false, false)),
+        false,
+        None,
+    )
+    .await;
+    let exporter = InMemorySpanExporter::default();
+    let provider = SdkTracerProvider::builder()
+        .with_simple_exporter(exporter.clone())
+        .build();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("native-call-proof")));
+    let dispatcher = tracing::Dispatch::new(subscriber);
+    let incoming = SpanContext::new(
+        TraceId::from_bytes([0x41; 16]),
+        SpanId::from_bytes([0x17; 8]),
+        TraceFlags::SAMPLED,
+        true,
+        TraceState::default(),
+    );
+    let root = tracing::dispatcher::with_default(&dispatcher, || {
+        tracing::info_span!(
+            target: "wamn::router",
+            "wamn.component.invoke",
+            wamn.operation = ROOT,
+            wamn.component_digest = %fixture.root.component_digest,
+        )
+    });
+    root.set_parent(opentelemetry::Context::new().with_remote_span_context(incoming.clone()))
+        .expect("the root invocation accepts the incoming trace");
+    let target = fixture.target().await;
+    // A scoped dispatcher is present only while the waiting caller polls. The
+    // upstream spawned task cannot inherit it from this executor thread.
+    let emission = invoke_native(&target, fixture.request(Instant::now() + CLEANUP))
+        .instrument(root)
+        .with_subscriber(dispatcher)
+        .await
+        .expect("native parent and child execute")
+        .expect("typed nested emission");
+    assert_eq!(emission.payload, r#"[{"value":37}]"#);
+    fixture.assert_clean().await;
+    fixture
+        .workload
+        .resolved
+        .unbind_all_plugins()
+        .await
+        .expect("unbind the trace fixture");
+    provider.force_flush().expect("flush native call spans");
+    let spans = exporter.get_finished_spans().expect("exported trace");
+    let invocations: Vec<_> = spans
+        .iter()
+        .filter(|span| span.name == "wamn.component.invoke")
+        .collect();
+    assert_eq!(
+        invocations.len(),
+        2,
+        "exactly one root and one child invocation"
+    );
+    let root = invocations
+        .iter()
+        .find(|span| attribute(span, "wamn.operation") == Some(ROOT))
+        .expect("the original root span");
+    let child = invocations
+        .iter()
+        .find(|span| attribute(span, "wamn.operation") == Some(CHILD))
+        .expect("the nested child span");
+    assert_eq!(root.span_context.trace_id(), incoming.trace_id());
+    assert_eq!(root.parent_span_id, incoming.span_id());
+    assert_eq!(child.span_context.trace_id(), incoming.trace_id());
+    assert_eq!(child.parent_span_id, root.span_context.span_id());
+    let effects: Vec<_> = spans
+        .iter()
+        .filter(|span| span.name == "proof.host.observe")
+        .collect();
+    assert_eq!(
+        effects.len(),
+        2,
+        "each executed guest issues its host observation effect"
+    );
+    for invocation in [root, child] {
+        let operation = attribute(invocation, "wamn.operation").expect("host operation identity");
+        let fact = fixture
+            .workload
+            .facts_by_component_id
+            .values()
+            .find(|fact| fact.operations.contains_key(operation))
+            .expect("admitted operation owner");
+        assert_eq!(
+            attribute(invocation, "wamn.component_digest"),
+            Some(fact.component_digest.as_str())
+        );
+        let effect = effects
+            .iter()
+            .find(|span| attribute(span, "wamn.operation") == Some(operation))
+            .expect("the guest performed its host effect");
+        assert_eq!(effect.span_context.trace_id(), incoming.trace_id());
+        assert_eq!(effect.parent_span_id, invocation.span_context.span_id());
+        assert_eq!(
+            attribute(effect, "wamn.component_digest"),
+            Some(fact.component_digest.as_str())
+        );
+    }
+    assert_eq!(
+        Arc::strong_count(&fixture.application),
+        1,
+        "completed calls retain no owner"
+    );
+}
+
+#[test]
+fn native_nested_calls_and_host_effects_preserve_trace_parentage() {
+    isolated_proof(
+        "trace::native_nested_calls_and_host_effects_preserve_trace_parentage",
+        prove(),
+    );
+}

@@ -1,0 +1,267 @@
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/crates/schema/generator)
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/crates/platform/runtime)
+warning: `wamn-catalog` (lib) generated 1 warning
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/crates/control/provision)
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:7:5
+  |
+7 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:56:7
+   |
+56 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:131:1
+    |
+131 | / pub struct ConnectionHttp {
+132 | |     postgres: Arc<WamnPostgres>,
+133 | |     transport: Arc<HttpTransport>,
+134 | |     vault: Arc<WamnCredentials>,
+...   |
+151 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+152 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:544:1
+    |
+544 | / pub struct WamnJetstream {
+545 | |     nats_url: Option<String>,
+546 | |     /// Lazily-connected, memoized JetStream context. A `Mutex<Option<_>>` (not a
+547 | |     /// `OnceCell`) so a transient connect failure is retried on the next call
+...   |
+569 | |     dlq_depth: Arc<DeadLetterDepth>,
+570 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1209:1
+     |
+1209 | / pub struct JsConsumer {
+1210 | |     consumer: Consumer<PullConfig>,
+1211 | |     dead_letter: Option<DeadLetterIdentity>,
+1212 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:1216:1
+     |
+1216 | / pub struct JsMessage {
+1217 | |     msg: async_nats::jetstream::Message,
+1218 | |     dead_letter: Option<DeadLetterIdentity>,
+1219 | | }
+     | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:55:1
+    |
+ 55 | / pub struct WamnPostgres {
+ 56 | |     /// Resolves a project id → its database connection + policy.
+ 57 | |     provider: Arc<dyn CredentialProvider>,
+ 58 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+121 | |     pub(super) bind_counters: super::BindCounters,
+122 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:339:1
+    |
+339 | / pub struct StaticCredentialProvider {
+340 | |     projects: HashMap<String, ProjectConfig>,
+341 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:514:1
+    |
+514 | / pub struct K8sSecretProvider {
+515 | |     pub namespace: String,
+516 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/wiring_doorbell.rs:145:1
+    |
+145 | / pub struct WiringDoorbellListener {
+146 | |     shutdown: tokio::sync::watch::Sender<bool>,
+147 | |     task: tokio::task::JoinHandle<()>,
+148 | | }
+    | |_^
+
+warning: `wamn-runtime` (lib) generated 16 warnings
+   Compiling wamn-execution-host v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/crates/execution/host)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 29.57s
+     Running unittests src/lib.rs (target/debug/deps/wamn_execution_host-d7a2d434ff67374e)
+
+running 53 tests
+test readiness::tests::failure_stays_not_ready_and_success_advances_the_same_generation ... ok
+test readiness::tests::invalidation_fences_an_older_in_flight_success ... ok
+test router_delivery::partial_tests::declared_evidence_crosses_the_bridge_with_the_original_failure ... ok
+test router_delivery::partial_tests::existing_verdict_still_wins_over_later_partial_evidence ... ok
+test router_delivery::tests::a_delivered_run_counts_once_and_raises_no_error_series ... ok
+test router_delivery::tests::a_delivery_is_labelled_by_its_source_kind_id_and_wiring_release ... ok
+test router_delivery::tests::a_first_verdict_stands_when_later_frontier_work_fails ... ok
+test router_delivery::tests::a_settled_preview_never_contradicts_what_the_caller_received ... ok
+test router_delivery::tests::caller_handle_must_match_the_welded_attachment_identity ... ok
+test router_delivery::tests::each_driver_refusal_counts_as_an_attempt_and_a_named_error ... ok
+test router_delivery::tests::host_mints_current_causation_and_only_inherits_parent_root_depth ... ok
+test router_delivery::tests::nested_fresh_only_refusal_retains_its_exact_wire_contract ... ok
+test router_delivery::tests::nested_permission_denial_uses_the_direct_call_wire_contract ... ok
+test router_delivery::tests::permission_denial_lowers_the_exact_registered_operation ... ok
+test router_delivery::tests::source_ids_resolve_only_the_manifest_target_and_derive_caller_attachment ... ok
+test router_delivery::tests::terminal_mapping_preserves_each_router_class_without_node_coordinates ... ok
+test router_driver::native_call::tests::native_readiness_bounds_initialization_and_returns_memory ... ok
+test router_driver::native_call::tests::native_readiness_initializes_without_running_the_handler ... ok
+test router_driver::native_call::tests::native_readiness_refuses_a_trapping_initializer ... ok
+test router_driver::native_policy::tests::native_application_call_retains_owner_until_guest_cancellation ... ok
+test router_driver::native_policy::tests::native_application_cancelled_resolution_clears_partial_bindings ... ok
+test router_driver::native_policy::tests::native_nested_permission_refusal_revokes_invocation_authority ... ok
+test router_driver::native_policy::tests::native_node_cancellation_revokes_invocation_authority ... ok
+test router_driver::native_policy::tests::native_node_execution_obeys_enclosing_deadline ... ok
+test router_driver::native_policy::tests::native_node_initialization_has_no_authority_and_obeys_deadline ... ok
+test router_driver::native_policy::tests::native_node_success_revokes_invocation_authority ... ok
+test router_driver::native_policy::tests::trace::native_nested_calls_and_host_effects_preserve_trace_parentage ... 
+thread 'router_driver::native_policy::tests::trace::native_nested_calls_and_host_effects_preserve_trace_parentage' (3366490) panicked at crates/execution/host/src/router_driver/native_policy/tests.rs:768:9:
+router_driver::native_policy::tests::trace::native_nested_calls_and_host_effects_preserve_trace_parentage: exit status: 101
+
+running 1 test
+test router_driver::native_policy::tests::trace::native_nested_calls_and_host_effects_preserve_trace_parentage ... FAILED
+
+failures:
+
+failures:
+    router_driver::native_policy::tests::trace::native_nested_calls_and_host_effects_preserve_trace_parentage
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 53 filtered out; finished in 0.00s
+
+
+
+thread 'router_driver::native_policy::tests::trace::native_nested_calls_and_host_effects_preserve_trace_parentage' (3366492) panicked at crates/execution/host/src/router_driver/native_policy/tests.rs:448:14:
+admit the exact release manifest: WeldError { kind: ManifestRejected, detail: "serving manifest native policy fixture refused: component dependency child@1.0.0 digest sha256:13aea053ecb9ebcaec3248552144e30f3dd1561eddf3c8ee6bdb75cef3553498 operation \"child:entry/run@1.0.0\" resolves to 0 exact component facts" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test router_driver::native_workload::tests::native_loader_allows_repeated_export_only_handlers ... ok
+test router_driver::native_workload::tests::native_loader_checks_repeated_bytes_before_cache_access ... ok
+test router_driver::native_workload::tests::native_loader_refuses_ambiguous_imported_operation ... ok
+test router_driver::tests::admitted_statement_types_lower_exhaustively_to_the_runtime_vocabulary ... ok
+test router_driver::tests::candidate_refusal_preserves_class_and_frozen_literal ... ok
+test router_driver::tests::component_span_adopts_remote_traceparent_and_host_identity ... ok
+test router_driver::tests::every_registered_invocation_requires_the_exact_operation_grant ... ok
+test router_driver::tests::malformed_traceparent_is_ignored_without_suppressing_the_span ... ok
+test router_driver::tests::nested_acquisition_preserves_causation_and_root_origin ... ok
+test router_driver::tests::node_context_carries_the_component_span_not_the_ingress_header ... ok
+test router_driver::tests::node_deadline_is_nonzero_and_host_bounded ... ok
+test router_driver::tests::partial_statement_binding_failure_cleans_earlier_operations ... ok
+test router_driver::tests::queue_component_span_inherits_the_host_created_root ... ok
+test router_driver::tests::queue_node_context_derives_a_traceparent_from_the_host_scoped_root ... ok
+test router_driver::tests::readiness_closure_contains_only_distinct_request_attachment_targets ... ok
+test router_driver::tests::shared_nested_import_retains_each_declaring_export ... ok
+test router_driver::tests::without_an_otel_layer_the_ingress_header_passes_through ... ok
+test router_response::tests::a_second_successful_selected_visit_makes_the_evidence_ambiguous ... ok
+test router_response::tests::an_existing_verdict_suppresses_partial_evidence ... ok
+test router_response::tests::cancellation_effect_evidence_belongs_only_to_the_cancelled_node_status ... ok
+test router_response::tests::deliveries_reuse_compiled_schemas_without_sharing_result_state ... ok
+test router_response::tests::interruption_retains_the_original_error_and_the_selected_result ... ok
+test router_response::tests::malformed_error_and_mixed_envelopes_cannot_prove_commitment ... ok
+test router_response::tests::selected_committed_result_survives_arbitrary_success_and_label_enrichment ... ok
+test router_response::tests::terminal_schema_refusal_preserves_only_the_original_committed_result ... ok
+test router_response::tests::undeclared_and_queued_deliveries_collect_no_response_evidence ... ok
+
+failures:
+
+failures:
+    router_driver::native_policy::tests::trace::native_nested_calls_and_host_effects_preserve_trace_parentage
+
+test result: FAILED. 52 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 1.84s
+
+error: test failed, to rerun pass `-p wamn-execution-host --lib`
