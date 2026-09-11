@@ -25,7 +25,7 @@ fn component_copies_match_the_built_contract() {
 }
 
 #[test]
-fn contract_declares_the_mvp_surface() {
+fn contract_declares_host_registration_and_retained_publishers() {
     // The materializer (l5i9.17) binds exactly these; a rename/removal of any
     // load-bearing line is a breaking change that must move the plugin too.
     let built = fs::read_to_string(root().join("wit/deps/wamn-jetstream/package.wit"))
@@ -37,15 +37,7 @@ fn contract_declares_the_mvp_surface() {
         "filter-subject: string,",
         "ack-wait-ms: u64,",
         "max-deliver: u32,",
-        "fetch: func(max-messages: u32, expires-ms: u64) -> result<list<message>, js-error>;",
-        "ack: func() -> result<_, js-error>;",
-        "nack: func(delay-ms: u64) -> result<_, js-error>;",
-        "term: func() -> result<_, js-error>;",
-        "dead-letter: func(reason: string) -> result<_, js-error>;",
-        "bind-registration: func(package-id: string, registration-id: string, config: consumer-config) -> result<durable-consumer, js-error>;",
-        "stream-seq: u64,",
-        "delivered: u64,",
-        "publish: func(subject: string, headers: list<header>, body: list<u8>) -> result<publish-ack, js-error>;",
+        "prepare: func(package-id: string, registration-id: string, config: consumer-config) -> result<_, js-error>;",
         // l5i9.17: the post-commit doorbell takeover — run-id only; the tenant
         // is host-derived from the workload's wamn.tenant, never a parameter.
         "ring: func(run-id: string) -> result<_, js-error>;",

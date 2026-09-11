@@ -136,6 +136,12 @@ Palette or other components without this evidence keep `poolSize` unset/zero. Th
 
 ### C. Re-evaluate `wamn:jetstream` against native NATS
 
+The reviewed [source checkpoint of 2026-09-11](../perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json), owned by `wamn-0ct2.7`, supersedes the payload dead-letter and adapter alternatives below.
+It uses the platform-owned native `events` binding, private host configuration, scoped broker credentials, and retained exhaustion and termination advisories.
+Registration checks, drift refusal, derived publishing and the separate scheduler doorbell remain.
+The earlier `.4` report and `.6` alternative retain their historical context.
+Live correctness, authority and pressure tests, the observer metadata decision, and the integrated retained workspace test run remain pending.
+
 **Observation:** 2.9's `wasmcloud:nats` provides broker-aware publish, pull and acknowledgement functionality with host-owned credentials and scoped grants. The historical justification that upstream lacks these mechanics is no longer sufficient. WAMN nevertheless has additional release-registration, causation and namespace rules. Native plugin internals are not all public reuse APIs. [S7, S8]
 
 **Target:** native NATS handles broker mechanics where its supported interfaces fit; WAMN retains the application delivery policy. Adapt WIT and component bindings when necessary rather than copy private Rust modules or create another generic messaging abstraction. Do not enable every upstream default provider or grant new application imports implicitly.

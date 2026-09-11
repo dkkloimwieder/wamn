@@ -160,6 +160,8 @@ fn reader_args(super_url: &str, cdc_name: &str, nats_url: String) -> EventReader
         system_database_url: role_url(super_url, &registry_reader_role(), READER_PW),
         cdc_url: cdc_plain_url(super_url, cdc_name),
         nats_url,
+        nats_username: None,
+        nats_password_file: None,
         sslmode: "disable".into(),
         stream_replicas: 1,
         dup_window_secs: 120,

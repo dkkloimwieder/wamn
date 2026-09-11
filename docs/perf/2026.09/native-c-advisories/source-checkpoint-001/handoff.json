@@ -1,0 +1,196 @@
+{
+  "source_patch": {
+    "path": "source.patch",
+    "sha256": "9d32d9f77e352ee9cee6055e1fb06dab94ba2d9ef634fffdee03b0b26f18e4a2",
+    "size_bytes": 289849
+  },
+  "source_identity": "source.json",
+  "changed_paths": 38,
+  "commands": [
+    {
+      "evidence": "binding-check-001",
+      "command": {
+        "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+        "argv": [
+          "cargo",
+          "check",
+          "-p",
+          "wamn-host",
+          "--tests",
+          "--locked",
+          "--offline"
+        ],
+        "capture_sha256": "80c39360db1c37e9e7d3ccbc67d79bc62b89392c69ccd675986ada26543d25ac"
+      },
+      "result": {
+        "exit_code": 101,
+        "elapsed_seconds": 0.32156455604126677,
+        "source_unchanged": true
+      }
+    },
+    {
+      "evidence": "binding-tests-001",
+      "command": {
+        "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+        "argv": [
+          "cargo",
+          "test",
+          "-p",
+          "wamn-host",
+          "--bin",
+          "wamn-host",
+          "--locked",
+          "--offline",
+          "host::tests::materializer_binding_keeps_credentials_and_grants_host_owned",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "capture_sha256": "80c39360db1c37e9e7d3ccbc67d79bc62b89392c69ccd675986ada26543d25ac"
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 370.73721407400444,
+        "source_unchanged": false
+      }
+    },
+    {
+      "evidence": "binding-tests-002",
+      "command": {
+        "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+        "argv": [
+          "cargo",
+          "test",
+          "-p",
+          "wamn-host",
+          "--bin",
+          "wamn-host",
+          "--locked",
+          "--offline",
+          "host::tests::materializer_binding_keeps_credentials_and_grants_host_owned",
+          "--",
+          "--exact",
+          "--nocapture"
+        ],
+        "capture_sha256": "80c39360db1c37e9e7d3ccbc67d79bc62b89392c69ccd675986ada26543d25ac"
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 7.061170081025921,
+        "source_unchanged": true
+      }
+    },
+    {
+      "evidence": "credentials-tests-001",
+      "command": [
+        "cargo",
+        "test",
+        "-p",
+        "wamn-cdc-reader",
+        "-p",
+        "wamn-ctl",
+        "--lib",
+        "--locked",
+        "--offline",
+        "event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs",
+        "--",
+        "--nocapture"
+      ],
+      "result": {
+        "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+        "command": [
+          "cargo",
+          "test",
+          "-p",
+          "wamn-cdc-reader",
+          "-p",
+          "wamn-ctl",
+          "--lib",
+          "--locked",
+          "--offline",
+          "event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs",
+          "--",
+          "--nocapture"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 227.3838823630358,
+        "source_unchanged": true,
+        "target_policy": "C worktree default target, two jobs, no concurrent owner Cargo",
+        "live_inputs_armed": false
+      }
+    },
+    {
+      "evidence": "event-scope-tests-001",
+      "command": {
+        "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+        "argv": [
+          "cargo",
+          "test",
+          "-p",
+          "wamn-runtime",
+          "--lib",
+          "--features",
+          "wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats",
+          "--locked",
+          "--offline",
+          "plugins::wamn_jetstream::tests::",
+          "--",
+          "--nocapture"
+        ],
+        "capture_sha256": "80c39360db1c37e9e7d3ccbc67d79bc62b89392c69ccd675986ada26543d25ac"
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 192.7604722630349,
+        "source_unchanged": true
+      }
+    },
+    {
+      "evidence": "proof-compile-001",
+      "command": {
+        "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+        "argv": [
+          "cargo",
+          "test",
+          "-p",
+          "wamn-proof-integration",
+          "--lib",
+          "--test",
+          "startup_burst_live",
+          "--no-run",
+          "--features",
+          "wamn-runtime/wasm_component_model_implements,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats",
+          "--locked",
+          "--offline"
+        ],
+        "capture_sha256": "80c39360db1c37e9e7d3ccbc67d79bc62b89392c69ccd675986ada26543d25ac"
+      },
+      "result": {
+        "exit_code": 0,
+        "elapsed_seconds": 172.55552339705173,
+        "source_unchanged": true
+      }
+    }
+  ],
+  "additional_checks": {
+    "credential-render-001": "Both renderer proofs and manifest-derived role bootstrap checks passed; no live broker or native CLI context run.",
+    "bootstrap-syntax-001": "Both shell scripts, both credential/binding Python blocks, the executor Python block, and startup Python syntax passed.",
+    "whitespace": "git diff --check passed."
+  },
+  "remaining": {
+    "authority": "Shared advisory metadata observer permission awaits owner ruling; grants remain unchanged.",
+    "live_proofs": [
+      "Fresh guest and host artifact identities with moved source after composition.",
+      "Execute native named-binding materializer on Receiving; prove guest config does not expose host credentials.",
+      "Broker-enforced intended attachment and foreign registration, stream and subject refusal.",
+      "Interruption after handler commit and before native acknowledgement; prove replay idempotence.",
+      "Native poison handling, retained exhaustion/termination advisories and later valid-event progress.",
+      "Bounded native delivery pressure near the broker payload ceiling.",
+      "Actual source-payload retrieval before retention expiry and honest absence after it.",
+      "Full journey startup using separate existing scheduler Service and event broker.",
+      "Final integrated retained workspace sweep and current live docs/ledger."
+    ]
+  },
+  "app_home_boundary": "Both PY_EVENT_NATS blocks use packages/<component>/wamn.json today. The move must use the existing resolved app/base directories because component receiving/wms names differ from exact package-id homes; do not guess prefixes.",
+  "source_commit": "Rejected before execution; no staging, commit, retry or proxy. Source stays stable at b1d40d80558cb58ea4c9e4580d0f46e7edf2fc5b."
+}

@@ -4,7 +4,7 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    copy_project_env, dead_letters, dump_project_env, prune_run_history, restore_project_env,
+    copy_project_env, dump_project_env, event_advisories, prune_run_history, restore_project_env,
 };
 
 #[derive(Parser)]
@@ -28,8 +28,8 @@ enum Command {
     CopyProjectEnv(copy_project_env::CopyProjectEnvArgs),
     /// Prune terminal run history older than the retention period.
     PruneRunHistory(prune_run_history::PruneRunHistoryArgs),
-    /// Read or replay one registration's capped dead-letter subject.
-    DeadLetters(dead_letters::DeadLettersArgs),
+    /// Read retained broker advisories and the available source payloads.
+    EventAdvisories(event_advisories::EventAdvisoriesArgs),
 }
 
 #[tokio::main]
@@ -49,6 +49,6 @@ async fn main() -> anyhow::Result<()> {
         Command::RestoreProjectEnv(args) => restore_project_env::run(args).await,
         Command::CopyProjectEnv(args) => copy_project_env::run(args).await,
         Command::PruneRunHistory(args) => prune_run_history::run(args).await,
-        Command::DeadLetters(args) => dead_letters::run(args).await,
+        Command::EventAdvisories(args) => event_advisories::run(args).await,
     }
 }

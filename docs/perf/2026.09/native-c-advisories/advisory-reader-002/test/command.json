@@ -1,0 +1,24 @@
+{
+  "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910",
+  "argv": [
+    "env",
+    "CARGO_BUILD_JOBS=4",
+    "WAMN_NATIVE_C_NATS_URL=nats://127.0.0.1:32969",
+    "cargo",
+    "test",
+    "-p",
+    "wamn-ctl",
+    "--features",
+    "ops",
+    "--lib",
+    "event_advisories::tests::retained_broker_advisories_report_missing_source_payloads",
+    "--locked",
+    "--offline",
+    "--",
+    "--ignored",
+    "--exact",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "capture_sha256": "b9ed2b0e86c7712c05f382ed92db4522f7e4c3f5d12b09c105691c22010e16e3"
+}

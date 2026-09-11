@@ -763,9 +763,78 @@ run docker run --detach --name "$registry_container" --network kind \
   --env 'REGISTRY_AUTH_HTPASSWD_REALM=WAMN WMS cluster journey' \
   --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
   --volume "$htpasswd_file:/auth/htpasswd:ro" registry:2
+# Broker credentials stay in the journey's private directory and Secret mounts.
+event_nats_directory=$work_dir/event-nats
+install -d -m 0700 "$event_nats_directory"
+python3 - "$event_nats_directory" "$repo_root" "$app_org" "$app_project" \
+  "$app_environment" "$app_tenant" "${app_components[@]}" <<'PY_EVENT_NATS'
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import sys
+
+out, root, org, project, environment, tenant, *components = sys.argv[1:]
+out, root = Path(out), Path(root)
+os.umask(0o077)
+if any(not re.fullmatch(r"[A-Za-z0-9_-]+", value)
+       for value in (org, project, environment, tenant)):
+    raise SystemExit("event-broker identity must use subject-safe tokens")
+stream = f"EVT_{org}_{environment}"
+subject = f"evt.{org}.{project}.{environment}.>"
+tap = f"tap.{tenant}.{project}.{environment}.>"
+# Read registrations from the package declarations of the selected app guests.
+# Data-only guests have no package manifest and declare no registrations.
+durables = []
+for component in components:
+    manifest = root / "packages" / component / "wamn.json"
+    if not manifest.is_file():
+        continue
+    package = json.loads(manifest.read_text())
+    for registration, operation in package.get("custom_operations", {}).items():
+        if operation.get("registration") is None:
+            continue
+        parts = (tenant, package["package"]["id"], registration)
+        durable = "mat_" + "_".join(re.sub(r"[^A-Za-z0-9_-]", "_", part) for part in parts)
+        durables.append(durable)
+if len(durables) != len(set(durables)):
+    raise SystemExit("event registrations have colliding durable names")
+materializer = [f"$JS.API.STREAM.INFO.{stream}"]
+admin = [subject, tap, f"$JS.API.STREAM.INFO.{stream}"]
+observer = [f"$JS.API.STREAM.INFO.{stream}", f"$JS.API.STREAM.MSG.GET.{stream}"]
+for durable in durables:
+    info = f"$JS.API.CONSUMER.INFO.{stream}.{durable}"
+    materializer += [info, f"$JS.API.CONSUMER.MSG.NEXT.{stream}.{durable}",
+                     f"$JS.ACK.{stream}.{durable}.>"]
+    admin += [info, f"$JS.API.CONSUMER.CREATE.{stream}.{durable}",
+              f"$JS.API.CONSUMER.CREATE.{stream}.{durable}.>"]
+    observer.append(info)
+publisher = [subject]
+for retained_stream in (stream, "WAMN_EVENT_ADVISORIES"):
+    publisher += [f"$JS.API.STREAM.INFO.{retained_stream}",
+                  f"$JS.API.STREAM.CREATE.{retained_stream}"]
+# Shared advisory metadata grants are pending the owner's explicit scope ruling.
+users = []
+for role, publish in (("materializer", materializer), ("publisher", publisher),
+                      ("admin", admin), ("observer", observer)):
+    username = f"{role}_{org}_{project}_{environment}"
+    password = secrets.token_hex(32)
+    (out / f"{role}-username").write_text(username)
+    (out / f"{role}-password").write_text(password)
+    subscriptions = [f"_INBOX_{username}.>"]
+    if role == "observer":
+        subscriptions.append(tap)
+    users.append({"user": username, "password": password,
+                  "permissions": {"publish": {"allow": publish},
+                                  "subscribe": {"allow": subscriptions}}})
+(out / "nats.conf").write_text(json.dumps({"authorization": {"users": users}}))
+PY_EVENT_NATS
 nats_owned=true
 run docker run --detach --name "$nats_container" --network kind \
-  nats:2.10-alpine --jetstream --store_dir /data --http_port 8222
+  --volume "$event_nats_directory/nats.conf:/etc/nats/event-nats.conf:ro" \
+  nats:2.10-alpine --config /etc/nats/event-nats.conf \
+  --jetstream --store_dir /data --http_port 8222
 # THE OBJECT STORE (wamn-362o.26): a named disposable MinIO beside the other
 # three, not deploy/infra/minio.yaml, which is install-once infrastructure for
 # the real cluster. The credential is minted by this journey and reaches the
@@ -872,6 +941,29 @@ test "$(curl --config "$curl_config" --silent --show-error --connect-timeout 2 \
 
 system_url=postgresql://postgres:probe@$postgres_ip:5432/wamn_system
 nats_url=nats://$nats_ip:4222
+
+python3 - "$event_nats_directory" "$nats_url" "$app_org" "$app_project" \
+  "$app_environment" "$app_event_stream" <<'PY_EVENT_BINDING'
+import json
+import os
+from pathlib import Path
+import sys
+
+root, server, org, project, environment, stream = sys.argv[1:]
+root = Path(root)
+os.umask(0o077)
+username = (root / "materializer-username").read_text()
+binding = {"servers": server, "username": username,
+           "password": (root / "materializer-password").read_text(),
+           "inbox-prefix": f"_INBOX_{username}", "stream-allow": stream,
+           "subject-allow": f"evt.{org}.{project}.{environment}.>",
+           "subscription-capacity-bytes": "4194304",
+           "subscription-capacity": "64", "max-in-flight": "64"}
+(root / "binding.json").write_text(json.dumps(binding))
+PY_EVENT_BINDING
+event_nats_publisher_username=$(<"$event_nats_directory/publisher-username")
+event_nats_admin_username=$(<"$event_nats_directory/admin-username")
+event_nats_observer_username=$(<"$event_nats_directory/observer-username")
 # The bucket blob-put writes into. An author may name an object but never a
 # container (the descriptor's own test), so the container exists before any
 # release does. mc is the store's client, run once and removed with --rm.
@@ -1349,12 +1441,16 @@ cdc_url=$(jq -er '.stringData.url' "$cdc_secret")
 registry_reader_url=$(jq -er '.stringData.url' "$registry_reader_secret")
 reader_binary=$cargo_target_dir/debug/wamn-cdc-reader
 record_command env WAMN_SYSTEM_URL='<registry-reader credential redacted>' \
-  WAMN_CDC_URL='<replication credential redacted>' "$reader_binary" \
+  WAMN_CDC_URL='<replication credential redacted>' \
+  WAMN_EVT_NATS_USERNAME="$event_nats_publisher_username" \
+  WAMN_EVT_NATS_PASSWORD_FILE='<private publisher password file>' "$reader_binary" \
   --log-level info --org "$app_org" --project "$app_project" --env "$app_environment" \
   --nats-url "$nats_url" \
   --sslmode disable --stream-replicas 1 --dup-window-secs 120 --feedback-secs 1 \
   --stall-threshold-secs 30 --slot-poll-secs 0 --slot-safe-wal-warn-bytes 268435456
 WAMN_SYSTEM_URL="$registry_reader_url" WAMN_CDC_URL="$cdc_url" \
+  WAMN_EVT_NATS_USERNAME="$event_nats_publisher_username" \
+  WAMN_EVT_NATS_PASSWORD_FILE="$event_nats_directory/publisher-password" \
   "$reader_binary" --log-level info --org "$app_org" --project "$app_project" \
   --env "$app_environment" \
   --nats-url "$nats_url" --sslmode disable --stream-replicas 1 \
@@ -1374,8 +1470,8 @@ for _ in $(seq 1 120); do
     >"$work_dir/nats-jsz.json"
   if jq -e --arg stream "$app_event_stream" '
       [.. | objects | .name? |
-       select(. == $stream or . == "WAMN_DLQ")] |
-      unique == ([$stream, "WAMN_DLQ"] | sort)
+       select(. == $stream or . == "WAMN_EVENT_ADVISORIES")] |
+      unique == ([$stream, "WAMN_EVENT_ADVISORIES"] | sort)
     ' >/dev/null "$work_dir/nats-jsz.json" &&
     grep -F -- 'walsender session open; draining' \
       "$evidence_dir/cdc-reader.log" >/dev/null; then
@@ -1446,6 +1542,29 @@ guest_secret_name=${host_secrets[name:guest]}
 declare -A host_secret_name_by_family=()
 for family in "${app_role_families[@]}"; do
   host_secret_name_by_family[$family]=${host_secrets[name:$family]}
+done
+
+# Native host configuration, separate from workload environment/configuration.
+for role_secret in event-nats materializer-nats; do
+  credential_secret=$work_dir/wamn-$role_secret.json
+  if [[ "$role_secret" == event-nats ]]; then
+    record_command "${kube[@]}" -n "$namespace" create secret generic wamn-event-nats \
+      '<private username/password files and declared event coordinates>'
+    "${kube[@]}" -n "$namespace" create secret generic wamn-event-nats \
+      --from-file=username="$event_nats_directory/admin-username" \
+      --from-file=password="$event_nats_directory/admin-password" \
+      --from-literal=org="$app_org" --from-literal=project="$app_project" \
+      --from-literal=environment="$app_environment" \
+      --dry-run=client -o json >"$credential_secret"
+  else
+    record_command "${kube[@]}" -n "$namespace" create secret generic wamn-materializer-nats \
+      '<private native NATS binding file>'
+    "${kube[@]}" -n "$namespace" create secret generic wamn-materializer-nats \
+      --from-file=binding.json="$event_nats_directory/binding.json" \
+      --dry-run=client -o json >"$credential_secret"
+  fi
+  chmod 0600 "$credential_secret"
+  run "${kube[@]}" apply -f "$credential_secret"
 done
 
 registry_pull=$work_dir/registry-pull.yaml
@@ -2567,7 +2686,9 @@ jq -e --arg image "$materializer_ref" --arg namespace "$namespace" \
     {namespace:"wamn", package:"flow-http-routing", version:"0.1.0",
      interfaces:["routing"]},
     {namespace:"wamn", package:"jetstream", version:"0.1.0",
-     interfaces:["types","consumer"]},
+     interfaces:["types","registration"]},
+    {namespace:"wasmcloud", package:"nats", version:"0.1.0", name:"events",
+     interfaces:["types","jetstream"]},
     {namespace:"wamn", package:"postgres", version:"0.1.0",
      interfaces:["types","client"]},
     {namespace:"wamn", package:"router-delivery", version:"0.1.0",

@@ -1,0 +1,11 @@
+{
+  "path": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911/target/debug/deps/wamn_host-3a37d50cecd75d8f",
+  "sha256": "bba5f06b6a62b04ca755c957a8eb826589ad4a55a7f4fbcd7f121d4e25b39ad4",
+  "bytes": 150404472,
+  "executed_test": "host::tests::materializer_binding_keeps_credentials_and_grants_host_owned",
+  "passed": 1,
+  "failed": 0,
+  "ignored": 0,
+  "filtered_out": 15,
+  "proof_scope": "Native binding configuration and override policy. No native materializer execution or live broker authorization proof."
+}

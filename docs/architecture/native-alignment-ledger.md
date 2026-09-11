@@ -68,11 +68,26 @@ The completed production implementation removes the manual application cache, li
 Row 4 records that mechanism change and keeps warm reuse refused.
 The owner prohibits benchmarks in this wave. B makes no performance claim.
 
-The [native NATS checkpoint](../perf/2026.09/native-c-nats/report.md), owned by `wamn-0ct2.4`, stops at the private native message-handle boundary.
-Registration checks and original-message dead-letter construction remain in the Rust host.
-No native NATS backend or adapter replaces the current implementation.
-Deferred decision `wamn-0ct2.6` reopens when the upstream binding surface stabilizes and the message handle becomes public.
-The capability registry can restrict native NATS imports to a trusted adapter, but moving policy requires its own decision and bypass proof.
+The earlier [native NATS checkpoint](../perf/2026.09/native-c-nats/report.md), owned by `wamn-0ct2.4`, records the private native message-handle boundary.
+Its retained host delivery and payload dead-letter model, and the deferred adapter alternative under `wamn-0ct2.6`, describe that historical checkpoint.
+The reviewed [C source checkpoint of 2026-09-11](../perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json) under `wamn-0ct2.7` supersedes those implementation alternatives.
+The original reports retain their results and limitations.
+Source commit `26fdd3eda8e194730a016bf933f2917a6120c05b` records this checkpoint without completing `wamn-0ct2.7`.
+
+The platform materializer imports native `wasmcloud:nats/jetstream@0.1.0` through the named `events` binding.
+The host reads its private native configuration through `WAMN_MAT_NATS_BINDING_FILE` and applies `WorkloadConfigPolicy::Deny`.
+Each environment's materializer credentials permit only its allowed stream, exact durable information, pull, acknowledgement, and private inbox subjects.
+The checkpoint removes custom WAMN delivery and settlement resources and payload dead-letter storage.
+WAMN retains release-registration checks, consumer preparation and drift refusal, derived publishing, and the separate scheduler doorbell.
+The broker retains exhaustion and termination advisories instead of a second payload copy.
+An operator can retrieve an original payload only while the source stream retains it.
+
+The host and executor receive event coordinates from `WAMN_EVT_ORG`, `WAMN_EVT_PROJECT`, and `WAMN_EVT_ENV`.
+These coordinates do not change tenant identity or database-project authority.
+Authenticated direct clients use paired `WAMN_EVT_NATS_USERNAME` and `WAMN_EVT_NATS_PASSWORD_FILE` with the existing event URL.
+The files and native binding keep passwords outside workload configuration and recorded commands.
+This is a source checkpoint only: live correctness, authority and pressure tests and the integrated retained workspace test run remain pending under `wamn-0ct2.7`.
+The owner still must decide the observer's access to shared advisory metadata.
 
 The [P3 HTTP cutover](../perf/2026.09/p3-http-cutover/report.md) belongs to `wamn-0h0g.2.7.17`.
 Its HTTP shell exports `wasi:http/handler@0.3.0` and uses native P3 body streams.

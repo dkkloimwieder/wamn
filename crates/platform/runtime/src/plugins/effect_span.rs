@@ -105,7 +105,7 @@
 //! component, running which node operation, raised this effect".
 
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use wamn_execution_contract::EffectOutcome;
 
@@ -284,7 +284,7 @@ impl Drop for EffectOutcomeGuard {
 ///
 /// `$instrument` is an expression, not a literal, so an instrument whose name is
 /// itself a published identifier can be declared from the `const` that pins it
-/// (see [`JETSTREAM_ACK_LAG_INSTRUMENT`]) instead of repeating the string.
+/// instead of repeating the string.
 macro_rules! effect_histogram {
     ($ident:ident, $meter:literal, $instrument:expr, $description:literal) => {
         pub(crate) static $ident: std::sync::LazyLock<opentelemetry::metrics::Histogram<f64>> =
@@ -314,22 +314,6 @@ effect_histogram!(
     "wamn-jetstream",
     "wamn.jetstream.duration_ms",
     "wamn:jetstream effect latency in ms, by effect.operation"
-);
-
-/// [9.8] `wamn-0h0g.24.8`'s ack-lag series: how long a JetStream message waited
-/// between the server publishing it and this host acking it.
-///
-/// The name is pinned as a `const` for the same reason `DELIVERY_ATTEMPTS` is in
-/// `crates/execution/host/src/router_delivery.rs` — the Prometheus exporter
-/// rewrites the dots to underscores, so a chart's `grep` for the series never
-/// finds the literal, and a rename looks free at the call site.
-pub(crate) const JETSTREAM_ACK_LAG_INSTRUMENT: &str = "wamn.jetstream.ack_lag_ms";
-
-effect_histogram!(
-    JETSTREAM_ACK_LAG_MS,
-    "wamn-jetstream",
-    JETSTREAM_ACK_LAG_INSTRUMENT,
-    "delay in ms between a JetStream message being published and this host acking it"
 );
 
 /// The `effect.operation` label the non-postgres surfaces record their duration
@@ -477,82 +461,6 @@ pub(crate) fn record_effect_ms(
     );
 }
 
-/// The registration one ack-lag sample is attributed to.
-///
-/// Only a consumer bound through `bind_registration` carries these: the plain
-/// `bind` path registers no dead-letter identity, so there is no registration to
-/// name and the call site passes `None`. Following the [`EffectIdentity`]
-/// convention, the keys are still emitted then, empty — one stable series shape,
-/// and an empty value reads as "this bind holds no such claim" rather than "the
-/// label was dropped".
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct AckLagRegistration<'a> {
-    pub tenant: &'a str,
-    pub environment: &'a str,
-    pub package_id: &'a str,
-    pub registration_id: &'a str,
-}
-
-/// The label vector one ack-lag sample carries, in a fixed order.
-fn ack_lag_labels(
-    project: &str,
-    registration: Option<AckLagRegistration<'_>>,
-) -> [opentelemetry::KeyValue; 5] {
-    // DELIBERATE, not a placeholder: the plain `bind` path emits these four
-    // keys empty rather than omitting them, per [`AckLagRegistration`] and the
-    // [`EffectIdentity`] convention. Dropping them would fork the series shape
-    // by bind path and make "no plain-bind traffic" indistinguishable from
-    // "plain-bind acks not measured" (owner ruling, wamn-0h0g.24.8).
-    let registration = registration.unwrap_or(AckLagRegistration {
-        tenant: "",
-        environment: "",
-        package_id: "",
-        registration_id: "",
-    });
-    [
-        opentelemetry::KeyValue::new("wamn.project", project.to_string()),
-        opentelemetry::KeyValue::new("wamn.tenant", registration.tenant.to_string()),
-        opentelemetry::KeyValue::new("wamn.environment", registration.environment.to_string()),
-        opentelemetry::KeyValue::new("wamn.package_id", registration.package_id.to_string()),
-        opentelemetry::KeyValue::new(
-            "wamn.registration_id",
-            registration.registration_id.to_string(),
-        ),
-    ]
-}
-
-/// Wall time between a message being published and this host acking it.
-///
-/// Clamped at zero. `published` is the NATS server's clock and `now` is this
-/// host's; an unsynchronised pair puts the publish in the future, which is a
-/// clock fact and not a measurement, and a duration histogram cannot hold it.
-fn ack_lag_ms(published: SystemTime, now: SystemTime) -> f64 {
-    now.duration_since(published)
-        .unwrap_or(Duration::ZERO)
-        .as_secs_f64()
-        * 1000.0
-}
-
-/// [9.8] Record how long one JetStream message waited between publish and ack.
-///
-/// Sibling of [`record_effect_ms`], and injected the same way: the histogram
-/// arrives BY REFERENCE, so a test passes one built over its own
-/// `SdkMeterProvider` and reads the sample back instead of reaching into the
-/// process-global meter. `now` is a parameter for the same reason — the whole
-/// recorded value is then the caller's, and the clamp is testable.
-pub(crate) fn record_ack_lag_ms(
-    ack_lag: &opentelemetry::metrics::Histogram<f64>,
-    project: &str,
-    registration: Option<AckLagRegistration<'_>>,
-    published: SystemTime,
-    now: SystemTime,
-) {
-    ack_lag.record(
-        ack_lag_ms(published, now),
-        &ack_lag_labels(project, registration),
-    );
-}
-
 /// Span-shape proof support for the surfaces that fill this vocabulary.
 ///
 /// It lives beside the vocabulary and not beside one surface. Every surface
@@ -646,155 +554,7 @@ pub(crate) mod span_proof {
 
 #[cfg(test)]
 mod tests {
-    use opentelemetry::metrics::MeterProvider as _;
-    use opentelemetry_sdk::metrics::data::{AggregatedMetrics, MetricData};
-    use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
-
     use super::*;
-
-    /// A fixed instant, so a recorded lag is an exact `f64` and not a race with
-    /// the wall clock.
-    fn published_at() -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000)
-    }
-
-    /// One ack-lag histogram over a test-owned in-memory exporter. The provider
-    /// is the test's, not `opentelemetry::global`'s, so each test reads back
-    /// exactly the samples its own call emitted — this is the injected Meter
-    /// [`record_ack_lag_ms`]'s by-reference histogram parameter exists for.
-    struct AckLagHarness {
-        exporter: InMemoryMetricExporter,
-        provider: SdkMeterProvider,
-    }
-
-    impl AckLagHarness {
-        fn install() -> Self {
-            let exporter = InMemoryMetricExporter::default();
-            let provider = SdkMeterProvider::builder()
-                .with_reader(PeriodicReader::builder(exporter.clone()).build())
-                .build();
-            Self { exporter, provider }
-        }
-
-        fn histogram(&self) -> opentelemetry::metrics::Histogram<f64> {
-            self.provider
-                .meter("ack-lag-test")
-                .f64_histogram(JETSTREAM_ACK_LAG_INSTRUMENT)
-                .build()
-        }
-
-        /// Every `(name, sorted labels, sum, count)` the exporter holds, so an
-        /// assertion names the whole emitted surface and a label that should not
-        /// be there cannot hide.
-        fn series(&self) -> Vec<(String, Vec<(String, String)>, f64, u64)> {
-            self.provider
-                .force_flush()
-                .expect("test metrics must flush");
-            let mut series = Vec::new();
-            for resource in self
-                .exporter
-                .get_finished_metrics()
-                .expect("test metric exporter must remain readable")
-            {
-                for scope in resource.scope_metrics() {
-                    for metric in scope.metrics() {
-                        let AggregatedMetrics::F64(MetricData::Histogram(histogram)) =
-                            metric.data()
-                        else {
-                            panic!("{} must stay an f64 histogram", metric.name())
-                        };
-                        for point in histogram.data_points() {
-                            let mut labels: Vec<(String, String)> = point
-                                .attributes()
-                                .map(|kv| (kv.key.to_string(), kv.value.to_string()))
-                                .collect();
-                            labels.sort();
-                            series.push((
-                                metric.name().to_owned(),
-                                labels,
-                                point.sum(),
-                                point.count(),
-                            ));
-                        }
-                    }
-                }
-            }
-            series
-        }
-    }
-
-    fn labels(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        let mut labels: Vec<(String, String)> = pairs
-            .iter()
-            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
-            .collect();
-        labels.sort();
-        labels
-    }
-
-    /// A consumer bound through `bind_registration` carries the registration, so
-    /// the sample is attributable to one registration of one package.
-    #[test]
-    fn ack_lag_records_the_message_age_under_its_registration() {
-        let harness = AckLagHarness::install();
-        record_ack_lag_ms(
-            &harness.histogram(),
-            "orders",
-            Some(AckLagRegistration {
-                tenant: "acme",
-                environment: "prod",
-                package_id: "package_a",
-                registration_id: "orders-changed",
-            }),
-            published_at(),
-            published_at() + Duration::from_millis(250),
-        );
-        assert_eq!(
-            harness.series(),
-            vec![(
-                JETSTREAM_ACK_LAG_INSTRUMENT.to_owned(),
-                labels(&[
-                    ("wamn.project", "orders"),
-                    ("wamn.tenant", "acme"),
-                    ("wamn.environment", "prod"),
-                    ("wamn.package_id", "package_a"),
-                    ("wamn.registration_id", "orders-changed"),
-                ]),
-                250.0,
-                1,
-            )],
-        );
-    }
-
-    /// The plain `bind` path registers no dead-letter identity. The sample is
-    /// still recorded, with the registration keys present and empty, so the
-    /// series shape does not depend on which bind path a consumer took.
-    #[test]
-    fn ack_lag_on_the_plain_bind_path_leaves_the_registration_keys_empty() {
-        let harness = AckLagHarness::install();
-        record_ack_lag_ms(
-            &harness.histogram(),
-            "orders",
-            None,
-            published_at(),
-            published_at() + Duration::from_millis(40),
-        );
-        assert_eq!(
-            harness.series(),
-            vec![(
-                JETSTREAM_ACK_LAG_INSTRUMENT.to_owned(),
-                labels(&[
-                    ("wamn.project", "orders"),
-                    ("wamn.tenant", ""),
-                    ("wamn.environment", ""),
-                    ("wamn.package_id", ""),
-                    ("wamn.registration_id", ""),
-                ]),
-                40.0,
-                1,
-            )],
-        );
-    }
 
     fn settled_evidence(evidence: &EffectEvidence, outcome: EffectOutcome, failed: bool) {
         let mut guard = EffectOutcomeGuard::new(&tracing::Span::none(), Some(evidence.clone()));
@@ -953,22 +713,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    /// `published` is the server's clock. Unsynchronised, it can sit in this
-    /// host's future; the sample is then zero, never negative.
-    #[test]
-    fn ack_lag_clamps_a_publish_stamped_in_the_future() {
-        let harness = AckLagHarness::install();
-        record_ack_lag_ms(
-            &harness.histogram(),
-            "orders",
-            None,
-            published_at() + Duration::from_secs(5),
-            published_at(),
-        );
-        let series = harness.series();
-        assert_eq!(series.len(), 1, "one sample was recorded");
-        assert_eq!(series[0].2, 0.0, "a future publish clamps to zero lag");
     }
 }

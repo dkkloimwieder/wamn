@@ -2,6 +2,7 @@
 //! Helm chart. Arg surface mirrors what the chart's runtime deployment
 //! template renders for `wash host` (charts/runtime-operator).
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -97,6 +98,10 @@ pub struct HostArgs {
 
     #[arg(long = "data-nats-tls-key")]
     pub data_nats_tls_key: Option<PathBuf>,
+
+    /// Host-private JSON configuration for the platform materializer's native events binding.
+    #[arg(long, env = "WAMN_MAT_NATS_BINDING_FILE")]
+    pub materializer_nats_binding_file: Option<PathBuf>,
 
     /// The host name to assign to the host (chart passes the pod IP)
     #[arg(long = "host-name")]
@@ -385,6 +390,15 @@ async fn load_release(
     // plugin and the router driver are `Arc`-owned, so none can hold a lifetime
     // tied to `run`'s stack. One allocation remains the process's only manifest.
     Ok(Some(Arc::new(weld)))
+}
+
+/// Declare the platform binding through the native host configuration policy.
+fn materializer_nats_bindings(config: HashMap<String, String>) -> plugin::PluginBindings {
+    plugin::PluginBindings::new().with_plugin(
+        plugin::PluginBindingSet::new(plugin::wasmcloud_nats::PLUGIN_NATS_ID)
+            .with_binding("events", config)
+            .with_workload_config(plugin::WorkloadConfigPolicy::Deny),
+    )
 }
 
 /// Resolve the native wash-runtime memory settings carried by the host CLI.
@@ -871,11 +885,33 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         ));
     }
 
+    let native_event_bindings = if let Some(path) = &args.materializer_nats_binding_file {
+        let bytes = tokio::fs::read(path)
+            .await
+            .context("read the platform materializer NATS binding")?;
+        let config = serde_json::from_slice(&bytes)
+            .context("decode the platform materializer NATS binding")?;
+        plugins.push(Arc::new(
+            plugin::wasmcloud_nats::WasmcloudNats::new()
+                .with_memory_budget(host_memory.max_guest_memory)
+                .with_lattice_prefixes(vec![
+                    format!("{}.", wash_runtime::washlet::HOST_API_PREFIX),
+                    format!("{}.", wash_runtime::washlet::OPERATOR_API_PREFIX),
+                ]),
+        ));
+        Some(materializer_nats_bindings(config))
+    } else {
+        None
+    };
+
     // Count the same plugins supplied to the native host, including the optional bridge.
     let cleanup_budget = host_cleanup_budget(plugins.len())?;
     let mut host_builder = wash_runtime::host::HostBuilder::default();
     for plugin in plugins {
         host_builder = host_builder.with_plugin(plugin)?;
+    }
+    if let Some(bindings) = native_event_bindings {
+        host_builder = host_builder.with_plugin_bindings(bindings);
     }
     let mut builder = ClusterHostBuilder::default()
         .with_host_builder(host_builder)
@@ -1079,6 +1115,48 @@ mod tests {
     struct TestCli {
         #[command(flatten)]
         args: HostArgs,
+    }
+
+    #[test]
+    fn materializer_binding_keeps_credentials_and_grants_host_owned() {
+        let config: HashMap<String, String> = [
+            ("servers", "nats://event-broker.invalid:4222"),
+            ("username", "materializer"),
+            ("password", "test-password"),
+            ("inbox-prefix", "_INBOX_materializer"),
+            ("stream-allow", "EVT_acme_prod"),
+            ("subject-allow", "evt.acme.receiving.prod.>"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect();
+        let bindings = materializer_nats_bindings(config.clone());
+        let declared = bindings.for_plugin(plugin::wasmcloud_nats::PLUGIN_NATS_ID);
+        let schema = plugin::wasmcloud_nats::binding_schema();
+        let native = plugin::wasmcloud_nats::WasmcloudNats::new();
+        use plugin::HostPlugin as _;
+        native.validate_bindings(&declared).unwrap();
+        let narrows = |key: &str, ceiling: &str, value: &str| native.narrows(key, ceiling, value);
+        let resolve = |name: &str, overrides: &HashMap<String, String>| {
+            declared.resolve(name, overrides, &schema, &narrows)
+        };
+        assert_eq!(resolve("events", &HashMap::new()).unwrap(), config);
+        assert!(resolve("", &HashMap::new()).unwrap().is_empty());
+        assert!(resolve("foreign", &HashMap::new()).is_err());
+        for (key, value) in [
+            ("servers", "nats://foreign.invalid:4222"),
+            ("username", "administrator"),
+            ("password", "foreign-password"),
+            ("inbox-prefix", "_INBOX_foreign"),
+            ("stream-allow", ">"),
+            ("subject-allow", ">"),
+        ] {
+            let overrides = HashMap::from([(key.to_owned(), value.to_owned())]);
+            let error = resolve("events", &overrides).unwrap_err().to_string();
+            assert!(error.contains(key), "{error}");
+            assert!(!error.contains("test-password"), "{error}");
+            assert!(!error.contains("foreign-password"), "{error}");
+        }
     }
 
     #[test]

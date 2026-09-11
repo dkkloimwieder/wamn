@@ -1,0 +1,22 @@
+{
+  "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "wamn-cdc-reader",
+    "-p",
+    "wamn-ctl",
+    "--lib",
+    "--locked",
+    "--offline",
+    "event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs",
+    "--",
+    "--nocapture"
+  ],
+  "exit_code": 0,
+  "elapsed_seconds": 227.3838823630358,
+  "source_unchanged": true,
+  "target_policy": "C worktree default target, two jobs, no concurrent owner Cargo",
+  "live_inputs_armed": false
+}

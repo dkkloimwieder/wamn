@@ -1,0 +1,9 @@
+{
+  "host_test_inputs_unchanged": true,
+  "changed_captured_files": [
+    "services/cdc-reader/src/lib.rs",
+    "services/cdc-reader/tests/event_reader_live.rs",
+    "services/ctl/src/event_advisories.rs"
+  ],
+  "note": "The first run overlapped delegated CDC/operator source edits; those files are outside the host test target. The captured host, runtime and lockfile inputs did not change."
+}

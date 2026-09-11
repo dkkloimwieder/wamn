@@ -1,0 +1,105 @@
+# wamn-l5i9.17 CDC materializer (D19 v3 §5) — EXAMPLE WorkloadDeployment for
+# ONE project-env × tenant. Per-env config (stream/org/project/env + the
+# tenant claim) makes this an example the provisioning runbook
+# instantiates, not an apply-as-is manifest; the demo values below match the
+# matbench fixture triple.
+#
+#   # after: provision-project-env + enable-cdc-project-env + the event reader
+#   # is publishing that env's EVT_ stream, and materializer.wasm is pushed to
+#   # the in-cluster registry (using the registry push workflow):
+#   kubectl -n wamn-system apply -f <instantiated copy of this file>
+#
+# SERVICE-FIRST (E11/D21 + E12): this is a wasmCloud SERVICE workload —
+# `spec.service`, a wasi:cli/run command component the host runs in its
+# restart loop — NOT a hand-rolled Deployment. The washlet host provides all
+# imports as plugins; `hostInterfaces` is the host-plugin ALLOWLIST
+# (bind_plugins binds only what is declared here).
+#
+# IDENTITY (host-injected, non-spoofable): `wamn.tenant` scopes the fully
+# qualified `catalog.packages` and `catalog.event_registrations` reads;
+# `wamn.project` selects the per-project pool;
+# `wamn.postgres.authority` selects the closed event-materializer credential
+# class. The WAMN_MAT_* environment is guest-side SUBSCRIPTION config only
+# (stream name + subject segments + the tenant label checked against the
+# credential-scoped catalog row) — RLS holds regardless of what the env claims.
+#
+# ONE TENANT PER WORKLOAD (v1): registrations and claims are tenant-scoped, and
+# a multi-tenant project-env runs one materializer workload per tenant.
+# Multi-registration fan-out within the tenant is one workload
+# (a durable consumer per registration).
+#
+# EXACTLY-ONCE: run_id = <flow>:evt:<stream_seq> (zero-padded) + ON CONFLICT
+# DO NOTHING on both the write-ahead and the enqueue — replicas > 1 is SAFE
+# (duplicates collapse; the matbench redelivery phase proves it) but 1 is the
+# v1 shape: JetStream redelivery, not replica count, is the availability story.
+apiVersion: runtime.wasmcloud.dev/v1alpha1
+kind: WorkloadDeployment
+metadata:
+  name: receiving-materializer
+  # Must be one of `operator.watchNamespaces` (deploy/infra/values-wamn.yaml),
+  # or the operator never sees this object at all.
+  namespace: warehouse-eu-3
+spec:
+  replicas: 1
+  template:
+    spec:
+      # [wamn-0h0g.15.15] The host group this schedules onto — the label the
+      # host reports from `--host-group` (deploy/platform/values-host-default.yaml).
+      hostSelector:
+        hostgroup: default
+      # The environment whose hosts may run this workload, matched against
+      # `Host.Environment` (the host Pod's namespace). Under the operator's
+      # `allowSharedHosts: false` lock this is only honoured when it equals this
+      # object's own namespace; any other value is refused with a
+      # `CrossEnvironmentSchedulingDenied` Warning Event and a
+      # `HostSelection=False` condition.
+      environment: warehouse-eu-3
+      hostInterfaces:
+        # The host's hostInterfaces are the ALLOWLIST for host plugins. The
+        # materializer imports PostgreSQL, JetStream, the routing resource type
+        # borrowed by delivery, and the production router-delivery bridge; all
+        # four must be listed or the component fails to instantiate.
+        - namespace: wamn
+          package: postgres
+          version: "0.1.0"
+          interfaces: [types, client]
+        - namespace: wamn
+          package: jetstream
+          version: "0.1.0"
+          interfaces: [types, consumer]
+        - namespace: wamn
+          package: flow-http-routing
+          version: "0.1.0"
+          interfaces: [routing]
+        - namespace: wamn
+          package: router-delivery
+          version: "0.1.0"
+          interfaces: [delivery]
+      service:
+        image: registry.probe.invalid:5000/proofs/materializer@sha256:abc123
+        # Mutable :dev tag — always re-pull so a re-pushed component is picked
+        # up on the next workload start.
+        imagePullPolicy: Always
+        # The host restarts a failed run up to this many times; transient
+        # errors are handled INSIDE the guest loop (nack + retry), so a
+        # restart here means repeated hard failure (bad config, trap).
+        maxRestarts: 5
+        localResources:
+          allowedIpNameLookups: []
+          config:
+            wamn.tenant: receiving-route-auth
+            wamn.project: receiving
+            wamn.environment: dev
+            wamn.postgres.authority: event-materializer
+          environment:
+            config:
+              WAMN_MAT_STREAM: EVT_acme_dev
+              WAMN_MAT_ORG: acme
+              WAMN_MAT_PROJECT: receiving
+              WAMN_MAT_ENV: dev
+              WAMN_MAT_TENANT: receiving-route-auth
+              WAMN_MAT_FETCH_MS: "500"
+              WAMN_MAT_SWEEP_MS: "500"
+              # Retry is bounded; the final failed attempt is published to the
+              # host-derived per-registration DLQ before the source is termed.
+              WAMN_MAT_MAX_DELIVER: "5"

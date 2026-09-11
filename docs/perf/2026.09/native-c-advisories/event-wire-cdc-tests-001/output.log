@@ -1,0 +1,132 @@
+   Compiling syn v3.0.4
+   Compiling num-traits v0.2.19
+   Compiling zeroize v1.9.0
+   Compiling form_urlencoded v1.2.2
+   Compiling rustls-pki-types v1.15.1
+   Compiling getrandom v0.3.4
+   Compiling slab v0.4.12
+   Compiling aws-lc-rs v1.18.0
+   Compiling rustls v0.23.43
+   Compiling ahash v0.8.12
+   Compiling subtle v2.6.1
+   Compiling tracing v0.1.44
+   Compiling rustls-native-certs v0.8.4
+   Compiling clap_builder v4.6.6
+   Compiling webpki-roots v1.0.9
+   Compiling rustls-webpki v0.103.15
+   Compiling serde_derive v1.0.229
+   Compiling zerovec-derive v0.11.6
+   Compiling displaydoc v0.2.7
+   Compiling zerotrie v0.2.5
+   Compiling tokio-macros v2.7.2
+   Compiling zerovec v0.11.8
+   Compiling ref-cast-impl v1.0.27
+   Compiling tinystr v0.8.4
+   Compiling icu_locale_core v2.3.0
+   Compiling potential_utf v0.1.6
+   Compiling icu_collections v2.3.0
+   Compiling futures-macro v0.3.34
+   Compiling icu_provider v2.3.1
+   Compiling futures-util v0.3.34
+   Compiling icu_properties v2.3.0
+   Compiling serde v1.0.229
+   Compiling smallvec v1.15.2
+   Compiling bytes v1.12.1
+   Compiling chrono v0.4.45
+   Compiling tokio v1.53.1
+   Compiling icu_normalizer v2.3.0
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling postgres-protocol v0.6.12
+   Compiling url v2.5.8
+   Compiling parking_lot_core v0.9.12
+   Compiling schemars v0.8.22
+   Compiling ref-cast v1.0.27
+   Compiling fluent-uri v0.3.2
+   Compiling parking_lot v0.12.5
+   Compiling postgres-types v0.2.14
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910/components/execution/contract)
+   Compiling async-trait v0.1.92
+   Compiling boon v0.6.1
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910/components/events/wire)
+   Compiling thiserror-impl v2.0.20
+   Compiling tokio-util v0.7.19
+   Compiling tokio-postgres v0.7.18
+   Compiling tokio-rustls v0.26.4
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910/crates/catalog/model)
+   Compiling thiserror v2.0.20
+   Compiling tryhard v0.5.2
+   Compiling tokio-stream v0.1.19
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910/crates/execution/run-state)
+   Compiling serde_nanos v0.1.4
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910/crates/control/registry)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910/crates/schema/introspection)
+   Compiling serde_repr v0.1.21
+   Compiling clap_derive v4.6.4
+   Compiling async-nats v0.49.1
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910/crates/schema/generator)
+   Compiling clap v4.6.6
+   Compiling pg_walstream v0.8.0 (https://github.com/dkkloimwieder/pg-walstream?rev=0b007cd627bb913d4b159c705a106b6d4152c91a#0b007cd6)
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling tracing-subscriber v0.3.23
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910/crates/control/provision)
+   Compiling wamn-cdc-reader v0.1.0 (/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910/services/cdc-reader)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 30.31s
+     Running unittests src/lib.rs (target/debug/deps/wamn_cdc_reader-cac40937e8b7bc7b)
+
+running 25 tests
+test tests::delivery_advisory_stream_drift_pins_the_subject_cap ... ok
+test tests::excluded_relation_skip_is_counted_by_package_relation_identity ... ok
+test tests::in_flight_bound_is_pinned_under_the_client_semaphore ... ok
+test tests::ladder_productivity_resets_the_streak ... ok
+test tests::cancellation_mid_pipeline_reports_cancelled ... ok
+test tests::ladder_open_then_err_flap_terminates_within_the_cap ... ok
+test tests::ladder_rate_cap_catches_a_slow_productive_flap ... ok
+test tests::classify_routes_the_session_fates ... WAMN_E1_NATS_URL unset — skipping E1 live JetStream gate
+ok
+test tests::in_flight_bound_drains_mid_transaction ... ok
+test tests::parse_causation_accepts_only_the_transactional_wamn_contract ... ok
+test tests::relation_classification_lookup_is_by_oid_in_the_event_schema ... ok
+test tests::resolved_relation_classification_is_cached_as_one_closed_identity ... ok
+test tests::pipeline_settles_every_ack_in_publish_order ... ok
+test tests::pipelined_publish_lands_in_order_and_dedupes_live ... ok
+test tests::row_map_keeps_null_and_absence_distinct ... ok
+test tests::row_to_map_passes_clean_utf8_through_unchanged ... ok
+test tests::slot_health_maps_wal_status_and_the_safe_wal_floor ... ok
+test tests::row_to_map_refuses_non_utf8_rather_than_corrupting ... ok
+test tests::stall_level_escalates_at_the_threshold ... ok
+test tests::stream_config_drift_flags_replicas_dup_window_and_storage ... ok
+test tests::retry_restarts_from_the_first_unacked_row ... ok
+test tests::unmapped_managed_relation_refusal_is_fatal_and_names_its_remedy ... ok
+test tests::walsender_url_appends_replication_database ... ok
+test tests::the_registration_read_refuses_the_wide_system_owner_before_connecting ... ok
+test tests::the_registration_read_accepts_its_own_generation_and_then_connects ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/wamn_event_wire-81d483015d4c7381)
+
+running 12 tests
+test tests::causation_carries_run_root_depth ... ok
+test tests::stream_name_is_evt_org_env ... ok
+test tests::derived_msg_id_is_host_scoped_and_keeps_the_author_operand ... ok
+test tests::envelope_wire_shape_is_the_v3_draft ... ok
+test tests::msg_id_is_project_env_colon_decimal_lsn ... ok
+test tests::derived_event_is_a_distinct_versioned_wire_without_wal_provenance ... ok
+test tests::fully_populated_envelope_freezes_every_field ... ok
+test tests::envelope_decode_requires_both_package_and_entity_identity ... ok
+test tests::stream_binds_every_project_of_the_org_env ... ok
+test tests::subject_is_the_v3_grammar ... ok
+test tests::subject_token_distinguishes_dot_from_underscore ... ok
+test tests::subject_token_neutralizes_nats_specials ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

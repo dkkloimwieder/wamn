@@ -12,14 +12,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio_postgres::Client;
-use wamn_event_wire::{DeadLetter, Envelope, Op};
+use wamn_event_wire::{DeliveryAdvisory, DeliveryAdvisoryKind, Envelope, Op};
 use wamn_runtime::plugins::wamn_jetstream::{
     RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind, router_tap_environment_filter,
 };
 
 use super::{
     BASE_PACKAGE_ID, ENVIRONMENT, JourneyDocument, MATERIALIZER_DURABLE, MATERIALIZER_STREAM,
-    OVERLAY_PACKAGE_ID, PROJECT, TENANT, connect, overlay_route_path, secret_value,
+    OVERLAY_PACKAGE_ID, PROJECT, TENANT, connect, connect_event_proof_client, overlay_route_path, secret_value,
 };
 
 const REGISTRATION: &str = "client_acme_receiving::quality.create_inspection";
@@ -314,12 +314,12 @@ async fn receipt(
         .to_owned())
 }
 
-async fn matching_dead_letter(
+async fn matching_delivery_advisory(
     jetstream: &Context,
     sequence: u64,
-) -> anyhow::Result<Option<(String, DeadLetter)>> {
+) -> anyhow::Result<Option<(String, DeliveryAdvisory)>> {
     let mut stream = jetstream
-        .get_stream(wamn_event_wire::DEAD_LETTER_STREAM)
+        .get_stream(wamn_event_wire::DELIVERY_ADVISORY_STREAM)
         .await?;
     let state = stream.info().await?.state.clone();
     if state.messages == 0 {
@@ -327,10 +327,12 @@ async fn matching_dead_letter(
     }
     for index in state.first_sequence..=state.last_sequence {
         let message = stream.get_raw_message(index).await?;
-        let letter = DeadLetter::from_slice(&message.payload)?;
-        if letter.source_stream == MATERIALIZER_STREAM && letter.source_stream_sequence == sequence
+        let advisory = DeliveryAdvisory::from_slice(&message.payload)?;
+        if advisory.stream == MATERIALIZER_STREAM
+            && advisory.consumer == MATERIALIZER_DURABLE
+            && advisory.stream_seq == sequence
         {
-            return Ok(Some((message.subject.to_string(), letter)));
+            return Ok(Some((message.subject.to_string(), advisory)));
         }
     }
     Ok(None)
@@ -353,7 +355,11 @@ async fn prove(
         .retry(reqwest::retry::never())
         .timeout(Duration::from_secs(60))
         .build()?;
-    let nats = async_nats::connect(&materializer.nats_url).await?;
+    let nats = connect_event_proof_client(
+        &materializer.nats_url,
+        "WAMN_EVT_NATS_USERNAME",
+        "WAMN_EVT_NATS_PASSWORD_FILE",
+    ).await?;
     let jetstream = async_nats::jetstream::new(nats.clone());
     let mut events = jetstream.get_stream(MATERIALIZER_STREAM).await?;
     let mut taps = nats
@@ -414,7 +420,12 @@ async fn prove(
     let wait = dedup + Duration::from_secs(2);
     evidence["dedup_wait_ms"] = json!(wait.as_millis());
     tokio::time::sleep(wait).await;
-    let replay = jetstream
+    let replay_publisher = async_nats::jetstream::new(connect_event_proof_client(
+        &materializer.nats_url,
+        "WAMN_EVT_NATS_REPLAY_USERNAME",
+        "WAMN_EVT_NATS_REPLAY_PASSWORD_FILE",
+    ).await?);
+    let replay = replay_publisher
         .publish_with_headers(
             original.subject.clone(),
             original.headers.clone(),
@@ -536,32 +547,24 @@ async fn prove(
                     evidence["blocked_handler_attempts"] = json!(waits);
                 }
             }
-            if let Some(letter) = matching_dead_letter(&jetstream, poison_source.sequence).await? { return Ok::<_, anyhow::Error>(letter); }
-            ensure!(Instant::now() < deadline, "poison did not reach its actual dead-letter record within 90 seconds");
+            if let Some(advisory) = matching_delivery_advisory(&jetstream, poison_source.sequence).await? { return Ok::<_, anyhow::Error>(advisory); }
+            ensure!(Instant::now() < deadline, "poison did not produce a retained broker termination advisory within 90 seconds");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         };
-        let (valid_receipt, (subject, letter)) = tokio::try_join!(
+        let (valid_receipt, (subject, advisory)) = tokio::try_join!(
             receipt(&http, document, phase, &valid_fixture, "postcommit-independent"), observed,
         )?;
         let resumed = ready(phase).await?;
         ensure!(resumed["spec"]["template"] == original_deployment["spec"]["template"], "materializer restart changed the deployed artifacts or configuration");
         evidence["deployment_resumed"] = resumed;
         ensure!(attempts.len() == 3, "expected three real blocked handler attempts, observed {}", attempts.len());
-        let mut expected_headers = poison_source.headers.iter().flat_map(|(name, values)|
-            values.iter().map(move |value| (name.to_string().to_ascii_lowercase(), value.as_str().to_owned())))
-            .collect::<Vec<_>>();
-        let mut actual_headers = letter.headers.iter().map(|header|
-            (header.name.to_ascii_lowercase(), header.value.clone())).collect::<Vec<_>>();
-        expected_headers.sort();
-        actual_headers.sort();
-        ensure!(subject == wamn_event_wire::dead_letter_subject(TENANT, ENVIRONMENT, OVERLAY_PACKAGE_ID, "quality.create_inspection")
-            && letter.reason == "router-retry-exhausted" && letter.delivered == 1
-            && letter.original_subject == poison_source.subject.as_str()
-            && letter.body.as_slice() == poison_source.payload.as_ref()
-            && actual_headers == expected_headers,
-            "dead-letter evidence does not correlate to the real retry exhaustion: {letter:?}");
-        evidence["dead_letter"] = json!({"subject":subject,"record":letter});
+        ensure!(subject == format!("$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.{MATERIALIZER_STREAM}.{MATERIALIZER_DURABLE}")
+            && advisory.kind == DeliveryAdvisoryKind::Terminated
+            && advisory.deliveries == 1
+            && advisory.stream_seq == poison_source.sequence,
+            "broker advisory does not identify the actual terminated poison delivery: {advisory:?}");
+        evidence["delivery_advisory"] = json!({"subject":subject,"record":advisory});
         loop {
             let state = inspection(project, &valid_receipt).await?;
             if state.as_array().is_some_and(|rows| rows.len() == 1)
@@ -679,7 +682,7 @@ async fn production_materializer_preserves_replay_and_progress() -> anyhow::Resu
     std::fs::write(&phase.evidence_file, serde_json::to_vec_pretty(&evidence)?)?;
     result?;
     println!(
-        "RECEIVING_POSTCOMMIT_PASS replay_deliveries=2 blocked_handler_attempts=3 dead_letters=1 independent_inspections=1"
+        "RECEIVING_POSTCOMMIT_PASS replay_deliveries=2 blocked_handler_attempts=3 termination_advisories=1 independent_inspections=1"
     );
     Ok(())
 }

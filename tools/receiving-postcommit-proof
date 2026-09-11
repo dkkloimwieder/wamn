@@ -95,7 +95,7 @@ for base in ("baseline", "additive"):
     require(verdict == {
         "schema": "wamn-receiving-postcommit/v1", "verdict": "pass", "source": source, "base": base,
         "passing_arms": ["unchanged-overlay-routes", "schema-requirements-observed",
-                         "duplicate-handler-delivery", "retry-exhaustion-dlq", "independent-event-progress"],
+                         "duplicate-handler-delivery", "retry-exhaustion-advisory", "independent-event-progress"],
     }, f"{base} did not pass every required proof arm")
     postcommit = json.loads((directory / "postcommit.json").read_text())
     require(postcommit["schema"] == "wamn-receiving-postcommit/v0.1"

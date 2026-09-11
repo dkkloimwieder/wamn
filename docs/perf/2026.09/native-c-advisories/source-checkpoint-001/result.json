@@ -1,0 +1,8 @@
+{
+  "commit": null,
+  "path_count": 38,
+  "live_proof_complete": false,
+  "observer_advisory_scope": "pending owner ruling",
+  "commit_state": "Automatic approval review rejected the local checkpoint before execution because authorization for the 38-file commit and disabled hooks was not clear. No retry or proxy attempted.",
+  "app_move_tail": "Both PY_EVENT_NATS blocks use component directory names under packages; use existing resolved app/base directory arguments after relocation, not guessed prefixes or only packages-to-apps substitution."
+}

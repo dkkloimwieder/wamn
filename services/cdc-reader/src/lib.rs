@@ -67,6 +67,7 @@
 //!   an undeclared relation is a typed publication refusal.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
@@ -84,8 +85,8 @@ use tokio_postgres::NoTls;
 use wamn_control_provision::{SystemReader, parse_system_reader_url};
 use wamn_control_registry::sql::select_event_reader_sql;
 use wamn_event_wire::{
-    Causation, DEAD_LETTER_MAX_AGE_SECONDS, DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION,
-    DEAD_LETTER_STREAM, DEAD_LETTER_STREAM_SUBJECTS, Envelope, Op, msg_id, stream_subjects,
+    Causation, DELIVERY_ADVISORY_MAX_AGE_SECONDS, DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT,
+    DELIVERY_ADVISORY_STREAM, DELIVERY_ADVISORY_SUBJECTS, Envelope, Op, msg_id, stream_subjects,
     subject,
 };
 use wamn_pg_core::quote_ident;
@@ -128,6 +129,14 @@ pub struct EventReaderArgs {
         default_value = "nats://evt-nats.wamn-system:4222"
     )]
     pub nats_url: String,
+
+    /// Event-broker username; requires its password file.
+    #[arg(long, env = "WAMN_EVT_NATS_USERNAME", requires = "nats_password_file")]
+    pub nats_username: Option<String>,
+
+    /// File containing the event-broker password; requires its username.
+    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE", requires = "nats_username")]
+    pub nats_password_file: Option<PathBuf>,
 
     /// sslmode appended to both the walsender and the preflight connection.
     #[arg(long, default_value = "disable")]
@@ -644,7 +653,7 @@ fn stream_config_drift(
     drift
 }
 
-fn dead_letter_stream_config_drift(
+fn delivery_advisory_stream_config_drift(
     want_replicas: usize,
     got: &jetstream::stream::Config,
 ) -> Vec<String> {
@@ -664,13 +673,13 @@ fn dead_letter_stream_config_drift(
             got.retention
         ));
     }
-    if got.max_messages_per_subject != DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION {
+    if got.max_messages_per_subject != DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT {
         drift.push(format!(
-            "max_messages_per_subject: want {DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION}, stream has {}",
+            "max_messages_per_subject: want {DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT}, stream has {}",
             got.max_messages_per_subject
         ));
     }
-    let want_age = Duration::from_secs(DEAD_LETTER_MAX_AGE_SECONDS);
+    let want_age = Duration::from_secs(DELIVERY_ADVISORY_MAX_AGE_SECONDS);
     if got.max_age != want_age {
         drift.push(format!(
             "max_age: want {want_age:?}, stream has {:?}",
@@ -683,9 +692,9 @@ fn dead_letter_stream_config_drift(
             got.duplicate_window
         ));
     }
-    if got.subjects.as_slice() != [DEAD_LETTER_STREAM_SUBJECTS] {
+    if got.subjects.as_slice() != DELIVERY_ADVISORY_SUBJECTS {
         drift.push(format!(
-            "subjects: want [{DEAD_LETTER_STREAM_SUBJECTS:?}], stream has {:?}",
+            "subjects: want {DELIVERY_ADVISORY_SUBJECTS:?}, stream has {:?}",
             got.subjects
         ));
     }
@@ -738,9 +747,40 @@ pub async fn run(args: EventReaderArgs) -> anyhow::Result<()> {
     run_with_token(args, token).await
 }
 
+fn event_nats_options(
+    username: Option<&str>,
+    password_file: Option<&Path>,
+) -> anyhow::Result<async_nats::ConnectOptions> {
+    match (username, password_file) {
+        (None, None) => Ok(async_nats::ConnectOptions::new()),
+        (Some(username), Some(path)) => {
+            if username.is_empty()
+                || !username
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            {
+                bail!("event-broker username must be one nonempty broker token");
+            }
+            let password =
+                std::fs::read_to_string(path).context("read the event-broker password file")?;
+            if password.is_empty() {
+                bail!("event-broker password file is empty");
+            }
+            Ok(async_nats::ConnectOptions::new()
+                .user_and_password(username.to_owned(), password)
+                .custom_inbox_prefix(format!("_INBOX_{username}")))
+        }
+        _ => bail!("event broker requires both username and password file"),
+    }
+}
+
 /// The service body, cancellation injected — the live gate drives this
 /// directly (abort = the crash drill, cancel = clean shutdown).
 pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> anyhow::Result<()> {
+    let nats_options = event_nats_options(
+        args.nats_username.as_deref(),
+        args.nats_password_file.as_deref(),
+    )?;
     let reg = read_registration(&args).await?;
     if !reg.enabled {
         bail!(
@@ -757,9 +797,10 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
         "registration loaded"
     );
 
-    let client = async_nats::connect(&args.nats_url)
+    let client = nats_options
+        .connect(&args.nats_url)
         .await
-        .with_context(|| format!("connect data-plane NATS at {}", args.nats_url))?;
+        .context("connect to the data-plane NATS broker")?;
     let js = jetstream::new(client);
     let want_dup_window = Duration::from_secs(args.dup_window_secs);
     let evt_stream = js
@@ -795,27 +836,31 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
         );
     }
 
-    let dead_letters = js
+    let advisories = js
         .get_or_create_stream(jetstream::stream::Config {
-            name: DEAD_LETTER_STREAM.to_string(),
-            subjects: vec![DEAD_LETTER_STREAM_SUBJECTS.to_string()],
+            name: DELIVERY_ADVISORY_STREAM.to_string(),
+            subjects: DELIVERY_ADVISORY_SUBJECTS.map(str::to_owned).to_vec(),
             storage: jetstream::stream::StorageType::File,
             num_replicas: args.stream_replicas,
             retention: jetstream::stream::RetentionPolicy::Limits,
-            max_messages_per_subject: DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION,
-            max_age: Duration::from_secs(DEAD_LETTER_MAX_AGE_SECONDS),
-            duplicate_window: Duration::from_secs(DEAD_LETTER_MAX_AGE_SECONDS),
+            max_messages_per_subject: DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT,
+            max_age: Duration::from_secs(DELIVERY_ADVISORY_MAX_AGE_SECONDS),
+            duplicate_window: Duration::from_secs(DELIVERY_ADVISORY_MAX_AGE_SECONDS),
             ..Default::default()
         })
         .await
-        .map_err(|error| anyhow::anyhow!("get-or-create stream {DEAD_LETTER_STREAM}: {error}"))?;
-    let dead_letter_drift =
-        dead_letter_stream_config_drift(args.stream_replicas, &dead_letters.cached_info().config);
-    if !dead_letter_drift.is_empty() {
+        .map_err(|error| {
+            anyhow::anyhow!("get-or-create stream {DELIVERY_ADVISORY_STREAM}: {error}")
+        })?;
+    let advisory_drift = delivery_advisory_stream_config_drift(
+        args.stream_replicas,
+        &advisories.cached_info().config,
+    );
+    if !advisory_drift.is_empty() {
         bail!(
-            "dead-letter stream {DEAD_LETTER_STREAM} has drifted config the reader will not \
+            "delivery advisory stream {DELIVERY_ADVISORY_STREAM} has drifted config the reader will not \
              silently accept: {}",
-            dead_letter_drift.join("; ")
+            advisory_drift.join("; ")
         );
     }
 
@@ -1701,6 +1746,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("wamn-reader-nats-{}-{nonce}", std::process::id()));
+        assert!(event_nats_options(None, None).is_ok());
+        for (username, password_file) in [
+            (Some("publisher_dev"), None),
+            (None, Some(path.as_path())),
+            (Some("publisher_dev"), Some(path.as_path())),
+            (Some(""), Some(path.as_path())),
+            (Some("publisher.*"), Some(path.as_path())),
+            (Some("publisher>"), Some(path.as_path())),
+            (Some("publisher dev"), Some(path.as_path())),
+        ] {
+            assert!(event_nats_options(username, password_file).is_err());
+        }
+        std::fs::write(&path, []).expect("write empty password file");
+        assert!(event_nats_options(Some("publisher_dev"), Some(&path)).is_err());
+        std::fs::write(&path, format!("{nonce}\n")).expect("write private password file");
+        assert!(event_nats_options(Some("publisher_dev"), Some(&path)).is_ok());
+        std::fs::remove_file(path).expect("remove private password file");
+    }
+
+    #[test]
     fn walsender_url_appends_replication_database() {
         assert_eq!(
             walsender_url("postgres://u:p@h:5432/db", "disable").unwrap(),
@@ -1776,6 +1848,8 @@ mod tests {
             system_database_url: String::new(),
             cdc_url: "postgres://cdc:pw@db.invalid:5432/project".into(),
             nats_url: "nats://nats.invalid:4222".into(),
+            nats_username: None,
+            nats_password_file: None,
             sslmode: "disable".into(),
             stream_replicas: 1,
             dup_window_secs: 120,
@@ -2154,30 +2228,30 @@ mod tests {
     }
 
     #[test]
-    fn dead_letter_stream_drift_pins_the_per_registration_cap() {
+    fn delivery_advisory_stream_drift_pins_the_subject_cap() {
         use jetstream::stream::{Config, RetentionPolicy, StorageType};
         let matching = Config {
-            subjects: vec![DEAD_LETTER_STREAM_SUBJECTS.into()],
+            subjects: DELIVERY_ADVISORY_SUBJECTS.map(str::to_owned).to_vec(),
             num_replicas: 3,
             storage: StorageType::File,
             retention: RetentionPolicy::Limits,
-            max_messages_per_subject: DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION,
-            max_age: Duration::from_secs(DEAD_LETTER_MAX_AGE_SECONDS),
-            duplicate_window: Duration::from_secs(DEAD_LETTER_MAX_AGE_SECONDS),
+            max_messages_per_subject: DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT,
+            max_age: Duration::from_secs(DELIVERY_ADVISORY_MAX_AGE_SECONDS),
+            duplicate_window: Duration::from_secs(DELIVERY_ADVISORY_MAX_AGE_SECONDS),
             ..Default::default()
         };
-        assert!(dead_letter_stream_config_drift(3, &matching).is_empty());
+        assert!(delivery_advisory_stream_config_drift(3, &matching).is_empty());
 
         let uncapped = Config {
             max_messages_per_subject: -1,
             ..matching
         };
-        let drift = dead_letter_stream_config_drift(3, &uncapped);
+        let drift = delivery_advisory_stream_config_drift(3, &uncapped);
         assert!(
             drift
                 .iter()
                 .any(|item| item.contains("max_messages_per_subject")),
-            "an unbounded per-registration DLQ must be refused: {drift:?}"
+            "unbounded retained delivery advisories must be refused: {drift:?}"
         );
     }
 

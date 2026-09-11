@@ -22,7 +22,7 @@ const OPS_VERBS: &[&str] = &[
     "restore-project-env",
     "copy-project-env",
     "prune-run-history",
-    "dead-letters",
+    "event-advisories",
 ];
 
 fn help(binary: &str) -> String {
@@ -276,7 +276,7 @@ fn ops_binary_exposes_only_ops_verbs() {
     for verb in OPS_VERBS {
         assert!(output.contains(verb), "ops help omitted {verb}");
     }
-    for verb in MVP_VERBS.iter().chain(["pin-run"].iter()) {
+    for verb in MVP_VERBS.iter().chain(["pin-run", "dead-letters"].iter()) {
         assert!(!output.contains(verb), "ops help exposed {verb}");
     }
 }

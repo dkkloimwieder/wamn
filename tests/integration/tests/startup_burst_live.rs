@@ -40,6 +40,7 @@ struct Inputs {
     private_dir: PathBuf,
     evidence_dir: PathBuf,
     nats_url: String,
+    scheduler_nats_url: String,
     otlp_endpoint: String,
     proof_id: String,
     component_artifact_base: String,
@@ -321,11 +322,15 @@ async fn production_http_start_burst_keeps_native_host_progress() -> Result<()> 
         inputs.max_concurrent_starts > 0,
         "native start limit must be nonzero"
     );
+    ensure!(
+        inputs.scheduler_nats_url != inputs.nats_url,
+        "the startup proof requires separate scheduler and event brokers"
+    );
     let mut receipt = json!({"source":inputs.source,"proof_id":inputs.proof_id,
         "native_start_limit":inputs.max_concurrent_starts,"profile":"release",
         "manifest_digest":inputs.manifest_digest,"verdict":"fail",
         "cache_scope":"Fresh host/empty private caches; native HTTP digest is first loaded by cold herd; replicas share native compile deduplication.",
-        "control_scope":"Native washlet RPC on the fixture-provided disposable NATS, independent of the chart operator proof.",
+        "control_scope":"Native washlet RPC on the owned chart scheduler Service, with a unique proof host/group and exact host heartbeat filtering; event NATS is separate.",
         "phase_attribution":"Whole native starts and observed progress only. Retired private Wasm/non-Wasm phase attribution unavailable.",
         "cache_precondition":"Both private OCI and Wasmtime cache directories were created empty. Release preload may compile release callables before readiness; the HTTP shell is not one of those callables.",
         "cold":{"starts":[],"observations":[]},"warm":{"starts":[],"observations":[]}});
@@ -333,7 +338,7 @@ async fn production_http_start_burst_keeps_native_host_progress() -> Result<()> 
         CONTROL_BUDGET,
         async_nats::ConnectOptions::new()
             .request_timeout(None)
-            .connect(&inputs.nats_url),
+            .connect(&inputs.scheduler_nats_url),
     )
     .await??;
     let mut heartbeats = client
@@ -371,7 +376,7 @@ async fn production_http_start_burst_keeps_native_host_progress() -> Result<()> 
             "--environment",
             &inputs.environment,
             "--scheduler-nats-url",
-            &inputs.nats_url,
+            &inputs.scheduler_nats_url,
             "--http-addr",
             "127.0.0.1:0",
             "--probe-addr",
@@ -417,6 +422,19 @@ async fn production_http_start_burst_keeps_native_host_progress() -> Result<()> 
         .stdout(Stdio::from(raw_log.try_clone()?))
         .stderr(Stdio::from(raw_log))
         .kill_on_drop(true);
+    for key in [
+        "WAMN_EVT_NATS_USERNAME",
+        "WAMN_EVT_NATS_PASSWORD_FILE",
+        "WAMN_EVT_ORG",
+        "WAMN_EVT_PROJECT",
+        "WAMN_EVT_ENV",
+    ] {
+        command.env(
+            key,
+            std::env::var_os(key)
+                .with_context(|| format!("the startup proof requires private process input {key}"))?,
+        );
+    }
     for (key, name) in [
         ("WAMN_SYSTEM_URL", "identity-reader"),
         ("WAMN_PG_URL", "guest-sql"),

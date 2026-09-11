@@ -170,12 +170,33 @@ uncertainty grants replay of a composed route.
 
 1. **Hot HTTP:** attachment → router → response, with no run or queue row.
    Per-route in-flight bounds refuse excess work with 429.
-2. **Streams:** per-registration durable pull consumers deliver one event or an
-   ordered batch; ack follows completion, retry is bounded, and poison input goes
-   to a capped per-registration DLQ.
+2. **Streams:** native durable pull consumers deliver one event or an ordered
+   batch for each registration. Acknowledgement follows completion, retries stay
+   bounded, and the broker records exhausted or terminated deliveries as advisories.
 3. **Automations:** admission atomically writes run and queue rows under a producer
    key; claim/lease hands work to the router; expiry redelivers. `begin`/`wait`
    and same-key/same-outcome remain.
+
+The reviewed [C source checkpoint](perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json) under `wamn-0ct2.7` uses native `wasmcloud:nats/jetstream@0.1.0` through the named `events` binding.
+The materializer is platform infrastructure.
+The checkpoint removes WAMN's custom delivery and settlement resources and its payload dead-letter queue.
+WAMN retains exact release-registration checks, consumer preparation and drift refusal, derived publishing, and the scheduler doorbell.
+
+The host reads native binding configuration from `--materializer-nats-binding-file` or `WAMN_MAT_NATS_BINDING_FILE`.
+The private file carries the native server, credentials, inbox prefix, and stream and subject grants.
+`WorkloadConfigPolicy::Deny` prevents workload configuration from replacing that binding.
+Each environment uses separate materializer credentials for its allowed stream and exact durables.
+Broker permissions allow their information, pull and acknowledgement subjects and a private inbox, without stream creation, consumer creation, or event publishing.
+
+Trusted application declarations supply `WAMN_EVT_ORG`, `WAMN_EVT_PROJECT`, and `WAMN_EVT_ENV` to the host and executor.
+These event coordinates remain separate from tenant identity and database-project authority.
+Direct runtime, CDC and operator clients retain `WAMN_EVT_NATS_URL`.
+When authentication is configured, `WAMN_EVT_NATS_USERNAME` and `WAMN_EVT_NATS_PASSWORD_FILE` are required together.
+Password bytes stay in private files and host memory, outside workload configuration and recorded commands.
+
+This checkpoint establishes source changes and focused test results only.
+Live correctness, broker authority, delivery pressure, and the integrated retained workspace test run remain pending under `wamn-0ct2.7`.
+The scope of observer access to shared advisory metadata still requires the owner's decision.
 
 `emit` carries an author-supplied dedup id; automation admission deduplicates it.
 The queue does not survive verbatim: classifier/effect-attempt predicates must be
@@ -341,8 +362,9 @@ pooler trigger, not an alternative identity model.
 - Registration identity is immutable release content. Hot operational state uses
   pointer-flipped activation; it does not mutate a manifest digest.
 - OTel carries trace context, one span per component invocation/effect, and
-  per-wiring/registration throughput, error, ack-lag and DLQ metrics. The studio
-  live view is a bounded, redacted router-edge stream, not durable node history.
+  throughput and error metrics for each wiring and registration.
+  Retained broker advisories identify exhausted and terminated deliveries.
+  The studio live view remains a bounded, redacted stream from router edges.
 - Platform artifacts retain the operator/OCI path, converged by operator kubectl
   per deploy/README.md's runbook with a GitOps controller demand-gated.
   Flow-language artifacts and plan-shaped publication surfaces retire with their

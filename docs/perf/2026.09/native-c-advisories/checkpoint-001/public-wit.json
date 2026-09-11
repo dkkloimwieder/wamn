@@ -1,0 +1,7 @@
+{
+  "upstream_path": "/home/kaalin/.cargo/git/checkouts/wasmcloud-5015bea8635e07bc/68ebece/wit/nats/wit/world.wit",
+  "vendored_path": "/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910/components/execution/materializer/wit/deps/wasmcloud-nats/package.wit",
+  "upstream_revision": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "identical": true,
+  "sha256": "0965e4663e28fe4e770868170d5947678edb43c268970e9be6160705bc8a0fdf"
+}

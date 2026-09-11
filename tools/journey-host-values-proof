@@ -95,11 +95,13 @@ grep -q 'replicas: 0' "$work/measure/host-overlay.yaml"; check "measure arm rend
 # These pins include native probes, shutdown budgets, count-mode memory, and
 # start concurrency. Before/after bytes and diffs:
 # docs/perf/2026.09/wasmcloud-2-9-cutover/live-harness-fix-001/
+# 2026-09-11, wamn-0ct2.7: native event binding and scoped broker Secret refs.
+# Reviewed before/after renders: docs/perf/2026.09/native-c-advisories/credential-render-001/.
 declare -A pinned=(
-  [normal/host-base.yaml]=3e307dd74963248a1458d667962f4cfd6fdbe5e262d62d2548555b0ee12dbc1e
-  [normal/host-overlay.yaml]=2f40eb4093694d67c115a2ce7f43ac57491dc6f947d2d3f81876e91e67be9ed5
-  [measure/host-base.yaml]=0cb3ee37ac9b4f191652d348c1e2b20bf0d4ea5b1bc6884dae22e8dda3597beb
-  [measure/host-overlay.yaml]=51dc2c85b40fb169dfb2e856aa308c1a4b3a1b7b030802289321b468a76ed85e
+  [normal/host-base.yaml]=dfc1b6212af5f5d3c656982261c1d80a699a704bb8d5e15276406cf34f410b64
+  [normal/host-overlay.yaml]=1d4bddaf429939a76d111210dd9e3baafefe0093ec85fd818b9d71a43ac22ee1
+  [measure/host-base.yaml]=1ea1a1e9c1a12a14ef62329aebdc2ef6b362bff93e541d1830309db2f769b786
+  [measure/host-overlay.yaml]=b0b9b77ded97de73a8c7569833a120033b904bfd9b7d1357b8f45e2d0b1aab92
 )
 keep=$(mktemp -d)
 for rel in "${!pinned[@]}"; do
@@ -127,6 +129,20 @@ check "WMS overlay carries its own identity" $?
 check "every WMS-derived anchor fired" $?
 grep -q 'secretName: probe-object-store-9' "$work/wms/host-overlay.yaml"
 check "the object-store credentials Secret is the declared one" $?
+for app in normal wms; do
+  rendered=$work/$app/host-overlay.yaml
+  grep -qF 'secretName: wamn-event-nats' "$rendered" &&
+    grep -qF 'secretName: wamn-materializer-nats' "$rendered" &&
+    grep -qF 'name: WAMN_EVT_NATS_PASSWORD_FILE, value: /etc/wamn/event-nats/password' "$rendered" &&
+    grep -qF 'name: WAMN_MAT_NATS_BINDING_FILE, value: /etc/wamn/materializer-nats/binding.json' "$rendered"
+  check "$app keeps direct and native broker credentials in separate host Secret files" $?
+  project=receiving
+  [[ $app != wms ]] || project=wms
+  grep -qF 'name: WAMN_EVT_ORG, value: acme' "$rendered" &&
+    grep -qF "name: WAMN_EVT_PROJECT, value: $project" "$rendered" &&
+    grep -qF 'name: WAMN_EVT_ENV, value: dev' "$rendered"
+  check "$app carries its explicit event-plane identity" $?
+done
 # Declared per application, in both directions: an application declaring no
 # object-store credential must not be handed an overlay that mounts one, and an
 # application declaring one must not be handed an overlay that mounts none.

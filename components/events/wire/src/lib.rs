@@ -252,51 +252,53 @@ impl<'de> Deserialize<'de> for Envelope {
     }
 }
 
-/// The single bounded stream that stores operator-visible registration poison.
-pub const DEAD_LETTER_STREAM: &str = "WAMN_DLQ";
+/// The bounded stream that retains broker delivery advisories.
+pub const DELIVERY_ADVISORY_STREAM: &str = "WAMN_EVENT_ADVISORIES";
 
-/// Subject filter owned by [`DEAD_LETTER_STREAM`].
-pub const DEAD_LETTER_STREAM_SUBJECTS: &str = "dlq.>";
+/// Broker subjects for exhausted and terminated deliveries.
+pub const DELIVERY_ADVISORY_SUBJECTS: [&str; 2] = [
+    "$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.*.*",
+    "$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.*.*",
+];
 
-/// Maximum retained poison messages for one exact registration subject.
-pub const DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION: i64 = 1_000;
+/// Maximum retained advisories on one broker subject.
+pub const DELIVERY_ADVISORY_MAX_MESSAGES_PER_SUBJECT: i64 = 1_000;
 
-/// Maximum age of one dead-letter message: seven days.
-pub const DEAD_LETTER_MAX_AGE_SECONDS: u64 = 7 * 24 * 60 * 60;
+/// Advisory retention is seven days, independent of source payload retention.
+pub const DELIVERY_ADVISORY_MAX_AGE_SECONDS: u64 = 7 * 24 * 60 * 60;
 
-/// The original header preserved inside a dead-letter record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct DeadLetterHeader {
-    pub name: String,
-    pub value: String,
+/// The broker's delivery disposition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeliveryAdvisoryKind {
+    #[serde(rename = "io.nats.jetstream.advisory.v1.max_deliver")]
+    MaxDeliver,
+    #[serde(rename = "io.nats.jetstream.advisory.v1.terminated")]
+    Terminated,
 }
 
-/// One server-acknowledged registration refusal retained for operator action.
+/// A retained broker advisory with no copied source payload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct DeadLetter {
-    pub format_version: u32,
-    pub reason: String,
-    pub source_stream: String,
-    pub source_stream_sequence: u64,
-    pub delivered: u64,
-    pub original_subject: String,
-    pub headers: Vec<DeadLetterHeader>,
-    pub body: Vec<u8>,
+pub struct DeliveryAdvisory {
+    #[serde(rename = "type")]
+    pub kind: DeliveryAdvisoryKind,
+    pub id: String,
+    pub timestamp: String,
+    pub stream: String,
+    pub consumer: String,
+    pub stream_seq: u64,
+    pub deliveries: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer_seq: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
-impl DeadLetter {
-    /// Parse and validate one retained dead-letter record.
+impl DeliveryAdvisory {
+    /// Read the broker's advisory format.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, serde_json::Error> {
-        let dead_letter: Self = serde_json::from_slice(bytes)?;
-        if dead_letter.format_version != 1 {
-            return Err(<serde_json::Error as serde::de::Error>::custom(format!(
-                "unsupported dead-letter format-version {}",
-                dead_letter.format_version
-            )));
-        }
-        Ok(dead_letter)
+        serde_json::from_slice(bytes)
     }
 }
 
@@ -384,34 +386,6 @@ pub fn stream_subjects(org: &str, env: &str) -> String {
 /// (the registration default; one stream per org+env, D19 v3 §5).
 pub fn stream_name(org: &str, env: &str) -> String {
     format!("EVT_{org}_{env}")
-}
-
-/// Host-derived per-registration dead-letter subject.
-pub fn dead_letter_subject(
-    tenant: &str,
-    environment: &str,
-    package_id: &str,
-    registration_id: &str,
-) -> String {
-    format!(
-        "dlq.{}.{}.{}.{}",
-        subject_token(tenant),
-        subject_token(environment),
-        subject_token(package_id),
-        subject_token(registration_id)
-    )
-}
-
-/// Stable JetStream dedup identity for one source message's DLQ publication.
-pub fn dead_letter_message_id(
-    subject: &str,
-    source_stream: &str,
-    source_stream_sequence: u64,
-) -> String {
-    format!(
-        "{subject}:{}:{source_stream_sequence}",
-        subject_token(source_stream)
-    )
 }
 
 /// Make a raw name safe as ONE subject token: NATS reserves `.` (separator),
@@ -577,43 +551,6 @@ mod tests {
     fn stream_name_is_evt_org_env() {
         assert_eq!(stream_name("acme", "dev"), "EVT_acme_dev");
         assert_eq!(stream_name("acme", "prod"), "EVT_acme_prod");
-    }
-
-    #[test]
-    fn dead_letter_identity_is_host_derivable_and_environment_exact() {
-        let subject = dead_letter_subject("tenant-a", "prod", "orders", "on.shipped");
-        assert_eq!(subject, "dlq.tenant-a.prod.orders.on_shipped_7567c5f1");
-        assert_eq!(
-            dead_letter_message_id(&subject, "EVT_acme_prod", 42),
-            "dlq.tenant-a.prod.orders.on_shipped_7567c5f1:EVT_acme_prod:42"
-        );
-        assert_eq!(DEAD_LETTER_STREAM, "WAMN_DLQ");
-        assert_eq!(DEAD_LETTER_STREAM_SUBJECTS, "dlq.>");
-        assert!(DEAD_LETTER_MAX_MESSAGES_PER_REGISTRATION > 0);
-        assert!(DEAD_LETTER_MAX_AGE_SECONDS > 0);
-    }
-
-    #[test]
-    fn dead_letter_format_refuses_unknown_versions() {
-        let record = DeadLetter {
-            format_version: 1,
-            reason: "poison-invalid-envelope".into(),
-            source_stream: "EVT_acme_prod".into(),
-            source_stream_sequence: 42,
-            delivered: 1,
-            original_subject: "evt.acme.app.prod.orders.insert".into(),
-            headers: vec![DeadLetterHeader {
-                name: "Nats-Msg-Id".into(),
-                value: "app_prod:42".into(),
-            }],
-            body: br#"{\"bad\":true}"#.to_vec(),
-        };
-        let canonical = serde_json::to_vec(&record).unwrap();
-        assert_eq!(DeadLetter::from_slice(&canonical).unwrap(), record);
-
-        let mut future = serde_json::to_value(&record).unwrap();
-        future["format-version"] = 2.into();
-        assert!(DeadLetter::from_slice(&serde_json::to_vec(&future).unwrap()).is_err());
     }
 
     #[test]

@@ -86,7 +86,6 @@ enum Surface {
 
 const DESTRUCTOR: Surface =
     Surface::Local("resource destructor: the host reclaims what the guest let go");
-const ACCESSOR: Surface = Surface::Local("accessor over already-delivered host memory");
 
 /// The methods of one host trait, each classified as an effect or not.
 type MethodSurfaces = &'static [(&'static str, Surface)];
@@ -171,34 +170,10 @@ const CONTRACT: &[(&str, &str, MethodSurfaces)] = &[
     (HTTP, "http::Host", &[("send", Surface::Effect)]),
     (
         JETSTREAM,
-        "consumer::Host",
-        &[
-            ("bind", Surface::Effect),
-            ("bind_registration", Surface::Effect),
-        ],
-    ),
-    (
-        JETSTREAM,
-        "consumer::HostDurableConsumer",
-        &[("fetch", Surface::Effect), ("drop", DESTRUCTOR)],
-    ),
-    (
-        JETSTREAM,
-        "consumer::HostMessage",
-        &[
-            ("body", ACCESSOR),
-            ("subject", ACCESSOR),
-            ("headers", ACCESSOR),
-            ("metadata", ACCESSOR),
-            ("ack", Surface::Effect),
-            ("nack", Surface::Effect),
-            ("term", Surface::Effect),
-            ("dead_letter", Surface::Effect),
-            ("drop", DESTRUCTOR),
-        ],
+        "registration::Host",
+        &[("prepare", Surface::Effect)],
     ),
     (JETSTREAM, "doorbell::Host", &[("ring", Surface::Effect)]),
-    (JETSTREAM, "producer::Host", &[("publish", Surface::Effect)]),
 ];
 
 fn repository_root() -> PathBuf {

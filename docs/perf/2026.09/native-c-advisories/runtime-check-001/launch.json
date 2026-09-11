@@ -1,0 +1,24 @@
+{
+  "pid": 3347919,
+  "argv": [
+    "nohup",
+    "python3",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/native-c-advisories/tools/capture.py",
+    "/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/native-c-advisories/runtime-check-001",
+    "cargo",
+    "check",
+    "-p",
+    "wamn-runtime",
+    "-p",
+    "wamn-cdc-reader",
+    "-p",
+    "wamn-ctl",
+    "--features",
+    "wamn-ctl/ops",
+    "--lib",
+    "--locked",
+    "--offline"
+  ],
+  "cargo_build_jobs": 4
+}

@@ -160,12 +160,52 @@ runtime:
         - { name: WAMN_REGISTRY_AUTH_FILE, value: /etc/wamn/registry/config.json }
         - name: WAMN_COMPONENT_ARTIFACT_BASE
           value: registry.wamn-system.svc.cluster.local:5000/wamn/components
-        # [l5i9.17] The data-plane (event-plane) NATS for the wamn:jetstream
-        # plugin — the materializer Service workload's stream/doorbell path.
-        # Absent, the plugin still links and returns connection-unavailable.
+        # Host-owned registration and publication use their own broker user.
+        # The native materializer binding uses a separate restricted credential.
+        # Required Secrets keep password bytes outside workload configuration.
         - name: WAMN_EVT_NATS_URL
           value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+        - name: WAMN_EVT_NATS_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: wamn-event-nats
+              key: username
+              optional: false
+        - { name: WAMN_EVT_NATS_PASSWORD_FILE, value: /etc/wamn/event-nats/password }
+        - { name: WAMN_MAT_NATS_BINDING_FILE, value: /etc/wamn/materializer-nats/binding.json }
+        - name: WAMN_EVT_ORG
+          valueFrom:
+            secretKeyRef:
+              name: wamn-event-nats
+              key: org
+              optional: false
+        - name: WAMN_EVT_PROJECT
+          valueFrom:
+            secretKeyRef:
+              name: wamn-event-nats
+              key: project
+              optional: false
+        - name: WAMN_EVT_ENV
+          valueFrom:
+            secretKeyRef:
+              name: wamn-event-nats
+              key: environment
+              optional: false
       volumes:
+        - name: event-nats
+          secret:
+            secretName: wamn-event-nats
+            optional: false
+            items:
+              - key: password
+                path: password
+        - name: materializer-nats
+          secret:
+            secretName: wamn-materializer-nats
+            optional: false
+            items:
+              - key: binding.json
+                path: binding.json
         - name: registry-pull
           secret:
             secretName: wamn-registry-pull
@@ -174,6 +214,12 @@ runtime:
               - key: .dockerconfigjson
                 path: config.json
       volumeMounts:
+        - name: event-nats
+          mountPath: /etc/wamn/event-nats
+          readOnly: true
+        - name: materializer-nats
+          mountPath: /etc/wamn/materializer-nats
+          readOnly: true
         - name: registry-pull
           mountPath: /etc/wamn/registry
           readOnly: true

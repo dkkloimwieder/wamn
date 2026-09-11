@@ -29,6 +29,8 @@
 #                               it mounts none. Empty is a declaration, not a
 #                               default: the overlay is then required to carry
 #                               no such Secret, and one that does is refused.
+# Event-broker Secrets keep their platform names within each environment
+# namespace. This renderer copies only Secret references and password-file paths.
 #
 # Positional: $2 is the directory to write host-base.yaml and host-overlay.yaml
 # into. The third argument is the replica count to RENDER -- already decided by
@@ -138,7 +140,9 @@ render_host_values() {
   awk -v anchor_map="$host_overlay_anchor_map" \
       -v component_base="${_rhv_spec[component_artifact_base]}" \
       -v release_base="${_rhv_spec[release_artifact_base]}" -v digest="${_rhv_spec[manifest_digest]}" \
-      -v nats_url="${_rhv_spec[nats_url]}" '
+      -v nats_url="${_rhv_spec[nats_url]}" \
+      -v event_org="${_rhv_spec[org]}" -v event_project="${_rhv_spec[project]}" \
+      -v event_environment="${_rhv_spec[environment]}" '
     BEGIN {
       rows = split(anchor_map, row, "\n")
       for (i = 1; i <= rows; i++) {
@@ -167,6 +171,18 @@ render_host_values() {
       print "        - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: http://otel-collector.wamn-system.svc.cluster.local:4317 }"
       print "        - { name: OTEL_BSP_SCHEDULE_DELAY, value: \"1\" }"
       print "        - { name: OTEL_BSP_MAX_EXPORT_BATCH_SIZE, value: \"1\" }"
+      next
+    }
+    /^        - \{ name: WAMN_EVT_ORG,/ {
+      print "        - { name: WAMN_EVT_ORG, value: " event_org " }"
+      next
+    }
+    /^        - \{ name: WAMN_EVT_PROJECT,/ {
+      print "        - { name: WAMN_EVT_PROJECT, value: " event_project " }"
+      next
+    }
+    /^        - \{ name: WAMN_EVT_ENV,/ {
+      print "        - { name: WAMN_EVT_ENV, value: " event_environment " }"
       next
     }
     /^        - name: WAMN_EVT_NATS_URL$/ {

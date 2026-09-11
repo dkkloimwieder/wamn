@@ -42,11 +42,13 @@ receiving_spec() {
     receiving dev EVT_acme_dev acme
 }
 
+# wamn-0ct2.7 reviewed render diffs and hashes:
+# docs/perf/2026.09/native-c-advisories/credential-render-001/.
 echo "1. bytes, and both applications"
 receiving_spec rcv
 render_materializer_manifest rcv "$work/rcv.yaml"; check "the Receiving render succeeds" $?
-[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == b484547d0b77395ac41e9386e880ca68f0bf00c738e95bf018d64cfcb80d9324 ]]
-check "bytes unchanged since the pre-lift block" $?
+[[ $(sha256sum "$work/rcv.yaml" | cut -d' ' -f1) == c42b3dd798779ef96915e09d244e6d7749e02a674d49b2a29ad111fffa803b15 ]]
+check "bytes match the reviewed native event binding template" $?
 # TWO PINS, because a render is a function of its inputs and the digest above
 # is of the PROOF's inputs. This second one is of the journey's real ones, so
 # the thing actually deployed is what the pre-lift block deployed -- a proof
@@ -56,8 +58,8 @@ build_spec live "$TEMPLATE" receiving-materializer receiving-route-auth \
 live[namespace]=wamn-receiving-journey
 live[image]=reg.example:5000/wamn/materializer@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 render_materializer_manifest live "$work/live.yaml"
-[[ $(sha256sum "$work/live.yaml" | cut -d' ' -f1) == 9778c0d5e2ab748d2a37c841e1d146a6b181c4a0603c35601b03f1da271b5a4d ]]
-check "the journey's own inputs render the pre-lift bytes too" $?
+[[ $(sha256sum "$work/live.yaml" | cut -d' ' -f1) == 028facfd6fdb82fb28d84d39c11b55e5bd0c2564fe01161cdc028d44cd31d5f2 ]]
+check "the journey's own inputs render the reviewed native binding" $?
 
 # A SECOND APPLICATION SHARING NOTHING. The template is generic and both
 # applications render the same file, so the only thing that can make their
@@ -92,6 +94,20 @@ grep -q 'wamn.postgres.authority: event-materializer' "$work/wms.yaml"
 check "the platform authority class is untouched for both applications" $?
 grep -q 'WAMN_MAT_MAX_DELIVER: "5"' "$work/wms.yaml"
 check "the template's retry bound is untouched" $?
+for app in rcv live wms; do
+  native=$(awk '
+    /- namespace: wasmcloud/ { in_native = 1; next }
+    in_native && /- namespace:/ { exit }
+    in_native { print }
+  ' "$work/$app.yaml")
+  [[ $(grep -c 'package: nats' <<<"$native") -eq 1 ]] &&
+    grep -qF 'name: events' <<<"$native" &&
+    grep -qF 'interfaces: [types, jetstream]' <<<"$native" &&
+    grep -qF 'interfaces: [types, registration]' "$work/$app.yaml"
+  check "$app uses named native delivery and retains WAMN registration" $?
+  ! grep -Eq 'WAMN_EVT_NATS_PASSWORD|WAMN_MAT_NATS_BINDING_FILE|password:' "$work/$app.yaml"
+  check "$app workload contains no broker password or host binding file" $?
+done
 
 echo "3. exactly once, per anchor"
 for anchor in 'name: materializer-demo' 'namespace: wamn-system' \

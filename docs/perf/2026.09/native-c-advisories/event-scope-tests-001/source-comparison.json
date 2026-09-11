@@ -1,0 +1,11 @@
+{
+  "captured_source_unchanged": true,
+  "supplemental_source_files_unchanged": true,
+  "changed_supplemental_paths": [],
+  "executed_tests": 12,
+  "reported_passes": 13,
+  "explicit_self_skips": [
+    "plugins::wamn_jetstream::tests::live_derived_publish_replay_converges_through_jetstream_dedup: WAMN_EVT_NATS_URL unset"
+  ],
+  "status_scope": "Full git status is recorded at both ends; only captured compilation inputs establish source stability."
+}

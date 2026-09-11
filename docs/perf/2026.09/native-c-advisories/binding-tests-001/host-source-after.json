@@ -1,0 +1,10 @@
+{
+  "head": "b1d40d80558cb58ea4c9e4580d0f46e7edf2fc5b",
+  "status": " M Cargo.lock\n M components/events/wire/src/lib.rs\n M components/execution/materializer/Cargo.toml\n M components/execution/materializer/src/main.rs\n M components/execution/materializer/wit/deps/wamn-jetstream/package.wit\n M components/execution/materializer/wit/world.wit\n M crates/platform/runtime/src/plugins/effect_span.rs\n M crates/platform/runtime/src/plugins/wamn_jetstream.rs\n M crates/platform/runtime/tests/jetstream_wit_coherence.rs\n M crates/platform/runtime/wit/deps/wamn-jetstream/package.wit\n M crates/platform/runtime/wit/world.wit\n M deploy/infra/nats-jetstream.yaml\n M deploy/platform/materializer.example.yaml\n M services/cdc-reader/src/lib.rs\n M services/cdc-reader/tests/event_reader_live.rs\n M services/ctl/src/bin/wamn-ctl-ops.rs\n D services/ctl/src/dead_letters.rs\n M services/ctl/src/lib.rs\n M services/ctl/tests/verb_surface.rs\n M services/host/Cargo.toml\n M services/host/src/host.rs\n M tests/conformance/tests/effect_spans.rs\n M tests/integration/src/route_authentication_live.rs\n M tests/integration/src/route_authentication_live/postcommit.rs\n M tools/receiving-cluster-journey-run\n M tools/receiving-postcommit-proof\n M tools/wms-cluster-journey-run\n?? components/execution/materializer/wit/deps/wasmcloud-nats/\n?? services/ctl/src/event_advisories.rs\n",
+  "files": {
+    "services/host/Cargo.toml": "fd7cbbf4af51efc04671043b60102bd734da4b8bbdcb3d7703d91b5a2372e1f7",
+    "services/host/src/host.rs": "df4b0e8757f68a96a02e785a71970a615a17366cf24e358fbae3da5925587c9f",
+    "crates/platform/runtime/src/plugins/wamn_jetstream.rs": "2399a5a48f6b868ab518c4c8fa2b4a50a8f027db27886c860e9d2fb4f3416f80",
+    "Cargo.lock": "716052ad25802313f4b0ea08135c11e5289f0d824414bb4ffd696a23b6038e4a"
+  }
+}

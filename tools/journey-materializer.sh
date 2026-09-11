@@ -36,6 +36,8 @@
 #                         identity, and named here for the same reason: a
 #                         value the harness holds is a value the caller cannot
 #                         see it holding.
+# The native events binding is fixed by the platform. Its credentials remain
+# in the host Secret and are never substituted into this workload.
 #
 # Required spec keys -- what the TEMPLATE says today:
 #   template_name, template_system_namespace, template_image, template_tenant,

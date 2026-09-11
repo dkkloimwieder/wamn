@@ -303,12 +303,52 @@ If a required public-API boundary remains blocked, stop and record the exact obs
 
 ### `[NATIVE-C]` native NATS source checkpoint
 
-`wamn-0ct2.4` stops before a production substitution.
-The [report](../perf/2026.09/native-c-nats/report.md) records the private message-handle boundary and the retained host policy.
-Deferred decision `wamn-0ct2.6` owns the separate trusted adapter option and its upstream trigger.
-No native delivery or bypass proof ran for this checkpoint.
+`wamn-0ct2.7` owns the reviewed [source checkpoint](../perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json).
+It moves materializer delivery and settlement to the named native `events` binding and replaces payload dead letters with retained broker advisories.
+WAMN retains exact release-registration selection, consumer preparation and drift refusal, derived publishing, and the separate scheduler doorbell.
+Source commit `26fdd3eda8e194730a016bf933f2917a6120c05b` records this checkpoint.
+It does not establish live correctness, broker authority, delivery pressure, or an integrated workspace result.
+The separate development activation caller update is outside this checkpoint.
+The observer's access to shared advisory metadata remains an owner decision.
 
-Capture the source identities into a new evidence directory:
+The host takes `--materializer-nats-binding-file` or `WAMN_MAT_NATS_BINDING_FILE` as a path to private native binding configuration.
+Use separate credentials for each environment's materializer and its permitted stream and durables.
+The native `events` binding uses `WorkloadConfigPolicy::Deny` and contains the server, credentials, private inbox prefix, and stream and subject grants.
+Keep password bytes out of workload configuration, commands, logs, and evidence.
+Project the declared application coordinates into the host and executor through `WAMN_EVT_ORG`, `WAMN_EVT_PROJECT`, and `WAMN_EVT_ENV`.
+Keep those values distinct from tenant identity and database-project authority.
+Direct runtime, CDC and operator clients retain `WAMN_EVT_NATS_URL` and require username and password-file configuration together when authentication is configured.
+Use `WAMN_EVT_NATS_USERNAME` and `WAMN_EVT_NATS_PASSWORD_FILE`.
+The client reads the file itself.
+
+The handoff records the original host check's lock-file refusal and the later passing focused tests, renderer tests, and compilation-only integration check.
+The runtime test run executes 12 cases and explicitly skips its unarmed live case.
+The compilation-only check executes no integration tests.
+Retain their original logs and source hashes.
+The focused commands include:
+
+```bash
+cargo test -p wamn-host --bin wamn-host --locked --offline \
+  host::tests::materializer_binding_keeps_credentials_and_grants_host_owned \
+  -- --exact --nocapture
+cargo test -p wamn-cdc-reader -p wamn-ctl --lib --locked --offline \
+  event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs -- --nocapture
+cargo test -p wamn-runtime --lib \
+  --features wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats \
+  --locked --offline plugins::wamn_jetstream::tests:: -- --nocapture
+tools/journey-host-values-proof
+tools/journey-materializer-proof
+```
+
+Before closing `wamn-0ct2.7`, execute the Receiving path with exact current artifacts and record the native binding's credential boundary.
+Test denied foreign registrations, streams and subjects, replay after interruption between commit and acknowledgement, poison termination, later valid-event progress, and bounded delivery pressure.
+Test source-payload retrieval before retention expiry and its absence afterward.
+Run the retained integrated workspace test command and classify each result against the consolidation baseline.
+These tests remain pending for this checkpoint.
+
+The earlier [source report](../perf/2026.09/native-c-nats/report.md) under `wamn-0ct2.4` retains its private message-handle finding.
+Its deferred adapter alternative under `wamn-0ct2.6` is superseded by the current platform materializer boundary.
+For a replay of that historical source capture, use its existing recipe:
 
 ```bash
 python3 docs/perf/2026.09/native-c-nats/tools/capture-source.py \
@@ -319,8 +359,8 @@ python3 docs/perf/2026.09/native-c-nats/tools/capture-source.py \
 
 The tool records four Git commands, 15 source hashes, and its own hash.
 Make sure that the revisions match the report and the selected source files are clean.
-Do not treat this source capture as an executed broker or adapter proof.
-Keep the host checks until the separate decision authorizes a tested replacement.
+Do not treat this source capture as an executed broker or adapter test.
+The historical capture supplies no executed broker result for `wamn-0ct2.7`.
 
 ### `[P3-HTTP]` production HTTP cutover
 
@@ -3670,6 +3710,9 @@ hostname.
 
 ### `[RECEIVING-MATERIALIZER-JOURNEY]` — router-era causation and materialization
 
+The [C source checkpoint](../perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json) updates this recipe to native delivery and settlement.
+A live run against that source remains pending under `wamn-0ct2.7`; earlier journey evidence retains its original implementation and claims.
+
 This is the D19 primary gate and the production-fed source for
 `H5-CAUSATION` and `H5-CAUSATION-E2E`. The disposable cluster runner starts the
 production CDC reader, schedules the released EventMaterializer, and issues a
@@ -3677,7 +3720,7 @@ real receipt through the published Receiving route. It proves the receipt
 event carries route-derived root causation, the handler-created inspection
 preserves that root while advancing depth, and exactly one pending inspection
 is committed. The durable must settle with no pending or redelivered messages
-and no dead letter. The materializer invocation trace must name the released
+and no exhaustion or termination advisory. The materializer invocation trace must name the released
 overlay operation and digest, include its PostgreSQL effect, and carry no
 caller identity: post-commit causation is provenance, not identity.
 
@@ -3692,6 +3735,10 @@ traceproof, and scoped RegistryReader receipts; it does not rerun those
 unchanged mechanisms.
 
 ### `[RECEIVING-POSTCOMMIT]` — unchanged overlay and event progress
+
+The [C source checkpoint](../perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json) replaces this recipe's payload dead-letter assertion with a retained broker termination advisory.
+Execution against the changed source remains pending under `wamn-0ct2.7`, including the observer scope decision.
+Earlier dated reports retain their original results.
 
 `wamn-10yt.78` owns this correctness proof under Increment 2 of `docs/poc/wamn_testing_spec.md`.
 The pair uses separate fresh installations of the baseline and additive base with identical overlay files and component bytes.
@@ -3714,8 +3761,9 @@ The second registered delivery must emit matching acceptance and completion reco
 
 The retry case stops only the owned materializer, commits a new receipt through its released route, and locks that receipt on another connection.
 The proof resumes the same materializer and submits an independent receipt.
-It observes three separate blocked handler queries before the actual `router-retry-exhausted` dead-letter record appears.
-The record must preserve the poison event, headers, stream sequence, and registration identity.
+It observes three separate blocked handler queries before the broker emits the retained `MSG_TERMINATED` advisory.
+The advisory must identify the exact stream, durable and poison source sequence, with one broker delivery.
+The test retains the original source event and headers separately.
 The independent receipt must produce its inspection within 90 seconds.
 The proof releases the lock and restores the owned materializer on every normal result path.
 
@@ -3727,7 +3775,7 @@ The proof assumes that its database, broker, host, and materializer remain avail
 It proves the named application behavior, not a platform-wide exactly-once guarantee.
 
 `overlay-compatibility.json` records the exact overlay files, component digest, schema observations, and breaking refusal.
-`postcommit.json` records source events, registered deliveries, approved state, observed retries, dead letters, independent state, and restoration.
+`postcommit.json` records source events, registered deliveries, approved state, observed retries, the delivery advisory, independent state, and restoration.
 `pair.json` requires both installations, unchanged overlay identities, and successful cleanup.
 An absent test, zero executed cases, missing event, or unarmed phase fails the recipe.
 The mutation rules in **Traps** apply to deliberate defects and exact restoration.

@@ -16,11 +16,17 @@
 #   kubectl -n wamn-system exec evt-nats-0 -- nats-server --help >/dev/null   # sanity
 #   kubectl -n wamn-system wait --for=condition=complete job/evt-nats-tap-stream --timeout=120s
 #
-# ACCOUNTS (wamn-l5i9.7 fork Q2 = single shared account now): JetStream is
-# enabled on the default global account. Per-org NATS accounts + replication
-# credentials are MANDATORY eventually (§11 honeypot) but are a documented SEAM
-# co-designed in wamn-4xw — NOT provisioned here. The subject namespace already
-# reserves per-org isolation (evt.<org>...), so the account split is additive.
+# Before apply, provision evt-nats-authorization with authorization.conf and
+# evt-nats-bootstrap with context.json. Both are required Secrets; this file
+# contains no passwords. The authorization file uses existing NATS users and
+# subject permissions on the shared account, with no anonymous/default user.
+# Give each environment separate materializer, publisher/admin and observer
+# users. The materializer may publish only exact stream/consumer INFO, consumer
+# NEXT and ACK subjects, and subscribe only to its private inbox prefix. It
+# cannot create a stream/consumer or publish events. Other roles receive only
+# their required stream operations and their own _INBOX_<username>.> replies.
+# The bootstrap context contains the tap-stream administrator credentials and
+# its private inbox_prefix; the Job reads that file without exposing passwords.
 #
 # The retained streambench recipe covers publish/consume, Nats-Msg-Id dedupe,
 # and R3 survival after one node deletion; its in-cluster Job is archived for MVP.
@@ -39,6 +45,9 @@ data:
     server_name: $POD_NAME
     listen: 0.0.0.0:4222
     http: 0.0.0.0:8222
+    # Preserve the default 1 MiB event ceiling explicitly for bounded native pulls.
+    max_payload: 1048576
+    include /etc/nats-authorization/authorization.conf
 
     jetstream {
       store_dir: /data/jetstream
@@ -163,6 +172,9 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/nats-config
+            - name: authorization
+              mountPath: /etc/nats-authorization
+              readOnly: true
             - name: data
               mountPath: /data
           # /healthz on the monitoring port reports overall + JetStream health.
@@ -190,6 +202,13 @@ spec:
         - name: config
           configMap:
             name: evt-nats-config
+        - name: authorization
+          secret:
+            secretName: evt-nats-authorization
+            optional: false
+            items:
+              - key: authorization.conf
+                path: authorization.conf
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -288,15 +307,21 @@ spec:
             - |
               URL=nats://evt-nats.wamn-system.svc.cluster.local:4222
               CONFIG=/etc/tap-stream/stream.json
-              if nats --server "$URL" stream info WAMN_TAP >/dev/null 2>&1; then
-                nats --server "$URL" stream edit WAMN_TAP --config "$CONFIG" --force
+              if nats --context bootstrap --server "$URL" stream info WAMN_TAP >/dev/null 2>&1; then
+                nats --context bootstrap --server "$URL" stream edit WAMN_TAP --config "$CONFIG" --force
               else
-                nats --server "$URL" stream add WAMN_TAP --config "$CONFIG"
+                nats --context bootstrap --server "$URL" stream add WAMN_TAP --config "$CONFIG"
               fi
-              nats --server "$URL" stream info WAMN_TAP
+              nats --context bootstrap --server "$URL" stream info WAMN_TAP
+          env:
+            - name: XDG_CONFIG_HOME
+              value: /etc/nats-client
           volumeMounts:
             - name: config
               mountPath: /etc/tap-stream
+            - name: bootstrap
+              mountPath: /etc/nats-client/nats/context
+              readOnly: true
           resources:
             requests: { cpu: "50m", memory: "32Mi" }
             limits: { memory: "128Mi" }
@@ -304,3 +329,10 @@ spec:
         - name: config
           configMap:
             name: evt-nats-tap-stream
+        - name: bootstrap
+          secret:
+            secretName: evt-nats-bootstrap
+            optional: false
+            items:
+              - key: context.json
+                path: bootstrap.json

@@ -56,9 +56,9 @@ spec:
       environment: wamn-system
       hostInterfaces:
         # The host's hostInterfaces are the ALLOWLIST for host plugins. The
-        # materializer imports PostgreSQL, JetStream, the routing resource type
-        # borrowed by delivery, and the production router-delivery bridge; all
-        # four must be listed or the component fails to instantiate.
+        # materializer uses WAMN registration policy and the native named NATS
+        # binding for delivery. The host owns the events binding configuration
+        # and restricted credentials; the workload cannot override either.
         - namespace: wamn
           package: postgres
           version: "0.1.0"
@@ -66,7 +66,12 @@ spec:
         - namespace: wamn
           package: jetstream
           version: "0.1.0"
-          interfaces: [types, consumer]
+          interfaces: [types, registration]
+        - namespace: wasmcloud
+          package: nats
+          version: "0.1.0"
+          name: events
+          interfaces: [types, jetstream]
         - namespace: wamn
           package: flow-http-routing
           version: "0.1.0"
@@ -98,6 +103,6 @@ spec:
               WAMN_MAT_PROJECT: mproj
               WAMN_MAT_ENV: menv
               WAMN_MAT_TENANT: t1
-              # Retry is bounded; the final failed attempt is published to the
-              # host-derived per-registration DLQ before the source is termed.
+              # Retry is bounded. The broker retains exhaustion and termination
+              # advisories without a separate WAMN payload copy.
               WAMN_MAT_MAX_DELIVER: "5"

@@ -1,0 +1,281 @@
+# Component+wiring router executor. One process owns the durable queue claim,
+# the single RouterDriver and its wiring cache. Wasmtime's pooling allocator
+# serves fresh per-invocation instances; reusable guest stores remain disabled.
+# It does not accept execution plans.
+#
+# Prerequisites are deliberately separate lifecycle objects:
+#   - `wamn-executor-db` and `wamn-executor-platform-db`: the project
+#     environment's GUEST-SQL url and its EXECUTOR-PLATFORM generation, each one
+#     database URL under key `url`, from
+#     deploy/platform/executor-db.example.yaml. Two objects because they are two
+#     principals: see the mounts below;
+#   - `wamn-registry-pull`: the pull-only Docker config from
+#     deploy/platform/registry-credentials.example.yaml;
+#   - the release-manifest artifact named by the digest selected below.
+#
+# THE RELEASE ARRIVES OVER OCI, NOT AS A MOUNT (wamn-3ceu). A projected
+# ConfigMap carried no usable binding between the bytes and the name this
+# template asked for — the same template placed both, so comparing them tested
+# the template against itself. The registry is a third party: the digest travels
+# here, the bytes come from there, and the pull refuses unless they agree.
+#
+# NOT APPLIABLE AS CHECKED IN: the 64-zero manifest digest is a placeholder for
+# the digest the release mint prints. A digest that addresses no
+# artifact fails process construction, so the Pod crashloops instead of going
+# ready. Readiness never re-verifies those bytes.
+#
+# HOW A RELEASE GETS IN HERE, AND HOW IT COMES BACK OUT — the full runbook is in
+# deploy/README.md, "Release rollout, and rollback by revert". In short: mint
+# with `wamn-ctl publish-release` (the digest is the whole of its stdout), push
+# the frozen bytes with `push-release-manifest`, read the lines both carriers
+# take with `print-release-env`, HAND-EDIT the pair below in one commit, then
+# `kubectl apply` this file. ROLLBACK IS `git revert` ON THAT COMMIT PLUS A
+# RE-APPLY: no image any manifest in deploy/ schedules is digest-pinned — every
+# one is a mutable tag, this file's `wamn-executor:dev` included — so this digest
+# is the only thing in the tree a revert genuinely rolls back to exact bytes.
+# Reverting stops pointing at the newer release; it never un-publishes it, since
+# the mint is append-only and the pushed artifact immutable.
+#
+# THIS FILE'S CARRIER IS `env:`; THE HOST'S IS FLAGS, and the asymmetry is
+# deliberate — see deploy/platform/values-host-receiving-pat.yaml. This
+# executor's pair is REQUIRED by its parser, so a value that fails to arrive is refused
+# whichever carrier it travels in, and the plainer carrier costs nothing here.
+# The host's pair is OPTIONAL, because a host serving no release is a legitimate
+# state, so a typo that loses both env names there would deploy cleanly and
+# serve nothing; a typo'd FLAG exits clap nonzero and crashloops instead. The
+# host is also rendered by a chart with no release model, which is why its pair
+# rides `extraArgs`, while this Deployment is hand-written.
+#
+# STARTUP + ROLLOUTS: native probes bind on port 8089 after release loading.
+# The transport asks the one RouterReadinessProbe to prepare only the release
+# wirings reachable from HTTP, internal, or studio attachments. It reports 200
+# only after those exact wiring versions resolve, every selected component's
+# exact connection requirements are actively bound, every OCI artifact is
+# digest-verified, and release preparation completes. Native loop liveness must
+# also produce its first beat before readiness reports 200.
+# Cron attachments and registrations remain background delivery and resolve
+# their frozen wiring versions on demand; they do not enlarge this gate.
+#
+# `maxUnavailable: 0` keeps an old Ready replica draining until the replacement
+# has held that complete closure Ready for `minReadySeconds`. A bad database
+# credential, missing binding, unavailable registry, digest mismatch, or pool
+# capacity refusal therefore stalls the rollout at 503 instead of replacing a
+# serving replica. Native probe bodies name failed checks without release identity.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor
+  namespace: wamn-system
+  labels: { app: executor }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: executor }
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  minReadySeconds: 30
+  template:
+    metadata:
+      labels: { app: executor }
+    spec:
+      # Queue drain5s + probe task1s + telemetry2s + runtime1s = 9s maximum.
+      terminationGracePeriodSeconds: 15
+      automountServiceAccountToken: false
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { app: executor }
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: executor
+          image: wamn-executor:dev
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: WAMN_RUNNER
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # THREE DATABASE CREDENTIALS, ONE PER AUTHORITY CLASS
+            # (wamn-0h0g.22.31, wamn-0h0g.22.11). Until those cutovers one url
+            # was written down for every class in the process; the
+            # executor-platform and callable-HTTP admitter families now
+            # authenticate as their own provisioned generations and this url no
+            # longer serves them. The first two are REQUIRED by the parser, so a
+            # value that fails to arrive refuses at startup rather than at the
+            # first claim; the third is OPTIONAL and its absence UNNAMES the
+            # class (see WAMN_HTTP_ADMITTER_PG_URL below).
+            #
+            # THE CARRIER EXISTS NOW: deploy/platform/executor-db.example.yaml
+            # (wamn-0h0g.10.10, wamn-0h0g.10.14). It declares all three Secrets
+            # below, spells the two cut-over halves as SCOPED GENERATIONS like
+            # the other carriers, and records why no url can stand in for
+            # another. `wamn-ctl provision-project-env` supplies the values:
+            # `--emit-secret` writes the guest url as
+            # `wamn-db-<org>--<project>--<env>`,
+            # `--prepare-executor-platform-generation` /
+            # `--emit-executor-platform-secret` write the platform url as
+            # `wamn-executor-platform-<org>--<project>--<env>`, and
+            # `--prepare-http-admitter-generation` /
+            # `--emit-http-admitter-secret` write the admitter url as
+            # `wamn-http-admitter-<org>--<project>--<env>`. Copying those values
+            # under the stable names this mount asks for is the same hand step
+            # every sibling carrier documents.
+            - name: WAMN_PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-executor-db
+                  key: url
+            # The queue claim, lease renewal, reap, caller release and plan
+            # supply dial with THIS one. `pool::credential_exactness_hook`
+            # asserts `pg_has_role(current_user, 'wamn_executor_platform',
+            # MEMBER)` on every physical connection it opens, so the guest url
+            # above cannot serve here: it does not fail over, it refuses every
+            # connection the platform pool ever makes.
+            - name: WAMN_EXECUTOR_PLATFORM_PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-executor-platform-db
+                  key: url
+            # The one authority-snapshot read behind a component's TRUSTED HTTP
+            # EFFECT dials with THIS one (wamn-0h0g.22.11).
+            # `pool::credential_exactness_hook` asserts
+            # `pg_has_role(current_user, 'wamn_http_admitter', MEMBER)` on every
+            # physical connection it opens, so neither url above can serve here.
+            #
+            # OPTIONAL, unlike the two above, and the asymmetry is deliberate:
+            # this class carries no path the process needs in order to run, so an
+            # executor without an admitter generation UNNAMES the class and still
+            # serves every route that raises no trusted HTTP effect. Removing
+            # this entry is therefore a supported deployment, and it is NOT the
+            # same as pointing it at the guest url — that would put a login of
+            # another authority back in the map.
+            - name: WAMN_HTTP_ADMITTER_PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-http-admitter-db
+                  key: url
+            - { name: WAMN_PROJECT, value: demo }
+            - { name: WAMN_SCHEMA, value: wamn_runner_demo }
+            # Keep 2/16 connections reserved so guest-held sessions cannot starve
+            # host-owned work. The split is the point: a guest that opens and
+            # holds every session it is allowed to still leaves the queue claim,
+            # lease renewal and completion path two connections of their own, so
+            # a busy or misbehaving component degrades throughput instead of
+            # wedging the executor's own bookkeeping. 14 + 2 is the compiled
+            # default (crates/platform/runtime/src/plugins/wamn_postgres/pool.rs);
+            # written out here so the reserve is reviewable per deployment.
+            #
+            # [wamn-xu49] THIS RATIONALE IS PROSE, NOT A PIN. The guard
+            # `shipping_manifests_pin_the_split_budget_and_its_starvation_rationale`
+            # reads only values-host-default.yaml — `deploy/platform/runner.yaml`
+            # was its second carrier until ea71c1c4 deleted it, and this file
+            # never inherited that half. Adding this file to the guard is a
+            # pool.rs change, which this lane does not own; until then the
+            # split-budget pin is deliberately single-manifest and the host tier
+            # is the manifest it pins.
+            - { name: WAMN_PG_GUEST_POOL_MAX, value: "14" }
+            - { name: WAMN_PG_PLATFORM_POOL_MAX, value: "2" }
+            # The release repository is deliberately its own base: a release
+            # artifact establishes release identity, it never implies where
+            # digest-addressed component bytes may be pulled from.
+            - name: WAMN_RELEASE_ARTIFACT_BASE
+              value: registry.wamn-system.svc.cluster.local:5000/wamn/releases
+            - name: WAMN_RELEASE_MANIFEST_DIGEST
+              value: sha256:0000000000000000000000000000000000000000000000000000000000000000
+            - name: WAMN_COMPONENT_ARTIFACT_BASE
+              value: registry.wamn-system.svc.cluster.local:5000/wamn/components
+            - { name: WAMN_REGISTRY_AUTH_FILE, value: /etc/wamn/registry/config.json }
+            - { name: WAMN_READINESS_BIND, value: "0.0.0.0:8089" }
+            # Native wash-runtime v2.9 memory contract. Keep the existing pod
+            # limit as the total guest budget; the heap ceiling and allocator
+            # slots preserve WAMN's prior engine sizing without a fork limiter.
+            - name: WASH_HOST_MAX_GUEST_MEMORY
+              valueFrom:
+                resourceFieldRef:
+                  containerName: executor
+                  resource: limits.memory
+            - { name: WASH_DEFAULT_HEAP_MEMORY, value: "256MiB" }
+            - { name: WASH_CORE_INSTANCES, value: "512" }
+            - { name: WASH_GUEST_MEMORY_MODE, value: "count" }
+          args:
+            - --log-level=info
+            # [wamn-0h0g.15.155] Verify the in-cluster registry instead of
+            # dropping to plain HTTP, replacing --allow-insecure-registries.
+            # Unlike the host tier this Deployment is hand-written, not rendered
+            # by the runtime-operator chart, so nothing mounts /runtime-cert
+            # here and the CA is mounted explicitly below.
+            #
+            # deploy/platform/registry.yaml serves TLS from this same CA, so
+            # apply that file before this one or every pull fails verification.
+            - --oci-ca-path=/etc/wamn/registry-ca/ca.crt
+          ports:
+            - name: readiness
+              containerPort: 8089
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /livez
+              port: readiness
+            periodSeconds: 5
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: readiness
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: readiness
+              scheme: HTTP
+            periodSeconds: 2
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 1
+          volumeMounts:
+            - name: registry-pull
+              mountPath: /etc/wamn/registry
+              readOnly: true
+            - name: registry-ca
+              mountPath: /etc/wamn/registry-ca
+              readOnly: true
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { memory: "4Gi" }
+      volumes:
+        - name: registry-pull
+          secret:
+            secretName: wamn-registry-pull
+            optional: false
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+        # The chart's own CA, which the operator release writes into this
+        # namespace as a `kubernetes.io/tls` Secret holding `tls.crt` and
+        # `tls.key` (charts/runtime-operator/templates/certificates.yaml:84-93).
+        # `items` projects the certificate ALONE: this pod needs the trust root
+        # to verify the registry, and must never hold the CA's private key.
+        - name: registry-ca
+          secret:
+            secretName: wasmcloud-ca
+            optional: false
+            items:
+              - key: tls.crt
+                path: ca.crt
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: executor
+  namespace: wamn-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: executor }

@@ -15,6 +15,7 @@ world materializer {
   import wamn:postgres/types@0.1.0;
   import wamn:postgres/client@0.1.0;
   import wamn:jetstream/types@0.1.0;
-  import wamn:jetstream/consumer@0.1.0;
+  import wamn:jetstream/registration@0.1.0;
+  import events: wasmcloud:nats/jetstream@0.1.0;
   import wamn:router-delivery/delivery@0.1.0;
 }

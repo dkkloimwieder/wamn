@@ -1,0 +1,184 @@
+{
+  "head": "b1d40d80558cb58ea4c9e4580d0f46e7edf2fc5b",
+  "status": " M Cargo.lock\n M components/events/wire/src/lib.rs\n M components/execution/materializer/Cargo.toml\n M components/execution/materializer/src/main.rs\n M components/execution/materializer/wit/deps/wamn-jetstream/package.wit\n M components/execution/materializer/wit/world.wit\n M crates/platform/runtime/src/plugins/effect_span.rs\n M crates/platform/runtime/src/plugins/wamn_jetstream.rs\n M crates/platform/runtime/tests/jetstream_wit_coherence.rs\n M crates/platform/runtime/wit/deps/wamn-jetstream/package.wit\n M crates/platform/runtime/wit/world.wit\n M deploy/infra/nats-jetstream.yaml\n M deploy/platform/materializer.example.yaml\n M deploy/platform/values-host-default.yaml\n M deploy/platform/values-host-receiving-pat.yaml\n M deploy/platform/values-host-wms-pat.yaml\n M services/cdc-reader/src/lib.rs\n M services/cdc-reader/tests/event_reader_live.rs\n M services/ctl/src/bin/wamn-ctl-ops.rs\n D services/ctl/src/dead_letters.rs\n M services/ctl/src/lib.rs\n M services/ctl/tests/verb_surface.rs\n M services/host/Cargo.toml\n M services/host/src/host.rs\n M tests/conformance/tests/effect_spans.rs\n M tests/integration/src/route_authentication_live.rs\n M tests/integration/src/route_authentication_live/postcommit.rs\n M tests/integration/tests/startup_burst_live.rs\n M tools/journey-host-values-proof\n M tools/journey-host-values.sh\n M tools/journey-materializer-proof\n M tools/journey-materializer.sh\n M tools/journey-startup-burst.py\n M tools/receiving-cluster-journey-run\n M tools/receiving-postcommit-proof\n M tools/wms-cluster-journey-run\n?? components/execution/materializer/wit/deps/wasmcloud-nats/\n?? services/ctl/src/event_advisories.rs\n",
+  "index_paths": [],
+  "files": {
+    "Cargo.lock": {
+      "sha256": "716052ad25802313f4b0ea08135c11e5289f0d824414bb4ffd696a23b6038e4a",
+      "mode": "0o664"
+    },
+    "components/events/wire/src/lib.rs": {
+      "sha256": "1a14c8df1aafb82f1aaad056d82047628a52cdce542654e2e00516611c3a734d",
+      "mode": "0o664"
+    },
+    "components/execution/materializer/Cargo.toml": {
+      "sha256": "ba83fd4902de00c337d5dd9c477f60a8c222b93b505bee8010bd901d10abd4cc",
+      "mode": "0o664"
+    },
+    "components/execution/materializer/src/main.rs": {
+      "sha256": "04536f8b87e2332c2147c58d483d99e44b5604c068c8992b282c790dce9d29ef",
+      "mode": "0o664"
+    },
+    "components/execution/materializer/wit/deps/wamn-jetstream/package.wit": {
+      "sha256": "8e4c6f0313d8aa2d0e7219982d6f5a3e2d26d8a34c3328ed60fa9bde06fbc97f",
+      "mode": "0o664"
+    },
+    "components/execution/materializer/wit/deps/wasmcloud-nats/package.wit": {
+      "sha256": "0965e4663e28fe4e770868170d5947678edb43c268970e9be6160705bc8a0fdf",
+      "mode": "0o664"
+    },
+    "components/execution/materializer/wit/world.wit": {
+      "sha256": "a3924b252d32196b8b419d46e5dc9df99d6ee11e77214ee43002dc8d4b1bcfb4",
+      "mode": "0o664"
+    },
+    "crates/platform/runtime/src/plugins/effect_span.rs": {
+      "sha256": "2056d2531cd8e9a906d87efbb7797d18c59e82de98d387c428a3e47f38b4d4e3",
+      "mode": "0o664"
+    },
+    "crates/platform/runtime/src/plugins/wamn_jetstream.rs": {
+      "sha256": "084f1bb6b20e853cd358e66edb6b18183421f4e4d03d879eb9e070fe4998ff91",
+      "mode": "0o664"
+    },
+    "crates/platform/runtime/tests/jetstream_wit_coherence.rs": {
+      "sha256": "a7cad0e550b46fe25ca7cf59707b1661d38902f5e29f934797daaf43320336bd",
+      "mode": "0o664"
+    },
+    "crates/platform/runtime/wit/deps/wamn-jetstream/package.wit": {
+      "sha256": "8e4c6f0313d8aa2d0e7219982d6f5a3e2d26d8a34c3328ed60fa9bde06fbc97f",
+      "mode": "0o664"
+    },
+    "crates/platform/runtime/wit/world.wit": {
+      "sha256": "2494197932e16d724232e63882e81055ed6ace578b889f607259ba36a703e1fb",
+      "mode": "0o664"
+    },
+    "deploy/infra/nats-jetstream.yaml": {
+      "sha256": "d115b1eaaca2a745478588bc0f6c0cf1777970ffd076c7bd5c413b9152594a4e",
+      "mode": "0o664"
+    },
+    "deploy/platform/materializer.example.yaml": {
+      "sha256": "e6d5481d2ab2b13bfd4ea29e67d2d15cb97c7fbfae5078282dd9f04c44af7514",
+      "mode": "0o664"
+    },
+    "deploy/platform/values-host-default.yaml": {
+      "sha256": "972ca2fd23cc29ca516c4ba58643717055e7636e3149e14a10ea25067258e757",
+      "mode": "0o664"
+    },
+    "deploy/platform/values-host-receiving-pat.yaml": {
+      "sha256": "a91d69bc8f543ac6a39dc44f2a9d3246038f912e373365e89fb2179de1fd3b5c",
+      "mode": "0o664"
+    },
+    "deploy/platform/values-host-wms-pat.yaml": {
+      "sha256": "9502c6c5f984ce39ee704ec646da47d43a536891904b840935392c590b7d5eef",
+      "mode": "0o664"
+    },
+    "services/cdc-reader/src/lib.rs": {
+      "sha256": "6506239845bfe6fc8e7426b6c82bbd5f761bc2f79156f1ef20af5fd49117ceb2",
+      "mode": "0o664"
+    },
+    "services/cdc-reader/tests/event_reader_live.rs": {
+      "sha256": "cfbac3c60267a63d8f66291863208caf774758e98d16d98ddfa10fc631c9a4cd",
+      "mode": "0o664"
+    },
+    "services/ctl/src/bin/wamn-ctl-ops.rs": {
+      "sha256": "29e533dbf737493b00323bf1e15d13bc0f5e8005509428c505b490ef8b378fe9",
+      "mode": "0o664"
+    },
+    "services/ctl/src/dead_letters.rs": {
+      "deleted": true
+    },
+    "services/ctl/src/event_advisories.rs": {
+      "sha256": "46fcc1687f6881579ba3245dde4c855bb128d821fb0ab56abbc95e614ad63155",
+      "mode": "0o664"
+    },
+    "services/ctl/src/lib.rs": {
+      "sha256": "e269f3a58d60fa51bd9d697e703cc59a93c6f4dd4f0d7c2079debad88d93f2ec",
+      "mode": "0o664"
+    },
+    "services/ctl/tests/verb_surface.rs": {
+      "sha256": "8aec57a758b68b1a2d282d0117b2325e496f874239a2970b32af8e0aab5caf32",
+      "mode": "0o664"
+    },
+    "services/host/Cargo.toml": {
+      "sha256": "fd7cbbf4af51efc04671043b60102bd734da4b8bbdcb3d7703d91b5a2372e1f7",
+      "mode": "0o664"
+    },
+    "services/host/src/host.rs": {
+      "sha256": "df4b0e8757f68a96a02e785a71970a615a17366cf24e358fbae3da5925587c9f",
+      "mode": "0o664"
+    },
+    "tests/conformance/tests/effect_spans.rs": {
+      "sha256": "b7812d8cd24e55f609e1c9e8faf405b244b08e8a22292ae3acb09c7af9e6bbe6",
+      "mode": "0o664"
+    },
+    "tests/integration/src/route_authentication_live.rs": {
+      "sha256": "568a4d2b41078acec5a6a6d120804970ba0f9acb5775e8cf0eba962a813b9459",
+      "mode": "0o664"
+    },
+    "tests/integration/src/route_authentication_live/postcommit.rs": {
+      "sha256": "3dedcf03f434b9471a250bb8aabed0c4a7a7b47230e9d27f6c5334adc3da5b84",
+      "mode": "0o664"
+    },
+    "tests/integration/tests/startup_burst_live.rs": {
+      "sha256": "3a2e0c5c62a00a45d98e15c163ef15ac4e192d07bcee4ff84986111b63ca205a",
+      "mode": "0o664"
+    },
+    "tools/journey-host-values-proof": {
+      "sha256": "6b1a66e160a6b32a4993de9dc25ff9d9113c5109e512ecd6e25c198b45402f25",
+      "mode": "0o775"
+    },
+    "tools/journey-host-values.sh": {
+      "sha256": "949d8ba5e3850ba722b6d4901c0f2231ebe9d197ab12346897861545d8557a3b",
+      "mode": "0o775"
+    },
+    "tools/journey-materializer-proof": {
+      "sha256": "ccdb67ca415033c42099b1011fbd507dad9f66dbdc9ebfa05f9e19f3de02c2de",
+      "mode": "0o775"
+    },
+    "tools/journey-materializer.sh": {
+      "sha256": "b05a11a64c5bc61db47604099792deee3d6659ea9172f3e3f1c8b1252d2ce0e9",
+      "mode": "0o664"
+    },
+    "tools/journey-startup-burst.py": {
+      "sha256": "c8bad718a7a6486916041f522de72e03cb7bde05d2ff1b3781fa31635a5c4ff3",
+      "mode": "0o775"
+    },
+    "tools/receiving-cluster-journey-run": {
+      "sha256": "121c286ca7d59213a74564d44e40dd015cdcfc589706d5c5b5c0ac2f3f7f4ed9",
+      "mode": "0o775"
+    },
+    "tools/receiving-postcommit-proof": {
+      "sha256": "719e4f4fe664252595f4df69c0ce953f23e54899121e69a0d26e48b7e8c05ebe",
+      "mode": "0o775"
+    },
+    "tools/wms-cluster-journey-run": {
+      "sha256": "3640abf212f3a5cad7965062b32d926471a722b099f570a3ea86f92ffcd345f1",
+      "mode": "0o775"
+    }
+  },
+  "guest_provenance": {
+    "components/events/wire/src/lib.rs": {
+      "matches_checkpoint_9b84e9a4": true,
+      "checkpoint_sha256": "1a14c8df1aafb82f1aaad056d82047628a52cdce542654e2e00516611c3a734d"
+    },
+    "components/execution/materializer/Cargo.toml": {
+      "matches_checkpoint_9b84e9a4": true,
+      "checkpoint_sha256": "ba83fd4902de00c337d5dd9c477f60a8c222b93b505bee8010bd901d10abd4cc"
+    },
+    "components/execution/materializer/src/main.rs": {
+      "matches_checkpoint_9b84e9a4": true,
+      "checkpoint_sha256": "04536f8b87e2332c2147c58d483d99e44b5604c068c8992b282c790dce9d29ef"
+    },
+    "components/execution/materializer/wit/deps/wamn-jetstream/package.wit": {
+      "matches_checkpoint_9b84e9a4": true,
+      "checkpoint_sha256": "8e4c6f0313d8aa2d0e7219982d6f5a3e2d26d8a34c3328ed60fa9bde06fbc97f"
+    },
+    "components/execution/materializer/wit/deps/wasmcloud-nats/package.wit": {
+      "matches_checkpoint_9b84e9a4": true,
+      "checkpoint_sha256": "0965e4663e28fe4e770868170d5947678edb43c268970e9be6160705bc8a0fdf"
+    },
+    "components/execution/materializer/wit/world.wit": {
+      "matches_checkpoint_9b84e9a4": true,
+      "checkpoint_sha256": "a3924b252d32196b8b419d46e5dc9df99d6ee11e77214ee43002dc8d4b1bcfb4"
+    }
+  }
+}

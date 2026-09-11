@@ -35,12 +35,19 @@ Serialize its shared host, executor, and driver edits with native-dispatch work.
 Its [report](../perf/2026.09/ctc8-16-http-reuse/README.md) records correctness evidence without a performance claim.
 The origin/executor authorization correction under `wamn-ctc8.33` follows pooling immediately.
 
+The reviewed [native C source checkpoint](../perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json) is owned by `wamn-0ct2.7`.
+It replaces custom materializer delivery and settlement with the platform-owned native `events` binding and scoped broker credentials.
+Registration checks, drift refusal, derived publishing, and the separate scheduler doorbell remain.
+Live correctness, authority and pressure tests and the integrated retained workspace test run remain pending.
+Coordinate its source integration with the application moves under `wamn-47wm` before building final artifacts and updating their digest pins.
+
 ## Exploration or decision required
 
 Do not claim the dependent implementation until its row is resolved in Beads.
 
 | Owner | Required answer |
 |---|---|
+| `wamn-0ct2.7` | Permit platform-wide advisory metadata for observers, or retain separate advisory streams for each environment. |
 | `.15.180` | Carry the recovered conflicting run id without exposing it through anonymous HTTP, or keep separate result types. |
 | `.12.151` | Keep the two release-membership conflict vocabularies or converge both tiers on one typed refusal. |
 | `.13.42` | Post-MVP only: customer-hosted router residency and signed-release trust. |

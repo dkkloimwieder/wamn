@@ -14,7 +14,7 @@ pub mod bind_connection;
 #[cfg(feature = "ops")]
 pub mod copy_project_env;
 #[cfg(feature = "ops")]
-pub mod dead_letters;
+pub mod event_advisories;
 pub mod dev;
 pub mod dev_gate;
 #[cfg(feature = "ops")]

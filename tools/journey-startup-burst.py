@@ -72,6 +72,7 @@ def main():
             password = urlsplit(url).password
             if password:
                 redactions.update((password, unquote(password)))
+        redactions.add(Path(os.environ['WAMN_EVT_NATS_PASSWORD_FILE']).read_text())
         pat = json.loads(Path(fixture['pat_secret']).read_text())['stringData']['token']
         redactions.add(pat)
         for entry in json.loads(Path(fixture['registry_auth']).read_text())['auths'].values():
@@ -111,6 +112,28 @@ def main():
                            ('host-deployment.json', Path(document['host_deployment'])),
                            ('production-workload.json', Path(fixture['workload']))]:
             final.setdefault('input_sha256', {})[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+
+        stage = 'owned scheduler port forward'
+        scheduler_log = private / 'scheduler-port-forward.log'
+        command = kube + ['-n', document['system_namespace'], 'port-forward',
+                          'service/nats', ':4222', '--address=127.0.0.1']
+        commands.append(command)
+        with scheduler_log.open('wb') as log:
+            scheduler_forward = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
+                                                  start_new_session=True)
+        children.append(scheduler_forward)
+        deadline = time.monotonic() + 120
+        while True:
+            if scheduler_forward.poll() is not None:
+                raise RuntimeError('scheduler port forward exited')
+            match = re.search(r'^Forwarding from 127\.0\.0\.1:(\d+) -> 4222$',
+                              scheduler_log.read_text(), re.M)
+            if match:
+                fixture['scheduler_nats_url'] = 'nats://127.0.0.1:' + match[1]
+                break
+            if time.monotonic() >= deadline:
+                raise TimeoutError('scheduler port forward did not become ready')
+            time.sleep(0.05)
 
         stage = 'owned OTLP port forward'
         forward_log = private / 'otlp-port-forward.log'
@@ -299,7 +322,8 @@ def main():
                 final['verdict'] = 'fail'
         for raw_name, public_name in [('host.raw.log', 'host.log'), ('test.raw.log', 'test.log'),
                                       ('failure.raw.log', 'failure.log'),
-                                      ('otlp-port-forward.log', 'otlp-port-forward.log')]:
+                                      ('otlp-port-forward.log', 'otlp-port-forward.log'),
+                                      ('scheduler-port-forward.log', 'scheduler-port-forward.log')]:
             raw = private / raw_name
             if raw.exists() and 'redact' in locals():
                 (evidence / public_name).write_text(redact(raw.read_bytes()))

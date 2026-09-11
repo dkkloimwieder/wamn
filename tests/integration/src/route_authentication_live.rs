@@ -1282,6 +1282,34 @@ struct MaterializerPhase {
     receipt_id: String,
 }
 
+async fn connect_event_proof_client(
+    url: &str,
+    username_key: &str,
+    password_file_key: &str,
+) -> anyhow::Result<async_nats::Client> {
+    let username = std::env::var(username_key)
+        .with_context(|| format!("the event proof requires {username_key}"))?;
+    let password_file = std::env::var_os(password_file_key)
+        .with_context(|| format!("the event proof requires {password_file_key}"))?;
+    anyhow::ensure!(
+        !username.is_empty()
+            && username.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
+            }),
+        "the event proof username must contain only ASCII letters, digits, underscore or hyphen"
+    );
+    let password = tokio::fs::read_to_string(password_file)
+        .await
+        .context("read the private event proof password file")?;
+    anyhow::ensure!(!password.is_empty(), "the event proof password is empty");
+    async_nats::ConnectOptions::new()
+        .custom_inbox_prefix(format!("_INBOX_{username}"))
+        .user_and_password(username, password)
+        .connect(url)
+        .await
+        .context("connect to the disposable event plane with the scoped proof role")
+}
+
 impl JourneyDocument {
     pub(crate) fn required() -> anyhow::Result<Self> {
         let path = required_journey_path(JOURNEY_DOCUMENT_ENV)?;
@@ -5228,9 +5256,11 @@ async fn production_materializer_consumes_the_causal_receipt_exactly_once() -> a
     );
 
     let jetstream = async_nats::jetstream::new(
-        async_nats::connect(&nats_url)
-            .await
-            .context("connect to the disposable event plane")?,
+        connect_event_proof_client(
+            &nats_url,
+            "WAMN_EVT_NATS_USERNAME",
+            "WAMN_EVT_NATS_PASSWORD_FILE",
+        ).await?,
     );
     let mut stream = jetstream
         .get_stream(MATERIALIZER_STREAM)
@@ -5335,13 +5365,13 @@ async fn production_materializer_consumes_the_causal_receipt_exactly_once() -> a
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     };
-    let mut dead_letters = jetstream
-        .get_stream(wamn_event_wire::DEAD_LETTER_STREAM)
+    let mut delivery_advisories = jetstream
+        .get_stream(wamn_event_wire::DELIVERY_ADVISORY_STREAM)
         .await
-        .context("read the production reader's dead-letter stream")?;
+        .context("read the production reader's broker advisory stream")?;
     anyhow::ensure!(
-        dead_letters.info().await?.state.messages == 0,
-        "successful materialization emitted a dead letter"
+        delivery_advisories.info().await?.state.messages == 0,
+        "successful materialization emitted a delivery advisory"
     );
 
     println!(
