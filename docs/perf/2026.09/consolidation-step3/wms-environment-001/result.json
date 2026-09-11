@@ -1,0 +1,144 @@
+{
+  "source_commit": "d60d2b944853f457aad69a71d7c1e4dcd85c1c92",
+  "bead": "wamn-47wm.4.2",
+  "change_type": "internal_refactor",
+  "source_sha256": {
+    "services/ctl/src/provision_org.rs": "abad9fe5553b90dd2debd79e4aae42be72d33bf2f1974ce4c9f7f7d1c4fc4154",
+    "test-support/harness/src/environment.rs": "9e7a7bc5066ed10bf12941c935db4d8403a9620e45a956da5037690ed543b758",
+    "apps/wamn_wms/tests/environment.rs": "174db5e8037b92592d096480f9df90041bd8c56b9d8f1523aec349d6e183afb7"
+  },
+  "prior_caller": {
+    "path": "tools/wms-cluster-journey-run",
+    "sha256": "ef6007b7ebdd15ceae18d417c5c1f6f2d0f60971775ade077cfc85c97debc09e"
+  },
+  "package_coordinate": {
+    "id": "wamn_wms",
+    "version": "1.0.0"
+  },
+  "retained_wiring_targets": [
+    {
+      "path": "apps/wamn_wms/publication/wirings/inventory_adjust.json",
+      "wiring_id": "inventory_adjust",
+      "version": 1
+    },
+    {
+      "path": "apps/wamn_wms/publication/wirings/inventory_aggregate.json",
+      "wiring_id": "inventory_aggregate",
+      "version": 1
+    },
+    {
+      "path": "apps/wamn_wms/publication/wirings/inventory_merge.json",
+      "wiring_id": "inventory_merge",
+      "version": 1
+    },
+    {
+      "path": "apps/wamn_wms/publication/wirings/inventory_move.json",
+      "wiring_id": "inventory_move",
+      "version": 1
+    },
+    {
+      "path": "apps/wamn_wms/publication/wirings/inventory_move_and_label.json",
+      "wiring_id": "inventory_move_and_label",
+      "version": 1
+    },
+    {
+      "path": "apps/wamn_wms/publication/wirings/inventory_split.json",
+      "wiring_id": "inventory_split",
+      "version": 1
+    },
+    {
+      "path": "apps/wamn_wms/publication/wirings/pallet_get.json",
+      "wiring_id": "pallet_get",
+      "version": 1
+    },
+    {
+      "path": "apps/wamn_wms/publication/wirings/pallet_query.json",
+      "wiring_id": "pallet_query",
+      "version": 1
+    }
+  ],
+  "direct_calls": [
+    "provision_org::run",
+    "provision_project_env::run",
+    "reconcile_run_plane::run",
+    "apply_package::run",
+    "reconcile_package_data_access::reconcile_package_data_access",
+    "push_component::admit_component",
+    "push_component::project_admitted_component_for_verification",
+    "push_component::publish_admitted_component",
+    "author_wiring::run",
+    "publish_release::run",
+    "bind_connection::run",
+    "push_release_manifest::run",
+    "print_release_env::lookup_release_carrier",
+    "enable_cdc_project_env::run"
+  ],
+  "ordering": [
+    "install control owner and schemas",
+    "start the separate PAT service",
+    "provision organization and project",
+    "stop and reap PAT process, abort its scoped generation",
+    "commit role posture then drain prior app sessions",
+    "create the emitted project database and apply privileges",
+    "install catalog and app schemas",
+    "reconcile run plane",
+    "prepare declared families",
+    "apply WMS package and replay data-access reconciliation",
+    "push WMS, label-render and blob-put",
+    "gate and author each declared wiring",
+    "publish release",
+    "bind labels store",
+    "push release manifest",
+    "configure CDC outside startup timing mode"
+  ],
+  "preserved": [
+    "WMS scope acme/wms/dev and tenant wms-route-auth",
+    "disposable flag remains false",
+    "actual manifest package coordinate",
+    "three exact component capability lists",
+    "seven typed workload families and their target databases/namespaces",
+    "authoring completed status and nonempty report identity",
+    "current fixed gate address and child liveness checks",
+    "labels-store binding to admitted blob-put digest",
+    "CDC publication commits before failover slot creation",
+    "credential file modes and private directories"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "--config",
+        "skip_children=true",
+        "services/ctl/src/dev.rs",
+        "services/ctl/src/dev/pat_issuer.rs",
+        "services/ctl/src/provision_org.rs",
+        "test-support/harness/src/environment.rs",
+        "apps/wamn_wms/tests/environment.rs"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "cargo": "not run; root owns the warm integrated test run",
+  "prerequisites": [
+    "tracker app test Cargo dependency/module tail",
+    "baseline typed declaration helpers",
+    "root lifecycle action callers",
+    "current C credential policy remains held"
+  ],
+  "remaining_validation": "Compile and run the retained application tests after integration; no disposable services started in this lane."
+}

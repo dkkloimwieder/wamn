@@ -117,6 +117,26 @@ pub struct ProvisionOrgArgs {
     pub emit_scheduled_backup: Option<PathBuf>,
 }
 
+/// Build organization arguments with the optional output fields unset.
+pub fn provision_org_args(
+    org: String,
+    template: TemplateArg,
+    pool: String,
+    system_database_url: Option<String>,
+) -> ProvisionOrgArgs {
+    ProvisionOrgArgs {
+        org,
+        template,
+        pool,
+        system_database_url,
+        emit_clusters: None,
+        #[cfg(feature = "ops")]
+        emit_object_store: None,
+        #[cfg(feature = "ops")]
+        emit_scheduled_backup: None,
+    }
+}
+
 pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
     // The template stamps the placement + the org's env-policy set in one step.
     let template = args.template.template();

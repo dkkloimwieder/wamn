@@ -13,32 +13,22 @@ use wamn_ctl::push_component::{
 };
 use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
 
-/// Provision the declared project and apply its emitted database setup.
+/// Provision the declared project and read its emitted connection and credentials.
 ///
-/// The caller owns the separate PAT service and supplies its existing arguments.
-/// `admin` and `admin_url` address the same disposable PostgreSQL cluster.
+/// The caller stops its separate PAT service before applying the database setup.
 pub async fn provision_project(
     args: ProvisionProjectEnvArgs,
-    admin: &Client,
     admin_url: &str,
 ) -> anyhow::Result<ProvisionedRoute> {
     let database_path = args
         .emit_database
         .clone()
         .context("set the Database output path")?;
-    let privilege_path = args
-        .emit_privilege_sql
-        .clone()
-        .context("set the privilege SQL output path")?;
     let route_secret = args
         .emit_route_caller_pat_secret
         .clone()
         .context("set the route caller Secret output path")?;
     let management_secret = args.emit_management_author_pat_secret.clone();
-    let app_password = args
-        .app_password
-        .clone()
-        .context("supply the provisioning password argument")?;
     let database_prefix = project_env_database_name(
         args.org.as_deref().context("supply the organization")?,
         args.project.as_deref().context("supply the project")?,
@@ -57,26 +47,6 @@ pub async fn provision_project(
         .context("the emitted Database belongs to another project environment")?;
     validate_instance_suffix(instance)
         .context("the emitted Database has an invalid instance suffix")?;
-
-    // Commit the NOLOGIN posture before the existing bounded session drain.
-    admin
-        .batch_execute(&provision_project_env::role_posture_sql(&app_password))
-        .await
-        .context("apply the project role posture")?;
-    admin
-        .batch_execute(&sql::drain_app_role_sessions_sql())
-        .await
-        .context("drain sessions of the retired shared app login")?;
-    admin
-        .batch_execute(&sql::create_database_named_sql(&database))
-        .await
-        .context("create the emitted project database")?;
-    admin
-        .batch_execute(
-            &std::fs::read_to_string(&privilege_path).context("read emitted privilege SQL")?,
-        )
-        .await
-        .context("apply emitted project privileges")?;
 
     let mut database_url =
         url::Url::parse(admin_url).context("parse the disposable cluster URL")?;
@@ -97,6 +67,43 @@ pub async fn provision_project(
             .map(|path| secret_annotation(path, "wamn.io/principal-subject"))
             .transpose()?,
     })
+}
+
+/// Apply the emitted project setup after the PAT service has stopped.
+/// `database_url` names the emitted database on the supplied admin cluster.
+pub async fn apply_project_database(
+    admin: &Client,
+    database_url: &str,
+    app_password: &str,
+    privilege_path: &Path,
+) -> anyhow::Result<()> {
+    let configuration: tokio_postgres::Config = database_url
+        .parse()
+        .context("parse the emitted project database URL")?;
+    let database = configuration
+        .get_dbname()
+        .context("the emitted project URL names its database")?;
+    // Commit the NOLOGIN posture before the existing bounded session drain.
+    admin
+        .batch_execute(&provision_project_env::role_posture_sql(app_password))
+        .await
+        .context("apply the project role posture")?;
+    admin
+        .batch_execute(&sql::drain_app_role_sessions_sql())
+        .await
+        .context("drain sessions of the retired shared app login")?;
+    admin
+        .batch_execute(&sql::create_database_named_sql(database))
+        .await
+        .context("create the emitted project database")?;
+    admin
+        .batch_execute(
+            &std::fs::read_to_string(privilege_path).context("read emitted privilege SQL")?,
+        )
+        .await
+        .context("apply emitted project privileges")?;
+
+    Ok(())
 }
 
 fn secret_annotation(path: &Path, name: &str) -> anyhow::Result<String> {
