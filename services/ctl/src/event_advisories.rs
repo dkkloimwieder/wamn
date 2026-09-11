@@ -301,7 +301,7 @@ mod tests {
             ensure!(crate::event_streams::provision(&jetstream, &scope, 1, duplicate_window, &consumers).await.is_err(), "changed consumer configuration was accepted");
             ensure!(source.consumer_info("exhausted").await?.config.max_deliver == 3, "activation changed the stored consumer configuration");
             source.update_consumer(consumers[0].clone()).await?;
-            let exhausted = source.get_consumer::<PullConfig>("exhausted").await?;
+            let exhausted = source.get_consumer::<PullConfig>("exhausted").await.map_err(anyhow::Error::from_boxed)?;
             let exhausted_sequence = jetstream
                 .publish("evt.c-advisory.app.dev.exhausted", "exhausted payload".into())
                 .await?
@@ -333,7 +333,7 @@ mod tests {
                 "consumer redelivered poison instead of the later valid message");
             valid.double_ack().await.map_err(anyhow::Error::from_boxed)?;
 
-            let terminated = source.get_consumer::<PullConfig>("terminated").await?;
+            let terminated = source.get_consumer::<PullConfig>("terminated").await.map_err(anyhow::Error::from_boxed)?;
             let terminated_sequence = jetstream
                 .publish("evt.c-advisory.app.dev.terminated", "terminated payload".into())
                 .await?
@@ -611,7 +611,7 @@ mod tests {
             let runtime = async_nats::jetstream::new(event_broker::connect(&broker.runtime, &server).await?);
             let materializer = async_nats::jetstream::new(event_broker::connect(&broker.materializer, &server).await?);
             let attached = materializer.get_stream(&source.name).await?
-                .get_consumer::<PullConfig>("registered").await?;
+                .get_consumer::<PullConfig>("registered").await.map_err(anyhow::Error::from_boxed)?;
             let sequence = runtime.publish(consumer.filter_subject.clone(), "runtime payload".into()).await?.await?.sequence;
             let message = fetch_one(&attached).await?.context("materializer did not read runtime publication")?;
             ensure!(message.payload.as_ref() == b"runtime payload", "runtime payload changed");
