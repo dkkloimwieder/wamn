@@ -812,7 +812,7 @@ impl Run {
                     "wamn-ctl-ops",
                 ],
             ),
-            ("Cargo.toml", vec!["-p", "wamn-host"]),
+            ("Cargo.toml", vec!["-p", "wamn-host", "-p", "wamn-identity"]),
             ("Cargo.toml", vec!["-p", "wamn-scenario-worker"]),
             (
                 "Cargo.toml",
@@ -844,6 +844,7 @@ impl Run {
         for artifact in [
             "wamn",
             "wamn-ctl-ops",
+            "wamn-identity",
             "wamn-host",
             "wamn-scenario-worker",
             "wamn-dev-env",
@@ -865,6 +866,7 @@ impl Run {
         for artifact in [
             "debug/wamn",
             "debug/wamn-ctl-ops",
+            "debug/wamn-identity",
             "debug/wamn-host",
             "debug/wamn-scenario-worker",
             "debug/wamn-dev-env",
