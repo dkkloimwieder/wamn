@@ -516,6 +516,7 @@ async fn with_signals(
 ) -> anyhow::Result<()> {
     use futures_util::FutureExt as _;
     use tokio::signal::unix::{SignalKind, signal};
+    wash_runtime::init_crypto();
     let mut interrupt = signal(SignalKind::interrupt())?;
     let mut terminate = signal(SignalKind::terminate())?;
     let mut hangup = signal(SignalKind::hangup())?;
@@ -539,6 +540,18 @@ async fn with_signals(
         }
     }
     result
+}
+
+#[tokio::test]
+async fn cluster_startup_initializes_tls_client_provider() -> anyhow::Result<()> {
+    let evidence = std::env::temp_dir().join(format!("receiving-tls-{}", uuid::Uuid::new_v4()));
+    with_signals(&evidence, async {
+        let _client = async_nats::rustls::ClientConfig::builder()
+            .with_root_certificates(async_nats::rustls::RootCertStore::empty())
+            .with_no_client_auth();
+        Ok(())
+    })
+    .await
 }
 
 async fn assert_source_unchanged(resources: &Resources) -> anyhow::Result<()> {
