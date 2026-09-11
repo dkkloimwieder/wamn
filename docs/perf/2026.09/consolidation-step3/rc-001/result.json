@@ -1,0 +1,47 @@
+{
+  "base_source": "9bda608074fea7672789e70c7f8cc2488c725f66",
+  "required_seam_commit": "a87bd29aec5bb353eee090e517fe01ab3108c2cd",
+  "issue": "wamn-47wm.4.3",
+  "change": "internal test refactor with the approved rc/app/dev native event prerequisite",
+  "checks": {
+    "rustfmt": "passed",
+    "bash_syntax": "passed",
+    "git_diff_whitespace": "passed",
+    "toml_parse": "passed",
+    "native_declaration": "1 replica, 120 seconds, exact rc/app/dev source",
+    "cargo": "not run; root owns warm compilation",
+    "services": "not run"
+  },
+  "assertions": [
+    "source cleanliness and final HEAD",
+    "three amd64 nodes and native image tuples",
+    "three production hosts and Helm releases",
+    "fresh native source/advisory configuration; separate provisioning credentials",
+    "Database identity, stable owner and NOLOGIN NOINHERIT passwordless roles",
+    "three exact environment Secret names",
+    "fresh Job UID, timestamps, native image and successful termination",
+    "P2/P3 socket refusal with standard positive control",
+    "exact production connection/http trace injection and cross-process reflection",
+    "exact owned cleanup and file hashes"
+  ],
+  "focused_commands": [
+    "cargo test --locked --offline -p wamn-proof-integration --lib rc:: -- --nocapture",
+    "cargo test --locked --offline -p wamn-proof-conformance --lib socketguard::tests:: -- --nocapture",
+    "cargo test --locked --offline -p wamn-proof-system --lib traceproof::tests:: -- --nocapture",
+    "cargo check --locked --offline -p wamn-gates"
+  ],
+  "live_command": "cargo run --locked --offline -p wamn-gates -- rc --apply --evidence-dir <new-main-docs/perf-directory>",
+  "remaining": "Integrate the separate lifecycle commit after the connected native tests compile. Run RC on a clean owned source checkout with its own target. The complete product-flow HTTP and cross-environment test remains deferred under wamn-0h0g.15.153.",
+  "files": {
+    "tests/integration/Cargo.toml": "b4d90e85c1d9f54f9a3c611e83e7afd7beb235bb2ac01c795f7da6f691d3f16f",
+    "tests/integration/src/lib.rs": "122d340a3fcd4e6c6082d1399bcaacea264cac17299be725ec6f258af991bed6",
+    "tests/orchestrator/src/main.rs": "48e9ba68e2851c7663e22f78055e830c887fc3e865e7c5c8fba9a0cf88c7651d",
+    "tests/integration/src/rc.rs": "4c5712aca6f19c317425a5d8bb71149c832898c9fa0e784a4d7f7273c9702731",
+    "deploy/gates/rc-event-stream.json": "c307d7f19cadcf2c2a60fbcebabd320c9bea5da364628e7e1394bce1875d0ad9",
+    "tests/integration/src/rc/Dockerfile": "3c70065e2b5e037350ab98e437f831372b6ebb73342d073064c556b0d27f04d9",
+    "tests/integration/src/rc/bootstrap.rs": "e1afc4b29be60001b6f32e796d985802025c05a65b87dba5307a39abd556caa7",
+    "tests/integration/src/rc/deployment.rs": "4fffdb29d4ca2f5f3f3658a089d26c3f383731358100762291674fd797eb8ba2",
+    "tests/integration/src/rc/jobs.rs": "c731bd9dd07d125692704d83c29a55ef6f533c54068663462298ad1f5570cd31",
+    "tests/integration/src/rc/resources.rs": "e9c53d10c389175725df3e62b2e5b14c3a4b48f4f4ce8100e89d75e81cc781b8"
+  }
+}

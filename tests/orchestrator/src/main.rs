@@ -12,7 +12,7 @@
 use wamn_proof_conformance::socketguard;
 use wamn_proof_integration::{
     dashproof, host_session_proof, identity_keys_proof, identity_session_proof, membershipproof,
-    readerbench, retention,
+    readerbench, rc, retention,
 };
 use wamn_proof_system::traceproof;
 
@@ -33,6 +33,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run the RC bootstrap and native socket and trace tests on an owned cluster.
+    Rc(rc::RcArgs),
     /// Prove session acceptance and removed-key refusal on two deployed hosts.
     #[command(name = "host-session-proof")]
     HostSessionProof(host_session_proof::HostSessionProofArgs),
@@ -75,6 +77,7 @@ async fn async_main() -> anyhow::Result<()> {
         wash_runtime::observability::initialize_observability(level, false, false)?;
 
     let result = match cli.command {
+        Command::Rc(args) => rc::run(args).await,
         Command::HostSessionProof(args) => host_session_proof::run(args).await,
         Command::IdentityJwks(args) => identity_keys_proof::run(args).await,
         Command::IdentitySession(args) => identity_session_proof::run(args).await,

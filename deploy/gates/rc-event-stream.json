@@ -1,0 +1,15 @@
+{
+  "name": "EVT_2_rc_3_app_3_dev",
+  "subjects": ["evt.rc.app.dev.>"],
+  "retention": "limits",
+  "storage": "file",
+  "discard": "old",
+  "num_replicas": 1,
+  "duplicate_window": 120000000000,
+  "max_consumers": -1,
+  "max_msgs": -1,
+  "max_bytes": -1,
+  "max_msgs_per_subject": -1,
+  "max_msg_size": -1,
+  "compression": "none"
+}

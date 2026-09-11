@@ -20,6 +20,7 @@ mod measurement_schema;
 pub mod membershipproof;
 pub mod provisionbench;
 pub mod readerbench;
+pub mod rc;
 pub mod retention;
 #[cfg(test)]
 mod route_authentication_live;
