@@ -78,7 +78,7 @@ The platform materializer imports native `wasmcloud:nats/jetstream@0.1.0` throug
 The host reads its private native configuration through `WAMN_MAT_NATS_BINDING_FILE` and applies `WorkloadConfigPolicy::Deny`.
 Each environment's materializer credentials permit only its allowed stream, exact durable information, pull, acknowledgement, and private inbox subjects.
 The checkpoint removes custom WAMN delivery and settlement resources and payload dead-letter storage.
-WAMN retains release-registration checks, consumer preparation and drift refusal, derived publishing, and the separate scheduler doorbell.
+WAMN retains release-registration checks, declared consumer attachment and drift refusal, derived publishing, and the separate scheduler doorbell.
 The unused active-wiring selector and PostgreSQL notification path are removed.
 Released deliveries and frozen candidates retain exact immutable resolution.
 The bounded cache keeps immutable versions and shares their compiled graphs.
@@ -90,13 +90,20 @@ The host and executor receive event coordinates from `WAMN_EVT_ORG`, `WAMN_EVT_P
 These coordinates do not change tenant identity or database-project authority.
 Authenticated direct clients use paired `WAMN_EVT_NATS_USERNAME` and `WAMN_EVT_NATS_PASSWORD_FILE` with the existing event URL.
 The files and native binding keep passwords outside workload configuration and recorded commands.
-This is a source checkpoint only: live correctness, authority and pressure tests and the integrated retained workspace test run remain pending under `wamn-0ct2.7`.
-The owner decision of 2026-09-11 requires separate source and advisory streams for each environment.
-Monitoring uses credentials for that environment.
-Provisioning owns stream and consumer creation from declared subjects, retention, and retry limits.
-Activation compares stored configuration with those declarations.
-Runtime credentials permit environment publishing, delivery, and attachment, without stream or consumer management rights.
-This split remains in progress under `wamn-0ct2.7`.
+Provisioning creates separate source and advisory streams for every organization, project, and environment.
+Source names encode all three coordinates, and their subjects select only that environment.
+Each source has a separate advisory stream for exhausted and terminated deliveries.
+Observers use credentials scoped to that environment.
+Provisioning creates the declared consumers and refuses configuration differences.
+Activation compares the stored stream configuration, including `WAMN_EVT_STREAM_REPLICAS` and `WAMN_EVT_DUP_WINDOW_SECS`, with the declaration.
+The stream replica count remains separate from the workload replica count.
+Runtime credentials cannot create, change, or delete streams or consumers.
+Operators must explicitly replace existing streams with overlapping broad subjects before provisioning the separate environment streams.
+Activation never performs that replacement.
+
+The [scoped native run](../perf/2026.09/native-c-advisories/scoped-native-004/README.md) demonstrates the allowed operations and actual broker refusals across three environments.
+The [retained native run](../perf/2026.09/native-c-advisories/retained-native-001/README.md) demonstrates advisory retention, later delivery progress, deleted payload reporting, and deduplication.
+Application correctness, the remaining delivery limits, and the integrated retained workspace test run remain under `wamn-0ct2.7`.
 
 The [P3 HTTP cutover](../perf/2026.09/p3-http-cutover/report.md) belongs to `wamn-0h0g.2.7.17`.
 Its HTTP shell exports `wasi:http/handler@0.3.0` and uses native P3 body streams.

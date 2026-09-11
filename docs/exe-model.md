@@ -182,7 +182,7 @@ uncertainty grants replay of a composed route.
 The reviewed [C source checkpoint](perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json) under `wamn-0ct2.7` uses native `wasmcloud:nats/jetstream@0.1.0` through the named `events` binding.
 The materializer is platform infrastructure.
 The checkpoint removes WAMN's custom delivery and settlement resources and its payload dead-letter queue.
-WAMN retains exact release-registration checks, consumer preparation and drift refusal, derived publishing, and the scheduler doorbell.
+WAMN retains exact release-registration checks, declared consumer attachment and drift refusal, derived publishing, and the scheduler doorbell.
 
 The host reads native binding configuration from `--materializer-nats-binding-file` or `WAMN_MAT_NATS_BINDING_FILE`.
 The private file carries the native server, credentials, inbox prefix, and stream and subject grants.
@@ -196,15 +196,26 @@ Direct runtime, CDC and operator clients retain `WAMN_EVT_NATS_URL`.
 When authentication is configured, `WAMN_EVT_NATS_USERNAME` and `WAMN_EVT_NATS_PASSWORD_FILE` are required together.
 Password bytes stay in private files and host memory, outside workload configuration and recorded commands.
 
-This checkpoint establishes source changes and focused test results only.
-Live correctness, broker authority, delivery pressure, and the integrated retained workspace test run remain pending under `wamn-0ct2.7`.
-The owner decision of 2026-09-11 requires separate source and advisory streams for each environment.
-Monitoring attaches with that environment's credentials.
-Platform provisioning creates streams and consumers from declared subjects, retention, and retry limits.
-Activation compares their stored configuration with those declarations.
-Runtime credentials permit only environment publishing, delivery, and consumer attachment.
-They cannot create, change, or delete streams or consumers.
-The implementation remains under `wamn-0ct2.7`.
+Platform provisioning creates the separate source and advisory streams for each organization, project, and environment.
+It creates each declared consumer and refuses a stored configuration that differs from the declaration.
+Source names encode the length and value of all three coordinates, such as `EVT_4_acme_9_receiving_3_dev`.
+The source accepts only that environment's `evt.<org>.<project>.<environment>.>` subjects.
+Each source has its own `WAMN_EVENT_ADVISORIES_<source>` stream for exhaustion and termination records.
+Monitoring uses that environment's credentials and cannot read another environment.
+
+Activation reads the declared stream replica count and duplicate window through `WAMN_EVT_STREAM_REPLICAS` and `WAMN_EVT_DUP_WINDOW_SECS`.
+The stream replica count remains separate from the workload replica count.
+Activation compares the stored stream configuration with the declared configuration and refuses disagreement.
+Runtime credentials permit environment publishing, delivery, and attachment, without stream or consumer management rights.
+Activation never creates or changes broker objects.
+
+Existing streams with broader subjects overlap the new exact subjects.
+Operators must explicitly replace those streams before provisioning the separate environment streams.
+Runtime activation does not perform that replacement.
+
+The [scoped native run](perf/2026.09/native-c-advisories/scoped-native-004/README.md) demonstrates provisioning, delivery, retained advisory reads, and refusal of runtime management and foreign access.
+The [retained native run](perf/2026.09/native-c-advisories/retained-native-001/README.md) demonstrates exhaustion, termination, later progress, unavailable deleted payloads, and runtime deduplication.
+Application correctness, the remaining delivery limits, and the integrated retained workspace test run remain under `wamn-0ct2.7`.
 
 `emit` carries an author-supplied dedup id; automation admission deduplicates it.
 The queue does not survive verbatim: classifier/effect-attempt predicates must be

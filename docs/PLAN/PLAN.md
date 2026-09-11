@@ -38,10 +38,14 @@ The origin/executor authorization correction under `wamn-ctc8.33` follows poolin
 The reviewed [native C source checkpoint](../perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json) is owned by `wamn-0ct2.7`.
 It replaces custom materializer delivery and settlement with the platform-owned native `events` binding and scoped broker credentials.
 Registration checks, drift refusal, derived publishing, and the separate scheduler doorbell remain.
-Live correctness, authority and pressure tests and the integrated retained workspace test run remain pending.
+The remaining application and delivery cases and the integrated retained workspace test run remain with `wamn-0ct2.7`.
 Coordinate its source integration with the application moves under `wamn-47wm` before building final artifacts and updating their digest pins.
 The owner requires separate source and advisory streams for each organization, project, and environment.
 Observers use that environment's credentials and cannot read another environment.
+Provisioning creates the declared streams and consumers.
+Activation compares their stored configuration, including stream replicas and duplicate window, and refuses disagreement without changing broker objects.
+Runtime credentials cannot create, change, or delete those objects.
+The stream replica count remains separate from the workload replica count.
 
 ## Exploration or decision required
 
@@ -49,7 +53,6 @@ Do not claim the dependent implementation until its row is resolved in Beads.
 
 | Owner | Required answer |
 |---|---|
-| `wamn-0ct2.7` | Can platform provisioning create the streams, with runtime credentials unable to create or reconfigure them? |
 | `.15.180` | Carry the recovered conflicting run id without exposing it through anonymous HTTP, or keep separate result types. |
 | `.12.151` | Keep the two release-membership conflict vocabularies or converge both tiers on one typed refusal. |
 | `.13.42` | Post-MVP only: customer-hosted router residency and signed-release trust. |
