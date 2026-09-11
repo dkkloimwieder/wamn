@@ -505,7 +505,21 @@ mod tests {
             .await?
             .await?
             .sequence;
-        let first_client = event_broker::connect(credentials, server).await?;
+        let (closed, mut closure) = tokio::sync::mpsc::unbounded_channel();
+        let first_client = crate::event_streams::connection_options(
+            &credentials.username,
+            &credentials.password_file,
+        )?
+        .event_callback(move |event| {
+            let closed = closed.clone();
+            async move {
+                if matches!(event, async_nats::Event::Closed) {
+                    let _ = closed.send(());
+                }
+            }
+        })
+        .connect(server)
+        .await?;
         let first_context = async_nats::jetstream::new(first_client.clone());
         let first_stream = first_context.get_stream(source_name).await?;
         let first_consumer = first_stream
@@ -529,14 +543,14 @@ mod tests {
         );
         drop(first);
         first_client.drain().await?;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while first_client.connection_state() != async_nats::connection::State::Disconnected {
-            ensure!(
-                tokio::time::Instant::now() < deadline,
-                "the interrupted materializer connection did not close"
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        tokio::time::timeout(Duration::from_secs(5), closure.recv())
+            .await
+            .context("the interrupted materializer connection did not close")?
+            .context("the interrupted materializer omitted its native closure event")?;
+        ensure!(
+            first_client.flush().await.is_err(),
+            "the closed materializer client still accepts commands"
+        );
         drop(first_consumer);
         drop(first_stream);
         drop(first_context);
