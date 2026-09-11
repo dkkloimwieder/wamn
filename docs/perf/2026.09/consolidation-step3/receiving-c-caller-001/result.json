@@ -1,0 +1,20 @@
+{
+  "bead": "wamn-0ct2.7",
+  "change_type": "behavior_change",
+  "source_commit": "bf4634772a630b32f2f47b058b40d8bd006680ac",
+  "path": "tools/receiving-cluster-journey-run",
+  "sha256": "442ed23c331f456c64178f086bda363fc16a14a18d7e69776fb71bdbea2db686",
+  "checks": [
+    "bash -n passed",
+    "changed inline Python AST parse passed",
+    "actual app declarations produced one native bounded pull consumer",
+    "exact length-prefixed source and environment advisory names",
+    "five distinct roles; only provisioning receives CREATE/UPDATE/DELETE",
+    "runtime and observer retain same-environment tap; all roles have private inboxes",
+    "broker monitor binds only loopback and callers use the owned container network",
+    "all emitted native configurations and credentials are private mode0600",
+    "git diff --check passed"
+  ],
+  "services": "Not run; root owns fresh integrated execution.",
+  "upstream_contract": "Pinned async-nats pull::Config requires deliver_policy, ack_policy and replay_policy; native JSON includes all three."
+}
