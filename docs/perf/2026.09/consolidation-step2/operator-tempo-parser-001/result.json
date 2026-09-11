@@ -1,0 +1,14 @@
+{
+  "scope": "Synthetic request-span boundary cases only. No live Tempo request ran.",
+  "helper_sha256": "b77a942af41cb057b7c3b559b62fe9480c07d9796e6e16671d591a72513d3c99",
+  "cases": {
+    "matching_completed_request": true,
+    "reject_http.method": true,
+    "reject_http.uri": true,
+    "reject_http.host": true,
+    "reject_http.response.status_code": true,
+    "reject_old_request": true,
+    "reject_later_request": true,
+    "reject_missing_host_identity": true
+  }
+}

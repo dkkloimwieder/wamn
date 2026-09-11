@@ -23,7 +23,9 @@ import subprocess
 import sys
 import termios
 import time
-from urllib.parse import unquote, urlsplit
+from urllib.error import HTTPError
+from urllib.parse import unquote, urlencode, urlsplit
+from urllib.request import Request, urlopen
 import uuid
 
 REPOSITORY = Path(__file__).resolve().parents[3]
@@ -360,7 +362,7 @@ def reference_empty(screen):
     return False
 
 
-def host_diagnostics(session, config, activation, http=False):
+def host_diagnostics(session, config, activation):
     instance = activation["binding"]["WAMN_TARGET_INSTANCE"]
     directory = Path(str(config["wasmtime_cache_dir"]) + ".operator-logs")
     announced = directory / f"operator-host-{session.process.pid}-{instance}.log"
@@ -372,17 +374,67 @@ def host_diagnostics(session, config, activation, http=False):
     info = path.lstat()
     require(stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600
             and info.st_uid == os.getuid(), "host diagnostics must be an owned regular mode 0600 file")
-    startup, request = False, False
+    startup = False
     # Inspect only this activation's file; never copy its contents into evidence.
     with path.open(errors="replace") as log:
         for line in log:
             startup |= "wamn-host runtime startup completed" in line
-            request |= all(marker in line for marker in
-                           ["handle_http_request{", "http.method=POST", "http.uri=/purchase_order/query"])
     require(startup, "host diagnostics omitted the runtime startup marker")
-    require(not http or request, "host diagnostics omitted the purchase-order query HTTP trace")
     return {"path": str(path), "announced_before_operator": True, "mode_0600": True,
-            "startup_retained": startup, "purchase_order_query_retained": request}
+            "startup_retained": startup}
+
+
+def request_span(document, route_host, started_ns, ended_ns):
+    for batch in document.get("batches", []):
+        resource = {entry["key"]: entry["value"].get("stringValue")
+                    for entry in batch.get("resource", {}).get("attributes", [])}
+        for scope in batch.get("scopeSpans", []):
+            for span in scope.get("spans", []):
+                attributes = {entry["key"]: entry["value"].get("stringValue", entry["value"].get("intValue"))
+                              for entry in span.get("attributes", [])}
+                if (span.get("name") == "handle_http_request"
+                        and attributes.get("http.method") == "POST"
+                        and attributes.get("http.uri") == "/purchase_order/query"
+                        and attributes.get("http.host") == route_host
+                        and str(attributes.get("http.response.status_code")) == "200"
+                        and started_ns <= int(span["startTimeUnixNano"]) < int(span["endTimeUnixNano"]) <= ended_ns
+                        and resource.get("service.instance.id")):
+                    return {"span_id": span["spanId"], "service_instance_id": resource["service.instance.id"],
+                            "method": attributes["http.method"], "uri": attributes["http.uri"],
+                            "host": attributes["http.host"], "status": 200,
+                            "started_ns": span["startTimeUnixNano"], "ended_ns": span["endTimeUnixNano"]}
+    return None
+
+
+def request_trace(config, started_ns, ended_ns):
+    endpoint = config["tempo_query_url"].rstrip("/")
+    query = ('{ name = "handle_http_request" && span."http.method" = "POST"'
+             ' && span."http.uri" = "/purchase_order/query"'
+             ' && span."http.host" = ' + json.dumps(config["route_host"]) + ' }')
+    search_url = endpoint + "/api/search?" + urlencode({
+        "q": query, "start": started_ns // 1_000_000_000,
+        "end": ended_ns // 1_000_000_000 + 1, "limit": 20,
+    })
+    deadline = time.monotonic() + 120
+    while True:
+        with urlopen(Request(search_url, headers={"Accept": "application/json"}), timeout=5) as response:
+            search = json.load(response)
+        for candidate in search.get("traces", []):
+            trace_id = candidate["traceID"]
+            require(re.fullmatch(r"[0-9a-fA-F]{32}", trace_id), "Tempo returned an invalid trace ID")
+            try:
+                with urlopen(Request(endpoint + "/api/traces/" + trace_id,
+                                     headers={"Accept": "application/json"}), timeout=5) as response:
+                    document = json.load(response)
+            except HTTPError as error:
+                if error.code == 404:
+                    continue  # Search can find a trace before its spans become readable.
+                raise
+            match = request_span(document, config["route_host"], started_ns, ended_ns)
+            if match:
+                return {"trace_id": trace_id, "query": query, "read_after_host_exit": True, **match}
+        require(time.monotonic() < deadline, "Tempo did not retain the purchase-order query trace")
+        time.sleep(0.5)
 
 
 def require_clean_frame(screen):
@@ -394,6 +446,7 @@ def require_clean_frame(screen):
 
 def prove(session, config, edit, evidence):
     first = None
+    first_started_ns = time.time_ns()
 
     def started():
         nonlocal first
@@ -410,12 +463,13 @@ def prove(session, config, edit, evidence):
     evidence["empty_purchase_order_list"] = session.display.text()
     require_clean_frame(evidence["empty_purchase_order_list"])
     open_reference(session, config)
-    evidence["first_host_diagnostics"] = host_diagnostics(session, config, first, http=True)
+    evidence["first_host_diagnostics"] = host_diagnostics(session, config, first)
     session.send(DRAFT_REFERENCE.encode() + b"\r")
     session.until(lambda: DRAFT_REFERENCE in session.display.text()
                   and "Enter saves; Esc cancels" not in session.display.text(), "saved receipt reference")
     evidence["draft_before_restart"] = session.display.text()
     restart_offset = len(session.output)
+    restart_started_ns = time.time_ns()
     edit.apply()
     observed = {"old_operator_gone": False, "old_host_gone": False, "old_socket_closed": False}
     second = None
@@ -469,6 +523,12 @@ def prove(session, config, edit, evidence):
                 for key in ["first_host_diagnostics", "second_host_diagnostics"]),
             "host diagnostics were not retained after session cleanup")
     evidence["host_diagnostics_retained_after_exit"] = True
+    finished_ns = time.time_ns()
+    evidence["first_request_trace"] = request_trace(config, first_started_ns, restart_started_ns)
+    evidence["second_request_trace"] = request_trace(config, restart_started_ns, finished_ns)
+    require(evidence["first_request_trace"]["service_instance_id"]
+            != evidence["second_request_trace"]["service_instance_id"],
+            "the replacement request trace came from the retired host")
     evidence["exit_code"] = session.process.returncode
     evidence["terminal_restored"] = True
 
