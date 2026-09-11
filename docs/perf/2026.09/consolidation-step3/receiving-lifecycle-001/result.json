@@ -1,0 +1,28 @@
+{
+  "source_base": "96bd3e19185df853f9adef9197476428fea843a8",
+  "issue": "wamn-47wm.4.1",
+  "change": "internal refactor",
+  "lifecycle": {
+    "path": "tools/receiving-cluster-journey-run",
+    "lines": 86,
+    "sha256": "a47cf412c5dcda40b77f20bf2d30d697cccdc6540c923aedd1a37977c8e97903"
+  },
+  "retired": [
+    "tools/journey-startup-burst.py",
+    "tools/receiving-operator-recovery-run",
+    "tools/receiving-postcommit-proof"
+  ],
+  "required_commits": {
+    "operator_recovery": "7939d322936972886c8ee1cb0e148ca7a4cd92f8",
+    "operator_caller": "96bd3e19185df853f9adef9197476428fea843a8",
+    "postcommit_pair": "3b3c51d3e53cf0d79a3b08344b17db22daf4039c",
+    "type_corrections": "278f38ae8031e87284c1ef77aa6097f53b6a2bd6"
+  },
+  "validation": [
+    "bash -n tools/receiving-cluster-journey-run",
+    "git diff --check"
+  ],
+  "integrated_prior_tests": "receiving-compile-002:15 ordinary passed,12 ignored; recovery child requires connected warm check before integration",
+  "services_run_here": false,
+  "remaining": "Root holds this commit until the connected ordinary checks pass, then creates a clean owned source worktree for the full Receiving run."
+}
