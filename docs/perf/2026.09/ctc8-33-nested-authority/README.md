@@ -59,3 +59,20 @@ This gate proves deployed route authentication, not nested outbound dispatch or 
 
 Merge commit `be309de3` preserves the tested commit and incorporates the Receiving boundary at `b7275405`.
 That boundary changes proof code, its dependency, and test tooling, but no identity, runtime, driver, or service implementation.
+
+The [integrated workspace run](integrated-workspace-001/run.json) finished at `dd28c68c` with exit 101 and a clean, unchanged source tree.
+It reported 2,235 test passes, six doctest passes, 83 failures, and 85 explicit self-skips.
+The [comparison](integrated-workspace-001/workspace-comparison.json) retains the exact failure identities, causes, test targets, and self-skip names.
+The [interpretation](workspace-interpretation-001/stdout.log) accounts for every difference and leaves no unresolved classification.
+These results do not constitute a green full-suite result.
+
+Against the pooling baseline, 79 failures match by exact identity and cause.
+One WIT diagnostic differs only in its checkout path.
+The renamed nested HTTP test retains the same missing-fixture refusal and separately passes in the armed live proof.
+The two other failures belong to Receiving tests and match their failures at `b7275405`.
+The installed observer lacks `WAMN_OVERLAY_OBSERVER_DATABASE_URL`, and the postcommit proof lacks `WAMN_JOURNEY_DOCUMENT`.
+
+Against the Receiving run, 81 failures match by exact identity and cause.
+The same checkout-path difference and nested-test rename account for the remaining two failures.
+The Receiving runner's temporary-directory failure does not occur here, and that exact test passes in this run.
+The test targets and explicit self-skip names match both reference runs.
