@@ -513,6 +513,8 @@ def prove(session, config, edit, evidence):
     evidence["second_host_diagnostics"] = host_diagnostics(session, config, second)
     evidence["operator_frames_clean"] = True
     session.send(b"q")
+    session.text("Discard draft changes and quit? (y/n)")
+    session.send(b"y")
     session.until(lambda: session.process.poll() is not None, "q closes the whole development session",
                   allow_exit=True, timeout=45.0)
     session.finish()
