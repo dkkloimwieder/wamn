@@ -1,0 +1,1 @@
+["cargo", "test", "-p", "wamn-execution-host", "--lib", "--locked", "--offline", "--target-dir", "target", "router_driver::native_policy::tests::native_nested_permission_refusal_revokes_invocation_authority", "--", "--exact", "--include-ignored", "--nocapture"]

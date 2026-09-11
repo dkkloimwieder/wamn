@@ -1,0 +1,1 @@
+["cargo", "test", "-p", "wamn-execution-host", "--lib", "--locked", "--offline", "--target-dir", "target", "router_driver::native_policy::tests::", "--", "--include-ignored", "--nocapture", "--test-threads=1"]

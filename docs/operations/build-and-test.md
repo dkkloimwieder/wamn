@@ -177,6 +177,7 @@ No throughput benchmark is required for this startup change.
 
 `wamn-0ct2.2` owns the native dispatch substitution and its stop conditions.
 The [checkpoint report](../perf/2026.09/native-b-dispatch/report.md) separates runtime mechanics from production adoption.
+The [implementation checkpoint](../perf/2026.09/native-b-adoption/report.md) records admitted imports, native helpers, and authenticated nested calls.
 The scalar fixtures exercise public APIs through the production WAMN engine.
 They require no live database, broker, registry, cluster, or benchmark.
 
@@ -196,7 +197,43 @@ This prospective embedding setting does not change the production runtimes.
 The native-only deadline control requires observed initialization after its deadline and watchdog exit 124.
 That expected child exit counts as a passing negative control, not a crashed positive case.
 The binding cases require host allowance, host refusal, and a direct child initialization trap.
-The duplicate-export case requires WAMN's exact manifest selection and the native ambiguity refusal.
+The imported-interface case requires admission to reject ambiguous providers despite an exact dependency digest.
+The public native resolver must also refuse that ambiguity. The historical report retains the former selection contract.
+
+Run the admitted-closure and native node checks in the same isolated worktree:
+
+```bash
+cargo test -p wamn-catalog --lib --test serving_manifest_digest \
+  --locked --offline --no-fail-fast -- --include-ignored
+cargo test -p wamn-execution-host --lib --locked --offline \
+  router_driver::native_ -- --include-ignored --nocapture --test-threads=1 \
+  --skip native_authenticated_nested_authority_and_lifecycle
+cargo test -p wamn-runtime --lib --locked --offline \
+  plugins::wamn_postgres::wiring_resolution::tests -- --include-ignored
+```
+
+Require shared export-only handlers to load with distinct admitted identities, including identical component bytes.
+Require wiring resolution to retain each exact node-to-component fact when distinct facts share a digest.
+Require ambiguous imported providers to refuse before native initialization and altered byte buffers to refuse before cache access.
+The node tests must preserve typed nested permission refusals and revoke invocation authority after success, refusal, deadline, and cancellation.
+Nonterminating initialization must obey the enclosing deadline without receiving invocation authority.
+The readiness cases must observe native initialization, leave the application handler uncalled, and return guest memory after initializer traps or deadlines.
+
+For the authenticated nested proof, use a fresh disposable PostgreSQL 18 server without WAMN schemas or roles.
+Set `WAMN_NATIVE_B_AUTH_PG_URL` to its administrator connection URL through the environment.
+The fixture installs the existing catalog and application schemas plus the scoped HTTP admission role.
+It refuses a populated server. The signed-session verifier uses a local HTTPS issuer with test signing keys.
+
+```bash
+cargo test -p wamn-execution-host --lib --locked --offline \
+  router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle \
+  -- --include-ignored --nocapture --test-threads=1
+```
+
+Require all six scenarios: permission refusal, session fresh-only refusal, permitted nested execution, child initialization deadline, child execution deadline, and cancellation.
+Require the original caller and credential kind, distinct invocation scopes, no initialization of refused children, and complete authority revocation.
+Remove only the owned disposable server after the proof.
+These checks do not replace the released and candidate production paths or their deployed proof required for B's substitution.
 
 Retain the source and artifact hashes, command, counts, and complete output.
 A passing checkpoint does not close B or prove the application node path.

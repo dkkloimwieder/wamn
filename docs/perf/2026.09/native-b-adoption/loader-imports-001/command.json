@@ -1,0 +1,29 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "-p",
+    "wamn-execution-host",
+    "--lib",
+    "--locked",
+    "--offline",
+    "--target-dir",
+    "target",
+    "router_driver::native_",
+    "--",
+    "--include-ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910",
+  "head": "03e594e9cb97e88fb6177f7516c5fa0f206b56d4",
+  "source_sha256": {
+    "crates/catalog/model/src/serving_manifest.rs": "38ee42b02277bcfc1e0387c59daa712081ded5a2e6f8b44d47db98e20762e4e0",
+    "crates/execution/host/src/router_driver.rs": "056b5a5332a2aca3626d56ddecde87838f185827c724ed3b5b2650c2446fbe08",
+    "crates/execution/host/src/router_driver/native_call.rs": "1b072f63cb04f17c3097a7a72bc7c2e3725de2dae72a1e3d904c775f4272a3f6",
+    "crates/execution/host/src/router_driver/native_policy/tests.rs": "52d559a30b70b18c356a9a594cdc8c17196904a2522f6b355c06cc86bac5c300",
+    "crates/execution/host/src/router_driver/native_policy.rs": "a46755dd39c10c65765054acf198a8b2b1230971d895bddf372f7f7653320833",
+    "crates/execution/host/src/router_driver/native_workload/tests.rs": "0d40773a74641fcb5cdda43836bcefc4fba271e2c27564b9c15adb9e344855bd",
+    "crates/execution/host/src/router_driver/native_workload.rs": "8eb43c893699d6651d3af87d12ad1b9bc7e05c649decf0fdf3b853231b817a62"
+  }
+}

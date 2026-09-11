@@ -1,0 +1,40 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "-p",
+    "wamn-execution-host",
+    "--lib",
+    "--locked",
+    "--offline",
+    "--target-dir",
+    "target",
+    "--no-fail-fast",
+    "router_driver::native_",
+    "--",
+    "--include-ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910",
+  "head": "03e594e9cb97e88fb6177f7516c5fa0f206b56d4",
+  "armed_variables": [
+    "WAMN_NATIVE_B_AUTH_PG_URL"
+  ],
+  "fixture_container": "wamn-native-b-auth-20260910-001",
+  "source_sha256": {
+    "Cargo.lock": "9aafd4be544d2e4f8e603a0a83b8d72f2edcaeaa81b43d98209aacf0708c3cc6",
+    "crates/execution/host/Cargo.toml": "24945fe1a8d8634b50fead4c229125362ce09fa184bcc06b29a249fc5cad237c",
+    "crates/execution/host/src/router_driver.rs": "056b5a5332a2aca3626d56ddecde87838f185827c724ed3b5b2650c2446fbe08",
+    "crates/catalog/model/src/serving_manifest.rs": "38ee42b02277bcfc1e0387c59daa712081ded5a2e6f8b44d47db98e20762e4e0",
+    "crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs": "b9d80bd6de7860b88c4fa44c31570ccf910090d9fcc104e1e140b4be62c6e33e",
+    "crates/platform/runtime/tests/support/session_fixture.rs": "d25ba15e29a86cfdba3a5477d4781879093d568d20ce0f579a737cee5c684595",
+    "crates/execution/host/src/router_driver/native_call/tests.rs": "a037f6f2d72f1b5283b814fcc5c2284d6ce57b02848c6a133c6e49a60991d110",
+    "crates/execution/host/src/router_driver/native_call.rs": "a52c305ca040191c0b48181d08ef49131a836c5b5293086120319740c24ff3a9",
+    "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs": "d419a4ad0e4c673275bebad0dbd42f71e8fd40083e722bca7d99730b2a82de81",
+    "crates/execution/host/src/router_driver/native_policy/tests.rs": "e09cdaeca0e9d0b9edc873550b8c35b186ad0f67cfce51cfc2348f32e7b323f2",
+    "crates/execution/host/src/router_driver/native_policy.rs": "a46755dd39c10c65765054acf198a8b2b1230971d895bddf372f7f7653320833",
+    "crates/execution/host/src/router_driver/native_workload/tests.rs": "0d40773a74641fcb5cdda43836bcefc4fba271e2c27564b9c15adb9e344855bd",
+    "crates/execution/host/src/router_driver/native_workload.rs": "8eb43c893699d6651d3af87d12ad1b9bc7e05c649decf0fdf3b853231b817a62"
+  }
+}

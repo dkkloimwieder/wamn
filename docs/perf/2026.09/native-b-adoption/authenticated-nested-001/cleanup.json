@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "docker",
+    "container",
+    "rm",
+    "--force",
+    "--volumes",
+    "wamn-native-b-auth-20260910-001"
+  ],
+  "expected_container_id": "67ee1ce3d5e3a677240b318c00d04d76b858721dd595cfd1c2409ca954909601",
+  "exit_code": 0,
+  "container_absent": true,
+  "stdout": "wamn-native-b-auth-20260910-001\n",
+  "stderr": ""
+}

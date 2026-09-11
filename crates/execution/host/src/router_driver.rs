@@ -58,6 +58,10 @@ use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component, Instance, InstancePre, Linker, TypedFunc};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
+mod native_call;
+mod native_policy;
+mod native_workload;
+
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
         path: "../router/wit",

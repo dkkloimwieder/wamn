@@ -1,0 +1,19 @@
+{
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-runtime",
+    "--lib",
+    "plugins::wamn_postgres::wiring_resolution::tests",
+    "--",
+    "--include-ignored"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910",
+  "baseline": "03e594e9cb97e88fb6177f7516c5fa0f206b56d4",
+  "source_sha256": {
+    "crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs": "b9d80bd6de7860b88c4fa44c31570ccf910090d9fcc104e1e140b4be62c6e33e"
+  }
+}

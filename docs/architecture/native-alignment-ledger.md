@@ -43,8 +43,10 @@ An omission mutant fails both raise cases, and the rebuilt restored source passe
 The test runner retains its original limits.
 The [native dispatch checkpoint](../perf/2026.09/native-b-dispatch/report.md) belongs to `wamn-0ct2.2`.
 It tests enclosing deadlines, memory return, and public host binding before production replacement.
-The exact-digest case compares WAMN's accepted release selection with native duplicate-export refusal.
-B retains its loading stop condition and the production manual lifecycle until that boundary is resolved.
+The historical exact-digest case compares the former per-dependency selection contract with native refusal of ambiguous imported providers.
+The owner decision of 2026-09-10 supersedes that contract through [B's admission boundary](wamn_native_alignment_plan.md#b-replace-manual-guest-execution-including-its-duplicate-caches).
+Only interfaces imported by the admitted closure require unique component providers. Shared export-only handlers retain exact wiring selection.
+The original experiment remains failed. B owns the approved production replacement and removal of the manual lifecycle.
 This checkpoint does not change row 4 or permit warm reuse.
 
 The [native NATS checkpoint](../perf/2026.09/native-c-nats/report.md), owned by `wamn-0ct2.4`, stops at the private native message-handle boundary.

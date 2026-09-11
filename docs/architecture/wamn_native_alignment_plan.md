@@ -45,6 +45,13 @@ A's [descriptor proof](../perf/2026.09/native-a-descriptor/report.md) records th
 
 ### B. Replace manual guest execution, including its duplicate caches
 
+Accepted trade, owner decision 2026-09-10: one admitted implementation per imported operation interface replaces per-dependency provider selection.
+Uniqueness applies to fully qualified interfaces that appear as imports in the admitted closure, including their versions.
+Admission derives that set from byte-verified operation dependencies and rejects multiple component providers for each imported interface.
+A dependency's exact package, version, and artifact digest still establish provenance. They cannot select among ambiguous providers.
+Export-only interfaces can repeat. Wiring selects palette nodes by their exact admitted facts, so shared `wamn:node/handler` exports remain valid.
+This boundary requires no exception for a named handler or palette.
+
 **Observation:** 2.9 exposes `DispatchTarget` / `GuestCall` and native digest-based component loading/caching. WAMN still owns `RouterDriver`'s compiled cache, `PreparedCache`, linker/pre-instantiation work and `NodeInstance`, including nested calls. Dispatch alone does not move loading into the native cache. [S4, S6, S7]
 
 **Target:** WAMN resolves and authorizes the operation; native loading and dispatch own compilation reuse, instance lifecycle, deadline/abandonment handling and invocation metering. WAMN retains verified statement selection, capability authority, application outcomes and wiring traversal.
@@ -70,10 +77,10 @@ Owner ruling, 2026-09-10: preserve one enclosing deadline across guest initializ
 **Stop condition:** a required context, candidate or loading boundary cannot be represented through public APIs. Record the exact obstacle before expanding the adapter. Do not copy internals or preserve duplicate machinery merely to report native adoption.
 
 B's [public dispatch checkpoint](../perf/2026.09/native-b-dispatch/report.md) tests the deadline and exact component selection boundaries.
-At the pinned 2.9 source, native resolution rejects an imported interface with multiple component exporters before considering an installed host policy function.
-WAMN's manifest can select one such component by its exact digest.
-The checkpoint records that loading obstacle under `wamn-0ct2.2` before any production adapter expansion.
-The production substitution and its deletion contract remain open.
+The historical checkpoint records a valid stop against the former per-dependency selection contract.
+The accepted trade above supersedes that contract. Admission rejects ambiguous imported providers before native resolution.
+The original failed experiment remains failed and does not block this approved substitution.
+The production substitution and its deletion contract remain open under `wamn-0ct2.2`.
 
 #### B2. Warm reuse after B with its policy amendment
 

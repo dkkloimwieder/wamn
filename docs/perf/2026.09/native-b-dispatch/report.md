@@ -2,6 +2,9 @@
 
 Issue: `wamn-0ct2.2`. Status: blocked at the exact component selection boundary.
 
+Superseding owner decision, 2026-09-10: [plan B](../../../architecture/wamn_native_alignment_plan.md#b-replace-manual-guest-execution-including-its-duplicate-caches) requires unique providers only for interfaces imported by the admitted closure.
+It replaces the per-dependency selection contract. This report retains the original failed experiment and its findings.
+
 ## Scope
 
 This checkpoint tests public native dispatch before production replacement.

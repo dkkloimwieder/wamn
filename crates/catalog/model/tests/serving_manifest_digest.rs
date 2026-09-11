@@ -4,10 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 use wamn_catalog::{
-    ArtifactHash, AttachmentAuthPolicy, AttachmentKind, CatalogIdentityError, DefinitionHash,
-    EffectiveReleaseId, PackageCoordinate, ServingAttachment, ServingComponent,
-    ServingComponentOperation, ServingManifest, ServingRegistration, ServingRegistrationInput,
-    ServingRelease, ServingWiring, parse_attachment_auth_policy,
+    ArtifactHash, AttachmentAuthPolicy, AttachmentKind, CatalogIdentityError,
+    ComponentOperationDependency, DefinitionHash, EffectiveReleaseId, PackageCoordinate,
+    ServingAttachment, ServingComponent, ServingComponentOperation, ServingManifest,
+    ServingRegistration, ServingRegistrationInput, ServingRelease, ServingWiring,
+    parse_attachment_auth_policy,
 };
 
 mod mint_vector {
@@ -306,6 +307,190 @@ fn malformed_authentication_lists_are_refused_by_parser_and_release_reader() {
             })
         );
     }
+}
+
+fn operation_provider_manifest(export: &str, version: &str) -> ServingManifest {
+    let package = export.split_once(':').expect("full interface identity").0;
+    let operation = ServingComponentOperation {
+        registered_operation: None,
+        fresh_only: false,
+        committed_result_schema: None,
+        dependencies: Vec::new(),
+        statements: BTreeMap::new(),
+    };
+    ServingManifest::new(
+        ServingRelease {
+            tenant_id: "provider-tenant".into(),
+            effective_release_id: EffectiveReleaseId::new(1).expect("nonzero release"),
+            environment: "proof".into(),
+            packages: BTreeSet::from([
+                PackageCoordinate::new(package, version).unwrap(),
+                PackageCoordinate::new("consumer", "1.0.0").unwrap(),
+            ]),
+        },
+        BTreeSet::from([
+            ServingComponent {
+                package_id: package.into(),
+                component: "provider".into(),
+                interface_version: "0.1.0".into(),
+                digest: artifact_hash(COMPONENT_A),
+                operations: BTreeMap::from([(
+                    export.into(),
+                    ServingComponentOperation {
+                        registered_operation: Some(export.into()),
+                        ..operation.clone()
+                    },
+                )]),
+            },
+            ServingComponent {
+                package_id: "consumer".into(),
+                component: "consumer".into(),
+                interface_version: "0.1.0".into(),
+                digest: artifact_hash(COMPONENT_B),
+                operations: BTreeMap::from([("consumer:entry/run@1.0.0".into(), operation)]),
+            },
+        ]),
+        BTreeSet::new(),
+        BTreeMap::new(),
+        BTreeMap::new(),
+    )
+    .expect("one provider and one consumer form a valid manifest")
+}
+
+fn add_operation_import(manifest: &mut ServingManifest, export: &str, version: &str) {
+    let mut consumer = manifest
+        .components
+        .iter()
+        .find(|component| component.package_id == "consumer")
+        .expect("fixture consumer")
+        .clone();
+    assert!(manifest.components.remove(&consumer));
+    consumer
+        .operations
+        .get_mut("consumer:entry/run@1.0.0")
+        .expect("consumer operation")
+        .dependencies = vec![ComponentOperationDependency {
+        package: export
+            .split_once(':')
+            .expect("full interface identity")
+            .0
+            .into(),
+        version: version.into(),
+        digest: COMPONENT_A.into(),
+        operation: export.into(),
+    }];
+    assert!(manifest.components.insert(consumer));
+}
+
+#[test]
+fn duplicate_export_only_interfaces_refuse_only_after_the_closure_imports_them() {
+    for (export, version) in [
+        ("wamn:node/handler@0.1.0", "0.1.0"),
+        ("provider:entry/run@1.0.0", "1.0.0"),
+    ] {
+        let mut candidate = operation_provider_manifest(export, version);
+        let mut other = candidate
+            .components
+            .iter()
+            .find(|component| component.component == "provider")
+            .expect("fixture provider")
+            .clone();
+        other.component = "another-provider".into();
+        other.digest = artifact_hash(COMPONENT_B);
+        other
+            .operations
+            .get_mut(export)
+            .unwrap()
+            .registered_operation = None;
+        assert!(candidate.components.insert(other));
+        let (admitted, _) = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
+            .expect("the host can address duplicate export-only interfaces directly");
+        assert_eq!(admitted, candidate);
+
+        add_operation_import(&mut candidate, export, version);
+        let error = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
+            .expect_err("one selected digest cannot disambiguate an imported interface");
+        let detail = error.to_string();
+        for expected in [
+            "ambiguous component providers",
+            export,
+            COMPONENT_A,
+            COMPONENT_B,
+        ] {
+            assert!(detail.contains(expected), "{expected}: {detail}");
+        }
+    }
+}
+
+#[test]
+fn imported_provider_ambiguity_does_not_deduplicate_coordinates_or_digests() {
+    let export = "provider:entry/run@1.0.0";
+    for same_digest in [false, true] {
+        let mut candidate = operation_provider_manifest(export, "1.0.0");
+        add_operation_import(&mut candidate, export, "1.0.0");
+        ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
+            .expect("one exact imported provider is admitted");
+        let mut other = candidate
+            .components
+            .iter()
+            .find(|component| component.component == "provider")
+            .expect("fixture provider")
+            .clone();
+        if same_digest {
+            other.component = "same-bytes-another-provider".into();
+        } else {
+            other.digest = artifact_hash(COMPONENT_B);
+        }
+        assert!(candidate.components.insert(other));
+        let error = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
+            .expect_err("each provider remains distinct at native resolution");
+        assert!(error.to_string().contains("ambiguous component providers"));
+    }
+}
+
+#[test]
+fn imported_interface_identity_includes_the_complete_version() {
+    let export = "provider:entry/run@1.0.0";
+    let mut candidate = operation_provider_manifest(export, "1.0.0");
+    add_operation_import(&mut candidate, export, "1.0.0");
+    let mut other = candidate
+        .components
+        .iter()
+        .find(|component| component.component == "provider")
+        .expect("fixture provider")
+        .clone();
+    other.component = "another-version".into();
+    other.digest = artifact_hash(COMPONENT_B);
+    let mut operation = other.operations.remove(export).unwrap();
+    operation.registered_operation = None;
+    other
+        .operations
+        .insert("provider:entry/run@2.0.0".into(), operation);
+    assert!(candidate.components.insert(other));
+    let (admitted, _) = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
+        .expect("a different full interface version is not a competing provider");
+    assert_eq!(admitted, candidate);
+}
+
+#[test]
+fn a_unique_imported_provider_must_still_match_the_exact_dependency_digest() {
+    let export = "provider:entry/run@1.0.0";
+    let mut candidate = operation_provider_manifest(export, "1.0.0");
+    add_operation_import(&mut candidate, export, "1.0.0");
+    let mut provider = candidate
+        .components
+        .iter()
+        .find(|component| component.component == "provider")
+        .expect("fixture provider")
+        .clone();
+    assert!(candidate.components.remove(&provider));
+    provider.digest = artifact_hash(COMPONENT_B);
+    assert!(candidate.components.insert(provider));
+    let error = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
+        .expect_err("one provider cannot replace the pinned artifact provenance");
+    let detail = error.to_string();
+    assert!(detail.contains("resolves to 0 exact component facts"));
+    assert!(detail.contains(COMPONENT_A));
 }
 
 #[test]

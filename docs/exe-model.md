@@ -59,6 +59,11 @@ uniform `wamn:node` seam and existing digest-keyed pool; services depend inward
 on execution-host, runtime, catalog and router. `to_port` is enforced whenever a
 target has multiple inputs and may be omitted only for a single-input target.
 
+Native alignment B (`wamn-0ct2.2`), owner decision 2026-09-10, requires one admitted provider for each operation interface imported by the admitted closure.
+The fully qualified interface token includes its version. Admission retains exact package and artifact provenance without per-dependency provider selection.
+Export-only interfaces can repeat. Wiring selects palette nodes by their complete admitted facts, so their shared `wamn:node/handler` export needs no uniqueness rule.
+The [B plan](architecture/wamn_native_alignment_plan.md#b-replace-manual-guest-execution-including-its-duplicate-caches) owns the native production substitution and deletion contract.
+
 ### Composition: an edge carries the route envelope
 
 RULED `wamn-362o.42` (2026-09-05). A wiring edge carries one value of one

@@ -28,6 +28,16 @@ tokio = { workspace = true, features = ["rt", "sync", "time"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-control-provision = { workspace = true }
+tokio-postgres = { workspace = true }
+url = { workspace = true }
+base64 = { workspace = true }
+ring = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true, features = ["aws_lc_rs"] }
+tokio-rustls = { workspace = true }
+tokio = { workspace = true, features = ["io-util", "net"] }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 tracing-subscriber = { workspace = true }
 wat = "=1.252.0"

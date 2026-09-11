@@ -54,6 +54,9 @@ Changing a contract to fit an API requires a separate owner decision. The [plan'
 
 ## 3. B: exact component selection fails before dispatch
 
+Superseding owner decision, 2026-09-10: [plan B][plan] replaces per-dependency provider selection with unique providers for interfaces imported by the admitted closure.
+Shared export-only handlers remain valid. The findings below retain the original experiment and its former contract.
+
 ### Intended replacement
 
 B transfers component loading, compilation reuse, linking, and invocation lifecycle to native wasmCloud.

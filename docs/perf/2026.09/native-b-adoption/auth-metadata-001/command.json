@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "cargo",
+    "metadata",
+    "--offline",
+    "--format-version",
+    "1"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910",
+  "exit_code": 0,
+  "manifest_sha256": "24945fe1a8d8634b50fead4c229125362ce09fa184bcc06b29a249fc5cad237c"
+}

@@ -1,0 +1,17 @@
+{
+  "base_commit": "03e594e9cb97e88fb6177f7516c5fa0f206b56d4",
+  "branch": "work/native-b-adoption-20260910",
+  "upstream_commit": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "state": "uncommitted B helpers, no production substitution",
+  "sha256": {
+    "Cargo.toml": "60ed3fa20c4b104ab03be599a97946df16187974c1d4ef490e31022ad04edb69",
+    "Cargo.lock": "31a34ba427b23a76e4aff29e861ef21267dd49d906d3e2e963a2dc3f20ce8da9",
+    "crates/execution/host/Cargo.toml": "5b820e0cabc56984aece36e96339d1171ece5f5e47921fadc327a75bdd270346",
+    "crates/execution/host/src/router_driver.rs": "056b5a5332a2aca3626d56ddecde87838f185827c724ed3b5b2650c2446fbe08",
+    "crates/catalog/model/src/serving_manifest.rs": "222aac29cfa0d1d82afca4bd63d0382e695a37ff3b310fb5f16b981e15b3bb88",
+    "crates/execution/host/src/router_driver/native_call.rs": "195b9f6848e544516d50e65b823ea1facbccd3aaca9759bed8f6cc33dc67e9c2",
+    "crates/execution/host/src/router_driver/native_policy/tests.rs": "36fb34b9a00d99c35fbabf7c23c262ca2ebe58f6f7628c1f9168ad58e5eb6679",
+    "crates/execution/host/src/router_driver/native_policy.rs": "b98ac5e8f128de12283a8394f4366eb3e1c133c91ea80d9db02524301e1ce607",
+    "crates/execution/host/src/router_driver/native_workload.rs": "ec0d33ea27f89c2e2b2f23623dd6bc29ae9e3bafce1bdbc3320685a2e381f2e7"
+  }
+}

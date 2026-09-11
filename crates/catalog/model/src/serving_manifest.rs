@@ -334,6 +334,14 @@ impl ServingManifest {
             }
         }
 
+        let operation_imports: BTreeSet<_> = self
+            .components
+            .iter()
+            .flat_map(|component| component.operations.values())
+            .flat_map(|operation| &operation.dependencies)
+            .map(|dependency| dependency.operation.as_str())
+            .collect();
+        let mut operation_providers = BTreeMap::new();
         for component in &self.components {
             validate_package_member(&package_versions, &component.package_id)?;
             validate_text(&component.component, "component")?;
@@ -343,6 +351,21 @@ impl ServingManifest {
             }
             for (export, operation) in &component.operations {
                 validate_text(export, "component-operation")?;
+                // Only an imported full interface needs a unique provider.
+                // Export-only handlers can be selected directly by the host.
+                if operation_imports.contains(export.as_str())
+                    && let Some(previous) = operation_providers.insert(export, component)
+                {
+                    return invalid(format!(
+                        "operation interface {export:?} has ambiguous component providers: {}::{} digest {} and {}::{} digest {}",
+                        previous.package_id,
+                        previous.component,
+                        previous.digest.as_str(),
+                        component.package_id,
+                        component.component,
+                        component.digest.as_str(),
+                    ));
+                }
                 if operation.fresh_only && operation.registered_operation.is_none() {
                     return invalid(format!(
                         "unregistered export {export:?} must not require a fresh credential"

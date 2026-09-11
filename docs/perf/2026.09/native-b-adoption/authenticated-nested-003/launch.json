@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "docker",
+    "run",
+    "--rm",
+    "-d",
+    "--name",
+    "wamn-native-b-auth-20260910-003",
+    "--label",
+    "wamn.proof.owner=native-b",
+    "--env",
+    "POSTGRES_PASSWORD",
+    "-p",
+    "127.0.0.1::5432",
+    "sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14"
+  ],
+  "image_id": "sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14",
+  "exit_code": 0,
+  "container_id": "0a16895b1cda1705d9c6f7e3df4e50b95661a7dd1ab6f3e13c5d4aaa4e066783"
+}

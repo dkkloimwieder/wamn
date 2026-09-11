@@ -435,6 +435,8 @@ pub struct ResolvedActiveWiring {
     pub graph_hash: Arc<str>,
     pub wiring: Wiring,
     pub response: Option<WiringResponse>,
+    /// Complete admitted facts selected by each exact wiring node.
+    pub node_components: Arc<BTreeMap<String, AdmittedComponent>>,
     pub components: Arc<[AdmittedComponent]>,
 }
 
@@ -976,26 +978,26 @@ fn lower_resolved_wiring(
     }
     let mut executable = decoded.document.clone();
     let mut operations = Vec::with_capacity(resolved.len());
-    for (node_id, component) in resolved {
+    for (node_id, component) in &resolved {
         let node = decoded
             .document
             .nodes
-            .get(&node_id)
+            .get(node_id)
             .ok_or_else(|| anyhow::anyhow!("release-wiring-node-binding-extra"))?;
         anyhow::ensure!(
             node.component == component.component
                 && node.interface_version == component.interface_version
                 && component.operations.contains_key(&node.operation)
-                && components.contains(&component),
+                && components.contains(component),
             "release-wiring-node-binding-mismatch"
         );
         let runtime_key = component.component_digest.clone();
         executable
             .nodes
-            .get_mut(&node_id)
+            .get_mut(node_id)
             .expect("the resolved node belongs to the cloned document")
             .component = runtime_key.clone();
-        for mut operation in project_component_operations(&component) {
+        for mut operation in project_component_operations(component) {
             operation.component = runtime_key.clone();
             if !operations.contains(&operation) {
                 operations.push(operation);
@@ -1028,6 +1030,7 @@ fn lower_resolved_wiring(
         graph_hash: Arc::from(decoded.graph_hash),
         wiring,
         response: decoded.document.response,
+        node_components: Arc::new(resolved),
         components: components.into(),
     })
 }
@@ -1148,7 +1151,7 @@ mod tests {
     }
 
     #[test]
-    fn same_local_name_nodes_keep_exact_target_package_identity() {
+    fn same_digest_nodes_keep_exact_target_package_identity() {
         let document = WiringDocument::parse(&json!({
             "format-version": "0.1",
             "wiring-id": "compose-orders",
@@ -1182,7 +1185,7 @@ mod tests {
         base_operation.registered_operation = Some("base:entity/create@1.0.0".to_owned());
         base.operations
             .insert("base:entity/create@1.0.0".to_owned(), base_operation);
-        let mut overlay = component("entity", "create", 'b');
+        let mut overlay = component("entity", "create", 'a');
         overlay.scope.package_id = "overlay".to_owned();
         overlay.scope.package_version = "2.0.0".to_owned();
         let mut overlay_operation = overlay
@@ -1225,9 +1228,24 @@ mod tests {
             resolved.wiring.node("overlay").unwrap().component,
             overlay.component_digest
         );
+        assert_eq!(base.component_digest, overlay.component_digest);
+        assert_ne!(base, overlay);
+        assert_eq!(
+            resolved.node_components.as_ref(),
+            &BTreeMap::from([
+                ("base".to_owned(), base.clone()),
+                ("overlay".to_owned(), overlay.clone()),
+            ])
+        );
         assert!(resolved.components.contains(&base));
         assert!(resolved.components.contains(&overlay));
         assert!(resolved.components.contains(&dependency));
+        assert!(
+            !resolved
+                .node_components
+                .values()
+                .any(|fact| fact == &dependency)
+        );
     }
 
     #[test]

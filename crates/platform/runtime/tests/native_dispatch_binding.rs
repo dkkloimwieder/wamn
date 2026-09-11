@@ -236,7 +236,7 @@ async fn host_export_binding_keeps_the_nested_policy_shim() {
 }
 
 fn exact_child_manifest() -> ServingManifest {
-    let children = [("child", child_wat(91)), ("other-child", child_wat(92))];
+    let children = [("child", child_wat(91))];
     let mut components = BTreeSet::new();
     let mut selected_digest = None;
     for (name, source) in [("root", ROOT_WAT.to_owned())].into_iter().chain(children) {
@@ -299,15 +299,15 @@ fn exact_child_manifest() -> ServingManifest {
         BTreeMap::new(),
         BTreeMap::new(),
     )
-    .expect("WAMN accepts an exact digest despite another exporter of the same operation")
+    .expect("WAMN admits one exact provider for each imported operation interface")
 }
 
 #[tokio::test]
-async fn host_shim_does_not_disambiguate_duplicate_component_exports() {
+async fn admission_refuses_ambiguous_imported_providers_before_native_resolution() {
     let manifest = exact_child_manifest();
     let (roundtrip, _) = ServingManifest::from_canonical_bytes(&manifest.canonical_bytes())
-        .expect("the production manifest parser accepts the exact component selection");
-    assert_eq!(roundtrip.components.len(), 3);
+        .expect("the production manifest parser admits the unique exact component");
+    assert_eq!(roundtrip.components.len(), 2);
     let root = roundtrip
         .components
         .iter()
@@ -323,14 +323,35 @@ async fn host_shim_does_not_disambiguate_duplicate_component_exports() {
             .count(),
         1
     );
-    // Removing the selected bytes must refuse instead of choosing the other
-    // exporter. The same exact-digest contract drives production resolution.
+    let mut other = roundtrip
+        .components
+        .iter()
+        .find(|component| component.digest.as_str() == selected)
+        .expect("the exact child component remains present")
+        .clone();
+    other.component = "other-child".into();
+    let bytes = wat::parse_str(child_wat(92)).expect("valid alternate component fixture");
+    other.digest = ArtifactHash::parse(format!("sha256:{}", hex::encode(Sha256::digest(&bytes))))
+        .expect("alternate content digest");
+    let mut ambiguous = roundtrip.clone();
+    assert!(ambiguous.components.insert(other.clone()));
+    let refusal = ServingManifest::from_canonical_bytes(&ambiguous.canonical_bytes())
+        .expect_err("an exact dependency digest does not waive imported-interface uniqueness");
+    assert!(
+        refusal
+            .to_string()
+            .contains("ambiguous component providers")
+    );
+
+    // A different artifact cannot replace the dependency's exact provenance,
+    // even when that replacement remains the only provider of the interface.
     let mut missing = roundtrip.clone();
     missing
         .components
         .retain(|component| component.digest.as_str() != selected);
+    assert!(missing.components.insert(other));
     let refusal = ServingManifest::from_canonical_bytes(&missing.canonical_bytes())
-        .expect_err("the other export cannot replace the exact pinned component");
+        .expect_err("the alternate export cannot replace the exact pinned component");
     assert!(
         refusal
             .to_string()
