@@ -3576,155 +3576,80 @@ WAMN_BIND_CONNECTION_CONTROL_PG_URL=postgres://postgres:probe@127.0.0.1:5441/bin
 docker rm -f wamn-bind-connection-pg18 # BY EXPLICIT NAME. Never prune.
 ```
 
-### `[WMS-CLUSTER-JOURNEY]` — the WMS release minted from the shell, on its own cluster
+### `[WMS-CLUSTER-JOURNEY]` WMS application tests
 
-The second application's journey, and the first minted through the product's
-verbs rather than the Rust producer: `tools/wms-cluster-journey-run` sources
-the nine harnesses, declares WMS's identity once, and drives the product's
-verbs from the shell in the order the Rust producer proved, call for call:
-`provision-org`, `provision-project-env` for the environment (emitting the
-Database CR, role SQL and privilege SQL that psql applies in place of the
-operator), the platform floor, `reconcile-run-plane`, then
-`provision-project-env` ONCE PER FAMILY — the verb's workload-action group is
-single-select, which cluster run 2 measured (`wamn-362o.37`) — then
-`apply-package`, `reconcile-package-data-access`, `push-component` (wms,
-label-render and blob-put, under the wms package scope), a locally served
-authoring gate for each wiring, `author-wiring`, `publish-release`,
-`bind-connection` and `push-release-manifest`. A verb's flags read from its
-parser are not its call contract; its argument groups and what the proven
-caller applies around it are. It seeds the
-FIXTURE rows a move needs — one product, two locations, one pallet with one
-quantity — which is precondition state, not simulation.
+`apps/wamn_wms/tests/cluster.rs` owns the five WMS cluster cases.
+The tests call the platform libraries to provision, publish, release, and activate the app.
+`tools/wms-cluster-journey-run` performs the cluster lifecycle commands that require Docker, kind, or Helm.
+The shell entrypoint accepts lifecycle actions from the Rust tests.
+
+Use a clean source worktree with its own Cargo target directory.
+Choose a new result directory under the main repository's `docs/perf` directory.
+Create its parent before the run.
+Each test creates uniquely named resources and removes them after success, failure, or interruption.
+The test writes its result and cleanup state to `result.json` in the selected directory.
+
+Run the released route cases:
 
 ```bash
-tools/wms-cluster-journey-run --apply \
-  --evidence-dir /tmp/wamn-wms-cluster-evidence
+WAMN_WMS_EVIDENCE_DIR=/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/wms-live-001 \
+  RUSTC_WRAPPER= CARGO_BUILD_JOBS=2 cargo test --locked --offline \
+  -p wamn-wms-tests --lib cluster::released_wms_routes -- --exact --ignored --nocapture
 ```
 
-The runtime assertions structure cannot make ride inside it: the journey
-exposes the released route on a temporary NodePort, amends the document's
-`runtime` phase with that endpoint and the fixture ids it seeded, and runs
-`wms_runtime_live::contention_and_replay_through_the_composed_route`, which
-fires two moves of one pallet behind one barrier and asserts exactly one
-success that moved the stock (its own response carries the target location
-and `row_version` 2) and exactly one `concurrency_conflict` that observed
-that version, then replays the winner's body and gets the same
-`movement_id`. The test prints the winner's id; the journey lists the store
-with `mc` and asserts exactly one label object under `wms/`, named by it.
-Then `wms_runtime_live::the_remaining_operations_serve_their_released_routes`
-(`wamn-362o.52`) hits the other five routes on the same fixture: get and
-aggregate to learn where it stands, adjust, a split whose replay returns the
-same new pallet id, a split refused for what the row holds, a merge that
-consumes the new pallet, the aggregate excluding it, and a paged query.
-An operation counts as shipped when its route has been hit. The tests assert
-and never provision; no environment variable carries data.
+The route cases retain the existing contention, replay, stock movement, and label assertions.
+Two concurrent moves require one success and one conflict.
+Replay must return the original movement identifier.
+The remaining routes cover reads, aggregation, adjustment, split, merge, and paging.
+The materializer runs without events because WMS declares none.
 
-`--measure-startup` probes `pallet.get` on the fixture pallet: one generated
-statement in every phase (cold, restart-first, steady), the fixed count
-`trace_is_complete` holds. Before `wamn-362o.10` landed the read route, the
-only possible probe was a move, which performs eight statements cold and
-replays with one ever after, so the arm was refused rather than measured.
-What the journey deliberately does not do: nothing flows through the
-materializer, which is deployed and asserted idle because the overlay mounts
-its family.
-
-#### Partial completion after a committed move
-
-`--prove-partial-completion` adds the platform HTTP proof for `wamn-b2m6.10`
-after the normal journey assertions. The generated TUI proof remains in
-`wamn-10yt.62.7`. This recipe defines the assertions and does not record a live
-pass.
-
-Run from a clean, committed source tree. Choose an unused value for
-`effects_run`.
+Run the committed move after the label store fails:
 
 ```bash
-effects_run=live-001
-tools/wms-cluster-journey-run --apply --prove-partial-completion \
-  --evidence-dir "/home/kaalin/dev/wamn/docs/perf/2026.09/effects-response/${effects_run}/journey"
+WAMN_WMS_EVIDENCE_DIR=/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/wms-partial-001 \
+  RUSTC_WRAPPER= CARGO_BUILD_JOBS=2 cargo test --locked --offline -p wamn-wms-tests --lib \
+  cluster::released_wms_routes_retain_committed_work_after_label_failure -- --exact --ignored --nocapture
 ```
 
-After the normal object assertions pass, the harness removes its own `labels`
-bucket while MinIO stays running. It runs
-`wms_runtime_live::committed_move_survives_label_store_failure` once, with a
-separate journey document for the return move. The test sends one fresh move
-and requires HTTP500
-with only `committed_result` and `failed_outcome`. The committed result must
-preserve the original movement fields and match the submitted `request_id`.
-The failed outcome must contain exactly `code`, `message`, and `effect_outcome`.
-Their values must be `write_failed`, a nonempty error message, and `responded`.
+The test removes its own label bucket, sends a fresh move, and compares the HTTP result with the committed database rows.
+It restores the bucket before cleanup.
+This case covers a store refusal after commit.
+It does not claim retry safety after response loss.
 
-A later `pallet.get` must return the committed location and revision. SQL
-assertions require one matching claim, one movement history row, and one
-quantity row for the fixture pallet. The claim supplies the public
-`movement_id`. The history row matches through `idempotency_key`, and the
-stored pallet state must match the HTTP result.
-
-The harness restores the bucket before it reports a test failure, with a
-cleanup fallback for earlier interruption. The flag refuses `--demo` and
-`--measure-startup`. This arm sends one move and does not repeat it. Database
-row counts cannot prove that repeating the composed route is safe. The arm
-covers an observed store refusal after commit, not timeout or response loss.
-
-The evidence directory retains `wms-partial-http.json`,
-`wms-partial-response.receipt.json`, `wms-partial-database.json`, and
-`wms-partial.log`. Bucket removal and restoration each produce a log.
-`wms-partial.receipt` records passing assertions, and `verdict.json` includes
-`committed-move-with-failed-label-store` only after the journey passes.
-
-#### Generated move form
-
-`--prove-generated-tui` adds the operator proof for `wamn-10yt.62.7` and includes the partial completion arm.
-The example composes generated `pallet.get` and `inventory.move` screens through the shared terminal driver.
-A successful matching pallet read supplies the protected pallet ID and revision.
-The operator enters the destination and submits the form.
-The generated package remains unchanged because its contract declares no record mapping for this command.
-
-Run from a clean, committed source tree. Choose a new evidence directory.
+Run the generated terminal cases:
 
 ```bash
-tools/wms-cluster-journey-run --apply --prove-generated-tui \
-  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/generated-tui-wms/live-001/journey
+WAMN_WMS_EVIDENCE_DIR=/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/wms-terminal-001 \
+  RUSTC_WRAPPER= CARGO_BUILD_JOBS=2 cargo test --locked --offline -p wamn-wms-tests --lib \
+  cluster::generated_wms_terminal_reports_success_and_partial_completion -- --exact --ignored --nocapture
 ```
 
-The first terminal session must show the returned label key.
-The harness reads that object and compares its bytes with the returned label.
-After bucket removal, a second session must show the committed movement beside the store failure.
-Both sessions must refuse captured retry and another submission of the spent intent.
-A local relay records HTTP bodies and counts attempts without publishing authorization headers.
-Each session must send exactly one read and one move, restore the terminal, and remove its database fixtures.
-The shared reducer tests cover missing completion evidence separately.
+The terminal cases retain the successful label display and the committed movement after a store failure.
+Each session sends one read and one move.
+The cases also retain the terminal cleanup and spent-intent assertions.
 
-#### `--demo` — the WMS demo, the command and the URL
-
-`--demo` holds the environment after a passing run and makes the released route
-reachable from a browser. Run it, then read the block it prints:
+Run the cold, restarted, and steady request case:
 
 ```bash
-tools/wms-cluster-journey-run --apply --demo \
-  --evidence-dir /tmp/wamn-wms-demo
+WAMN_WMS_EVIDENCE_DIR=/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/wms-startup-001 \
+  RUSTC_WRAPPER= CARGO_BUILD_JOBS=2 cargo test --locked --offline -p wamn-wms-tests --lib \
+  cluster::restarted_wms_host_retains_compiled_code_and_bounded_request_overhead -- --exact --ignored --nocapture
 ```
 
-Open `http://127.0.0.1:8080/`. The route answers
-`{"error":{"code":"route-not-found"}}` with the exact typed shape, which proves
-it is live. Every WMS operation is a POST, so the printed block carries the four
-commands: read the pallet, move it through the composed wiring, run the same
-move again and get the same `movement_id` back, and list the labels the object
-store's own client wrote.
+This case retains the one-statement `pallet.get` trace, the same-pod restart, compiled file identity, and the declared overhead limit.
 
-The block prints the path of the route-caller token, never the token. Both that
-path and the MinIO container name change per run, because both die with the
-environment.
+Run the browser demonstration:
 
-**The demo changes three things and leaves the release alone.** It pins the
-route's NodePort, keeps that Service past the runtime phase, and runs one nginx
-container on `127.0.0.1:8080` that rewrites `Host` to the route host the release
-names. The proxy is there because a browser cannot reach the route otherwise:
-the route matches its host exactly, a browser sends the port it dialled, port 80
-belongs to the frozen cluster, `.localhost` names resolve to `::1` on this
-machine, docker does not forward an IPv6 publish on the `kind` network, and the
-runtime refuses a route host that carries a port as not a valid RFC 1123
-hostname.
+```bash
+WAMN_WMS_EVIDENCE_DIR=/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/wms-demo-001 \
+  RUSTC_WRAPPER= CARGO_BUILD_JOBS=2 cargo test --locked --offline -p wamn-wms-tests --lib \
+  cluster::wms_browser_demo -- --exact --ignored --nocapture
+```
+
+The demonstration publishes the route through a loopback proxy at `http://127.0.0.1:8080/`.
+It retains NodePort 30950 and the default hold time of 3,600 seconds.
+`WAMN_JOURNEY_HOLD_SECONDS` sets a different hold time.
+The proxy supplies the declared route host, and cleanup removes the owned resources.
 
 ### `[RECEIVING-MATERIALIZER-JOURNEY]` — router-era causation and materialization
 
