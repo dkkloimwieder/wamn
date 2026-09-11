@@ -157,7 +157,7 @@ pub fn prepare(
         "runtime",
         &source.name,
         runtime,
-        None,
+        Some(tap.clone()),
         &mut users,
     )?;
     let publisher = credentials(
@@ -401,7 +401,9 @@ mod tests {
             );
             assert_eq!(
                 subscriptions.len(),
-                if user["user"] == broker.observer.username {
+                if user["user"] == broker.observer.username
+                    || user["user"] == broker.runtime.username
+                {
                     2
                 } else {
                     1
