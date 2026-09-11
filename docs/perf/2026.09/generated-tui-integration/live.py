@@ -178,7 +178,7 @@ def source_identity(tree):
     if git("diff", "--name-only", "--diff-filter=U").strip():
         raise ProofFailure("resolve Git conflicts before running the integration proof")
     names = set(git("ls-files", "--cached", "--others", "--exclude-standard", "-z").decode().split("\0"))
-    prefixes = ("crates/", "services/", "components/", "packages/", "test-support/", ".cargo/")
+    prefixes = ("crates/", "services/", "apps/", "test-support/", ".cargo/")
     files = {}
     for name in sorted(names):
         if name in {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml"} or name.startswith(prefixes):
@@ -296,7 +296,7 @@ def main():
     target = tree / "target"
     proof = tree / "services/ctl/tests/generated_operator_live.py"
     compose_file = tree / "test-support/infrastructure/std-virtualization.compose.yaml"
-    for required in (proof, compose_file, tree / "packages/receiving/wamn.json", tree / "packages/client_acme_receiving/wamn.json"):
+    for required in (proof, compose_file, tree / "apps/wamn_receiving/wamn.json", tree / "apps/client_acme_receiving/wamn.json"):
         if not required.is_file():
             raise ProofFailure(f"required source is absent: {required}")
     for name in ("wamn", "wamn-identity", "wamn-host", "wamn-scenario-worker", "wamn-receiving-tui"):
@@ -322,7 +322,7 @@ def main():
     environment = os.environ.copy()
     environment.update(RUSTUP_TOOLCHAIN="1.98.0", RUSTC_WRAPPER="", CARGO_BUILD_JOBS="2",
                        WAMN_IDENTITY_BINARY=str(target / "debug/wamn-identity"))
-    # The dev loop uses the lane's native target and normal components/target.
+    # The dev loop uses the lane's native target and normal apps/target.
     environment.pop("CARGO_TARGET_DIR", None)
     environment.pop("CARGO_BUILD_TARGET_DIR", None)
     held = {}
@@ -358,9 +358,9 @@ def main():
 
     previous_signals = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
-        guest_environment = environment | {"CARGO_TARGET_DIR": str(tree / "components/target")}
-        owned.run("build-http-route", ["cargo", "build", "--manifest-path", tree / "components/Cargo.toml", "-p", "http-route", "--target", "wasm32-wasip2", "--locked", "--offline"], timeout=1800, environment=guest_environment)
-        guest = tree / "components/target/wasm32-wasip2/debug/http_route.wasm"
+        guest_environment = environment | {"CARGO_TARGET_DIR": str(tree / "apps/target")}
+        owned.run("build-http-route", ["cargo", "build", "--manifest-path", tree / "apps/Cargo.toml", "-p", "http-route", "--target", "wasm32-wasip2", "--locked", "--offline"], timeout=1800, environment=guest_environment)
+        guest = tree / "apps/target/wasm32-wasip2/debug/http_route.wasm"
         if not guest.is_file() or guest.stat().st_size == 0:
             raise ProofFailure("http-route guest artifact is absent")
         password = secrets.token_hex(32)
@@ -396,7 +396,7 @@ def main():
             "--release-artifact-base", authority + "/wamn/releases",
             "--registry-auth-file", auth, "--route-host", "receiving.localhost",
             "--flow-http-workload-image", image, "--host-binary", target / "debug/wamn-host",
-            "--package", tree / "packages/receiving", "--overlay-root", tree / "packages/client_acme_receiving",
+            "--package", tree / "apps/wamn_receiving", "--overlay-root", tree / "apps/client_acme_receiving",
         ])
         config = env_root / "dev.json"
 
@@ -412,7 +412,7 @@ def main():
         wait_until("dev up and Gate ready", ready, 300, alive=up)
         # The live proof runs directly in this batch, never through another gap helper.
         proof_command = [sys.executable, proof, "--wamn", target / "debug/wamn",
-                         "--config", config, "--overlay-root", tree / "packages/client_acme_receiving",
+                         "--config", config, "--overlay-root", tree / "apps/client_acme_receiving",
                          "--evidence-dir", scratch / "proof"]
         owned.run("generated-operator-live", proof_command, timeout=args.proof_timeout)
         success = True
@@ -475,7 +475,7 @@ def main():
                 "cleanup": cleanup_results, "source_before": source_before,
                 "source_after": source_after, "stages": owned.stages,
                 "toolchain": "1.98.0", "native_target": "target",
-                "guest_target": "components/target", "finished_utc": datetime.now(timezone.utc).isoformat(),
+                "guest_target": "apps/target", "finished_utc": datetime.now(timezone.utc).isoformat(),
             })
         except (OSError, ValueError, ProofFailure) as error:
             success = False
