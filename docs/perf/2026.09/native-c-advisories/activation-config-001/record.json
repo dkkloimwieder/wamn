@@ -1,0 +1,27 @@
+{
+  "source_commit": "ce35909098bc6e2290470f6701a4583f17cb05f1",
+  "started_utc": "2026-09-11T17:55:32.415299+00:00",
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-ctl",
+    "--lib",
+    "dev::config::tests::regenerate_checked_in_dev_config_schema",
+    "--",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "schema_before_sha256": "f19723145d7ae3a8958788910daed9c1ba3521d840ff773291cab27fdcd93f31",
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "exit_code": 101,
+  "elapsed_seconds": 19.74,
+  "schema_after_sha256": "f19723145d7ae3a8958788910daed9c1ba3521d840ff773291cab27fdcd93f31"
+}

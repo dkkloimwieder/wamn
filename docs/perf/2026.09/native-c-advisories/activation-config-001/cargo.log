@@ -1,0 +1,45 @@
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/dev/wamn/apps/platform/events/wire)
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/dev/wamn/crates/control/registry)
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/crates/catalog/model)
+   Compiling wamn-event-reg v0.1.0 (/home/kaalin/dev/wamn/apps/platform/events/registration)
+   Compiling wamn-router v0.1.0 (/home/kaalin/dev/wamn/crates/execution/router)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/crates/schema/generator)
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/dev/wamn/crates/platform/runtime)
+error[E0433]: cannot find module or crate `wamn_control_provision` in this scope
+  --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:27:5
+   |
+27 | use wamn_control_provision::events::{
+   |     ^^^^^^^^^^^^^^^^^^^^^^ use of unresolved module or unlinked crate `wamn_control_provision`
+   |
+help: there is a crate or module with a similar name
+   |
+27 - use wamn_control_provision::events::{
+27 + use wamn_control_registry::events::{
+   |
+
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/crates/control/provision)
+   Compiling wamn-schema-control v0.1.0 (/home/kaalin/dev/wamn/crates/schema/control)
+For more information about this error, try `rustc --explain E0433`.
+warning: `wamn-runtime` (lib) generated 1 warning
+error: could not compile `wamn-runtime` (lib) due to 1 previous error; 1 warning emitted

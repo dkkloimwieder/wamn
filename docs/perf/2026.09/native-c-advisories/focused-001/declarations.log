@@ -1,0 +1,45 @@
+   Compiling serde v1.0.229
+   Compiling bytes v1.12.1
+   Compiling chrono v0.4.45
+   Compiling tokio v1.53.1
+   Compiling postgres-protocol v0.6.12
+   Compiling schemars v0.8.22
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/dev/wamn/apps/platform/execution/contract)
+   Compiling tokio-util v0.7.19
+   Compiling postgres-types v0.2.14
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/dev/wamn/apps/platform/events/wire)
+   Compiling tokio-postgres v0.7.18
+   Compiling boon v0.6.1
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/dev/wamn/crates/schema/introspection)
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/dev/wamn/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling jmespath v0.3.0
+   Compiling wamn-event-reg v0.1.0 (/home/kaalin/dev/wamn/apps/platform/events/registration)
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/dev/wamn/crates/schema/generator)
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling tryhard v0.5.2
+   Compiling tokio-stream v0.1.19
+   Compiling tokio-rustls v0.26.4
+   Compiling serde_nanos v0.1.4
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/dev/wamn/crates/control/registry)
+   Compiling async-nats v0.49.1
+   Compiling wamn-schema-control v0.1.0 (/home/kaalin/dev/wamn/crates/schema/control)
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/dev/wamn/crates/execution/run-state)
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/dev/wamn/crates/control/provision)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 21.37s
+     Running unittests src/lib.rs (target/debug/deps/wamn_control_provision-068b4c6a92b8ec18)
+
+running 3 tests
+test events::tests::event_names_and_subjects_use_the_same_declared_triple ... ok
+test events::tests::consumer_comparison_refuses_foreign_delivery_and_changed_bounds ... ok
+test events::tests::source_comparison_refuses_foreign_inputs_and_changed_delivery_policy ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 137 filtered out; finished in 0.00s
+
