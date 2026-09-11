@@ -1,0 +1,19 @@
+{
+  "body": {
+    "command-id": "gate-wamn_wms-inventory_aggregate",
+    "outcome": {
+      "status": "completed",
+      "value": {
+        "command": "gate",
+        "result": {
+          "report-id": "sha256:c82ec528498ac7d88cdcc7c97c0a830c8e5873ef90fec28e265b84b55eceab72",
+          "validated-draft": {
+            "validated-draft-id": "sha256:c82ec528498ac7d88cdcc7c97c0a830c8e5873ef90fec28e265b84b55eceab72"
+          }
+        }
+      }
+    },
+    "schema-version": "0.1"
+  },
+  "document": "response"
+}

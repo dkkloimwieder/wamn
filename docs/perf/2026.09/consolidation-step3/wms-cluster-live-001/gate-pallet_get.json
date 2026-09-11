@@ -1,0 +1,19 @@
+{
+  "body": {
+    "command-id": "gate-wamn_wms-pallet_get",
+    "outcome": {
+      "status": "completed",
+      "value": {
+        "command": "gate",
+        "result": {
+          "report-id": "sha256:b6f19def680f78e1da3ab4064bde4efee2392954a3828b1680eca54e6c3de57d",
+          "validated-draft": {
+            "validated-draft-id": "sha256:b6f19def680f78e1da3ab4064bde4efee2392954a3828b1680eca54e6c3de57d"
+          }
+        }
+      }
+    },
+    "schema-version": "0.1"
+  },
+  "document": "response"
+}

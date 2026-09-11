@@ -1,0 +1,34 @@
+[
+  {
+    "allowed": true,
+    "verb": "create"
+  },
+  {
+    "allowed": true,
+    "verb": "patch"
+  },
+  {
+    "allowed": false,
+    "verb": "get"
+  },
+  {
+    "allowed": false,
+    "verb": "list"
+  },
+  {
+    "allowed": false,
+    "verb": "watch"
+  },
+  {
+    "allowed": false,
+    "verb": "update"
+  },
+  {
+    "allowed": false,
+    "verb": "delete"
+  },
+  {
+    "allowed": false,
+    "verb": "deletecollection"
+  }
+]
