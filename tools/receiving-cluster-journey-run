@@ -1121,27 +1121,27 @@ WAMN_JOURNEY_DOCUMENT="$journey_document" \
 WAMN_JOURNEY_SCENARIO_WORKER_BIN="$cargo_target_dir/debug/wamn-scenario-worker" \
 CARGO_TARGET_DIR="$cargo_target_dir" \
 RUSTC_WRAPPER= \
-  cargo test -p wamn-proof-integration --lib --locked --offline \
-  "route_authentication_live::$route_phase_test" \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  "route_authentication_live::routes::$route_phase_test" \
   -- --ignored --exact --nocapture --test-threads=1 \
   2>&1 | tee "$evidence_dir/production-route.log"
 assert_one_test_ran "$evidence_dir/production-route.log" \
-  "$route_phase_test"
+  "$route_phase_test" 'route_authentication_live::routes::'
 
 journey_release_id=1
 if [[ "$session_host_proof" == true ]]; then
   session_fixture=$work_dir/session-host-fixture.json
-  record_command cargo test route_authentication_live::production_receiving_session_host_fixture \
+  record_command cargo test route_authentication_live::sessions::production_receiving_session_host_fixture \
     '<private journey document and fixture output>'
   WAMN_JOURNEY_DOCUMENT="$journey_document" \
   WAMN_SESSION_HOST_FIXTURE_OUTPUT="$session_fixture" \
   CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-    cargo test -p wamn-proof-integration --lib --locked --offline \
-    route_authentication_live::production_receiving_session_host_fixture \
+    cargo test -p wamn-receiving-tests --lib --locked --offline \
+    route_authentication_live::sessions::production_receiving_session_host_fixture \
     -- --ignored --exact --nocapture --test-threads=1 \
     2>&1 | tee "$evidence_dir/session-host-fixture.log"
   assert_one_test_ran "$evidence_dir/session-host-fixture.log" \
-    production_receiving_session_host_fixture
+    production_receiving_session_host_fixture 'route_authentication_live::sessions::'
   [[ $(stat -c '%a' "$session_fixture") == 600 ]] || exit 1
   jq -e --arg org "$app_org" --arg project "$app_project" --arg env "$app_environment" \
     --arg tenant "$app_tenant" --arg host "$route_host" '
@@ -1996,7 +1996,9 @@ if [[ "$session_host_proof" == true ]]; then
     "$evidence_dir/session-workload-objects.json" >"$evidence_dir/session-workload-source.json"
   printf '%s\n' "$head" >"$evidence_dir/session-source-head.txt"
   sha256sum Cargo.lock Dockerfile tools/receiving-cluster-journey-run \
-    tests/integration/src/host_session_proof.rs tests/integration/src/route_authentication_live.rs \
+    tests/integration/src/host_session_proof.rs apps/wamn_receiving/tests/route_authentication_live.rs \
+    apps/wamn_receiving/tests/route_authentication_live/*.rs \
+    apps/wamn_receiving/tests/postcommit.rs apps/client_acme_receiving/tests/overlay_compatibility.rs \
     deploy/platform/identity/Chart.yaml deploy/platform/identity/values.yaml \
     deploy/platform/identity/templates/deployment.yaml deploy/platform/identity/templates/service.yaml \
     >"$evidence_dir/session-source-inputs.sha256"
@@ -2208,19 +2210,19 @@ if [[ "$session_host_proof" == true ]]; then
         session_nested_receipt='HOST_SESSION_CLIENT result=pass login=pass ordinary=pass fresh=pass nested=pass prior_commit=pass expired_pat=refused revoked_pat=refused'
       fi
       record_command timeout 240s cargo test \
-        "route_authentication_live::$session_nested_test" \
+        "route_authentication_live::sessions::$session_nested_test" \
         '<private journey document; original issuer and explicit fixture HTTPS endpoint>'
       WAMN_JOURNEY_DOCUMENT="$journey_document" WAMN_IDENTITY_ISSUER="$session_issuer" \
       WAMN_JOURNEY_SCENARIO_WORKER_BIN="$cargo_target_dir/debug/wamn-scenario-worker" \
       WAMN_IDENTITY_CA_FILE="$work_dir/session-ca.crt" \
       WAMN_SESSION_NESTED_HTTPS_ENDPOINT="$session_nested_endpoint" \
       CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-        timeout 240s cargo test -p wamn-proof-integration --lib --locked --offline \
-        "route_authentication_live::$session_nested_test" \
+        timeout 240s cargo test -p wamn-receiving-tests --lib --locked --offline \
+        "route_authentication_live::sessions::$session_nested_test" \
         -- --ignored --exact --nocapture --test-threads=1 \
         2>&1 | tee "$evidence_dir/$session_continuation.log"
       assert_one_test_ran "$evidence_dir/$session_continuation.log" \
-        "$session_nested_test"
+        "$session_nested_test" 'route_authentication_live::sessions::'
       [[ $(grep -Fxc -- "$session_nested_receipt" "$evidence_dir/$session_continuation.log") == 1 ]] || exit 1
       printf '%s\n' "$session_nested_receipt" >"$evidence_dir/$session_continuation.receipt"
       if [[ "$fresh_only_proof" == true || "$session_client_proof" == true ]]; then
@@ -3567,12 +3569,12 @@ WAMN_JOURNEY_DOCUMENT="$journey_document" \
 WAMN_EVT_NATS_USERNAME="$event_nats_observer_username" \
 WAMN_EVT_NATS_PASSWORD_FILE="$event_nats_directory/observer-password" \
 CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  cargo test -p wamn-proof-integration --lib --locked --offline \
-  route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::materializer::production_materializer_consumes_the_causal_receipt_exactly_once \
   -- --ignored --exact --nocapture --test-threads=1 \
   2>&1 | tee "$evidence_dir/production-materializer.log"
 assert_one_test_ran "$evidence_dir/production-materializer.log" \
-  production_materializer_consumes_the_causal_receipt_exactly_once
+  production_materializer_consumes_the_causal_receipt_exactly_once 'route_authentication_live::materializer::'
 if [[ $(grep -Fc 'RECEIVING_MATERIALIZER_PASS ' \
     "$evidence_dir/production-materializer.log") -ne 1 ]]; then
   echo "production materializer emitted no unique causal receipt" >&2
@@ -3626,7 +3628,7 @@ if [[ -n "$receiving_postcommit" ]]; then
     WAMN_EVT_NATS_PASSWORD_FILE="$event_nats_directory/observer-password" \
     WAMN_EVT_NATS_REPLAY_USERNAME="$event_nats_publisher_username" \
     WAMN_EVT_NATS_REPLAY_PASSWORD_FILE="$event_nats_directory/publisher-password" \
-    cargo test --locked --offline -p wamn-proof-integration --lib \
+    cargo test --locked --offline -p wamn-receiving-tests --lib \
     route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress \
     -- --ignored --exact --nocapture --test-threads=1 \
     2>&1 | tee "$evidence_dir/postcommit.log"

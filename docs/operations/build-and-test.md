@@ -2296,8 +2296,8 @@ WAMN_ROUTE_COMPONENT_ARTIFACT_BASE="$WAMN_DEV_LIVE_AUTHORITY/wamn/components" \
 WAMN_ROUTE_RELEASE_ARTIFACT_BASE="$WAMN_DEV_LIVE_AUTHORITY/wamn/releases" \
 WAMN_ROUTE_HOST=receiving.localhost \
 WAMN_ROUTE_REGISTRY_AUTH_FILE="$WAMN_DEV_LIVE_DOCKER_AUTH" \
-  cargo test -p wamn-proof-integration --lib --locked --offline \
-  route_authentication_live::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::dev::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup \
   -- --ignored --exact --nocapture --test-threads=1
 
 wamn_dev_live_cleanup
@@ -3524,8 +3524,8 @@ write_journey_document journey_spec \
 WAMN_JOURNEY_DOCUMENT="$RECEIVING_ROUTE_JOURNEY_DOCUMENT" \
 WAMN_JOURNEY_SCENARIO_WORKER_BIN="$RECEIVING_ROUTE_GATE_BIN" \
 WAMN_IDENTITY_BINARY="$RECEIVING_ROUTE_IDENTITY_BIN" \
-  cargo test -p wamn-proof-integration --lib --locked --offline \
-  route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes \
+  cargo test -p wamn-receiving-tests --lib --locked --offline \
+  route_authentication_live::routes::production_two_package_release_serves_all_thirteen_pat_routes \
   -- --ignored --exact --nocapture --test-threads=1
 
 receiving_route_cleanup

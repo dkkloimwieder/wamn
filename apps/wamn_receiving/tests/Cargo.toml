@@ -19,11 +19,42 @@ rust_decimal = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sqlx = { version = "=0.9.0", default-features = false, features = ["chrono", "json", "macros", "postgres", "runtime-tokio", "rust_decimal", "uuid"] }
-tokio = { workspace = true, features = ["fs", "io-util", "net", "time", "rt", "macros"] }
+tokio = { workspace = true, features = ["fs", "io-util", "net", "process", "sync", "time", "rt", "macros"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1"] }
 uuid = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-execution-contract = { workspace = true }
+
+async-nats = { workspace = true }
+bytes = { workspace = true }
+futures-util = { workspace = true }
+opentelemetry = { workspace = true, features = ["trace"] }
+opentelemetry_sdk = { workspace = true, features = ["testing", "trace"] }
+tracing = { workspace = true }
+tracing-opentelemetry = { workspace = true }
+tracing-subscriber = { workspace = true }
+wamn-control-provision = { workspace = true, features = ["ops"] }
+wamn-control-registry = { workspace = true }
+wamn-ctl = { workspace = true }
+wamn-event-wire = { workspace = true }
+wamn-gate-harness = { workspace = true }
+wamn-test-infrastructure = { workspace = true }
+wamn-platform-identity = { workspace = true }
+wamn-run-state = { workspace = true, features = ["test-util"] }
+wamn-execution-host = { workspace = true, features = ["test-util"] }
+wamn-runtime = { workspace = true, features = ["test-util"] }
+wamn-schema-control = { workspace = true }
+wash-runtime = { workspace = true, features = ["washlet"] }
+wasmtime-wasi = { workspace = true }
+async-trait = { workspace = true }
+wamn-client = { workspace = true }
+wamn-receiving-tui = { workspace = true }
+wamn-schema-generator = { workspace = true }
+wamn-schema-introspection = { workspace = true }
+wat = "=1.252.0"
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+wasmtime-wasi-http = { workspace = true }
 
 [[test]]
 name = "receiving_command_histories_live"

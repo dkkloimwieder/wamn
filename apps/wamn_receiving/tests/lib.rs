@@ -4,3 +4,5 @@
 mod receiving_data_access;
 #[cfg(test)]
 mod receiving_publication;
+#[cfg(test)]
+mod route_authentication_live;

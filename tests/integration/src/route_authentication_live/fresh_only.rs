@@ -951,7 +951,7 @@ mod execution_tests {
 
     mod node_bindings {
         wash_runtime::wasmtime::component::bindgen!({
-            path: "../../crates/execution/router/wit",
+            path: "../../../crates/execution/router/wit",
             world: "node",
             additional_derives: [PartialEq],
             wasmtime_crate: wash_runtime::wasmtime,
@@ -960,7 +960,7 @@ mod execution_tests {
 
     mod postgres_bindings {
         wash_runtime::wasmtime::component::bindgen!({
-            path: "../../crates/platform/runtime/wit",
+            path: "../../../crates/platform/runtime/wit",
             world: "postgres-plugin",
             wasmtime_crate: wash_runtime::wasmtime,
         });
