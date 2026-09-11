@@ -452,6 +452,7 @@ mod tests {
             &credentials.username,
             &credentials.password_file,
         )?
+        .request_timeout(Some(Duration::from_millis(500)))
         .event_callback(move |event| {
             let errors = errors.clone();
             async move {
