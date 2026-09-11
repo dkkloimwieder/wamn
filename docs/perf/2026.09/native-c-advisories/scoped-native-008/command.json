@@ -1,0 +1,28 @@
+{
+  "source_commit": "5ef028880f4c83283ae344008bbb298adbd88003",
+  "source_directory": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-ctl",
+    "--features",
+    "ops",
+    "--lib",
+    "event_advisories::tests::scoped_credentials_confine_management_delivery_and_monitoring",
+    "--",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2",
+    "WAMN_NATIVE_C_NATS_BIN": "/home/kaalin/.cache/wamn-native-tests/native-c-d9d7dd9d4962/nats-server"
+  },
+  "nats_binary_sha256": "e6375afff3dbe7bd6ffc59c3eed3092c0e3b0c5936b166fb959fd240271ead4c",
+  "started_utc": "2026-09-11T20:50:49.218786+00:00"
+}
