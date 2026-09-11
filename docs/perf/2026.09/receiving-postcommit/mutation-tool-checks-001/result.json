@@ -1,0 +1,12 @@
+{
+  "schema": "receiving-postcommit-mutation-offline-checks/v1",
+  "result": "pass",
+  "scope": "temporary ordinary directories only, no worktrees, builds, services, or live gates",
+  "source_sha256": "6ecd8e787d1f1fb0f607a942d1da193a9fe52270950bf792d00247f3f05e19b0",
+  "checks": [
+    "replay generation requires sealing and refuses a second seal",
+    "replay-reset: exact mutation, backup guard, unexpected-byte/mode guard, exact byte/mode/atime/mtime restoration, repeat restoration",
+    "timeout-terminal: exact mutation, backup guard, unexpected-byte/mode guard, exact byte/mode/atime/mtime restoration, repeat restoration",
+    "zero and repeated timeout mutation matches refuse"
+  ]
+}

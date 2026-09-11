@@ -1,0 +1,35 @@
+[
+  [
+    "kubectl",
+    "--kubeconfig",
+    "/tmp/tmp.qF7NDmisLJ/kubeconfig",
+    "--context",
+    "kind-wamn-receiving-postcommit",
+    "--request-timeout=10s",
+    "get",
+    "--raw",
+    "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/655833bf599cf31d4f5422f6e06c7347"
+  ],
+  [
+    "kubectl",
+    "--kubeconfig",
+    "/tmp/tmp.qF7NDmisLJ/kubeconfig",
+    "--context",
+    "kind-wamn-receiving-postcommit",
+    "--request-timeout=10s",
+    "get",
+    "--raw",
+    "/api/v1/namespaces/wamn-system/services/http:tempo:3200/proxy/api/traces/93f57e644bcf91a12ac9913faeeae292"
+  ],
+  [
+    "kubectl",
+    "--kubeconfig",
+    "/tmp/tmp.qF7NDmisLJ/kubeconfig",
+    "--context",
+    "kind-wamn-receiving-postcommit",
+    "--request-timeout=10s",
+    "get",
+    "--raw",
+    "/api/v1/namespaces/wamn-system/services/http:otel-collector:8889/proxy/metrics"
+  ]
+]

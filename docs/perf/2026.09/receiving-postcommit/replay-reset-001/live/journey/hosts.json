@@ -1,0 +1,147 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-postcommit",
+            "hostId": "c0aa9d42-62ec-4eb0-adac-f59bbfbe8f10",
+            "hostname": "10.244.1.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-11T01:15:01Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "bashful-frogs-2543",
+                "namespace": "wamn-system",
+                "resourceVersion": "1450",
+                "uid": "4358f4d6-6ea3-4ae3-9757-23c7d2df54fe"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-11T01:15:01Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-11T01:15:02Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-11T01:15:03Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "22.077923",
+                "systemMemoryFree": 2120855552,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-postcommit",
+            "hostId": "b564ca3b-e9e3-4e00-9f61-ef3334738627",
+            "hostname": "10.244.2.5",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-11T01:15:00Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "obtainable-galley-2256",
+                "namespace": "wamn-system",
+                "resourceVersion": "1433",
+                "uid": "80328b39-74b9-4865-982e-90cb61ba3b52"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-11T01:15:00Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-11T01:15:02Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-11T01:15:03Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "17.815344",
+                "systemMemoryFree": 2120396800,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-postcommit",
+            "hostId": "61cca1d4-ca06-4329-8dda-3f07a79b42be",
+            "hostname": "10.244.2.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-11T01:15:01Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "tame-scissors-4840",
+                "namespace": "wamn-system",
+                "resourceVersion": "1449",
+                "uid": "15f9fd37-d6cb-4bd2-9110-0b40c0aae5b9"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-11T01:15:01Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-11T01:15:02Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-11T01:15:03Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "21.789883",
+                "systemMemoryFree": 2120855552,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

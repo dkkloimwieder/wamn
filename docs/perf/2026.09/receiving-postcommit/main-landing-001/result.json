@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "base": "cf739ecbe04df413ffad0e506a751c38e5412bca",
+  "head": "b7275405c8adca5aeef0373cfb8276d5b1678717",
+  "preserved_stable_files": 63,
+  "preserved_index_entries": 23703,
+  "reconciled_own_files": 0,
+  "concurrent_evidence_not_compared": [
+    "docs/perf/2026.09/ctc8-16-http-reuse/",
+    "docs/perf/2026.09/ctc8-33-nested-authority/",
+    "docs/perf/2026.09/native-b-adoption/",
+    "docs/perf/2026.09/native-f-retained/",
+    "docs/perf/2026.09/receiving-postcommit/"
+  ],
+  "fenced_files": []
+}

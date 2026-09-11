@@ -1,0 +1,9 @@
+{
+  "result": "pass",
+  "source_sha256": {
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-009/journey/materializer-deployment.json": "5f144c9d338f3260c9a9abd7ffd7813263484bc60d6f37bbcaceff2d15e3afca",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-009/journey/materializer-replicaset.json": "0859dd72dbe2fd4d1047cf525252087bd66f49bc49834f1ec4ec02a597bd4065",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-009/journey/materializer-workload.json": "99054fc8db56b6585945b48fffabc55c1e7d639ef33c4e1cec68fba927b3ac18"
+  },
+  "scope": "retained object shape and ownership only; no current live result"
+}

@@ -1,0 +1,17 @@
+{
+  "issue": "wamn-10yt.78",
+  "implementation_source": "b7275405c8adca5aeef0373cfb8276d5b1678717",
+  "paired_positive": "live-005/pair/pair.json",
+  "replay_control": "replay-reset-001/control-verdict.json",
+  "invalid_timeout_attempt": "timeout-terminal-001/control-verdict.json",
+  "timeout_control": "timeout-terminal-002/control-verdict.json",
+  "restored_positive": "restored-positive-001/verdict.json",
+  "workspace_classification": "integrated-workspace-001/interpretation.json",
+  "workspace_exit_code": 101,
+  "all_required_receiving_proofs_complete": true,
+  "owned_jobs_remaining": [],
+  "publication": "pending",
+  "beads_closure": "pending",
+  "source_paths": 11,
+  "scope": "Correctness and finite event progress in the owned disposable installations. No performance benchmark, in-place upgrade, broad exactly-once or release-readiness claim."
+}

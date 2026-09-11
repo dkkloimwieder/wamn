@@ -1,0 +1,8 @@
+{
+  "source": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target",
+  "destination": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-controls-20260910/target",
+  "source_commit": "72142cf353da2e39afdb17bbfc153dd9d8ee1790",
+  "positive_pair": "live-005/pair/pair.json",
+  "exclusive_transfer": true,
+  "active_source_jobs": 0
+}

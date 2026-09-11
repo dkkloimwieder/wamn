@@ -1,0 +1,58 @@
+{
+  "source": "b7275405c8adca5aeef0373cfb8276d5b1678717",
+  "cargo_exit_code": 101,
+  "counts": {
+    "test_targets": 194,
+    "test_nonempty_targets": 174,
+    "test_empty_targets": 20,
+    "test_failed_targets": 39,
+    "test_reported_passed": 2231,
+    "test_failed": 84,
+    "test_ignored": 0,
+    "test_measured": 0,
+    "test_filtered_out": 2,
+    "test_explicit_self_skip_count": 85,
+    "test_reported_passes_after_excluding_explicit_self_skips": 2146,
+    "doctest_targets": 37,
+    "doctest_nonempty_targets": 6,
+    "doctest_empty_targets": 31,
+    "doctest_failed_targets": 0,
+    "doctest_reported_passed": 6,
+    "doctest_failed": 0,
+    "doctest_ignored": 0,
+    "doctest_measured": 0,
+    "doctest_filtered_out": 0,
+    "doctest_explicit_self_skip_count": 0,
+    "doctest_reported_passes_after_excluding_explicit_self_skips": 6
+  },
+  "source_stable": true,
+  "baseline_failure_identities_retained": 81,
+  "exact_baseline_causes": 80,
+  "one_changed_cause": "The same WIT diagnostic differs only by the exact checkout prefix. Both original causes remain in workspace-comparison.json.",
+  "added_failures": [
+    {
+      "test": "workspace_tier_helper_runs_safely_outside_repository",
+      "classification": "The sweep wrapper placed TMPDIR inside the checkout. The unchanged test binary passes when only TMPDIR moves outside the checkout.",
+      "evidence": "../workspace-tempdir-rerun-001/classification.json"
+    },
+    {
+      "test": "route_authentication_live::overlay_compatibility::installed_contract_observer_preserves_acls_and_refuses_changed_requirements",
+      "classification": "The sweep deliberately supplies no WAMN_OVERLAY_OBSERVER_DATABASE_URL or evidence path. The separately armed observer proof passes.",
+      "source": "tests/integration/src/route_authentication_live/overlay_compatibility.rs:543",
+      "evidence": "../observer-pg18-002/result.json"
+    },
+    {
+      "test": "route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress",
+      "classification": "The sweep deliberately supplies no WAMN_JOURNEY_DOCUMENT. The separately armed baseline/additive pair passes.",
+      "evidence": "../live-005/pair/pair.json"
+    }
+  ],
+  "unresolved_classifications": 0,
+  "full_sweep_rerun": false,
+  "original_wrapper": "../workspace-tempdir-001/integrated_sweep_before.py",
+  "limitations": [
+    "The workspace sweep remains red. Its 85 explicit self-skips do not prove live behavior.",
+    "The focused temporary-directory rerun does not replace or alter the original sweep result.",
+    "Guest controls and the restored positive proof keep separate results."
+  ]
+}

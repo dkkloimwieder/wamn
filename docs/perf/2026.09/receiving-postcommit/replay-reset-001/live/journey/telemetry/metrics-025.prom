@@ -1,0 +1,367 @@
+# HELP guest_invocation_duration Wall-clock duration of one guest invocation
+# TYPE guest_invocation_duration histogram
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.005"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.01"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.025"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.05"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.075"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.1"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.25"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.5"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.75"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="1"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="2.5"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="5"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="7.5"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="10"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="+Inf"} 1
+guest_invocation_duration_sum{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit"} 0.000285084
+guest_invocation_duration_count{component="flow-http",http_request_method="GET",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.005"} 0
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.01"} 0
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.025"} 1
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.05"} 2
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.075"} 2
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.1"} 2
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.25"} 2
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.5"} 2
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="0.75"} 2
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="1"} 2
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="2.5"} 2
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="5"} 2
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="7.5"} 2
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="10"} 2
+guest_invocation_duration_bucket{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit",le="+Inf"} 2
+guest_invocation_duration_sum{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit"} 0.052206377
+guest_invocation_duration_count{component="flow-http",http_request_method="POST",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",operation="wasi:http/handler#handle",plugin="wasi-http",workload_name="flow-http-6df9d6855b-dbb5c4cc7",workload_namespace="wamn-receiving-postcommit"} 2
+# HELP guest_memory_high_water Most guest linear memory charged at once since this host started
+# TYPE guest_memory_high_water gauge
+guest_memory_high_water{instance="81c59e32-3f16-4e61-b31b-f073fba31935",job="wash-runtime",mode="count"} 2.228224e+06
+guest_memory_high_water{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",mode="count"} 5.57056e+06
+guest_memory_high_water{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",mode="count"} 3.342336e+06
+# HELP guest_memory_in_use Guest linear memory currently charged to this host's budget
+# TYPE guest_memory_in_use gauge
+guest_memory_in_use{instance="81c59e32-3f16-4e61-b31b-f073fba31935",job="wash-runtime",mode="count"} 0
+guest_memory_in_use{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",mode="count"} 0
+guest_memory_in_use{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",mode="count"} 1.114112e+06
+# HELP guest_memory_limit This host's max-guest-memory budget
+# TYPE guest_memory_limit gauge
+guest_memory_limit{instance="81c59e32-3f16-4e61-b31b-f073fba31935",job="wash-runtime",mode="count"} 4.294967296e+09
+guest_memory_limit{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",mode="count"} 4.294967296e+09
+guest_memory_limit{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",mode="count"} 4.294967296e+09
+# HELP guest_memory_refused Guest memory growths refused for crossing this host's budget
+# TYPE guest_memory_refused counter
+guest_memory_refused{instance="81c59e32-3f16-4e61-b31b-f073fba31935",job="wash-runtime",mode="count"} 0
+guest_memory_refused{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",mode="count"} 0
+guest_memory_refused{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",mode="count"} 0
+# HELP guest_memory_would_refuse Guest memory growths that crossed this host's budget and were allowed because it is only being counted
+# TYPE guest_memory_would_refuse counter
+guest_memory_would_refuse{instance="81c59e32-3f16-4e61-b31b-f073fba31935",job="wash-runtime",mode="count"} 0
+guest_memory_would_refuse{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",mode="count"} 0
+guest_memory_would_refuse{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",mode="count"} 0
+# HELP http_ingress_connections Connections offered to the host's HTTP ingress, whether held or shed
+# TYPE http_ingress_connections counter
+http_ingress_connections{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime"} 3
+# HELP target_info Target metadata
+# TYPE target_info gauge
+target_info{instance="81c59e32-3f16-4e61-b31b-f073fba31935",job="wash-runtime",service_version="2.9.0",telemetry_sdk_language="rust",telemetry_sdk_name="opentelemetry",telemetry_sdk_version="0.31.0"} 1
+target_info{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",service_version="2.9.0",telemetry_sdk_language="rust",telemetry_sdk_name="opentelemetry",telemetry_sdk_version="0.31.0"} 1
+target_info{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",service_version="2.9.0",telemetry_sdk_language="rust",telemetry_sdk_name="opentelemetry",telemetry_sdk_version="0.31.0"} 1
+# HELP wamn_http_route_in_flight inline HTTP router deliveries currently in flight per attachment
+# TYPE wamn_http_route_in_flight gauge
+wamn_http_route_in_flight{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_attachment_id="client-acme-receiving-purchase-order-update-http"} 0
+wamn_http_route_in_flight{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_attachment_id="client-acme-receiving-receiving-record-receipt-http"} 0
+# HELP wamn_http_route_shed inline HTTP requests refused because their route was at capacity
+# TYPE wamn_http_route_shed counter
+wamn_http_route_shed{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_attachment_id="client-acme-receiving-purchase-order-update-http"} 0
+wamn_http_route_shed{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_attachment_id="client-acme-receiving-receiving-record-receipt-http"} 0
+# HELP wamn_jetstream_ack_lag_ms delay in ms between a JetStream message being published and this host acking it
+# TYPE wamn_jetstream_ack_lag_ms histogram
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="0"} 0
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="5"} 0
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="10"} 0
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="25"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="50"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="75"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="100"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="250"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="500"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="750"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="1000"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="2500"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="5000"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="7500"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="10000"} 1
+wamn_jetstream_ack_lag_ms_bucket{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth",le="+Inf"} 1
+wamn_jetstream_ack_lag_ms_sum{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth"} 24.145017000000003
+wamn_jetstream_ack_lag_ms_count{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package_id="client_acme_receiving",wamn_project="receiving",wamn_registration_id="quality.create_inspection",wamn_tenant="receiving-route-auth"} 1
+# HELP wamn_jetstream_dlq_depth retained dead-letter messages for one release registration
+# TYPE wamn_jetstream_dlq_depth gauge
+wamn_jetstream_dlq_depth{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package="client_acme_receiving",wamn_registration="quality.create_inspection",wamn_tenant="receiving-route-auth"} 0
+# HELP wamn_jetstream_dlq_depth_samples dead-letter depth readings taken for one release registration; a flat count means the observer stopped, not that the subject is empty
+# TYPE wamn_jetstream_dlq_depth_samples counter
+wamn_jetstream_dlq_depth_samples{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_environment="dev",wamn_package="client_acme_receiving",wamn_registration="quality.create_inspection",wamn_tenant="receiving-route-auth"} 99
+# HELP wamn_jetstream_duration_ms wamn:jetstream effect latency in ms, by effect.operation
+# TYPE wamn_jetstream_duration_ms histogram
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="25"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="50"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="75"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="100"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="250"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="500"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="750"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="1000"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="2500"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5000"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="7500"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10000"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="+Inf"} 1
+wamn_jetstream_duration_ms_sum{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 0.009478
+wamn_jetstream_duration_ms_count{effect_operation="ack",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="25"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="50"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="75"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="100"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="250"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="500"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="750"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="1000"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="2500"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5000"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="7500"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10000"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="+Inf"} 1
+wamn_jetstream_duration_ms_sum{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 3.183085
+wamn_jetstream_duration_ms_count{effect_operation="bind-registration",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="25"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="50"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="75"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="100"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="250"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="500"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="750"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="1000"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="2500"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5000"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="7500"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10000"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="+Inf"} 100
+wamn_jetstream_duration_ms_sum{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 61.033928999999986
+wamn_jetstream_duration_ms_count{effect_operation="bind-registration",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 100
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5"} 0
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10"} 0
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="25"} 0
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="50"} 0
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="75"} 0
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="100"} 0
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="250"} 0
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="500"} 1
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="750"} 99
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="1000"} 99
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="2500"} 99
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5000"} 99
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="7500"} 99
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10000"} 99
+wamn_jetstream_duration_ms_bucket{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="+Inf"} 99
+wamn_jetstream_duration_ms_sum{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 49433.25672499999
+wamn_jetstream_duration_ms_count{effect_operation="fetch",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 99
+# HELP wamn_logging_accepted Log records accepted onto the front queue
+# TYPE wamn_logging_accepted counter
+wamn_logging_accepted{instance="81c59e32-3f16-4e61-b31b-f073fba31935",job="wash-runtime"} 0
+wamn_logging_accepted{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime"} 0
+wamn_logging_accepted{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime"} 0
+# HELP wamn_logging_dropped Log records dropped by the bounded front queue (rate-limit engaged)
+# TYPE wamn_logging_dropped counter
+wamn_logging_dropped{instance="81c59e32-3f16-4e61-b31b-f073fba31935",job="wash-runtime"} 0
+wamn_logging_dropped{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime"} 0
+wamn_logging_dropped{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime"} 0
+# HELP wamn_logging_emitted Log records emitted to the OTLP exporter
+# TYPE wamn_logging_emitted counter
+wamn_logging_emitted{instance="81c59e32-3f16-4e61-b31b-f073fba31935",job="wash-runtime"} 0
+wamn_logging_emitted{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime"} 0
+wamn_logging_emitted{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime"} 0
+# HELP wamn_postgres_query_duration_ms wamn:postgres guest DB call latency in ms, by db.operation
+# TYPE wamn_postgres_query_duration_ms histogram
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="25"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="50"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="75"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="100"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="250"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="500"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="750"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="1000"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="2500"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5000"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="7500"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10000"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="+Inf"} 2
+wamn_postgres_query_duration_ms_sum{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 11.019811
+wamn_postgres_query_duration_ms_count{db_operation="query",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5"} 199
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10"} 199
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="25"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="50"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="75"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="100"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="250"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="500"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="750"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="1000"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="2500"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5000"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="7500"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10000"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="+Inf"} 200
+wamn_postgres_query_duration_ms_sum{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 129.34964500000004
+wamn_postgres_query_duration_ms_count{db_operation="query",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 200
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="25"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="50"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="75"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="100"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="250"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="500"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="750"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="1000"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="2500"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5000"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="7500"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10000"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="+Inf"} 2
+wamn_postgres_query_duration_ms_sum{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 0.897367
+wamn_postgres_query_duration_ms_count{db_operation="statement.begin",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="25"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="50"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="75"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="100"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="250"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="750"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="1000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="2500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="7500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="+Inf"} 1
+wamn_postgres_query_duration_ms_sum{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 7.819947000000001
+wamn_postgres_query_duration_ms_count{db_operation="statement.begin",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="25"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="50"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="75"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="100"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="250"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="750"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="1000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="2500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="7500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="+Inf"} 1
+wamn_postgres_query_duration_ms_sum{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 15.767228000000001
+wamn_postgres_query_duration_ms_count{db_operation="statement.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="25"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="50"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="75"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="100"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="250"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="500"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="750"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="1000"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="2500"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5000"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="7500"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10000"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="+Inf"} 2
+wamn_postgres_query_duration_ms_sum{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 6.704829
+wamn_postgres_query_duration_ms_count{db_operation="statement.txn.commit",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 2
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="25"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="50"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="75"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="100"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="250"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="750"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="1000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="2500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="7500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="+Inf"} 1
+wamn_postgres_query_duration_ms_sum{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 3.4821269999999998
+wamn_postgres_query_duration_ms_count{db_operation="statement.txn.commit",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="25"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="50"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="75"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="100"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="250"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="500"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="750"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="1000"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="2500"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="5000"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="7500"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="10000"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving",le="+Inf"} 10
+wamn_postgres_query_duration_ms_sum{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 11.350779999999999
+wamn_postgres_query_duration_ms_count{db_operation="statement.txn.run",instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_project="receiving"} 10
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="0"} 0
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="25"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="50"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="75"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="100"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="250"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="750"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="1000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="2500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="5000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="7500"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="10000"} 1
+wamn_postgres_query_duration_ms_bucket{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving",le="+Inf"} 1
+wamn_postgres_query_duration_ms_sum{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 1.466204
+wamn_postgres_query_duration_ms_count{db_operation="statement.txn.run",instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_project="receiving"} 1
+# HELP wamn_router_delivery_attempts deliveries dispatched to the router driver, per wiring source
+# TYPE wamn_router_delivery_attempts counter
+wamn_router_delivery_attempts{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_source_id="client-acme-receiving-purchase-order-update-http",wamn_source_kind="attachment",wamn_wiring_id="purchase_order_update",wamn_wiring_version="1"} 1
+wamn_router_delivery_attempts{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",wamn_source_id="client-acme-receiving-receiving-record-receipt-http",wamn_source_kind="attachment",wamn_wiring_id="receiving_record_receipt",wamn_wiring_version="1"} 1
+wamn_router_delivery_attempts{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",wamn_source_id="client_acme_receiving::quality.create_inspection",wamn_source_kind="registration",wamn_wiring_id="quality_create_inspection",wamn_wiring_version="1"} 1
+# HELP wamn_run_wiring_cache_lookups wiring resolutions served from memory (hit) or sent to the env-hot store (miss)
+# TYPE wamn_run_wiring_cache_lookups counter
+wamn_run_wiring_cache_lookups{instance="81c59e32-3f16-4e61-b31b-f073fba31935",job="wash-runtime",result="miss"} 13
+wamn_run_wiring_cache_lookups{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",result="hit"} 2
+wamn_run_wiring_cache_lookups{instance="b419ac74-4d49-442b-ade6-d1e6499440d5",job="wash-runtime",result="miss"} 13
+wamn_run_wiring_cache_lookups{instance="ec914c65-746e-45e4-ac16-ffb1ed5439cf",job="wash-runtime",result="miss"} 14

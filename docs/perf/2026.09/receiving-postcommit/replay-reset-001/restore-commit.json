@@ -1,0 +1,14 @@
+{
+  "source": "36c3b12c4ce6c2d0303b0f1b1e6d60168bcb7472",
+  "source_tree_equal_to": "72142cf353da2e39afdb17bbfc153dd9d8ee1790",
+  "paths": [
+    "packages/client_acme_receiving/command/create_inspection/load_inspection.sql",
+    "packages/client_acme_receiving/generated/contracts/quality/create_inspection.operation.json",
+    "packages/client_acme_receiving/generated/package-weld.json",
+    "packages/client_acme_receiving/generated/platform-policy/data-access.json",
+    "packages/client_acme_receiving/generated/source-map/quality_create_inspection.json",
+    "packages/client_acme_receiving/generated/wamn/quality_create_inspection.rs",
+    "packages/client_acme_receiving/wamn.json"
+  ],
+  "normal_hooks": true
+}

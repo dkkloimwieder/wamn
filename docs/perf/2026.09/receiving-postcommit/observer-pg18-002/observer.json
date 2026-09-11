@@ -1,0 +1,39 @@
+{
+  "additive_observed_schema_sha256": "sha256:4a9678b0535355bf75ed79738547fc6119e6a2bc418d7d298a5ef39625c5655b",
+  "authoring_refusal": "PostgreSQL introspection refused (unsupported-acl) in schema `receiving`: schema has an explicit ACL",
+  "baseline_observed_schema_sha256": "sha256:13d16cbf6eb2ecf9c6f216d9624500bf0e5d88741b72818fa881dc21cc312456",
+  "case": "installed-overlay-contract-observer",
+  "controls": [
+    {
+      "control": "consumed-nullability",
+      "refusal": "unsatisfied overlay schema requirement: receiving.purchase_order.status expected type=\"text\" nullable=false, observed type=\"text\" nullable=true",
+      "result": "refused"
+    },
+    {
+      "control": "consumed-check",
+      "refusal": "unsatisfied overlay schema requirement: receiving.quality_inspection.quality_inspection_status_check definition differs",
+      "result": "refused"
+    },
+    {
+      "control": "unvalidated-check",
+      "refusal": "unsatisfied overlay schema requirement: receiving.quality_inspection.quality_inspection_status_check must be enforced, validated, and immediate",
+      "result": "refused"
+    },
+    {
+      "control": "deferrable-foreign-key",
+      "refusal": "unsatisfied overlay schema requirement: receiving.quality_inspection.quality_inspection_receipt_id_fkey must be enforced, validated, and immediate",
+      "result": "refused"
+    }
+  ],
+  "installed_schema_acl": "{wamn_db_owner=UC/wamn_db_owner,wamn_app=U/wamn_db_owner}",
+  "positive": {
+    "constraints": 7,
+    "fields": 14,
+    "result": "satisfied",
+    "tables": 3
+  },
+  "result": "pass",
+  "retained_schema_acl": "{wamn_db_owner=UC/wamn_db_owner,wamn_app=U/wamn_db_owner}",
+  "schema_admission_claim": false,
+  "server_version_num": 180006
+}

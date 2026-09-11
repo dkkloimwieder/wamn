@@ -1,0 +1,5 @@
+Source: 0cdb9af37e065af305c089e9035526384ae24844
+Run two independent installations, then compare the unchanged overlay artifacts.
+  /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/tools/receiving-cluster-journey-run --apply --receiving-postcommit baseline --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/dryrun-unused/baseline
+  /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/tools/receiving-cluster-journey-run --apply --receiving-postcommit additive --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/dryrun-unused/additive
+Require both post-commit proofs, the ownership refusal, and both resource cleanup results.

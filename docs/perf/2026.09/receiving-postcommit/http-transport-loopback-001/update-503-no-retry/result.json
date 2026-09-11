@@ -1,0 +1,25 @@
+{
+  "case": "update-503-no-retry",
+  "exit_code": 1,
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/no-such-route",
+      "host": "receiving.localhost",
+      "response_status": 404
+    },
+    {
+      "method": "POST",
+      "path": "/acme/purchase_order/update",
+      "host": "receiving.localhost",
+      "exact_body": true,
+      "exact_trace": true,
+      "authorization_matches_synthetic_token": true,
+      "private_config_mode": "0o600",
+      "response_status": 503
+    }
+  ],
+  "retained_artifacts_exclude_synthetic_token": true,
+  "no_post_retries": true,
+  "verdict": "pass"
+}

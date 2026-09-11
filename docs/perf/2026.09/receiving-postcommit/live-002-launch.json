@@ -1,0 +1,16 @@
+{
+  "pid": 2450369,
+  "argv": [
+    "python3",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/tools/capture.py",
+    "--tree",
+    "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/live-002",
+    "--",
+    "tools/receiving-postcommit-proof",
+    "--apply",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/live-002/pair"
+  ]
+}

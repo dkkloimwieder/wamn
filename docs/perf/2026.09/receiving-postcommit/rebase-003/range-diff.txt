@@ -1,0 +1,5 @@
+1:  7b81259f = 1:  071fa046 test(wamn-10yt.78): prove overlay reuse and event progress
+2:  c77a574d = 2:  abffaa05 test(wamn-10yt.78): reuse PostgreSQL type normalization
+3:  a9fdc337 = 3:  de679b4f test(wamn-10yt.78): observe the installed overlay schema
+4:  ab1dd7f7 = 4:  85427c93 test(wamn-10yt.78): use the owned HTTP endpoint for proof requests
+5:  72142cf3 = 5:  b7275405 test(wamn-10yt.78): allow telemetry from the owned proof cluster

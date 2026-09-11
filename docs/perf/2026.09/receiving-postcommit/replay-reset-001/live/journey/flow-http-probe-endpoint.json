@@ -1,0 +1,7 @@
+{
+  "transport": "owned-nodeport",
+  "endpoint": "http://172.28.0.6:30090",
+  "host": "receiving.localhost",
+  "http_status": "404",
+  "curl_exit_code": 0
+}

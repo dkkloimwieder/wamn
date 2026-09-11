@@ -1,0 +1,19 @@
+{
+  "source_load_inspection_digest": "sha256:0f21db223ec017fa15f04c26dd646b85270965bda939885c2195674960e9242a",
+  "previous_replay_mutant_digest": "sha256:de7e261650fa3eacef035e830803cfdc61008ab12fb6390c28c6281b64b61285",
+  "artifacts": [
+    {
+      "artifact": "wasm32-wasip2/release/client_acme_receiving.wasm",
+      "sha256": "ef92fe0ffc8ed82cf3e5fde969261588c56a8a2627cf444a8c52a45a0d943be2",
+      "original_digest_offset": -1,
+      "replay_mutant_digest_offset": 265801
+    },
+    {
+      "artifact": "virtualized/std-empty-environment/client_acme_receiving.wasm",
+      "sha256": "6e4f41b6b4bbeba4e08d19a527a57312794fd337624ec490a9874bd5e3a84548",
+      "original_digest_offset": -1,
+      "replay_mutant_digest_offset": 402724
+    }
+  ],
+  "scope": "Generated callers send statement digests rather than SQL text."
+}

@@ -1,0 +1,6 @@
+Receiving cluster journey dry-run (no mutation)
+  source: 0cdb9af37e065af305c089e9035526384ae24844
+  cluster/context: wamn-receiving-postcommit / kind-wamn-receiving-postcommit
+  namespace: wamn-receiving-postcommit
+  route host: receiving.localhost (setup overlay only)
+  order: fresh additive base + unchanged overlay -> thirteen released routes -> CDC + registered materializer -> duplicate handler delivery -> retry exhaustion and independent progress -> exact teardown

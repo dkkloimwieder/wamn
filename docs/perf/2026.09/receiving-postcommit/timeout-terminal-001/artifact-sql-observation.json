@@ -1,0 +1,18 @@
+{
+  "source_sql": "original SELECT",
+  "artifacts": [
+    {
+      "artifact": "wasm32-wasip2/release/client_acme_receiving.wasm",
+      "sha256": "ef92fe0ffc8ed82cf3e5fde969261588c56a8a2627cf444a8c52a45a0d943be2",
+      "original_sql_offset": -1,
+      "replay_mutant_sql_offset": -1
+    },
+    {
+      "artifact": "virtualized/std-empty-environment/client_acme_receiving.wasm",
+      "sha256": "6e4f41b6b4bbeba4e08d19a527a57312794fd337624ec490a9874bd5e3a84548",
+      "original_sql_offset": -1,
+      "replay_mutant_sql_offset": -1
+    }
+  ],
+  "capture_process_absent": 3058083
+}

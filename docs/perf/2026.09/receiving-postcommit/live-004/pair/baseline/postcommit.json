@@ -1,0 +1,1326 @@
+{
+  "approved_state": [
+    {
+      "receipt_id": "b3e05c47-9a6d-4984-b2b0-b841f24d9082",
+      "row_version": 2,
+      "status": "approved"
+    }
+  ],
+  "blocked_handler_attempts": [
+    {
+      "observed_seconds": 0.052335,
+      "pid": 346,
+      "query": "INSERT INTO quality_inspection (receipt_id)\nVALUES ($1)\nON CONFLICT ON CONSTRAINT quality_inspection_receipt_id_pkey\nDO NOTHING\nRETURNING receipt_id;\n",
+      "query_start": "2026-09-10 21:47:38.778267+00",
+      "wait_event": "transactionid"
+    },
+    {
+      "observed_seconds": 0.015247,
+      "pid": 348,
+      "query": "INSERT INTO quality_inspection (receipt_id)\nVALUES ($1)\nON CONFLICT ON CONSTRAINT quality_inspection_receipt_id_pkey\nDO NOTHING\nRETURNING receipt_id;\n",
+      "query_start": "2026-09-10 21:47:43.884701+00",
+      "wait_event": "transactionid"
+    },
+    {
+      "observed_seconds": 0.034847,
+      "pid": 349,
+      "query": "INSERT INTO quality_inspection (receipt_id)\nVALUES ($1)\nON CONFLICT ON CONSTRAINT quality_inspection_receipt_id_pkey\nDO NOTHING\nRETURNING receipt_id;\n",
+      "query_start": "2026-09-10 21:47:49.091423+00",
+      "wait_event": "transactionid"
+    }
+  ],
+  "blocker_pid": 333,
+  "cleanup": {
+    "lock_released": true,
+    "materializer_restored": true
+  },
+  "consumer_after_poison": {
+    "ack_floor": {
+      "consumer_sequence": 4,
+      "stream_sequence": 18
+    },
+    "config": {
+      "ack_policy": "explicit",
+      "ack_wait": 30000000000,
+      "deliver_policy": "all",
+      "durable_name": "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection",
+      "filter_subject": "evt.acme.receiving.dev.receipt.>",
+      "max_ack_pending": 1000,
+      "max_deliver": -1,
+      "max_waiting": 512,
+      "name": "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection",
+      "replay_policy": "instant"
+    },
+    "delivered": {
+      "consumer_sequence": 4,
+      "stream_sequence": 18
+    },
+    "name": "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection",
+    "num_ack_pending": 0,
+    "num_pending": 0,
+    "num_redelivered": 0
+  },
+  "consumer_after_replay": {
+    "ack_floor": {
+      "consumer_sequence": 2,
+      "stream_sequence": 9
+    },
+    "config": {
+      "ack_policy": "explicit",
+      "ack_wait": 30000000000,
+      "deliver_policy": "all",
+      "durable_name": "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection",
+      "filter_subject": "evt.acme.receiving.dev.receipt.>",
+      "max_ack_pending": 1000,
+      "max_deliver": -1,
+      "max_waiting": 512,
+      "name": "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection",
+      "replay_policy": "instant"
+    },
+    "delivered": {
+      "consumer_sequence": 2,
+      "stream_sequence": 9
+    },
+    "name": "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection",
+    "num_ack_pending": 0,
+    "num_pending": 0,
+    "num_redelivered": 0
+  },
+  "consumer_before": {
+    "ack_floor": {
+      "consumer_sequence": 1,
+      "stream_sequence": 2
+    },
+    "config": {
+      "ack_policy": "explicit",
+      "ack_wait": 30000000000,
+      "deliver_policy": "all",
+      "durable_name": "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection",
+      "filter_subject": "evt.acme.receiving.dev.receipt.>",
+      "max_ack_pending": 1000,
+      "max_deliver": -1,
+      "max_waiting": 512,
+      "name": "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection",
+      "replay_policy": "instant"
+    },
+    "delivered": {
+      "consumer_sequence": 1,
+      "stream_sequence": 2
+    },
+    "name": "mat_receiving-route-auth_client_acme_receiving_quality_create_inspection",
+    "num_ack_pending": 0,
+    "num_pending": 0,
+    "num_redelivered": 0
+  },
+  "dead_letter": {
+    "record": {
+      "body": [
+        123,
+        34,
+        111,
+        112,
+        34,
+        58,
+        34,
+        105,
+        110,
+        115,
+        101,
+        114,
+        116,
+        34,
+        44,
+        34,
+        110,
+        101,
+        119,
+        34,
+        58,
+        123,
+        34,
+        99,
+        114,
+        101,
+        97,
+        116,
+        101,
+        100,
+        95,
+        97,
+        116,
+        34,
+        58,
+        34,
+        50,
+        48,
+        50,
+        54,
+        45,
+        48,
+        57,
+        45,
+        49,
+        48,
+        32,
+        50,
+        49,
+        58,
+        52,
+        55,
+        58,
+        51,
+        56,
+        46,
+        53,
+        49,
+        48,
+        54,
+        56,
+        55,
+        43,
+        48,
+        48,
+        34,
+        44,
+        34,
+        105,
+        100,
+        34,
+        58,
+        34,
+        52,
+        52,
+        101,
+        51,
+        51,
+        57,
+        52,
+        98,
+        45,
+        53,
+        51,
+        51,
+        56,
+        45,
+        52,
+        57,
+        55,
+        50,
+        45,
+        57,
+        50,
+        57,
+        52,
+        45,
+        52,
+        52,
+        57,
+        52,
+        102,
+        48,
+        57,
+        56,
+        49,
+        54,
+        101,
+        99,
+        34,
+        44,
+        34,
+        105,
+        100,
+        101,
+        109,
+        112,
+        111,
+        116,
+        101,
+        110,
+        99,
+        121,
+        95,
+        107,
+        101,
+        121,
+        34,
+        58,
+        34,
+        112,
+        111,
+        115,
+        116,
+        99,
+        111,
+        109,
+        109,
+        105,
+        116,
+        45,
+        112,
+        111,
+        105,
+        115,
+        111,
+        110,
+        45,
+        48,
+        97,
+        49,
+        50,
+        50,
+        101,
+        50,
+        97,
+        45,
+        102,
+        101,
+        49,
+        51,
+        45,
+        52,
+        55,
+        53,
+        56,
+        45,
+        97,
+        102,
+        56,
+        57,
+        45,
+        51,
+        100,
+        57,
+        99,
+        102,
+        97,
+        51,
+        49,
+        53,
+        48,
+        55,
+        56,
+        34,
+        44,
+        34,
+        111,
+        99,
+        99,
+        117,
+        114,
+        114,
+        101,
+        100,
+        95,
+        97,
+        116,
+        34,
+        58,
+        34,
+        50,
+        48,
+        50,
+        54,
+        45,
+        48,
+        57,
+        45,
+        49,
+        48,
+        32,
+        49,
+        50,
+        58,
+        48,
+        48,
+        58,
+        48,
+        48,
+        43,
+        48,
+        48,
+        34,
+        44,
+        34,
+        112,
+        117,
+        114,
+        99,
+        104,
+        97,
+        115,
+        101,
+        95,
+        111,
+        114,
+        100,
+        101,
+        114,
+        95,
+        105,
+        100,
+        34,
+        58,
+        34,
+        48,
+        97,
+        49,
+        50,
+        50,
+        101,
+        50,
+        97,
+        45,
+        102,
+        101,
+        49,
+        51,
+        45,
+        52,
+        55,
+        53,
+        56,
+        45,
+        97,
+        102,
+        56,
+        57,
+        45,
+        51,
+        100,
+        57,
+        99,
+        102,
+        97,
+        51,
+        49,
+        53,
+        48,
+        55,
+        56,
+        34,
+        44,
+        34,
+        114,
+        101,
+        99,
+        101,
+        105,
+        112,
+        116,
+        95,
+        114,
+        101,
+        102,
+        101,
+        114,
+        101,
+        110,
+        99,
+        101,
+        34,
+        58,
+        34,
+        112,
+        111,
+        115,
+        116,
+        99,
+        111,
+        109,
+        109,
+        105,
+        116,
+        45,
+        112,
+        111,
+        105,
+        115,
+        111,
+        110,
+        45,
+        48,
+        97,
+        49,
+        50,
+        50,
+        101,
+        50,
+        97,
+        45,
+        102,
+        101,
+        49,
+        51,
+        45,
+        52,
+        55,
+        53,
+        56,
+        45,
+        97,
+        102,
+        56,
+        57,
+        45,
+        51,
+        100,
+        57,
+        99,
+        102,
+        97,
+        51,
+        49,
+        53,
+        48,
+        55,
+        56,
+        34,
+        125,
+        44,
+        34,
+        112,
+        97,
+        99,
+        107,
+        97,
+        103,
+        101,
+        95,
+        105,
+        100,
+        34,
+        58,
+        34,
+        119,
+        97,
+        109,
+        110,
+        95,
+        114,
+        101,
+        99,
+        101,
+        105,
+        118,
+        105,
+        110,
+        103,
+        34,
+        44,
+        34,
+        101,
+        110,
+        116,
+        105,
+        116,
+        121,
+        34,
+        58,
+        34,
+        114,
+        101,
+        99,
+        101,
+        105,
+        112,
+        116,
+        34,
+        44,
+        34,
+        116,
+        97,
+        98,
+        108,
+        101,
+        34,
+        58,
+        34,
+        114,
+        101,
+        99,
+        101,
+        105,
+        112,
+        116,
+        34,
+        44,
+        34,
+        108,
+        115,
+        110,
+        34,
+        58,
+        54,
+        56,
+        49,
+        50,
+        54,
+        51,
+        55,
+        54,
+        44,
+        34,
+        116,
+        120,
+        105,
+        100,
+        34,
+        58,
+        57,
+        55,
+        51,
+        44,
+        34,
+        99,
+        111,
+        109,
+        109,
+        105,
+        116,
+        95,
+        116,
+        115,
+        34,
+        58,
+        34,
+        50,
+        48,
+        50,
+        54,
+        45,
+        48,
+        57,
+        45,
+        49,
+        48,
+        84,
+        50,
+        49,
+        58,
+        52,
+        55,
+        58,
+        51,
+        56,
+        46,
+        53,
+        49,
+        52,
+        49,
+        50,
+        53,
+        90,
+        34,
+        44,
+        34,
+        99,
+        97,
+        117,
+        115,
+        97,
+        116,
+        105,
+        111,
+        110,
+        34,
+        58,
+        123,
+        34,
+        114,
+        117,
+        110,
+        34,
+        58,
+        34,
+        98,
+        57,
+        57,
+        51,
+        57,
+        52,
+        98,
+        101,
+        54,
+        48,
+        50,
+        49,
+        99,
+        53,
+        101,
+        99,
+        50,
+        99,
+        100,
+        100,
+        55,
+        49,
+        57,
+        56,
+        100,
+        49,
+        55,
+        100,
+        50,
+        54,
+        55,
+        97,
+        34,
+        44,
+        34,
+        114,
+        111,
+        111,
+        116,
+        34,
+        58,
+        34,
+        98,
+        57,
+        57,
+        51,
+        57,
+        52,
+        98,
+        101,
+        54,
+        48,
+        50,
+        49,
+        99,
+        53,
+        101,
+        99,
+        50,
+        99,
+        100,
+        100,
+        55,
+        49,
+        57,
+        56,
+        100,
+        49,
+        55,
+        100,
+        50,
+        54,
+        55,
+        97,
+        34,
+        44,
+        34,
+        100,
+        101,
+        112,
+        116,
+        104,
+        34,
+        58,
+        48,
+        125,
+        125
+      ],
+      "delivered": 1,
+      "format-version": 1,
+      "headers": [
+        {
+          "name": "Nats-Msg-Id",
+          "value": "receiving_dev:68126376"
+        }
+      ],
+      "original-subject": "evt.acme.receiving.dev.receipt.insert",
+      "reason": "router-retry-exhausted",
+      "source-stream": "EVT_acme_dev",
+      "source-stream-sequence": 14
+    },
+    "subject": "dlq.receiving-route-auth.dev.client_acme_receiving.quality_create_inspection_332f881f"
+  },
+  "dedup_wait_ms": 122000,
+  "deployment_before": {
+    "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+    "kind": "WorkloadDeployment",
+    "metadata": {
+      "annotations": {
+        "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"runtime.wasmcloud.dev/v1alpha1\",\"kind\":\"WorkloadDeployment\",\"metadata\":{\"annotations\":{},\"name\":\"receiving-materializer\",\"namespace\":\"wamn-receiving-postcommit\"},\"spec\":{\"replicas\":1,\"template\":{\"spec\":{\"environment\":\"wamn-receiving-postcommit\",\"hostInterfaces\":[{\"interfaces\":[\"types\",\"client\"],\"namespace\":\"wamn\",\"package\":\"postgres\",\"version\":\"0.1.0\"},{\"interfaces\":[\"types\",\"consumer\"],\"namespace\":\"wamn\",\"package\":\"jetstream\",\"version\":\"0.1.0\"},{\"interfaces\":[\"routing\"],\"namespace\":\"wamn\",\"package\":\"flow-http-routing\",\"version\":\"0.1.0\"},{\"interfaces\":[\"delivery\"],\"namespace\":\"wamn\",\"package\":\"router-delivery\",\"version\":\"0.1.0\"}],\"hostSelector\":{\"hostgroup\":\"default\"},\"service\":{\"image\":\"172.28.0.9:5000/wamn/materializer@sha256:28e49abce3011cf563c4bbd12b538f7e11587db291d4930d601d9c959e5fd0ae\",\"imagePullPolicy\":\"Always\",\"localResources\":{\"allowedIpNameLookups\":[],\"config\":{\"wamn.environment\":\"dev\",\"wamn.postgres.authority\":\"event-materializer\",\"wamn.project\":\"receiving\",\"wamn.tenant\":\"receiving-route-auth\"},\"environment\":{\"config\":{\"WAMN_MAT_ENV\":\"dev\",\"WAMN_MAT_FETCH_MS\":\"500\",\"WAMN_MAT_MAX_DELIVER\":\"5\",\"WAMN_MAT_ORG\":\"acme\",\"WAMN_MAT_PROJECT\":\"receiving\",\"WAMN_MAT_STREAM\":\"EVT_acme_dev\",\"WAMN_MAT_SWEEP_MS\":\"500\",\"WAMN_MAT_TENANT\":\"receiving-route-auth\"}}},\"maxRestarts\":5}}}}}\n"
+      },
+      "creationTimestamp": "2026-09-10T21:44:42Z",
+      "generation": 1,
+      "name": "receiving-materializer",
+      "namespace": "wamn-receiving-postcommit",
+      "resourceVersion": "1366",
+      "uid": "a6b42da4-8aec-4b2f-a859-ebde3bf58d0e"
+    },
+    "spec": {
+      "deployPolicy": "RollingUpdate",
+      "replicas": 1,
+      "template": {
+        "spec": {
+          "environment": "wamn-receiving-postcommit",
+          "hostInterfaces": [
+            {
+              "interfaces": [
+                "types",
+                "client"
+              ],
+              "namespace": "wamn",
+              "package": "postgres",
+              "version": "0.1.0"
+            },
+            {
+              "interfaces": [
+                "types",
+                "consumer"
+              ],
+              "namespace": "wamn",
+              "package": "jetstream",
+              "version": "0.1.0"
+            },
+            {
+              "interfaces": [
+                "routing"
+              ],
+              "namespace": "wamn",
+              "package": "flow-http-routing",
+              "version": "0.1.0"
+            },
+            {
+              "interfaces": [
+                "delivery"
+              ],
+              "namespace": "wamn",
+              "package": "router-delivery",
+              "version": "0.1.0"
+            }
+          ],
+          "hostSelector": {
+            "hostgroup": "default"
+          },
+          "service": {
+            "image": "172.28.0.9:5000/wamn/materializer@sha256:28e49abce3011cf563c4bbd12b538f7e11587db291d4930d601d9c959e5fd0ae",
+            "imagePullPolicy": "Always",
+            "localResources": {
+              "allowedIpNameLookups": [],
+              "config": {
+                "wamn.environment": "dev",
+                "wamn.postgres.authority": "event-materializer",
+                "wamn.project": "receiving",
+                "wamn.tenant": "receiving-route-auth"
+              },
+              "environment": {
+                "config": {
+                  "WAMN_MAT_ENV": "dev",
+                  "WAMN_MAT_FETCH_MS": "500",
+                  "WAMN_MAT_MAX_DELIVER": "5",
+                  "WAMN_MAT_ORG": "acme",
+                  "WAMN_MAT_PROJECT": "receiving",
+                  "WAMN_MAT_STREAM": "EVT_acme_dev",
+                  "WAMN_MAT_SWEEP_MS": "500",
+                  "WAMN_MAT_TENANT": "receiving-route-auth"
+                }
+              }
+            },
+            "maxRestarts": 5
+          }
+        }
+      }
+    },
+    "status": {
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-09-10T21:44:42Z",
+          "reason": "Available",
+          "status": "True",
+          "type": "Artifact"
+        },
+        {
+          "lastTransitionTime": "2026-09-10T21:44:42Z",
+          "reason": "Available",
+          "status": "True",
+          "type": "Sync"
+        },
+        {
+          "lastTransitionTime": "2026-09-10T21:44:42Z",
+          "reason": "Available",
+          "status": "True",
+          "type": "Deploy"
+        },
+        {
+          "lastTransitionTime": "2026-09-10T21:44:43Z",
+          "reason": "Available",
+          "status": "True",
+          "type": "Scale"
+        },
+        {
+          "lastTransitionTime": "2026-09-10T21:44:43Z",
+          "reason": "Available",
+          "status": "True",
+          "type": "Ready"
+        }
+      ],
+      "currentReplicaSet": {
+        "name": "receiving-materializer-5b7df7cdc9"
+      },
+      "currentReplicas": 1,
+      "replicas": {
+        "current": 1,
+        "expected": 1,
+        "ready": 1
+      },
+      "selector": "runtime.wasmcloud.dev/workload-deployment=receiving-materializer"
+    }
+  },
+  "deployment_resumed": {
+    "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+    "kind": "WorkloadDeployment",
+    "metadata": {
+      "annotations": {
+        "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"runtime.wasmcloud.dev/v1alpha1\",\"kind\":\"WorkloadDeployment\",\"metadata\":{\"annotations\":{},\"name\":\"receiving-materializer\",\"namespace\":\"wamn-receiving-postcommit\"},\"spec\":{\"replicas\":1,\"template\":{\"spec\":{\"environment\":\"wamn-receiving-postcommit\",\"hostInterfaces\":[{\"interfaces\":[\"types\",\"client\"],\"namespace\":\"wamn\",\"package\":\"postgres\",\"version\":\"0.1.0\"},{\"interfaces\":[\"types\",\"consumer\"],\"namespace\":\"wamn\",\"package\":\"jetstream\",\"version\":\"0.1.0\"},{\"interfaces\":[\"routing\"],\"namespace\":\"wamn\",\"package\":\"flow-http-routing\",\"version\":\"0.1.0\"},{\"interfaces\":[\"delivery\"],\"namespace\":\"wamn\",\"package\":\"router-delivery\",\"version\":\"0.1.0\"}],\"hostSelector\":{\"hostgroup\":\"default\"},\"service\":{\"image\":\"172.28.0.9:5000/wamn/materializer@sha256:28e49abce3011cf563c4bbd12b538f7e11587db291d4930d601d9c959e5fd0ae\",\"imagePullPolicy\":\"Always\",\"localResources\":{\"allowedIpNameLookups\":[],\"config\":{\"wamn.environment\":\"dev\",\"wamn.postgres.authority\":\"event-materializer\",\"wamn.project\":\"receiving\",\"wamn.tenant\":\"receiving-route-auth\"},\"environment\":{\"config\":{\"WAMN_MAT_ENV\":\"dev\",\"WAMN_MAT_FETCH_MS\":\"500\",\"WAMN_MAT_MAX_DELIVER\":\"5\",\"WAMN_MAT_ORG\":\"acme\",\"WAMN_MAT_PROJECT\":\"receiving\",\"WAMN_MAT_STREAM\":\"EVT_acme_dev\",\"WAMN_MAT_SWEEP_MS\":\"500\",\"WAMN_MAT_TENANT\":\"receiving-route-auth\"}}},\"maxRestarts\":5}}}}}\n"
+      },
+      "creationTimestamp": "2026-09-10T21:44:42Z",
+      "generation": 3,
+      "name": "receiving-materializer",
+      "namespace": "wamn-receiving-postcommit",
+      "resourceVersion": "1833",
+      "uid": "a6b42da4-8aec-4b2f-a859-ebde3bf58d0e"
+    },
+    "spec": {
+      "deployPolicy": "RollingUpdate",
+      "replicas": 1,
+      "template": {
+        "spec": {
+          "environment": "wamn-receiving-postcommit",
+          "hostInterfaces": [
+            {
+              "interfaces": [
+                "types",
+                "client"
+              ],
+              "namespace": "wamn",
+              "package": "postgres",
+              "version": "0.1.0"
+            },
+            {
+              "interfaces": [
+                "types",
+                "consumer"
+              ],
+              "namespace": "wamn",
+              "package": "jetstream",
+              "version": "0.1.0"
+            },
+            {
+              "interfaces": [
+                "routing"
+              ],
+              "namespace": "wamn",
+              "package": "flow-http-routing",
+              "version": "0.1.0"
+            },
+            {
+              "interfaces": [
+                "delivery"
+              ],
+              "namespace": "wamn",
+              "package": "router-delivery",
+              "version": "0.1.0"
+            }
+          ],
+          "hostSelector": {
+            "hostgroup": "default"
+          },
+          "service": {
+            "image": "172.28.0.9:5000/wamn/materializer@sha256:28e49abce3011cf563c4bbd12b538f7e11587db291d4930d601d9c959e5fd0ae",
+            "imagePullPolicy": "Always",
+            "localResources": {
+              "allowedIpNameLookups": [],
+              "config": {
+                "wamn.environment": "dev",
+                "wamn.postgres.authority": "event-materializer",
+                "wamn.project": "receiving",
+                "wamn.tenant": "receiving-route-auth"
+              },
+              "environment": {
+                "config": {
+                  "WAMN_MAT_ENV": "dev",
+                  "WAMN_MAT_FETCH_MS": "500",
+                  "WAMN_MAT_MAX_DELIVER": "5",
+                  "WAMN_MAT_ORG": "acme",
+                  "WAMN_MAT_PROJECT": "receiving",
+                  "WAMN_MAT_STREAM": "EVT_acme_dev",
+                  "WAMN_MAT_SWEEP_MS": "500",
+                  "WAMN_MAT_TENANT": "receiving-route-auth"
+                }
+              }
+            },
+            "maxRestarts": 5
+          }
+        }
+      }
+    },
+    "status": {
+      "conditions": [
+        {
+          "lastTransitionTime": "2026-09-10T21:44:42Z",
+          "reason": "Available",
+          "status": "True",
+          "type": "Artifact"
+        },
+        {
+          "lastTransitionTime": "2026-09-10T21:44:42Z",
+          "reason": "Available",
+          "status": "True",
+          "type": "Sync"
+        },
+        {
+          "lastTransitionTime": "2026-09-10T21:44:42Z",
+          "reason": "Available",
+          "status": "True",
+          "type": "Deploy"
+        },
+        {
+          "lastTransitionTime": "2026-09-10T21:47:38Z",
+          "reason": "Available",
+          "status": "True",
+          "type": "Scale"
+        },
+        {
+          "lastTransitionTime": "2026-09-10T21:47:38Z",
+          "reason": "Available",
+          "status": "True",
+          "type": "Ready"
+        }
+      ],
+      "currentReplicaSet": {
+        "name": "receiving-materializer-5b7df7cdc9"
+      },
+      "currentReplicas": 1,
+      "replicas": {
+        "current": 1,
+        "expected": 1,
+        "ready": 1
+      },
+      "selector": "runtime.wasmcloud.dev/workload-deployment=receiving-materializer"
+    }
+  },
+  "independent_inspection": [
+    {
+      "receipt_id": "b1ad673a-a6a9-481b-81bd-76a15ce85ece",
+      "row_version": 1,
+      "status": "pending"
+    }
+  ],
+  "independent_source": {
+    "body": {
+      "causation": {
+        "depth": 0,
+        "root": "c7540233b3891dd34643a49c72fac9da",
+        "run": "c7540233b3891dd34643a49c72fac9da"
+      },
+      "commit_ts": "2026-09-10T21:47:38.613633Z",
+      "entity": "receipt",
+      "lsn": 68129424,
+      "new": {
+        "created_at": "2026-09-10 21:47:38.609771+00",
+        "id": "b1ad673a-a6a9-481b-81bd-76a15ce85ece",
+        "idempotency_key": "postcommit-independent-4ce0132f-7ef6-43b0-85c7-30214a286a95",
+        "occurred_at": "2026-09-10 12:00:00+00",
+        "purchase_order_id": "4ce0132f-7ef6-43b0-85c7-30214a286a95",
+        "receipt_reference": "postcommit-independent-4ce0132f-7ef6-43b0-85c7-30214a286a95"
+      },
+      "op": "insert",
+      "package_id": "wamn_receiving",
+      "table": "receipt",
+      "txid": 976
+    },
+    "headers": {
+      "Nats-Msg-Id": [
+        "receiving_dev:68129424"
+      ]
+    },
+    "sequence": 18,
+    "subject": "evt.acme.receiving.dev.receipt.insert"
+  },
+  "invariants": [
+    "REC-EVENT-REPLAY",
+    "REC-POSTCOMMIT-PROGRESS"
+  ],
+  "original_source": {
+    "body": {
+      "causation": {
+        "depth": 0,
+        "root": "b64600e5e457cef1dfb147e33668efb2",
+        "run": "b64600e5e457cef1dfb147e33668efb2"
+      },
+      "commit_ts": "2026-09-10T21:44:43.656952Z",
+      "entity": "receipt",
+      "lsn": 68093520,
+      "new": {
+        "created_at": "2026-09-10 21:44:43.649922+00",
+        "id": "b3e05c47-9a6d-4984-b2b0-b841f24d9082",
+        "idempotency_key": "materializer-receipt-command",
+        "occurred_at": "2026-08-31 12:34:00+00",
+        "purchase_order_id": "00000000-0000-0000-0000-000000000304",
+        "receipt_reference": "MATERIALIZER-RECEIPT"
+      },
+      "op": "insert",
+      "package_id": "wamn_receiving",
+      "table": "receipt",
+      "txid": 964
+    },
+    "headers": {
+      "Nats-Msg-Id": [
+        "receiving_dev:68093520"
+      ]
+    },
+    "sequence": 2,
+    "subject": "evt.acme.receiving.dev.receipt.insert"
+  },
+  "poison_source": {
+    "body": {
+      "causation": {
+        "depth": 0,
+        "root": "b99394be6021c5ec2cdd7198d17d267a",
+        "run": "b99394be6021c5ec2cdd7198d17d267a"
+      },
+      "commit_ts": "2026-09-10T21:47:38.514125Z",
+      "entity": "receipt",
+      "lsn": 68126376,
+      "new": {
+        "created_at": "2026-09-10 21:47:38.510687+00",
+        "id": "44e3394b-5338-4972-9294-4494f09816ec",
+        "idempotency_key": "postcommit-poison-0a122e2a-fe13-4758-af89-3d9cfa315078",
+        "occurred_at": "2026-09-10 12:00:00+00",
+        "purchase_order_id": "0a122e2a-fe13-4758-af89-3d9cfa315078",
+        "receipt_reference": "postcommit-poison-0a122e2a-fe13-4758-af89-3d9cfa315078"
+      },
+      "op": "insert",
+      "package_id": "wamn_receiving",
+      "table": "receipt",
+      "txid": 973
+    },
+    "headers": {
+      "Nats-Msg-Id": [
+        "receiving_dev:68126376"
+      ]
+    },
+    "sequence": 14,
+    "subject": "evt.acme.receiving.dev.receipt.insert"
+  },
+  "progress_elapsed_ms": 15618,
+  "recovery_assumptions": "The owned database, broker, host, and materializer remain available. The poison lock lasts through retry exhaustion.",
+  "registration": {
+    "entity": "receipt",
+    "input": "event",
+    "ops": [
+      "insert"
+    ],
+    "package-id": "client_acme_receiving",
+    "registration-id": "quality.create_inspection",
+    "schema-version": "0.1",
+    "source-package-id": "wamn_receiving"
+  },
+  "replay_sequence": 9,
+  "replay_taps": [
+    {
+      "record": {
+        "delivery-id": "client_acme_receiving::quality.create_inspection:event:9:receiving_dev:68093520",
+        "format-version": 1,
+        "payload": {
+          "event": "insert",
+          "new": {
+            "created_at": "2026-09-10 21:44:43.649922+00",
+            "id": "b3e05c47-9a6d-4984-b2b0-b841f24d9082",
+            "idempotency_key": "materializer-receipt-command",
+            "occurred_at": "2026-08-31 12:34:00+00",
+            "purchase_order_id": "00000000-0000-0000-0000-000000000304",
+            "receipt_reference": "MATERIALIZER-RECEIPT"
+          }
+        },
+        "phase": "accepted",
+        "redacted": false,
+        "source-id": "client_acme_receiving::quality.create_inspection",
+        "source-kind": "registration",
+        "wiring-id": "quality_create_inspection",
+        "wiring-version": 1
+      },
+      "subject": "tap.receiving-route-auth.receiving.dev.quality_create_inspection.client_acme_receiving::quality_create_inspection:event:9:receiving_dev:68093520_9f4db630"
+    },
+    {
+      "record": {
+        "delivery-id": "client_acme_receiving::quality.create_inspection:event:9:receiving_dev:68093520",
+        "format-version": 1,
+        "outcome": "discard",
+        "payload": null,
+        "phase": "settled",
+        "redacted": false,
+        "source-id": "client_acme_receiving::quality.create_inspection",
+        "source-kind": "registration",
+        "wiring-id": "quality_create_inspection",
+        "wiring-version": 1
+      },
+      "subject": "tap.receiving-route-auth.receiving.dev.quality_create_inspection.client_acme_receiving::quality_create_inspection:event:9:receiving_dev:68093520_9f4db630"
+    }
+  ],
+  "retry_policy": {
+    "backoff_ms": [
+      100,
+      200
+    ],
+    "broker_delivered": 1,
+    "handler_attempts": 3,
+    "materializer_max_deliver": 5,
+    "progress_bound_seconds": 90,
+    "statement_timeout_ms": 5000
+  },
+  "schema": "wamn-receiving-postcommit/v0.1",
+  "source": "95dc61c1fe2d1ec624f899aa89a63da5c72abe0d",
+  "stopped_workload_uid": "79a81455-11e2-493b-859f-355043c0527a",
+  "verdict": "pass",
+  "wiring": {
+    "entry": "operation",
+    "format-version": "0.1",
+    "nodes": {
+      "operation": {
+        "component": "client_acme_receiving",
+        "interface-version": "0.1.0",
+        "operation": "client-acme-receiving:quality/create-inspection@3.0.0"
+      }
+    },
+    "version": 1,
+    "wiring-id": "quality_create_inspection"
+  },
+  "workloads_before": [
+    {
+      "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+      "kind": "Workload",
+      "metadata": {
+        "annotations": {
+          "runtime.wasmcloud.dev/workload-replica-set-generation": "7fb8c56d4"
+        },
+        "creationTimestamp": "2026-09-10T21:44:42Z",
+        "finalizers": [
+          "runtime.wasmcloud.dev/workload-finalizer"
+        ],
+        "generation": 1,
+        "name": "receiving-materializer-5b7df7cdc9-79f4c58744",
+        "namespace": "wamn-receiving-postcommit",
+        "ownerReferences": [
+          {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "WorkloadReplicaSet",
+            "name": "receiving-materializer-5b7df7cdc9",
+            "uid": "e89c8f43-3f78-4fc5-a79b-a2145f8628cf"
+          }
+        ],
+        "resourceVersion": "1363",
+        "uid": "79a81455-11e2-493b-859f-355043c0527a"
+      },
+      "spec": {
+        "environment": "wamn-receiving-postcommit",
+        "hostInterfaces": [
+          {
+            "interfaces": [
+              "types",
+              "client"
+            ],
+            "namespace": "wamn",
+            "package": "postgres",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "types",
+              "consumer"
+            ],
+            "namespace": "wamn",
+            "package": "jetstream",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "routing"
+            ],
+            "namespace": "wamn",
+            "package": "flow-http-routing",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "delivery"
+            ],
+            "namespace": "wamn",
+            "package": "router-delivery",
+            "version": "0.1.0"
+          }
+        ],
+        "hostSelector": {
+          "hostgroup": "default"
+        },
+        "service": {
+          "image": "172.28.0.9:5000/wamn/materializer@sha256:28e49abce3011cf563c4bbd12b538f7e11587db291d4930d601d9c959e5fd0ae",
+          "imagePullPolicy": "Always",
+          "localResources": {
+            "config": {
+              "wamn.environment": "dev",
+              "wamn.postgres.authority": "event-materializer",
+              "wamn.project": "receiving",
+              "wamn.tenant": "receiving-route-auth"
+            },
+            "environment": {
+              "config": {
+                "WAMN_MAT_ENV": "dev",
+                "WAMN_MAT_FETCH_MS": "500",
+                "WAMN_MAT_MAX_DELIVER": "5",
+                "WAMN_MAT_ORG": "acme",
+                "WAMN_MAT_PROJECT": "receiving",
+                "WAMN_MAT_STREAM": "EVT_acme_dev",
+                "WAMN_MAT_SWEEP_MS": "500",
+                "WAMN_MAT_TENANT": "receiving-route-auth"
+              }
+            }
+          },
+          "maxRestarts": 5
+        }
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-09-10T21:44:43Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Config"
+          },
+          {
+            "lastTransitionTime": "2026-09-10T21:44:43Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "HostSelection"
+          },
+          {
+            "lastTransitionTime": "2026-09-10T21:44:43Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Placement"
+          },
+          {
+            "lastTransitionTime": "2026-09-10T21:44:43Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Sync"
+          },
+          {
+            "lastTransitionTime": "2026-09-10T21:44:43Z",
+            "reason": "Available",
+            "status": "True",
+            "type": "Ready"
+          }
+        ],
+        "environment": "wamn-receiving-postcommit",
+        "hostId": "be2a8665-580f-47dc-9f7d-c87ae5f205ef",
+        "workloadId": "79a81455-11e2-493b-859f-355043c0527a"
+      }
+    }
+  ]
+}

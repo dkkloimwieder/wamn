@@ -1,0 +1,147 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-postcommit",
+            "hostId": "c8939731-317d-4bc4-a9bf-cfd36edb84a5",
+            "hostname": "10.244.2.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-10T21:38:28Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "immense-cakes-4354",
+                "namespace": "wamn-system",
+                "resourceVersion": "1291",
+                "uid": "2d195cf6-5f2f-470c-a487-c6bb6025f802"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-10T21:38:28Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-10T21:38:29Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-10T21:38:30Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "3.9440203",
+                "systemMemoryFree": 9057947648,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-postcommit",
+            "hostId": "97dd0c3f-66e0-46e4-8aca-20d65c153fca",
+            "hostname": "10.244.1.5",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-10T21:38:29Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "trashy-minister-5878",
+                "namespace": "wamn-system",
+                "resourceVersion": "1293",
+                "uid": "fb699f6c-b4d2-4d30-a112-6b95f2d5bde3"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-10T21:38:29Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-10T21:38:30Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-10T21:38:31Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "4.562738",
+                "systemMemoryFree": 9056505856,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-postcommit",
+            "hostId": "0c48857a-26b8-4ccf-879f-526a4f5a52ae",
+            "hostname": "10.244.1.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-10T21:38:28Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "volatile-clocks-9091",
+                "namespace": "wamn-system",
+                "resourceVersion": "1292",
+                "uid": "477c2d1b-880b-479a-92a2-d591cf74101b"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-10T21:38:29Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-10T21:38:30Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-10T21:38:31Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "4.534005",
+                "systemMemoryFree": 9056505856,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

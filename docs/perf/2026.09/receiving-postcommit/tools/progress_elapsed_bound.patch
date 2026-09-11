@@ -1,0 +1,15 @@
+--- a/tests/integration/src/route_authentication_live/postcommit.rs
++++ b/tests/integration/src/route_authentication_live/postcommit.rs
+@@ -589,7 +589,11 @@
+             ensure!(Instant::now() < deadline, "poison and valid deliveries did not settle within 90 seconds");
+             tokio::time::sleep(Duration::from_millis(100)).await;
+         }
+-        evidence["progress_elapsed_ms"] = json!(started.elapsed().as_millis());
++        let progress_elapsed = started.elapsed();
++        evidence["progress_elapsed_ms"] = json!(progress_elapsed.as_millis());
++        ensure!(progress_elapsed <= PROGRESS_BOUND,
++            "poison and independent receipt exceeded the 90-second progress bound: {} ms",
++            progress_elapsed.as_millis());
+         evidence["retry_policy"] = json!({"handler_attempts":3,"backoff_ms":[100,200],
+             "statement_timeout_ms":phase.statement_timeout_ms,"materializer_max_deliver":5,
+             "broker_delivered":1,"progress_bound_seconds":90});

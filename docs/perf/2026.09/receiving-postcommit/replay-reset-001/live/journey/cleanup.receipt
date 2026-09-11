@@ -1,0 +1,2 @@
+verdict=pass cluster=wamn-receiving-postcommit containers=wamn-receiving-pg18-e581881623a3-2959114,wamn-receiving-registry-e581881623a3-2959114,wamn-receiving-nats-e581881623a3-2959114 reader_pid=3028053 image=wamn-host:receiving-e581881623a3-2959114-release
+gates_image=wamn-gates:receiving-e581881623a3-2959114-release

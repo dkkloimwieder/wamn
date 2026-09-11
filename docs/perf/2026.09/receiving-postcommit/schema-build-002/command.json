@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "cargo",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-proof-integration",
+    "--lib",
+    "route_authentication_live::regenerate_checked_in_journey_schema",
+    "--",
+    "--ignored",
+    "--exact"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910"
+}

@@ -1,0 +1,12 @@
+{
+  "verdict": "invalid-control-artifact",
+  "source": "8cb7fa0f0208cda9218028d1b1287291d2dbe3b1",
+  "exit_code": 101,
+  "failure": "private handler settled with the wrong outcome",
+  "intended_assertion_reached": false,
+  "cleanup": "pass",
+  "cause": "The prior cleanup omitted --release. The generated data-access library did not rebuild after the exact old timestamps returned. Both raw and served timeout artifacts contain the prior replay-mutant statement digest, absent from restored source.",
+  "evidence": "artifact-digest-observation.json",
+  "retained_component": "invalid-timeout-component.wasm",
+  "no_production_source_change": true
+}

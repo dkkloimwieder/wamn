@@ -1,0 +1,408 @@
+[
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/returning-privilege-001/roles.sql"
+    ],
+    "name": "roles"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/deploy/sql/postgres-init.sql"
+    ],
+    "name": "postgres-init"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-c",
+      "SELECT current_setting('server_version_num')::integer"
+    ],
+    "name": "version"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-c",
+      "CREATE DATABASE returning_baseline OWNER wamn_db_owner"
+    ],
+    "name": "baseline-database"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/deploy/sql/catalog-schema.sql"
+    ],
+    "name": "baseline-catalog-schema.sql"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/deploy/sql/app-schema.sql"
+    ],
+    "name": "baseline-app-schema.sql"
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target/debug/wamn-ctl",
+      "apply-package",
+      "--package",
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/packages/receiving",
+      "--tenant",
+      "returning-privilege-diagnosis"
+    ],
+    "name": "baseline-apply-base"
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target/debug/wamn-ctl",
+      "apply-package",
+      "--package",
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/packages/client_acme_receiving",
+      "--tenant",
+      "returning-privilege-diagnosis"
+    ],
+    "name": "baseline-apply-overlay"
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target/debug/wamn-ctl",
+      "reconcile-package-data-access",
+      "--package",
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/packages/receiving",
+      "--package",
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/packages/client_acme_receiving",
+      "--tenant",
+      "returning-privilege-diagnosis"
+    ],
+    "name": "baseline-reconcile"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-c",
+      "INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id) VALUES ('00000000-0000-0000-0000-000000000301', 'PO-PROBE', '00000000-0000-0000-0000-000000000401')"
+    ],
+    "name": "baseline-seed"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-c",
+      "SELECT jsonb_build_object('table_select', has_table_privilege('wamn_app', 'receiving.purchase_order', 'SELECT'), 'columns', (SELECT jsonb_agg(jsonb_build_object('name', attname, 'select', has_column_privilege('wamn_app', attrelid, attnum, 'SELECT'), 'update', has_column_privilege('wamn_app', attrelid, attnum, 'UPDATE')) ORDER BY attnum) FROM pg_attribute WHERE attrelid = 'receiving.purchase_order'::regclass AND attnum > 0 AND NOT attisdropped))"
+    ],
+    "name": "baseline-acl"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/returning-privilege-001/baseline-base-wildcard.sql"
+    ],
+    "name": "baseline-base-wildcard"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/returning-privilege-001/baseline-overlay-wildcard.sql"
+    ],
+    "name": "baseline-overlay-wildcard"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-c",
+      "SELECT row_version FROM receiving.purchase_order WHERE id = '00000000-0000-0000-0000-000000000301'"
+    ],
+    "name": "baseline-row-after-rollback"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-c",
+      "CREATE DATABASE returning_additive OWNER wamn_db_owner"
+    ],
+    "name": "additive-database"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/deploy/sql/catalog-schema.sql"
+    ],
+    "name": "additive-catalog-schema.sql"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/deploy/sql/app-schema.sql"
+    ],
+    "name": "additive-app-schema.sql"
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target/debug/wamn-ctl",
+      "apply-package",
+      "--package",
+      "/tmp/pg_virtualenv.MuL652/additive-receiving",
+      "--tenant",
+      "returning-privilege-diagnosis"
+    ],
+    "name": "additive-apply-base"
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target/debug/wamn-ctl",
+      "apply-package",
+      "--package",
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/packages/client_acme_receiving",
+      "--tenant",
+      "returning-privilege-diagnosis"
+    ],
+    "name": "additive-apply-overlay"
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target/debug/wamn-ctl",
+      "reconcile-package-data-access",
+      "--package",
+      "/tmp/pg_virtualenv.MuL652/additive-receiving",
+      "--package",
+      "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/packages/client_acme_receiving",
+      "--tenant",
+      "returning-privilege-diagnosis"
+    ],
+    "name": "additive-reconcile"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-c",
+      "INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id) VALUES ('00000000-0000-0000-0000-000000000301', 'PO-PROBE', '00000000-0000-0000-0000-000000000401')"
+    ],
+    "name": "additive-seed"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-c",
+      "SELECT jsonb_build_object('table_select', has_table_privilege('wamn_app', 'receiving.purchase_order', 'SELECT'), 'columns', (SELECT jsonb_agg(jsonb_build_object('name', attname, 'select', has_column_privilege('wamn_app', attrelid, attnum, 'SELECT'), 'update', has_column_privilege('wamn_app', attrelid, attnum, 'UPDATE')) ORDER BY attnum) FROM pg_attribute WHERE attrelid = 'receiving.purchase_order'::regclass AND attnum > 0 AND NOT attisdropped))"
+    ],
+    "name": "additive-acl"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/returning-privilege-001/additive-base-wildcard.sql"
+    ],
+    "name": "additive-base-wildcard"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/returning-privilege-001/additive-base-declared.sql"
+    ],
+    "name": "additive-base-declared"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/returning-privilege-001/additive-overlay-wildcard.sql"
+    ],
+    "name": "additive-overlay-wildcard"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-f",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/returning-privilege-001/additive-overlay-declared.sql"
+    ],
+    "name": "additive-overlay-declared"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-q",
+      "-A",
+      "-t",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-v",
+      "VERBOSITY=verbose",
+      "-c",
+      "SELECT row_version FROM receiving.purchase_order WHERE id = '00000000-0000-0000-0000-000000000301'"
+    ],
+    "name": "additive-row-after-rollback"
+  }
+]

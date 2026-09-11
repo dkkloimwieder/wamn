@@ -1,0 +1,147 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-postcommit",
+            "hostId": "d20788ef-6c0b-45ee-a7c8-0a9f5d4c38fe",
+            "hostname": "10.244.2.5",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-11T00:31:29Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "eager-crate-2084",
+                "namespace": "wamn-system",
+                "resourceVersion": "1276",
+                "uid": "8ff85bd9-e8fc-4f04-80a7-f638f468b2f2"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-11T00:31:29Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-11T00:31:30Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-11T00:31:31Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "9.242619",
+                "systemMemoryFree": 24693272576,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-postcommit",
+            "hostId": "02cebc36-74a7-4f83-9443-c8b9b04d7a02",
+            "hostname": "10.244.2.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-11T00:31:29Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "far-coast-9611",
+                "namespace": "wamn-system",
+                "resourceVersion": "1277",
+                "uid": "cdf92370-ee25-48eb-b458-f6cad3f2e766"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-11T00:31:29Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-11T00:31:30Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-11T00:31:31Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "9.183674",
+                "systemMemoryFree": 24693272576,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-postcommit",
+            "hostId": "e206b2f3-2db0-416a-a2e4-0698008a9008",
+            "hostname": "10.244.1.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-11T00:31:28Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "flowery-idea-9891",
+                "namespace": "wamn-system",
+                "resourceVersion": "1273",
+                "uid": "95dc5c3b-7ebc-4e22-b5ed-e7f060af013c"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-11T00:31:28Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-11T00:31:29Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-11T00:31:30Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "8.723135",
+                "systemMemoryFree": 24693841920,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0"
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

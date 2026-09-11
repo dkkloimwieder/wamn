@@ -1,0 +1,535 @@
+{
+  "schema": "wamn-receiving-telemetry/v0.1",
+  "verdict": "pass",
+  "source": "8cb7fa0f0208cda9218028d1b1287291d2dbe3b1",
+  "context": "kind-wamn-receiving-postcommit",
+  "namespace": "wamn-receiving-postcommit",
+  "meter": "duration",
+  "traces": {
+    "update": "326452bfe1656bd0182d19a13e46b424",
+    "receipt": "04eb4f68736c9588b10d14c429d16974"
+  },
+  "collected": {
+    "update": {
+      "file": "update-001.json",
+      "sha256": "80c99e4a8e0791d8b226f86d921d2e7100b4d51f573a319629dbe1131b87d119",
+      "evidence": {
+        "trace_id": "326452bfe1656bd0182d19a13e46b424",
+        "spans": 32,
+        "invocations": [
+          {
+            "span_id": "82111e770ec804bf",
+            "duration_ns": 12457755,
+            "attributes": {
+              "code.file.path": "crates/execution/host/src/router_driver.rs",
+              "code.module.name": "wamn_execution_host::router_driver",
+              "code.line.number": "424",
+              "thread.id": "7",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn::router",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.environment": "dev",
+              "wamn.wiring_id": "purchase_order_update",
+              "wamn.wiring_version": "1",
+              "wamn.component_digest": "sha256:6f79598ca74341fcbe8f42a04373c4c393e92052307669e45e6a92b8bf780e7d",
+              "wamn.node_id": "operation",
+              "wamn.operation": "client-acme-receiving:purchase-order/update@3.0.0",
+              "wamn.caller_principal_id": "94993fe9-f83d-4ab0-a428-4987f8e42f85",
+              "wamn.caller_credential_kind": "pat",
+              "busy_ns": "2533356",
+              "idle_ns": "9924571"
+            }
+          }
+        ],
+        "postgres_effects": [
+          {
+            "span_id": "07f2a3b5de77902c",
+            "invocation_span_id": "82111e770ec804bf",
+            "duration_ns": 11672421,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "7",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.run",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "client_acme_receiving#2",
+              "busy_ns": "1709549",
+              "idle_ns": "9963181"
+            }
+          }
+        ]
+      }
+    },
+    "receipt": {
+      "file": "receipt-001.json",
+      "sha256": "9163c0fd0a4cde93a9cd77524b3fcf43bdca649c061a96532334908d77040df0",
+      "evidence": {
+        "trace_id": "04eb4f68736c9588b10d14c429d16974",
+        "spans": 77,
+        "invocations": [
+          {
+            "span_id": "ca7892b7a469e1c6",
+            "duration_ns": 18706403,
+            "attributes": {
+              "code.file.path": "crates/execution/host/src/router_driver.rs",
+              "code.module.name": "wamn_execution_host::router_driver",
+              "code.line.number": "424",
+              "thread.id": "5",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn::router",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.environment": "dev",
+              "wamn.wiring_id": "receiving_record_receipt",
+              "wamn.wiring_version": "1",
+              "wamn.component_digest": "sha256:6f79598ca74341fcbe8f42a04373c4c393e92052307669e45e6a92b8bf780e7d",
+              "wamn.node_id": "operation",
+              "wamn.operation": "client-acme-receiving:receiving/record-receipt@3.0.0",
+              "wamn.caller_principal_id": "94993fe9-f83d-4ab0-a428-4987f8e42f85",
+              "wamn.caller_credential_kind": "pat",
+              "busy_ns": "3196958",
+              "idle_ns": "15509677"
+            }
+          },
+          {
+            "span_id": "7adc4b244ee263fa",
+            "duration_ns": 13068676,
+            "attributes": {
+              "code.file.path": "crates/execution/host/src/router_driver.rs",
+              "code.module.name": "wamn_execution_host::router_driver",
+              "code.line.number": "1964",
+              "thread.id": "5",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_execution_host::router_driver",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.environment": "dev",
+              "wamn.wiring_id": "receiving_record_receipt",
+              "wamn.wiring_version": "1",
+              "wamn.component_digest": "sha256:a092149c1c8df8b4f74babf64122f9747d15d7b1a78b82b35cb6e496f98fd9a1",
+              "wamn.node_id": "operation",
+              "wamn.operation": "wamn-receiving:receiving/record-receipt@1.0.0",
+              "wamn.caller_principal_id": "94993fe9-f83d-4ab0-a428-4987f8e42f85",
+              "wamn.caller_credential_kind": "pat",
+              "busy_ns": "1345850",
+              "idle_ns": "11723132"
+            }
+          }
+        ],
+        "postgres_effects": [
+          {
+            "span_id": "17c40c2757346df6",
+            "invocation_span_id": "7adc4b244ee263fa",
+            "duration_ns": 447298,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "5",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.begin",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "receiving#4",
+              "busy_ns": "84360",
+              "idle_ns": "363198"
+            }
+          },
+          {
+            "span_id": "95574cfbe62e4457",
+            "invocation_span_id": "7adc4b244ee263fa",
+            "duration_ns": 793006,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "7",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.run",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "receiving#4",
+              "busy_ns": "59482",
+              "idle_ns": "733819"
+            }
+          },
+          {
+            "span_id": "cb92b7c84cdb8661",
+            "invocation_span_id": "7adc4b244ee263fa",
+            "duration_ns": 773966,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "7",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.run",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "receiving#4",
+              "busy_ns": "80018",
+              "idle_ns": "694205"
+            }
+          },
+          {
+            "span_id": "179bff11f05b7a25",
+            "invocation_span_id": "7adc4b244ee263fa",
+            "duration_ns": 404975,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "2",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.run",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "receiving#4",
+              "busy_ns": "48159",
+              "idle_ns": "357044"
+            }
+          },
+          {
+            "span_id": "7dc3a8bbdda6f1be",
+            "invocation_span_id": "7adc4b244ee263fa",
+            "duration_ns": 2595749,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "7",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.run",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "receiving#4",
+              "busy_ns": "63686",
+              "idle_ns": "2532224"
+            }
+          },
+          {
+            "span_id": "d4291b05d01377d8",
+            "invocation_span_id": "7adc4b244ee263fa",
+            "duration_ns": 945339,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "7",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.run",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "receiving#4",
+              "busy_ns": "59479",
+              "idle_ns": "886070"
+            }
+          },
+          {
+            "span_id": "7da92f97fbf088b0",
+            "invocation_span_id": "7adc4b244ee263fa",
+            "duration_ns": 1056154,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "3",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.run",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "receiving#4",
+              "busy_ns": "58368",
+              "idle_ns": "997982"
+            }
+          },
+          {
+            "span_id": "e8b92abb9782e12d",
+            "invocation_span_id": "7adc4b244ee263fa",
+            "duration_ns": 695583,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "2",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.run",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "receiving#4",
+              "busy_ns": "48363",
+              "idle_ns": "647540"
+            }
+          },
+          {
+            "span_id": "29f193a86148f1da",
+            "invocation_span_id": "7adc4b244ee263fa",
+            "duration_ns": 764493,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "7",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.run",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "receiving#4",
+              "busy_ns": "49041",
+              "idle_ns": "715626"
+            }
+          },
+          {
+            "span_id": "f1799fb6d46fc707",
+            "invocation_span_id": "7adc4b244ee263fa",
+            "duration_ns": 529046,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "7",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.run",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "receiving#4",
+              "busy_ns": "48912",
+              "idle_ns": "480312"
+            }
+          },
+          {
+            "span_id": "eb396d7841f8de09",
+            "invocation_span_id": "7adc4b244ee263fa",
+            "duration_ns": 3423326,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "7",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.commit",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "receiving#4",
+              "busy_ns": "10714",
+              "idle_ns": "3412772"
+            }
+          },
+          {
+            "span_id": "7a455e61f1b92686",
+            "invocation_span_id": "ca7892b7a469e1c6",
+            "duration_ns": 335252,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "5",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.begin",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "client_acme_receiving#3",
+              "busy_ns": "72440",
+              "idle_ns": "263159"
+            }
+          },
+          {
+            "span_id": "d47b4602b5b656ac",
+            "invocation_span_id": "ca7892b7a469e1c6",
+            "duration_ns": 425888,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "5",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.run",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "client_acme_receiving#3",
+              "busy_ns": "76494",
+              "idle_ns": "349596"
+            }
+          },
+          {
+            "span_id": "d4a7ff34e55cd571",
+            "invocation_span_id": "ca7892b7a469e1c6",
+            "duration_ns": 3280282,
+            "attributes": {
+              "code.file.path": "crates/platform/runtime/src/plugins/wamn_postgres/resources.rs",
+              "code.module.name": "wamn_runtime::plugins::wamn_postgres::resources",
+              "code.line.number": "384",
+              "thread.id": "2",
+              "thread.name": "tokio-rt-worker",
+              "target": "wamn_runtime::plugins::wamn_postgres::resources",
+              "db.system": "postgresql",
+              "db.operation": "statement.txn.commit",
+              "wamn.tenant": "receiving-route-auth",
+              "wamn.project": "receiving",
+              "wamn.component": "client_acme_receiving#3",
+              "busy_ns": "9943",
+              "idle_ns": "3270559"
+            }
+          }
+        ]
+      }
+    },
+    "metrics": {
+      "file": "metrics-026.prom",
+      "sha256": "85b420eca0b43536c615eec61a9896b116745c2270cc811b63aeba20403e099b",
+      "evidence": {
+        "guest_invocation_duration_count": [
+          {
+            "labels": {
+              "component": "flow-http",
+              "http_request_method": "POST",
+              "instance": "dc794112-92ba-4536-8ac6-971149dffdb4",
+              "job": "wash-runtime",
+              "operation": "wasi:http/handler#handle",
+              "plugin": "wasi-http",
+              "workload_name": "flow-http-b45db95fb-85d86ffdcb",
+              "workload_namespace": "wamn-receiving-postcommit"
+            },
+            "count": 2.0
+          }
+        ],
+        "wamn_postgres_query_duration_ms_count": [
+          {
+            "labels": {
+              "db_operation": "query",
+              "instance": "1774aa3d-96cf-4361-9831-4f708afa9f2c",
+              "job": "wash-runtime",
+              "wamn_project": "receiving"
+            },
+            "count": 206.0
+          },
+          {
+            "labels": {
+              "db_operation": "statement.begin",
+              "instance": "1774aa3d-96cf-4361-9831-4f708afa9f2c",
+              "job": "wash-runtime",
+              "wamn_project": "receiving"
+            },
+            "count": 1.0
+          },
+          {
+            "labels": {
+              "db_operation": "statement.begin",
+              "instance": "dc794112-92ba-4536-8ac6-971149dffdb4",
+              "job": "wash-runtime",
+              "wamn_project": "receiving"
+            },
+            "count": 2.0
+          },
+          {
+            "labels": {
+              "db_operation": "statement.run",
+              "instance": "dc794112-92ba-4536-8ac6-971149dffdb4",
+              "job": "wash-runtime",
+              "wamn_project": "receiving"
+            },
+            "count": 1.0
+          },
+          {
+            "labels": {
+              "db_operation": "statement.txn.commit",
+              "instance": "1774aa3d-96cf-4361-9831-4f708afa9f2c",
+              "job": "wash-runtime",
+              "wamn_project": "receiving"
+            },
+            "count": 1.0
+          },
+          {
+            "labels": {
+              "db_operation": "statement.txn.commit",
+              "instance": "dc794112-92ba-4536-8ac6-971149dffdb4",
+              "job": "wash-runtime",
+              "wamn_project": "receiving"
+            },
+            "count": 2.0
+          },
+          {
+            "labels": {
+              "db_operation": "statement.txn.run",
+              "instance": "1774aa3d-96cf-4361-9831-4f708afa9f2c",
+              "job": "wash-runtime",
+              "wamn_project": "receiving"
+            },
+            "count": 1.0
+          },
+          {
+            "labels": {
+              "db_operation": "statement.txn.run",
+              "instance": "dc794112-92ba-4536-8ac6-971149dffdb4",
+              "job": "wash-runtime",
+              "wamn_project": "receiving"
+            },
+            "count": 10.0
+          }
+        ],
+        "wamn_jetstream_duration_ms_count": [
+          {
+            "labels": {
+              "effect_operation": "ack",
+              "instance": "1774aa3d-96cf-4361-9831-4f708afa9f2c",
+              "job": "wash-runtime",
+              "wamn_project": "receiving"
+            },
+            "count": 1.0
+          },
+          {
+            "labels": {
+              "effect_operation": "bind-registration",
+              "instance": "1774aa3d-96cf-4361-9831-4f708afa9f2c",
+              "job": "wash-runtime",
+              "wamn_project": "receiving"
+            },
+            "count": 103.0
+          },
+          {
+            "labels": {
+              "effect_operation": "fetch",
+              "instance": "1774aa3d-96cf-4361-9831-4f708afa9f2c",
+              "job": "wash-runtime",
+              "wamn_project": "receiving"
+            },
+            "count": 102.0
+          }
+        ]
+      }
+    }
+  },
+  "scope": "Two live PAT requests with invocation ancestry for PostgreSQL effects. Metrics cover native HTTP duration and WAMN PostgreSQL and JetStream calls. Histograms do not identify individual requests or measure guest CPU. This proof does not cover HTTP egress injection or private runtime phases."
+}

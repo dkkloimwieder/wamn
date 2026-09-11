@@ -1,0 +1,20 @@
+{
+  "pid": 3058083,
+  "argv": [
+    "python3",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/tools/capture.py",
+    "--tree",
+    "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-controls-20260910",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/timeout-terminal-001/live",
+    "--",
+    "tools/receiving-cluster-journey-run",
+    "--apply",
+    "--receiving-postcommit",
+    "baseline",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/timeout-terminal-001/live/journey"
+  ],
+  "source": "8cb7fa0f0208cda9218028d1b1287291d2dbe3b1",
+  "expected_assertion": "expected three real blocked handler attempts, observed 1"
+}

@@ -1,0 +1,7 @@
+{
+  "source": "b5aaa243a57c21e0d543c3d3f47d08cd876a34a5",
+  "source_tree_equal_to": "72142cf353da2e39afdb17bbfc153dd9d8ee1790",
+  "normal_hooks": true,
+  "restored_path": "components/application/client-acme-receiving/src/lib.rs",
+  "mutation_state": "../timeout-terminal-001/state.json"
+}

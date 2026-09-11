@@ -1,0 +1,12 @@
+{
+  "verdict": "pass",
+  "test": "workspace_tier_helper_runs_safely_outside_repository",
+  "test_binary": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/debug/deps/workspace_tiers-1fc3bea20794013f",
+  "test_binary_sha256": "07db3b41efe1b80b7de47c74052bb97248a5399ace06ec63e5ab532d0470b07f",
+  "binary_source": "The exact test executable compiled by integrated-workspace-001 at b7275405c8adca5aeef0373cfb8276d5b1678717.",
+  "temporary_directory": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-tier-kt3oxuxe",
+  "outside_source_checkout": true,
+  "product_source_changed": false,
+  "scope": "The original sweep failed this case because its TMPDIR was inside the checkout. This rerun changes only TMPDIR and executes exactly one existing test.",
+  "temporary_directory_removed": true
+}

@@ -1,0 +1,8 @@
+{
+  "argv": [
+    "python3",
+    "-c",
+    "import hashlib,json,pathlib,subprocess,sys; p=pathlib.Path(\"docs/perf/2026.09/receiving-postcommit/tools/materialize_replay_pg18.py\"); compile(p.read_bytes(),str(p),\"exec\"); subprocess.run([sys.executable,str(p),\"--help\"],check=True); print(json.dumps({\"result\":\"pass\",\"scope\":\"syntax and CLI help only; no builds, database, or guest controls\",\"helper_sha256\":hashlib.sha256(p.read_bytes()).hexdigest()}))"
+  ],
+  "cwd": "/home/kaalin/dev/wamn"
+}

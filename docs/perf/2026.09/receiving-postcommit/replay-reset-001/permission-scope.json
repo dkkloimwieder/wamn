@@ -1,0 +1,6 @@
+{
+  "policy_equal_except_manifest_sha256": true,
+  "path": "packages/client_acme_receiving/generated/platform-policy/data-access.json",
+  "expected_failure": "duplicate delivery reset the approved inspection or created another row",
+  "unmutated_pair": "../live-005/pair/pair.json"
+}

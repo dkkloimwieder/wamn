@@ -1,0 +1,28 @@
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/.cache/wamn-lanes/receiving-postcommit-controls-20260910/components/events/wire)
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/receiving-postcommit-controls-20260910/components/execution/contract)
+   Compiling wamn-component-policy v0.1.0 (/home/kaalin/.cache/wamn-lanes/receiving-postcommit-controls-20260910/crates/platform/component-policy)
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/receiving-postcommit-controls-20260910/crates/catalog/model)
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/.cache/wamn-lanes/receiving-postcommit-controls-20260910/crates/schema/introspection)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/receiving-postcommit-controls-20260910/crates/schema/generator)
+warning: `wamn-catalog` (lib) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.81s
+     Running `target/debug/examples/materialize_package write packages/client_acme_receiving`
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:792:4
+    |
+792 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.26s
+     Running `target/debug/examples/materialize_package check packages/client_acme_receiving`
