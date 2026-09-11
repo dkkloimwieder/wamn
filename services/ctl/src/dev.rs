@@ -17,7 +17,7 @@ mod native_tui;
 pub mod observations;
 #[cfg(target_os = "linux")]
 mod operator;
-mod pat_issuer;
+pub mod pat_issuer;
 pub mod read;
 pub mod target_database;
 #[cfg(target_os = "linux")]

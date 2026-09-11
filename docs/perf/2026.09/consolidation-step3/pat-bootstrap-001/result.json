@@ -1,0 +1,60 @@
+{
+  "source_commit": "fe6883b3506897d59deff2639064d4ffa1201904",
+  "bead": "wamn-47wm.4.2",
+  "change_type": "internal_refactor",
+  "source_sha256": {
+    "services/ctl/src/dev.rs": "903cf88719d564895e6a0ef7413bd0992da2ac274d7bd067699a64408f3f4b58",
+    "services/ctl/src/dev/pat_issuer.rs": "dc79157e9e71f15ee3ba41518602a17b0e3c2363f00faa3afc91d042831e96f9"
+  },
+  "retained_source_comparison": {
+    "stop_body": true,
+    "spawn_body": true,
+    "binary_and_private_directory": true
+  },
+  "receiving_before_and_after": {
+    "issuer": "https://127.0.0.1:<selected port>",
+    "transport": "https://127.0.0.1:<selected port>",
+    "certificate_lifetime_seconds": 3600,
+    "ca_path_length": null,
+    "secret_name": "wamn-dev-identity-db"
+  },
+  "wms_before_and_after": {
+    "issuer": "https://127.0.0.1",
+    "transport": "https://127.0.0.1:<selected port>",
+    "certificate_lifetime_seconds": 86400,
+    "ca_path_length": 0,
+    "secret_name": "wamn-identity-db"
+  },
+  "checks": [
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "--config",
+        "skip_children=true",
+        "services/ctl/src/dev.rs",
+        "services/ctl/src/dev/pat_issuer.rs",
+        "services/ctl/src/provision_org.rs",
+        "test-support/harness/src/environment.rs",
+        "apps/wamn_wms/tests/environment.rs"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "cargo": "not run; root owns the warm integrated test run",
+  "remaining_validation": "Compile the ctl API and run the application setup with its owned disposable services after integration."
+}

@@ -27,11 +27,13 @@ use crate::pat_client::PatIssuerArgs;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const CERTIFICATE_LIFETIME: Duration = Duration::from_secs(3600);
 
-pub(super) struct Bootstrap {
-    pub(super) args: PatIssuerArgs,
+/// One temporary identity process and its scoped database authority.
+pub struct Bootstrap {
+    pub args: PatIssuerArgs,
     child: Option<Child>,
     issuer: String,
     system_url: String,
+    secret_name: String,
     files: PrivateDirectory,
 }
 
@@ -43,7 +45,7 @@ impl fmt::Debug for Bootstrap {
 
 impl Bootstrap {
     /// Stop the owned process before removing its database login authority.
-    pub(super) async fn stop(mut self) -> anyhow::Result<()> {
+    pub async fn stop(mut self) -> anyhow::Result<()> {
         if let Some(mut child) = self.child.take() {
             tokio::time::timeout(IO_TIMEOUT, async {
                 if child.try_wait()?.is_none() {
@@ -69,7 +71,7 @@ impl Bootstrap {
             abort_generation: (!prepare).then_some(CredentialGeneration::A),
             emit_secret: prepare.then(|| self.files.0.join("database.json")),
             namespace: "wamn-system".into(),
-            secret_name: "wamn-dev-identity-db".into(),
+            secret_name: self.secret_name.clone(),
         }
     }
 
@@ -118,19 +120,71 @@ impl Bootstrap {
 
 /// Prepare temporary operator credentials and start the existing service binary.
 pub(super) async fn start(system_url: &str, root: &Path) -> anyhow::Result<Bootstrap> {
+    start_with(
+        system_url,
+        root,
+        None,
+        CERTIFICATE_LIFETIME,
+        None,
+        "wamn-dev-identity-db",
+    )
+    .await
+}
+
+/// Start the existing bootstrap with the caller's issuer and certificate limits.
+pub async fn start_for_issuer(
+    system_url: &str,
+    root: &Path,
+    issuer: &str,
+    certificate_lifetime: Duration,
+    ca_path_length: u8,
+    secret_name: &str,
+) -> anyhow::Result<Bootstrap> {
+    start_with(
+        system_url,
+        root,
+        Some(issuer),
+        certificate_lifetime,
+        Some(ca_path_length),
+        secret_name,
+    )
+    .await
+}
+
+async fn start_with(
+    system_url: &str,
+    root: &Path,
+    issuer: Option<&str>,
+    certificate_lifetime: Duration,
+    ca_path_length: Option<u8>,
+    secret_name: &str,
+) -> anyhow::Result<Bootstrap> {
     let binary = preflight(system_url)?;
     let socket = std::net::TcpListener::bind("127.0.0.1:0")
         .context("select the disposable identity listener")?;
     let bind = socket
         .local_addr()
         .context("read the disposable identity address")?;
-    let issuer = format!("https://{bind}");
+    let endpoint = format!("https://{bind}");
+    let issuer = issuer.unwrap_or(&endpoint).to_owned();
     let files = PrivateDirectory::new(root)?;
-    certificates(&files.0, "server", ExtendedKeyUsagePurpose::ServerAuth)?;
-    certificates(&files.0, "operator", ExtendedKeyUsagePurpose::ClientAuth)?;
+    certificates(
+        &files.0,
+        "server",
+        ExtendedKeyUsagePurpose::ServerAuth,
+        certificate_lifetime,
+        ca_path_length,
+    )?;
+    certificates(
+        &files.0,
+        "operator",
+        ExtendedKeyUsagePurpose::ClientAuth,
+        certificate_lifetime,
+        ca_path_length,
+    )?;
     let mut bootstrap = Bootstrap {
         args: PatIssuerArgs {
-            endpoint: Some(issuer.clone()),
+            endpoint: Some(endpoint),
             client_cert: Some(files.0.join("operator.crt")),
             client_key: Some(files.0.join("operator.key")),
             server_ca: Some(files.0.join("server-ca.pem")),
@@ -138,6 +192,7 @@ pub(super) async fn start(system_url: &str, root: &Path) -> anyhow::Result<Boots
         child: None,
         issuer,
         system_url: system_url.to_owned(),
+        secret_name: secret_name.to_owned(),
         files,
     };
     identity_issuer::run(bootstrap.generation_args(true)).await?;
@@ -207,18 +262,27 @@ impl Drop for PrivateDirectory {
     }
 }
 
-fn certificate_params(names: Vec<String>) -> anyhow::Result<CertificateParams> {
+fn certificate_params(names: Vec<String>, lifetime: Duration) -> anyhow::Result<CertificateParams> {
     let mut params =
         CertificateParams::new(names).context("create disposable certificate parameters")?;
     let now = SystemTime::now();
     params.not_before = now.into();
-    params.not_after = (now + CERTIFICATE_LIFETIME).into();
+    params.not_after = (now + lifetime).into();
     Ok(params)
 }
 
-fn certificates(root: &Path, stem: &str, purpose: ExtendedKeyUsagePurpose) -> anyhow::Result<()> {
-    let mut ca_params = certificate_params(Vec::new())?;
-    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+fn certificates(
+    root: &Path,
+    stem: &str,
+    purpose: ExtendedKeyUsagePurpose,
+    lifetime: Duration,
+    ca_path_length: Option<u8>,
+) -> anyhow::Result<()> {
+    let mut ca_params = certificate_params(Vec::new(), lifetime)?;
+    ca_params.is_ca = IsCa::Ca(ca_path_length.map_or(
+        BasicConstraints::Unconstrained,
+        BasicConstraints::Constrained,
+    ));
     ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
     let ca_key = KeyPair::generate().context("generate a disposable CA key")?;
     let ca = ca_params
@@ -226,7 +290,7 @@ fn certificates(root: &Path, stem: &str, purpose: ExtendedKeyUsagePurpose) -> an
         .context("sign a disposable CA certificate")?;
     let issuer = Issuer::new(ca_params, ca_key);
     let key = KeyPair::generate().context("generate a disposable TLS key")?;
-    let mut params = certificate_params(vec!["127.0.0.1".into()])?;
+    let mut params = certificate_params(vec!["127.0.0.1".into()], lifetime)?;
     params.extended_key_usages = vec![purpose];
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature];
     let certificate = params
