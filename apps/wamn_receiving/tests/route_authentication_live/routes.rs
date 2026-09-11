@@ -6,14 +6,14 @@ use super::*;
 #[tokio::test]
 #[ignore = "requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts"]
 async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyhow::Result<()> {
-    receiving_pat_journey(false).await
+    receiving_pat_journey(&JourneyDocument::required()?, &journey_scenario_worker_binary()?, false).await.map(|_| ())
 }
 
 #[tokio::test]
 #[ignore = "requires the dedicated fresh-only disposable journey and copied package directory"]
 async fn production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes()
 -> anyhow::Result<()> {
-    receiving_pat_journey(true).await
+    receiving_pat_journey(&JourneyDocument::required()?, &journey_scenario_worker_binary()?, true).await.map(|_| ())
 }
 
 pub(super) fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyhow::Result<()> {
@@ -106,8 +106,11 @@ fn fresh_only_fixture_changes_copies_without_changing_business_policy() -> anyho
     Ok(())
 }
 
-pub(super) async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
-    let inputs = JourneyDocument::required()?;
+pub(super) async fn receiving_pat_journey(
+    inputs: &JourneyDocument,
+    scenario_worker: &Path,
+    fresh_only: bool,
+) -> anyhow::Result<wamn_ctl::dev::environment::ProvisionedRoute> {
     anyhow::ensure!(
         inputs.fresh_only_packages.is_some() == fresh_only,
         "the selected journey must match its fresh-only package fixture"
@@ -171,7 +174,7 @@ pub(super) async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()
         )
     })?;
     let (project, project_task) = connect(&route.database_url).await?;
-    install_journey_project(project.as_ref(), &route.database_url, fresh_only).await?;
+    install_journey_project(inputs, project.as_ref(), &route.database_url, fresh_only).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     reconcile_journey_run_plane(&system_url, &route.database_url).await?;
     let credentials = prepare_journey_credentials(
@@ -193,8 +196,8 @@ pub(super) async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()
             std::fs::set_permissions(&destination, Permissions::from_mode(0o600))?;
         }
     }
-    reconcile_journey_data_access(&route.database_url).await?;
-    let declarations = render_component_declarations(root, &inputs.component_directory)?;
+    reconcile_journey_data_access(inputs, &route.database_url).await?;
+    let declarations = render_component_declarations(Some(inputs), root, &inputs.component_directory)?;
     push_journey_components(&inputs, &route.database_url, &system_url, &declarations).await?;
     let admitted_component_digests =
         verify_journey_components_are_effectful(project.as_ref()).await?;
@@ -204,7 +207,7 @@ pub(super) async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()
     // (wamn-10yt.10.32). The in-process exemption this proof used to hold died
     // with that ruling.
     let mut management_server = spawn_journey_management_gate(
-        &journey_scenario_worker_binary()?,
+        scenario_worker,
         &credentials,
         &credentials.management_admitter,
         if inputs.host_secret_namespace == "wamn-receiving-correctness" {
@@ -215,6 +218,7 @@ pub(super) async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()
     )
     .await?;
     let gate_reports = gate_journey_wirings(
+        inputs,
         management_server.bind(),
         route
             .management_token
@@ -223,7 +227,7 @@ pub(super) async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()
     )
     .await?;
     verify_zero_case_gate_reports(admin.as_ref(), &gate_reports).await?;
-    author_journey_wirings(&route.database_url, &system_url).await?;
+    author_journey_wirings(inputs, &route.database_url, &system_url).await?;
     reconcile_journey_run_plane(&system_url, &route.database_url).await?;
     let (_, release) = publish_journey_release(
         &inputs,
@@ -239,7 +243,7 @@ pub(super) async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()
             release_id: RELEASE_ID,
             attachments: JOURNEY_PACKAGES
                 .iter()
-                .map(|package| journey_publication_root(*package).join("attachments.json"))
+                .map(|package| journey_publication_root(*package, Some(inputs)).join("attachments.json"))
                 .collect(),
         },
     )
@@ -796,13 +800,13 @@ pub(super) async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()
         .find(|package| package.id == BASE_PACKAGE_ID)
         .context("find the base package in the journey release")?;
     apply_package::run(ApplyPackageArgs {
-        package: journey_package_root(base_package),
+        package: journey_package_root(base_package, Some(inputs)),
         database_url: route.database_url.clone(),
         tenant: TENANT.to_owned(),
     })
     .await
     .context("restore the base package's exact operation grants")?;
-    reconcile_journey_data_access(&route.database_url).await?;
+    reconcile_journey_data_access(inputs, &route.database_url).await?;
     verify_journey_operation_grants(project.as_ref()).await?;
     seed_materializer_trigger_rows(project.as_ref()).await?;
     if let Some(phase) = &inputs.overlay_compatibility {
@@ -826,5 +830,6 @@ pub(super) async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()
     identity_task.abort();
     project_task.abort();
     admin_task.abort();
-    gate_stop
+    gate_stop?;
+    Ok(route)
 }

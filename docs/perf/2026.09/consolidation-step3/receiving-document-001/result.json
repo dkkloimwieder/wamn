@@ -1,0 +1,41 @@
+{
+  "source_commit": "a864b40c176c211258920463f456b484e2d66c2f",
+  "bead": "wamn-47wm.4.1",
+  "change_type": "internal_refactor",
+  "files": [
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/dev.rs",
+      "sha256": "70bd42f113321647617ad1433b8f4abe5a266d48ff283d078ca98e6cb902525e",
+      "retained_assertions": 25
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/environment.rs",
+      "sha256": "5b8f01d1b7f89868160a917c70e91eaa85d1ea401e8d25a34c3660af34bcdd12",
+      "retained_assertions": 25
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/routes.rs",
+      "sha256": "a5ed7655b7eaa71bec15103541b47a4e980ab3a11cb0e12d39979b6cf7f35f4d",
+      "retained_assertions": 31
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/sessions.rs",
+      "sha256": "31e80f892d7ced7c35e7a9eb2b17a8ed6804508694425ef8216d9c5fad93c689",
+      "retained_assertions": 31
+    },
+    {
+      "path": "tests/integration/src/route_authentication_live/fresh_only.rs",
+      "sha256": "d88fa16e4407794e4d90b5dc0b42c16672b2573fec8b738053d3b4081260527b",
+      "retained_assertions": 47
+    }
+  ],
+  "assertion_tokens_preserved": true,
+  "assertion_call_adjustment": "The existing declaration tests now pass None explicitly instead of consulting process state.",
+  "source_selection": "Existing JourneyDocument fresh_only_packages and overlay_compatibility fields select their sources; no mapping or new input record added.",
+  "return_value": "Existing ProvisionedRoute returned after retained route assertions and cleanup.",
+  "checks": [
+    "rustfmt parse passed without formatting unrelated lines",
+    "git diff --check passed"
+  ],
+  "cargo": "Not run; root owns warm integrated test execution."
+}

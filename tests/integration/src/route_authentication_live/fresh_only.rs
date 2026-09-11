@@ -145,7 +145,7 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
         .find(|package| package.id == BASE_PACKAGE_ID)
         .context("the journey must declare the actual base package")?;
     let source: Value = serde_json::from_slice(&std::fs::read(
-        journey_publication_root(base_package).join("components/receiving.json.in"),
+        journey_publication_root(base_package, Some(proof.inputs)).join("components/receiving.json.in"),
     )?)?;
     let ports = &source["operations"][BASE_RECORD_RECEIPT];
     let declaration = json!({
@@ -213,7 +213,7 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
         PackageCoordinate::new(PACKAGE, VERSION)?,
     ];
     let manifests = vec![
-        journey_package_root(base_package).join("wamn.json"),
+        journey_package_root(base_package, Some(proof.inputs)).join("wamn.json"),
         package.join("wamn.json"),
     ];
     publish_release::run(PublishReleaseArgs {

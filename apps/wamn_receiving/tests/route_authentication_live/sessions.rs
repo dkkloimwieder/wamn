@@ -61,7 +61,7 @@ async fn production_receiving_session_host_fixture() -> anyhow::Result<()> {
     let mut attachments = Vec::with_capacity(JOURNEY_PACKAGES.len());
     let mut changed = 0;
     for package in JOURNEY_PACKAGES {
-        let source = journey_publication_root(package).join("attachments.json");
+        let source = journey_publication_root(package, Some(&inputs)).join("attachments.json");
         let original =
             std::fs::read(&source).with_context(|| format!("read {}", source.display()))?;
         let mut document: Value = serde_json::from_slice(&original)?;
@@ -352,7 +352,7 @@ pub(super) async fn nested_session_caller(fresh_only: bool, client_proof: bool) 
     let mut attachments = Vec::new();
     let mut changed = 0;
     for package in JOURNEY_PACKAGES {
-        let source = journey_publication_root(package).join("attachments.json");
+        let source = journey_publication_root(package, Some(&inputs)).join("attachments.json");
         let original = std::fs::read(&source)?;
         let mut document: Value = serde_json::from_slice(&original)?;
         for selected in &selected_attachments {
