@@ -332,13 +332,19 @@ async fn production_http_start_burst_keeps_native_host_progress() -> Result<()> 
         project: std::env::var("WAMN_EVT_PROJECT")?,
         env: Env::new(std::env::var("WAMN_EVT_ENV")?),
     };
-    assert_startup(&inputs, &credentials, &scope).await
+    let source = wamn_control_provision::events::source_stream_config(
+        &scope,
+        std::env::var("WAMN_EVT_STREAM_REPLICAS")?.parse()?,
+        Duration::from_secs(std::env::var("WAMN_EVT_DUP_WINDOW_SECS")?.parse()?),
+    );
+    assert_startup(&inputs, &credentials, &scope, &source).await
 }
 
 pub(crate) async fn assert_startup(
     inputs: &Inputs,
     credentials: &Credentials,
     scope: &Triple,
+    source: &async_nats::jetstream::stream::Config,
 ) -> Result<()> {
     ensure!(
         inputs.max_concurrent_starts > 0,
@@ -449,7 +455,12 @@ pub(crate) async fn assert_startup(
         .env("WAMN_EVT_NATS_PASSWORD_FILE", &credentials.password_file)
         .env("WAMN_EVT_ORG", &scope.org)
         .env("WAMN_EVT_PROJECT", &scope.project)
-        .env("WAMN_EVT_ENV", scope.env.as_str());
+        .env("WAMN_EVT_ENV", scope.env.as_str())
+        .env("WAMN_EVT_STREAM_REPLICAS", source.num_replicas.to_string())
+        .env(
+            "WAMN_EVT_DUP_WINDOW_SECS",
+            source.duplicate_window.as_secs().to_string(),
+        );
     for (key, name) in [
         ("WAMN_SYSTEM_URL", "identity-reader"),
         ("WAMN_PG_URL", "guest-sql"),
