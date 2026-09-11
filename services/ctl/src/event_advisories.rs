@@ -580,6 +580,7 @@ mod tests {
             .stderr(Stdio::from(log))
             .kill_on_drop(true)
             .spawn()?;
+        let mut stage = "broker readiness";
         let result = tokio::time::timeout(Duration::from_secs(90), async {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
             loop {
@@ -588,6 +589,7 @@ mod tests {
                 ensure!(tokio::time::Instant::now() < deadline, "owned NATS process did not listen");
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
+            stage = "provision declared streams and consumers";
             let mut managers = Vec::new();
             for (scope, broker) in scopes.iter().zip(&brokers) {
                 let manager = async_nats::jetstream::new(event_broker::connect(&broker.provisioning, &server).await?);
@@ -606,21 +608,30 @@ mod tests {
                 stream_replicas: Some(1),
                 dup_window_secs: Some(120),
             });
+            stage = "activate the runtime";
             active().activate_events().await
                 .map_err(|error| anyhow::anyhow!("declared runtime activation failed: {error:?}"))?;
             let runtime = async_nats::jetstream::new(event_broker::connect(&broker.runtime, &server).await?);
             let materializer = async_nats::jetstream::new(event_broker::connect(&broker.materializer, &server).await?);
+            stage = "attach the materializer";
             let attached = materializer.get_stream(&source.name).await?
                 .get_consumer::<PullConfig>("registered").await.map_err(anyhow::Error::from_boxed)?;
+            stage = "publish the runtime payload";
             let sequence = runtime.publish(consumer.filter_subject.clone(), "runtime payload".into()).await?.await?.sequence;
+            stage = "read the runtime payload";
             let message = fetch_one(&attached).await?.context("materializer did not read runtime publication")?;
             ensure!(message.payload.as_ref() == b"runtime payload", "runtime payload changed");
+            stage = "terminate the runtime payload";
             message.ack_with(AckKind::Term).await.map_err(anyhow::Error::from_boxed)?;
             let publisher = async_nats::jetstream::new(event_broker::connect(&broker.publisher, &server).await?);
+            stage = "publish the CDC payload";
             publisher.publish(consumer.filter_subject.clone(), "publisher payload".into()).await?.await?;
+            stage = "read the CDC payload";
             let message = fetch_one(&attached).await?.context("materializer did not read publisher publication")?;
             ensure!(message.payload.as_ref() == b"publisher payload", "publisher payload changed");
+            stage = "acknowledge the CDC payload";
             message.double_ack().await.map_err(anyhow::Error::from_boxed)?;
+            stage = "read retained advisories and source data";
             let (observer_client, mut observer_errors) = monitored_broker_client(&broker.observer, &server).await?;
             let mut observer = async_nats::jetstream::new(observer_client);
             observer.set_timeout(Duration::from_millis(500));
@@ -634,27 +645,35 @@ mod tests {
             ensure!(records.len() == 1 && records[0].advisory.stream_seq == sequence, "observer read another delivery");
             ensure!(matches!(&records[0].source, SourcePayload::Available { body, .. } if body == b"runtime payload"), "observer lost its permitted source payload");
 
+            stage = "refuse runtime management";
             for credentials in [&broker.runtime, &broker.publisher, &broker.materializer] {
                 let (client, mut errors) = monitored_broker_client(credentials, &server).await?;
                 let mut restricted = async_nats::jetstream::new(client);
                 restricted.set_timeout(Duration::from_millis(500));
+                stage = "refuse runtime stream creation";
                 ensure!(restricted.create_stream(source.clone()).await.is_err(), "runtime created a stream");
                 require_permission_denial(&mut errors, &format!("$JS.API.STREAM.CREATE.{}", source.name)).await?;
+                stage = "refuse runtime stream update";
                 ensure!(restricted.update_stream(source.clone()).await.is_err(), "runtime updated a stream");
                 require_permission_denial(&mut errors, &format!("$JS.API.STREAM.UPDATE.{}", source.name)).await?;
+                stage = "refuse runtime stream deletion";
                 ensure!(restricted.delete_stream(&source.name).await.is_err(), "runtime deleted a stream");
                 require_permission_denial(&mut errors, &format!("$JS.API.STREAM.DELETE.{}", source.name)).await?;
                 let stream = restricted.get_stream(&source.name).await?;
+                stage = "refuse runtime consumer creation";
                 ensure!(stream.create_consumer_strict(consumer.clone()).await.is_err(), "runtime created a consumer");
                 require_permission_denial(&mut errors, &format!("$JS.API.CONSUMER.CREATE.{}.registered", source.name)).await?;
+                stage = "refuse runtime consumer update";
                 ensure!(stream.update_consumer(consumer.clone()).await.is_err(), "runtime updated a consumer");
                 require_permission_denial(&mut errors, &format!("$JS.API.CONSUMER.CREATE.{}.registered", source.name)).await?;
+                stage = "refuse runtime consumer deletion";
                 ensure!(stream.delete_consumer("registered").await.is_err(), "runtime deleted a consumer");
                 require_permission_denial(&mut errors, &format!("$JS.API.CONSUMER.DELETE.{}.registered", source.name)).await?;
             }
             let (runtime_client, mut runtime_errors) = monitored_broker_client(&broker.runtime, &server).await?;
             let mut restricted_runtime = async_nats::jetstream::new(runtime_client.clone());
             restricted_runtime.set_timeout(Duration::from_millis(500));
+            stage = "refuse access to other environments";
             for (foreign_source, foreign_advisory, foreign_consumer) in &declarations[1..] {
                 let published = restricted_runtime.publish(foreign_consumer.filter_subject.clone(), "foreign payload".into()).await;
                 let refused = match published {
@@ -678,6 +697,7 @@ mod tests {
                     require_permission_denial(&mut observer_errors, &format!("$JS.API.STREAM.MSG.GET.{name}")).await?;
                 }
             }
+            stage = "refuse changed stream and consumer declarations";
             let manager = &managers[0];
             manager.update_stream(async_nats::jetstream::stream::Config { max_messages: 2, ..source.clone() }).await?;
             ensure!(active().activate_events().await.is_err(), "runtime accepted changed stream configuration");
@@ -694,7 +714,9 @@ mod tests {
         }).await;
         let kill = child.start_kill();
         let reaped = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-        result.context("scoped native event test exceeded 90 seconds")??;
+        result.with_context(|| {
+            format!("scoped native event test exceeded 90 seconds during {stage}")
+        })??;
         kill.context("stop the owned NATS process")?;
         reaped
             .context("owned NATS process did not exit within five seconds")?
