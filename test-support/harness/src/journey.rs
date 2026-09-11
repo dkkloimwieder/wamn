@@ -23,7 +23,7 @@ const JOURNEY_DOCUMENT_ENV: &str = "WAMN_JOURNEY_DOCUMENT";
 /// reads it strictly. `deny_unknown_fields` is what makes it a contract: a key
 /// the writer invents and the reader does not know fails here, not forty
 /// minutes into a cluster run as an empty string.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JourneyDocument {
     pub system_pg_url: String,
@@ -59,7 +59,7 @@ pub struct JourneyDocument {
 /// The runtime-assertion phase: where the released route answers from this
 /// machine, and the fixture the journey seeded, declared ONCE there and handed
 /// over here so the test carries no second copy of it.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimePhase {
     /// The route's origin as reachable from the test -- a temporary NodePort
@@ -77,7 +77,7 @@ pub struct RuntimePhase {
 /// the trigger produced. The NATS URL is known from the start, but the only
 /// reader that needs it is this phase's, so it rides here rather than being a
 /// required top-level field a route-only run would have to invent.
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct MaterializerPhase {
     pub project_pg_url: String,
@@ -92,7 +92,7 @@ pub enum BaseCandidate {
     Additive,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompatibilityPhase {
     pub base: BaseCandidate,
@@ -100,7 +100,7 @@ pub struct CompatibilityPhase {
     pub evidence_file: PathBuf,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PostcommitPhase {
     pub route_endpoint: String,
