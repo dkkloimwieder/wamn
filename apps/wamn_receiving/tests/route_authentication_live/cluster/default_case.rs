@@ -171,6 +171,11 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             &evidence,
         )
         .await?;
+        super::operator_recovery::assert_recovery(&cluster).await?;
+        std::fs::copy(
+            evidence.join("operator-recovery/evidence.sha256"),
+            evidence.join("operator-recovery.sha256"),
+        )?;
         super::assert_source_unchanged(resources).await
     }
     .await;

@@ -7,6 +7,7 @@ mod deployment;
 mod materializer_case;
 mod measurement;
 mod measurement_cases;
+mod operator_recovery;
 mod postcommit_case;
 mod postcommit_pair;
 mod resources;
