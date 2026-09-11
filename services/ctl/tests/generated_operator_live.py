@@ -330,9 +330,10 @@ ON CONFLICT ON CONSTRAINT location_id_pkey DO NOTHING;
 COMMIT;
 SELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1;"""
     result = subprocess.run(
-        ["psql", "-X", "-A", "-t", "-q", "-v", "ON_ERROR_STOP=1"],
+        ["psql", "-X", "-A", "-t", "-q", "-v", "ON_ERROR_STOP=1",
+         "--dbname", config["target_database_url"]],
         input=sql, text=True, capture_output=True, timeout=30,
-        env=dict(os.environ, PGDATABASE=config["target_database_url"], PGCONNECT_TIMEOUT="10"),
+        env=dict(os.environ, PGCONNECT_TIMEOUT="10"),
     )
     require(result.returncode == 0, "owned Receiving rows could not be prepared or removed")
     require(result.stdout.strip() == ("0" if remove else ORDER_ID),
