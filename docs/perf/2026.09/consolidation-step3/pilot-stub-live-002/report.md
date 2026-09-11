@@ -4,7 +4,7 @@ The second pilot setup failed before the local stub launched.
 
 | Action | Exit | Seconds | Result |
 | --- | ---: | ---: | --- |
-| [up](up-record.json) | 10 | 216.7598277659854 | Standup could not find its identity executable. |
+| [up](up-record.json) | 10 | 216.7598277659854 | Standup did not find its identity executable. |
 | launch | Unexecuted | Unexecuted | Setup did not finish. |
 | [down](down-record.json) | 0 | 2.594984684023075 | The cleanup command completed. |
 
