@@ -1,0 +1,29 @@
+{
+  "source_base": "5dca1f57ee77390bafce57893b752e590b8ffe2e",
+  "issue": "wamn-47wm.4.1",
+  "change": "internal refactor",
+  "former_owner": "tools/receiving-postcommit-proof",
+  "assertions_preserved": [
+    "both individual installations return after successful exact owned cleanup",
+    "complete postcommit case set and materializer resource restoration",
+    "schema observation counts and no production-admission claim",
+    "all overlay file identities and three artifact digests",
+    "equal overlay files/component/required schema across installations",
+    "distinct base migration and observed schema identities",
+    "separate breaking database identity and exact ownership refusal with no partial overlay state"
+  ],
+  "validation": [
+    "rustfmt parse/check",
+    "git diff --check"
+  ],
+  "tests_run": false,
+  "services_run": false,
+  "ordinary_test_filter": "route_authentication_live::cluster::postcommit_pair::tests::",
+  "live_test_filter": "route_authentication_live::cluster::postcommit_pair::unchanged_overlay_across_baseline_and_additive_installations",
+  "source_sha256": {
+    "apps/wamn_receiving/tests/route_authentication_live/cluster.rs": "d176e6d4d900730f8ddc5a74c431e9875525fc4f00766aff98f3ae624af63676",
+    "apps/wamn_receiving/tests/route_authentication_live/cluster/postcommit_case.rs": "044da122c19b278e11a3080e5488ce2dc3ac217329aff14efa8eaaa3731737da",
+    "apps/wamn_receiving/tests/route_authentication_live/cluster/postcommit_pair.rs": "750634160e397997be0d6475180dbc7e6b22bef5da3d2490fab46bc164eb5302"
+  },
+  "remaining": "Root warm compile/tests; final lifecycle and obsolete wrapper deletion remain held."
+}

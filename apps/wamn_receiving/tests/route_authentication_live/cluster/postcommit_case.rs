@@ -31,7 +31,10 @@ async fn run(base: BaseCandidate) -> anyhow::Result<()> {
     super::with_signals(&evidence, run_selected(base, &evidence)).await
 }
 
-async fn run_selected(base: BaseCandidate, evidence: &std::path::Path) -> anyhow::Result<()> {
+pub(super) async fn run_selected(
+    base: BaseCandidate,
+    evidence: &std::path::Path,
+) -> anyhow::Result<()> {
     let mut cluster = start(evidence, true, false).await?;
     cluster.inputs.overlay_compatibility = Some(CompatibilityPhase {
         base,

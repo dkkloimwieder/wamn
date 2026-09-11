@@ -8,6 +8,7 @@ mod materializer_case;
 mod measurement;
 mod measurement_cases;
 mod postcommit_case;
+mod postcommit_pair;
 mod resources;
 mod route_cases;
 mod session_cases;
