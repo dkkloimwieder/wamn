@@ -445,9 +445,8 @@ fn surviving_authority_matrix_live() {
            ASSERT actual = \
              'component_library:SELECT,connection_bindings:SELECT,\
 connection_generations:SELECT,connection_instances:SELECT,connection_requirements:SELECT,\
-effective_release_heads:SELECT,effective_release_packages:SELECT,release_components:SELECT,\
-release_manifest_v3_snapshots:SELECT,wiring_activation:SELECT,\
-wiring_tombstones:SELECT,wirings:SELECT', \
+effective_release_packages:SELECT,release_components:SELECT,\
+release_manifest_v3_snapshots:SELECT,wirings:SELECT', \
                   'catalog TABLE grain drifted: ' || coalesce(actual, '<none>'); \
            SELECT string_agg(a.attname, ',' ORDER BY a.attname) INTO actual \
              FROM pg_catalog.pg_attribute AS a \

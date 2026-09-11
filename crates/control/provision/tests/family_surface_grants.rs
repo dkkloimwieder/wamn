@@ -417,12 +417,9 @@ fn expected_executor_inventory() -> Vec<String> {
         "connection_generations",
         "connection_instances",
         "connection_requirements",
-        "effective_release_heads",
         "effective_release_packages",
         "release_components",
         "release_manifest_v3_snapshots",
-        "wiring_activation",
-        "wiring_tombstones",
         "wirings",
     ] {
         rows.push(format!("relation|catalog|{relation}|SELECT"));

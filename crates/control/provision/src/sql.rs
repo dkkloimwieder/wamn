@@ -339,26 +339,21 @@ pub const MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS: [&str; 7] = [
 /// Catalog relations the executor-platform family reads (`wamn-0h0g.22.37`).
 ///
 /// Released and candidate resolution read these through the platform pool.
-/// This grant set also retains activation and tombstone access; removal of the
-/// unused Active selector does not change credential authority.
 ///
 /// TABLE grain, not column grain — the [`grant_system_reader_surface_sql`]
 /// determination: this family holds no write privilege anywhere in `catalog`,
 /// so a column list would withhold only labels and timestamps while making a
 /// statement that reads one more column fail in production instead of at review.
-pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 12] = [
+pub const EXECUTOR_PLATFORM_CATALOG_RELATIONS: [&str; 9] = [
     "wirings",
     "component_library",
     "connection_requirements",
     "connection_bindings",
     "connection_instances",
     "connection_generations",
-    "effective_release_heads",
     "effective_release_packages",
     "release_components",
     "release_manifest_v3_snapshots",
-    "wiring_activation",
-    "wiring_tombstones",
 ];
 
 /// Every `runs` column the executor-platform family WRITES, and no other
@@ -2225,15 +2220,11 @@ mod tests {
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"connection_generations\" \
              TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"effective_release_heads\" \
-             TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"effective_release_packages\" \
              TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"release_components\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE catalog.\"release_manifest_v3_snapshots\" \
              TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"wiring_activation\" TO \"wamn_executor_platform\"; \
-             GRANT SELECT ON TABLE catalog.\"wiring_tombstones\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"runs\" TO \"wamn_executor_platform\"; \
              GRANT UPDATE (\"status\", \"terminal_reason\", \"fail_kind\", \"result_json\", \
              \"state_json\", \"manifest_digest\", \"caller_outcome_kind\", \
