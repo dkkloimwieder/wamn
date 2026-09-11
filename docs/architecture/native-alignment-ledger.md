@@ -91,7 +91,12 @@ These coordinates do not change tenant identity or database-project authority.
 Authenticated direct clients use paired `WAMN_EVT_NATS_USERNAME` and `WAMN_EVT_NATS_PASSWORD_FILE` with the existing event URL.
 The files and native binding keep passwords outside workload configuration and recorded commands.
 This is a source checkpoint only: live correctness, authority and pressure tests and the integrated retained workspace test run remain pending under `wamn-0ct2.7`.
-The owner still must decide the observer's access to shared advisory metadata.
+The owner decision of 2026-09-11 requires separate source and advisory streams for each environment.
+Monitoring uses credentials for that environment.
+Provisioning owns stream and consumer creation from declared subjects, retention, and retry limits.
+Activation compares stored configuration with those declarations.
+Runtime credentials permit environment publishing, delivery, and attachment, without stream or consumer management rights.
+This split remains in progress under `wamn-0ct2.7`.
 
 The [P3 HTTP cutover](../perf/2026.09/p3-http-cutover/report.md) belongs to `wamn-0h0g.2.7.17`.
 Its HTTP shell exports `wasi:http/handler@0.3.0` and uses native P3 body streams.

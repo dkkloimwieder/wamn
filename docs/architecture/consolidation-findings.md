@@ -194,6 +194,13 @@ The materializer is platform infrastructure.
 Native C uses a platform-owned named NATS binding for it.
 Credentials apply to one environment and permit attachment only to its allowed streams.
 The binding credentials enforce authority.
+Each environment has separate source and advisory streams.
+Monitoring attaches with that environment's credentials.
+Platform provisioning creates the streams and consumers from declared subjects, retention, and retry limits.
+Activation compares the provisioned stream and consumer configuration with those declarations.
+Runtime credentials permit publishing, delivery, and attachment within that environment.
+They cannot create, change, or delete streams or consumers.
+This split remains in progress under `wamn-0ct2.7`.
 
 The composed Receiving operator is the application and owns its `main`.
 Retire the standalone launcher in a separate mechanical commit.

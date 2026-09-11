@@ -198,7 +198,13 @@ Password bytes stay in private files and host memory, outside workload configura
 
 This checkpoint establishes source changes and focused test results only.
 Live correctness, broker authority, delivery pressure, and the integrated retained workspace test run remain pending under `wamn-0ct2.7`.
-The scope of observer access to shared advisory metadata still requires the owner's decision.
+The owner decision of 2026-09-11 requires separate source and advisory streams for each environment.
+Monitoring attaches with that environment's credentials.
+Platform provisioning creates streams and consumers from declared subjects, retention, and retry limits.
+Activation compares their stored configuration with those declarations.
+Runtime credentials permit only environment publishing, delivery, and consumer attachment.
+They cannot create, change, or delete streams or consumers.
+The implementation remains under `wamn-0ct2.7`.
 
 `emit` carries an author-supplied dedup id; automation admission deduplicates it.
 The queue does not survive verbatim: classifier/effect-attempt predicates must be

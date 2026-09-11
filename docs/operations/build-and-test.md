@@ -312,7 +312,12 @@ The separate caller change at `8c3c28a9495c8b7f5bfee218dbb8f2bfae87afe3` passes 
 Its existing activation test passes without skips, and the YAML comparison preserves unrelated data.
 The [test result](../perf/2026.09/native-c-advisories/dev-event-inputs-tests-001/commit.json) records the tested source.
 The local development environment still uses its existing broker and authentication model.
-The observer's access to shared advisory metadata remains an owner decision.
+The owner decision requires separate source and advisory streams for each environment.
+Monitoring attaches with credentials for that environment.
+Provisioning creates the declared streams and consumers, and activation compares their stored configuration.
+Runtime credentials permit only environment publishing, delivery, and consumer attachment.
+They cannot create, change, or delete streams or consumers.
+The implementation and cluster tests remain under `wamn-0ct2.7`.
 
 The host takes `--materializer-nats-binding-file` or `WAMN_MAT_NATS_BINDING_FILE` as a path to private native binding configuration.
 Use separate credentials for each environment's materializer and its permitted stream and durables.
@@ -3750,7 +3755,8 @@ unchanged mechanisms.
 ### `[RECEIVING-POSTCOMMIT]` — unchanged overlay and event progress
 
 The [C source checkpoint](../perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json) replaces this recipe's payload dead-letter assertion with a retained broker termination advisory.
-Execution against the changed source remains pending under `wamn-0ct2.7`, including the observer scope decision.
+Execution against the changed source remains pending under `wamn-0ct2.7`.
+The owner requires monitoring to use credentials for the same environment.
 Earlier dated reports retain their original results.
 
 `wamn-10yt.78` owns this correctness proof under Increment 2 of `docs/poc/wamn_testing_spec.md`.
