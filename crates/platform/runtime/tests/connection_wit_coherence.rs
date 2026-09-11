@@ -11,12 +11,6 @@ mod host_bindings {
     });
 }
 
-const EXPECTED_COPIES: [&str; 3] = [
-    "components/fixtures/connection-http-standard/wit/deps/wamn-connection/package.wit",
-    "components/no-std/http-request/wit/deps/wamn-connection/package.wit",
-    "crates/platform/runtime/wit/deps/wamn-connection/package.wit",
-];
-
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../..")
@@ -38,9 +32,12 @@ fn collect_copies(dir: &Path, root: &Path, found: &mut Vec<String>) {
                 continue;
             }
             collect_copies(&path, root, found);
-        } else if path.file_name().and_then(|name| name.to_str()) == Some("package.wit") {
+        } else if path.extension().and_then(|name| name.to_str()) == Some("wit") {
             let source = fs::read_to_string(&path).expect("candidate WIT reads");
-            if source.contains("package wamn:connection@") {
+            if source
+                .lines()
+                .any(|line| line.trim().starts_with("package wamn:connection@"))
+            {
                 found.push(
                     path.strip_prefix(root)
                         .expect("vendored WIT is within repository")
@@ -53,20 +50,29 @@ fn collect_copies(dir: &Path, root: &Path, found: &mut Vec<String>) {
 }
 
 #[test]
-fn every_vendored_http_connection_contract_is_registered_and_byte_identical() {
+fn every_vendored_http_connection_contract_is_byte_identical() {
     let root = repo_root();
-    let authority = fs::read_to_string(root.join("docs/reference/contracts/wamn-connection.wit"))
+    let authority = fs::read(root.join("docs/reference/contracts/wamn-connection.wit"))
         .expect("authoritative connection WIT reads");
     let mut found = Vec::new();
-    for top in ["components", "crates", "services"] {
-        collect_copies(&root.join(top), &root, &mut found);
+    for top in [
+        "apps",
+        "components",
+        "crates",
+        "services",
+        "test-support",
+        "tests",
+    ] {
+        let dir = root.join(top);
+        if dir.is_dir() {
+            collect_copies(&dir, &root, &mut found);
+        }
     }
     found.sort();
 
-    assert_eq!(found, EXPECTED_COPIES);
-    for path in EXPECTED_COPIES {
-        let copy = fs::read_to_string(root.join(path))
-            .unwrap_or_else(|error| panic!("{path} reads: {error}"));
+    for path in found {
+        let copy =
+            fs::read(root.join(&path)).unwrap_or_else(|error| panic!("{path} reads: {error}"));
         assert_eq!(
             copy, authority,
             "{path} drifted from docs/reference/contracts/wamn-connection.wit"

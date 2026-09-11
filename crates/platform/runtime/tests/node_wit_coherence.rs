@@ -1,23 +1,13 @@
 //! Drift guard for every `wamn:node@0.1.0` package copy.
 //!
 //! The router owns the contract. Each guest vendors its own copy for
-//! `wit-bindgen`, so inventory and complete package bytes are both guarded.
+//! `wit-bindgen`, so every discovered copy must match the complete contract.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const PACKAGE_DECLARATION: &str = "package wamn:node@0.1.0;";
+const PACKAGE_PREFIX: &str = "package wamn:node@";
 const AUTHORITY_COPY: &str = "crates/execution/router/wit/package.wit";
-
-const EXPECTED_COPIES: [&str; 7] = [
-    "components/data/receiving-data/wit/deps/wamn-node/package.wit",
-    "components/data/wms-data/wit/deps/wamn-node/package.wit",
-    "components/execution/blob-put/wit/deps/wamn-node/package.wit",
-    "components/no-std/http-request/wit/deps/wamn-node/package.wit",
-    "components/no-std/label-render/wit/deps/wamn-node/package.wit",
-    "components/no-std/transform/wit/deps/wamn-node/package.wit",
-    AUTHORITY_COPY,
-];
 
 fn repo_root() -> PathBuf {
     fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."))
@@ -40,14 +30,17 @@ fn collect_copies(dir: &Path, root: &Path, out: &mut Vec<String>) {
             collect_copies(&path, root, out);
             continue;
         }
-        if path.file_name().and_then(|name| name.to_str()) != Some("package.wit") {
+        if path.extension().and_then(|name| name.to_str()) != Some("wit") {
             continue;
         }
 
         let Ok(source) = fs::read_to_string(&path) else {
             continue;
         };
-        if source.lines().any(|line| line == PACKAGE_DECLARATION) {
+        if source
+            .lines()
+            .any(|line| line.trim().starts_with(PACKAGE_PREFIX))
+        {
             out.push(
                 path.strip_prefix(root)
                     .expect("copy is under repo root")
@@ -60,28 +53,18 @@ fn collect_copies(dir: &Path, root: &Path, out: &mut Vec<String>) {
 
 fn discover_copies(root: &Path) -> Vec<String> {
     let mut copies = Vec::new();
-    for top in ["components", "crates", "services"] {
+    for top in [
+        "apps",
+        "components",
+        "crates",
+        "services",
+        "test-support",
+        "tests",
+    ] {
         collect_copies(&root.join(top), root, &mut copies);
     }
     copies.sort();
     copies
-}
-
-#[test]
-fn all_package_copies_are_registered() {
-    let root = repo_root();
-    let discovered = discover_copies(&root);
-    let mut expected: Vec<String> = EXPECTED_COPIES
-        .iter()
-        .map(|path| path.to_string())
-        .collect();
-    expected.sort();
-
-    assert_eq!(
-        discovered, expected,
-        "the wamn:node package inventory changed; register every copy in \
-         crates/platform/runtime/tests/node_wit_coherence.rs"
-    );
 }
 
 #[test]
@@ -90,9 +73,9 @@ fn every_copy_is_byte_identical_to_the_router_authority() {
     let authority = fs::read(root.join(AUTHORITY_COPY))
         .unwrap_or_else(|error| panic!("{AUTHORITY_COPY} reads: {error}"));
 
-    for copy in EXPECTED_COPIES {
+    for copy in discover_copies(&root) {
         let bytes =
-            fs::read(root.join(copy)).unwrap_or_else(|error| panic!("{copy} reads: {error}"));
+            fs::read(root.join(&copy)).unwrap_or_else(|error| panic!("{copy} reads: {error}"));
         assert_eq!(
             bytes, authority,
             "{copy} drifted from {AUTHORITY_COPY}; re-vendor the complete package"

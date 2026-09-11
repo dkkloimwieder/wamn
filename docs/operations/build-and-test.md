@@ -433,7 +433,9 @@ passed, 1 failed, 77 ignored, no compile errors.** The same one failure, still
 cargo test -p wamn-proof-conformance --no-fail-fast
 ```
 
-**Adding or removing a Cargo workspace member moves TEN hard-coded sites,**
+[Before `wamn-47wm.2.3`, the measured member-change procedure included three copied WIT location lists.]
+
+**Cargo member changes still update the package inventories listed below,**
 all asserted against live `cargo metadata`, so a partial edit is red and a
 partial COMMIT is red even when the final tree is green (remeasured at
 `wamn-362o` adding two components: exactly ten files). Seven member
@@ -455,18 +457,17 @@ checked by whole-token equality against the live count;
 (6) `tests/conformance/tests/retained_root_outcomes.rs` `RETAINED_ROOTS`,
 asserted set-equal to `package-roles.json` across all three workspaces;
 (7) `tests/conformance/tests/repo_lint.rs` `ROOT_MEMBER_COUNT`,
-`COMPONENT_MEMBER_COUNT`, `NO_STD_MEMBER_COUNT`. Three ABI guards, each a
-length-typed array asserting RAW BYTES (`cp` the file, never reformat):
-(8) `crates/platform/runtime/tests/node_wit_coherence.rs` `EXPECTED_COPIES`;
-(9) `tests/conformance/src/invocation.rs` `EXPECTED_NODE_ABI_COPIES`;
-(10) `crates/platform/runtime/tests/postgres_wit_coherence.rs`
-`EXPECTED_COPIES` -- a data-access guest vendors `wamn-postgres` as well as
-`wamn-node`, so both pairs move together. App-interface WIT copies
-(`wamn-<app>-<iface>`) are package-owned and guarded by nothing.
+`COMPONENT_MEMBER_COUNT`, `NO_STD_MEMBER_COUNT`.
+
+WIT contract tests discover `.wit` files by their package headers and compare complete bytes with the owning contracts.
+The Node contract lives in `crates/execution/router/wit/package.wit`.
+The PostgreSQL contract lives in `crates/platform/runtime/wit/deps/wamn-postgres/package.wit`.
+The connection contract lives in `docs/reference/contracts/wamn-connection.wit`.
+New copies need no copied location list.
 
 Generated operator crates in `packages/*/generated/*-tui/` are native root members.
 Register them in sites (1) through (7).
-They add no WIT copies, so sites (8) through (10) stay unchanged.
+They add no WIT copies.
 The root has 40 members, and its default selects 19.
 The `deploy` selector has 33 members, while `m1` and `m2` retain 20 and 22.
 The `full` and `ops` selectors each have 40 members.

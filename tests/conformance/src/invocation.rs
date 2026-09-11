@@ -12,11 +12,6 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    // The live node ABI has the vendored-copy discipline of
-    // `crates/platform/runtime/tests/postgres_wit_coherence.rs` from day one,
-    // before the first copy is vendored — the copies that are hardest to guard
-    // are the ones added while no guard is watching.
-
     /// Source of record for the live node ABI, repo-root-relative.
     ///
     /// The router owns it and both sides bind it:
@@ -27,30 +22,13 @@ mod tests {
     /// [`node_abi_source_and_included_copy_agree`] fails if only one does.
     const NODE_ABI_SOURCE: &str = "crates/execution/router/wit/package.wit";
 
-    /// Every vendored copy of the node ABI, repo-root-relative. The walk below
-    /// cross-checks this list against disk BOTH ways.
-    const EXPECTED_NODE_ABI_COPIES: [&str; 6] = [
-        "components/data/receiving-data/wit/deps/wamn-node/package.wit",
-        "components/data/wms-data/wit/deps/wamn-node/package.wit",
-        "components/execution/blob-put/wit/deps/wamn-node/package.wit",
-        "components/no-std/http-request/wit/deps/wamn-node/package.wit",
-        "components/no-std/label-render/wit/deps/wamn-node/package.wit",
-        "components/no-std/transform/wit/deps/wamn-node/package.wit",
-    ];
-
-    /// Tiers holding executable, bindable WIT. Documentation is deliberately
-    /// excluded because it is not an ABI source or vendored executable copy.
-    const CODE_TIERS: [&str; 5] = ["components", "crates", "services", "test-support", "tests"];
-
     fn repo_root() -> PathBuf {
         // CARGO_MANIFEST_DIR is tests/conformance; the repo root is two up.
         fs::canonicalize(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."))
             .unwrap_or_else(|error| panic!("canonicalize repo root: {error}"))
     }
 
-    /// Comment- and blank-stripped, whitespace-trimmed code lines. Doc-comment
-    /// drift between copies is tolerated; a change to a real WIT declaration is
-    /// not, because that is what a guest actually binds.
+    /// Ignore whitespace and comments when asserting the source contract shape.
     fn code_lines(wit: &str) -> Vec<&str> {
         wit.lines()
             .map(str::trim)
@@ -58,10 +36,8 @@ mod tests {
             .collect()
     }
 
-    /// Collect every `.wit` file under `dir` that declares the node package,
-    /// as repo-root-relative slash paths. Discovery is by PACKAGE HEADER rather
-    /// than by directory name, so a copy vendored under an off-convention
-    /// directory cannot dodge the registry.
+    /// Collect every `.wit` file that declares the node package by its header.
+    /// Return paths relative to the repository root.
     fn collect_node_abi_copies(dir: &Path, root: &Path, out: &mut Vec<String>) {
         let Ok(entries) = fs::read_dir(dir) else {
             return;
@@ -77,7 +53,10 @@ mod tests {
                 }
                 collect_node_abi_copies(&path, root, out);
             } else if path.extension().and_then(|ext| ext.to_str()) == Some("wit")
-                && fs::read_to_string(&path).is_ok_and(|text| text.contains("package wamn:node@"))
+                && fs::read_to_string(&path).is_ok_and(|text| {
+                    text.lines()
+                        .any(|line| line.trim().starts_with("package wamn:node@"))
+                })
             {
                 let relative = path
                     .strip_prefix(root)
@@ -202,7 +181,7 @@ mod tests {
 
     /// The `include_str!` path and [`NODE_ABI_SOURCE`] must name the same file.
     /// Without this, moving the package and updating only the `include_str!`
-    /// still compiles while the registry walk silently guards a stale path.
+    /// still compiles while the discovery walk silently guards a stale path.
     #[test]
     fn node_abi_source_and_included_copy_agree() {
         let path = repo_root().join(NODE_ABI_SOURCE);
@@ -220,52 +199,30 @@ mod tests {
         );
     }
 
-    /// The discovered vendored copies must equal [`EXPECTED_NODE_ABI_COPIES`]
-    /// exactly — an unregistered copy fails (register it), a vanished one fails
-    /// (drop it) — and every registered copy must carry the source of record's
-    /// code. This is what stops a future consumer from binding a drifted node
-    /// ABI, which otherwise surfaces only as a cryptic instantiation failure.
+    /// Every discovered copy must contain the complete source contract bytes.
     #[test]
-    fn all_vendored_node_abi_copies_are_registered_and_match_the_source() {
+    fn all_vendored_node_abi_copies_match_the_source() {
         let root = repo_root();
         let mut discovered = Vec::new();
-        for tier in CODE_TIERS {
-            collect_node_abi_copies(&root.join(tier), &root, &mut discovered);
+        for top in [
+            "apps",
+            "components",
+            "crates",
+            "services",
+            "test-support",
+            "tests",
+        ] {
+            collect_node_abi_copies(&root.join(top), &root, &mut discovered);
         }
         discovered.sort();
 
-        let mut expected: Vec<String> = EXPECTED_NODE_ABI_COPIES
-            .iter()
-            .map(|copy| (*copy).to_string())
-            .collect();
-        expected.sort();
-
-        for found in &discovered {
-            assert!(
-                expected.contains(found),
-                "found an UNREGISTERED wamn:node WIT copy: {found}\n\
-                 add it to EXPECTED_NODE_ABI_COPIES in \
-                 tests/conformance/src/invocation.rs so the drift guard covers it"
-            );
-        }
-        for want in &expected {
-            assert!(
-                discovered.contains(want),
-                "expected wamn:node WIT copy {want} was not found on disk — if it \
-                 was intentionally removed, drop it from EXPECTED_NODE_ABI_COPIES"
-            );
-        }
-
-        let source_code = code_lines(NODE_WIT);
-        for rel in &expected {
-            let copy = fs::read_to_string(root.join(rel))
-                .unwrap_or_else(|error| panic!("{rel} reads: {error}"));
+        for rel in &discovered {
+            let copy =
+                fs::read(root.join(rel)).unwrap_or_else(|error| panic!("{rel} reads: {error}"));
             assert_eq!(
-                code_lines(&copy),
-                source_code,
-                "{rel} drifted from {NODE_ABI_SOURCE} in a CODE line — a vendored \
-                 contract surface must stay identical to its source of record \
-                 (edit the source AND re-vendor every copy, or neither)"
+                copy,
+                NODE_WIT.as_bytes(),
+                "{rel} drifted from {NODE_ABI_SOURCE}; re-vendor the complete package"
             );
         }
     }
