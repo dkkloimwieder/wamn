@@ -14,7 +14,7 @@ path = "lib.rs"
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
 proptest = { workspace = true }
-reqwest = { workspace = true, features = ["rustls"] }
+reqwest = { workspace = true, features = ["rustls", "json"] }
 rust_decimal = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -55,6 +55,8 @@ wat = "=1.252.0"
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
+
+wamn-authoring-model = { workspace = true }
 
 [[test]]
 name = "receiving_command_histories_live"

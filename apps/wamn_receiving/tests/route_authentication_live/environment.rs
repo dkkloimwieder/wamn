@@ -111,27 +111,12 @@ pub(super) async fn reconcile_journey_data_access(project_url: &str) -> anyhow::
         .iter()
         .map(|package| journey_package_root(*package))
         .collect::<Vec<_>>();
-    reconcile_package_data_access::reconcile_package_data_access(ReconcilePackageDataAccessArgs {
-        packages: packages.clone(),
+    wamn_gate_harness::environment::reconcile_package_data_access(ReconcilePackageDataAccessArgs {
+        packages,
         database_url: project_url.to_owned(),
         tenant: TENANT.to_owned(),
     })
     .await
-    .context("converge the fresh installed-set data-access union")?;
-    let again = reconcile_package_data_access::reconcile_package_data_access(
-        ReconcilePackageDataAccessArgs {
-            packages,
-            database_url: project_url.to_owned(),
-            tenant: TENANT.to_owned(),
-        },
-    )
-    .await
-    .context("replay the installed-set data-access union")?;
-    anyhow::ensure!(
-        again.is_noop(),
-        "installed-set data-access reconciliation did not converge"
-    );
-    Ok(())
 }
 
 pub(super) async fn verify_journey_operation_grants(project: &Client) -> anyhow::Result<()> {
@@ -267,7 +252,7 @@ pub(super) async fn push_journey_components(
 ) -> anyhow::Result<()> {
     for declaration in declarations {
         let package = declaration.package;
-        push_component::run(PushComponentArgs {
+        wamn_gate_harness::environment::push_component(PushComponentArgs {
             package: journey_package_root(package),
             component_bytes: inputs
                 .component_directory
@@ -372,23 +357,22 @@ pub(super) async fn verify_journey_components_are_effectful(
     Ok(digests)
 }
 
-pub(super) fn gate_document(command_id: &str, package: JourneyPackage, document: Value) -> Value {
-    serde_json::json!({
-        "document": "request",
-        "body": {
-            "schema-version": "0.1",
-            "command-id": command_id,
-            "command": {
-                "kind": "gate",
-                "input": {
-                    "scope": {"project-id": PROJECT, "environment": ENVIRONMENT},
-                    "package-id": package.id,
-                    "package-version": package.version,
-                    "document": document,
-                },
+pub(super) fn gate_document(
+    command_id: &str,
+    package: JourneyPackage,
+    document: Value,
+) -> anyhow::Result<wamn_authoring_model::AuthoringDocument> {
+    wamn_test_infrastructure::declarations::gate_document(
+        &wamn_test_infrastructure::declarations::GateInput {
+            command_id: command_id.to_owned(),
+            package: PackageCoordinate::new(package.id, package.version)?,
+            scope: wamn_authoring_model::AuthoringScope {
+                project_id: PROJECT.to_owned(),
+                environment: ENVIRONMENT.to_owned(),
             },
         },
-    })
+        &serde_json::to_string(&document)?,
+    )
 }
 
 pub(super) async fn gate_journey_wirings(bind: &str, bearer: &str) -> anyhow::Result<Vec<String>> {
@@ -415,7 +399,7 @@ pub(super) async fn gate_journey_wirings(bind: &str, bearer: &str) -> anyhow::Re
                     &format!("gate-{}-{wiring}", package.id),
                     package,
                     document,
-                ))
+                )?)
                 .send()
                 .await
                 .with_context(|| {
