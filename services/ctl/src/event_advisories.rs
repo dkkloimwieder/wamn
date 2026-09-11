@@ -1085,6 +1085,9 @@ mod tests {
             let (runtime_client, mut runtime_errors) = monitored_broker_client(&broker.runtime, &server).await?;
             let mut restricted_runtime = async_nats::jetstream::new(runtime_client.clone());
             restricted_runtime.set_timeout(Duration::from_millis(500));
+            let (materializer_client, mut materializer_errors) = monitored_broker_client(&broker.materializer, &server).await?;
+            let mut restricted_materializer = async_nats::jetstream::new(materializer_client);
+            restricted_materializer.set_timeout(Duration::from_millis(500));
             stage = "refuse access to other environments";
             for (foreign_source, foreign_advisory, foreign_consumer, _) in &declarations[1..] {
                 let published = restricted_runtime.publish(foreign_consumer.filter_subject.clone(), "foreign payload".into()).await;
@@ -1101,6 +1104,9 @@ mod tests {
                 let foreign = restricted_runtime.get_stream_no_info(&foreign_source.name).await?;
                 ensure!(foreign.get_consumer::<PullConfig>("registered").await.is_err(), "runtime attached to a foreign consumer");
                 require_permission_denial(&mut runtime_errors, &format!("$JS.API.CONSUMER.INFO.{}.registered", foreign_source.name)).await?;
+                let foreign = restricted_materializer.get_stream_no_info(&foreign_source.name).await?;
+                ensure!(foreign.get_consumer::<PullConfig>("registered").await.is_err(), "materializer attached to a foreign consumer");
+                require_permission_denial(&mut materializer_errors, &format!("$JS.API.CONSUMER.INFO.{}.registered", foreign_source.name)).await?;
                 for name in [&foreign_source.name, &foreign_advisory.name] {
                     ensure!(observer.get_stream(name).await.is_err(), "observer read foreign stream metadata");
                     require_permission_denial(&mut observer_errors, &format!("$JS.API.STREAM.INFO.{name}")).await?;
@@ -1127,7 +1133,7 @@ mod tests {
             large_messages_obey_pull_and_ack_limits(&publisher, &materializer, &source.name, &consumers[2]).await?;
             stage = "retain advisory metadata after actual source time expiry";
             source_time_expiry_preserves_advisory(manager, &publisher, &materializer, &observer, source, advisory, &consumers[3]).await?;
-            println!("NATIVE_C_SCOPED_PASS environments=3 provisioning=3 runtime_management_refusals=18 foreign_metadata_and_data_refusals=8 foreign_runtime_refusals=6");
+            println!("NATIVE_C_SCOPED_PASS environments=3 provisioning=3 runtime_management_refusals=18 foreign_metadata_and_data_refusals=8 foreign_runtime_refusals=6 foreign_materializer_attachment_refusals=2");
             Ok::<(), anyhow::Error>(())
         }).await;
         let kill = child.start_kill();
