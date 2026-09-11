@@ -1,0 +1,76 @@
+{
+  "source_commit": "cd1b24b5d2131f8851aaff271b1af09cdc80acff",
+  "started_utc": "2026-09-11T18:34:45.096818+00:00",
+  "native_binary": {
+    "image": "sha256:8b9f712ae2148dcbd9d7f3d16a942d515e290526e5d018500931eab62b18e045",
+    "container": "f092098cbc2f0bb0857fd1949c1afd96d0ae357e8c79aacceec59889f9c9813d",
+    "name": "wamn-native-c-binary-4ca9c511a66b",
+    "binary": "/home/kaalin/.cache/wamn-native-tests/native-c-d9d7dd9d4962/nats-server",
+    "version": "nats-server: v2.10.29",
+    "sha256": "e6375afff3dbe7bd6ffc59c3eed3092c0e3b0c5936b166fb959fd240271ead4c",
+    "container_removed": true
+  },
+  "runs": [
+    {
+      "name": "advisories",
+      "command": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-ctl",
+        "--features",
+        "ops",
+        "--lib",
+        "event_advisories::tests::retained_broker_advisories_report_missing_source_payloads",
+        "--",
+        "--ignored",
+        "--exact",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.68
+    },
+    {
+      "name": "deduplication",
+      "command": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-runtime",
+        "--lib",
+        "plugins::wamn_jetstream::tests::live_derived_publish_replay_converges_through_jetstream_dedup",
+        "--",
+        "--exact",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 5.421
+    },
+    {
+      "name": "executor-redaction",
+      "command": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-test-infrastructure",
+        "--lib",
+        "executor::tests",
+        "--",
+        "--nocapture"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 25.888
+    }
+  ],
+  "broker_exit_code": 1,
+  "private_files_removed": true
+}
