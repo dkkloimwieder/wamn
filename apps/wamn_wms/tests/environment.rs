@@ -607,6 +607,9 @@ pub async fn configure_cdc(
     route: &ProvisionedRoute,
     work: &Path,
     replication_password: &str,
+    nats_url: &str,
+    provisioning: &wamn_test_infrastructure::event_broker::Credentials,
+    source: &async_nats::jetstream::stream::Config,
 ) -> anyhow::Result<()> {
     let database_config: tokio_postgres::Config = route.database_url.parse()?;
     let host = match database_config.get_hosts() {
@@ -630,6 +633,12 @@ pub async fn configure_cdc(
         namespace: inputs.host_secret_namespace.clone(),
         secret_namespace: Some(inputs.host_secret_namespace.clone()),
         stream: None,
+        nats_url: nats_url.to_owned(),
+        nats_username: provisioning.username.clone(),
+        nats_password_file: provisioning.password_file.clone(),
+        stream_replicas: source.num_replicas,
+        dup_window_secs: source.duplicate_window.as_secs(),
+        consumer_config: Vec::new(),
         emit_role_sql: Some(role_path),
         emit_cdc_sql: Some(cdc_path),
         emit_secret: Some(secret_path.clone()),

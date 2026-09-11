@@ -27,5 +27,7 @@ wamn-test-infrastructure = { workspace = true }
 
 wamn-authoring-model = { workspace = true }
 
+async-nats = { workspace = true }
+
 [lints]
 workspace = true
