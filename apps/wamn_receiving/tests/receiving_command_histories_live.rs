@@ -910,6 +910,13 @@ fn production_receiving_command_histories() -> Result<()> {
 }
 
 pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
+    assert_histories_with_cancellation(inputs, pg_walstream::CancellationToken::new())
+}
+
+pub(crate) fn assert_histories_with_cancellation(
+    inputs: Inputs,
+    cancellation: pg_walstream::CancellationToken,
+) -> Result<()> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(600);
     ensure!(
         (1..=64).contains(&inputs.cases),
@@ -977,8 +984,8 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let db = run_before(&runtime, deadline, connect(&inputs.project_pg_url))?;
-    let version: String = run_before(&runtime, deadline, db.client.query_one("SHOW server_version_num", &[]))?
+    let db = run_before(&runtime, deadline, &cancellation, connect(&inputs.project_pg_url))?;
+    let version: String = run_before(&runtime, deadline, &cancellation, db.client.query_one("SHOW server_version_num", &[]))?
         .get(0);
     ensure!(
         version.parse::<u32>()? >= 180_000,
@@ -1001,7 +1008,7 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
             "REC-ROLLBACK","REC-LOST-RESPONSE","REC-REVISION","REC-AUTHORITY"]}),
     )?;
     if let Some(selected) = &inputs.history {
-        run_before(&runtime, deadline, explicit_history(
+        run_before(&runtime, deadline, &cancellation, explicit_history(
             &db.client,
             &route,
             selected,
@@ -1014,7 +1021,7 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
         return Ok(());
     }
     for example in model::examples() {
-        run_before(&runtime, deadline, explicit_history(
+        run_before(&runtime, deadline, &cancellation, explicit_history(
             &db.client,
             &route,
             &example,
@@ -1038,7 +1045,7 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
             if failures.borrow().infrastructure.is_some() {
                 return Ok(());
             }
-            let result = run_before(&runtime, deadline, history(
+            let result = run_before(&runtime, deadline, &cancellation, history(
                 &db.client,
                 &route,
                 &case,
@@ -1058,7 +1065,7 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
             )?;
         }
         if let TestError::Fail(reason, minimized) = error {
-            let reproduction = run_before(&runtime, deadline, reproduce_history(
+            let reproduction = run_before(&runtime, deadline, &cancellation, reproduce_history(
                 &db.client,
                 &route,
                 &minimized,
@@ -1087,7 +1094,7 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
         }
         return Err(anyhow::anyhow!("REC-HISTORY generation aborted: {error}"));
     }
-    run_before(&runtime, deadline, async {
+    run_before(&runtime, deadline, &cancellation, async {
         invalid_status(&db.client, &route, &mut evidence).await?;
         mixed_items(&db.client, &route, &mut evidence).await?;
         competing_receipts(&db.client, &route, &inputs, &mut evidence, false).await?;
@@ -1112,16 +1119,18 @@ pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
 fn run_before<T, E>(
     runtime: &tokio::runtime::Runtime,
     deadline: tokio::time::Instant,
+    cancellation: &pg_walstream::CancellationToken,
     operation: impl std::future::Future<Output = std::result::Result<T, E>>,
 ) -> Result<T>
 where
     E: Into<anyhow::Error>,
 {
     runtime.block_on(async {
-        tokio::time::timeout_at(deadline, operation)
-            .await
-            .context("the Receiving command histories exceeded 600 seconds")?
-            .map_err(Into::into)
+        tokio::select! {
+            result = tokio::time::timeout_at(deadline, operation) => result
+                .context("the Receiving command histories exceeded 600 seconds")?.map_err(Into::into),
+            _ = cancellation.cancelled() => Err(anyhow::anyhow!("the Receiving command histories were interrupted")),
+        }
     })
 }
 

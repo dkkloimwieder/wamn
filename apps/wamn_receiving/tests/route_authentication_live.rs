@@ -2,6 +2,11 @@
 
 #[path = "../../../tests/integration/src/route_authentication_live/fresh_only.rs"]
 mod fresh_only;
+mod cluster;
+#[path = "../../../tests/integration/tests/startup_burst_live.rs"]
+mod startup_burst;
+#[path = "receiving_command_histories_live.rs"]
+mod command_histories;
 #[path = "../../client_acme_receiving/tests/overlay_compatibility.rs"]
 mod overlay_compatibility;
 #[path = "../../../tests/integration/src/route_authentication_live/p3_shell.rs"]

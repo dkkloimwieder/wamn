@@ -11,6 +11,12 @@ autotests = false
 path = "lib.rs"
 
 [dev-dependencies]
+base64 = { workspace = true }
+serde_yaml = { workspace = true }
+pg_walstream = { workspace = true }
+hex = { workspace = true }
+ring = { workspace = true }
+sha2 = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
 proptest = { workspace = true }
@@ -19,7 +25,7 @@ rust_decimal = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sqlx = { version = "=0.9.0", default-features = false, features = ["chrono", "json", "macros", "postgres", "runtime-tokio", "rust_decimal", "uuid"] }
-tokio = { workspace = true, features = ["fs", "io-util", "net", "process", "sync", "time", "rt", "macros"] }
+tokio = { workspace = true, features = ["fs", "io-util", "net", "process", "signal", "sync", "time", "rt", "macros"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1", "with-uuid-1"] }
 uuid = { workspace = true }
 wamn-catalog = { workspace = true }
@@ -36,8 +42,10 @@ tracing-subscriber = { workspace = true }
 wamn-control-provision = { workspace = true, features = ["ops"] }
 wamn-control-registry = { workspace = true }
 wamn-ctl = { workspace = true }
+wamn-cdc-reader = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-gate-harness = { workspace = true }
+wamn-proof-integration = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
