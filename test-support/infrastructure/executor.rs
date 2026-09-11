@@ -41,7 +41,8 @@ fn read_json(path: &Path) -> anyhow::Result<Value> {
     serde_json::from_slice(&std::fs::read(path)?).context("read private executor input")
 }
 
-fn decoded_password(value: &str) -> anyhow::Result<String> {
+/// Decode a database password for the test log redactor.
+pub fn decoded_password(value: &str) -> anyhow::Result<String> {
     let mut input = value.bytes();
     let mut output = Vec::new();
     while let Some(byte) = input.next() {
