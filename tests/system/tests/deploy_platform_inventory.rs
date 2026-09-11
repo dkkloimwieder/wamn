@@ -216,7 +216,7 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// `wamn-http-admitter-db` `wamn-0h0g.22.11` added, so all three are DECLARED
 /// rows in the table above rather than prerequisites of it. Every database
 /// credential in this tier ships a carrier again.
-const EXTERNAL_PREREQUISITES: [(&str, &str); 3] = [
+const EXTERNAL_PREREQUISITES: [(&str, &str); 5] = [
     (
         IDENTITY_TLS_SECRET,
         "operator-configured serving certificate from the existing issuer/CA",
@@ -233,6 +233,14 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 3] = [
     (
         "pg-init",
         "kubectl create configmap pg-init --from-file=deploy/sql/postgres-init.sql",
+    ),
+    (
+        "wamn-event-nats",
+        "Receiving/WMS journey bootstrap: host registration/publication broker credential and scope",
+    ),
+    (
+        "wamn-materializer-nats",
+        "Receiving/WMS journey bootstrap: native materializer broker credential and binding",
     ),
 ];
 
@@ -802,10 +810,28 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
         ("values-host-wms-pat.yaml", Some("wms")),
     ] {
         let source = read(&root, file);
-        let mut expected = BTreeMap::from([(
-            "WAMN_PG_URL".to_owned(),
-            ("wamn-host-db".to_owned(), "url".to_owned()),
-        )]);
+        let mut expected = BTreeMap::from([
+            (
+                "WAMN_PG_URL".to_owned(),
+                ("wamn-host-db".to_owned(), "url".to_owned()),
+            ),
+            (
+                "WAMN_EVT_NATS_USERNAME".to_owned(),
+                ("wamn-event-nats".to_owned(), "username".to_owned()),
+            ),
+        ]);
+        if project.is_none() {
+            for (variable, key) in [
+                ("WAMN_EVT_ORG", "org"),
+                ("WAMN_EVT_PROJECT", "project"),
+                ("WAMN_EVT_ENV", "environment"),
+            ] {
+                expected.insert(
+                    variable.to_owned(),
+                    ("wamn-event-nats".to_owned(), key.to_owned()),
+                );
+            }
+        }
         if let Some(project) = project {
             for (variable, class) in [
                 ("WAMN_SYSTEM_URL", "identity-reader"),

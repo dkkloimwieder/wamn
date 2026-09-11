@@ -1,0 +1,4 @@
+
+thread 'every_mounted_secret_is_declared_here_or_named_a_prerequisite' (76) panicked at tests/system/tests/deploy_platform_inventory.rs:1131:5:
+deploy/platform mounts Secrets it neither declares nor names as a prerequisite: [("wamn-object-store-credentials-acme--wms--dev", {"values-host-wms-pat.yaml"})]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
