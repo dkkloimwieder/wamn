@@ -1,0 +1,49 @@
+{
+  "issue": "wamn-47wm.4.3",
+  "base": "152e8791b15c8806a43642d5b479d31c70f55816",
+  "retained_requirements": {
+    "host": "same runtime digest/config tuple on all three nodes, plus deployed host image ID matching",
+    "gates": "source/debug labels, exact declared Pod image, nonempty actual native image ID",
+    "source": [
+      "e4257128:tools/rc-gate-run:308-329",
+      "e4257128:tools/kubernetes-gate-run:271-277"
+    ]
+  },
+  "extraction_error": "RC added the host-only runtime-digest precheck and digest equality to gates Jobs. Those checks were not in the retained gates scenario.",
+  "changes": "Restore gates labels and actual image-ID semantics, while retaining raw gates inspections and every host image check.",
+  "historical_inputs": [
+    {
+      "path": "docs/perf/2026.09/ctc8-15-1-identity/deployed-001/identity-jwks-published-a-pods.json",
+      "sha256": "9d14001c65be1433908ced53f39ce88d2f0935948b5afc8f5f135090bf57feca"
+    },
+    {
+      "path": "docs/perf/2026.09/ctc8-15-1-identity/deployed-001/gates-node-image.json",
+      "sha256": "92f40b85eaa298b8b9d97b2d06e17b739cd21c4ea6be3c89697609ff456f1aa0"
+    }
+  ],
+  "historical_observation": {
+    "image_id": "sha256:f79dbf19e8f235336c3da78a021009d7becedff3c409a7e42b5aae4435bd70ae",
+    "repo_digests": [],
+    "native_image_id_is_recorded_config_id": true
+  },
+  "offline_retained_jq_checks": {
+    "declared-image": {
+      "exit_code": 0,
+      "stdout": "true"
+    },
+    "native-image-id": {
+      "exit_code": 0,
+      "stdout": "true"
+    }
+  },
+  "new_test": "rc::jobs::tests::native_completion_accepts_the_recorded_config_image_id",
+  "retained_negative_test": "rc::jobs::tests::completion_requires_original_job_image_and_assertions",
+  "validation": {
+    "host_calls_byte_identical": true,
+    "rustfmt": "passed",
+    "git_diff_whitespace": "passed",
+    "cargo": "not run; integration owner",
+    "live": "not run; integration owner"
+  },
+  "limits": "The historical Pod belongs to the recorded identity test, not the failed RC run. The failed RC gates inspection was not saved, so its exact contents remain unknown."
+}

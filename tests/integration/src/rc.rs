@@ -200,18 +200,7 @@ async fn execute(
         &resources.evidence,
     )
     .await?;
-    let gates_dir = resources.evidence.join("gates-image");
-    fs::create_dir(&gates_dir)?;
-    let gates_digest = workload::image_ready(
-        &resources.lifecycle,
-        CLUSTER,
-        &resources.work,
-        &resources.gates_image,
-        &resources.source,
-        "debug",
-        &gates_dir,
-    )
-    .await?;
+    jobs::inspect_image(resources).await?;
     deployment::install(resources, &broker, &source, &server).await?;
     workload::hosts_ready(
         &resources.lifecycle,
@@ -231,20 +220,8 @@ async fn execute(
         &json!({"status":"not_run","reason":"da58814f removed the wakeproof Job and integration harness","deferred":"wamn-0h0g.15.26"}),
     )?;
     jobs::install_dependencies(resources).await?;
-    let socket = jobs::run(
-        resources,
-        "socketguard",
-        &gates_digest,
-        Duration::from_secs(180),
-    )
-    .await?;
-    let trace = jobs::run(
-        resources,
-        "traceproof",
-        &gates_digest,
-        Duration::from_secs(240),
-    )
-    .await?;
+    let socket = jobs::run(resources, "socketguard", Duration::from_secs(180)).await?;
+    let trace = jobs::run(resources, "traceproof", Duration::from_secs(240)).await?;
     save(
         resources,
         "m0-verdict.json",

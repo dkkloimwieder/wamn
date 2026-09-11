@@ -7,11 +7,41 @@ use anyhow::{Context as _, ensure};
 use serde::Deserialize as _;
 use serde_json::{Value, json};
 use sha2::Digest as _;
+use tokio::process::Command;
 use tokio::time::Instant;
 
 use super::{
     NAMESPACE, Resources, apply, checked, command_json, kubectl, resources::write_private, save,
 };
+
+pub(super) async fn inspect_image(resources: &Resources) -> anyhow::Result<()> {
+    let directory = resources.evidence.join("gates-image");
+    fs::create_dir(&directory)?;
+    let labels = command_json(
+        Command::new(&resources.lifecycle).args(["image-labels", &resources.gates_image]),
+    )
+    .await?;
+    write_private(
+        &directory.join("host-image-labels.json"),
+        &serde_json::to_vec_pretty(&labels)?,
+    )?;
+    ensure!(
+        labels["wamn.dev/source-head"] == resources.source
+            && labels["wamn.dev/build-profile"] == "debug",
+        "the native test image does not carry the requested source and build profile"
+    );
+    let nodes = checked(Command::new(&resources.lifecycle).args(["nodes", super::CLUSTER])).await?;
+    for node in std::str::from_utf8(&nodes)?.lines() {
+        let bytes = checked(Command::new(&resources.lifecycle).args([
+            "node-image",
+            node,
+            &resources.gates_image,
+        ]))
+        .await?;
+        write_private(&directory.join(format!("node-image-{node}.json")), &bytes)?;
+    }
+    Ok(())
+}
 
 pub(super) async fn install_dependencies(resources: &Resources) -> anyhow::Result<()> {
     for (source, name) in [
@@ -60,7 +90,6 @@ pub(super) async fn install_dependencies(resources: &Resources) -> anyhow::Resul
 pub(super) async fn run(
     resources: &Resources,
     name: &str,
-    image_digest: &str,
     timeout: Duration,
 ) -> anyhow::Result<Value> {
     let template = fs::read_to_string(
@@ -198,14 +227,7 @@ pub(super) async fn run(
     ensure!(!logs.is_empty(), "native test log must not be empty");
     write_private(&resources.evidence.join(format!("{name}.log")), &logs)?;
     validate_times(started, &terminal, &pods)?;
-    let result = validate_completion(
-        name,
-        uid,
-        &resources.gates_image,
-        image_digest,
-        &terminal,
-        &pods,
-    )?;
+    let result = validate_completion(name, uid, &resources.gates_image, &terminal, &pods)?;
     let verdict = json!({"name":name,"job_uid":uid,"verdict":"pass","failure_classes":[],"logs_sha256":hex::encode(sha2::Sha256::digest(&logs)),"result":result});
     save(resources, &format!("{name}-verdict.json"), &verdict)?;
     Ok(verdict)
@@ -263,7 +285,6 @@ fn validate_completion(
     name: &str,
     uid: &str,
     image: &str,
-    digest: &str,
     job: &Value,
     pods: &Value,
 ) -> anyhow::Result<Value> {
@@ -318,8 +339,8 @@ fn validate_completion(
             && statuses[0]["restartCount"] == 0
             && statuses[0]["imageID"]
                 .as_str()
-                .is_some_and(|value| value.ends_with(digest)),
-        "native test must run the measured image once"
+                .is_some_and(|value| !value.is_empty()),
+        "native test must run once with an observed image ID"
     );
     let terminated = &statuses[0]["state"]["terminated"];
     ensure!(
@@ -389,25 +410,33 @@ mod tests {
     }
 
     #[test]
+    fn native_completion_accepts_the_recorded_config_image_id() {
+        // This historical Pod ran the gates image without a repository digest.
+        let observed: Value = serde_json::from_str(include_str!(
+            "../../../../docs/perf/2026.09/ctc8-15-1-identity/deployed-001/identity-jwks-published-a-pods.json"
+        ))
+        .unwrap();
+        let image: Value = serde_json::from_str(include_str!(
+            "../../../../docs/perf/2026.09/ctc8-15-1-identity/deployed-001/gates-node-image.json"
+        ))
+        .unwrap();
+        let image_id = &observed["items"][0]["status"]["containerStatuses"][0]["imageID"];
+        assert_eq!(image["status"]["repoDigests"], json!([]));
+        assert_eq!(image_id, &image["status"]["id"]);
+        let (job, mut pods) = completed();
+        pods["items"][0]["status"]["containerStatuses"][0]["imageID"] = image_id.clone();
+        assert!(validate_completion("socketguard", "new-job", "test:image", &job, &pods).is_ok());
+    }
+
+    #[test]
     fn completion_requires_original_job_image_and_assertions() {
         let (job, pods) = completed();
-        assert!(
-            validate_completion(
-                "socketguard",
-                "new-job",
-                "test:image",
-                "sha256:abc",
-                &job,
-                &pods
-            )
-            .is_ok()
-        );
+        assert!(validate_completion("socketguard", "new-job", "test:image", &job, &pods).is_ok());
         for (path, value) in [
             ("/items/0/metadata/ownerReferences/0/uid", json!("old-job")),
-            (
-                "/items/0/status/containerStatuses/0/imageID",
-                json!("test@sha256:other"),
-            ),
+            ("/items/0/spec/containers/0/image", json!("other:image")),
+            ("/items/0/status/containerStatuses/0/imageID", Value::Null),
+            ("/items/0/status/containerStatuses/0/imageID", json!("")),
             (
                 "/items/0/status/containerStatuses/0/state/terminated/exitCode",
                 json!(1),
@@ -420,15 +449,8 @@ mod tests {
             let mut changed = pods.clone();
             *changed.pointer_mut(path).unwrap() = value;
             assert!(
-                validate_completion(
-                    "socketguard",
-                    "new-job",
-                    "test:image",
-                    "sha256:abc",
-                    &job,
-                    &changed
-                )
-                .is_err()
+                validate_completion("socketguard", "new-job", "test:image", &job, &changed)
+                    .is_err()
             );
         }
     }
