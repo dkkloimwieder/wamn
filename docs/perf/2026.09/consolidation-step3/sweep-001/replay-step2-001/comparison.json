@@ -1,0 +1,10 @@
+{
+  "kind": "offline replay of retained step2 log, not stage3 execution",
+  "retained_source": "b9fba07ac4bb4b5381a5f5d6dcefbd5cb0f3e1de",
+  "same_82_failure_identities_and_classes": true,
+  "same_84_named_explicit_skips": true,
+  "all_failures_and_skips_in_report": true,
+  "no_pending_review_or_parser_entries": true,
+  "capture_not_executed": true,
+  "scripts_parse": true
+}

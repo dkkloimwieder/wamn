@@ -1,0 +1,64 @@
+{
+  "binary": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/debug/wamn-run-worker",
+  "binary_sha256": "51322d535f0d4ef8d629c1f4df9aad33e1aec28205edf2786fc69a1197c5b7ac",
+  "cases": [
+    {
+      "case_seconds": 6.70810468,
+      "cleanup_killed": false,
+      "exit_code": 0,
+      "live": {
+        "body": "ok\n",
+        "elapsed_seconds": 0.000691797,
+        "path": "/livez",
+        "status": 200
+      },
+      "log": "executor-SIGTERM.log",
+      "pid": 752992,
+      "probe_bind": "127.0.0.1:45937",
+      "ready": {
+        "body": "ok\n",
+        "elapsed_seconds": 0.001189766,
+        "path": "/readyz",
+        "status": 200
+      },
+      "ready_attempts": 122,
+      "ready_seconds": 6.694081421,
+      "shutdown_seconds": 0.013118403,
+      "signal": "SIGTERM",
+      "signal_sent": true,
+      "verdict": "pass"
+    },
+    {
+      "case_seconds": 6.8711423069999995,
+      "cleanup_killed": false,
+      "exit_code": 0,
+      "live": {
+        "body": "ok\n",
+        "elapsed_seconds": 0.000727748,
+        "path": "/livez",
+        "status": 200
+      },
+      "log": "executor-SIGINT.log",
+      "pid": 753123,
+      "probe_bind": "127.0.0.1:36101",
+      "ready": {
+        "body": "ok\n",
+        "elapsed_seconds": 0.001064872,
+        "path": "/readyz",
+        "status": 200
+      },
+      "ready_attempts": 125,
+      "ready_seconds": 6.857082874,
+      "shutdown_seconds": 0.013124132,
+      "signal": "SIGINT",
+      "signal_sent": true,
+      "verdict": "pass"
+    }
+  ],
+  "deployment_grace_seconds": 15,
+  "manifest_digest": "sha256:52feceaa7255c21a354995ea59ad6056edef22c929467fe4adad2c90c4cf5bb3",
+  "scope": "Real idle executor probes and signal shutdown. Queued delivery is outside this test.",
+  "source": "0bd0c089fe27a209a73ba68c1583654c1dad0e45",
+  "startup_budget_seconds": 45,
+  "verdict": "pass"
+}

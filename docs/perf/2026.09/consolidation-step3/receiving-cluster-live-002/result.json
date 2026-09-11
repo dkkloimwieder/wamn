@@ -1,0 +1,6 @@
+{
+  "cluster": "wamn-receiving-91d148e222e04431843cccf5f36529c6",
+  "failure": "causal receipt and inspection events did not both reach EVT_4_acme_9_receiving_3_dev",
+  "passed": false,
+  "source": "0bd0c089fe27a209a73ba68c1583654c1dad0e45"
+}

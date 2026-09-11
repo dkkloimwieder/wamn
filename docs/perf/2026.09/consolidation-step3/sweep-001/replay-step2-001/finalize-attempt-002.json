@@ -1,0 +1,15 @@
+{
+  "command": [
+    "python3",
+    "-B",
+    "docs/perf/2026.09/consolidation-step3/sweep-001/tools/finalize-classification.py",
+    "--evidence-dir",
+    "docs/perf/2026.09/consolidation-step2/run-003",
+    "--reduction-dir",
+    "docs/perf/2026.09/consolidation-step3/sweep-001/replay-step2-001/reduction-001",
+    "--output-dir",
+    "docs/perf/2026.09/consolidation-step3/sweep-001/replay-step2-001/classification-001"
+  ],
+  "exit_code": 0,
+  "cargo_executed": false
+}

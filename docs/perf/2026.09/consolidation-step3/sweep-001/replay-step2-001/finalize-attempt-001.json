@@ -1,0 +1,18 @@
+{
+  "command": [
+    "python3",
+    "-B",
+    "docs/perf/2026.09/consolidation-step3/sweep-001/tools/finalize-classification.py",
+    "--evidence-dir",
+    "docs/perf/2026.09/consolidation-step2/run-003",
+    "--reduction-dir",
+    "docs/perf/2026.09/consolidation-step3/sweep-001/replay-step2-001/reduction-001",
+    "--output-dir",
+    "docs/perf/2026.09/consolidation-step3/sweep-001/replay-step2-001/classification-001"
+  ],
+  "exit_code": 1,
+  "error": "AssertionError: source lookup for set WAMN_NATIVE_B_AUTH_PG_URL found no literal match. The retained Rust source formats this message from URL_ENV.",
+  "tool_sha256": "83a263830b07fcfbd027b3098bb63c6fb245453b95305bf14cf43286bf079ed4",
+  "output_directory_created": false,
+  "cargo_executed": false
+}

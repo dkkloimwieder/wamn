@@ -1,0 +1,58 @@
+2026-09-11T19:56:00.549199Z  INFO native descriptor limits initialized descriptor_soft_limit=Some(524288) default_max_connections=32768 default_max_http_ingress_connections=32768
+2026-09-11T19:56:00.642994Z  INFO host memory resolved max_guest_memory=45.7GiB guest_memory_mode="count" default_heap_memory=256MiB core_instances=512 memories=512 pool_reservation=128GiB
+2026-09-11T19:56:00.662300Z  INFO executor router queue driver ready runner=cutover-sigterm tenant=receiving-route-auth package_count=2 environment=dev effective_release_id=1 manifest_digest=sha256:52feceaa7255c21a354995ea59ad6056edef22c929467fe4adad2c90c4cf5bb3 wiring_cache_capacity=1024 lease_ttl_ms=30000
+2026-09-11T19:56:00.662508Z  INFO probe server listening addr=127.0.0.1:45937
+2026-09-11T19:56:00.748044Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:01.002339Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:01.258679Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:01.517520Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:01.775700Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:02.031769Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:02.287780Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:02.541948Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:02.800050Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:03.057994Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:03.312348Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:03.571302Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:03.825268Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:04.079452Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:04.333524Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:04.586519Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:04.840375Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:05.096172Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:05.351167Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:05.604814Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:05.860015Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:06.114254Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:06.368158Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:06.621201Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:06.874536Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:07.126686Z  WARN executor queue turn failed; retrying error=production claim prepare exhausted candidate failed: db error: ERROR: function require_executor_platform_authority() does not exist
+HINT: No function matches the given name and argument types. You might need to add explicit type casts.
+2026-09-11T19:56:07.198467Z  INFO synchronous release preload completed synchronous_wirings=13 component_digests=2 elapsed_ms=6535
+2026-09-11T19:56:07.239603Z  INFO executor router driver stopping cache_hits=0 cache_evictions=0
