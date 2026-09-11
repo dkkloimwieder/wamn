@@ -885,6 +885,35 @@ async fn human_runs(
         .await?;
     }
     let mut order = Vec::new();
+    for (credential, repetition, secret) in fresh_runs(service_secret, human_secret) {
+        let output = resources
+            .evidence
+            .join("throughput")
+            .join(format!("{credential}-{repetition}"));
+        throughput_sweep(
+            state,
+            cold,
+            project_database_url,
+            &output,
+            credential,
+            repetition,
+            secret,
+        )
+        .await?;
+        order.push(json!({"credential":credential,"repetition":repetition}));
+    }
+    write_result(
+        &resources.evidence,
+        "fresh-auth-runs.json",
+        &json!({"completed":order}),
+    )
+}
+
+fn fresh_runs<'a>(
+    service_secret: &'a str,
+    human_secret: &'a str,
+) -> Vec<(&'static str, u32, &'a str)> {
+    let mut runs = Vec::new();
     for repetition in 1..=3 {
         let credentials = if repetition == 2 {
             ["human", "service"]
@@ -897,28 +926,10 @@ async fn human_runs(
             } else {
                 service_secret
             };
-            let output = resources
-                .evidence
-                .join("throughput")
-                .join(format!("{credential}-{repetition}"));
-            throughput_sweep(
-                state,
-                cold,
-                project_database_url,
-                &output,
-                credential,
-                repetition,
-                secret,
-            )
-            .await?;
-            order.push(json!({"credential":credential,"repetition":repetition}));
+            runs.push((credential, repetition, secret));
         }
     }
-    write_result(
-        &resources.evidence,
-        "fresh-auth-runs.json",
-        &json!({"completed":order}),
-    )
+    runs
 }
 
 fn benchmark_sql(generated: &str) -> anyhow::Result<String> {
@@ -981,7 +992,8 @@ async fn throughput_sweep(
         for concurrency in &index.concurrency {
             let job = format!("bench-{credential}-r{repetition}-{layer}-c{concurrency}");
             let manifest = throughput_job(
-                state,
+                &state.resources.name,
+                &state.inputs.route_host,
                 &job,
                 layer,
                 *concurrency,
@@ -1098,7 +1110,8 @@ async fn throughput_sweep(
 }
 
 fn throughput_job(
-    state: &ReceivingCluster,
+    namespace: &str,
+    host: &str,
     job: &str,
     layer: &str,
     concurrency: u32,
@@ -1108,8 +1121,6 @@ fn throughput_job(
     statement: &str,
 ) -> anyhow::Result<Value> {
     ensure!(concurrency > 0, "throughput concurrency must be positive");
-    let namespace = &state.resources.name;
-    let host = &state.inputs.route_host;
     let oha =
         "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f";
     let postgres_image =
@@ -1224,6 +1235,201 @@ async fn take_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rendered_job(layer: &str, concurrency: u32) -> anyhow::Result<Value> {
+        throughput_job(
+            "selected-environment",
+            "selected.example",
+            "selected-job",
+            layer,
+            concurrency,
+            "selected-pat",
+            "10.89.0.7",
+            "selected_database",
+            "SELECT model.id FROM receiving.purchase_order AS model WHERE model.id = '00000000-0000-0000-0000-000000000301'::uuid;",
+        )
+    }
+
+    #[test]
+    fn throughput_jobs_keep_the_selected_http_fields_and_private_pat_reference() {
+        let route = rendered_job("route", 4).unwrap();
+        assert_eq!(
+            route["metadata"],
+            json!({"name":"selected-job","namespace":"selected-environment","labels":{"wamn.bench/layer":"route","wamn.bench/concurrency":"4"}})
+        );
+        assert_eq!(route["kind"], "Job");
+        assert_eq!(route["spec"]["activeDeadlineSeconds"], 120);
+        assert_eq!(route["spec"]["backoffLimit"], 0);
+        assert_eq!(route["spec"]["template"]["spec"]["restartPolicy"], "Never");
+        let containers = route["spec"]["template"]["spec"]["containers"]
+            .as_array()
+            .unwrap();
+        assert_eq!(containers.len(), 1);
+        let container = &containers[0];
+        assert_eq!(
+            container["image"],
+            "ghcr.io/hatoo/oha@sha256:3ec3dbf549ea197793482d47a6324797411406bbf438c2fe8b91f244ec641a2f"
+        );
+        assert_eq!(container["command"], json!(["/bin/oha"]));
+        assert_eq!(
+            container["env"],
+            json!([{"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":"selected-pat","key":"token"}}}])
+        );
+        let args = container["args"].as_array().unwrap();
+        let value_after =
+            |key: &str| &args[args.iter().position(|value| value == key).unwrap() + 1];
+        assert_eq!(value_after("-c"), "4");
+        assert_eq!(value_after("-z"), "10s");
+        assert_eq!(value_after("--output-format"), "json");
+        assert_eq!(value_after("-m"), "POST");
+        assert!(args.contains(&json!("Host: selected.example")));
+        assert!(args.contains(&json!("Content-Type: application/json")));
+        assert!(args.contains(&json!("Authorization: Bearer $(ROUTE_CALLER_PAT)")));
+        assert_eq!(
+            serde_json::from_str::<Value>(value_after("-d").as_str().unwrap()).unwrap(),
+            json!([{"request_id":"bench","id":"00000000-0000-0000-0000-000000000301"}])
+        );
+        assert_eq!(
+            args.last().unwrap(),
+            "http://flow-http.selected-environment.svc.cluster.local/purchase_order/get"
+        );
+        assert!(!serde_json::to_string(&route).unwrap().contains("password"));
+
+        let no_database = rendered_job("nodb", 64).unwrap();
+        let container = &no_database["spec"]["template"]["spec"]["containers"][0];
+        assert!(container.get("env").is_none());
+        assert_eq!(container["command"], json!(["/bin/oha"]));
+        assert_eq!(
+            container["image"],
+            route["spec"]["template"]["spec"]["containers"][0]["image"]
+        );
+        assert_eq!(
+            container["args"],
+            json!([
+                "--no-tui",
+                "-z",
+                "10s",
+                "-c",
+                "64",
+                "--output-format",
+                "json",
+                "-m",
+                "GET",
+                "-H",
+                "Host: selected.example",
+                "http://flow-http.selected-environment.svc.cluster.local/no-such-route"
+            ])
+        );
+        assert!(rendered_job("redis", 4).is_err());
+        assert!(rendered_job("route", 0).is_err());
+    }
+
+    #[test]
+    fn throughput_postgres_job_keeps_the_statement_and_runs_its_output_script() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let job = rendered_job("pg", 16).unwrap();
+        let container = &job["spec"]["template"]["spec"]["containers"][0];
+        assert_eq!(
+            container["image"],
+            "postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d"
+        );
+        assert_eq!(container["command"], json!(["/bin/sh", "-ec"]));
+        assert_eq!(
+            container["env"],
+            json!([{"name":"PGPASSWORD","value":"probe"}])
+        );
+        let script = container["args"][0].as_str().unwrap();
+        assert!(script.contains("-c 16 -j 8 -T 10"));
+        assert!(script.contains("--sampling-rate 0.05"));
+        assert!(script.contains("-h 10.89.0.7 -p 5432 -U postgres -d selected_database"));
+        let low = rendered_job("pg", 4).unwrap();
+        assert!(
+            low["spec"]["template"]["spec"]["containers"][0]["args"][0]
+                .as_str()
+                .unwrap()
+                .contains("-c 4 -j 4 -T 10")
+        );
+
+        let directory = wamn_test_infrastructure::scratch::ScratchRoot(std::env::temp_dir().join(
+            format!("receiving-throughput-test-{}", uuid::Uuid::new_v4()),
+        ));
+        fs::create_dir(directory.path()).unwrap();
+        let program = directory.path().join("pgbench");
+        fs::write(
+            &program,
+            r#"#!/bin/sh
+printf '%s\n' "$@" >"$TEST_DIRECTORY/arguments"
+script_file=''
+previous=''
+for argument in "$@"; do
+  if [ "$previous" = -f ]; then script_file=$argument; fi
+  previous=$argument
+done
+test -s "$script_file"
+grep -q 'receiving.purchase_order' "$script_file"
+grep -q "'00000000-0000-0000-0000-000000000301'::uuid" "$script_file"
+echo 'tps = 123.4 (without initial connection time)'
+printf '0 1 471 0 1788644700 907135\n0 2 103 0 1788644700 907251\n' >"$TEST_DIRECTORY/pgb.test"
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+        // Only the test's temporary paths differ from the rendered script.
+        let script = script
+            .replace(
+                "/tmp/bench.sql",
+                &directory.path().join("bench.sql").display().to_string(),
+            )
+            .replace(
+                "/tmp/pgb",
+                &directory.path().join("pgb").display().to_string(),
+            );
+        let output = std::process::Command::new("sh")
+            .args(["-ec", &script])
+            .env("TEST_DIRECTORY", directory.path())
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    directory.path().display(),
+                    std::env::var("PATH").unwrap()
+                ),
+            )
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let output = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(
+            output.lines().collect::<Vec<_>>(),
+            [
+                "tps = 123.4 (without initial connection time)",
+                "===LOGS===",
+                "0 1 471 0 1788644700 907135",
+                "0 2 103 0 1788644700 907251"
+            ]
+        );
+        let arguments = fs::read_to_string(directory.path().join("arguments")).unwrap();
+        assert!(arguments.contains("--sampling-rate\n0.05\n"));
+    }
+
+    #[test]
+    fn fresh_runs_keep_three_pairs_with_the_second_pair_reversed() {
+        assert_eq!(
+            fresh_runs("service-secret", "human-secret"),
+            [
+                ("service", 1, "service-secret"),
+                ("human", 1, "human-secret"),
+                ("human", 2, "human-secret"),
+                ("service", 2, "service-secret"),
+                ("service", 3, "service-secret"),
+                ("human", 3, "human-secret"),
+            ]
+        );
+    }
 
     #[test]
     fn overhead_limit_uses_five_sample_median() {

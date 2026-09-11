@@ -241,33 +241,17 @@ async fn request(
     let body = serde_json::to_string(
         &json!([{"request_id":request_id,"id":super::application::PALLET_ID}]),
     )?;
-    // The mounted PAT stays inside the owned request pod. Results contain no credentials.
-    let script = r#"probe_start=$(date +%s)
-attempt=0
-while :; do
-  attempt=$((attempt + 1))
-  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \
-    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \
-    --header "Host: $ROUTE_HOST" --header 'Content-Type: application/json' \
-    --header "Authorization: Bearer $ROUTE_CALLER_PAT" --header "traceparent: $TRACEPARENT" \
-    --data "$REQUEST_BODY" "$ROUTE_URL") || metrics='000 0 0'
-  set -- $metrics
-  elapsed=$(( $(date +%s) - probe_start ))
-  printf '{"attempt":%s,"status":"%s","recovery_seconds":%s,"total_seconds":"%s"}\n' "$attempt" "$1" "$elapsed" "$3"
-  [ "$1" = 200 ] && break
-  [ "$elapsed" -ge 150 ] && break
-  sleep 1
-done
-body=$(od -An -v -tx1 /tmp/body | tr -d ' \n')
-printf '{"status":"%s","first_seconds":"%s","total_seconds":"%s","recovery_seconds":%s,"attempts":%s,"body_hex":"%s"}\n' "$1" "$2" "$3" "$elapsed" "$attempt" "$body" >/dev/termination-log
-test "$1" = 200
-"#;
     let job = format!("startup-request-{name}");
-    let manifest = json!({"apiVersion":"batch/v1","kind":"Job","metadata":{"name":job,"namespace":cluster},"spec":{"activeDeadlineSeconds":200,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"probe","image":image,"imagePullPolicy":"Never","terminationMessagePolicy":"File","command":["/bin/sh","-ec"],"args":[script],"env":[
-        {"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}},
-        {"name":"ROUTE_HOST","value":inputs.route_host},{"name":"TRACEPARENT","value":format!("00-{trace_id}-{parent_span}-01")},
-        {"name":"REQUEST_BODY","value":body},{"name":"ROUTE_URL","value":format!("http://flow-http.{cluster}.svc.cluster.local/pallet/get")}
-    ]}]}}}});
+    let manifest = request_job(
+        cluster,
+        image,
+        &inputs.route_host,
+        secret,
+        &job,
+        trace_id,
+        parent_span,
+        &body,
+    );
     let path = work.join(format!("{job}.json"));
     fs::write(&path, serde_json::to_vec_pretty(&manifest)?)?;
     checked(kubectl(cluster, work).args(["apply", "-f"]).arg(&path)).await?;
@@ -337,6 +321,44 @@ test "$1" = 200
         format!("{trace_id}\n"),
     )?;
     Ok(total_ms)
+}
+
+fn request_job(
+    cluster: &str,
+    image: &str,
+    route_host: &str,
+    secret: &str,
+    job: &str,
+    trace_id: &str,
+    parent_span: &str,
+    body: &str,
+) -> Value {
+    // The mounted PAT stays inside the owned request pod. Results contain no credentials.
+    let script = r#"probe_start=$(date +%s)
+attempt=0
+while :; do
+  attempt=$((attempt + 1))
+  metrics=$(curl --silent --show-error --connect-timeout 5 --max-time 60 \
+    --output /tmp/body --write-out '%{http_code} %{time_starttransfer} %{time_total}' \
+    --header "Host: $ROUTE_HOST" --header 'Content-Type: application/json' \
+    --header "Authorization: Bearer $ROUTE_CALLER_PAT" --header "traceparent: $TRACEPARENT" \
+    --data "$REQUEST_BODY" "$ROUTE_URL") || metrics='000 0 0'
+  set -- $metrics
+  elapsed=$(( $(date +%s) - probe_start ))
+  printf '{"attempt":%s,"status":"%s","recovery_seconds":%s,"total_seconds":"%s"}\n' "$attempt" "$1" "$elapsed" "$3"
+  [ "$1" = 200 ] && break
+  [ "$elapsed" -ge 150 ] && break
+  sleep 1
+done
+body=$(od -An -v -tx1 /tmp/body | tr -d ' \n')
+printf '{"status":"%s","first_seconds":"%s","total_seconds":"%s","recovery_seconds":%s,"attempts":%s,"body_hex":"%s"}\n' "$1" "$2" "$3" "$elapsed" "$attempt" "$body" >/dev/termination-log
+test "$1" = 200
+"#;
+    json!({"apiVersion":"batch/v1","kind":"Job","metadata":{"name":job,"namespace":cluster},"spec":{"activeDeadlineSeconds":200,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{"name":"probe","image":image,"imagePullPolicy":"Never","terminationMessagePolicy":"File","command":["/bin/sh","-ec"],"args":[script],"env":[
+        {"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":secret,"key":"token"}}},
+        {"name":"ROUTE_HOST","value":route_host},{"name":"TRACEPARENT","value":format!("00-{trace_id}-{parent_span}-01")},
+        {"name":"REQUEST_BODY","value":body},{"name":"ROUTE_URL","value":format!("http://flow-http.{cluster}.svc.cluster.local/pallet/get")}
+    ]}]}}}})
 }
 
 fn assert_response(result: &Value, request_id: &str, restarted: bool) -> anyhow::Result<f64> {
@@ -707,6 +729,179 @@ fn assert_host_restart(pod: &Value, uid: Option<&str>, restarts: u64) -> anyhow:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_job_reports_immediate_delayed_and_failed_responses() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let body = r#"[{"request_id":"startup-cold","id":"selected-pallet","note":"it's quoted"}]"#;
+        let job = request_job(
+            "selected-environment",
+            "selected-host-image",
+            "selected.example",
+            "selected-pat",
+            "selected-job",
+            "11111111111111111111111111111111",
+            "1111111111111111",
+            body,
+        );
+        assert_eq!(
+            job["metadata"],
+            json!({"name":"selected-job","namespace":"selected-environment"})
+        );
+        assert_eq!(job["spec"]["activeDeadlineSeconds"], 200);
+        assert_eq!(job["spec"]["backoffLimit"], 0);
+        assert_eq!(job["spec"]["template"]["spec"]["restartPolicy"], "Never");
+        let containers = job["spec"]["template"]["spec"]["containers"]
+            .as_array()
+            .unwrap();
+        assert_eq!(containers.len(), 1);
+        let container = &containers[0];
+        assert_eq!(container["image"], "selected-host-image");
+        assert_eq!(container["imagePullPolicy"], "Never");
+        assert_eq!(container["command"], json!(["/bin/sh", "-ec"]));
+        let env = container["env"].as_array().unwrap();
+        assert_eq!(
+            env[0],
+            json!({"name":"ROUTE_CALLER_PAT","valueFrom":{"secretKeyRef":{"name":"selected-pat","key":"token"}}})
+        );
+        assert_eq!(
+            env[1],
+            json!({"name":"ROUTE_HOST","value":"selected.example"})
+        );
+        assert_eq!(
+            env[2],
+            json!({"name":"TRACEPARENT","value":"00-11111111111111111111111111111111-1111111111111111-01"})
+        );
+        assert_eq!(env[3], json!({"name":"REQUEST_BODY","value":body}));
+        assert_eq!(
+            env[4],
+            json!({"name":"ROUTE_URL","value":"http://flow-http.selected-environment.svc.cluster.local/pallet/get"})
+        );
+        assert_eq!(env.len(), 5);
+        let script = container["args"][0].as_str().unwrap();
+        assert!(script.contains("--connect-timeout 5 --max-time 60"));
+        assert_eq!(script.matches("-ge 150").count(), 1);
+
+        for (name, codes, succeeds, expected_attempts) in [
+            ("immediate", "200", true, 1),
+            ("delayed", "404 404 200", true, 3),
+            ("failed", "404", false, 0),
+        ] {
+            let directory = wamn_test_infrastructure::scratch::ScratchRoot(
+                std::env::temp_dir().join(format!("wms-startup-test-{}", uuid::Uuid::new_v4())),
+            );
+            fs::create_dir(directory.path()).unwrap();
+            let program = directory.path().join("curl");
+            fs::write(
+                &program,
+                r#"#!/bin/sh
+set -eu
+count=0
+if [ -f "$TEST_DIRECTORY/count" ]; then count=$(cat "$TEST_DIRECTORY/count"); fi
+count=$((count + 1))
+printf '%s\n' "$count" >"$TEST_DIRECTORY/count"
+output=''
+previous=''
+for argument in "$@"; do
+  if [ "$previous" = --output ]; then output=$argument; fi
+  previous=$argument
+done
+test -n "$output"
+index=0
+status=''
+for value in $TEST_CODES; do
+  index=$((index + 1))
+  status=$value
+  if [ "$index" -eq "$count" ]; then break; fi
+done
+printf 'test-body-%s' "$status" >"$output"
+printf '%s 0.001 0.002' "$status"
+"#,
+            )
+            .unwrap();
+            fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+            let script = script
+                .replace(
+                    "/tmp/body",
+                    &directory.path().join("body").display().to_string(),
+                )
+                .replace(
+                    "/dev/termination-log",
+                    &directory.path().join("result.json").display().to_string(),
+                );
+            // The retained failed-response test shortens only the retry window.
+            let script = if succeeds {
+                script
+            } else {
+                script.replace("-ge 150", "-ge 2")
+            };
+            let mut command = std::process::Command::new("sh");
+            command
+                .args(["-ec", &script])
+                .env(
+                    "PATH",
+                    format!(
+                        "{}:{}",
+                        directory.path().display(),
+                        std::env::var("PATH").unwrap()
+                    ),
+                )
+                .env("TEST_DIRECTORY", directory.path())
+                .env("TEST_CODES", codes)
+                .env("ROUTE_CALLER_PAT", "local-test-token");
+            for entry in &env[1..] {
+                command.env(
+                    entry["name"].as_str().unwrap(),
+                    entry["value"].as_str().unwrap(),
+                );
+            }
+            let output = command.output().unwrap();
+            assert_eq!(
+                output.status.success(),
+                succeeds,
+                "{name}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let lines = String::from_utf8(output.stdout)
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str::<Value>(line).unwrap())
+                .collect::<Vec<_>>();
+            let result: Value =
+                serde_json::from_slice(&fs::read(directory.path().join("result.json")).unwrap())
+                    .unwrap();
+            assert_eq!(result["attempts"].as_u64().unwrap(), lines.len() as u64);
+            assert_eq!(result["status"], if succeeds { "200" } else { "404" });
+            assert_eq!(result["first_seconds"], "0.001");
+            assert_eq!(result["total_seconds"], "0.002");
+            assert_eq!(
+                hex::decode(result["body_hex"].as_str().unwrap()).unwrap(),
+                if succeeds {
+                    b"test-body-200"
+                } else {
+                    b"test-body-404"
+                }
+            );
+            if succeeds {
+                assert_eq!(lines.len(), expected_attempts);
+            } else {
+                assert!(lines.len() >= 2);
+                assert!(result["recovery_seconds"].as_u64().unwrap() >= 2);
+            }
+            for (index, attempt) in lines.iter().enumerate() {
+                assert_eq!(attempt["attempt"], index + 1);
+                assert!(attempt["recovery_seconds"].is_u64());
+                assert_eq!(
+                    attempt["status"],
+                    if succeeds && index == lines.len() - 1 {
+                        "200"
+                    } else {
+                        "404"
+                    }
+                );
+            }
+        }
+    }
 
     #[test]
     fn startup_request_keeps_the_recovery_limit_and_pallet_identity() {
