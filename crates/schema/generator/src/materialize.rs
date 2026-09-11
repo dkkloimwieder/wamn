@@ -12,7 +12,7 @@ use wamn_schema_introspection::postgres::read_catalog_excluding_relations;
 use crate::StatementTransactionality;
 use crate::client_ir::{ClientContractIr, published_routes};
 use crate::client_rust::emit_rust_client;
-use crate::client_tui::{component_contract, emit_tui, read_operator};
+use crate::client_tui::{component_contract, emit_tui, read_operator, read_tui_workspace};
 use crate::generate::GeneratedFile;
 use crate::{
     AuthoredSql, GeneratedPackage, GenerationInput, GenerationProvenance, PackageManifest,
@@ -237,8 +237,10 @@ fn client_bindings(package_root: &Path, package: &GeneratedPackage) -> Result<Ve
             .context("select the component's operator contracts")?;
         let operator = read_operator(package_root, component)
             .context("read the component's declared UI operator")?;
+        let workspace = read_tui_workspace(package_root, component)
+            .context("resolve the component UI workspace")?;
         files.extend(
-            emit_tui(&selected, component, operator.as_ref())
+            emit_tui(&selected, component, operator.as_ref(), &workspace)
                 .context("emit the operator TUI crate")?,
         );
     }
@@ -569,6 +571,11 @@ mod tests {
             let root = scratch.join("test_package");
             fs::create_dir_all(&root).expect("create test package");
             fs::write(root.join("wamn.json"), MANIFEST).expect("write test manifest");
+            fs::write(
+                root.join("Cargo.toml"),
+                "[workspace]\nmembers = [\"generated/*\"]\n",
+            )
+            .expect("write app workspace");
             Self { root, scratch }
         }
 

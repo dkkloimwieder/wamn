@@ -5,7 +5,7 @@ use serde_json::json;
 use wamn_schema_generator::client_ir::{ClientContractIr, ResponseIr, RouteIr};
 use wamn_schema_generator::client_rust::emit_rust_client;
 use wamn_schema_generator::client_tui::{
-    ClientTuiErrorKind, component_contract, emit_tui, read_operator,
+    ClientTuiErrorKind, component_contract, emit_tui, read_operator, read_tui_workspace,
 };
 use wamn_schema_generator::{GeneratedFile, PackageManifest};
 
@@ -75,8 +75,9 @@ fn shipped_operator_crates_are_deterministic_and_cover_each_callable_operation()
             .join("apps")
             .join(package);
         let operator = read_operator(&root, component).unwrap();
-        let first = emit_tui(&selected, component, operator.as_ref()).unwrap();
-        let second = emit_tui(&selected, component, operator.as_ref()).unwrap();
+        let workspace = read_tui_workspace(&root, component).unwrap();
+        let first = emit_tui(&selected, component, operator.as_ref(), &workspace).unwrap();
+        let second = emit_tui(&selected, component, operator.as_ref(), &workspace).unwrap();
         for file in &first {
             assert_eq!(
                 file.bytes(),
@@ -164,6 +165,13 @@ screens = { package = "wamn-generated-receiving-tui", path = "../generated/recei
     assert_eq!(operator.cargo_package, "warehouse-desk");
     assert_eq!(operator.binary, "dock-screen");
     assert!(read_operator(&root, "reports").unwrap().is_none());
+    let inherited = ui.replace(
+        "[dependencies]\nscreens = { package = \"wamn-generated-receiving-tui\", path = \"../generated/receiving-tui\" }",
+        "[workspace.dependencies]\nscreens = { package = \"wamn-generated-receiving-tui\", path = \"../generated/receiving-tui\" }\n[dependencies]\nscreens = { workspace = true }",
+    );
+    std::fs::write(root.join("ui/Cargo.toml"), inherited).unwrap();
+    assert_eq!(read_operator(&root, "receiving").unwrap(), Some(operator));
+
     std::fs::write(
         root.join("ui/Cargo.toml"),
         format!("{ui}\n[[bin]]\nname = \"another-screen\"\n"),
@@ -174,14 +182,36 @@ screens = { package = "wamn-generated-receiving-tui", path = "../generated/recei
 }
 
 #[test]
+fn generation_resolves_an_app_workspace_before_its_native_crate_exists() {
+    let root = std::env::temp_dir().join(format!(
+        "wamn-generated-app-workspace-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    assert!(read_tui_workspace(&root, "receiving").is_err());
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"generated/*\"]\n",
+    )
+    .unwrap();
+    let workspace = read_tui_workspace(&root, "receiving").unwrap();
+    assert_eq!(workspace, "../..");
+    let files = emit_tui(&release("wamn_receiving"), "receiving", None, &workspace).unwrap();
+    let manifest: toml::Value =
+        toml::from_str(source(&files, "generated/receiving-tui/Cargo.toml")).unwrap();
+    assert_eq!(manifest["package"]["workspace"].as_str(), Some("../.."));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn declared_operator_keeps_generated_library_bytes_without_a_launcher() {
     let operator = wamn_schema_generator::client_tui::OperatorCrate {
         cargo_package: "warehouse-desk".to_owned(),
         binary: "dock-screen".to_owned(),
     };
     let ir = release("wamn_receiving");
-    let standalone = emit_tui(&ir, "receiving", None).unwrap();
-    let composed = emit_tui(&ir, "receiving", Some(&operator)).unwrap();
+    let standalone = emit_tui(&ir, "receiving", None, "../../../..").unwrap();
+    let composed = emit_tui(&ir, "receiving", Some(&operator), "../../../..").unwrap();
     assert!(
         !composed
             .iter()
@@ -216,8 +246,8 @@ fn two_declared_components_render_only_their_owned_operations() {
     let manifest = PackageManifest::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
     let reports = component_contract(&ir, &manifest, "reports").unwrap();
     let receiving = component_contract(&ir, &manifest, "receiving").unwrap();
-    let reports_files = emit_tui(&reports, "reports", None).unwrap();
-    let receiving_files = emit_tui(&receiving, "receiving", None).unwrap();
+    let reports_files = emit_tui(&reports, "reports", None, "../../../..").unwrap();
+    let receiving_files = emit_tui(&receiving, "receiving", None, "../../../..").unwrap();
     let report_operations = reports
         .models
         .iter()
@@ -260,7 +290,7 @@ fn two_declared_components_render_only_their_owned_operations() {
 #[test]
 fn workspace_package_and_binary_names_keep_the_reference_crate_distinct() {
     let ir = release("client_acme_receiving");
-    let files = emit_tui(&ir, "client_acme_receiving", None).unwrap();
+    let files = emit_tui(&ir, "client_acme_receiving", None, "../../../..").unwrap();
     let cargo = source(&files, "generated/client_acme_receiving-tui/Cargo.toml");
     assert!(cargo.contains("name = \"wamn-generated-client-acme-receiving-tui\""));
     assert!(cargo.contains("name = \"wamn-client-acme-receiving-tui\""));
@@ -291,7 +321,7 @@ fn workspace_package_and_binary_names_keep_the_reference_crate_distinct() {
 
 #[test]
 fn receiving_replay_and_wms_composed_completion_use_the_served_contract() {
-    let receiving = emit_tui(&release("wamn_receiving"), "receiving", None).unwrap();
+    let receiving = emit_tui(&release("wamn_receiving"), "receiving", None, "../../../..").unwrap();
     let command = spec(
         source(
             &receiving,
@@ -305,7 +335,7 @@ fn receiving_replay_and_wms_composed_completion_use_the_served_contract() {
     assert!(command.contains("direct: true"));
 
     let ir = release("wamn_wms");
-    let files = emit_tui(&ir, "wms", None).unwrap();
+    let files = emit_tui(&ir, "wms", None, "../../../..").unwrap();
     let command = spec(
         source(&files, "generated/wms-tui/src/screens/inventory.rs"),
         "move",
@@ -393,7 +423,7 @@ fn fixtures() -> ClientContractIr {
 #[test]
 fn queries_reference_their_own_result_schemas_and_preserve_distinct_error_cases() {
     let ir = fixtures();
-    let files = emit_tui(&ir, "example", None).unwrap();
+    let files = emit_tui(&ir, "example", None, "../../../..").unwrap();
     let screens = source(&files, "generated/example-tui/src/screens/entry.rs");
     for (name, column) in [("query_alpha", "code"), ("query_beta", "title")] {
         let screen = spec(screens, name);
@@ -425,7 +455,7 @@ fn queries_reference_their_own_result_schemas_and_preserve_distinct_error_cases(
 #[test]
 fn unexposed_unsupported_and_composed_operations_keep_distinct_screens() {
     let ir = fixtures();
-    let files = emit_tui(&ir, "example", None).unwrap();
+    let files = emit_tui(&ir, "example", None, "../../../..").unwrap();
     let screens = source(&files, "generated/example-tui/src/screens/entry.rs");
     let hidden = spec(screens, "hidden");
     assert!(hidden.contains("route: None"));
@@ -478,7 +508,7 @@ fn platform_and_revision_inputs_come_only_from_exact_declared_paths() {
         ..template.clone()
     })
     .collect();
-    let files = emit_tui(&ir, "example", None).unwrap();
+    let files = emit_tui(&ir, "example", None, "../../../..").unwrap();
     let reserved = spec(
         source(&files, "generated/example-tui/src/screens/entry.rs"),
         "reserved",
@@ -511,7 +541,7 @@ fn event_handlers_are_excluded_and_deployment_values_are_supplied_at_launch() {
     handler.kind = "event_handler".into();
     handler.operation = "example:entry/private-handler@1.0.0".into();
     ir.models[0].operations.push(handler);
-    let files = emit_tui(&ir, "example", None).unwrap();
+    let files = emit_tui(&ir, "example", None, "../../../..").unwrap();
     let combined: String = files
         .iter()
         .map(|file| std::str::from_utf8(file.bytes()).unwrap())
@@ -546,7 +576,7 @@ fn raw_schema_literals_preserve_quotes_without_becoming_rust_source() {
     let route = operation.route.as_mut().unwrap();
     route.input_schema = Some(input.clone());
     route.response.schema = Some(response.clone());
-    let files = emit_tui(&ir, "example", None).unwrap();
+    let files = emit_tui(&ir, "example", None, "../../../..").unwrap();
     let screen = spec(
         source(&files, "generated/example-tui/src/screens/entry.rs"),
         "query_alpha",
@@ -560,20 +590,26 @@ fn invalid_paths_and_generated_module_collisions_are_refused() {
     let ir = fixtures();
     for directory in ["", "..", "../outside", "example/nested", "example\\nested"] {
         assert_eq!(
-            emit_tui(&ir, directory, None).unwrap_err().kind(),
+            emit_tui(&ir, directory, None, "../../../..")
+                .unwrap_err()
+                .kind(),
             ClientTuiErrorKind::InvalidName
         );
     }
     let mut collision = ir.clone();
     collision.models[0].name = "screens".into();
     assert_eq!(
-        emit_tui(&collision, "example", None).unwrap_err().kind(),
+        emit_tui(&collision, "example", None, "../../../..")
+            .unwrap_err()
+            .kind(),
         ClientTuiErrorKind::NameCollision
     );
     let mut invalid = ir;
     invalid.models[0].operations[0].name = "self".into();
     assert_eq!(
-        emit_tui(&invalid, "example", None).unwrap_err().kind(),
+        emit_tui(&invalid, "example", None, "../../../..")
+            .unwrap_err()
+            .kind(),
         ClientTuiErrorKind::InvalidName
     );
 }
@@ -605,9 +641,12 @@ fn screens_reference_the_same_collision_free_helpers_as_the_client() {
     .collect();
     let client = emit_rust_client(&ir).unwrap();
     let bindings = source(&client, "generated/client/entry.rs");
-    let first = emit_tui(&ir, "example", None).unwrap();
+    let first = emit_tui(&ir, "example", None, "../../../..").unwrap();
     ir.models[0].operations.reverse();
-    assert_eq!(first, emit_tui(&ir, "example", None).unwrap());
+    assert_eq!(
+        first,
+        emit_tui(&ir, "example", None, "../../../..").unwrap()
+    );
     let screens = source(&first, "generated/example-tui/src/screens/entry.rs");
     for (name, helper) in [
         ("get", "__wamn_route_get_2"),
@@ -625,7 +664,7 @@ fn screens_reference_the_same_collision_free_helpers_as_the_client() {
 #[test]
 fn screen_metadata_preserves_the_operation_freshness_requirement() {
     let ir = fixtures();
-    let files = emit_tui(&ir, "example", None).unwrap();
+    let files = emit_tui(&ir, "example", None, "../../../..").unwrap();
     let screens = source(&files, "generated/example-tui/src/screens/entry.rs");
     assert!(spec(screens, "query_alpha").contains("fresh_only: false,"));
     assert!(spec(screens, "query_beta").contains("fresh_only: true,"));

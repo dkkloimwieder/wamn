@@ -15,10 +15,8 @@ use wamn_schema_generator::client_tui::read_operator;
 /// Operator targets belong to the declared component.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct NativePackage {
-    pub root: PathBuf,
     pub component: String,
-    pub cargo_package: String,
-    pub binary: String,
+    pub manifest_path: PathBuf,
 }
 
 /// Native source trees and exact workspace files that can require a rebuild.
@@ -73,7 +71,6 @@ impl Error for NativeTuiError {
 /// Resolve operator targets for the complete declared package closure.
 pub(super) fn operator_packages(roots: &[PathBuf]) -> Result<Vec<NativePackage>, NativeTuiError> {
     let mut packages = BTreeMap::new();
-    let mut cargo_names = BTreeSet::new();
     for root in roots {
         let path = root.join("wamn.json");
         let bytes = std::fs::read(&path).map_err(|source| {
@@ -107,7 +104,6 @@ pub(super) fn operator_packages(roots: &[PathBuf]) -> Result<Vec<NativePackage>,
                     format!("{component:?} has no safe generated spelling"),
                 ));
             }
-            let slug = component.replace('_', "-");
             let operator = read_operator(root, component).map_err(|source| {
                 NativeTuiError::with_source(
                     "read declared UI operator",
@@ -115,24 +111,17 @@ pub(super) fn operator_packages(roots: &[PathBuf]) -> Result<Vec<NativePackage>,
                     source,
                 )
             })?;
-            let (cargo_package, binary) = operator.map_or_else(
-                || {
-                    (
-                        format!("wamn-generated-{slug}-tui"),
-                        format!("wamn-{slug}-tui"),
-                    )
-                },
-                |operator| (operator.cargo_package, operator.binary),
-            );
-            let package = NativePackage {
-                root: root.clone(),
-                component: component.to_owned(),
-                cargo_package,
-                binary,
+            let manifest_path = if operator.is_some() {
+                root.join("ui/Cargo.toml")
+            } else {
+                root.join("generated")
+                    .join(format!("{component}-tui/Cargo.toml"))
             };
-            if packages.contains_key(component)
-                || !cargo_names.insert(package.cargo_package.clone())
-            {
+            let package = NativePackage {
+                component: component.to_owned(),
+                manifest_path,
+            };
+            if packages.contains_key(component) {
                 return Err(NativeTuiError::new(
                     "select operator package",
                     format!("{component:?} is ambiguous in the declared package closure"),
@@ -160,34 +149,94 @@ pub(super) fn select_component(
         })
 }
 
-/// Build the selected native operators through the root Cargo workspace.
+/// Build each selected operator through its own Cargo manifest.
 pub(super) async fn build(
-    repository_root: &Path,
     package_roots: &[PathBuf],
 ) -> Result<BTreeMap<String, PathBuf>, NativeTuiError> {
     let packages = operator_packages(package_roots)?;
-    if packages.is_empty() {
-        return Ok(BTreeMap::new());
-    }
-    let mut command = Command::new("cargo");
-    command
-        .current_dir(repository_root)
-        .args([
-            "build",
-            "--locked",
-            "--offline",
-            "--bins",
-            "--message-format=json",
-        ])
-        .kill_on_drop(true);
+    let mut executables = BTreeMap::new();
     for package in &packages {
-        command.arg("-p").arg(&package.cargo_package);
+        let metadata = read_metadata(&package.manifest_path, true).await?;
+        let target = operator_target(package, &metadata)?;
+        let output = Command::new("cargo")
+            .current_dir(
+                target
+                    .manifest_path
+                    .parent()
+                    .expect("Cargo manifest has a parent"),
+            )
+            .args([
+                "build",
+                "--locked",
+                "--offline",
+                "--message-format=json",
+                "--manifest-path",
+            ])
+            .arg(&target.manifest_path)
+            .arg("--package")
+            .arg(&target.package_id)
+            .arg("--bin")
+            .arg(&target.binary)
+            .kill_on_drop(true)
+            .output()
+            .await
+            .map_err(|source| {
+                NativeTuiError::with_source("build operator packages", "cannot start Cargo", source)
+            })?;
+        require_success("build operator packages", &output)?;
+        executables.extend(artifact_paths(&[target], &output.stdout)?);
     }
-    let output = command.output().await.map_err(|source| {
-        NativeTuiError::with_source("build operator packages", "cannot start Cargo", source)
+    Ok(executables)
+}
+
+#[derive(Debug)]
+struct OperatorTarget {
+    component: String,
+    manifest_path: PathBuf,
+    package_id: String,
+    cargo_package: String,
+    binary: String,
+}
+
+fn operator_target(
+    selected: &NativePackage,
+    metadata: &Metadata,
+) -> Result<OperatorTarget, NativeTuiError> {
+    let manifest = selected.manifest_path.canonicalize().map_err(|source| {
+        NativeTuiError::with_source(
+            "read native operator target",
+            selected.manifest_path.display().to_string(),
+            source,
+        )
     })?;
-    require_success("build operator packages", &output)?;
-    artifact_paths(&packages, &output.stdout)
+    let package = metadata
+        .packages
+        .iter()
+        .find(|package| package.manifest_path == manifest)
+        .ok_or_else(|| {
+            NativeTuiError::new(
+                "read native operator target",
+                format!("Cargo metadata omitted {}", manifest.display()),
+            )
+        })?;
+    let binaries = package
+        .targets
+        .iter()
+        .filter(|target| target.kind.iter().any(|kind| kind == "bin"))
+        .collect::<Vec<_>>();
+    let [binary] = binaries.as_slice() else {
+        return Err(NativeTuiError::new(
+            "read native operator target",
+            format!("{} must declare exactly one binary", manifest.display()),
+        ));
+    };
+    Ok(OperatorTarget {
+        component: selected.component.clone(),
+        manifest_path: manifest,
+        package_id: package.id.clone(),
+        cargo_package: package.name.clone(),
+        binary: binary.name.clone(),
+    })
 }
 
 fn require_success(operation: &'static str, output: &Output) -> Result<(), NativeTuiError> {
@@ -212,12 +261,17 @@ fn require_success(operation: &'static str, output: &Output) -> Result<(), Nativ
 }
 
 fn artifact_paths(
-    packages: &[NativePackage],
+    packages: &[OperatorTarget],
     stdout: &[u8],
 ) -> Result<BTreeMap<String, PathBuf>, NativeTuiError> {
     let expected = packages
         .iter()
-        .map(|package| (package.binary.as_str(), package.component.as_str()))
+        .map(|package| {
+            (
+                (package.package_id.as_str(), package.binary.as_str()),
+                package.component.as_str(),
+            )
+        })
         .collect::<BTreeMap<_, _>>();
     let mut executables = BTreeMap::new();
     for line in stdout
@@ -237,7 +291,10 @@ fn artifact_paths(
         let Some(binary) = message.pointer("/target/name").and_then(Value::as_str) else {
             continue;
         };
-        let Some(component) = expected.get(binary) else {
+        let Some(package_id) = message.get("package_id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(component) = expected.get(&(package_id, binary)) else {
             continue;
         };
         let is_binary = message
@@ -276,7 +333,10 @@ fn artifact_paths(
         if !executables.contains_key(&package.component) {
             return Err(NativeTuiError::new(
                 "read native Cargo artifacts",
-                format!("Cargo emitted no binary named {}", package.binary),
+                format!(
+                    "Cargo emitted no binary named {} for package {}",
+                    package.binary, package.cargo_package
+                ),
             ));
         }
     }
@@ -286,7 +346,7 @@ fn artifact_paths(
 /// Read normal and build dependencies without walking registry source trees.
 pub(super) async fn native_dependency_roots(
     repository_root: &Path,
-    selected_cargo_packages: &[String],
+    selected: &[NativePackage],
 ) -> Result<NativeWatchInputs, NativeTuiError> {
     let root = repository_root.canonicalize().map_err(|source| {
         NativeTuiError::with_source(
@@ -295,25 +355,83 @@ pub(super) async fn native_dependency_roots(
             source,
         )
     })?;
-    let output = Command::new("cargo")
-        .current_dir(&root)
-        .args(["metadata", "--locked", "--offline", "--format-version", "1"])
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|source| {
-            NativeTuiError::with_source(
-                "read native dependency roots",
-                "cannot start Cargo metadata",
-                source,
-            )
-        })?;
-    require_success("read native dependency roots", &output)?;
-    dependency_roots(&root, selected_cargo_packages, &output.stdout)
+    let mut directories = BTreeSet::new();
+    let mut files = BTreeSet::new();
+    for package in selected {
+        let metadata = read_metadata(&package.manifest_path, false).await?;
+        let target = operator_target(package, &metadata)?;
+        let inputs = dependency_roots(&root, &[target.package_id], &metadata)?;
+        directories.extend(inputs.directories);
+        files.extend(inputs.files);
+        for parent in target
+            .manifest_path
+            .parent()
+            .into_iter()
+            .flat_map(Path::ancestors)
+            .take_while(|parent| parent.starts_with(&root))
+        {
+            // Cargo and rustup also read configuration above the invocation directory.
+            files.extend(
+                [
+                    ".cargo/config",
+                    ".cargo/config.toml",
+                    "rust-toolchain",
+                    "rust-toolchain.toml",
+                ]
+                .map(|path| parent.join(path)),
+            );
+        }
+    }
+    Ok(NativeWatchInputs {
+        directories: directories.into_iter().collect(),
+        files: files.into_iter().collect(),
+    })
+}
+
+async fn read_metadata(manifest: &Path, no_deps: bool) -> Result<Metadata, NativeTuiError> {
+    let manifest = manifest.canonicalize().map_err(|source| {
+        NativeTuiError::with_source(
+            "read native Cargo metadata",
+            manifest.display().to_string(),
+            source,
+        )
+    })?;
+    let mut command = Command::new("cargo");
+    command
+        .current_dir(manifest.parent().expect("Cargo manifest has a parent"))
+        .args([
+            "metadata",
+            "--locked",
+            "--offline",
+            "--format-version",
+            "1",
+            "--manifest-path",
+        ])
+        .arg(manifest)
+        .kill_on_drop(true);
+    if no_deps {
+        command.arg("--no-deps");
+    }
+    let output = command.output().await.map_err(|source| {
+        NativeTuiError::with_source(
+            "read native Cargo metadata",
+            "cannot start Cargo metadata",
+            source,
+        )
+    })?;
+    require_success("read native Cargo metadata", &output)?;
+    serde_json::from_slice(&output.stdout).map_err(|source| {
+        NativeTuiError::with_source(
+            "read native Cargo metadata",
+            "Cargo metadata is invalid",
+            source,
+        )
+    })
 }
 
 #[derive(Debug, Deserialize)]
 struct Metadata {
+    workspace_root: PathBuf,
     packages: Vec<MetadataPackage>,
     resolve: Option<Resolve>,
 }
@@ -323,6 +441,14 @@ struct MetadataPackage {
     id: String,
     name: String,
     manifest_path: PathBuf,
+    #[serde(default)]
+    targets: Vec<MetadataTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MetadataTarget {
+    name: String,
+    kind: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -350,16 +476,9 @@ struct DependencyKind {
 fn dependency_roots(
     repository_root: &Path,
     selected: &[String],
-    bytes: &[u8],
+    metadata: &Metadata,
 ) -> Result<NativeWatchInputs, NativeTuiError> {
-    let metadata: Metadata = serde_json::from_slice(bytes).map_err(|source| {
-        NativeTuiError::with_source(
-            "read native dependency roots",
-            "Cargo metadata is invalid",
-            source,
-        )
-    })?;
-    let resolve = metadata.resolve.ok_or_else(|| {
+    let resolve = metadata.resolve.as_ref().ok_or_else(|| {
         NativeTuiError::new(
             "read native dependency roots",
             "Cargo metadata has no resolved graph",
@@ -376,19 +495,14 @@ fn dependency_roots(
         .map(|node| (node.id.as_str(), node))
         .collect::<BTreeMap<_, _>>();
     let mut pending = Vec::new();
-    for name in selected {
-        let candidates = metadata
-            .packages
-            .iter()
-            .filter(|package| package.name == *name)
-            .collect::<Vec<_>>();
-        let [package] = candidates.as_slice() else {
+    for id in selected {
+        if !packages.contains_key(id.as_str()) {
             return Err(NativeTuiError::new(
                 "read native dependency roots",
-                format!("{name} is missing or ambiguous in Cargo metadata"),
+                format!("{id} is missing from Cargo metadata"),
             ));
-        };
-        pending.push(package.id.as_str());
+        }
+        pending.push(id.as_str());
     }
     let mut visited = BTreeSet::new();
     let mut directories = BTreeSet::new();
@@ -441,7 +555,7 @@ fn dependency_roots(
             "rust-toolchain.toml",
         ]
         .into_iter()
-        .map(|path| repository_root.join(path))
+        .map(|path| metadata.workspace_root.join(path))
         .collect(),
     })
 }
@@ -467,20 +581,40 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn selection_uses_the_declared_component_and_emitter_spelling() {
+    #[tokio::test]
+    async fn selection_uses_the_declared_component_and_emitter_spelling() {
         let selected =
             select_component(&roots(), "client_acme_receiving").expect("select exact component");
+        let target = operator_target(
+            &selected,
+            &read_metadata(&selected.manifest_path, true).await.unwrap(),
+        )
+        .unwrap();
         assert_eq!(
-            selected.cargo_package,
+            target.cargo_package,
             "wamn-generated-client-acme-receiving-tui"
         );
-        assert_eq!(selected.binary, "wamn-client-acme-receiving-tui");
-        assert_eq!(selected.root, roots()[1]);
+        assert_eq!(target.binary, "wamn-client-acme-receiving-tui");
+        assert!(selected.manifest_path.starts_with(&roots()[1]));
         let receiving =
             select_component(&roots(), "receiving").expect("select Receiving composition");
-        assert_eq!(receiving.cargo_package, "wamn-receiving-tui");
-        assert_eq!(receiving.binary, "wamn-receiving");
+        let target = operator_target(
+            &receiving,
+            &read_metadata(&receiving.manifest_path, true).await.unwrap(),
+        )
+        .unwrap();
+        assert_eq!(target.cargo_package, "wamn-receiving-tui");
+        assert_eq!(target.binary, "wamn-receiving");
+        let wms_root = roots()[0].parent().unwrap().join("wamn_wms");
+        let wms =
+            select_component(&[wms_root], "wms").expect("select WMS by its declared component");
+        let target = operator_target(
+            &wms,
+            &read_metadata(&wms.manifest_path, true).await.unwrap(),
+        )
+        .unwrap();
+        assert_eq!(target.cargo_package, "wamn-generated-wms-tui");
+        assert_eq!(target.binary, "wamn-wms-tui");
         assert!(select_component(&roots(), "wamn_receiving").is_err());
         assert!(select_component(&roots(), "../receiving").is_err());
         assert!(select_component(&roots(), "client-acme-receiving").is_err());
@@ -508,16 +642,14 @@ mod tests {
             let packages = operator_packages(&[root.clone()]).expect("read declared components");
             assert_eq!(packages.len(), names.len());
             let selected = select_component(&[root.clone()], "receiving").unwrap();
-            assert_eq!(selected.cargo_package, "wamn-generated-receiving-tui");
-            assert_eq!(selected.root, root);
+            assert_eq!(
+                selected.manifest_path,
+                root.join("generated/receiving-tui/Cargo.toml")
+            );
+            assert!(selected.manifest_path.starts_with(&root));
             assert!(operator_packages(&[root.clone(), roots()[0].clone()]).is_err());
         }
-        for names in [
-            vec!["Receiving"],
-            vec!["1receiving"],
-            vec!["../receiving"],
-            vec!["client_acme", "client-acme"],
-        ] {
+        for names in [vec!["Receiving"], vec!["1receiving"], vec!["../receiving"]] {
             manifest["components"] = names
                 .iter()
                 .map(|name| ((*name).to_owned(), json!({"connections":["postgres"]})))
@@ -534,7 +666,23 @@ mod tests {
     }
 
     fn artifact(binary: &str, executable: &Value) -> Value {
-        json!({"reason":"compiler-artifact", "target":{"name":binary,"kind":["bin"]}, "executable":executable})
+        json!({"reason":"compiler-artifact", "package_id":binary, "target":{"name":binary,"kind":["bin"]}, "executable":executable})
+    }
+
+    fn artifact_targets() -> Vec<OperatorTarget> {
+        [
+            ("receiving", "wamn-receiving"),
+            ("client_acme_receiving", "wamn-client-acme-receiving-tui"),
+        ]
+        .into_iter()
+        .map(|(component, binary)| OperatorTarget {
+            component: component.to_owned(),
+            manifest_path: PathBuf::from("/repo/Cargo.toml"),
+            package_id: binary.to_owned(),
+            cargo_package: "selected-package".to_owned(),
+            binary: binary.to_owned(),
+        })
+        .collect()
     }
 
     fn lines(messages: &[Value]) -> Vec<u8> {
@@ -547,7 +695,7 @@ mod tests {
 
     #[test]
     fn artifacts_use_cargo_paths_and_require_every_selected_binary() {
-        let packages = operator_packages(&roots()).expect("name packages");
+        let packages = artifact_targets();
         let mut messages = vec![
             json!({"reason":"compiler-message", "message":{"rendered":"a diagnostic"}}),
             artifact("unrelated", &json!("/elsewhere/unrelated")),
@@ -568,13 +716,15 @@ mod tests {
             Path::new("/custom-target/debug/wamn-receiving")
         );
         assert_eq!(found.len(), 2);
+        messages[3]["package_id"] = json!("unselected-package-with-the-same-binary");
+        assert!(artifact_paths(&packages, &lines(&messages)).is_err());
         messages.remove(3);
         assert!(artifact_paths(&packages, &lines(&messages)).is_err());
     }
 
     #[test]
     fn missing_relative_and_conflicting_executables_refuse() {
-        let packages = operator_packages(&roots()[..1]).expect("name package");
+        let packages = artifact_targets().into_iter().take(1).collect::<Vec<_>>();
         for executable in [Value::Null, json!("target/debug/wamn-receiving")] {
             assert!(
                 artifact_paths(
@@ -594,6 +744,7 @@ mod tests {
 
     fn graph() -> Value {
         json!({
+            "workspace_root":"/repo",
             "packages":[
                 {"id":"operator","name":"wamn-receiving-tui","manifest_path":"/repo/apps/wamn_receiving/ui/Cargo.toml"},
                 {"id":"app","name":"wamn-generated-receiving-tui","manifest_path":"/repo/apps/wamn_receiving/generated/receiving-tui/Cargo.toml"},
@@ -624,8 +775,8 @@ mod tests {
     fn watch_graph_follows_normal_and_build_dependencies_inside_the_repository() {
         let inputs = dependency_roots(
             Path::new("/repo"),
-            &["wamn-receiving-tui".to_owned()],
-            &serde_json::to_vec(&graph()).expect("encode graph"),
+            &["operator".to_owned()],
+            &serde_json::from_value(graph()).expect("decode graph"),
         )
         .expect("read source dependency roots");
         assert_eq!(
@@ -655,12 +806,12 @@ mod tests {
 
     #[test]
     fn a_missing_selection_or_incomplete_resolved_graph_refuses() {
-        let selected = ["wamn-receiving-tui".to_owned()];
+        let selected = ["operator".to_owned()];
         assert!(
             dependency_roots(
                 Path::new("/repo"),
                 &["missing".to_owned()],
-                &serde_json::to_vec(&graph()).expect("encode graph")
+                &serde_json::from_value(graph()).expect("decode graph")
             )
             .is_err()
         );
@@ -673,7 +824,7 @@ mod tests {
             dependency_roots(
                 Path::new("/repo"),
                 &selected,
-                &serde_json::to_vec(&incomplete).expect("encode graph")
+                &serde_json::from_value(incomplete.clone()).expect("decode graph")
             )
             .is_err()
         );
@@ -682,9 +833,84 @@ mod tests {
             dependency_roots(
                 Path::new("/repo"),
                 &selected,
-                &serde_json::to_vec(&incomplete).expect("encode graph")
+                &serde_json::from_value(incomplete.clone()).expect("decode graph")
             )
             .is_err()
         );
+    }
+    #[tokio::test]
+    async fn an_independent_app_workspace_owns_its_target_and_native_watches() {
+        let root =
+            std::env::temp_dir().join(format!("wamn-native-app-workspace-{}", std::process::id()));
+        let app = root.join("different-directory");
+        let ui = app.join("ui");
+        let generated = app.join("generated/receiving-tui");
+        std::fs::create_dir_all(ui.join("src")).unwrap();
+        std::fs::create_dir_all(generated.join("src")).unwrap();
+        std::fs::copy(roots()[0].join("wamn.json"), app.join("wamn.json")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[workspace]\nmembers = []\nexclude = [\"different-directory\"]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            app.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"ui\", \"generated/receiving-tui\"]\nresolver = \"3\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            ui.join("Cargo.toml"),
+            r#"[package]
+name = "warehouse-desk"
+version = "0.1.0"
+edition = "2024"
+[[bin]]
+name = "dock-screen"
+path = "src/main.rs"
+[dependencies]
+screens = { package = "wamn-generated-receiving-tui", path = "../generated/receiving-tui" }
+"#,
+        )
+        .unwrap();
+        std::fs::write(generated.join("Cargo.toml"), "[package]\nname = \"wamn-generated-receiving-tui\"\nversion = \"0.1.0\"\nedition = \"2024\"\n").unwrap();
+        std::fs::write(ui.join("src/main.rs"), "fn main() {}\n").unwrap();
+        std::fs::write(generated.join("src/lib.rs"), "pub fn screen() {}\n").unwrap();
+        std::fs::write(
+            app.join("Cargo.lock"),
+            r#"version = 4
+[[package]]
+name = "wamn-generated-receiving-tui"
+version = "0.1.0"
+[[package]]
+name = "warehouse-desk"
+version = "0.1.0"
+dependencies = ["wamn-generated-receiving-tui"]
+"#,
+        )
+        .unwrap();
+        let selected = select_component(&[app.clone()], "receiving").unwrap();
+        let metadata = read_metadata(&selected.manifest_path, false).await.unwrap();
+        assert_eq!(metadata.workspace_root, app);
+        let target = operator_target(&selected, &metadata).unwrap();
+        assert_eq!(target.cargo_package, "warehouse-desk");
+        assert_eq!(target.binary, "dock-screen");
+        assert_eq!(target.manifest_path, ui.join("Cargo.toml"));
+        let executables = build(&[app.clone()])
+            .await
+            .expect("build the independent app");
+        assert!(executables["receiving"].is_file());
+        assert!(
+            std::process::Command::new(&executables["receiving"])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let inputs = native_dependency_roots(&root, &[selected]).await.unwrap();
+        assert_eq!(inputs.directories, [generated, ui]);
+        assert!(inputs.files.contains(&app.join("Cargo.toml")));
+        assert!(inputs.files.contains(&app.join("Cargo.lock")));
+        assert!(inputs.files.contains(&app.join(".cargo/config.toml")));
+        assert!(!inputs.files.contains(&root.join("Cargo.lock")));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -145,18 +145,8 @@ impl DevInvalidationSource for NativeInvalidations {
         // a missing native manifest before this refresh needs it.
         let packages = super::native_tui::operator_packages(&self.package_roots)
             .map_err(|source| CommandInvalidationError::new("read native package names", source))?;
-        if packages.iter().all(|package| {
-            package
-                .root
-                .join("generated")
-                .join(format!("{}-tui/Cargo.toml", package.component))
-                .is_file()
-        }) {
-            let selected = packages
-                .iter()
-                .map(|package| package.cargo_package.clone())
-                .collect::<Vec<_>>();
-            match super::native_tui::native_dependency_roots(&self.repository_root, &selected).await
+        if packages.iter().all(|package| package.manifest_path.is_file()) {
+            match super::native_tui::native_dependency_roots(&self.repository_root, &packages).await
             {
                 Ok(inputs) => self
                     .filesystem

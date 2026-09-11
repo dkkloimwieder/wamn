@@ -686,7 +686,7 @@ impl ProductionDevStageRunner {
             bytes: output.stdout.into_boxed_slice(),
             plan,
         });
-        self.native_binaries = super::native_tui::build(self.git.repository_root(), &roots)
+        self.native_binaries = super::native_tui::build(&roots)
             .await
             .map_err(|source| {
                 ProductionDevStageError::owner("build native operator terminals", source.into())

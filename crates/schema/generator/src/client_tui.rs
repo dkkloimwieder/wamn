@@ -3,7 +3,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde_json::Value;
 
@@ -138,8 +139,8 @@ pub struct OperatorCrate {
 
 /// Read a component's explicit operator from its app's UI Cargo manifest.
 ///
-/// Implicit Cargo binaries are not selected here. The current native build
-/// still builds packages through the repository workspace.
+/// Implicit Cargo binaries are not selected here.
+/// Cargo owns workspace resolution.
 ///
 /// # Errors
 /// Refuses unreadable or invalid manifests and ambiguous explicit binaries.
@@ -153,18 +154,40 @@ pub fn read_operator(package_root: &Path, component: &str) -> io::Result<Option<
     let manifest: toml::Value = toml::from_str(&source)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let generated = format!("wamn-generated-{}-tui", component.replace('_', "-"));
-    let consumes = manifest
-        .get("dependencies")
-        .and_then(toml::Value::as_table)
-        .is_some_and(|dependencies| {
-            dependencies.iter().any(|(name, dependency)| {
-                dependency
-                    .get("package")
-                    .and_then(toml::Value::as_str)
-                    .unwrap_or(name)
-                    == generated
-            })
-        });
+    let dependencies = manifest.get("dependencies").and_then(toml::Value::as_table);
+    let workspace = if dependencies.is_some_and(|dependencies| {
+        dependencies.values().any(|dependency| {
+            dependency.get("workspace").and_then(toml::Value::as_bool) == Some(true)
+        })
+    }) {
+        let workspace = cargo_workspace_manifest(&path)?;
+        Some(
+            toml::from_str::<toml::Value>(&std::fs::read_to_string(workspace)?)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
+        )
+    } else {
+        None
+    };
+    let consumes = dependencies.is_some_and(|dependencies| {
+        dependencies.iter().any(|(name, declared)| {
+            let dependency =
+                if declared.get("workspace").and_then(toml::Value::as_bool) == Some(true) {
+                    workspace
+                        .as_ref()
+                        .and_then(|workspace| workspace.get("workspace"))
+                        .and_then(|workspace| workspace.get("dependencies"))
+                        .and_then(|dependencies| dependencies.get(name))
+                        .unwrap_or(declared)
+                } else {
+                    declared
+                };
+            dependency
+                .get("package")
+                .and_then(toml::Value::as_str)
+                .unwrap_or(name)
+                == generated
+        })
+    });
     if !consumes {
         return Ok(None);
     }
@@ -198,6 +221,112 @@ pub fn read_operator(package_root: &Path, component: &str) -> io::Result<Option<
     }))
 }
 
+/// Resolve the generated UI's workspace from an existing Cargo declaration.
+///
+/// # Errors
+/// Refuses missing manifests or a workspace that Cargo cannot locate.
+pub fn read_tui_workspace(package_root: &Path, component: &str) -> io::Result<String> {
+    let root = package_root.canonicalize()?;
+    let generated = root.join("generated").join(format!("{component}-tui"));
+    let manifest = [
+        generated.join("Cargo.toml"),
+        root.join("Cargo.toml"),
+        root.join("ui/Cargo.toml"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "{} needs a Cargo manifest declaring the native UI workspace",
+                root.display()
+            ),
+        )
+    })?;
+    let declared: toml::Value = toml::from_str(&std::fs::read_to_string(&manifest)?)
+        .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
+    let manifest = if let Some(workspace) = declared
+        .get("package")
+        .and_then(|package| package.get("workspace"))
+        .and_then(toml::Value::as_str)
+    {
+        manifest
+            .parent()
+            .expect("selected Cargo manifest has a parent")
+            .join(workspace)
+            .join("Cargo.toml")
+    } else {
+        manifest
+    };
+    let manifest = cargo_workspace_manifest(&manifest)?;
+    let workspace = manifest
+        .parent()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Cargo workspace has no directory",
+            )
+        })?
+        .canonicalize()?;
+    let generated = if generated.exists() {
+        generated.canonicalize()?
+    } else {
+        generated
+    };
+    let source = generated.components().collect::<Vec<_>>();
+    let target = workspace.components().collect::<Vec<_>>();
+    let shared = source
+        .iter()
+        .zip(&target)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let relative = std::iter::repeat_n(Path::new(".."), source.len() - shared)
+        .chain(
+            target[shared..]
+                .iter()
+                .map(|part| Path::new(part.as_os_str())),
+        )
+        .collect::<PathBuf>();
+    relative.to_str().map(str::to_owned).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Cargo workspace path is not UTF-8",
+        )
+    })
+}
+
+fn cargo_workspace_manifest(manifest: &Path) -> io::Result<PathBuf> {
+    let manifest = manifest.canonicalize()?;
+    let output = Command::new("cargo")
+        .current_dir(
+            manifest
+                .parent()
+                .ok_or_else(|| io::Error::other("Cargo manifest has no directory"))?,
+        )
+        .args(["locate-project", "--workspace", "--manifest-path"])
+        .arg(&manifest)
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other(format!(
+            "Cargo could not locate the UI workspace: {}",
+            String::from_utf8_lossy(&output.stderr).trim_end()
+        )));
+    }
+    let located: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|source| io::Error::new(io::ErrorKind::InvalidData, source))?;
+    located
+        .get("root")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Cargo omitted the workspace manifest",
+            )
+        })
+}
+
 /// Emit the selected component's operator beside its package client bindings.
 ///
 /// # Errors
@@ -206,6 +335,7 @@ pub fn emit_tui(
     ir: &ClientContractIr,
     component: &str,
     operator: Option<&OperatorCrate>,
+    workspace: &str,
 ) -> Result<Vec<GeneratedFile>, ClientTuiError> {
     if !component
         .bytes()
@@ -223,7 +353,7 @@ pub fn emit_tui(
     let mut files = BTreeMap::new();
     files.insert(
         format!("{prefix}/Cargo.toml"),
-        cargo_manifest(&slug, operator),
+        cargo_manifest(&slug, operator, workspace),
     );
     if operator.is_none() {
         files.insert(
@@ -290,14 +420,15 @@ pub fn emit_tui(
         .collect())
 }
 
-fn cargo_manifest(slug: &str, operator: Option<&OperatorCrate>) -> String {
+fn cargo_manifest(slug: &str, operator: Option<&OperatorCrate>, workspace: &str) -> String {
+    let workspace = toml::Value::String(workspace.to_owned());
     let binary = if operator.is_none() {
         format!("[[bin]]\nname = \"wamn-{slug}-tui\"\npath = \"src/main.rs\"\n\n")
     } else {
         String::new()
     };
     format!(
-        "# @generated; do not edit.\n[package]\nworkspace = \"../../../..\"\nname = \"wamn-generated-{slug}-tui\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\n\n{binary}[dependencies]\nwamn-client = {{ workspace = true }}\nwamn-client-tui = {{ workspace = true }}\nwamn-client-terminal = {{ workspace = true }}\nserde_json = {{ workspace = true }}\nchrono = {{ workspace = true }}\nrust_decimal = {{ workspace = true }}\nuuid = {{ workspace = true }}\ntokio = {{ workspace = true, features = [\"macros\", \"rt-multi-thread\"] }}\n\n[lints]\nworkspace = true\n"
+        "# @generated; do not edit.\n[package]\nworkspace = {workspace}\nname = \"wamn-generated-{slug}-tui\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\n\n{binary}[dependencies]\nwamn-client = {{ workspace = true }}\nwamn-client-tui = {{ workspace = true }}\nwamn-client-terminal = {{ workspace = true }}\nserde_json = {{ workspace = true }}\nchrono = {{ workspace = true }}\nrust_decimal = {{ workspace = true }}\nuuid = {{ workspace = true }}\ntokio = {{ workspace = true, features = [\"macros\", \"rt-multi-thread\"] }}\n\n[lints]\nworkspace = true\n"
     )
 }
 
