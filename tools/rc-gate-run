@@ -19,7 +19,8 @@ case "${1-}" in
   create)
     cluster=$2; work=$3; host_image=$4; gates_image=$5; postgres_image=$6
     kind create cluster --name "$cluster" --config "$work/kind.yaml" --kubeconfig "$work/kubeconfig"
-    kind load docker-image "$host_image" "$gates_image" --name "$cluster"
+    kind load docker-image "$gates_image" --name "$cluster"
+    kind load docker-image "$host_image" --name "$cluster"
     docker run --detach --name "$cluster-postgres" --network kind \
       --publish 127.0.0.1::5432 --env POSTGRES_HOST_AUTH_METHOD=trust "$postgres_image"
     docker run --detach --name "$cluster-nats" --network kind \

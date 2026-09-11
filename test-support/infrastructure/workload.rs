@@ -56,12 +56,19 @@ pub async fn image_ready(
         names.len() == 3,
         "kind must report exactly three distinct nodes"
     );
+    let mut inspections = Vec::new();
+    for node in names {
+        let bytes = checked(Command::new(lifecycle).args(["node-image", &node, image])).await?;
+        fs::write(evidence.join(format!("node-image-{node}.json")), &bytes)?;
+        inspections.push((node, bytes));
+    }
     let mut rows = Vec::new();
     let mut expected = None;
-    for node in names {
-        let observed =
-            command_json(Command::new(lifecycle).args(["node-image", &node, image])).await?;
-        let tuple = image_tuple(&observed)?;
+    for (node, bytes) in inspections {
+        let observed = serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse image {image} on {node}"))?;
+        let tuple =
+            image_tuple(&observed).with_context(|| format!("check image {image} on {node}"))?;
         if let Some(expected) = &expected {
             ensure!(
                 expected == &tuple,
@@ -1004,6 +1011,46 @@ mod tests {
         include_str!("../../docs/perf/2026.09/1-component-cache/journey3/hosts.json");
     const PODS: &str =
         include_str!("../../docs/perf/2026.09/1-component-cache/journey3/host-pods.json");
+
+    #[test]
+    fn recorded_images_require_one_runtime_digest_and_a_config_id() {
+        // Both inputs are historical native output; neither is the failed RC inspection.
+        let identity: Value = serde_json::from_str(include_str!(
+            "../../docs/perf/2026.09/ctc8-15-1-identity/deployed-001/identity-node-image.json"
+        ))
+        .unwrap();
+        let gates: Value = serde_json::from_str(include_str!(
+            "../../docs/perf/2026.09/ctc8-15-1-identity/deployed-001/gates-node-image.json"
+        ))
+        .unwrap();
+        let expected = (
+            "sha256:a3dafaa1a09101a5a4eaaeedd12fc21542a8bb4b3c66fb8dd3fa01850ec16021".to_owned(),
+            "sha256:6d7e01c8efdb85c004da7c5924b7b83a8489f3ab97b55a0aaeed45601e795e77".to_owned(),
+        );
+        assert_eq!(image_tuple(&identity).unwrap(), expected);
+        assert!(image_tuple(&gates).is_err());
+
+        let mut alias = identity.clone();
+        alias["status"]["repoDigests"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(format!("another-repository@{}", expected.0)));
+        assert_eq!(image_tuple(&alias).unwrap(), expected);
+
+        let mut ambiguous = identity.clone();
+        ambiguous["status"]["repoDigests"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(format!("another-repository@{}", expected.1)));
+        assert!(image_tuple(&ambiguous).is_err());
+
+        let mut missing = identity.clone();
+        missing["status"]["repoDigests"] = json!(["repository-without-a-digest"]);
+        assert!(image_tuple(&missing).is_err());
+        let mut invalid_config = identity;
+        invalid_config["status"]["id"] = json!("invalid");
+        assert!(image_tuple(&invalid_config).is_err());
+    }
 
     #[test]
     fn refused_environment_cannot_carry_a_host_or_ready_condition() {
