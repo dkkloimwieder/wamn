@@ -1,0 +1,40 @@
+{
+  "observed_utc": "2026-09-11T20:41:21.060889+00:00",
+  "owned_name": "wamn-receiving-5acf0a38e8c5445cb8c9159bcba50d7f",
+  "private_directory": "/tmp/wamn-receiving-5acf0a38e8c5445cb8c9159bcba50d7f",
+  "private_directory_exists": false,
+  "commands": [
+    {
+      "command": [
+        "docker",
+        "ps",
+        "-a",
+        "--format",
+        "{{.Names}}"
+      ],
+      "exit_code": 0,
+      "owned_name_matches": []
+    },
+    {
+      "command": [
+        "kind",
+        "get",
+        "clusters"
+      ],
+      "exit_code": 0,
+      "owned_name_matches": []
+    },
+    {
+      "command": [
+        "docker",
+        "image",
+        "ls",
+        "--format",
+        "{{.Repository}}:{{.Tag}}"
+      ],
+      "exit_code": 0,
+      "owned_name_matches": []
+    }
+  ],
+  "scope": "State observed after the test process exited. This is separate from automatic cleanup result capture."
+}
