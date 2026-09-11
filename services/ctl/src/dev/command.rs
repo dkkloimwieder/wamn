@@ -48,11 +48,11 @@ pub struct DevCommandArgs {
     #[arg(long)]
     hold: bool,
 
-    /// Open the developer console, or the named package's operator terminal.
-    #[arg(long, num_args = 0..=1, value_name = "PACKAGE")]
+    /// Open the developer console, or the named component's operator terminal.
+    #[arg(long, num_args = 0..=1, value_name = "COMPONENT")]
     #[allow(
         clippy::option_option,
-        reason = "clap distinguishes omitted --tui, bare --tui, and --tui PACKAGE"
+        reason = "clap distinguishes omitted --tui, bare --tui, and --tui COMPONENT"
     )]
     tui: Option<Option<String>>,
 }
@@ -91,14 +91,14 @@ impl DevCommandArgs {
         matches!(self.tui, Some(None))
     }
 
-    /// Select the generated terminal owned by this package directory.
+    /// Select the generated terminal owned by this declared component.
     #[must_use]
-    pub fn with_package_tui(mut self, package: String) -> Self {
-        self.tui = Some(Some(package));
+    pub fn with_component_tui(mut self, component: String) -> Self {
+        self.tui = Some(Some(component));
         self
     }
 
-    fn operator_package(&self) -> Option<&str> {
+    fn operator_component(&self) -> Option<&str> {
         self.tui.as_ref().and_then(Option::as_deref)
     }
 }
@@ -149,7 +149,7 @@ impl DevInvalidationSource for NativeInvalidations {
             package
                 .root
                 .join("generated")
-                .join(format!("{}-tui/Cargo.toml", package.directory))
+                .join(format!("{}-tui/Cargo.toml", package.component))
                 .is_file()
         }) {
             let selected = packages
@@ -344,10 +344,10 @@ impl DevSession {
         let bytes = fs::read(&args.config)
             .with_context(|| format!("read development config {}", args.config.display()))?;
         let config = parse_config(&bytes).context("validate development config")?;
-        let operator_package = if let Some(selected) = args.operator_package() {
+        let operator_component = if let Some(selected) = args.operator_component() {
             anyhow::ensure!(
                 config.operator_bearer_token().is_some(),
-                "--tui <package> requires operator_bearer_token in dev.json"
+                "--tui <component> requires operator_bearer_token in dev.json"
             );
             let packages = resolve_dev_packages(&config, &args.overlay_root)
                 .context("resolve operator package closure")?;
@@ -357,7 +357,7 @@ impl DevSession {
                 .map(|package| package.root().to_owned())
                 .chain(std::iter::once(packages.overlay_root().to_owned()))
                 .collect::<Vec<_>>();
-            Some(super::native_tui::select_package(&roots, selected)?)
+            Some(super::native_tui::select_component(&roots, selected)?)
         } else {
             None
         };
@@ -377,7 +377,7 @@ impl DevSession {
             .context("start development observation readers")?;
         let (shutdown, shutdown_receiver) = watch::channel(false);
         let control = DevSessionControl { shutdown };
-        if let Some(package) = operator_package {
+        if let Some(package) = operator_component {
             runner.configure_operator(package, super::operator::spawn(control.clone()));
         }
 
@@ -468,7 +468,7 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
         // one-shot caller does not carry it on the stack.
         return Box::pin(super::tui::run(args)).await;
     }
-    if args.operator_package().is_some() {
+    if args.operator_component().is_some() {
         let mut session = DevSession::prepare(args).await?;
         let mut observer = OperatorObserver {
             read: session.read_handle(),
@@ -842,7 +842,7 @@ mod tests {
 
         let operator = parse(&["--watch", "--tui", "receiving"])
             .expect("parse generated operator session without hold");
-        assert_eq!(operator.operator_package(), Some("receiving"));
+        assert_eq!(operator.operator_component(), Some("receiving"));
         assert!(!operator.tui());
         assert!(!operator.hold());
         assert!(operator.watch);

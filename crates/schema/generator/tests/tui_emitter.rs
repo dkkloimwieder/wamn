@@ -2,19 +2,28 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::json;
-use wamn_schema_generator::GeneratedFile;
 use wamn_schema_generator::client_ir::{ClientContractIr, ResponseIr, RouteIr};
 use wamn_schema_generator::client_rust::emit_rust_client;
-use wamn_schema_generator::client_tui::{ClientTuiErrorKind, emit_tui};
+use wamn_schema_generator::client_tui::{ClientTuiErrorKind, component_contract, emit_tui};
+use wamn_schema_generator::{GeneratedFile, PackageManifest};
 
 fn release(package: &str) -> ClientContractIr {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let manifest = manifest(package);
     ClientContractIr::from_release(
-        package,
+        &manifest.package.id,
         &root.join(format!("packages/{package}/generated/contracts")),
         &root.join(format!("packages/{package}/publication/attachments.json")),
     )
     .unwrap_or_else(|error| panic!("{package} projects: {error}"))
+}
+
+fn manifest(package: &str) -> PackageManifest {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    PackageManifest::from_slice(
+        &std::fs::read(root.join(format!("packages/{package}/wamn.json"))).unwrap(),
+    )
+    .unwrap()
 }
 
 fn source<'a>(files: &'a [GeneratedFile], path: &str) -> &'a str {
@@ -51,8 +60,25 @@ fn spec<'a>(source: &'a str, name: &str) -> &'a str {
 fn shipped_operator_crates_are_deterministic_and_cover_each_callable_operation() {
     for package in ["receiving", "client_acme_receiving", "wms"] {
         let ir = release(package);
-        let first = emit_tui(&ir, package).unwrap();
-        let second = emit_tui(&ir, package).unwrap();
+        let selected = component_contract(&ir, &manifest(package), package).unwrap();
+        assert_eq!(
+            selected, ir,
+            "the sole declared component owns the existing release"
+        );
+        let first = emit_tui(&selected, package).unwrap();
+        let second = emit_tui(&selected, package).unwrap();
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .join("packages")
+            .join(package);
+        for file in &first {
+            assert_eq!(
+                file.bytes(),
+                std::fs::read(root.join(file.path())).unwrap(),
+                "{package}/{}",
+                file.path()
+            );
+        }
         assert_eq!(first, second, "{package}");
         assert_eq!(first.len(), 4 + ir.models.len());
         let library = source(&first, &format!("generated/{package}-tui/src/lib.rs"));
@@ -103,6 +129,68 @@ fn shipped_operator_crates_are_deterministic_and_cover_each_callable_operation()
             }
         }
     }
+}
+
+#[test]
+fn two_declared_components_render_only_their_owned_operations() {
+    let ir = release("receiving");
+    let mut value = serde_json::to_value(manifest("receiving")).unwrap();
+    value["connections"]["reporting"] = value["connections"]["postgres"].clone();
+    value["components"]["reports"] = json!({"connections":["postgres", "reporting"]});
+    for model in value["models"].as_object_mut().unwrap().values_mut() {
+        for operation in model["operations"].as_object_mut().unwrap().values_mut() {
+            operation["component"] = json!("receiving");
+        }
+    }
+    for (name, operation) in value["custom_operations"].as_object_mut().unwrap() {
+        operation["component"] = json!(if name == "location.list" {
+            "reports"
+        } else {
+            "receiving"
+        });
+    }
+    let manifest = PackageManifest::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+    let reports = component_contract(&ir, &manifest, "reports").unwrap();
+    let receiving = component_contract(&ir, &manifest, "receiving").unwrap();
+    let reports_files = emit_tui(&reports, "reports").unwrap();
+    let receiving_files = emit_tui(&receiving, "receiving").unwrap();
+    let report_operations = reports
+        .models
+        .iter()
+        .flat_map(|model| &model.operations)
+        .collect::<Vec<_>>();
+    assert_eq!(report_operations.len(), 1);
+    assert_eq!(
+        report_operations[0].operation,
+        "wamn-receiving:location/list@1.0.0"
+    );
+    assert!(
+        source(&reports_files, "generated/reports-tui/src/lib.rs")
+            .contains("screens::location::list(binding)")
+    );
+    assert!(
+        !source(&receiving_files, "generated/receiving-tui/src/lib.rs")
+            .contains("screens::location::list")
+    );
+    assert_eq!(
+        receiving
+            .models
+            .iter()
+            .map(|model| model.operations.len())
+            .sum::<usize>()
+            + 1,
+        ir.models
+            .iter()
+            .map(|model| model.operations.len())
+            .sum::<usize>()
+    );
+    assert!(component_contract(&ir, &manifest, "wamn_receiving").is_err());
+    value["custom_operations"]["location.list"]
+        .as_object_mut()
+        .unwrap()
+        .remove("component");
+    let ambiguous = PackageManifest::from_slice(&serde_json::to_vec(&value).unwrap()).unwrap();
+    assert!(component_contract(&ir, &ambiguous, "reports").is_err());
 }
 
 #[test]

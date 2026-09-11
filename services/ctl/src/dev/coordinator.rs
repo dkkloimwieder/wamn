@@ -1235,7 +1235,7 @@ impl ProductionDevStageRunner {
             let launched = async {
                 let executable = self
                     .native_binaries
-                    .get(&package.directory)
+                    .get(&package.component)
                     .ok_or_else(|| {
                         ProductionDevStageError::invalid(
                             "launch operator terminal",

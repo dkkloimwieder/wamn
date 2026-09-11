@@ -9,12 +9,13 @@ use std::process::Output;
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
+use wamn_schema_generator::PackageManifest;
 
-/// Generated names belong to the authored package directory.
+/// Generated names belong to the declared component.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct NativePackage {
     pub root: PathBuf,
-    pub directory: String,
+    pub component: String,
     pub cargo_package: String,
     pub binary: String,
 }
@@ -73,59 +74,71 @@ pub(super) fn generated_packages(roots: &[PathBuf]) -> Result<Vec<NativePackage>
     let mut packages = BTreeMap::new();
     let mut cargo_names = BTreeSet::new();
     for root in roots {
-        let directory = root
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                NativeTuiError::new(
+        let path = root.join("wamn.json");
+        let bytes = std::fs::read(&path).map_err(|source| {
+            NativeTuiError::with_source(
+                "read operator component",
+                path.display().to_string(),
+                source,
+            )
+        })?;
+        let manifest = PackageManifest::from_slice(&bytes).map_err(|source| {
+            NativeTuiError::with_source(
+                "read operator component",
+                path.display().to_string(),
+                source,
+            )
+        })?;
+        for component in manifest.components.keys() {
+            if root.components().any(|part| part == Component::ParentDir)
+                || !component
+                    .bytes()
+                    .next()
+                    .is_some_and(|first| first.is_ascii_lowercase())
+                || !component.bytes().all(|byte| {
+                    byte.is_ascii_lowercase()
+                        || byte.is_ascii_digit()
+                        || matches!(byte, b'_' | b'-')
+                })
+            {
+                return Err(NativeTuiError::new(
                     "name generated operator package",
-                    format!("{} has no UTF-8 directory name", root.display()),
-                )
-            })?;
-        if root.components().any(|part| part == Component::ParentDir)
-            || !directory
-                .bytes()
-                .next()
-                .is_some_and(|first| first.is_ascii_lowercase())
-            || !directory.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
-            })
-        {
-            return Err(NativeTuiError::new(
-                "name generated operator package",
-                format!("{directory:?} has no safe generated spelling"),
-            ));
+                    format!("{component:?} has no safe generated spelling"),
+                ));
+            }
+            let slug = component.replace('_', "-");
+            let package = NativePackage {
+                root: root.clone(),
+                component: component.to_owned(),
+                cargo_package: format!("wamn-generated-{slug}-tui"),
+                binary: format!("wamn-{slug}-tui"),
+            };
+            if packages.contains_key(component)
+                || !cargo_names.insert(package.cargo_package.clone())
+            {
+                return Err(NativeTuiError::new(
+                    "select generated operator package",
+                    format!("{component:?} is ambiguous in the declared package closure"),
+                ));
+            }
+            packages.insert(component.to_owned(), package);
         }
-        let slug = directory.replace('_', "-");
-        let package = NativePackage {
-            root: root.clone(),
-            directory: directory.to_owned(),
-            cargo_package: format!("wamn-generated-{slug}-tui"),
-            binary: format!("wamn-{slug}-tui"),
-        };
-        if packages.contains_key(directory) || !cargo_names.insert(package.cargo_package.clone()) {
-            return Err(NativeTuiError::new(
-                "select generated operator package",
-                format!("{directory:?} is ambiguous in the declared package closure"),
-            ));
-        }
-        packages.insert(directory.to_owned(), package);
     }
     Ok(packages.into_values().collect())
 }
 
-/// Select exactly one authored directory from the declared package closure.
-pub(super) fn select_package(
+/// Select one declared component from the package closure.
+pub(super) fn select_component(
     roots: &[PathBuf],
     selector: &str,
 ) -> Result<NativePackage, NativeTuiError> {
     generated_packages(roots)?
         .into_iter()
-        .find(|package| package.directory == selector)
+        .find(|package| package.component == selector)
         .ok_or_else(|| {
             NativeTuiError::new(
                 "select generated operator package",
-                format!("{selector:?} is not a package directory in the declared closure"),
+                format!("{selector:?} is not a component in the declared package closure"),
             )
         })
 }
@@ -191,7 +204,7 @@ fn artifact_paths(
 ) -> Result<BTreeMap<String, PathBuf>, NativeTuiError> {
     let expected = packages
         .iter()
-        .map(|package| (package.binary.as_str(), package.directory.as_str()))
+        .map(|package| (package.binary.as_str(), package.component.as_str()))
         .collect::<BTreeMap<_, _>>();
     let mut executables = BTreeMap::new();
     for line in stdout
@@ -211,7 +224,7 @@ fn artifact_paths(
         let Some(binary) = message.pointer("/target/name").and_then(Value::as_str) else {
             continue;
         };
-        let Some(directory) = expected.get(binary) else {
+        let Some(component) = expected.get(binary) else {
             continue;
         };
         let is_binary = message
@@ -237,7 +250,7 @@ fn artifact_paths(
                 format!("{binary} has a relative executable path"),
             ));
         }
-        if let Some(previous) = executables.insert((*directory).to_owned(), executable.clone())
+        if let Some(previous) = executables.insert((*component).to_owned(), executable.clone())
             && previous != executable
         {
             return Err(NativeTuiError::new(
@@ -247,7 +260,7 @@ fn artifact_paths(
         }
     }
     for package in packages {
-        if !executables.contains_key(&package.directory) {
+        if !executables.contains_key(&package.component) {
             return Err(NativeTuiError::new(
                 "read native Cargo artifacts",
                 format!("Cargo emitted no binary named {}", package.binary),
@@ -429,52 +442,78 @@ mod tests {
     use super::*;
 
     fn roots() -> Vec<PathBuf> {
-        [
-            "/repo/packages/receiving",
-            "/repo/packages/client_acme_receiving",
-        ]
-        .into_iter()
-        .map(PathBuf::from)
-        .collect()
+        ["receiving", "client_acme_receiving"]
+            .into_iter()
+            .map(|name| {
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../packages")
+                    .join(name)
+                    .canonicalize()
+                    .expect("resolve source package root")
+            })
+            .collect()
     }
 
     #[test]
-    fn selection_uses_the_declared_directory_and_emitter_spelling() {
+    fn selection_uses_the_declared_component_and_emitter_spelling() {
         let selected =
-            select_package(&roots(), "client_acme_receiving").expect("select exact directory");
+            select_component(&roots(), "client_acme_receiving").expect("select exact component");
         assert_eq!(
             selected.cargo_package,
             "wamn-generated-client-acme-receiving-tui"
         );
         assert_eq!(selected.binary, "wamn-client-acme-receiving-tui");
-        assert_eq!(
-            selected.root,
-            Path::new("/repo/packages/client_acme_receiving")
-        );
-        assert!(select_package(&roots(), "wamn_receiving").is_err());
-        assert!(select_package(&roots(), "../receiving").is_err());
-        assert!(select_package(&roots(), "client-acme-receiving").is_err());
+        assert_eq!(selected.root, roots()[1]);
+        assert!(select_component(&roots(), "wamn_receiving").is_err());
+        assert!(select_component(&roots(), "../receiving").is_err());
+        assert!(select_component(&roots(), "client-acme-receiving").is_err());
     }
 
     #[test]
-    fn invalid_names_and_colliding_generated_names_refuse() {
-        for root in [
-            "/repo/packages/../receiving",
-            "/repo/packages/Receiving",
-            "/repo/packages/1receiving",
-            "/repo/packages/réception",
-        ] {
-            assert!(
-                generated_packages(&[PathBuf::from(root)]).is_err(),
-                "{root}"
-            );
+    fn component_names_survive_a_directory_rename_and_collisions_refuse() {
+        let root = std::env::temp_dir().join(format!("wamn-native-names-{}", std::process::id()));
+        std::fs::create_dir_all(&root).expect("create renamed app directory");
+        let mut manifest: Value = serde_json::from_slice(
+            &std::fs::read(roots()[0].join("wamn.json")).expect("read source manifest"),
+        )
+        .expect("parse source manifest");
+        for names in [vec!["receiving"], vec!["receiving", "dispatch"]] {
+            manifest["components"] = names
+                .iter()
+                .map(|name| ((*name).to_owned(), json!({"connections":["postgres"]})))
+                .collect::<serde_json::Map<_, _>>()
+                .into();
+            std::fs::write(
+                root.join("wamn.json"),
+                serde_json::to_vec(&manifest).unwrap(),
+            )
+            .unwrap();
+            let packages = generated_packages(&[root.clone()]).expect("read declared components");
+            assert_eq!(packages.len(), names.len());
+            let selected = select_component(&[root.clone()], "receiving").unwrap();
+            assert_eq!(selected.cargo_package, "wamn-generated-receiving-tui");
+            assert_eq!(selected.root, root);
+            assert!(generated_packages(&[root.clone(), roots()[0].clone()]).is_err());
         }
-        for pair in [
-            ["/a/receiving", "/b/receiving"],
-            ["/a/client_acme", "/b/client-acme"],
+        for names in [
+            vec!["Receiving"],
+            vec!["1receiving"],
+            vec!["../receiving"],
+            vec!["client_acme", "client-acme"],
         ] {
-            assert!(generated_packages(&pair.map(PathBuf::from)).is_err());
+            manifest["components"] = names
+                .iter()
+                .map(|name| ((*name).to_owned(), json!({"connections":["postgres"]})))
+                .collect::<serde_json::Map<_, _>>()
+                .into();
+            std::fs::write(
+                root.join("wamn.json"),
+                serde_json::to_vec(&manifest).unwrap(),
+            )
+            .unwrap();
+            assert!(generated_packages(&[root.clone()]).is_err());
         }
+        std::fs::remove_dir_all(root).expect("remove fixture");
     }
 
     fn artifact(binary: &str, executable: &Value) -> Value {
@@ -518,8 +557,7 @@ mod tests {
 
     #[test]
     fn missing_relative_and_conflicting_executables_refuse() {
-        let packages =
-            generated_packages(&[PathBuf::from("/repo/packages/receiving")]).expect("name package");
+        let packages = generated_packages(&roots()[..1]).expect("name package");
         for executable in [Value::Null, json!("target/debug/wamn-receiving-tui")] {
             assert!(
                 artifact_paths(

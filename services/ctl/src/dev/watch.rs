@@ -625,6 +625,7 @@ impl Error for FilesystemInvalidationError {
 struct PackageRoot {
     root: PathBuf,
     authored_inputs: BTreeSet<PathBuf>,
+    native_outputs: Vec<PathBuf>,
 }
 
 impl PackageRoot {
@@ -656,6 +657,7 @@ impl PackageRoot {
         })?;
         Ok(Self {
             authored_inputs: authored_inputs(&root, &manifest),
+            native_outputs: native_output_paths(&root, &manifest),
             root,
         })
     }
@@ -669,6 +671,7 @@ impl PackageRoot {
             return;
         };
         self.authored_inputs = authored_inputs(&self.root, &manifest);
+        self.native_outputs = native_output_paths(&self.root, &manifest);
     }
 
     fn stage(&self, path: &Path) -> Option<DevStage> {
@@ -746,10 +749,16 @@ fn is_authored_input(path: impl AsRef<Path>) -> bool {
 /// so duplicate notifications for the same bytes do not request another run.
 #[derive(Clone, Default)]
 pub(super) struct GeneratedNativeOutputs {
-    packages: std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, NativeOutputFiles>>>,
+    packages: std::sync::Arc<std::sync::Mutex<BTreeMap<PathBuf, NativeOutputSnapshot>>>,
 }
 
 type NativeOutputFiles = BTreeMap<PathBuf, Vec<u8>>;
+
+#[derive(Debug)]
+struct NativeOutputSnapshot {
+    roots: Vec<PathBuf>,
+    files: NativeOutputFiles,
+}
 
 impl fmt::Debug for GeneratedNativeOutputs {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -762,11 +771,18 @@ impl fmt::Debug for GeneratedNativeOutputs {
 impl GeneratedNativeOutputs {
     /// Call immediately after this package's own generation succeeds.
     pub(super) fn acknowledge(&self, package: &Path) -> Result<(), FilesystemInvalidationError> {
-        let files = native_output_files(package)?;
+        let paths = PackageRoot::read(package)?.native_outputs;
+        let files = native_output_files(&paths)?;
         self.packages
             .lock()
             .expect("native output snapshot mutex is not poisoned")
-            .insert(package.to_owned(), files);
+            .insert(
+                package.to_owned(),
+                NativeOutputSnapshot {
+                    roots: paths,
+                    files,
+                },
+            );
         Ok(())
     }
 
@@ -784,43 +800,43 @@ impl GeneratedNativeOutputs {
                 change
                     .path
                     .as_deref()
-                    .is_some_and(|path| affects_native_output(package, path))
+                    .is_some_and(|path| affects_native_output(&previous.roots, path))
             }) {
                 continue;
             }
-            let current = native_output_files(package)?;
-            if current != *previous {
+            let current = native_output_files(&previous.roots)?;
+            if current != previous.files {
                 invalidated.insert(package.clone());
-                *previous = current;
+                previous.files = current;
             }
         }
         Ok(invalidated)
     }
 }
 
-fn native_output_paths(package: &Path) -> [PathBuf; 3] {
-    let mut directory = package
-        .file_name()
-        .expect("a declared package root has a directory name")
-        .to_owned();
-    directory.push("-tui");
-    let tui = package.join("generated").join(directory);
-    [
-        tui.join("Cargo.toml"),
-        tui.join("src"),
-        package.join("generated/client"),
-    ]
+fn native_output_paths(package: &Path, manifest: &PackageManifest) -> Vec<PathBuf> {
+    let mut paths = vec![package.join("generated/client")];
+    for component in manifest.components.keys().filter(|name| {
+        let mut parts = Path::new(name).components();
+        matches!(parts.next(), Some(Component::Normal(_))) && parts.next().is_none()
+    }) {
+        let tui = package.join("generated").join(format!("{component}-tui"));
+        paths.extend([tui.join("Cargo.toml"), tui.join("src")]);
+    }
+    paths
 }
 
-fn affects_native_output(package: &Path, path: &Path) -> bool {
-    native_output_paths(package)
+fn affects_native_output(roots: &[PathBuf], path: &Path) -> bool {
+    roots
         .iter()
         .any(|root| path.starts_with(root) || root.starts_with(path))
 }
 
-fn native_output_files(package: &Path) -> Result<NativeOutputFiles, FilesystemInvalidationError> {
+fn native_output_files(
+    roots: &[PathBuf],
+) -> Result<NativeOutputFiles, FilesystemInvalidationError> {
     let mut files = BTreeMap::new();
-    let mut pending = native_output_paths(package).to_vec();
+    let mut pending = roots.to_vec();
     while let Some(path) = pending.pop() {
         let read_error = |source| {
             FilesystemInvalidationError::with_source(
@@ -1024,7 +1040,7 @@ impl WatchRoots {
                 && self
                     .packages
                     .iter()
-                    .any(|package| affects_native_output(&package.root, path)))
+                    .any(|package| affects_native_output(&package.native_outputs, path)))
             .then_some(DevStage::Build);
         }
         let package_stage = self
@@ -1056,9 +1072,11 @@ impl WatchRoots {
                 .packages
                 .iter()
                 .any(|package| package.owns_generated(path))
-                || changed_native
+                || self
+                    .packages
                     .iter()
-                    .any(|package| affects_native_output(package, path)))
+                    .filter(|package| changed_native.contains(&package.root))
+                    .any(|package| affects_native_output(&package.native_outputs, path)))
     }
 
     /// An ANCESTOR of a metadata path counts, and that is deliberate.
@@ -1474,9 +1492,10 @@ impl FilesystemInvalidationSource {
                         event_mask = change.events.bits(),
                         stage_owner = ?self.roots.stage(&path),
                         git_metadata = self.roots.is_git_metadata(&path),
-                        generated_native_output = changed_native
+                        generated_native_output = self.roots.packages
                             .iter()
-                            .any(|package| affects_native_output(package, &path)),
+                            .filter(|package| changed_native.contains(&package.root))
+                            .any(|package| affects_native_output(&package.native_outputs, &path)),
                         "development filesystem input requires rerun"
                     );
                     DevInvalidation::Rerun {
@@ -1980,10 +1999,10 @@ mod tests {
         let paths = [
             repository
                 .package()
-                .join("generated/package-tui/Cargo.toml"),
+                .join("generated/receiving-tui/Cargo.toml"),
             repository
                 .package()
-                .join("generated/package-tui/src/lib.rs"),
+                .join("generated/receiving-tui/src/lib.rs"),
             repository.package().join("generated/client/location.rs"),
         ];
         for path in &paths {
@@ -2249,7 +2268,7 @@ mod tests {
 
         let emitted = repository
             .package()
-            .join("generated/package-tui/src/lib.rs");
+            .join("generated/receiving-tui/src/lib.rs");
         fs::create_dir_all(emitted.parent().expect("generated source parent"))
             .expect("create first generated native source directory");
         fs::write(emitted, "own first emission").expect("emit native source before Build");

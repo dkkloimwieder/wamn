@@ -10,7 +10,7 @@ use anyhow::{Context as _, bail, ensure};
 use clap::{Args, Subcommand};
 use wamn_schema_generator::client_ir::ClientContractIr;
 use wamn_schema_generator::client_rust::emit_rust_client;
-use wamn_schema_generator::client_tui::emit_tui;
+use wamn_schema_generator::client_tui::{component_contract, emit_tui};
 use wamn_schema_generator::{GeneratedFile, PackageManifest};
 
 use crate::dev::watch::GitSource;
@@ -34,6 +34,9 @@ pub enum UiCommand {
 pub struct ScaffoldArgs {
     pub package: String,
     pub screen: Option<String>,
+    /// Select the declared component that exports the screens. Required for multiple components.
+    #[arg(long)]
+    pub component: Option<String>,
 }
 
 /// Create a scaffold from the current generated release projection.
@@ -104,13 +107,23 @@ fn scaffold_package(repository: &Path, args: &ScaffoldArgs) -> anyhow::Result<Pa
         &package.join("publication/attachments.json"),
     )
     .context("read generated contracts; run Generate for this package before scaffolding")?;
-    let emitted = emit_tui(&ir, &args.package).context("emit the current screen definitions")?;
+    let component = match args.component.as_deref() {
+        Some(component) => component,
+        None if manifest.components.len() == 1 => {
+            manifest.components.keys().next().expect("one component")
+        }
+        None => bail!("select the declared component with --component NAME"),
+    };
+    let selected_ir = component_contract(&ir, &manifest, component)
+        .context("select the component's operator contracts")?;
+    let emitted =
+        emit_tui(&selected_ir, component).context("emit the current screen definitions")?;
     require_current(&package, &emitted)?;
     require_current(
         &package,
         &emit_rust_client(&ir).context("emit current client bindings")?,
     )?;
-    let screens = screen_functions(&ir, &args.package, &emitted)?;
+    let screens = screen_functions(&selected_ir, component, &emitted)?;
     ensure!(
         !screens.is_empty(),
         "this package has no operator screens to scaffold"
@@ -133,7 +146,7 @@ fn scaffold_package(repository: &Path, args: &ScaffoldArgs) -> anyhow::Result<Pa
     } else {
         None
     };
-    let files = scaffold_files(&args.package, &ir.package, &screens, selected)?;
+    let files = scaffold_files(&args.package, component, &ir.package, &screens, selected)?;
     fs::create_dir(&output).with_context(|| {
         format!(
             "create new scaffold {}; existing files are never overwritten",
@@ -175,19 +188,19 @@ fn require_current(package: &Path, files: &[GeneratedFile]) -> anyhow::Result<()
 
 fn screen_functions(
     ir: &ClientContractIr,
-    directory: &str,
+    component: &str,
     files: &[GeneratedFile],
 ) -> anyhow::Result<Vec<ScreenFunction>> {
     let mut functions = Vec::new();
     for model in &ir.models {
-        let path = format!("generated/{directory}-tui/src/screens/{}.rs", model.name);
+        let path = format!("generated/{component}-tui/src/screens/{}.rs", model.name);
         let source = files
             .iter()
             .find(|file| file.path() == path)
             .with_context(|| format!("screen emitter omitted {path}"))?;
         let source =
             std::str::from_utf8(source.bytes()).context("generated screens must be UTF-8")?;
-        let module = generated_module(files, directory, &model.name)?;
+        let module = generated_module(files, component, &model.name)?;
         for operation in model
             .operations
             .iter()
@@ -235,10 +248,10 @@ fn screen_functions(
 
 fn generated_module(
     files: &[GeneratedFile],
-    directory: &str,
+    component: &str,
     model: &str,
 ) -> anyhow::Result<String> {
-    let path = format!("generated/{directory}-tui/src/screens/mod.rs");
+    let path = format!("generated/{component}-tui/src/screens/mod.rs");
     let source = files
         .iter()
         .find(|file| file.path() == path)
@@ -257,16 +270,17 @@ fn generated_module(
 
 fn scaffold_files(
     directory: &str,
+    component: &str,
     package: &str,
     screens: &[ScreenFunction],
     selected: Option<(&str, &str)>,
 ) -> anyhow::Result<BTreeMap<PathBuf, String>> {
-    let slug = directory.replace('_', "-");
+    let slug = component.replace('_', "-");
     let crate_name = format!("wamn_{}_ui", slug.replace('-', "_"));
     let mut files = BTreeMap::new();
     files.insert(PathBuf::from(".gitignore"), "/target/\n".to_owned());
     files.insert(PathBuf::from("Cargo.toml"), format!(
-        "[package]\nname = \"wamn-{slug}-ui\"\nversion = \"0.1.0\"\nedition = \"2024\"\nlicense = \"Apache-2.0\"\n\n[workspace]\n\n[dependencies]\ngenerated = {{ package = \"wamn-generated-{slug}-tui\", path = \"../generated/{directory}-tui\" }}\nwamn-client-tui = {{ path = \"../../../crates/client/tui\" }}\nwamn-client-terminal = {{ path = \"../../../crates/client/terminal\" }}\ntokio = {{ version = \"1\", features = [\"macros\", \"rt-multi-thread\"] }}\n\n[dev-dependencies]\nwamn-client = {{ path = \"../../../crates/client/core\" }}\n"
+        "[package]\nname = \"wamn-{slug}-ui\"\nversion = \"0.1.0\"\nedition = \"2024\"\nlicense = \"Apache-2.0\"\n\n[workspace]\n\n[dependencies]\ngenerated = {{ package = \"wamn-generated-{slug}-tui\", path = \"../generated/{component}-tui\" }}\nwamn-client-tui = {{ path = \"../../../crates/client/tui\" }}\nwamn-client-terminal = {{ path = \"../../../crates/client/terminal\" }}\ntokio = {{ version = \"1\", features = [\"macros\", \"rt-multi-thread\"] }}\n\n[dev-dependencies]\nwamn-client = {{ path = \"../../../crates/client/core\" }}\n"
     ));
     files.insert(PathBuf::from("src/main.rs"), format!(
         "#[tokio::main]\nasync fn main() -> Result<wamn_client_terminal::operator::ExitReason, Box<dyn std::error::Error>> {{\n    wamn_client_terminal::operator::run({package:?}, {crate_name}::screens).await\n}}\n"
@@ -342,7 +356,7 @@ fn scaffold_files(
         interaction_tests(&crate_name, chosen),
     );
     files.insert(PathBuf::from("README.md"), format!(
-        "This crate is developer-owned Rust over the generated {directory} screens.\nEdit the copied functions in `src/screens/` to add composition.\nKeep the direct calls in `src/lib.rs` for screens that you do not override.\nTo remove an override, call its function under `generated::screens` again.\n\nTyped API incompatibilities fail this crate's build.\nThis scaffold must pass its declared interaction tests against regenerated bindings.\nThe initial tests cover the selected operation kind and session reset.\nAdd assertions for your custom workflow.\nAn additive field that no assertion reads can pass.\n\nAfter Generate completes, run `cargo test --manifest-path packages/{directory}/ui/Cargo.toml`.\nSupply `WAMN_BASE_URL`, `WAMN_HOST`, `WAMN_TOKEN`, and `WAMN_TARGET_INSTANCE` from the active development session before launch.\n"
+        "This crate is developer-owned Rust over the generated {component} screens.\nEdit the copied functions in `src/screens/` to add composition.\nKeep the direct calls in `src/lib.rs` for screens that you do not override.\nTo remove an override, call its function under `generated::screens` again.\n\nTyped API incompatibilities fail this crate's build.\nThis scaffold must pass its declared interaction tests against regenerated bindings.\nThe initial tests cover the selected operation kind and session reset.\nAdd assertions for your custom workflow.\nAn additive field that no assertion reads can pass.\n\nAfter Generate completes, run `cargo test --manifest-path packages/{directory}/ui/Cargo.toml`.\nSupply `WAMN_BASE_URL`, `WAMN_HOST`, `WAMN_TOKEN`, and `WAMN_TARGET_INSTANCE` from the active development session before launch.\n"
     ));
     Ok(files)
 }
@@ -485,6 +499,7 @@ mod tests {
         ScaffoldArgs {
             package: "receiving".to_owned(),
             screen: screen.map(str::to_owned),
+            component: None,
         }
     }
 
@@ -512,7 +527,8 @@ mod tests {
         let fixture = Fixture::new();
         let output = scaffold_package(&fixture.root, &args(Some("purchase_order.get")))
             .expect("scaffold one screen");
-        let main = fs::read_to_string(output.join("src/main.rs")).expect("read executable entry point");
+        let main =
+            fs::read_to_string(output.join("src/main.rs")).expect("read executable entry point");
         assert!(main.contains(
             "async fn main() -> Result<wamn_client_terminal::operator::ExitReason, Box<dyn std::error::Error>>"
         ));
@@ -558,6 +574,7 @@ mod tests {
         let screens = screen_functions(&ir, "receiving", &emitted).expect("find emitted screens");
         let files = scaffold_files(
             "receiving",
+            "receiving",
             &ir.package,
             &screens,
             Some(("generated", "get")),
@@ -582,6 +599,38 @@ mod tests {
             .expect("read receiving overrides");
         assert!(screen.contains("pub fn record_receipt("));
         assert!(!screen.contains("ScreenSpec {"));
+    }
+
+    #[test]
+    fn a_renamed_directory_keeps_the_declared_component_dependency() {
+        let fixture = Fixture::new();
+        fs::rename(
+            fixture.root.join("packages/receiving"),
+            fixture.root.join("packages/wamn_receiving"),
+        )
+        .expect("rename the app directory");
+        let mut selection = args(None);
+        selection.package = "wamn_receiving".to_owned();
+        selection.component = Some("receiving".to_owned());
+        let output =
+            scaffold_package(&fixture.root, &selection).expect("scaffold the declared component");
+        let cargo = fs::read_to_string(output.join("Cargo.toml")).unwrap();
+        assert!(cargo.contains("wamn-generated-receiving-tui"));
+        assert!(cargo.contains("../generated/receiving-tui"));
+        assert!(!cargo.contains("wamn-generated-wamn-receiving-tui"));
+    }
+
+    #[test]
+    fn multiple_components_require_an_explicit_selection() {
+        let fixture = Fixture::new();
+        let path = fixture.root.join("packages/receiving/wamn.json");
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        manifest["components"]["reports"] = serde_json::json!({"connections":["postgres"]});
+        fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+        let error = scaffold_package(&fixture.root, &args(None)).unwrap_err();
+        assert!(error.to_string().contains("--component NAME"));
+        assert!(!fixture.root.join("packages/receiving/ui").exists());
     }
 
     #[test]
@@ -620,6 +669,7 @@ mod tests {
             let args = ScaffoldArgs {
                 package: package.to_owned(),
                 screen: None,
+                component: None,
             };
             assert!(scaffold_package(&fixture.root, &args).is_err());
         }

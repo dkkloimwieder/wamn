@@ -2441,7 +2441,8 @@ fi
 
 ### `[GENERATED-TUI]` generated operator terminals
 
-Generate writes each native crate to `packages/<package>/generated/<package>-tui/`, beside its contracts and client bindings.
+Generate writes each native crate to `<app>/generated/<component>-tui/`, beside its contracts and client bindings.
+The manifest component declaration names the generated crate and the operations that it renders.
 Build compiles these crates as native clients.
 Do not edit emitted sources.
 Change authored contracts or developer-owned Rust instead.
@@ -2457,7 +2458,7 @@ target/debug/wamn dev --config "$WAMN_DEV_ENV_DIR/dev.json" \
 ```
 
 Bare `--tui` opens the developer console.
-`--tui <package>` opens the generated terminal for a package directory in the resolved package set.
+`--tui <component>` opens the generated terminal for that declared component in the resolved package set.
 Either terminal keeps the activation alive until the operator exits, without `--hold`.
 Without `--tui`, `--hold` keeps the activated release reachable until interruption.
 
@@ -2495,6 +2496,8 @@ target/debug/wamn ui scaffold receiving receiving.record_receipt
 CARGO_TARGET_DIR="$PWD/target" cargo test --offline \
   --manifest-path packages/receiving/ui/Cargo.toml -- --include-ignored
 ```
+
+If the app declares several components, add `--component NAME` to select the component that owns the screens.
 
 The command creates `packages/receiving/ui/` and refuses to overwrite an existing crate.
 Edit the selected constructor under `src/screens/` as ordinary Rust.
@@ -2570,8 +2573,8 @@ process that wrote it, and a stray listener there is a hard failure.
 
 The `wamn` binary carries `dev`, `dev up`, and `ui scaffold`.
 Bare `--tui` opens the developer console.
-`--tui <package>` opens that package's generated operator terminal and holds
-activation until the operator exits, without `--hold`.
+`--tui <component>` opens that declared component's generated operator terminal.
+It holds activation until the operator exits, without `--hold`.
 Without `--tui`, `--hold` retains its existing meaning.
 
 The loop records host output in a private file beside the Wasmtime cache.

@@ -11,6 +11,10 @@ use crate::client_ir::{
 use crate::client_rust::route_helper_names;
 use crate::generate::GeneratedFile;
 use crate::manifest::rust_identifier;
+use crate::{
+    GenerateError, GenerateErrorKind, PackageManifest, canonical_operation_identity,
+    validate_operation_vocabulary,
+};
 
 /// Why an operator crate could not be emitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,27 +79,73 @@ fn identifier(name: &str) -> Result<String, ClientTuiError> {
     }
 }
 
-/// Emit a workspace member beside the package's existing client bindings.
+/// Select the operations exported by one explicitly declared component.
+///
+/// # Errors
+/// Refuses invalid declarations, an unknown component, or a different package.
+pub fn component_contract(
+    ir: &ClientContractIr,
+    manifest: &PackageManifest,
+    component: &str,
+) -> Result<ClientContractIr, GenerateError> {
+    validate_operation_vocabulary(manifest)?;
+    if ir.package != manifest.package.id || !manifest.components.contains_key(component) {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidComponent,
+            format!(
+                "{component} must name a component declared by {}",
+                ir.package
+            ),
+        ));
+    }
+    let implicit = (manifest.components.len() == 1).then_some(component);
+    let mut operations = BTreeSet::new();
+    for (model, declaration) in &manifest.models {
+        for (action, operation) in &declaration.operations {
+            if operation.component.as_deref().or(implicit) == Some(component) {
+                operations.insert(canonical_operation_identity(
+                    &manifest.package,
+                    &format!("{model}.{}", action.as_str()),
+                )?);
+            }
+        }
+    }
+    for (name, operation) in &manifest.custom_operations {
+        if operation.component().or(implicit) == Some(component) {
+            operations.insert(canonical_operation_identity(&manifest.package, name)?);
+        }
+    }
+    let mut selected = ir.clone();
+    for model in &mut selected.models {
+        model
+            .operations
+            .retain(|operation| operations.contains(&operation.operation));
+    }
+    selected.models.retain(|model| !model.operations.is_empty());
+    Ok(selected)
+}
+
+/// Emit the selected component's operator beside its package client bindings.
 ///
 /// # Errors
 /// Refuses names that cannot form safe paths or distinct Rust identifiers.
 pub fn emit_tui(
     ir: &ClientContractIr,
-    directory_name: &str,
+    component: &str,
 ) -> Result<Vec<GeneratedFile>, ClientTuiError> {
-    if !directory_name
+    if !component
         .bytes()
         .next()
         .is_some_and(|first| first.is_ascii_lowercase())
-        || !directory_name.bytes().all(|byte| {
+        || !component.bytes().all(|byte| {
             byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
         })
     {
-        return Err(error(ClientTuiErrorKind::InvalidName, directory_name));
+        return Err(error(ClientTuiErrorKind::InvalidName, component));
     }
-    let slug = directory_name.replace('_', "-");
+    let slug = component.replace('_', "-");
     let crate_name = format!("wamn_generated_{}_tui", slug.replace('-', "_"));
-    let prefix = format!("generated/{directory_name}-tui");
+    let prefix = format!("generated/{component}-tui");
     let mut files = BTreeMap::new();
     files.insert(format!("{prefix}/Cargo.toml"), cargo_manifest(&slug));
     files.insert(

@@ -1,0 +1,93 @@
+{
+  "bead": "wamn-47wm.3.1",
+  "change_type": "internal_refactor",
+  "worktree": "/home/kaalin/.cache/wamn-lanes/consolidation-app-names-20260911",
+  "base_commit": "a48923a65cd74265751addde30c36ee289317e8b",
+  "source_sha256": {
+    "crates/schema/generator/src/client_tui.rs": "d39fbf272fb75e2fba0d7849a67bd59d8dbb1ffda0b388e92c8d3bd72431b1d2",
+    "crates/schema/generator/src/materialize.rs": "a9333ca315544ee9dbada3808eea48dcbbb6dae237b55c89a29f0179b4f62a60",
+    "crates/schema/generator/tests/tui_emitter.rs": "b0b016f10a8c1d9c3ffda48273a1fbd5ba90dd96109384ded36aac5bea4beaaa",
+    "services/ctl/src/dev/command.rs": "bcd0e19e45268ce593f9123111b9fadd658d31d7560ed2f579a8d248215b4995",
+    "services/ctl/src/dev/coordinator.rs": "5ad931675b948139c307a1db77d5d85157dc7018bb830b86625e2d600aa31ca6",
+    "services/ctl/src/dev/native_tui.rs": "21d8f01cb101e44c1817c45a9544c37da92d5746c14729ab5f17bae2801624a3",
+    "services/ctl/src/dev/watch.rs": "80ca4b21393c1ae2a5b656d335acc6718da7842e535efaa066d34db4abd2c723",
+    "services/ctl/src/ui.rs": "06a38acd9f105dd57d69619464142af1fdc49339af229d7e50a28c455a6a00d5"
+  },
+  "checked_in_generated_output_sha256": {
+    "packages/receiving/generated/receiving-tui/Cargo.toml": "fd5031262093600a56e343a75a8b5a509e0557f9ea4f3d97f7e707a6bfdb031a",
+    "packages/receiving/generated/receiving-tui/src/lib.rs": "12a6619363c8ee1d99bc17fb90a6fe88e4fec40c7819f0e2a6fb209bb1229285",
+    "packages/receiving/generated/receiving-tui/src/main.rs": "0dae3602c44a9f18a031d822561fadabc177986bc248199a8b364c4162d34849",
+    "packages/receiving/generated/receiving-tui/src/screens/receipt.rs": "79bf7c3b9d618991f01f0aab9483b205c85aad650e5a93c9b167220f1f8b4227",
+    "packages/receiving/generated/receiving-tui/src/screens/location.rs": "11005e67b39747af28f140e426e283e71b817e5fa3a428fb7dc51616d8e06ed5",
+    "packages/receiving/generated/receiving-tui/src/screens/purchase_order.rs": "7641f2ef3b75c066cadd030da436c2f7ec7fb3b5cfb175c92d2d86e9ec7beb71",
+    "packages/receiving/generated/receiving-tui/src/screens/receiving.rs": "4881f76013c5e5167b1e4edc4ce66afbebbc907e63029d0538af3c58af5e1ef3",
+    "packages/receiving/generated/receiving-tui/src/screens/mod.rs": "3b78c7dd2a803e7001f0a0794102430aa216d3ac50a41833ddbf304b7c8bb37d",
+    "packages/wms/generated/wms-tui/Cargo.toml": "ed14f316c0530a7b2f970e318ec3583f622beb802276adec05e55895d03c6732",
+    "packages/wms/generated/wms-tui/src/lib.rs": "8ea5b65659ce0479d68081c4f2903de1db11bfc4fddfd9a21f1ae7b08e3994cf",
+    "packages/wms/generated/wms-tui/src/main.rs": "06e5148d22e7441e6c011cd473eaffa2da8f796a03dfdf929bf1e8f21891f230",
+    "packages/wms/generated/wms-tui/src/screens/pallet.rs": "260a69a37a9dddc0fe19957c40fd6d3808a88ab81136cca0c302325f32ccae79",
+    "packages/wms/generated/wms-tui/src/screens/inventory.rs": "8e7777894ee280b46259270806a93e8eb6adca9a1141bca3dca34b5abb7234b5",
+    "packages/wms/generated/wms-tui/src/screens/mod.rs": "071078a1ea05d0c6117ca0810af8029cf09d13c96f27577a8f411425a7fa198b",
+    "packages/client_acme_receiving/generated/client_acme_receiving-tui/Cargo.toml": "f8c67939faceca59624e7f7ec64d61dab622f895579463a4c2404c3f99ecc4a2",
+    "packages/client_acme_receiving/generated/client_acme_receiving-tui/src/lib.rs": "d1cc4e27daf6c734f890f4d5b79293b765040de3c446e4b3f886c1886fca23f5",
+    "packages/client_acme_receiving/generated/client_acme_receiving-tui/src/main.rs": "79696b928461a9c51cad220bc8545287534634516ed93973827b9da788482267",
+    "packages/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/quality.rs": "9478ad496eb04cf818c3e0825baed02a8e0220176eea9063ee89c71afbb55aed",
+    "packages/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/purchase_order.rs": "81b4cc565cb5435c0fb788a8b1bd3ac98a53fc84564144a772894e4dec556bce",
+    "packages/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/receiving.rs": "d1b351dabb3ca44201211bdeaa4e5e270721877a19a3d75006e75383e5ff618f",
+    "packages/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/mod.rs": "90ab5f38d9c976634f2bc3f78925bac3f0223422fc7edc115bb02145294939d5"
+  },
+  "validation": [
+    {
+      "command": "cargo test --locked --offline -p wamn-schema-generator --test tui_emitter",
+      "log": "generator-tui.log",
+      "exit_code": 101,
+      "passed": 11,
+      "failed": 1,
+      "classification": "New test expected an underscore in a frozen wire token. Corrected only the expectation to existing wamn-receiving spelling."
+    },
+    {
+      "command": "cargo test --locked --offline -p wamn-schema-generator --test tui_emitter",
+      "log": "generator-tui-rerun.log",
+      "exit_code": 0,
+      "passed": 12,
+      "failed": 0,
+      "assertions": "All emitted files for all three shipped operators match checked-in bytes. Two declared components receive distinct operations. Unknown components and missing multi-component ownership refuse."
+    },
+    {
+      "command": "cargo test --locked --offline -p wamn-schema-generator --lib materialize::tests",
+      "log": "generator-materialize.log",
+      "exit_code": 0,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "command": "git diff --check",
+      "exit_code": 0
+    },
+    {
+      "command": "rustfmt --check --edition 2024 <eight changed Rust files>",
+      "exit_code": 0
+    }
+  ],
+  "deferred_validation": {
+    "owner": "root",
+    "reason": "Root instructed no cold ctl build in lane. Run changed ctl lib tests on integrated root in phase2 sweep.",
+    "filters": [
+      "dev::native_tui::tests",
+      "dev::watch::tests",
+      "dev::command::tests",
+      "ui::tests"
+    ]
+  },
+  "constraints": {
+    "generated_files_changed": false,
+    "app_moves": false,
+    "launcher_retirement": false,
+    "new_manifest_fields": false,
+    "root_target_reused": false,
+    "full_workspace_sweep_run": false
+  },
+  "commit": "c8a8158515ce058181b43442a65b061003cedc04",
+  "review": "Root accepted the declared output snapshot and component filter. Final requested changes rename component selectors and name the component in generated scaffold prose. Source paths remain directory-based.",
+  "working_tree_clean": true
+}
