@@ -1,0 +1,36 @@
+{
+  "source_commit": "47391bbc237f2e760f5cddb8b2e8f54a417ccc1f",
+  "command": [
+    "python3",
+    "-B",
+    "apps/wamn_receiving/tests/operator_pty.py",
+    "--binary",
+    "/home/kaalin/dev/wamn/target/debug/wamn-receiving"
+  ],
+  "cwd": "/home/kaalin/dev/wamn",
+  "binary": {
+    "path": "/home/kaalin/dev/wamn/target/debug/wamn-receiving",
+    "bytes": 56363912,
+    "mode": "0775",
+    "sha256": "38517fd9f33c6d72cc4ec4d1ef550b063dbd815a301cdd1777d093bc81f22153"
+  },
+  "environment": {
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "started_utc": "2026-09-11T23:15:47.361345+00:00",
+  "finished_utc": "2026-09-11T23:15:52.222314+00:00",
+  "elapsed_seconds": 4.860752706998028,
+  "exit_code": 0,
+  "source_head_after": "47391bbc237f2e760f5cddb8b2e8f54a417ccc1f",
+  "source_unchanged": true,
+  "binary_after": {
+    "path": "/home/kaalin/dev/wamn/target/debug/wamn-receiving",
+    "bytes": 56363912,
+    "mode": "0775",
+    "sha256": "38517fd9f33c6d72cc4ec4d1ef550b063dbd815a301cdd1777d093bc81f22153"
+  },
+  "binary_unchanged": true,
+  "log_sha256": "299c1d8b3a08ba325beece6d50459007a8ab55cb650b1769196a9dc5ad25df3d",
+  "execution_scope": "One existing local Receiving PTY driver invocation. No Cargo, container, cluster or external agent invocation.",
+  "passed": true
+}

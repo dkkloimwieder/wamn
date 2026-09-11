@@ -1,0 +1,78 @@
+{
+  "original_root": "/home/kaalin/dev/wamn",
+  "copied_originals": [
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pty-receiving-001/capture.py",
+      "bytes": 3965,
+      "sha256": "06ab428fe6e55ce4131aa2dcda5bd26e78535037bcef6a3dc34278c8a02ff5f2",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pty-receiving-001/command.json",
+      "bytes": 586,
+      "sha256": "e4f75b482c5fbb4878147d3a4c6e1e2da0371970684ef31e39047c6370fadc6b",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pty-receiving-001/git-status-after.txt",
+      "bytes": 17440,
+      "sha256": "aa5916097a7d1cb7f88195e2e570c6e35ef9005eaffb5364f963463eb4b58f16",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pty-receiving-001/git-status-before.txt",
+      "bytes": 17220,
+      "sha256": "554a514cb64c9306913a1083b8ad9f35b1de60abcf86c89bd593652bc6f80588",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pty-receiving-001/result.json",
+      "bytes": 1272,
+      "sha256": "c8dcc7d2d9e82b0e89956e1052dc9008694b14e9d0a16ae82c523ed8558bf479",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pty-receiving-001/run.log",
+      "bytes": 102,
+      "sha256": "299c1d8b3a08ba325beece6d50459007a8ab55cb650b1769196a9dc5ad25df3d",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pty-receiving-001/source-after.json",
+      "bytes": 210,
+      "sha256": "4158dc17d9272c1516966d85663a315f504881a545b19ac770a1745e19e90c17",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/pty-receiving-001/source-before.json",
+      "bytes": 461279,
+      "sha256": "68c404c59d1cb653d0227be3b68000f7dde8b9e9c266c55c65a0d24fb1714fb0",
+      "filesystem_mode": "0664",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
+    }
+  ],
+  "original_bytes_and_modes_unchanged": true
+}
