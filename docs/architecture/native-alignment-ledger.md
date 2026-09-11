@@ -103,7 +103,10 @@ Activation never performs that replacement.
 
 The [scoped native run](../perf/2026.09/native-c-advisories/scoped-native-004/README.md) demonstrates the allowed operations and actual broker refusals across three environments.
 The [retained native run](../perf/2026.09/native-c-advisories/retained-native-001/README.md) demonstrates advisory retention, later delivery progress, deleted payload reporting, and deduplication.
-Application correctness, the remaining delivery limits, and the integrated retained workspace test run remain under `wamn-0ct2.7`.
+The [native delivery and retention test](../perf/2026.09/native-c-advisories/scoped-native-007/README.md) at `b0a3f045` passed after observed connection closure and redelivery of the same unacknowledged sequence.
+With 65 payloads of 1,047,552 bytes, pulls stayed below 4,194,304 bytes and stopped at 64 pending acknowledgements.
+Delivery resumed after acknowledgement, and real source expiry left the termination advisory readable with its source payload unavailable.
+Application correctness and the integrated retained workspace test run remain pending under `wamn-0ct2.7`.
 
 The [P3 HTTP cutover](../perf/2026.09/p3-http-cutover/report.md) belongs to `wamn-0h0g.2.7.17`.
 Its HTTP shell exports `wasi:http/handler@0.3.0` and uses native P3 body streams.

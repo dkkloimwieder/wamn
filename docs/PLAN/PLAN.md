@@ -38,7 +38,10 @@ The origin/executor authorization correction under `wamn-ctc8.33` follows poolin
 The reviewed [native C source checkpoint](../perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json) is owned by `wamn-0ct2.7`.
 It replaces custom materializer delivery and settlement with the platform-owned native `events` binding and scoped broker credentials.
 Registration checks, drift refusal, derived publishing, and the separate scheduler doorbell remain.
-The remaining application and delivery cases and the integrated retained workspace test run remain with `wamn-0ct2.7`.
+The [native delivery and retention test](../perf/2026.09/native-c-advisories/scoped-native-007/README.md) at `b0a3f045` passed after observed connection closure and redelivery of the same unacknowledged sequence.
+With 65 payloads of 1,047,552 bytes, pulls stayed below 4,194,304 bytes and stopped at 64 pending acknowledgements.
+Delivery resumed after acknowledgement, and real source expiry left the termination advisory readable with its source payload unavailable.
+Application correctness and the integrated retained workspace test run remain pending under `wamn-0ct2.7`.
 Coordinate its source integration with the application moves under `wamn-47wm` before building final artifacts and updating their digest pins.
 The owner requires separate source and advisory streams for each organization, project, and environment.
 Observers use that environment's credentials and cannot read another environment.

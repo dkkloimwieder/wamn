@@ -215,7 +215,10 @@ Runtime activation does not perform that replacement.
 
 The [scoped native run](perf/2026.09/native-c-advisories/scoped-native-004/README.md) demonstrates provisioning, delivery, retained advisory reads, and refusal of runtime management and foreign access.
 The [retained native run](perf/2026.09/native-c-advisories/retained-native-001/README.md) demonstrates exhaustion, termination, later progress, unavailable deleted payloads, and runtime deduplication.
-Application correctness, the remaining delivery limits, and the integrated retained workspace test run remain under `wamn-0ct2.7`.
+The [native delivery and retention test](perf/2026.09/native-c-advisories/scoped-native-007/README.md) at `b0a3f045` passed after observed connection closure and redelivery of the same unacknowledged sequence.
+With 65 payloads of 1,047,552 bytes, pulls stayed below 4,194,304 bytes and stopped at 64 pending acknowledgements.
+Delivery resumed after acknowledgement, and real source expiry left the termination advisory readable with its source payload unavailable.
+Application correctness and the integrated retained workspace test run remain pending under `wamn-0ct2.7`.
 
 `emit` carries an author-supplied dedup id; automation admission deduplicates it.
 The queue does not survive verbatim: classifier/effect-attempt predicates must be
