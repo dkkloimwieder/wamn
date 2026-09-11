@@ -26,3 +26,7 @@ wamn-generated-wms-tui = { workspace = true }
 
 [lints]
 workspace = true
+
+[[example]]
+name = "wms_move"
+path = "../../../apps/wamn_wms/examples/wms_move.rs"
