@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use futures_util::TryStreamExt as _;
-use object_store::{ObjectStore as _, aws::AmazonS3};
+use object_store::{ObjectStore as _, ObjectStoreExt as _, aws::AmazonS3};
 use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio_postgres::Client;
