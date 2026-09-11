@@ -89,9 +89,8 @@ pub async fn run(args: RcArgs) -> anyhow::Result<()> {
         resources::clean_source(repository).await
     }
     .await;
-    save(
-        &resources,
-        "result.json",
+    let capture = resources::finish_result(
+        &resources.evidence,
         &json!({
             "source":source,"cluster":CLUSTER,"namespace":NAMESPACE,
             "passed":result.is_ok() && cleanup.is_ok() && unchanged.is_ok(),
@@ -103,14 +102,14 @@ pub async fn run(args: RcArgs) -> anyhow::Result<()> {
             "traceproof_completed":resources.evidence.join("traceproof-verdict.json").is_file(),
             "deferred":["wamn-0h0g.15.153"],"deferred_disposition":"post-merge; not claimed",
         }),
-    )?;
+    );
     if interrupted {
         std::process::exit(130);
     }
     result?;
     cleanup?;
     unchanged?;
-    resources::hash_evidence(&resources.evidence)
+    capture
 }
 
 async fn execute(
@@ -149,7 +148,9 @@ async fn execute(
             .arg(&resources.postgres_image),
     )
     .await?;
-    checked(
+    resources::recorded(
+        resources,
+        "create",
         Command::new(&resources.lifecycle)
             .arg("create")
             .arg(CLUSTER)
@@ -159,8 +160,15 @@ async fn execute(
             .arg(&resources.postgres_image),
     )
     .await?;
-    let nats =
-        command_json(Command::new(&resources.lifecycle).args(["inspect", "wamn-rc-nats"])).await?;
+    let nats: Value = serde_json::from_slice(
+        &resources::recorded(
+            resources,
+            "inspect-nats",
+            Command::new(&resources.lifecycle).args(["inspect", "wamn-rc-nats"]),
+        )
+        .await?,
+    )
+    .context("parse the owned broker network")?;
     let nats_host = nats
         .pointer("/Networks/kind/IPAddress")
         .and_then(Value::as_str)

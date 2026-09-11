@@ -14,9 +14,15 @@ use wamn_ctl::provision_project_env::{self, ProvisionProjectEnvArgs, WorkloadGen
 use super::{NAMESPACE, Resources, TENANT, apply, command_json, kubectl, save};
 
 pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
-    let network =
-        command_json(Command::new(&resources.lifecycle).args(["inspect", "wamn-rc-postgres"]))
-            .await?;
+    let network: Value = serde_json::from_slice(
+        &super::resources::recorded(
+            resources,
+            "inspect-postgres",
+            Command::new(&resources.lifecycle).args(["inspect", "wamn-rc-postgres"]),
+        )
+        .await?,
+    )
+    .context("parse the owned PostgreSQL network")?;
     let mappings = network
         .pointer("/Ports/5432~1tcp")
         .and_then(Value::as_array)

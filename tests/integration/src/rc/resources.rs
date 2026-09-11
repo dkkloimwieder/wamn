@@ -3,12 +3,14 @@
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::Write as _;
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Instant;
 
 use super::{CLUSTER, checked, kubectl, save};
 use anyhow::{Context as _, ensure};
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::process::Command;
 
 pub(super) struct Resources {
@@ -84,32 +86,6 @@ pub(super) async fn prepare(
     let host_image = format!("wamn-host:{tag}");
     let gates_image = format!("wamn-gates:{tag}");
     let postgres_image = format!("wamn-postgres:rc-{}-{}", &source[..12], std::process::id());
-    checked(Command::new(&lifecycle).arg("docker-version")).await?;
-    let clusters = checked(Command::new(&lifecycle).arg("clusters")).await?;
-    ensure!(
-        !String::from_utf8_lossy(&clusters)
-            .lines()
-            .any(|line| line == CLUSTER),
-        "refusing pre-existing RC cluster"
-    );
-    let containers = checked(Command::new(&lifecycle).arg("containers")).await?;
-    for name in ["wamn-rc-postgres", "wamn-rc-nats"] {
-        ensure!(
-            !String::from_utf8_lossy(&containers)
-                .lines()
-                .any(|line| line == name),
-            "refusing pre-existing RC container {name}"
-        );
-    }
-    let images = checked(Command::new(&lifecycle).arg("images")).await?;
-    for image in [&host_image, &gates_image, &postgres_image] {
-        ensure!(
-            !String::from_utf8_lossy(&images)
-                .lines()
-                .any(|line| line == image),
-            "refusing pre-existing RC image {image}"
-        );
-    }
     DirBuilder::new().mode(0o700).create(&evidence)?;
     let work = std::env::temp_dir().join(format!("wamn-rc-{}", uuid::Uuid::new_v4().simple()));
     DirBuilder::new().mode(0o700).create(&work)?;
@@ -129,6 +105,56 @@ pub(super) async fn prepare(
         "source.json",
         &json!({"source":source,"cluster":CLUSTER,"build_profile":"debug"}),
     )?;
+    recorded(
+        &resources,
+        "preflight-docker",
+        Command::new(&resources.lifecycle).arg("docker-version"),
+    )
+    .await?;
+    let clusters = recorded(
+        &resources,
+        "preflight-clusters",
+        Command::new(&resources.lifecycle).arg("clusters"),
+    )
+    .await?;
+    ensure!(
+        !String::from_utf8_lossy(&clusters)
+            .lines()
+            .any(|line| line == CLUSTER),
+        "refusing pre-existing RC cluster"
+    );
+    let containers = recorded(
+        &resources,
+        "preflight-containers",
+        Command::new(&resources.lifecycle).arg("containers"),
+    )
+    .await?;
+    for name in ["wamn-rc-postgres", "wamn-rc-nats"] {
+        ensure!(
+            !String::from_utf8_lossy(&containers)
+                .lines()
+                .any(|line| line == name),
+            "refusing pre-existing RC container {name}"
+        );
+    }
+    let images = recorded(
+        &resources,
+        "preflight-images",
+        Command::new(&resources.lifecycle).arg("images"),
+    )
+    .await?;
+    for image in [
+        &resources.host_image,
+        &resources.gates_image,
+        &resources.postgres_image,
+    ] {
+        ensure!(
+            !String::from_utf8_lossy(&images)
+                .lines()
+                .any(|line| line == image),
+            "refusing pre-existing RC image {image}"
+        );
+    }
     Ok(resources)
 }
 
@@ -163,7 +189,9 @@ pub(super) async fn diagnostics(resources: &Resources) {
 
 pub(super) async fn cleanup(resources: &mut Resources) -> anyhow::Result<()> {
     if resources.owned {
-        checked(
+        recorded(
+            resources,
+            "remove",
             Command::new(&resources.lifecycle)
                 .arg("remove")
                 .arg(CLUSTER)
@@ -173,14 +201,24 @@ pub(super) async fn cleanup(resources: &mut Resources) -> anyhow::Result<()> {
                 .arg(&resources.postgres_image),
         )
         .await?;
-        let clusters = checked(Command::new(&resources.lifecycle).arg("clusters")).await?;
+        let clusters = recorded(
+            resources,
+            "cleanup-clusters",
+            Command::new(&resources.lifecycle).arg("clusters"),
+        )
+        .await?;
         ensure!(
             !String::from_utf8_lossy(&clusters)
                 .lines()
                 .any(|line| line == CLUSTER),
             "RC cluster survived cleanup"
         );
-        let containers = checked(Command::new(&resources.lifecycle).arg("containers")).await?;
+        let containers = recorded(
+            resources,
+            "cleanup-containers",
+            Command::new(&resources.lifecycle).arg("containers"),
+        )
+        .await?;
         for name in ["wamn-rc-postgres", "wamn-rc-nats"] {
             ensure!(
                 !String::from_utf8_lossy(&containers)
@@ -189,7 +227,12 @@ pub(super) async fn cleanup(resources: &mut Resources) -> anyhow::Result<()> {
                 "owned container survived cleanup"
             );
         }
-        let images = checked(Command::new(&resources.lifecycle).arg("images")).await?;
+        let images = recorded(
+            resources,
+            "cleanup-images",
+            Command::new(&resources.lifecycle).arg("images"),
+        )
+        .await?;
         for image in [
             &resources.host_image,
             &resources.gates_image,
@@ -241,7 +284,7 @@ pub(super) fn write_private(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn hash_evidence(directory: &Path) -> anyhow::Result<()> {
+fn hash_evidence(directory: &Path, result: &[u8]) -> anyhow::Result<()> {
     use sha2::Digest as _;
     fn collect(
         root: &Path,
@@ -252,9 +295,10 @@ pub(super) fn hash_evidence(directory: &Path) -> anyhow::Result<()> {
             let path = entry?.path();
             if path.is_dir() {
                 collect(root, &path, rows)?;
-            } else if path
-                .file_name()
-                .is_some_and(|name| name != "evidence.sha256")
+            } else if path != root.join("result.json")
+                && path
+                    .file_name()
+                    .is_some_and(|name| name != "evidence.sha256")
             {
                 rows.push((
                     path.strip_prefix(root)?.to_owned(),
@@ -266,6 +310,10 @@ pub(super) fn hash_evidence(directory: &Path) -> anyhow::Result<()> {
     }
     let mut rows = Vec::new();
     collect(directory, directory, &mut rows)?;
+    rows.push((
+        PathBuf::from("result.json"),
+        hex::encode(sha2::Sha256::digest(result)),
+    ));
     rows.sort_by(|left, right| left.0.cmp(&right.0));
     let text = rows
         .into_iter()
@@ -274,38 +322,78 @@ pub(super) fn hash_evidence(directory: &Path) -> anyhow::Result<()> {
     write_private(&directory.join("evidence.sha256"), text.as_bytes())
 }
 
+pub(super) fn finish_result(directory: &Path, result: &Value) -> anyhow::Result<()> {
+    let bytes = serde_json::to_vec_pretty(result)?;
+    let hashes = hash_evidence(directory, &bytes);
+    match &hashes {
+        Ok(()) => write_private(&directory.join("result.json"), &bytes)?,
+        Err(error) => {
+            let mut failed = result.clone();
+            failed["passed"] = json!(false);
+            failed["capture_failure"] = json!(format!("{error:#}"));
+            write_private(
+                &directory.join("result.json"),
+                &serde_json::to_vec_pretty(&failed)?,
+            )?;
+        }
+    }
+    hashes
+}
+
 pub(super) async fn recorded(
     resources: &Resources,
     name: &str,
     command: &mut Command,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<u8>> {
     let standard = command.as_std();
     let arguments = std::iter::once(standard.get_program())
         .chain(standard.get_args())
         .map(|value| value.to_string_lossy().into_owned())
         .collect::<Vec<_>>();
+    let cwd = standard.get_current_dir();
+    let stdout_path = resources.evidence.join(format!("{name}.log"));
+    let stderr_path = resources.evidence.join(format!("{name}.stderr.log"));
     save(
         resources,
         &format!("{name}-command.json"),
-        &json!({"argv":arguments,"source":resources.source}),
+        &json!({"argv":arguments,"cwd":cwd,"source":resources.source,
+            "stdout":stdout_path,"stderr":stderr_path}),
     )?;
-    let log = OpenOptions::new()
+    let stdout = OpenOptions::new()
         .create_new(true)
         .write(true)
         .mode(0o600)
-        .open(resources.evidence.join(format!("{name}.log")))?;
+        .open(&stdout_path)?;
+    let stderr = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&stderr_path)?;
+    let started = Instant::now();
     let status = command
         .stdin(Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log)
+        .stdout(stdout)
+        .stderr(stderr)
         .kill_on_drop(true)
         .status()
-        .await?;
+        .await;
     save(
         resources,
         &format!("{name}-result.json"),
-        &json!({"exit_code":status.code(),"passed":status.success()}),
+        &match &status {
+            Ok(status) => json!({"exit_code":status.code(),"signal":status.signal(),
+                "status":status.to_string(),"passed":status.success(),
+                "elapsed_seconds":started.elapsed().as_secs_f64()}),
+            Err(error) => json!({"exit_code":null,"passed":false,"failure":error.to_string(),
+                "elapsed_seconds":started.elapsed().as_secs_f64()}),
+        },
     )?;
-    ensure!(status.success(), "{name} failed; see its retained log");
-    Ok(())
+    ensure!(
+        status?.success(),
+        "{name} failed; see its retained stdout and stderr logs"
+    );
+    Ok(fs::read(stdout_path)?)
 }
+
+#[cfg(test)]
+mod tests;

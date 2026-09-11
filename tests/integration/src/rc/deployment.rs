@@ -96,7 +96,9 @@ pub(super) async fn install(
     let rendered = host_values(base, &resources.host_image, server)?;
     let values = resources.work.join("host-values.yaml");
     write_private(&values, &serde_json::to_vec(&rendered)?)?;
-    checked(
+    super::resources::recorded(
+        resources,
+        "install-host",
         tokio::process::Command::new(&resources.lifecycle)
             .arg("install-host")
             .arg(CLUSTER)
