@@ -399,7 +399,7 @@ fn unix_ms() -> i64 {
 /// entity map + grants. NO slot — each axis creates it at its own moment.
 async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream_name = event_stream_name(ORG, ENV);
+    let stream_name = event_stream_name(ORG, PROJECT, ENV);
     let app_role = app_generation_role()?;
 
     // Hermetic preamble (leftovers mask): slot, database, role.
@@ -573,7 +573,11 @@ async fn teardown(admin_url: &str, nats_url: &str) {
     }
     if let Ok(nats) = async_nats::connect(nats_url).await {
         let js = async_nats::jetstream::new(nats);
-        let _ = js.delete_stream(&event_stream_name(ORG, ENV)).await;
+        let source = event_stream_name(ORG, PROJECT, ENV);
+        let _ = js.delete_stream(&source).await;
+        let _ = js
+            .delete_stream(wamn_event_wire::delivery_advisory_stream(&source))
+            .await;
     }
 }
 
@@ -620,7 +624,7 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
          spill counters = the logical_decoding_work_mem evidence (wamn-mu4h)"
     );
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream_name = event_stream_name(ORG, ENV);
+    let stream_name = event_stream_name(ORG, PROJECT, ENV);
     let (_admin, db) = provision(&args.admin_database_url).await?;
     let app = connect_app(&args.admin_database_url).await?;
     let nats = async_nats::connect(&args.nats_url)
@@ -695,6 +699,17 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
             .await?;
         normalize(&db, &["suppliers", "users"]).await?;
         let _ = js.delete_stream(&stream_name).await;
+        let _ = js
+            .delete_stream(wamn_event_wire::delivery_advisory_stream(&stream_name))
+            .await;
+        wamn_ctl::event_streams::provision(
+            &js,
+            &wamn_control_registry::Triple::new(ORG, PROJECT, ENV),
+            1,
+            Duration::from_secs(120),
+            &[],
+        )
+        .await?;
         drop_slot(&db, &cdc_name).await;
         db.batch_execute(&provision_sql::create_failover_slot_sql(&cdc_name))
             .await
@@ -870,13 +885,24 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
         args.lag_step_secs, args.lag_writers
     );
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream_name = event_stream_name(ORG, ENV);
+    let stream_name = event_stream_name(ORG, PROJECT, ENV);
     let (_admin, db) = provision(&args.admin_database_url).await?;
     let nats = async_nats::connect(&args.nats_url)
         .await
         .with_context(|| format!("connect NATS at {}", args.nats_url))?;
     let js = async_nats::jetstream::new(nats);
     let _ = js.delete_stream(&stream_name).await;
+    let _ = js
+        .delete_stream(wamn_event_wire::delivery_advisory_stream(&stream_name))
+        .await;
+    wamn_ctl::event_streams::provision(
+        &js,
+        &wamn_control_registry::Triple::new(ORG, PROJECT, ENV),
+        1,
+        Duration::from_secs(120),
+        &[],
+    )
+    .await?;
     db.batch_execute(&provision_sql::create_failover_slot_sql(&cdc_name))
         .await
         .context("create failover slot")?;
@@ -1331,13 +1357,24 @@ async fn switchover_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result
         args.secs
     );
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream_name = event_stream_name(ORG, ENV);
+    let stream_name = event_stream_name(ORG, PROJECT, ENV);
     let (_admin, db) = provision(&args.admin_database_url).await?;
     let nats = async_nats::connect(&args.nats_url)
         .await
         .with_context(|| format!("connect NATS at {}", args.nats_url))?;
     let js = async_nats::jetstream::new(nats);
     let _ = js.delete_stream(&stream_name).await;
+    let _ = js
+        .delete_stream(wamn_event_wire::delivery_advisory_stream(&stream_name))
+        .await;
+    wamn_ctl::event_streams::provision(
+        &js,
+        &wamn_control_registry::Triple::new(ORG, PROJECT, ENV),
+        1,
+        Duration::from_secs(120),
+        &[],
+    )
+    .await?;
     db.batch_execute(&provision_sql::create_failover_slot_sql(&cdc_name))
         .await
         .context("create failover slot")?;

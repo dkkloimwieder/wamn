@@ -299,120 +299,148 @@ mod tests {
             info.config.duplicate_window == Duration::from_secs(120),
             "WAMN_TAP dedup drifted"
         );
-        let (port, served) = upstream_origin().await?;
-        let route = trusted_http_route::build(&RouteOptions {
-            database_url,
-            artifact_base,
-            component_wasm: node_wasm,
-            upstream_base_url: format!("http://127.0.0.1:{port}"),
-            path_and_query: "/effect".to_owned(),
-        })
-        .await
-        .context("build the real released RouterDriver closure")?;
-        let jetstream = Arc::new(
-            WamnJetstream::new(WamnJetstreamConfig {
-                nats_url: Some(nats_url),
-            })
-            .with_release(Some(Arc::clone(&route.release))),
-        );
-        let bridge = Arc::new(
-            RouterDeliveryBridge::new(
-                Arc::clone(&route.driver),
-                Arc::clone(&route.release),
-                Arc::clone(&jetstream),
-                PROJECT,
+        // The route fixture declares its organization as TENANT in WorkloadRoleScope.
+        let event_scope = wamn_control_registry::Triple::new(TENANT, PROJECT, ENVIRONMENT);
+        let event_stream = wamn_event_wire::stream_name(TENANT, PROJECT, ENVIRONMENT);
+        let advisory_stream = wamn_event_wire::delivery_advisory_stream(&event_stream);
+        let result: anyhow::Result<()> = async {
+            wamn_ctl::event_streams::provision(
+                &jetstream_context,
+                &event_scope,
+                1,
+                Duration::from_secs(120),
+                &[],
             )
-            .context("bind the bridge's release-derived tap identity")?,
-        );
-        let routing = Arc::new(
-            FlowHttpRouting::from_env(Some(Arc::clone(&route.release)))
-                .context("build release-backed flow-http routing")?,
-        );
-        let consumer = stream
-            .create_consumer(PullConfig {
-                deliver_policy: DeliverPolicy::New,
-                ack_policy: AckPolicy::Explicit,
-                filter_subject: format!("tap.{TENANT}.{PROJECT}.{ENVIRONMENT}.{WIRING_ID}.>"),
-                inactive_threshold: Duration::from_secs(120),
-                ..Default::default()
+            .await?;
+            let (port, served) = upstream_origin().await?;
+            let route = trusted_http_route::build(&RouteOptions {
+                database_url,
+                artifact_base,
+                component_wasm: node_wasm,
+                upstream_base_url: format!("http://127.0.0.1:{port}"),
+                path_and_query: "/effect".to_owned(),
             })
             .await
-            .context("create a new-only exact-scope tap consumer")?;
-        let input =
-            Bytes::from_static(br#"{"api_key":"must-not-reach-the-tap","plain":"visible"}"#);
-        let response = invoke_flow_http(flow_http_wasm, routing, bridge, input.clone())
-            .await
-            .context("drive the production ingress-to-router path")?;
-        ensure!(
-            response.status() == StatusCode::OK,
-            "released route returned {}",
-            response.status()
-        );
-        let response_body: serde_json::Value =
-            serde_json::from_slice(response.body()).context("decode released route response")?;
-        ensure!(
-            response_body["status"] == 200,
-            "the real HTTP node did not settle successfully"
-        );
+            .context("build the real released RouterDriver closure")?;
+            let jetstream = Arc::new(
+                WamnJetstream::new(WamnJetstreamConfig {
+                    nats_url: Some(nats_url),
+                    event_scope: Some(event_scope),
+                    stream_replicas: Some(1),
+                    dup_window_secs: Some(120),
+                })
+                .with_release(Some(Arc::clone(&route.release))),
+            );
+            jetstream
+                .activate_events()
+                .await
+                .map_err(|error| anyhow::anyhow!("activate test event streams: {error:?}"))?;
+            let bridge = Arc::new(
+                RouterDeliveryBridge::new(
+                    Arc::clone(&route.driver),
+                    Arc::clone(&route.release),
+                    Arc::clone(&jetstream),
+                    PROJECT,
+                )
+                .context("bind the bridge's release-derived tap identity")?,
+            );
+            let routing = Arc::new(
+                FlowHttpRouting::from_env(Some(Arc::clone(&route.release)))
+                    .context("build release-backed flow-http routing")?,
+            );
+            let consumer = stream
+                .create_consumer(PullConfig {
+                    deliver_policy: DeliverPolicy::New,
+                    ack_policy: AckPolicy::Explicit,
+                    filter_subject: format!("tap.{TENANT}.{PROJECT}.{ENVIRONMENT}.{WIRING_ID}.>"),
+                    inactive_threshold: Duration::from_secs(120),
+                    ..Default::default()
+                })
+                .await
+                .context("create a new-only exact-scope tap consumer")?;
+            let input =
+                Bytes::from_static(br#"{"api_key":"must-not-reach-the-tap","plain":"visible"}"#);
+            let response = invoke_flow_http(flow_http_wasm, routing, bridge, input.clone())
+                .await
+                .context("drive the production ingress-to-router path")?;
+            ensure!(
+                response.status() == StatusCode::OK,
+                "released route returned {}",
+                response.status()
+            );
+            let response_body: serde_json::Value = serde_json::from_slice(response.body())
+                .context("decode released route response")?;
+            ensure!(
+                response_body["status"] == 200,
+                "the real HTTP node did not settle successfully"
+            );
 
-        let upstream_body = tokio::time::timeout(Duration::from_secs(10), served)
-            .await
-            .context("the released node never reached its upstream")?
-            .context("the disposable upstream task failed")?;
-        ensure!(
-            upstream_body.as_slice() == input.as_ref(),
-            "the real driver did not execute the released payload"
-        );
+            let upstream_body = tokio::time::timeout(Duration::from_secs(10), served)
+                .await
+                .context("the released node never reached its upstream")?
+                .context("the disposable upstream task failed")?;
+            ensure!(
+                upstream_body.as_slice() == input.as_ref(),
+                "the real driver did not execute the released payload"
+            );
 
-        let records = read_tap_records(&consumer).await?;
-        ensure!(
-            stream.info().await?.state.messages == messages_before + 2,
-            "one delivered request must store exactly two previews"
-        );
-        ensure!(
-            records.len() == 2,
-            "one delivered request must emit exactly two previews, got {}",
-            records.len()
-        );
-        ensure!(
-            records[0].0 == records[1].0,
-            "accepted and settled must share one delivery subject"
-        );
-        ensure!(
-            records[0].0.starts_with(&format!(
-                "tap.{TENANT}.{PROJECT}.{ENVIRONMENT}.{WIRING_ID}."
-            )),
-            "the bridge must mint scope from the release: {}",
-            records[0].0
-        );
-        ensure!(
-            records[0].1["phase"] == "accepted",
-            "first preview is not accepted"
-        );
-        ensure!(
-            records[1].1["phase"] == "settled",
-            "second preview is not settled"
-        );
-        ensure!(
-            records[1].1["outcome"] == "respond",
-            "settled preview lost the real outcome"
-        );
-        ensure!(
-            records[0].1["payload"]["api_key"] == "[redacted]",
-            "accepted preview leaked a secret"
-        );
-        ensure!(
-            records[0].1["payload"]["plain"] == "visible",
-            "accepted preview lost safe payload"
-        );
-        ensure!(
-            records[0].1["delivery-id"] == records[1].1["delivery-id"],
-            "the two boundaries disagree on delivery identity"
-        );
-        ensure!(
-            records[0].1["source-id"] == ATTACHMENT_ID,
-            "tap did not name the released attachment"
-        );
+            let records = read_tap_records(&consumer).await?;
+            ensure!(
+                stream.info().await?.state.messages == messages_before + 2,
+                "one delivered request must store exactly two previews"
+            );
+            ensure!(
+                records.len() == 2,
+                "one delivered request must emit exactly two previews, got {}",
+                records.len()
+            );
+            ensure!(
+                records[0].0 == records[1].0,
+                "accepted and settled must share one delivery subject"
+            );
+            ensure!(
+                records[0].0.starts_with(&format!(
+                    "tap.{TENANT}.{PROJECT}.{ENVIRONMENT}.{WIRING_ID}."
+                )),
+                "the bridge must mint scope from the release: {}",
+                records[0].0
+            );
+            ensure!(
+                records[0].1["phase"] == "accepted",
+                "first preview is not accepted"
+            );
+            ensure!(
+                records[1].1["phase"] == "settled",
+                "second preview is not settled"
+            );
+            ensure!(
+                records[1].1["outcome"] == "respond",
+                "settled preview lost the real outcome"
+            );
+            ensure!(
+                records[0].1["payload"]["api_key"] == "[redacted]",
+                "accepted preview leaked a secret"
+            );
+            ensure!(
+                records[0].1["payload"]["plain"] == "visible",
+                "accepted preview lost safe payload"
+            );
+            ensure!(
+                records[0].1["delivery-id"] == records[1].1["delivery-id"],
+                "the two boundaries disagree on delivery identity"
+            );
+            ensure!(
+                records[0].1["source-id"] == ATTACHMENT_ID,
+                "tap did not name the released attachment"
+            );
+            Ok(())
+        }
+        .await;
+        let source_cleanup = jetstream_context.delete_stream(&event_stream).await;
+        let advisory_cleanup = jetstream_context.delete_stream(&advisory_stream).await;
+        result?;
+        source_cleanup.context("remove the test source stream")?;
+        advisory_cleanup.context("remove the test advisory stream")?;
         Ok(())
     }
 }

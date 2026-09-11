@@ -28,7 +28,7 @@ pub struct ReaderBenchArgs {
     #[arg(long, env = "WAMN_EVT_NATS_URL")]
     pub nats_url: String,
 
-    /// Org slug (subject root; default stream `EVT_<org>_<env>`).
+    /// Organization slug for the declared event environment.
     #[arg(long)]
     pub org: String,
 
@@ -40,7 +40,7 @@ pub struct ReaderBenchArgs {
     #[arg(long)]
     pub env: String,
 
-    /// Stream to drain. Default: `EVT_<org>_<env>` (the registration default).
+    /// Stream to drain. Defaults to this exact organization, project, and environment.
     #[arg(long)]
     pub stream: Option<String>,
 
@@ -94,7 +94,7 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
     let stream_name = args
         .stream
         .clone()
-        .unwrap_or_else(|| wamn_event_wire::stream_name(&args.org, &args.env));
+        .unwrap_or_else(|| wamn_event_wire::stream_name(&args.org, &args.project, &args.env));
     let expect = args.expect_ids.len();
     println!(
         "readerbench — draining {stream_name} at {} (expect {expect} inserts on {})",
@@ -296,6 +296,10 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
         js.delete_stream(&stream_name)
             .await
             .map_err(|e| anyhow::anyhow!("delete stream {stream_name}: {e}"))?;
+        let advisory_name = wamn_event_wire::delivery_advisory_stream(&stream_name);
+        js.delete_stream(&advisory_name)
+            .await
+            .map_err(|error| anyhow::anyhow!("delete advisory stream {advisory_name}: {error}"))?;
         println!("stream {stream_name} deleted (zero residue)");
     }
     Ok(())

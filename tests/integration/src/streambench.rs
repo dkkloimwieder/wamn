@@ -36,7 +36,6 @@ use anyhow::{Context as _, bail};
 use async_nats::header::NATS_MESSAGE_ID;
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
 use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
-use async_nats::jetstream::stream::{Config as StreamConfig, RetentionPolicy, StorageType};
 use async_nats::{Client, HeaderMap};
 use bytes::Bytes;
 use clap::{Args, ValueEnum};
@@ -103,11 +102,11 @@ pub struct StreamBenchArgs {
 
 impl StreamBenchArgs {
     fn stream_name(&self) -> String {
-        wamn_event_wire::stream_name(&self.org, &self.env)
+        wamn_event_wire::stream_name(&self.org, &self.project, &self.env)
     }
-    /// The stream binds every project's events for this org+env.
+    /// The stream binds only this organization, project, and environment.
     fn stream_subjects(&self) -> String {
-        wamn_event_wire::stream_subjects(&self.org, &self.env)
+        wamn_event_wire::stream_subjects(&self.org, &self.project, &self.env)
     }
     /// `<project>_<env>` — the Nats-Msg-Id prefix the reader keys dedupe on.
     fn project_env(&self) -> String {
@@ -273,17 +272,18 @@ async fn recreate_stream(
     let name = args.stream_name();
     // Ignore "stream not found" on first run.
     let _ = js.delete_stream(&name).await;
-    js.create_stream(StreamConfig {
-        name: name.clone(),
-        subjects: vec![args.stream_subjects()],
-        storage: StorageType::File,
-        num_replicas: args.replicas,
-        retention: RetentionPolicy::Limits,
-        duplicate_window: Duration::from_secs(args.dup_window_secs),
-        ..Default::default()
-    })
+    let _ = js
+        .delete_stream(wamn_event_wire::delivery_advisory_stream(&name))
+        .await;
+    wamn_ctl::event_streams::provision(
+        js,
+        &wamn_control_registry::Triple::new(&args.org, &args.project, args.env.as_str()),
+        args.replicas,
+        Duration::from_secs(args.dup_window_secs),
+        &[],
+    )
     .await
-    .with_context(|| format!("create stream {name} (R{})", args.replicas))?;
+    .with_context(|| format!("provision event streams for {name} (R{})", args.replicas))?;
     Ok(())
 }
 

@@ -520,7 +520,7 @@ mod tests {
             String::from_utf8_lossy(&request_head)
         );
 
-        let jetstream = Arc::new(WamnJetstream::new(WamnJetstreamConfig { nats_url: None }));
+        let jetstream = Arc::new(WamnJetstream::new(WamnJetstreamConfig::default()));
         let bridge = Arc::new(
             RouterDeliveryBridge::new(
                 Arc::clone(&route.driver),
