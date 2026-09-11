@@ -5,6 +5,7 @@
 pub mod ctl_process;
 pub mod declarations;
 pub mod event_broker;
+pub mod executor;
 pub mod platform;
 
 pub mod rendering;
