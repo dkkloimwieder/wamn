@@ -117,7 +117,8 @@ Each runner removed only its own containers and anonymous volumes.
 | `clippy-004` | Exit 0 | Runtime all-target lint after the narrow correction, with no transport warnings |
 | `deployed-001` | Exit 0 | Canonical host and gate images, the deployed membership Job, and exact cleanup |
 
-These results total 80 distinct targeted tests.
+The native, related regression, two live proofs, and guard runs cover 80 distinct targeted tests.
+Later HTTP runs repeat 35 of those tests rather than add new cases.
 The live proofs use cleartext HTTP/1.1.
 The socket tests separately cover TLS HTTP/1.1 and HTTP/2.
 The final integration binary hash is `45ef0e7dc8612fe9189a1cdcd69808587ecc72fecdcf0e109eb12e94c25c26f1`.
@@ -139,6 +140,7 @@ The route fixture passes its eight P3 protocol cases before deployment.
 The in-cluster Job then proves seven membership cases through the real provisioning CLI and HTTP route.
 Absent membership returns 401, grants return 200, removed roles return 403, and membership revocation returns 401.
 Repeated grants and revocations retain their expected results.
+
 The Job receipt, deployed image identities, and cleanup receipt live in `cluster-membership-001`.
 Every file in its `evidence.sha256` matches the recorded hash.
 The runner removes its own cluster, containers, images, and private scratch directory.
@@ -151,6 +153,45 @@ It also preserves target counts, explicit self-skips, unresolved results, and th
 The earlier `comparison-selfcheck-001.json` remains diagnostic evidence from the helper that used an uncommitted peer dependency.
 The final helper removes that dependency and refuses to overwrite existing comparison output.
 These offline checks do not execute workspace tests or decide acceptance.
+
+## Integrated workspace
+
+Main integrates the unchanged HTTP patches onto the published Receiving repair `ccd3ac401f7be09ddca39d43b727dfa092297db5`.
+The integrated source is `dce31af910ba7b586e3537ab2b1cfea784ea2066`.
+Its production commit is `a7068545`, which carries the same patch as the deployed source commit `bbcdbecd`.
+The source worktree remains clean at the same commit before and after the full run.
+The exact command, environment names, output, and source receipts live in `integrated-workspace-001`.
+
+The standard serialized workspace run exits 101.
+It reports 2,231 passing tests, six passing documentation tests, and 81 failing tests across 38 targets.
+Its 85 explicit self-skips remain unchanged, so the reported passes do not establish an exact count of executed proofs.
+No benchmark fixture is armed, and the run reports no measured tests.
+The command excludes only the two recorded schema-regeneration tests.
+
+A baseline is a retained earlier test run.
+The comparison uses the PAT baseline at `437672fcae8f76ad1df6cde705524a267dac1e04` and the earlier P3 baseline.
+The [exact comparison](integrated-workspace-001/workspace-comparison.json) retains every failure identity and cause.
+Against PAT, 77 failures match exactly and one existing WIT-scanner failure differs only in its absolute checkout path.
+The scanner and its four cited WIT files remain byte-identical between the two source commits.
+The [recorded comparison assertions](interpretation-checks-001/result.json) pass without changing the comparison rules.
+
+The three added failures name missing fixture inputs, not executed behavior failures.
+The Receiving UPDATE test requires `WAMN_RECEIVING_PG_URL` and passes in its [separate PostgreSQL proof](../receiving-update-projection/regression-positive-001/regression-result.json).
+That test source remains unchanged from the published Receiving repair.
+Both HTTP tests refuse before fixture setup because `WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET` is absent.
+Their separate armed runs pass in `live-reuse-003` and `live-nested-003`.
+
+No PAT failure disappears, and no failure identity is duplicated or unresolved.
+The target names, target counts, explicit self-skip names, and self-skip counts remain unchanged from PAT.
+All 75 P3 baseline failures match exactly.
+The three added PAT failures and three new fixture failures account for the difference from P3.
+This is not a green workspace run, and it supplies no new live proof for an unconfigured fixture.
+The completed comparison finds no new behavioral regression from the HTTP change.
+
+The main integration audit preserves 22,731 unrelated files and 22,675 index entries.
+It reconciles 177 byte-identical copies of owned evidence through recoverable backups.
+The audit receipts live in `main-landing-001`.
+The helper also passes three offline tests for preservation and conflict refusal in `integration-smoke-001.json`.
 
 The approval check rejected two earlier attempts to replace the fresh-client guard with runtime tests alone.
 The owner now directs a preventive guard for the complete client isolation key.
@@ -174,7 +215,7 @@ The correction follows immediately under `wamn-ctc8.33`.
 It authorizes the executing child as B and preserves A as the origin, following the existing origin/executor ruling.
 The passing nested proof establishes refusal and identity preservation, not successful nested HTTP dispatch.
 
-The issue remains in progress.
-The source is committed, but main integration and its workspace run remain pending at this checkpoint.
+Beads and Git own completion and publication status.
+This report records the approved correctness scope and its exact proof sources.
 The owner removes benchmarks as a condition for this correctness landing.
 Performance evidence remains deferred and unclaimed.

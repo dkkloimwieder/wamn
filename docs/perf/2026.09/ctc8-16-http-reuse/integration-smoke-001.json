@@ -1,0 +1,52 @@
+{
+  "schema": "wamn-http-integration-helper-smoke/v1",
+  "passed": true,
+  "offline_only": true,
+  "real_repository_git_mutations": false,
+  "builds_or_benchmarks_executed": false,
+  "temporary_root": "/tmp/wamn-http-integration-smoke.slbrz0",
+  "helper": {
+    "path": "/home/kaalin/dev/wamn/docs/perf/2026.09/ctc8-16-http-reuse/tools/integrate.py",
+    "sha256": "9c8294cb38b0a414b79399a4cee3156ef2f3d9de9f6f446ed2e33d92356b70e7"
+  },
+  "cases": [
+    {
+      "case": "successful_fast_forward",
+      "exit": 0,
+      "bytes_modes_and_index_preserved": true,
+      "recoverable_backup_retained": true,
+      "unrelated_staged_and_unstaged_layers_preserved": true,
+      "helper_result": {
+        "passed": true,
+        "base": "80751e4638e264c49609f04e1eb000e2ea4ebfe2",
+        "head": "e79ae87861e25e356f858d6e202f6e14bde42589",
+        "incoming_files": 2,
+        "preserved_stable_files": 4,
+        "preserved_index_entries": 3,
+        "reconciled_own_files": 1,
+        "backups_retained": [
+          "docs/perf/2026.09/ctc8-16-http-reuse/fixture/log.txt"
+        ],
+        "concurrent_evidence_not_compared": [
+          "docs/perf/2026.09/receiving-postcommit/",
+          "docs/perf/2026.09/receiving-update-projection/",
+          "docs/perf/2026.09/native-b-adoption/",
+          "docs/perf/2026.09/native-f-retained/"
+        ],
+        "merge_exit": 0
+      }
+    },
+    {
+      "case": "mismatch_preflight_refusal",
+      "exit": 1,
+      "expected_reason": "untracked bytes differ from incoming blob",
+      "head_files_modes_and_index_unchanged": true
+    },
+    {
+      "case": "forbidden_preflight_refusal",
+      "exit": 1,
+      "expected_reason": "incoming paths exceed the explicit HTTP allowlist",
+      "head_files_modes_and_index_unchanged": true
+    }
+  ]
+}
