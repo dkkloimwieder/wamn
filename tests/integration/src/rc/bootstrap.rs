@@ -37,7 +37,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         .parse()?;
     ensure!(port != 0, "PostgreSQL host port is nonzero");
     let admin_url = format!("postgres://postgres@127.0.0.1:{port}/postgres?sslmode=disable");
-    let system_url = format!("postgres://postgres@127.0.0.1:{port}/wamn_system?sslmode=disable");
+    let system_url = format!("postgres://postgres@127.0.0.1:{port}/wamn_system");
     let (admin, admin_task) = tokio::time::timeout(Duration::from_secs(120), async {
         loop {
             if let Ok(pair) = connect(&admin_url).await {
