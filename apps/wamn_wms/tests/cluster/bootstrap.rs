@@ -30,44 +30,28 @@ impl std::fmt::Debug for BootstrapFiles {
 }
 
 /// Prepare private files without creating the application service containers.
-pub(super) fn prepare(
-    repository: &Path,
-    work: &Path,
-    approved_broker_configuration: &Path,
-) -> anyhow::Result<BootstrapFiles> {
+pub(super) fn prepare(repository: &Path, work: &Path) -> anyhow::Result<BootstrapFiles> {
     let metadata = fs::metadata(work).context("read the owned WMS work directory")?;
     ensure!(
         metadata.is_dir() && metadata.permissions().mode() & 0o077 == 0,
         "the WMS work directory must be private"
     );
-    let broker = fs::read(approved_broker_configuration)
-        .context("read the approved broker configuration")?;
     let kind = render_kind_cluster(&fs::read_to_string(
         repository.join("deploy/infra/kind-config.yaml"),
     )?)?;
-    for directory in ["registry", "event-nats", "docker"] {
+    for directory in ["registry", "docker"] {
         DirBuilder::new()
             .mode(0o700)
             .create(work.join(directory))
             .with_context(|| format!("create the private WMS {directory} directory"))?;
     }
     write_private(&work.join("kind.yaml"), kind.as_bytes())?;
-    write_private(&work.join("event-nats/nats.conf"), &broker)?;
     let files = BootstrapFiles {
         registry_password: random_password()?,
         minio_password: random_password()?,
     };
-    let mut child = Command::new("docker")
-        .args([
-            "run",
-            "--rm",
-            "-i",
-            "--entrypoint",
-            "htpasswd",
-            "httpd:2-alpine",
-            "-Bni",
-            REGISTRY_USERNAME,
-        ])
+    let mut child = Command::new(repository.join("tools/wms-cluster-journey-run"))
+        .args(["registry-password", REGISTRY_USERNAME])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -102,7 +86,7 @@ pub(super) fn prepare(
     Ok(files)
 }
 
-fn random_password() -> anyhow::Result<String> {
+pub(super) fn random_password() -> anyhow::Result<String> {
     let mut bytes = [0u8; 32];
     SystemRandom::new()
         .fill(&mut bytes)

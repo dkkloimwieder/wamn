@@ -6,3 +6,8 @@ mod wms_publication;
 mod wms_runtime_live;
 #[cfg(test)]
 mod wms_wiring_shape;
+
+#[cfg(test)]
+mod cluster;
+#[cfg(test)]
+mod environment;

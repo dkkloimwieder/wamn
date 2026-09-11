@@ -14,7 +14,7 @@ path = "lib.rs"
 anyhow = { workspace = true }
 reqwest = { workspace = true, features = ["rustls", "json"] }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["process", "net", "time", "rt", "macros"] }
+tokio = { workspace = true, features = ["process", "net", "time", "rt", "macros", "io-util", "signal"] }
 uuid = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-execution-contract = { workspace = true }
@@ -27,7 +27,15 @@ wamn-test-infrastructure = { workspace = true }
 
 wamn-authoring-model = { workspace = true }
 
+futures-util = { workspace = true }
+hex = { workspace = true }
+ring = { workspace = true }
+sha2 = { workspace = true }
 async-nats = { workspace = true }
+wamn-control-registry = { workspace = true }
+wamn-cdc-reader = { workspace = true }
+pg_walstream = { workspace = true }
+object_store = { workspace = true }
 
 [lints]
 workspace = true
