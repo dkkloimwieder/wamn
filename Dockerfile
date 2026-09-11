@@ -210,7 +210,13 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
     cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
       -p http-route \
  && cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
-      -p materializer -p busyloop -p connection-http-standard -p sockprobe \
+      -p materializer \
+ && cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
+      -p busyloop \
+ && cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
+      -p connection-http-standard \
+ && cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
+      -p sockprobe \
  && install -d /component-output \
  && for artifact in \
       http_route materializer \

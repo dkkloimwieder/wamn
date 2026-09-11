@@ -47,14 +47,14 @@ render_declaration() {
     "$script_dir/$component/declaration.json.in" >"$scratch/$component.json"
 }
 
-for component in transform http-request label-render; do
-  cargo build \
-    --manifest-path "$component_manifest" \
-    --locked \
-    --release \
-    --target wasm32-wasip2 \
-    -p "$component"
-done
+cargo build \
+  --manifest-path "$component_manifest" \
+  --locked \
+  --release \
+  --target wasm32-wasip2 \
+  -p transform \
+  -p http-request \
+  -p label-render
 
 render_declaration transform
 render_declaration http-request
