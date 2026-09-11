@@ -825,6 +825,8 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
                 ("WAMN_EVT_ORG", "org"),
                 ("WAMN_EVT_PROJECT", "project"),
                 ("WAMN_EVT_ENV", "environment"),
+                ("WAMN_EVT_STREAM_REPLICAS", "stream_replicas"),
+                ("WAMN_EVT_DUP_WINDOW_SECS", "dup_window_secs"),
             ] {
                 expected.insert(
                     variable.to_owned(),
