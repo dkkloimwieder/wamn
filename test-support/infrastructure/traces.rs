@@ -2,6 +2,8 @@
 
 use serde::Deserialize;
 
+pub mod telemetry;
+
 /// A request trace returned by Tempo.
 #[derive(Debug, Deserialize)]
 pub struct TraceDocument {
