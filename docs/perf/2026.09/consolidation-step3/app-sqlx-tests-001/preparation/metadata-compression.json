@@ -1,0 +1,11 @@
+{
+  "source": "/tmp/consolidation-app-sqlx-20260911/metadata.json",
+  "path": "preparation/metadata.json.gz",
+  "original_bytes": 3304433,
+  "original_sha256": "a308fa0e7f54d875a7f78fafe00b3ef62c78681d33f1bcaa482fd8599b2ecf4e",
+  "compressed_bytes": 243268,
+  "compressed_sha256": "3a471d440f81da485471fb60dcc43d7ea99b6f9886b602a0739ac05362338112",
+  "mode": "0o664",
+  "round_trip_equal": true,
+  "purpose": "Cargo workspace and target structure from preparation, not a test result"
+}
