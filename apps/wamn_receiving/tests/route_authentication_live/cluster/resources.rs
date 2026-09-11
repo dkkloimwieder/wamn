@@ -323,6 +323,10 @@ pub(super) async fn capture_failure(cluster: &Resources) {
             "failure-workloads.json",
             vec!["get", "workloads", "-o", "json"],
         ),
+        (
+            "failure-host-deployment.json",
+            vec!["get", "deployment", "hostgroup-default", "-o", "json"],
+        ),
         ("failure-pods.json", vec!["get", "pods", "-o", "json"]),
         ("failure-jobs.json", vec!["get", "jobs", "-o", "json"]),
         (
@@ -340,6 +344,43 @@ pub(super) async fn capture_failure(cluster: &Resources) {
         if let Ok(output) = output {
             if output.status.success() {
                 let _ = fs::write(cluster.evidence.join(name), output.stdout);
+            }
+        }
+    }
+    let pods = fs::read(cluster.evidence.join("failure-pods.json"))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    if let Some(pods) = pods.as_ref().and_then(|pods| pods["items"].as_array()) {
+        for pod in pods {
+            let Some(name) = pod["metadata"]["name"].as_str() else {
+                continue;
+            };
+            let output = super::kubectl(cluster)
+                .arg("--request-timeout=10s")
+                .args([
+                    "-n",
+                    &cluster.name,
+                    "logs",
+                    name,
+                    "--all-containers",
+                    "--tail=-1",
+                ])
+                .kill_on_drop(true)
+                .output()
+                .await;
+            if let Ok(output) = output {
+                let _ = fs::write(
+                    cluster.evidence.join(format!("failure-pod-{name}.log")),
+                    output.stdout,
+                );
+                let _ = fs::write(
+                    cluster.evidence.join(format!("failure-pod-{name}.stderr")),
+                    output.stderr,
+                );
+                let _ = fs::write(
+                    cluster.evidence.join(format!("failure-pod-{name}-result.json")),
+                    json!({"pod":name,"exit_code":output.status.code(),"passed":output.status.success()}).to_string(),
+                );
             }
         }
     }
