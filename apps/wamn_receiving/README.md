@@ -17,5 +17,11 @@ cargo test --locked --offline -p wamn-receiving-tests --test receiving_command_h
 The history test requires `WAMN_RECEIVING_CORRECTNESS_DOCUMENT` to run its live cases.
 The local model tests run without that input.
 
+The terminal test uses a built Receiving operator and a local HTTP fixture.
+
+```bash
+python3 apps/wamn_receiving/tests/operator_pty.py --binary target/debug/wamn-receiving
+```
+
 SQLx reads the committed metadata in `tests/.sqlx/`.
 The [build and test runbook](../../docs/operations/build-and-test.md) gives the database and metadata regeneration commands.

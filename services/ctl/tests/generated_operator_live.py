@@ -29,14 +29,15 @@ from urllib.request import Request, urlopen
 import uuid
 
 REPOSITORY = Path(__file__).resolve().parents[3]
-HARNESS = REPOSITORY / "crates/client/terminal/tests/operator_pty.py"
-MODULE = importlib.util.spec_from_file_location("wamn_operator_pty", HARNESS)
-terminal = importlib.util.module_from_spec(MODULE)
-sys.modules[MODULE.name] = terminal
-# Import the reusable ANSI/PTY implementation without writing __pycache__ into
-# a watched source tree or running its disposable HTTP fixture.
+HARNESS = REPOSITORY / "apps/wamn_receiving/tests/operator_pty.py"
+MODULE = importlib.util.spec_from_file_location("receiving_operator_pty", HARNESS)
+receiving = importlib.util.module_from_spec(MODULE)
+sys.modules[MODULE.name] = receiving
+# Import the app assertions and shared terminal mechanics without writing
+# __pycache__ into a watched source tree or starting the HTTP fixture.
 sys.dont_write_bytecode = True
-MODULE.loader.exec_module(terminal)
+MODULE.loader.exec_module(receiving)
+terminal = receiving.terminal
 require, ProofError = terminal.require, terminal.ProofError
 
 STARTUP_TIMEOUT = 600.0
@@ -168,6 +169,7 @@ class LiveSession(terminal.Session):
     def __init__(self, wamn, config_path, overlay, host_binary):
         self.master, self.slave = pty.openpty()
         self.process = None
+        self.token = receiving.TOKEN
         self.output = bytearray()
         self.eof = False
         self.display = terminal.Display()
@@ -568,7 +570,7 @@ def main():
         require(info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) == 0o700
                 and not any(candidate.iterdir()), "evidence directory must be owned, empty, and mode 0700")
         directory = candidate
-        terminal.check_descriptors(REPOSITORY)
+        receiving.check_descriptors(REPOSITORY)
         edit = SourceEdit()
         evidence["command"] = [str(wamn), "dev", "--config", str(config_path), "--overlay-root",
                                str(overlay), "--watch", "--tui", "receiving"]

@@ -104,7 +104,7 @@ def run_mode(driver, tree, binary, directory, mode, failure, timeout):
     token, host = "wms-preflight-fixture-token", "wms-preflight.localhost"
     evidence = driver.support.Evidence(directory, [token])
     helper, _ = driver.support.load_terminal(tree)
-    helper.HOST, helper.TOKEN, helper.TIMEOUT = host, token, timeout
+    helper.TIMEOUT = timeout
     helper.ROWS, helper.COLUMNS = 60, 260
     ids = SimpleNamespace(pallet="44444444-0000-0000-0000-000000000001",
                           product="44444444-0000-0000-0000-000000000002",
@@ -116,7 +116,7 @@ def run_mode(driver, tree, binary, directory, mode, failure, timeout):
         fixture = HttpFixture(ids, mode, failure)
         relay = driver.Relay(fixture.url, host, token, timeout)
         database = DatabaseFixture(relay, evidence, ids, fixture.movement)
-        session = helper.Session(binary, tree, relay, "synthetic-wms-preflight")
+        session = helper.Session(binary, tree, relay, "synthetic-wms-preflight", host, token)
         result["driver_assertions"] = driver.drive(session, relay, database, evidence, ids, mode)
         driver.require(not fixture.errors, "the HTTP fixture reported an error")
         result["passed"] = True

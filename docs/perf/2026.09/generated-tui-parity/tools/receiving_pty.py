@@ -13,7 +13,6 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import termios
 import time
@@ -22,71 +21,13 @@ from urllib.parse import unquote, urlsplit
 import uuid
 
 
-class ProofError(Exception):
-    pass
-
-
-def require(condition, message):
-    if not condition:
-        raise ProofError(message)
-
-
-def load_terminal(root):
-    sys.dont_write_bytecode = True
-    path = root / "crates/client/terminal/tests/operator_pty.py"
-    spec = importlib.util.spec_from_file_location("receiving_terminal_proof", path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module, path
-
-
-class Evidence:
-    def __init__(self, directory, secrets):
-        directory.mkdir(parents=True, exist_ok=False)
-        self.directory = directory
-        self.secrets = sorted({value for value in secrets if value}, key=len, reverse=True)
-        self.events = []
-
-    def redact(self, text):
-        for secret in self.secrets:
-            text = text.replace(secret, "<redacted>")
-        return text
-
-    def write(self, name, text):
-        (self.directory / name).write_text(self.redact(text))
-
-    def json(self, name, value):
-        self.write(name, json.dumps(value, indent=2, sort_keys=True) + "\n")
-
-    def event(self, action, **fields):
-        self.events.append({"action": action, **fields})
-        self.json("commands.json", self.events)
-
-    def sums(self):
-        lines = []
-        for path in sorted(self.directory.iterdir()):
-            if path.is_file() and path.name != "SHA256SUMS":
-                lines.append(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n")
-        (self.directory / "SHA256SUMS").write_text("".join(lines))
-
-
-class Database:
-    def __init__(self, url, evidence):
-        self.url, self.evidence = url, evidence
-
-    def sql(self, name, sql, parse=False):
-        self.evidence.write(name + ".sql", sql + "\n")
-        self.evidence.event("psql", sql=name + ".sql", connection="private URL file via --dbname")
-        environment = dict(os.environ, PGCONNECT_TIMEOUT="10")
-        result = subprocess.run(
-            ["psql", "--dbname", self.url, "-X", "-A", "-t", "-q", "-v", "ON_ERROR_STOP=1"],
-            input=sql, text=True, capture_output=True, env=environment, timeout=30,
-        )
-        self.evidence.write(name + ".stdout", result.stdout)
-        self.evidence.write(name + ".stderr", result.stderr)
-        require(result.returncode == 0, f"psql failed at {name}; see redacted evidence")
-        return json.loads(result.stdout) if parse else result.stdout.strip()
+sys.dont_write_bytecode = True
+SUPPORT_PATH = Path(__file__).resolve().parents[5] / "crates/client/terminal/tests/live_support.py"
+SUPPORT_SPEC = importlib.util.spec_from_file_location("receiving_live_support", SUPPORT_PATH)
+support = importlib.util.module_from_spec(SUPPORT_SPEC)
+SUPPORT_SPEC.loader.exec_module(support)
+ProofError, require = support.ProofError, support.require
+load_terminal, Evidence, Database = support.load_terminal, support.Evidence, support.Database
 
 
 def seed(db, ids, prefix):
@@ -293,7 +234,7 @@ def main():
         require(binary.is_file() and os.access(binary, os.X_OK), "binary must be executable")
         root = Path(__file__).resolve().parents[5]
         helper, helper_path = load_terminal(root)
-        helper.HOST, helper.TOKEN, helper.TIMEOUT = args.host, token, args.timeout
+        helper.TIMEOUT = args.timeout
         helper.ROWS, helper.COLUMNS = 50, 260
         evidence = Evidence(args.evidence_dir, [token, database_url, unquote(urlsplit(database_url).password or "")])
         ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ("order", "supplier", "item", "dock1", "dock2", "line1", "line2")})
@@ -310,7 +251,7 @@ def main():
         navigation = seed(db, ids, prefix)
         fixture = SimpleNamespace(url=args.endpoint, snapshot=lambda: [])
         evidence.event("launch", binary=str(binary), credential="private PAT file via WAMN_TOKEN")
-        session = helper.Session(binary, root, fixture, args.target_instance)
+        session = helper.Session(binary, root, fixture, args.target_instance, args.host, token)
         result.update(drive(session, db, evidence, ids, prefix, navigation))
         result["passed"] = True
     except (Exception, KeyboardInterrupt) as error:

@@ -22,8 +22,8 @@ from urllib.parse import unquote, urlsplit
 import uuid
 
 sys.dont_write_bytecode = True
-SUPPORT_PATH = Path(__file__).resolve().parents[2] / "generated-tui-parity/tools/receiving_pty.py"
-SUPPORT_SPEC = importlib.util.spec_from_file_location("receiving_live_support", SUPPORT_PATH)
+SUPPORT_PATH = Path(__file__).resolve().parents[5] / "crates/client/terminal/tests/live_support.py"
+SUPPORT_SPEC = importlib.util.spec_from_file_location("wms_live_support", SUPPORT_PATH)
 support = importlib.util.module_from_spec(SUPPORT_SPEC)
 SUPPORT_SPEC.loader.exec_module(support)
 require = support.require
@@ -279,7 +279,7 @@ def main():
         require(binary.is_file() and os.access(binary, os.X_OK), "binary must be executable")
         root = Path(__file__).resolve().parents[5]
         helper, helper_path = support.load_terminal(root)
-        helper.HOST, helper.TOKEN, helper.TIMEOUT = args.host, token, args.timeout
+        helper.TIMEOUT = args.timeout
         helper.ROWS, helper.COLUMNS = 60, 260
         evidence = support.Evidence(args.evidence_dir, [token, database_url, unquote(urlsplit(database_url).password or "")])
         ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ("pallet", "product", "source", "destination")})
@@ -298,7 +298,7 @@ def main():
         relay = Relay(args.endpoint, args.host, token, args.timeout)
         evidence.event("launch", binary=str(binary), credential="private PAT file via WAMN_TOKEN",
                        relay=relay.url, upstream=args.endpoint)
-        session = helper.Session(binary, root, relay, args.target_instance)
+        session = helper.Session(binary, root, relay, args.target_instance, args.host, token)
         result.update(drive(session, relay, db, evidence, ids, args.mode))
         result["passed"] = True
     except (Exception, KeyboardInterrupt) as error:
