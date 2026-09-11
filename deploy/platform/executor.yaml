@@ -159,6 +159,34 @@ spec:
                 secretKeyRef:
                   name: wamn-http-admitter-db
                   key: url
+            # Event routing uses the declared environment coordinates and broker user.
+            - name: WAMN_EVT_NATS_URL
+              value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+            - name: WAMN_EVT_NATS_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-event-nats
+                  key: username
+                  optional: false
+            - { name: WAMN_EVT_NATS_PASSWORD_FILE, value: /etc/wamn/event-nats/password }
+            - name: WAMN_EVT_ORG
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-event-nats
+                  key: org
+                  optional: false
+            - name: WAMN_EVT_PROJECT
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-event-nats
+                  key: project
+                  optional: false
+            - name: WAMN_EVT_ENV
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-event-nats
+                  key: environment
+                  optional: false
             - { name: WAMN_PROJECT, value: demo }
             - { name: WAMN_SCHEMA, value: wamn_runner_demo }
             # Keep 2/16 connections reserved so guest-held sessions cannot starve
@@ -240,6 +268,9 @@ spec:
             successThreshold: 1
             failureThreshold: 1
           volumeMounts:
+            - name: event-nats
+              mountPath: /etc/wamn/event-nats
+              readOnly: true
             - name: registry-pull
               mountPath: /etc/wamn/registry
               readOnly: true
@@ -250,6 +281,10 @@ spec:
             requests: { cpu: "100m", memory: "256Mi" }
             limits: { memory: "4Gi" }
       volumes:
+        - name: event-nats
+          secret:
+            secretName: wamn-event-nats
+            optional: false
         - name: registry-pull
           secret:
             secretName: wamn-registry-pull

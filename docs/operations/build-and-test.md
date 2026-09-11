@@ -308,7 +308,10 @@ It moves materializer delivery and settlement to the named native `events` bindi
 WAMN retains exact release-registration selection, consumer preparation and drift refusal, derived publishing, and the separate scheduler doorbell.
 Source commit `26fdd3eda8e194730a016bf933f2917a6120c05b` records this checkpoint.
 It does not establish live correctness, broker authority, delivery pressure, or an integrated workspace result.
-The separate development activation caller update is outside this checkpoint.
+The separate caller change at `8c3c28a9495c8b7f5bfee218dbb8f2bfae87afe3` passes declared event coordinates through development activation and the executor deployment.
+Its existing activation test passes without skips, and the YAML comparison preserves unrelated data.
+The [test result](../perf/2026.09/native-c-advisories/dev-event-inputs-tests-001/commit.json) records the tested source.
+The local development environment still uses its existing broker and authentication model.
 The observer's access to shared advisory metadata remains an owner decision.
 
 The host takes `--materializer-nats-binding-file` or `WAMN_MAT_NATS_BINDING_FILE` as a path to private native binding configuration.

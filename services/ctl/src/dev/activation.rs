@@ -586,6 +586,7 @@ fn image_pull_secret(credentials: &RegistryCredentials) -> v2::ImagePullSecret {
 
 fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
     let identity = request.identity;
+    let event_identity = request.config.activation_identity();
     let mut args = vec![
         "host".to_owned(),
         "--host-group".to_owned(),
@@ -644,6 +645,12 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         (
             "WAMN_EVT_NATS_URL".to_owned(),
             request.config.event_nats_url().to_owned(),
+        ),
+        ("WAMN_EVT_ORG".to_owned(), event_identity.org.clone()),
+        ("WAMN_EVT_PROJECT".to_owned(), event_identity.project.clone()),
+        (
+            "WAMN_EVT_ENV".to_owned(),
+            event_identity.environment.clone(),
         ),
         (
             "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
@@ -1725,6 +1732,9 @@ mod tests {
                     "WAMN_EVT_NATS_URL".to_owned(),
                     "nats://127.0.0.1:41010".to_owned(),
                 ),
+                ("WAMN_EVT_ORG".to_owned(), "acme".to_owned()),
+                ("WAMN_EVT_PROJECT".to_owned(), "receiving".to_owned()),
+                ("WAMN_EVT_ENV".to_owned(), "receiving-dev".to_owned()),
                 (
                     "OTEL_EXPORTER_OTLP_ENDPOINT".to_owned(),
                     "http://127.0.0.1:41016".to_owned(),
