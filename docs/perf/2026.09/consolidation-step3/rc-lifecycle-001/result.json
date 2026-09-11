@@ -1,0 +1,33 @@
+{
+  "issue": "wamn-47wm.4.3",
+  "requires": [
+    "a87bd29aec5bb353eee090e517fe01ab3108c2cd",
+    "29cafdd6ac9135441fb5d83b481431f5ee37ffa6"
+  ],
+  "change": "internal test refactor; transfer RC decisions and assertions to the connected Rust caller",
+  "lifecycle_lines": 60,
+  "sha256": "94c0dba0a2e77bacf131def1b814441866709f8094c7b0bfd3171b9811b91d85",
+  "validation": {
+    "bash_syntax": "passed",
+    "git_diff_whitespace": "passed",
+    "only_kind_helm_docker": "passed static inspection",
+    "frozen_cluster_guard": "retained",
+    "cargo": "not run",
+    "services": "not run"
+  },
+  "old_calls_replaced": [
+    "provision-org CLI -> wamn_ctl::provision_org::run",
+    "bootstrap.sh capture wrapper -> provision_project_env::run and existing PAT Bootstrap",
+    "psql/createdb -> tokio_postgres with existing emitted SQL",
+    "kubernetes-gate-run and log markers -> native termination JSON with retained Job assertions"
+  ],
+  "retained": [
+    "kind three-node create/load/delete",
+    "Helm chart 2.9.0 install/readback",
+    "debug image assembly and source labels",
+    "pinned PostgreSQL 18.6 image",
+    "explicit rc/app/dev native broker with separate provisioning role",
+    "exact named container/image cleanup"
+  ],
+  "integration_condition": "Apply after the RC Rust caller and native result seams compile."
+}
