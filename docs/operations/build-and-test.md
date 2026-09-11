@@ -3066,89 +3066,92 @@ down and stand a fresh one up**; do not try to reuse the roles. `down
 --volumes` above is what makes the next standup clean, and dropping only the
 database is not enough.
 
-### `[AGENT-PILOT]` — the agent-authoring experiment harness
+### `[AGENT-PILOT]`: authoring experiment
 
-Not a gate. It measures whether a coding agent can author a wamn package from a
-scenario and prove it works, with no human relay. The method, the rubric and the
-task fixtures live in `docs/experiments/agent-authoring/protocol.md`; the tools
-are specified in `docs/poc/agent-authoring-tooling-spec.md`. This section is the
-command surface only.
+The pilot measures whether a coding agent can author a WAMN package from a scenario.
+The agent runs its tests without human relay.
+The method, rubric, and task inputs remain in `docs/experiments/agent-authoring/protocol.md`.
+`tests/integration/src/agent_pilot` owns preparation, grading, result interpretation, and cleanup decisions.
+The two shell entrypoints call the existing native `wamn-gates` commands.
+The run entrypoint also performs the Docker lifecycle actions requested by that owner.
+
+Build the native entrypoint and run its ordinary tests:
+
+```bash
+cargo build -p wamn-gates --bin wamn-gates --locked --offline
+cargo test -p wamn-proof-integration --lib --locked --offline \
+  agent_pilot:: -- --nocapture
+```
+
+The grading tests retain 54 assertions over recorded requests, contract fields, and scenario text.
+The preparation tests retain the 12 rubric-isolation assertions.
+These cases use private temporary files and start no database, host, or agent.
+
+The task configuration declares the package ID and app path.
+Run the dock appointments scenario with its declared task configuration:
 
 ```bash
 tools/agent-pilot-run all --run 001 --agent claude \
   --task docs/experiments/agent-authoring/tasks/dock-appointments
 ```
 
-The verbs run separately when you want to hold the environment between them:
-`up`, `launch`, `grade`, `down`. `down` is safe to run twice. `--agent stub`
-drives the whole shape without spending an agent, and `--stub-mode` reproduces
-each of the four driver exit reasons.
+The separate actions are `up`, `launch`, `grade`, and `down`.
+`down` is safe to run twice.
+`--agent stub` uses the retained local driver.
+`--stub-mode` accepts `completed`, `idle`, `step`, and `cap`.
+The last three keep the driver idle until the configured deadline stops it.
+`CARGO_TARGET_DIR` selects the built native entrypoint used by both shell commands.
+Without that variable, they use the repository's `target/debug/wamn-gates`.
 
-Re-grade a recorded run without an environment:
+Re-grade a recorded run without starting its environment:
 
 ```bash
-tools/agent-pilot-grade --replay "${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot/runs/020-claude-dock-appointments"
-tools/agent-pilot-grade-proof
+tools/agent-pilot-grade --replay \
+  "${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot/runs/020-claude-dock-appointments"
 ```
 
-`--replay` scores every step from the requests and responses the run wrote into
-`grade/http.jsonl`, under the same predicates as the live grade. No host, no
-database and no agent time, so a rubric change re-scores every recorded run. It
-writes `checklist-replay.json` and leaves the run's own `checklist.json` and
-`grade/` files exactly as the run left them. `agent-pilot-grade-proof` is its
-proof and needs no environment either.
+`--replay` grades each step from `grade/http.jsonl` with the same predicates as live grading.
+It writes `checklist-replay.json` and `grade/replay-results.json`.
+It preserves the original `checklist.json`, `grade/http.jsonl`, and `grade/results.json`.
+A run from before `wamn-nvbd.10` carries no request log, so its missing steps report `not replayable`.
+`--placement` reads the package's published input paths.
+`--contract` compares the scenario's declared fields and types with published contracts.
+Each takes an explicit recorded run directory.
 
-A replay reads what the run recorded. A run graded before `wamn-nvbd.10` landed
-carries no request log, so its steps replay as `not replayable`.
-
-Run directories live under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot/runs`.
-They are working state and any tool may delete them. Evidence leaves the cache
-through `tools/agent-pilot-report`, which writes
-`docs/experiments/agent-authoring/<run>.md` and the raw directory beside it,
-minus the environment and the worktree.
-
-Reclaim the arm after you promote it:
+Run directories remain under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot/runs`.
+They are temporary working data.
+Export a run with the retained `tools/agent-pilot-report` before reclaiming its directory:
 
 ```bash
 tools/agent-pilot-report --run 030
 tools/agent-pilot-run down --run 030
 ```
 
-The second `down` deletes the run directory and its per-commit target directory,
-which is where the storage is: twelve targets at roughly 11 GB each reached
-135 GB. It reclaims nothing until `agent-pilot-report` has written
-`docs/experiments/agent-authoring/<run>/run.json`, and it keeps a target that
-another surviving run still names. Running `down` inside `all` is therefore
-always a no-op for storage, and `down` on an already-reclaimed run is a no-op
-too.
+The report writes `docs/experiments/agent-authoring/<run>.md` and its raw result directory, without the environment or worktree.
+`down` reclaims storage only after that result directory contains `run.json`.
+It preserves a build target that another surviving run still names.
+The teardown inside `all` therefore keeps an unreported run's files.
+A second teardown of an already reclaimed run does nothing.
 
-Rules the harness enforces rather than asks for:
+Run one pilot at a time and keep it separate from cluster tests.
+Preflight refuses occupied ports 54332, 5004, 4224, 3201, 4319, and 8088.
+The agent process overrides the origin push URL with its private `no-push` path.
+It does not remove the repository's shared remote.
+The agent's `PATH` excludes `bd`, so its hooks cannot update the tracker.
+Each run records that difference from an ordinary session.
 
-- One run per machine at a time, and never beside a cluster journey. It takes
-  the same five ports the development environment takes, plus the Gate's 8088,
-  and preflight refuses if any is in use.
-- The run worktree has no remote, so "do not push" is true by construction.
-- `bd` is off the agent's `PATH`, so the hooks no-op and a run cannot write the
-  task system. This is a known deviation from an ordinary session and it is
-  recorded in every run report.
-- The skill inventory is frozen against run 001. A run whose inventory differs
-  is refused, because both agents select skills by description and a skill
-  appearing between runs changes the measurement silently.
-- The grading fixture is harness state and lives outside the run directory,
-  because the run directory is exported to the agent. `up` refuses the run when
-  the fixture or a `grade` block is reachable from any path the agent is handed.
-  It also refuses when the grading root sits on the run directory's walk-up
-  path, which is why that root is
-  `${XDG_STATE_HOME:-$HOME/.local/state}/wamn-pilot-grading` and not a sibling of
-  `runs`. The walk stops at `$HOME`: one user on one filesystem cannot hide a
-  directory from itself, and the bar this sets is deliberately leaving the
-  sandbox rather than reading a path the layout hands over.
-- **The pilot builds its binaries from the main checkout, not from the run
-  worktree.** An edit that lands in the main checkout while `up` is building
-  goes into the binaries the measurement uses. `up` now hashes the tree before
-  and after the build and refuses the run if it changed. Do not write to the
-  main checkout until `up` reports ok; after that the run uses binaries already
-  built, and the agent compiles only inside its own worktree.
+The run's skill list must match `skills-baseline.json`.
+Grading inputs stay under `${XDG_STATE_HOME:-$HOME/.local/state}/wamn-pilot-grading`, outside paths handed to the agent.
+Preparation removes the pilot source, shell tools, and this section from the measured worktree.
+It refuses reachable grading inputs or a retained `grade` block.
+It also refuses a grading directory found by walking up the run's parent paths.
+That walk stops at the user's home directory.
+
+The native runner builds the selected, prepared run worktree into its recorded build target.
+The build compares HEAD and the tracked file names, bytes, modes, and symlink targets before and after compilation.
+It refuses changed inputs and records those comparisons and the built file hashes in `build.json`.
+Keep that worktree unchanged until `up` reports success.
+Later agent compilation stays inside the agent's own worktree.
 
 ### `[GUEST-DIGEST-REPRODUCIBILITY]`: one commit, two checkouts, one digest
 

@@ -389,8 +389,9 @@ Generic. Writes `$RUN/checklist.json` and `$RUN/grade/*`.
    live grade. The path and naming checks read the recorded worktree, and the
    teardown answer comes from the run's own checklist, because only the live run
    can ask the database that question. A replay writes `checklist-replay.json`
-   and never touches the record it grades. `tools/agent-pilot-grade-proof` is
-   the proof and needs no environment.
+   and never touches the record it grades. Run the ordinary Rust cases with
+   `cargo test -p wamn-proof-integration --lib --locked --offline agent_pilot:: -- --nocapture`.
+   These tests need no running environment.
 
    A run graded before this landed carries no request log, so its steps replay
    as `not replayable`. Series 010 is in that state.
