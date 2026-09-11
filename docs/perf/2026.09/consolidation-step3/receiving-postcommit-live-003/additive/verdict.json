@@ -1,0 +1,14 @@
+{
+  "base": "additive",
+  "failure": null,
+  "passing_arms": [
+    "unchanged-overlay-routes",
+    "schema-requirements-observed",
+    "duplicate-handler-delivery",
+    "retry-exhaustion-advisory",
+    "independent-event-progress"
+  ],
+  "schema": "wamn-receiving-postcommit/v1",
+  "source": "965cd41835bd6e28b3f24b080392dac2dc53213e",
+  "verdict": "pass"
+}

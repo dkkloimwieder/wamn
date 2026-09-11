@@ -1,0 +1,7 @@
+{
+  "cluster": "wamn-receiving-ca36e6c706854528979aace4afa05313",
+  "gates_image": "wamn-gates:wamn-receiving-ca36e6c706854528979aace4afa05313",
+  "host_image": "wamn-host:wamn-receiving-ca36e6c706854528979aace4afa05313",
+  "identity_image": null,
+  "source_commit": "965cd41835bd6e28b3f24b080392dac2dc53213e"
+}

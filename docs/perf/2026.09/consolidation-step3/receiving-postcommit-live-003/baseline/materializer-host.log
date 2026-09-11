@@ -1,0 +1,46 @@
+2026-09-11T21:56:19.583545Z  INFO native descriptor limits initialized descriptor_soft_limit=Some(2147483584) default_max_connections=32768 default_max_http_ingress_connections=32768
+2026-09-11T21:56:19.734934Z  INFO connected to NATS
+2026-09-11T21:56:19.735330Z  INFO host memory resolved max_guest_memory=4GiB guest_memory_mode="count" default_heap_memory=256MiB core_instances=512 memories=512 pool_reservation=128GiB
+2026-09-11T21:56:21.175473Z  INFO synchronous release preload completed synchronous_wirings=13 component_digests=2 elapsed_ms=1405
+2026-09-11T21:56:21.175502Z  INFO release preload completed; component cache warm
+2026-09-11T21:56:21.185342Z  INFO wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing) router_delivery=true
+2026-09-11T21:56:21.185354Z  INFO wamn-host welded to its release effective_release_id=1 manifest_digest=sha256:52feceaa7255c21a354995ea59ad6056edef22c929467fe4adad2c90c4cf5bb3
+2026-09-11T21:56:21.185370Z  INFO HTTP server listening addr=0.0.0.0:80 protocol="HTTP"
+2026-09-11T21:56:21.185372Z  INFO probe server listening addr=0.0.0.0:8081
+2026-09-11T21:56:21.185390Z  INFO Starting WASI OTel plugin endpoint=http://otel-collector.wamn-system.svc.cluster.local:4317 protocol="grpc"
+2026-09-11T21:56:21.185801Z  INFO WASI OTel plugin started
+2026-09-11T21:56:21.185811Z  INFO Host started host_id="76b92c71-1ecb-4e58-b5af-c0e9b98eb975" friendly_name="fallacious-cemetery-4244" host_name="10.244.1.6" labels={"hostgroup": "default"} version="2.9.0" max_concurrent_starts=4
+2026-09-11T21:56:21.185892Z  INFO Host provides interfaces count=11 interfaces=["wasi:cli/terminal-stderr,terminal-output,environment,stdin,exit,stdout,terminal-input,stderr,terminal-stdin,terminal-stdout@0.2.0", "wasi:clocks/monotonic-clock,wall-time@0.2.0", "wasi:clocks/wall-clock,monotonic-clock@0.2.0", "wasi:filesystem/preopens,types@0.2.0", "wasi:http/types,handler@0.3.0", "wasi:http/types,incoming-handler,outgoing-handler@0.2.0", "wasi:io/error,streams,poll@0.2.0", "wasi:random/insecure,random,insecure-seed@0.2.0", "wasi:random/random@0.2.0", "wasi:sockets/tcp,tcp-create-socket,network,udp,udp-create-socket,instance-network,ip-name-lookup@0.2.0", "wasmcloud:nats/jetstream-handler,core-handler,kv-handler@0.1.0"]
+2026-09-11T21:56:21.185904Z  INFO wamn-host runtime startup completed elapsed_ms=1602 cleanup_budget_secs=57
+2026-09-11T21:56:19.581896Z  INFO native descriptor limits initialized descriptor_soft_limit=Some(2147483584) default_max_connections=32768 default_max_http_ingress_connections=32768
+2026-09-11T21:56:19.726874Z  INFO connected to NATS
+2026-09-11T21:56:19.727391Z  INFO host memory resolved max_guest_memory=4GiB guest_memory_mode="count" default_heap_memory=256MiB core_instances=512 memories=512 pool_reservation=128GiB
+2026-09-11T21:56:20.905602Z  INFO synchronous release preload completed synchronous_wirings=13 component_digests=2 elapsed_ms=1142
+2026-09-11T21:56:20.905662Z  INFO release preload completed; component cache warm
+2026-09-11T21:56:20.920746Z  INFO wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing) router_delivery=true
+2026-09-11T21:56:20.920778Z  INFO wamn-host welded to its release effective_release_id=1 manifest_digest=sha256:52feceaa7255c21a354995ea59ad6056edef22c929467fe4adad2c90c4cf5bb3
+2026-09-11T21:56:20.920810Z  INFO HTTP server listening addr=0.0.0.0:80 protocol="HTTP"
+2026-09-11T21:56:20.920831Z  INFO Starting WASI OTel plugin endpoint=http://otel-collector.wamn-system.svc.cluster.local:4317 protocol="grpc"
+2026-09-11T21:56:20.921562Z  INFO WASI OTel plugin started
+2026-09-11T21:56:20.921596Z  INFO Host started host_id="3d80630a-bda2-4ba9-b3c3-fd5f182ac062" friendly_name="ratty-star-2641" host_name="10.244.2.6" labels={"hostgroup": "default"} version="2.9.0" max_concurrent_starts=4
+2026-09-11T21:56:20.921741Z  INFO Host provides interfaces count=11 interfaces=["wasi:cli/terminal-stdin,stdin,exit,stdout,stderr,terminal-input,terminal-stderr,terminal-output,terminal-stdout,environment@0.2.0", "wasi:clocks/monotonic-clock,wall-clock@0.2.0", "wasi:clocks/wall-time,monotonic-clock@0.2.0", "wasi:filesystem/preopens,types@0.2.0", "wasi:http/handler,types@0.3.0", "wasi:http/incoming-handler,outgoing-handler,types@0.2.0", "wasi:io/streams,error,poll@0.2.0", "wasi:random/random@0.2.0", "wasi:random/insecure-seed,random,insecure@0.2.0", "wasi:sockets/network,instance-network,tcp,tcp-create-socket,udp-create-socket,udp,ip-name-lookup@0.2.0", "wasmcloud:nats/jetstream-handler,core-handler,kv-handler@0.1.0"]
+2026-09-11T21:56:20.921764Z  INFO wamn-host runtime startup completed elapsed_ms=1339 cleanup_budget_secs=57
+2026-09-11T21:56:20.921814Z  INFO probe server listening addr=0.0.0.0:8081
+2026-09-11T21:56:19.617005Z  INFO native descriptor limits initialized descriptor_soft_limit=Some(2147483584) default_max_connections=32768 default_max_http_ingress_connections=32768
+2026-09-11T21:56:19.724971Z  INFO connected to NATS
+2026-09-11T21:56:19.725327Z  INFO host memory resolved max_guest_memory=4GiB guest_memory_mode="count" default_heap_memory=256MiB core_instances=512 memories=512 pool_reservation=128GiB
+2026-09-11T21:56:21.177952Z  INFO synchronous release preload completed synchronous_wirings=13 component_digests=2 elapsed_ms=1427
+2026-09-11T21:56:21.177976Z  INFO release preload completed; component cache warm
+2026-09-11T21:56:21.186050Z  INFO wamn-host starting (base plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-http-routing) router_delivery=true
+2026-09-11T21:56:21.186059Z  INFO wamn-host welded to its release effective_release_id=1 manifest_digest=sha256:52feceaa7255c21a354995ea59ad6056edef22c929467fe4adad2c90c4cf5bb3
+2026-09-11T21:56:21.186072Z  INFO HTTP server listening addr=0.0.0.0:80 protocol="HTTP"
+2026-09-11T21:56:21.186084Z  INFO probe server listening addr=0.0.0.0:8081
+2026-09-11T21:56:21.186091Z  INFO Starting WASI OTel plugin endpoint=http://otel-collector.wamn-system.svc.cluster.local:4317 protocol="grpc"
+2026-09-11T21:56:21.186492Z  INFO WASI OTel plugin started
+2026-09-11T21:56:21.186504Z  INFO Host started host_id="ce1b0944-9da9-4eea-836e-1dbe411fa05f" friendly_name="frail-dime-4189" host_name="10.244.1.5" labels={"hostgroup": "default"} version="2.9.0" max_concurrent_starts=4
+2026-09-11T21:56:21.186595Z  INFO Host provides interfaces count=11 interfaces=["wasi:cli/stderr,stdin,stdout,terminal-output,terminal-input,exit,terminal-stdin,environment,terminal-stderr,terminal-stdout@0.2.0", "wasi:clocks/wall-time,monotonic-clock@0.2.0", "wasi:clocks/monotonic-clock,wall-clock@0.2.0", "wasi:filesystem/types,preopens@0.2.0", "wasi:http/handler,types@0.3.0", "wasi:http/incoming-handler,types,outgoing-handler@0.2.0", "wasi:io/poll,error,streams@0.2.0", "wasi:random/insecure-seed,random,insecure@0.2.0", "wasi:random/random@0.2.0", "wasi:sockets/tcp,instance-network,ip-name-lookup,udp-create-socket,udp,tcp-create-socket,network@0.2.0", "wasmcloud:nats/core-handler,kv-handler,jetstream-handler@0.1.0"]
+2026-09-11T21:56:21.186609Z  INFO wamn-host runtime startup completed elapsed_ms=1569 cleanup_budget_secs=57
+2026-09-11T21:56:27.190978Z  INFO workload_start{workload_id=4657f706-d496-4f0d-b2bd-bd2cc7044f47 workload.name="flow-http-8678bdb568-85878ffb77" workload.namespace="wamn-receiving-1f631dc53fb64e568df4a24b847fd42e"}: Starting workload workload_id="4657f706-d496-4f0d-b2bd-bd2cc7044f47" namespace="wamn-receiving-1f631dc53fb64e568df4a24b847fd42e" name="flow-http-8678bdb568-85878ffb77"
+2026-09-11T21:56:29.744279Z  INFO workload_start{workload_id=20732f3c-88fa-4f7b-91b6-973f7c0a9d37 workload.name="receiving-materializer-76b96cf569-84dcc86d47" workload.namespace="wamn-receiving-1f631dc53fb64e568df4a24b847fd42e"}: Starting workload workload_id="20732f3c-88fa-4f7b-91b6-973f7c0a9d37" namespace="wamn-receiving-1f631dc53fb64e568df4a24b847fd42e" name="receiving-materializer-76b96cf569-84dcc86d47"
+2026-09-11T21:56:30.004825Z  INFO workload_start{workload_id=20732f3c-88fa-4f7b-91b6-973f7c0a9d37 workload.name="receiving-materializer-76b96cf569-84dcc86d47" workload.namespace="wamn-receiving-1f631dc53fb64e568df4a24b847fd42e"}:workload_start_reserved:resolve_workload{workload.id="20732f3c-88fa-4f7b-91b6-973f7c0a9d37" workload.name="receiving-materializer-76b96cf569-84dcc86d47" workload.namespace="wamn-receiving-1f631dc53fb64e568df4a24b847fd42e"}:bind_plugins:plugin_on_workload_bind{plugin_id="wasmcloud-nats"}: opened NATS connection workload_id="20732f3c-88fa-4f7b-91b6-973f7c0a9d37" binding="events" servers="nats://172.28.0.10:4222" auth="user-password" server_version="2.10.29"
+wamn::materializer up: stream=EVT_4_acme_9_receiving_3_dev filter=evt.acme.receiving.dev.*.* tenant=receiving-route-auth batch=64 fetch_ms=500 max_deliver=5 max_sweeps=0

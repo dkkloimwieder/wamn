@@ -1,0 +1,59 @@
+{
+  "advisories": {
+    "config": {
+      "compression": "none",
+      "consumer_limits": null,
+      "discard": "old",
+      "duplicate_window": 604800000000000,
+      "max_age": 604800000000000,
+      "max_bytes": -1,
+      "max_consumers": -1,
+      "max_msg_size": -1,
+      "max_msgs": -1,
+      "max_msgs_per_subject": 1000,
+      "name": "WAMN_EVENT_ADVISORIES_EVT_4_acme_9_receiving_3_dev",
+      "num_replicas": 1,
+      "retention": "limits",
+      "storage": "file",
+      "subjects": [
+        "$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.EVT_4_acme_9_receiving_3_dev.*",
+        "$JS.EVENT.ADVISORY.CONSUMER.MSG_TERMINATED.EVT_4_acme_9_receiving_3_dev.*"
+      ]
+    },
+    "state": {
+      "bytes": 0,
+      "consumer_count": 0,
+      "first_seq": 0,
+      "last_seq": 0,
+      "messages": 0
+    }
+  },
+  "source": {
+    "config": {
+      "compression": "none",
+      "consumer_limits": null,
+      "discard": "old",
+      "duplicate_window": 120000000000,
+      "max_age": 0,
+      "max_bytes": -1,
+      "max_consumers": -1,
+      "max_msg_size": -1,
+      "max_msgs": -1,
+      "max_msgs_per_subject": -1,
+      "name": "EVT_4_acme_9_receiving_3_dev",
+      "num_replicas": 1,
+      "retention": "limits",
+      "storage": "file",
+      "subjects": [
+        "evt.acme.receiving.dev.>"
+      ]
+    },
+    "state": {
+      "bytes": 0,
+      "consumer_count": 1,
+      "first_seq": 0,
+      "last_seq": 0,
+      "messages": 0
+    }
+  }
+}

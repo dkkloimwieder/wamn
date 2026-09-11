@@ -1,0 +1,40 @@
+{
+  "apiVersion": "v1",
+  "kind": "Service",
+  "metadata": {
+    "annotations": {
+      "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"v1\",\"kind\":\"Service\",\"metadata\":{\"annotations\":{},\"name\":\"receiving-postcommit-nodeport\",\"namespace\":\"wamn-receiving-1f631dc53fb64e568df4a24b847fd42e\"},\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"protocol\":\"TCP\",\"targetPort\":80}],\"type\":\"NodePort\"}}\n"
+    },
+    "creationTimestamp": "2026-09-11T21:56:28Z",
+    "name": "receiving-postcommit-nodeport",
+    "namespace": "wamn-receiving-1f631dc53fb64e568df4a24b847fd42e",
+    "resourceVersion": "1348",
+    "uid": "acb36d2f-6dd2-4fa3-b134-a6ea4776fe18"
+  },
+  "spec": {
+    "clusterIP": "10.96.114.134",
+    "clusterIPs": [
+      "10.96.114.134"
+    ],
+    "externalTrafficPolicy": "Cluster",
+    "internalTrafficPolicy": "Cluster",
+    "ipFamilies": [
+      "IPv4"
+    ],
+    "ipFamilyPolicy": "SingleStack",
+    "ports": [
+      {
+        "name": "http",
+        "nodePort": 31112,
+        "port": 80,
+        "protocol": "TCP",
+        "targetPort": 80
+      }
+    ],
+    "sessionAffinity": "None",
+    "type": "NodePort"
+  },
+  "status": {
+    "loadBalancer": {}
+  }
+}

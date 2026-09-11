@@ -1,0 +1,17 @@
+[
+  {
+    "config_id": "sha256:970a42ad633b84894986ab52c4c061c89c6f9c459f8263212ec4b997a7142734",
+    "node": "wamn-receiving-ca36e6c706854528979aace4afa05313-control-plane",
+    "runtime_digest": "sha256:3159b77aabcd63654f5c0b9d1c7e9f269652be57982ab5b343a83dd2a47f4083"
+  },
+  {
+    "config_id": "sha256:970a42ad633b84894986ab52c4c061c89c6f9c459f8263212ec4b997a7142734",
+    "node": "wamn-receiving-ca36e6c706854528979aace4afa05313-worker",
+    "runtime_digest": "sha256:3159b77aabcd63654f5c0b9d1c7e9f269652be57982ab5b343a83dd2a47f4083"
+  },
+  {
+    "config_id": "sha256:970a42ad633b84894986ab52c4c061c89c6f9c459f8263212ec4b997a7142734",
+    "node": "wamn-receiving-ca36e6c706854528979aace4afa05313-worker2",
+    "runtime_digest": "sha256:3159b77aabcd63654f5c0b9d1c7e9f269652be57982ab5b343a83dd2a47f4083"
+  }
+]

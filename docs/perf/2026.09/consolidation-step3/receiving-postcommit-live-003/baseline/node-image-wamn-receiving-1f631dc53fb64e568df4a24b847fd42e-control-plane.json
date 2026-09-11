@@ -1,0 +1,72 @@
+{
+  "info": {
+    "chainID": "sha256:966387a1d842e0cb386700dd74394197bd4cfb0e26356bc48347a2b196e77028",
+    "imageSpec": {
+      "architecture": "amd64",
+      "config": {
+        "Entrypoint": [
+          "/usr/local/bin/wamn-host"
+        ],
+        "Env": [
+          "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+          "HOME=/tmp"
+        ],
+        "Labels": {
+          "wamn.dev/build-profile": "release",
+          "wamn.dev/source-head": "965cd41835bd6e28b3f24b080392dac2dc53213e"
+        }
+      },
+      "created": "2026-09-11T17:09:10.772758943-04:00",
+      "history": [
+        {
+          "comment": "debuerreotype 0.17",
+          "created": "2026-08-24T00:00:00Z",
+          "created_by": "# debian.sh --arch 'amd64' out/ 'trixie' '@1787529600'"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-06T09:57:34.90144603-04:00",
+          "created_by": "RUN /bin/sh -c apt-get update \u0026\u0026 apt-get install -y --no-install-recommends ca-certificates \u0026\u0026 rm -rf /var/lib/apt/lists/* # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-11T17:09:10.772758943-04:00",
+          "created_by": "COPY /native-output/wamn-host /usr/local/bin/wamn-host # buildkit"
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-11T17:09:10.772758943-04:00",
+          "created_by": "ENV HOME=/tmp",
+          "empty_layer": true
+        },
+        {
+          "comment": "buildkit.dockerfile.v0",
+          "created": "2026-09-11T17:09:10.772758943-04:00",
+          "created_by": "ENTRYPOINT [\"/usr/local/bin/wamn-host\"]",
+          "empty_layer": true
+        }
+      ],
+      "os": "linux",
+      "rootfs": {
+        "diff_ids": [
+          "sha256:411a86676185cb54d695a805b238194a64e9b77e0c723f3802fbb87d333ea0b3",
+          "sha256:8e4ed51d39fb1ccacd58d6b312ebcb8e6f3f6314a52fdb98d278bc3c4ede6792",
+          "sha256:ee2767aebb623ca0feffa7964b441f1e5a9d7ac6f6b419dd4e9b2f5e1f264506"
+        ],
+        "type": "layers"
+      }
+    }
+  },
+  "status": {
+    "id": "sha256:dca8a8a458fb3300bb88ffb8bb007f1eddf0ba5314476dfbfa78d2745d18f3d4",
+    "pinned": false,
+    "repoDigests": [
+      "docker.io/library/import-2026-09-11@sha256:bbf2ab87d1411071df0a720a874d2275464ccff357b100fa17ef77cbd49a47b1"
+    ],
+    "repoTags": [
+      "docker.io/library/wamn-host:wamn-receiving-1f631dc53fb64e568df4a24b847fd42e"
+    ],
+    "size": "200440891",
+    "username": ""
+  }
+}
