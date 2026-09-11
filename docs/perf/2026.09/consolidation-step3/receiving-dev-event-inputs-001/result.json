@@ -1,0 +1,20 @@
+{
+  "source_commit": "a9590a52a963a0584697a7a4b28185fa7a165189",
+  "bead": "wamn-0ct2.7",
+  "change_type": "test_setup_behavior",
+  "files": [
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/dev.rs",
+      "sha256": "062cfce8b5bf952c08a07099daf8d5553e03de83984f11f8cf4a69893e7de2ce",
+      "retained_assertions": 25
+    }
+  ],
+  "assertion_tokens_preserved": true,
+  "source_selection": "Existing JourneyDocument fresh_only_packages and overlay_compatibility fields select their sources; no mapping or new input record added.",
+  "direct_calls": "The retained dev test requires the same provisioning credential names as DevUp and provisions the declared stream before writing the strict dev configuration. Its body also accepts a direct provisioning client from EventBroker.",
+  "checks": [
+    "rustfmt parse passed without formatting unrelated lines",
+    "git diff --check passed"
+  ],
+  "cargo": "Not run; root owns warm integrated test execution."
+}

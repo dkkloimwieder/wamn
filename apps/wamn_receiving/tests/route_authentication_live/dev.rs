@@ -37,6 +37,13 @@ impl DevJourneyInputs {
             environment: DevEnvironmentInputs {
                 host_binary: required_journey_path("WAMN_RECEIVING_DEV_HOST_BIN")?,
                 nats_url: required_journey("WAMN_RECEIVING_DEV_NATS_URL")?,
+                event_nats_url: required_journey("WAMN_EVT_NATS_URL")?,
+                event_nats_username: required_journey("WAMN_EVT_NATS_USERNAME")?,
+                event_nats_password_file: required_journey_path("WAMN_EVT_NATS_PASSWORD_FILE")?,
+                stream_replicas: required_journey("WAMN_EVT_STREAM_REPLICAS")?.parse()
+                    .context("the dev test requires its declared NATS stream replica count")?,
+                dup_window_secs: required_journey("WAMN_EVT_DUP_WINDOW_SECS")?.parse()
+                    .context("the dev test requires its declared NATS duplicate window")?,
                 tempo_query_url: required_journey("WAMN_RECEIVING_DEV_TEMPO_QUERY_URL")?,
                 otel_exporter_otlp_endpoint: required_journey(
                     "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -509,13 +516,28 @@ pub(super) async fn verify_dev_verification_database_absent(
 #[ignore = "requires disposable PG18, NATS, authenticated OCI, and built wamn/host/flow-http binaries"]
 async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -> anyhow::Result<()>
 {
+    let system_url = required_journey(JOURNEY_URL_ENV)?;
+    let inputs = DevJourneyInputs::required()?;
+    let credentials = wamn_test_infrastructure::event_broker::Credentials {
+        username: required_journey("WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME")?,
+        password_file: required_journey_path("WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE")?,
+    };
+    let provisioning = wamn_test_infrastructure::event_broker::connect(
+        &credentials, &inputs.environment.event_nats_url,
+    ).await?;
+    assert_dev_command(&system_url, &inputs, &provisioning).await
+}
+
+pub(super) async fn assert_dev_command(
+    system_url: &str,
+    inputs: &DevJourneyInputs,
+    event_provisioning: &async_nats::Client,
+) -> anyhow::Result<()> {
     // Keep the expensive product gate to one clean run. Engine tests
     // `dirty_source_reaches_gate_then_refuses_before_publish` and
     // `dirty_watch_suffix_refuses_before_its_first_provenance_stage`, plus the
     // filesystem adapter's `filesystem_events_map_owned_inputs_and_ignore_generated_outputs`,
     // own dirty-stop and affected-suffix behavior deterministically.
-    let system_url = required_journey(JOURNEY_URL_ENV)?;
-    let inputs = DevJourneyInputs::required()?;
     let repository = repository_root()?;
     let source = GitSource::discover(&repository)
         .await
@@ -558,6 +580,16 @@ async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -
     .await?;
     let system_acl_before = current_database_acl(admin.as_ref()).await?;
     let durable_acl_before = current_database_acl(project.as_ref()).await?;
+    let event_scope = wamn_control_registry::Triple {
+        org: environment.identity.org.clone(),
+        project: environment.identity.project.clone(),
+        env: wamn_control_registry::Env::new(environment.identity.environment.clone()),
+    };
+    wamn_ctl::event_streams::provision(
+        &async_nats::jetstream::new(event_provisioning.clone()), &event_scope,
+        inputs.environment.stream_replicas,
+        Duration::from_secs(inputs.environment.dup_window_secs), &[],
+    ).await?;
     let config = write_dev_config(
         root,
         &system_url,
