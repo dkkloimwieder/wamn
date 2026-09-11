@@ -1,0 +1,24 @@
+{
+  "source_commit": "c4294de87aace635fb4418479386bac714ad410c",
+  "source_directory": "/home/kaalin/dev/wamn",
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-receiving-tests",
+    "--lib",
+    "route_authentication_live::cluster::resources::tests::",
+    "--",
+    "--nocapture"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "started_utc": "2026-09-11T21:22:21.375937+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 29.258486651990097
+}
