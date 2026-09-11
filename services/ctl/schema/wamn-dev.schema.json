@@ -9,6 +9,11 @@
     "component_artifact_base": {
       "type": "string"
     },
+    "dup_window_secs": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
+    },
     "effective_release_id": {
       "format": "uint32",
       "minimum": 1.0,
@@ -20,7 +25,13 @@
     "event_materializer_database_url": {
       "type": "string"
     },
+    "event_nats_password_file": {
+      "type": "string"
+    },
     "event_nats_url": {
+      "type": "string"
+    },
+    "event_nats_username": {
       "type": "string"
     },
     "executor_platform_database_url": {
@@ -93,6 +104,11 @@
     "schema": {
       "type": "string"
     },
+    "stream_replicas": {
+      "format": "uint",
+      "minimum": 0.0,
+      "type": "integer"
+    },
     "system_database_url": {
       "type": "string"
     },
@@ -124,10 +140,13 @@
   "required": [
     "catalog",
     "component_artifact_base",
+    "dup_window_secs",
     "effective_release_id",
     "environment",
     "event_materializer_database_url",
+    "event_nats_password_file",
     "event_nats_url",
+    "event_nats_username",
     "executor_platform_database_url",
     "flow_http_workload_image",
     "gate_bearer_token",
@@ -149,6 +168,7 @@
     "runner",
     "scheduler_nats_url",
     "schema",
+    "stream_replicas",
     "system_database_url",
     "target_database_acl_file",
     "target_database_url",
