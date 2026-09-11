@@ -1,0 +1,14 @@
+# wamn-gates socketguard — E13a publish-time egress guard (hermetic)
+# claim: P2 and P3 components importing wasi:sockets are REFUSED at publish;
+#        a standard component still publishes. Fixtures synthesized in-process.
+
+## negative — a P2 wasi:sockets importer is refused at publish
+    PASS: refused — component "socket-importer-P2.wasm" imports raw-socket interface(s) ["wasi:sockets/tcp@0.2.3", "wasi:sockets/ip-name-lookup@0.2.3"] (package "wasi:sockets") — this opens arbitrary outbound TCP with DNS, bypassing the wamn:postgres tenant-claim / RLS path; the platform refuses to publish it
+
+## negative — a P3 wasi:sockets importer is refused at publish
+    PASS: refused — component "socket-importer-P3.wasm" imports raw-socket interface(s) ["wasi:sockets/types@0.3.0", "wasi:sockets/ip-name-lookup@0.3.0"] (package "wasi:sockets") — this opens arbitrary outbound TCP with DNS, bypassing the wamn:postgres tenant-claim / RLS path; the platform refuses to publish it
+
+## positive control — a standard workload still publishes
+    PASS: admitted — no raw-socket surface
+
+socketguard complete — overall PASS: true

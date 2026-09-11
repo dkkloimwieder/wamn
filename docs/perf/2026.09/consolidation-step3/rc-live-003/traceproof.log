@@ -1,0 +1,4 @@
+controlled parent traceparent = 00-000000000000000018d45db9727fb730-18d45db9727fb731-01
+wamn:connection/http injected traceparent = 00-000000000000000018d45db9727fb730-80dccb6f08feb66f-01
+PASS [wamn:connection/http trace id threads across process boundary without guest help]
+traceproof: overall PASS (host-enforced effect-span inject on the production egress surface)

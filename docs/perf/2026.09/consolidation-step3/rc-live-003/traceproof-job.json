@@ -1,0 +1,121 @@
+{
+  "apiVersion": "batch/v1",
+  "kind": "Job",
+  "metadata": {
+    "annotations": {
+      "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"traceproof\",\"namespace\":\"wamn-rc\"},\"spec\":{\"backoffLimit\":0,\"template\":{\"metadata\":{\"labels\":{\"app\":\"traceproof\"}},\"spec\":{\"containers\":[{\"args\":[\"--log-level\",\"info\",\"traceproof\",\"--upstream\",\"http://serve-echo.wamn-rc.svc.cluster.local:8091/\",\"--result-file\",\"/dev/termination-log\"],\"env\":[{\"name\":\"OTEL_EXPORTER_OTLP_ENDPOINT\",\"value\":\"http://otel-collector:4317\"},{\"name\":\"OTEL_EXPORTER_OTLP_PROTOCOL\",\"value\":\"grpc\"},{\"name\":\"RUST_LOG\",\"value\":\"error\"}],\"image\":\"wamn-gates:rc-1c4a2676375a-815368-debug\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"traceproof\",\"resources\":{\"limits\":{\"memory\":\"256Mi\"},\"requests\":{\"cpu\":\"250m\",\"memory\":\"128Mi\"}},\"terminationMessagePath\":\"/dev/termination-log\",\"terminationMessagePolicy\":\"File\"}],\"restartPolicy\":\"Never\"}}}}\n"
+    },
+    "creationTimestamp": "2026-09-11T20:20:02Z",
+    "generation": 1,
+    "labels": {
+      "app": "traceproof",
+      "batch.kubernetes.io/controller-uid": "b0cfa9f8-34a9-4dde-a48c-bbc0a8a72375",
+      "batch.kubernetes.io/job-name": "traceproof",
+      "controller-uid": "b0cfa9f8-34a9-4dde-a48c-bbc0a8a72375",
+      "job-name": "traceproof"
+    },
+    "name": "traceproof",
+    "namespace": "wamn-rc",
+    "resourceVersion": "1382",
+    "uid": "b0cfa9f8-34a9-4dde-a48c-bbc0a8a72375"
+  },
+  "spec": {
+    "backoffLimit": 0,
+    "completionMode": "NonIndexed",
+    "completions": 1,
+    "manualSelector": false,
+    "parallelism": 1,
+    "podReplacementPolicy": "TerminatingOrFailed",
+    "selector": {
+      "matchLabels": {
+        "batch.kubernetes.io/controller-uid": "b0cfa9f8-34a9-4dde-a48c-bbc0a8a72375"
+      }
+    },
+    "suspend": false,
+    "template": {
+      "metadata": {
+        "labels": {
+          "app": "traceproof",
+          "batch.kubernetes.io/controller-uid": "b0cfa9f8-34a9-4dde-a48c-bbc0a8a72375",
+          "batch.kubernetes.io/job-name": "traceproof",
+          "controller-uid": "b0cfa9f8-34a9-4dde-a48c-bbc0a8a72375",
+          "job-name": "traceproof"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "args": [
+              "--log-level",
+              "info",
+              "traceproof",
+              "--upstream",
+              "http://serve-echo.wamn-rc.svc.cluster.local:8091/",
+              "--result-file",
+              "/dev/termination-log"
+            ],
+            "env": [
+              {
+                "name": "OTEL_EXPORTER_OTLP_ENDPOINT",
+                "value": "http://otel-collector:4317"
+              },
+              {
+                "name": "OTEL_EXPORTER_OTLP_PROTOCOL",
+                "value": "grpc"
+              },
+              {
+                "name": "RUST_LOG",
+                "value": "error"
+              }
+            ],
+            "image": "wamn-gates:rc-1c4a2676375a-815368-debug",
+            "imagePullPolicy": "IfNotPresent",
+            "name": "traceproof",
+            "resources": {
+              "limits": {
+                "memory": "256Mi"
+              },
+              "requests": {
+                "cpu": "250m",
+                "memory": "128Mi"
+              }
+            },
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File"
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "restartPolicy": "Never",
+        "schedulerName": "default-scheduler",
+        "securityContext": {},
+        "terminationGracePeriodSeconds": 30
+      }
+    }
+  },
+  "status": {
+    "completionTime": "2026-09-11T20:20:05Z",
+    "conditions": [
+      {
+        "lastProbeTime": "2026-09-11T20:20:05Z",
+        "lastTransitionTime": "2026-09-11T20:20:05Z",
+        "message": "Reached expected number of succeeded pods",
+        "reason": "CompletionsReached",
+        "status": "True",
+        "type": "SuccessCriteriaMet"
+      },
+      {
+        "lastProbeTime": "2026-09-11T20:20:05Z",
+        "lastTransitionTime": "2026-09-11T20:20:05Z",
+        "message": "Reached expected number of succeeded pods",
+        "reason": "CompletionsReached",
+        "status": "True",
+        "type": "Complete"
+      }
+    ],
+    "ready": 0,
+    "startTime": "2026-09-11T20:20:02Z",
+    "succeeded": 1,
+    "terminating": 0,
+    "uncountedTerminatedPods": {}
+  }
+}

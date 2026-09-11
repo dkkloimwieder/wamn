@@ -1,0 +1,19 @@
+{
+  "cleanup": null,
+  "cluster": "wamn-rc",
+  "deferred": [
+    "wamn-0h0g.15.153"
+  ],
+  "deferred_disposition": "post-merge; not claimed",
+  "failure": null,
+  "namespace": "wamn-rc",
+  "passed": true,
+  "selected_tests": [
+    "socketguard",
+    "traceproof"
+  ],
+  "socketguard_completed": true,
+  "source": "1c4a2676375a6757c17f5b7e12f2c01d104ff7ce",
+  "source_changed": null,
+  "traceproof_completed": true
+}

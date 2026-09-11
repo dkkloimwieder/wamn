@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "cargo",
+    "build",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-identity"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+  "source": "1c4a2676375a6757c17f5b7e12f2c01d104ff7ce",
+  "stderr": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/rc-live-003/identity-build.stderr.log",
+  "stdout": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/rc-live-003/identity-build.log"
+}

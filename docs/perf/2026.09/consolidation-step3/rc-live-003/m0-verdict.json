@@ -1,0 +1,60 @@
+{
+  "failure_classes": [],
+  "jobs": [
+    {
+      "failure_classes": [],
+      "job_uid": "d0d035d5-f074-4123-9324-51f80d946cd1",
+      "logs_sha256": "283ec233b8ab120387da48cad75f95422d4772ca5edbe8fa9dfc5300e7bcd3ae",
+      "name": "socketguard",
+      "result": {
+        "checks": {
+          "P2": {
+            "reason": "component \"socket-importer-P2.wasm\" imports raw-socket interface(s) [\"wasi:sockets/tcp@0.2.3\", \"wasi:sockets/ip-name-lookup@0.2.3\"] (package \"wasi:sockets\") — this opens arbitrary outbound TCP with DNS, bypassing the wamn:postgres tenant-claim / RLS path; the platform refuses to publish it",
+            "refused": true
+          },
+          "P3": {
+            "reason": "component \"socket-importer-P3.wasm\" imports raw-socket interface(s) [\"wasi:sockets/types@0.3.0\", \"wasi:sockets/ip-name-lookup@0.3.0\"] (package \"wasi:sockets\") — this opens arbitrary outbound TCP with DNS, bypassing the wamn:postgres tenant-claim / RLS path; the platform refuses to publish it",
+            "refused": true
+          },
+          "standard": {
+            "admitted": true
+          }
+        },
+        "passed": true,
+        "test": "socketguard"
+      },
+      "verdict": "pass"
+    },
+    {
+      "failure_classes": [],
+      "job_uid": "b0cfa9f8-34a9-4dde-a48c-bbc0a8a72375",
+      "logs_sha256": "cf5c07194d1caa7bfbd0f1264eda1875890fa17cdf38e42cdb27fdb9ef12f8ad",
+      "name": "traceproof",
+      "result": {
+        "injected": "00-000000000000000018d45db9727fb730-80dccb6f08feb66f-01",
+        "parent": "00-000000000000000018d45db9727fb730-18d45db9727fb731-01",
+        "passed": true,
+        "reflected": {
+          "traceparent": "00-000000000000000018d45db9727fb730-80dccb6f08feb66f-01",
+          "tracestate": null
+        },
+        "surface": "wamn:connection/http",
+        "test": "traceproof"
+      },
+      "verdict": "pass"
+    }
+  ],
+  "schema_version": "0.1",
+  "scope": {
+    "deferred": [
+      "wamn-0h0g.15.153"
+    ],
+    "deferred_disposition": "post-merge; not claimed",
+    "executed": [
+      "socketguard",
+      "traceproof"
+    ]
+  },
+  "source": "1c4a2676375a6757c17f5b7e12f2c01d104ff7ce",
+  "verdict": "pass"
+}

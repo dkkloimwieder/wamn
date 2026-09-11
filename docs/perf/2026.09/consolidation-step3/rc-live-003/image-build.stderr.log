@@ -1,0 +1,414 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.43kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/debian:trixie-slim
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/rust:1.98-trixie
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 242B done
+#4 DONE 0.0s
+
+#5 [base 1/2] FROM docker.io/library/debian:trixie-slim
+#5 DONE 0.0s
+
+#6 [native  1/13] FROM docker.io/library/rust:1.98-trixie
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 112.98kB 0.0s done
+#7 DONE 0.1s
+
+#8 [native  5/13] COPY Dockerfile ./Dockerfile
+#8 CACHED
+
+#9 [native  2/13] RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git  && rm -rf /var/lib/apt/lists/*
+#9 CACHED
+
+#10 [native  3/13] WORKDIR /build
+#10 CACHED
+
+#11 [native  7/13] COPY apps ./apps
+#11 CACHED
+
+#12 [native  9/13] COPY services ./services
+#12 CACHED
+
+#13 [native  4/13] COPY Cargo.toml Cargo.lock ./
+#13 CACHED
+
+#14 [native  6/13] COPY .cargo ./.cargo
+#14 CACHED
+
+#15 [native  8/13] COPY crates ./crates
+#15 CACHED
+
+#16 [native 10/13] COPY test-support ./test-support
+#16 CACHED
+
+#17 [native 11/13] COPY tests ./tests
+#17 DONE 2.2s
+
+#18 [native 12/13] COPY deploy ./deploy
+#18 DONE 0.2s
+
+#19 [native 13/13] RUN --mount=type=cache,id=wamn-rc-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-rc-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-rc-debug-target,target=/build/target,sharing=locked     RUSTC_WRAPPER= cargo build --locked -p wamn-gates -p wamn-host  && install -D -m 0755 target/debug/wamn-host /native-output/wamn-host  && install -D -m 0755 target/debug/wamn-gates /native-output/wamn-gates
+#19 1.383 warning: function `canonical_serialized` is never used
+#19 1.383    --> crates/catalog/model/src/lib.rs:791:4
+#19 1.383     |
+#19 1.383 791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+#19 1.383     |    ^^^^^^^^^^^^^^^^^^^^
+#19 1.383     |
+#19 1.383     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#19 1.383 
+#19 1.383 warning: `wamn-catalog` (lib) generated 1 warning
+#19 1.386 warning: the item `Future` is imported redundantly
+#19 1.386  --> crates/platform/runtime/src/connection_authority.rs:3:5
+#19 1.386   |
+#19 1.386 3 | use std::future::Future;
+#19 1.386   |     ^^^^^^^^^^^^^^^^^^^
+#19 1.386   |
+#19 1.386  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+#19 1.386   |
+#19 1.386   = note: the item `Future` is already defined here
+#19 1.386   |
+#19 1.386   = note: requested on the command line with `-W redundant-imports`
+#19 1.386 
+#19 1.386 warning: constant `HTTP_CONTRACT` is never used
+#19 1.386   --> crates/platform/runtime/src/plugins/connection_http.rs:56:7
+#19 1.386    |
+#19 1.386 56 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+#19 1.386    |       ^^^^^^^^^^^^^
+#19 1.386    |
+#19 1.386    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#19 1.386 
+#19 1.386 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.386    --> crates/platform/runtime/src/plugins/connection_http.rs:131:1
+#19 1.386     |
+#19 1.386 131 | / pub struct ConnectionHttp {
+#19 1.386 132 | |     postgres: Arc<WamnPostgres>,
+#19 1.386 133 | |     transport: Arc<HttpTransport>,
+#19 1.386 134 | |     vault: Arc<WamnCredentials>,
+#19 1.386 ...   |
+#19 1.386 151 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+#19 1.386 152 | | }
+#19 1.386     | |_^
+#19 1.386     |
+#19 1.386     = note: requested on the command line with `-W missing-debug-implementations`
+#19 1.386 
+#19 1.386 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.386   --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+#19 1.386    |
+#19 1.386 27 | / pub struct WamnCredentials {
+#19 1.386 28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+#19 1.386 29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+#19 1.386 30 | |     /// config-shaped).
+#19 1.386 ...  |
+#19 1.386 33 | |     projects: HashMap<String, HashMap<String, String>>,
+#19 1.386 34 | | }
+#19 1.386    | |_^
+#19 1.386 
+#19 1.386 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.386    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:507:1
+#19 1.386     |
+#19 1.386 507 | / pub struct WamnJetstream {
+#19 1.386 508 | |     nats_url: Option<String>,
+#19 1.386 509 | |     stream_replicas: Option<usize>,
+#19 1.386 510 | |     dup_window_secs: Option<u64>,
+#19 1.386 ...   |
+#19 1.386 536 | |     release: Option<Arc<ReleaseManifestWeld>>,
+#19 1.386 537 | | }
+#19 1.386     | |_^
+#19 1.386 
+#19 1.386 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.386    --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+#19 1.386     |
+#19 1.386 213 | / pub struct Capture {
+#19 1.386 214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+#19 1.386 215 | | }
+#19 1.386     | |_^
+#19 1.386 
+#19 1.386 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.386    --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+#19 1.386     |
+#19 1.386 235 | / pub struct WamnLogging {
+#19 1.386 236 | |     /// component id → host-trusted {tenant, project}.
+#19 1.386 237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+#19 1.386 238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+#19 1.386 ...   |
+#19 1.386 243 | |     _drain: tokio::task::JoinHandle<()>,
+#19 1.386 244 | | }
+#19 1.386     | |_^
+#19 1.386 
+#19 1.386 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.386    --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:54:1
+#19 1.386     |
+#19 1.386  54 | / pub struct WamnPostgres {
+#19 1.386  55 | |     /// Resolves a project id → its database connection + policy.
+#19 1.386  56 | |     provider: Arc<dyn CredentialProvider>,
+#19 1.386  57 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+#19 1.386 ...   |
+#19 1.386 117 | |     pub(super) bind_counters: super::BindCounters,
+#19 1.386 118 | | }
+#19 1.386     | |_^
+#19 1.386 
+#19 1.386 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.386    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:248:1
+#19 1.386     |
+#19 1.386 248 | / pub struct StaticCredentialProvider {
+#19 1.386 249 | |     projects: HashMap<String, ProjectConfig>,
+#19 1.386 250 | | }
+#19 1.386     | |_^
+#19 1.386 
+#19 1.386 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.386    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:423:1
+#19 1.386     |
+#19 1.386 423 | / pub struct K8sSecretProvider {
+#19 1.386 424 | |     pub namespace: String,
+#19 1.386 425 | | }
+#19 1.386     | |_^
+#19 1.386 
+#19 1.386 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.386    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+#19 1.386     |
+#19 1.386  99 | / pub struct PgTransaction {
+#19 1.386 100 | |     state: SharedTxnState,
+#19 1.386 101 | |     destroyed: Arc<AtomicU64>,
+#19 1.386 102 | |     cursor_seq: u32,
+#19 1.386 103 | |     /// Row limit of the project this transaction's connection belongs to.
+#19 1.386 104 | |     row_limit: u64,
+#19 1.386 105 | | }
+#19 1.386     | |_^
+#19 1.386 
+#19 1.386 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.386    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+#19 1.386     |
+#19 1.386 145 | / pub struct PgCursor {
+#19 1.386 146 | |     state: SharedTxnState,
+#19 1.386 147 | |     destroyed: Arc<AtomicU64>,
+#19 1.386 148 | |     name: String,
+#19 1.386 149 | | }
+#19 1.386     | |_^
+#19 1.386 
+#19 1.386 warning: `wamn-runtime` (lib) generated 12 warnings
+#19 1.387 warning: function `run_once_stages` is never used
+#19 1.387    --> services/ctl/src/dev.rs:604:10
+#19 1.387     |
+#19 1.387 604 | async fn run_once_stages<R>(
+#19 1.387     |          ^^^^^^^^^^^^^^^
+#19 1.387     |
+#19 1.387     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#19 1.387 
+#19 1.387 warning: function `verify_source_package_with_client` is never used
+#19 1.387     --> services/ctl/src/push_component.rs:1301:10
+#19 1.387      |
+#19 1.387 1301 | async fn verify_source_package_with_client(
+#19 1.387      |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#19 1.387 
+#19 1.387 warning: `wamn-ctl` (lib) generated 2 warnings
+#19 1.387 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.387   --> test-support/harness/src/ceiling.rs:72:1
+#19 1.387    |
+#19 1.387 72 | / pub struct Ramp {
+#19 1.387 73 | |     tolerance: f64,
+#19 1.387 74 | |     max_levels: usize,
+#19 1.387 75 | |     levels: Vec<LevelStats>,
+#19 1.387 ...  |
+#19 1.387 82 | |     retrying: bool,
+#19 1.387 83 | | }
+#19 1.387    | |_^
+#19 1.387    |
+#19 1.387    = note: requested on the command line with `-W missing-debug-implementations`
+#19 1.387 
+#19 1.387 warning: `wamn-gate-harness` (lib) generated 1 warning
+#19 1.387 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.387    --> services/scenario-worker/src/authoring.rs:218:1
+#19 1.387     |
+#19 1.387 218 | / pub struct InternalAuthoringBackend {
+#19 1.387 219 | |     authority: InternalDevAdmin,
+#19 1.387 220 | |     client: Client,
+#19 1.387 221 | |     connection_task: tokio::task::JoinHandle<()>,
+#19 1.387 222 | |     tenant_id: Box<str>,
+#19 1.387 223 | |     source_schema: BareSchemaName,
+#19 1.387 224 | | }
+#19 1.387     | |_^
+#19 1.387     |
+#19 1.387     = note: requested on the command line with `-W missing-debug-implementations`
+#19 1.387 
+#19 1.387 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 1.387    --> services/scenario-worker/src/store/admission.rs:316:1
+#19 1.387     |
+#19 1.387 316 | / pub struct AdmissionSurface {
+#19 1.387 317 | |     /// The explicit credential and exact server-side predicates are retained so
+#19 1.387 318 | |     /// every replacement physical connection is checked identically.
+#19 1.387 319 | |     probe: CredentialExactnessProbe,
+#19 1.387 ...   |
+#19 1.387 322 | |     tenant_id: Box<str>,
+#19 1.387 323 | | }
+#19 1.387     | |_^
+#19 1.387 
+#19 1.387 warning: `wamn-scenario-worker` (lib) generated 2 warnings
+#19 1.387    Compiling wamn-proof-integration v0.1.0 (/build/tests/integration)
+#19 2.158 warning: unused import: `anyhow::Context as _`
+#19 2.158   --> tests/integration/src/agent_pilot/runner/process.rs:10:5
+#19 2.158    |
+#19 2.158 10 | use anyhow::Context as _;
+#19 2.158    |     ^^^^^^^^^^^^^^^^^^^^
+#19 2.158    |
+#19 2.158    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+#19 2.158 
+#19 2.579 warning: function `models` is never used
+#19 2.579   --> tests/integration/src/measurement_schema.rs:25:8
+#19 2.579    |
+#19 2.579 25 | pub fn models(schema: &str) -> Vec<ManagedModel> {
+#19 2.579    |        ^^^^^^
+#19 2.579    |
+#19 2.579    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#19 2.579 
+#19 2.579 warning: field `release` is never read
+#19 2.579    --> tests/integration/src/trusted_http_route.rs:110:16
+#19 2.579     |
+#19 2.579 105 | pub struct TrustedHttpRoute {
+#19 2.579     |            ---------------- field in this struct
+#19 2.579 ...
+#19 2.579 110 |     pub(crate) release: Arc<ReleaseManifestWeld>,
+#19 2.579     |                ^^^^^^^
+#19 2.579 
+#19 2.664 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 2.664    --> tests/integration/src/trusted_http_route.rs:105:1
+#19 2.664     |
+#19 2.664 105 | / pub struct TrustedHttpRoute {
+#19 2.664 106 | |     pub driver: Arc<RouterDriver>,
+#19 2.664 107 | |     /// The same welded release the driver authorizes. Callers that exercise a
+#19 2.664 108 | |     /// release-owned ingress plugin must share this exact weld rather than mint
+#19 2.664 ...   |
+#19 2.664 116 | |     pub wiring_hash: String,
+#19 2.664 117 | | }
+#19 2.664     | |_^
+#19 2.664     |
+#19 2.664     = note: requested on the command line with `-W missing-debug-implementations`
+#19 2.664 
+#19 4.143 warning: `wamn-proof-integration` (lib) generated 4 warnings (run `cargo fix --lib -p wamn-proof-integration` to apply 1 suggestion)
+#19 4.143    Compiling wamn-gates v0.1.0 (/build/tests/orchestrator)
+#19 7.091     Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.54s
+#19 DONE 9.3s
+
+#20 [base 2/2] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates  && rm -rf /var/lib/apt/lists/*
+#20 CACHED
+
+#21 [host 1/1] COPY --from=native /native-output/wamn-host /usr/local/bin/wamn-host
+#21 CACHED
+
+#22 [gates 1/1] COPY --from=native /native-output/wamn-gates /usr/local/bin/wamn-gates
+#22 DONE 0.7s
+
+#23 exporting to image
+#23 exporting layers
+#23 exporting layers 0.5s done
+#23 writing image sha256:81d4c6afc72cf311f99115b29ee3a51ec03659016cf5144296a57f740084b1a1
+#23 writing image sha256:81d4c6afc72cf311f99115b29ee3a51ec03659016cf5144296a57f740084b1a1 done
+#23 naming to docker.io/library/wamn-gates:rc-1c4a2676375a-815368-debug 0.0s done
+#23 DONE 0.5s
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.43kB done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/debian:trixie-slim
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/rust:1.98-trixie
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 242B done
+#4 DONE 0.0s
+
+#5 [base 1/2] FROM docker.io/library/debian:trixie-slim
+#5 DONE 0.0s
+
+#6 [native  1/13] FROM docker.io/library/rust:1.98-trixie
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 101.73kB 0.0s done
+#7 DONE 0.1s
+
+#8 [native  2/13] RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git  && rm -rf /var/lib/apt/lists/*
+#8 CACHED
+
+#9 [native  4/13] COPY Cargo.toml Cargo.lock ./
+#9 CACHED
+
+#10 [native  9/13] COPY services ./services
+#10 CACHED
+
+#11 [native 13/13] RUN --mount=type=cache,id=wamn-rc-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-rc-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-rc-debug-target,target=/build/target,sharing=locked     RUSTC_WRAPPER= cargo build --locked -p wamn-gates -p wamn-host  && install -D -m 0755 target/debug/wamn-host /native-output/wamn-host  && install -D -m 0755 target/debug/wamn-gates /native-output/wamn-gates
+#11 CACHED
+
+#12 [native 11/13] COPY tests ./tests
+#12 CACHED
+
+#13 [native 12/13] COPY deploy ./deploy
+#13 CACHED
+
+#14 [native  5/13] COPY Dockerfile ./Dockerfile
+#14 CACHED
+
+#15 [native  8/13] COPY crates ./crates
+#15 CACHED
+
+#16 [base 2/2] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates  && rm -rf /var/lib/apt/lists/*
+#16 CACHED
+
+#17 [native  3/13] WORKDIR /build
+#17 CACHED
+
+#18 [native  7/13] COPY apps ./apps
+#18 CACHED
+
+#19 [native  6/13] COPY .cargo ./.cargo
+#19 CACHED
+
+#20 [native 10/13] COPY test-support ./test-support
+#20 CACHED
+
+#21 [host 1/1] COPY --from=native /native-output/wamn-host /usr/local/bin/wamn-host
+#21 CACHED
+
+#22 exporting to image
+#22 exporting layers done
+#22 writing image sha256:c5e5244a0dd278d74026e5093c66fb5c2b0e5588645783fd9a62b0489cbcab5a done
+#22 naming to docker.io/library/wamn-host:rc-1c4a2676375a-815368-debug 0.0s done
+#22 DONE 0.1s
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from m1-postgres.Dockerfile
+#1 transferring dockerfile: 418B done
+#1 WARN: FromPlatformFlagConstDisallowed: FROM --platform flag should not use constant value "linux/amd64" (line 1)
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/postgres:18.6-trixie@sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/1] FROM docker.io/library/postgres:18.6-trixie@sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a
+#4 CACHED
+
+#5 exporting to image
+#5 exporting layers done
+#5 writing image sha256:9a1a67579dc39ae2790d10ac66102510a1644bbe96f995aa722acf9168b95574 done
+#5 naming to docker.io/library/wamn-postgres:rc-1c4a2676375a-815368 0.0s done
+#5 DONE 0.0s
+
+ [33m1 warning found (use docker --debug to expand):
+[0m - FromPlatformFlagConstDisallowed: FROM --platform flag should not use constant value "linux/amd64" (line 1)

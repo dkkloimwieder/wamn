@@ -1,0 +1,105 @@
+{
+  "apiVersion": "batch/v1",
+  "kind": "Job",
+  "metadata": {
+    "annotations": {
+      "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"socketguard\",\"namespace\":\"wamn-rc\"},\"spec\":{\"backoffLimit\":0,\"template\":{\"metadata\":{\"labels\":{\"app\":\"socketguard\"}},\"spec\":{\"containers\":[{\"args\":[\"--log-level\",\"warn\",\"socketguard\",\"--result-file\",\"/dev/termination-log\"],\"image\":\"wamn-gates:rc-1c4a2676375a-815368-debug\",\"imagePullPolicy\":\"IfNotPresent\",\"name\":\"socketguard\",\"resources\":{\"limits\":{\"memory\":\"1Gi\"},\"requests\":{\"cpu\":\"1\",\"memory\":\"256Mi\"}},\"terminationMessagePath\":\"/dev/termination-log\",\"terminationMessagePolicy\":\"File\"}],\"restartPolicy\":\"Never\"}}}}\n"
+    },
+    "creationTimestamp": "2026-09-11T20:19:58Z",
+    "generation": 1,
+    "labels": {
+      "app": "socketguard",
+      "batch.kubernetes.io/controller-uid": "d0d035d5-f074-4123-9324-51f80d946cd1",
+      "batch.kubernetes.io/job-name": "socketguard",
+      "controller-uid": "d0d035d5-f074-4123-9324-51f80d946cd1",
+      "job-name": "socketguard"
+    },
+    "name": "socketguard",
+    "namespace": "wamn-rc",
+    "resourceVersion": "1349",
+    "uid": "d0d035d5-f074-4123-9324-51f80d946cd1"
+  },
+  "spec": {
+    "backoffLimit": 0,
+    "completionMode": "NonIndexed",
+    "completions": 1,
+    "manualSelector": false,
+    "parallelism": 1,
+    "podReplacementPolicy": "TerminatingOrFailed",
+    "selector": {
+      "matchLabels": {
+        "batch.kubernetes.io/controller-uid": "d0d035d5-f074-4123-9324-51f80d946cd1"
+      }
+    },
+    "suspend": false,
+    "template": {
+      "metadata": {
+        "labels": {
+          "app": "socketguard",
+          "batch.kubernetes.io/controller-uid": "d0d035d5-f074-4123-9324-51f80d946cd1",
+          "batch.kubernetes.io/job-name": "socketguard",
+          "controller-uid": "d0d035d5-f074-4123-9324-51f80d946cd1",
+          "job-name": "socketguard"
+        }
+      },
+      "spec": {
+        "containers": [
+          {
+            "args": [
+              "--log-level",
+              "warn",
+              "socketguard",
+              "--result-file",
+              "/dev/termination-log"
+            ],
+            "image": "wamn-gates:rc-1c4a2676375a-815368-debug",
+            "imagePullPolicy": "IfNotPresent",
+            "name": "socketguard",
+            "resources": {
+              "limits": {
+                "memory": "1Gi"
+              },
+              "requests": {
+                "cpu": "1",
+                "memory": "256Mi"
+              }
+            },
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File"
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "restartPolicy": "Never",
+        "schedulerName": "default-scheduler",
+        "securityContext": {},
+        "terminationGracePeriodSeconds": 30
+      }
+    }
+  },
+  "status": {
+    "completionTime": "2026-09-11T20:20:01Z",
+    "conditions": [
+      {
+        "lastProbeTime": "2026-09-11T20:20:01Z",
+        "lastTransitionTime": "2026-09-11T20:20:01Z",
+        "message": "Reached expected number of succeeded pods",
+        "reason": "CompletionsReached",
+        "status": "True",
+        "type": "SuccessCriteriaMet"
+      },
+      {
+        "lastProbeTime": "2026-09-11T20:20:01Z",
+        "lastTransitionTime": "2026-09-11T20:20:01Z",
+        "message": "Reached expected number of succeeded pods",
+        "reason": "CompletionsReached",
+        "status": "True",
+        "type": "Complete"
+      }
+    ],
+    "ready": 0,
+    "startTime": "2026-09-11T20:19:58Z",
+    "succeeded": 1,
+    "terminating": 0,
+    "uncountedTerminatedPods": {}
+  }
+}
