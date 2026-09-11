@@ -1,0 +1,95 @@
+{
+  "rust_parse": [
+    {
+      "command": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "--emit",
+        "stdout",
+        "crates/schema/generator/src/client_tui.rs"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "--emit",
+        "stdout",
+        "crates/schema/generator/src/materialize.rs"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "--emit",
+        "stdout",
+        "crates/schema/generator/tests/tui_emitter.rs"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--config",
+        "skip_children=true",
+        "--emit",
+        "stdout",
+        "services/ctl/src/ui.rs"
+      ],
+      "exit": 0,
+      "stderr": ""
+    }
+  ],
+  "python_ast": "passed",
+  "generated_cargo_toml": "passed",
+  "expected_hashes_and_modes": "passed",
+  "read_operator_bytes": "unchanged",
+  "reader_test_bytes": "unchanged",
+  "unchanged_generated_receiving_rust": [
+    "apps/wamn_receiving/generated/client/location.rs",
+    "apps/wamn_receiving/generated/client/purchase_order.rs",
+    "apps/wamn_receiving/generated/client/receipt.rs",
+    "apps/wamn_receiving/generated/client/receiving.rs",
+    "apps/wamn_receiving/generated/native-verifier/item.rs",
+    "apps/wamn_receiving/generated/native-verifier/location.rs",
+    "apps/wamn_receiving/generated/native-verifier/location_list.rs",
+    "apps/wamn_receiving/generated/native-verifier/purchase_order.rs",
+    "apps/wamn_receiving/generated/native-verifier/purchase_order_line.rs",
+    "apps/wamn_receiving/generated/native-verifier/receipt.rs",
+    "apps/wamn_receiving/generated/native-verifier/receipt_line.rs",
+    "apps/wamn_receiving/generated/native-verifier/receiving_load_receipt_screen.rs",
+    "apps/wamn_receiving/generated/native-verifier/receiving_record_receipt.rs",
+    "apps/wamn_receiving/generated/receiving-tui/src/lib.rs",
+    "apps/wamn_receiving/generated/receiving-tui/src/screens/location.rs",
+    "apps/wamn_receiving/generated/receiving-tui/src/screens/mod.rs",
+    "apps/wamn_receiving/generated/receiving-tui/src/screens/purchase_order.rs",
+    "apps/wamn_receiving/generated/receiving-tui/src/screens/receipt.rs",
+    "apps/wamn_receiving/generated/receiving-tui/src/screens/receiving.rs",
+    "apps/wamn_receiving/generated/wamn/item.rs",
+    "apps/wamn_receiving/generated/wamn/location.rs",
+    "apps/wamn_receiving/generated/wamn/location_list.rs",
+    "apps/wamn_receiving/generated/wamn/purchase_order.rs",
+    "apps/wamn_receiving/generated/wamn/purchase_order_line.rs",
+    "apps/wamn_receiving/generated/wamn/receipt.rs",
+    "apps/wamn_receiving/generated/wamn/receipt_line.rs",
+    "apps/wamn_receiving/generated/wamn/receiving_load_receipt_screen.rs",
+    "apps/wamn_receiving/generated/wamn/receiving_record_receipt.rs"
+  ]
+}

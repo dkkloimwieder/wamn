@@ -205,6 +205,7 @@ pub fn read_operator(package_root: &Path, component: &str) -> io::Result<Option<
 pub fn emit_tui(
     ir: &ClientContractIr,
     component: &str,
+    operator: Option<&OperatorCrate>,
 ) -> Result<Vec<GeneratedFile>, ClientTuiError> {
     if !component
         .bytes()
@@ -220,14 +221,19 @@ pub fn emit_tui(
     let crate_name = format!("wamn_generated_{}_tui", slug.replace('-', "_"));
     let prefix = format!("generated/{component}-tui");
     let mut files = BTreeMap::new();
-    files.insert(format!("{prefix}/Cargo.toml"), cargo_manifest(&slug));
     files.insert(
-        format!("{prefix}/src/main.rs"),
-        format!(
-            "// @generated; do not edit.\n\n#[tokio::main]\nasync fn main() -> Result<wamn_client_terminal::operator::ExitReason, Box<dyn std::error::Error>> {{\n    wamn_client_terminal::operator::run({:?}, {crate_name}::screens).await\n}}\n",
-            ir.package
-        ),
+        format!("{prefix}/Cargo.toml"),
+        cargo_manifest(&slug, operator),
     );
+    if operator.is_none() {
+        files.insert(
+            format!("{prefix}/src/main.rs"),
+            format!(
+                "// @generated; do not edit.\n\n#[tokio::main]\nasync fn main() -> Result<wamn_client_terminal::operator::ExitReason, Box<dyn std::error::Error>> {{\n    wamn_client_terminal::operator::run({:?}, {crate_name}::screens).await\n}}\n",
+                ir.package
+            ),
+        );
+    }
 
     let mut library = String::from(
         "// @generated; do not edit.\n\nuse wamn_client_tui::screen::Screen;\nuse wamn_client_tui::submission::SessionBinding;\n\npub mod screens;\n",
@@ -284,9 +290,14 @@ pub fn emit_tui(
         .collect())
 }
 
-fn cargo_manifest(slug: &str) -> String {
+fn cargo_manifest(slug: &str, operator: Option<&OperatorCrate>) -> String {
+    let binary = if operator.is_none() {
+        format!("[[bin]]\nname = \"wamn-{slug}-tui\"\npath = \"src/main.rs\"\n\n")
+    } else {
+        String::new()
+    };
     format!(
-        "# @generated; do not edit.\n[package]\nworkspace = \"../../../..\"\nname = \"wamn-generated-{slug}-tui\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\n\n[[bin]]\nname = \"wamn-{slug}-tui\"\npath = \"src/main.rs\"\n\n[dependencies]\nwamn-client = {{ workspace = true }}\nwamn-client-tui = {{ workspace = true }}\nwamn-client-terminal = {{ workspace = true }}\nserde_json = {{ workspace = true }}\nchrono = {{ workspace = true }}\nrust_decimal = {{ workspace = true }}\nuuid = {{ workspace = true }}\ntokio = {{ workspace = true, features = [\"macros\", \"rt-multi-thread\"] }}\n\n[lints]\nworkspace = true\n"
+        "# @generated; do not edit.\n[package]\nworkspace = \"../../../..\"\nname = \"wamn-generated-{slug}-tui\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\n\n{binary}[dependencies]\nwamn-client = {{ workspace = true }}\nwamn-client-tui = {{ workspace = true }}\nwamn-client-terminal = {{ workspace = true }}\nserde_json = {{ workspace = true }}\nchrono = {{ workspace = true }}\nrust_decimal = {{ workspace = true }}\nuuid = {{ workspace = true }}\ntokio = {{ workspace = true, features = [\"macros\", \"rt-multi-thread\"] }}\n\n[lints]\nworkspace = true\n"
     )
 }
 

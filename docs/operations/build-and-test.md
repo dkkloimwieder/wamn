@@ -2488,6 +2488,7 @@ Generate writes each native crate to `<app>/generated/<component>-tui/`, beside 
 The manifest component declaration names the generated crate and the operations that it renders.
 Build compiles the generated library and its operator.
 Receiving uses the composition declared in `apps/wamn_receiving/ui/Cargo.toml`.
+Its generated crate retains only the library.
 Do not edit emitted sources.
 Change authored contracts or developer-owned Rust instead.
 

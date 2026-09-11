@@ -82,7 +82,7 @@ def main():
         run('build-cli', ['cargo', 'build', '--locked', '--offline', '-p', 'wamn-ctl', '--bin', 'wamn'])
         run('build-identity', ['cargo', 'build', '--locked', '--offline', '-p', 'wamn-identity', '--bin', 'wamn-identity'])
         run('build-clients', ['cargo', 'build', '--locked', '--offline', '-p', 'wamn-host',
-            '-p', 'wamn-scenario-worker', '-p', 'wamn-receiving-tui', '-p', 'wamn-generated-receiving-tui',
+            '-p', 'wamn-scenario-worker', '-p', 'wamn-receiving-tui',
             '-p', 'wamn-generated-client-acme-receiving-tui', '-p', 'wamn-generated-wms-tui', '--bins'])
         run('shared-and-receiving-tests', ['cargo', 'test', '--locked', '--offline', '--no-fail-fast',
             '-p', 'wamn-client', '-p', 'wamn-client-tui', '-p', 'wamn-client-terminal',

@@ -1,0 +1,17 @@
+{
+  "base": "55700b360be2c83c37657c597ea3461b2c5bcc74",
+  "status": "source and static checks complete; integrated Rust and live tests pending",
+  "source_files": [
+    "apps/wamn_receiving/generated/receiving-tui/Cargo.toml",
+    "apps/wamn_receiving/generated/receiving-tui/src/main.rs",
+    "crates/schema/generator/src/client_tui.rs",
+    "crates/schema/generator/src/materialize.rs",
+    "crates/schema/generator/tests/tui_emitter.rs",
+    "services/ctl/src/ui.rs",
+    "docs/perf/2026.09/generated-tui-recipe/tools/run.py",
+    "docs/operations/build-and-test.md"
+  ],
+  "retained_generated_rust_files_unchanged": 28,
+  "retired_generated_launcher_files": 1,
+  "source_patch_sha256": "c45641941f9b2073287db77b55972c1769f13e15d765f8ebf664e884ec3e440a"
+}

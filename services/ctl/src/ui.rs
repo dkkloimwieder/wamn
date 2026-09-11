@@ -117,7 +117,7 @@ fn scaffold_package(repository: &Path, args: &ScaffoldArgs) -> anyhow::Result<Pa
     let selected_ir = component_contract(&ir, &manifest, component)
         .context("select the component's operator contracts")?;
     let emitted =
-        emit_tui(&selected_ir, component).context("emit the current screen definitions")?;
+        emit_tui(&selected_ir, component, None).context("emit the current screen definitions")?;
     require_current(&package, &emitted)?;
     require_current(
         &package,
@@ -481,7 +481,7 @@ mod tests {
                 &package.join("publication/attachments.json"),
             )
             .expect("project fixture release");
-            let files = emit_tui(&ir, "receiving")
+            let files = emit_tui(&ir, "receiving", None)
                 .expect("emit fixture screens")
                 .into_iter()
                 .chain(emit_rust_client(&ir).expect("emit fixture bindings"));
@@ -570,7 +570,7 @@ mod tests {
             .find(|model| model.name == "purchase_order")
             .expect("the fixture declares purchase_order")
             .name = "generated".to_owned();
-        let emitted = emit_tui(&ir, "receiving").expect("generated is a valid model name");
+        let emitted = emit_tui(&ir, "receiving", None).expect("generated is a valid model name");
         let screens = screen_functions(&ir, "receiving", &emitted).expect("find emitted screens");
         let files = scaffold_files(
             "wamn_receiving",
