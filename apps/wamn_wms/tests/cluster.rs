@@ -111,12 +111,38 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     } else {
         repository.join(target)
     };
-    let evidence = target.join("test-results/wms").join(&identifier);
-    fs::create_dir_all(
+    let evidence = PathBuf::from(std::env::var_os("WAMN_WMS_EVIDENCE_DIR").context(
+        "set WAMN_WMS_EVIDENCE_DIR to a new directory under the main repository docs/perf",
+    )?);
+    ensure!(
+        evidence.is_absolute(),
+        "the WMS result directory must be absolute"
+    );
+    let parent = evidence
+        .parent()
+        .context("the WMS result directory has a parent")?
+        .canonicalize()?;
+    let common = checked(Command::new("git").current_dir(&repository).args([
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+    ]))
+    .await?;
+    let common = PathBuf::from(std::str::from_utf8(&common)?.trim());
+    let results_root = common
+        .parent()
+        .context("the Git directory has a repository parent")?
+        .join("docs/perf")
+        .canonicalize()?;
+    ensure!(
+        parent.starts_with(&results_root),
+        "the WMS result directory must be under the main repository docs/perf"
+    );
+    let evidence = parent.join(
         evidence
-            .parent()
-            .context("the WMS result directory has a parent")?,
-    )?;
+            .file_name()
+            .context("the WMS result directory has a name")?,
+    );
     fs::create_dir(&evidence).context("create the new WMS result directory")?;
     let work_path = std::env::temp_dir().join(&cluster);
     DirBuilder::new()
