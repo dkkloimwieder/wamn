@@ -1,0 +1,273 @@
+{
+  "writer_scan": {
+    "path": "tests/conformance/tests/state_ownership.rs",
+    "source": "2ab0674be174b1d22444e3ac04d8136b16133b2e",
+    "sha256": "3b0c4a413c0a2b64f8ea48b16d8fae920e8a9d61d7703815272ae1a9c9190f1e",
+    "start_line": 892,
+    "end_line": 917,
+    "lines": [
+      {
+        "line": 892,
+        "text": "    repository: &Path,"
+      },
+      {
+        "line": 893,
+        "text": "    manifest: &Manifest,"
+      },
+      {
+        "line": 894,
+        "text": ") -> Result<Vec<Discovery>, String> {"
+      },
+      {
+        "line": 895,
+        "text": "    let roots = manifest"
+      },
+      {
+        "line": 896,
+        "text": "        .scan_policy"
+      },
+      {
+        "line": 897,
+        "text": "        .roots"
+      },
+      {
+        "line": 898,
+        "text": "        .iter()"
+      },
+      {
+        "line": 899,
+        "text": "        .map(String::as_str)"
+      },
+      {
+        "line": 900,
+        "text": "        .collect::<Vec<_>>();"
+      },
+      {
+        "line": 901,
+        "text": ""
+      },
+      {
+        "line": 902,
+        "text": "    let mut discoveries = Vec::new();"
+      },
+      {
+        "line": 903,
+        "text": "    for (relative, line, literal) in production_sql_fragments(repository, manifest, &roots)? {"
+      },
+      {
+        "line": 904,
+        "text": "        if manifest"
+      },
+      {
+        "line": 905,
+        "text": "            .scan_policy"
+      },
+      {
+        "line": 906,
+        "text": "            .ignored_literals"
+      },
+      {
+        "line": 907,
+        "text": "            .iter()"
+      },
+      {
+        "line": 908,
+        "text": "            .any(|ignored| ignored.path == relative && ignored.literal == literal)"
+      },
+      {
+        "line": 909,
+        "text": "        {"
+      },
+      {
+        "line": 910,
+        "text": "            continue;"
+      },
+      {
+        "line": 911,
+        "text": "        }"
+      },
+      {
+        "line": 912,
+        "text": "        discoveries.extend(discover_writes(&relative, line, &literal));"
+      },
+      {
+        "line": 913,
+        "text": "    }"
+      },
+      {
+        "line": 914,
+        "text": "    Ok(discoveries)"
+      },
+      {
+        "line": 915,
+        "text": "}"
+      },
+      {
+        "line": 916,
+        "text": ""
+      },
+      {
+        "line": 917,
+        "text": "fn collect_files("
+      }
+    ]
+  },
+  "unqualified_target": {
+    "path": "tests/conformance/tests/state_ownership.rs",
+    "source": "2ab0674be174b1d22444e3ac04d8136b16133b2e",
+    "sha256": "3b0c4a413c0a2b64f8ea48b16d8fae920e8a9d61d7703815272ae1a9c9190f1e",
+    "start_line": 1477,
+    "end_line": 1492,
+    "lines": [
+      {
+        "line": 1477,
+        "text": ""
+      },
+      {
+        "line": 1478,
+        "text": "    let context = manifest"
+      },
+      {
+        "line": 1479,
+        "text": "        .scan_policy"
+      },
+      {
+        "line": 1480,
+        "text": "        .unqualified_contexts"
+      },
+      {
+        "line": 1481,
+        "text": "        .iter()"
+      },
+      {
+        "line": 1482,
+        "text": "        .filter(|context| path_is_within(&discovery.path, &context.path_prefix))"
+      },
+      {
+        "line": 1483,
+        "text": "        .max_by_key(|context| context.path_prefix.len());"
+      },
+      {
+        "line": 1484,
+        "text": "    if !normalized.contains('.') {"
+      },
+      {
+        "line": 1485,
+        "text": "        let context = context.ok_or_else(|| {"
+      },
+      {
+        "line": 1486,
+        "text": "            format!("
+      },
+      {
+        "line": 1487,
+        "text": "                \"{}:{}: unqualified {} target `{}` has no declared default schema\","
+      },
+      {
+        "line": 1488,
+        "text": "                discovery.path, discovery.line, discovery.operation, discovery.target"
+      },
+      {
+        "line": 1489,
+        "text": "            )"
+      },
+      {
+        "line": 1490,
+        "text": "        })?;"
+      },
+      {
+        "line": 1491,
+        "text": "        let qualified = format!(\"{}.{}\", context.default_schema, normalized);"
+      },
+      {
+        "line": 1492,
+        "text": "        if let Some(object) = manifest"
+      }
+    ]
+  },
+  "app_statement": {
+    "path": "apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql",
+    "source": "2ab0674be174b1d22444e3ac04d8136b16133b2e",
+    "sha256": "1049669b64fe0491694988be7e38771a8c4068839c06371b2bd3a81cd09140c0",
+    "start_line": 1,
+    "end_line": 19,
+    "lines": [
+      {
+        "line": 1,
+        "text": "WITH locked_inspection AS MATERIALIZED ("
+      },
+      {
+        "line": 2,
+        "text": "    SELECT"
+      },
+      {
+        "line": 3,
+        "text": "        quality_inspection.receipt_id,"
+      },
+      {
+        "line": 4,
+        "text": "        quality_inspection.status,"
+      },
+      {
+        "line": 5,
+        "text": "        quality_inspection.row_version,"
+      },
+      {
+        "line": 6,
+        "text": "        receipt.purchase_order_id"
+      },
+      {
+        "line": 7,
+        "text": "    FROM quality_inspection"
+      },
+      {
+        "line": 8,
+        "text": "    JOIN receipt"
+      },
+      {
+        "line": 9,
+        "text": "        ON receipt.id = quality_inspection.receipt_id"
+      },
+      {
+        "line": 10,
+        "text": "    WHERE quality_inspection.receipt_id = $1"
+      },
+      {
+        "line": 11,
+        "text": "    FOR UPDATE OF quality_inspection"
+      },
+      {
+        "line": 12,
+        "text": "),"
+      },
+      {
+        "line": 13,
+        "text": "approved_inspection AS ("
+      },
+      {
+        "line": 14,
+        "text": "    UPDATE quality_inspection"
+      },
+      {
+        "line": 15,
+        "text": "    SET"
+      },
+      {
+        "line": 16,
+        "text": "        status = 'approved',"
+      },
+      {
+        "line": 17,
+        "text": "        row_version = quality_inspection.row_version + 1"
+      },
+      {
+        "line": 18,
+        "text": "    FROM locked_inspection"
+      },
+      {
+        "line": 19,
+        "text": "    WHERE quality_inspection.receipt_id = locked_inspection.receipt_id"
+      }
+    ]
+  }
+}

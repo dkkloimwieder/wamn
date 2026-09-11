@@ -1,0 +1,13 @@
+[
+  "cargo",
+  "test",
+  "--locked",
+  "--offline",
+  "-p",
+  "wamn-proof-conformance",
+  "--test",
+  "state_ownership",
+  "--",
+  "--nocapture",
+  "--test-threads=1"
+]
