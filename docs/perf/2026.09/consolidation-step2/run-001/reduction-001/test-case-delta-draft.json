@@ -1,0 +1,1488 @@
+{
+  "baseline": {
+    "removed_case_occurrences": [
+      {
+        "name": "wiring_activation::tests::the_env_hot_read_requires_exact_package_membership",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_catalog-e8e7eeb4abeaa92e",
+        "log_line": 496,
+        "target_running_log_line": 435
+      },
+      {
+        "name": "wiring_activation::tests::the_env_hot_read_takes_no_row_lock_and_so_needs_no_write_grant",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_catalog-e8e7eeb4abeaa92e",
+        "log_line": 497,
+        "target_running_log_line": 435
+      },
+      {
+        "name": "wiring_activation::tests::the_notice_shape_is_exactly_the_payload_the_ddl_builds",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_catalog-e8e7eeb4abeaa92e",
+        "log_line": 498,
+        "target_running_log_line": 435
+      },
+      {
+        "name": "tests::dead_letter_stream_drift_pins_the_per_registration_cap",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_cdc_reader-506db6261633d5d5",
+        "log_line": 565,
+        "target_running_log_line": 560
+      },
+      {
+        "name": "dev::native_tui::tests::invalid_names_and_colliding_generated_names_refuse",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-9ef22fcc99dd9d4d",
+        "log_line": 1388,
+        "target_running_log_line": 1331
+      },
+      {
+        "name": "dev::native_tui::tests::selection_uses_the_declared_directory_and_emitter_spelling",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-9ef22fcc99dd9d4d",
+        "log_line": 1390,
+        "target_running_log_line": 1331
+      },
+      {
+        "name": "invocation::tests::all_vendored_node_abi_copies_are_registered_and_match_the_source",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-569752e8bec2a8ea",
+        "log_line": 2381,
+        "target_running_log_line": 2373
+      },
+      {
+        "name": "runtime_inventory::host_component_plugins_mutation_is_rejected",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-569752e8bec2a8ea",
+        "log_line": 2405,
+        "target_running_log_line": 2373
+      },
+      {
+        "name": "runtime_inventory::resolved_feature_and_deployed_workload_inventory_is_current",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-569752e8bec2a8ea",
+        "log_line": 2415,
+        "target_running_log_line": 2373
+      },
+      {
+        "name": "runtime_inventory::the_retained_workload_manifest_set_is_accepted",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-569752e8bec2a8ea",
+        "log_line": 2417,
+        "target_running_log_line": 2373
+      },
+      {
+        "name": "runtime_inventory::unrecorded_workload_manifest_mutation_is_rejected",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-569752e8bec2a8ea",
+        "log_line": 2419,
+        "target_running_log_line": 2373
+      },
+      {
+        "name": "runtime_inventory::vanished_workload_manifest_mutation_is_rejected",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-569752e8bec2a8ea",
+        "log_line": 2420,
+        "target_running_log_line": 2373
+      },
+      {
+        "name": "runtime_inventory::wasmtime_feature_policy_tests::control_a_removed_feature_is_refused",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-569752e8bec2a8ea",
+        "log_line": 2421,
+        "target_running_log_line": 2373
+      },
+      {
+        "name": "runtime_inventory::wasmtime_feature_policy_tests::control_an_absent_pin_is_refused",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-569752e8bec2a8ea",
+        "log_line": 2422,
+        "target_running_log_line": 2373
+      },
+      {
+        "name": "runtime_inventory::wasmtime_feature_policy_tests::control_an_unreviewed_feature_is_refused",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-569752e8bec2a8ea",
+        "log_line": 2423,
+        "target_running_log_line": 2373
+      },
+      {
+        "name": "runtime_inventory::wasmtime_feature_policy_tests::control_restoring_wasmtime_defaults_is_refused",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-569752e8bec2a8ea",
+        "log_line": 2424,
+        "target_running_log_line": 2373
+      },
+      {
+        "name": "runtime_inventory::wasmtime_feature_policy_tests::the_reviewed_pin_is_accepted",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-569752e8bec2a8ea",
+        "log_line": 2425,
+        "target_running_log_line": 2373
+      },
+      {
+        "name": "accepted_edge_pin_cannot_waive_a_forbidden_edge",
+        "description": "tests/package_architecture.rs",
+        "executable": "target/debug/deps/package_architecture-9e1f593f347b6655",
+        "log_line": 2653,
+        "target_running_log_line": 2650
+      },
+      {
+        "name": "core_and_contract_to_concrete_effect_are_rejected",
+        "description": "tests/package_architecture.rs",
+        "executable": "target/debug/deps/package_architecture-9e1f593f347b6655",
+        "log_line": 2654,
+        "target_running_log_line": 2650
+      },
+      {
+        "name": "guest_to_native_contamination_is_rejected",
+        "description": "tests/package_architecture.rs",
+        "executable": "target/debug/deps/package_architecture-9e1f593f347b6655",
+        "log_line": 2655,
+        "target_running_log_line": 2650
+      },
+      {
+        "name": "guest_to_native_transitive_contamination_is_rejected",
+        "description": "tests/package_architecture.rs",
+        "executable": "target/debug/deps/package_architecture-9e1f593f347b6655",
+        "log_line": 2656,
+        "target_running_log_line": 2650
+      },
+      {
+        "name": "manifest_classifies_both_workspaces_and_non_cargo_release_inputs",
+        "description": "tests/package_architecture.rs",
+        "executable": "target/debug/deps/package_architecture-9e1f593f347b6655",
+        "log_line": 2657,
+        "target_running_log_line": 2650
+      },
+      {
+        "name": "peer_composition_root_import_is_rejected",
+        "description": "tests/package_architecture.rs",
+        "executable": "target/debug/deps/package_architecture-9e1f593f347b6655",
+        "log_line": 2658,
+        "target_running_log_line": 2650
+      },
+      {
+        "name": "production_to_test_support_normal_and_build_edges_are_rejected",
+        "description": "tests/package_architecture.rs",
+        "executable": "target/debug/deps/package_architecture-9e1f593f347b6655",
+        "log_line": 2659,
+        "target_running_log_line": 2650
+      },
+      {
+        "name": "real_workspaces_satisfy_package_architecture",
+        "description": "tests/package_architecture.rs",
+        "executable": "target/debug/deps/package_architecture-9e1f593f347b6655",
+        "log_line": 2660,
+        "target_running_log_line": 2650
+      },
+      {
+        "name": "undocumented_native_deployable_is_rejected",
+        "description": "tests/package_architecture.rs",
+        "executable": "target/debug/deps/package_architecture-9e1f593f347b6655",
+        "log_line": 2661,
+        "target_running_log_line": 2650
+      },
+      {
+        "name": "component_build_distinguishes_absent_package_crates_from_inventory_drift",
+        "description": "tests/profile_selectors.rs",
+        "executable": "target/debug/deps/profile_selectors-6e9d5df52be3a2e9",
+        "log_line": 2668,
+        "target_running_log_line": 2665
+      },
+      {
+        "name": "profile_contract_matches_locked_metadata",
+        "description": "tests/profile_selectors.rs",
+        "executable": "target/debug/deps/profile_selectors-6e9d5df52be3a2e9",
+        "log_line": 2670,
+        "target_running_log_line": 2665
+      },
+      {
+        "name": "selector_tools_do_not_duplicate_canonical_package_inventory",
+        "description": "tests/profile_selectors.rs",
+        "executable": "target/debug/deps/profile_selectors-6e9d5df52be3a2e9",
+        "log_line": 2671,
+        "target_running_log_line": 2665
+      },
+      {
+        "name": "retained_root_map_exactly_covers_the_package_inventory",
+        "description": "tests/retained_root_outcomes.rs",
+        "executable": "target/debug/deps/retained_root_outcomes-a8b377217cce6d24",
+        "log_line": 2720,
+        "target_running_log_line": 2717
+      },
+      {
+        "name": "bare_cargo_commands_select_exact_defaults_and_workspace_remains_exhaustive",
+        "description": "tests/workspace_tiers.rs",
+        "executable": "target/debug/deps/workspace_tiers-928b392cc9f0749c",
+        "log_line": 2787,
+        "target_running_log_line": 2784
+      },
+      {
+        "name": "release_tier_requires_sr17_sr26_identity_join",
+        "description": "tests/workspace_tiers.rs",
+        "executable": "target/debug/deps/workspace_tiers-928b392cc9f0749c",
+        "log_line": 2788,
+        "target_running_log_line": 2784
+      },
+      {
+        "name": "workspace_tier_helper_dry_run_matches_manifest",
+        "description": "tests/workspace_tiers.rs",
+        "executable": "target/debug/deps/workspace_tiers-928b392cc9f0749c",
+        "log_line": 2789,
+        "target_running_log_line": 2784
+      },
+      {
+        "name": "workspace_tier_helper_full_plans_cover_both_workspaces",
+        "description": "tests/workspace_tiers.rs",
+        "executable": "target/debug/deps/workspace_tiers-928b392cc9f0749c",
+        "log_line": 2790,
+        "target_running_log_line": 2784
+      },
+      {
+        "name": "workspace_tier_helper_list_matches_manifest",
+        "description": "tests/workspace_tiers.rs",
+        "executable": "target/debug/deps/workspace_tiers-928b392cc9f0749c",
+        "log_line": 2791,
+        "target_running_log_line": 2784
+      },
+      {
+        "name": "workspace_tier_helper_refuses_invalid_and_empty_selections",
+        "description": "tests/workspace_tiers.rs",
+        "executable": "target/debug/deps/workspace_tiers-928b392cc9f0749c",
+        "log_line": 2792,
+        "target_running_log_line": 2784
+      },
+      {
+        "name": "workspace_tier_helper_runs_safely_outside_repository",
+        "description": "tests/workspace_tiers.rs",
+        "executable": "target/debug/deps/workspace_tiers-928b392cc9f0749c",
+        "log_line": 2793,
+        "target_running_log_line": 2784
+      },
+      {
+        "name": "workspace_tier_inventory_matches_live_cargo_metadata",
+        "description": "tests/workspace_tiers.rs",
+        "executable": "target/debug/deps/workspace_tiers-928b392cc9f0749c",
+        "log_line": 2794,
+        "target_running_log_line": 2784
+      },
+      {
+        "name": "workspace_tier_membership_matches_live_classification",
+        "description": "tests/workspace_tiers.rs",
+        "executable": "target/debug/deps/workspace_tiers-928b392cc9f0749c",
+        "log_line": 2795,
+        "target_running_log_line": 2784
+      },
+      {
+        "name": "a_flip_forward_resolves_the_new_version_and_leaves_the_old_resident",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3135,
+        "target_running_log_line": 3132
+      },
+      {
+        "name": "a_resolution_in_flight_across_a_reconnect_cannot_install_its_stale_pointer",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3136,
+        "target_running_log_line": 3132
+      },
+      {
+        "name": "a_resolution_in_flight_across_an_invalidation_cannot_install_its_stale_pointer",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3137,
+        "target_running_log_line": 3132
+      },
+      {
+        "name": "an_evicted_entry_leaves_behind_no_pointer",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3139,
+        "target_running_log_line": 3132
+      },
+      {
+        "name": "environments_do_not_share_a_pointer",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3141,
+        "target_running_log_line": 3132
+      },
+      {
+        "name": "invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3143,
+        "target_running_log_line": 3132
+      },
+      {
+        "name": "invalidate_all_keeps_the_graphs_so_the_re_read_recompiles_nothing",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3144,
+        "target_running_log_line": 3132
+      },
+      {
+        "name": "invalidate_keeps_the_graphs_so_a_rollback_flip_is_a_hit",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3145,
+        "target_running_log_line": 3132
+      },
+      {
+        "name": "invalidate_sends_the_next_lookup_back_to_the_store",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3146,
+        "target_running_log_line": 3132
+      },
+      {
+        "name": "plugins::effect_span::tests::ack_lag_clamps_a_publish_stamped_in_the_future",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3455,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::effect_span::tests::ack_lag_on_the_plain_bind_path_leaves_the_registration_keys_empty",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3456,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::effect_span::tests::ack_lag_records_the_message_age_under_its_registration",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3457,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::a_release_less_host_admits_no_consumer_bind",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3550,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::every_minted_tap_subject_falls_inside_the_gated_namespace",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3556,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::exact_registration_bind_mints_the_host_owned_dlq_identity",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3557,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::exact_registration_consumer_keeps_transport_redelivery_armed",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3558,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::from_header_map_expands_multi_value",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3559,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::from_header_map_none_is_empty",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3560,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::generic_publish_cannot_name_the_host_owned_event_namespace",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3561,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::generic_publish_cannot_name_the_reserved_dlq_namespace",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3562,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::generic_publish_refuses_every_reserved_namespace_before_the_wire",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3563,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::header_round_trip_preserves_pairs_and_order",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3564,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::live_generic_guest_cannot_write_the_provisioned_tap_stream",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3567,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::live_publish_dedupe_bind_fetch_ack",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3572,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::message_meta_carries_seq_and_delivered",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3574,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::message_meta_clamps_negative_delivered",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3575,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::nack_positive_delay_is_deferred",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3576,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::nack_zero_delay_is_immediate",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3577,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::only_a_source_the_serving_release_registers_admits_a_consumer",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3578,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::publish_ack_maps_fields_and_duplicate",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3579,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::the_dlq_depth_samples_counter_tells_an_empty_subject_from_a_stopped_observer",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3580,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "wiring_doorbell::tests::a_flip_in_another_environment_does_not_touch_this_one",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3719,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "wiring_doorbell::tests::a_flip_invalidates_exactly_the_pointer_it_names",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3720,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "wiring_doorbell::tests::a_flip_invalidates_the_coordinate_across_resident_release_scopes",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3721,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "wiring_doorbell::tests::a_reconnect_drops_every_pointer_because_the_gap_is_unknowable",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3722,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "wiring_doorbell::tests::a_resolution_in_flight_across_a_doorbell_ring_cannot_reinstall_the_stale_pointer",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3723,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "wiring_doorbell::tests::an_unreadable_payload_drops_the_whole_cache_rather_than_guessing",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3724,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "wiring_doorbell::tests::another_tenants_or_packages_flip_leaves_this_process_alone",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3725,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "wiring_doorbell::tests::taking_a_wiring_dark_invalidates_like_any_other_flip",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3726,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "wiring_doorbell::tests::the_next_delivery_serves_the_new_version_and_a_rollback_is_a_hit",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3727,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "wiring_doorbell::tests::the_subscriber_reads_the_ddls_kebab_case_keys_and_only_those",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3728,
+        "target_running_log_line": 3365
+      },
+      {
+        "name": "every_vendored_http_connection_contract_is_registered_and_byte_identical",
+        "description": "tests/connection_wit_coherence.rs",
+        "executable": "target/debug/deps/connection_wit_coherence-a22ec0b58b2e994e",
+        "log_line": 3769,
+        "target_running_log_line": 3766
+      },
+      {
+        "name": "contract_declares_the_mvp_surface",
+        "description": "tests/jetstream_wit_coherence.rs",
+        "executable": "target/debug/deps/jetstream_wit_coherence-caf797b949cd5538",
+        "log_line": 3822,
+        "target_running_log_line": 3818
+      },
+      {
+        "name": "all_package_copies_are_registered",
+        "description": "tests/node_wit_coherence.rs",
+        "executable": "target/debug/deps/node_wit_coherence-17499e9b51bd96d6",
+        "log_line": 3850,
+        "target_running_log_line": 3847
+      },
+      {
+        "name": "all_vendored_copies_are_registered",
+        "description": "tests/postgres_wit_coherence.rs",
+        "executable": "target/debug/deps/postgres_wit_coherence-fb93d7dab67db897",
+        "log_line": 3865,
+        "target_running_log_line": 3862
+      },
+      {
+        "name": "a_pointer_flip_makes_the_cache_serve_the_new_active_version",
+        "description": "tests/wiring_doorbell_live.rs",
+        "executable": "target/debug/deps/wiring_doorbell_live-a8225d1df189f009",
+        "log_line": 4008,
+        "target_running_log_line": 4005
+      }
+    ],
+    "added_case_occurrences": [
+      {
+        "name": "tests::delivery_advisory_stream_drift_pins_the_subject_cap",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_cdc_reader-f77a87029b94de92",
+        "log_line": 518,
+        "target_running_log_line": 513
+      },
+      {
+        "name": "tests::event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_cdc_reader-f77a87029b94de92",
+        "log_line": 519,
+        "target_running_log_line": 513
+      },
+      {
+        "name": "dev::native_tui::tests::an_independent_app_workspace_owns_its_target_and_native_watches",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-0ffbcab18fac05c7",
+        "log_line": 1350,
+        "target_running_log_line": 1285
+      },
+      {
+        "name": "dev::native_tui::tests::component_names_survive_a_directory_rename_and_collisions_refuse",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-0ffbcab18fac05c7",
+        "log_line": 1352,
+        "target_running_log_line": 1285
+      },
+      {
+        "name": "dev::native_tui::tests::selection_uses_the_declared_component_and_emitter_spelling",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-0ffbcab18fac05c7",
+        "log_line": 1354,
+        "target_running_log_line": 1285
+      },
+      {
+        "name": "ui::tests::multiple_components_require_an_explicit_selection",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-0ffbcab18fac05c7",
+        "log_line": 1584,
+        "target_running_log_line": 1285
+      },
+      {
+        "name": "ui::tests::the_app_directory_keeps_the_declared_component_dependency",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-0ffbcab18fac05c7",
+        "log_line": 1588,
+        "target_running_log_line": 1285
+      },
+      {
+        "name": "host::tests::materializer_binding_keeps_credentials_and_grants_host_owned",
+        "description": "unittests src/main.rs",
+        "executable": "target/debug/deps/wamn_host-1c3bb9eacddf775e",
+        "log_line": 2118,
+        "target_running_log_line": 2105
+      },
+      {
+        "name": "invocation::tests::all_vendored_node_abi_copies_match_the_source",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-6f1d93379555f70f",
+        "log_line": 2343,
+        "target_running_log_line": 2335
+      },
+      {
+        "name": "runtime_inventory::deployed_workloads_preserve_runtime_policy",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-6f1d93379555f70f",
+        "log_line": 2366,
+        "target_running_log_line": 2335
+      },
+      {
+        "name": "runtime_inventory::materializer_keeps_its_command_export",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_proof_conformance-6f1d93379555f70f",
+        "log_line": 2368,
+        "target_running_log_line": 2335
+      },
+      {
+        "name": "component_build_requires_declared_app_crates_and_accepts_new_cargo_members",
+        "description": "tests/profile_selectors.rs",
+        "executable": "target/debug/deps/profile_selectors-864dfe26e318af77",
+        "log_line": 2618,
+        "target_running_log_line": 2614
+      },
+      {
+        "name": "an_evicted_version_misses",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-97544030e08d76bb",
+        "log_line": 3116,
+        "target_running_log_line": 3112
+      },
+      {
+        "name": "distinct_versions_remain_resident",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-97544030e08d76bb",
+        "log_line": 3118,
+        "target_running_log_line": 3112
+      },
+      {
+        "name": "environments_do_not_share_an_entry",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-97544030e08d76bb",
+        "log_line": 3119,
+        "target_running_log_line": 3112
+      },
+      {
+        "name": "repeated_resolution_shares_the_resident_graph",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-97544030e08d76bb",
+        "log_line": 3121,
+        "target_running_log_line": 3112
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::derived_publication_refuses_missing_or_foreign_event_coordinates_before_connect",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-da394471fc16565b",
+        "log_line": 3525,
+        "target_running_log_line": 3340
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::every_minted_tap_subject_preserves_its_host_owned_scope",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-da394471fc16565b",
+        "log_line": 3528,
+        "target_running_log_line": 3340
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::registration_consumer_refuses_changed_broker_bounds",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-da394471fc16565b",
+        "log_line": 3531,
+        "target_running_log_line": 3340
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::registration_preparation_requires_the_exact_release_source",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-da394471fc16565b",
+        "log_line": 3532,
+        "target_running_log_line": 3340
+      },
+      {
+        "name": "every_vendored_http_connection_contract_is_byte_identical",
+        "description": "tests/connection_wit_coherence.rs",
+        "executable": "target/debug/deps/connection_wit_coherence-c654c8b6c7309365",
+        "log_line": 3711,
+        "target_running_log_line": 3708
+      },
+      {
+        "name": "contract_declares_host_registration_and_retained_publishers",
+        "description": "tests/jetstream_wit_coherence.rs",
+        "executable": "target/debug/deps/jetstream_wit_coherence-2a7bd31fd8997997",
+        "log_line": 3774,
+        "target_running_log_line": 3770
+      },
+      {
+        "name": "materialize::tests::regeneration_keeps_the_declared_operator_and_does_not_restore_a_generated_main",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_schema_generator-6c824fd95ce5efc0",
+        "log_line": 4266,
+        "target_running_log_line": 4197
+      },
+      {
+        "name": "declared_operator_keeps_generated_library_bytes_without_a_launcher",
+        "description": "tests/tui_emitter.rs",
+        "executable": "target/debug/deps/tui_emitter-098c7f7a24ad5e1b",
+        "log_line": 4424,
+        "target_running_log_line": 4421
+      },
+      {
+        "name": "explicit_ui_target_uses_its_dependency_and_refuses_ambiguous_binaries",
+        "description": "tests/tui_emitter.rs",
+        "executable": "target/debug/deps/tui_emitter-098c7f7a24ad5e1b",
+        "log_line": 4426,
+        "target_running_log_line": 4421
+      },
+      {
+        "name": "generation_resolves_an_app_workspace_before_its_native_crate_exists",
+        "description": "tests/tui_emitter.rs",
+        "executable": "target/debug/deps/tui_emitter-098c7f7a24ad5e1b",
+        "log_line": 4427,
+        "target_running_log_line": 4421
+      },
+      {
+        "name": "two_declared_components_render_only_their_owned_operations",
+        "description": "tests/tui_emitter.rs",
+        "executable": "target/debug/deps/tui_emitter-098c7f7a24ad5e1b",
+        "log_line": 4436,
+        "target_running_log_line": 4421
+      }
+    ],
+    "removed_name_multiplicities": {
+      "wiring_activation::tests::the_env_hot_read_requires_exact_package_membership": 1,
+      "wiring_activation::tests::the_env_hot_read_takes_no_row_lock_and_so_needs_no_write_grant": 1,
+      "wiring_activation::tests::the_notice_shape_is_exactly_the_payload_the_ddl_builds": 1,
+      "tests::dead_letter_stream_drift_pins_the_per_registration_cap": 1,
+      "dev::native_tui::tests::invalid_names_and_colliding_generated_names_refuse": 1,
+      "dev::native_tui::tests::selection_uses_the_declared_directory_and_emitter_spelling": 1,
+      "invocation::tests::all_vendored_node_abi_copies_are_registered_and_match_the_source": 1,
+      "runtime_inventory::host_component_plugins_mutation_is_rejected": 1,
+      "runtime_inventory::resolved_feature_and_deployed_workload_inventory_is_current": 1,
+      "runtime_inventory::the_retained_workload_manifest_set_is_accepted": 1,
+      "runtime_inventory::unrecorded_workload_manifest_mutation_is_rejected": 1,
+      "runtime_inventory::vanished_workload_manifest_mutation_is_rejected": 1,
+      "runtime_inventory::wasmtime_feature_policy_tests::control_a_removed_feature_is_refused": 1,
+      "runtime_inventory::wasmtime_feature_policy_tests::control_an_absent_pin_is_refused": 1,
+      "runtime_inventory::wasmtime_feature_policy_tests::control_an_unreviewed_feature_is_refused": 1,
+      "runtime_inventory::wasmtime_feature_policy_tests::control_restoring_wasmtime_defaults_is_refused": 1,
+      "runtime_inventory::wasmtime_feature_policy_tests::the_reviewed_pin_is_accepted": 1,
+      "accepted_edge_pin_cannot_waive_a_forbidden_edge": 1,
+      "core_and_contract_to_concrete_effect_are_rejected": 1,
+      "guest_to_native_contamination_is_rejected": 1,
+      "guest_to_native_transitive_contamination_is_rejected": 1,
+      "manifest_classifies_both_workspaces_and_non_cargo_release_inputs": 1,
+      "peer_composition_root_import_is_rejected": 1,
+      "production_to_test_support_normal_and_build_edges_are_rejected": 1,
+      "real_workspaces_satisfy_package_architecture": 1,
+      "undocumented_native_deployable_is_rejected": 1,
+      "component_build_distinguishes_absent_package_crates_from_inventory_drift": 1,
+      "profile_contract_matches_locked_metadata": 1,
+      "selector_tools_do_not_duplicate_canonical_package_inventory": 1,
+      "retained_root_map_exactly_covers_the_package_inventory": 1,
+      "bare_cargo_commands_select_exact_defaults_and_workspace_remains_exhaustive": 1,
+      "release_tier_requires_sr17_sr26_identity_join": 1,
+      "workspace_tier_helper_dry_run_matches_manifest": 1,
+      "workspace_tier_helper_full_plans_cover_both_workspaces": 1,
+      "workspace_tier_helper_list_matches_manifest": 1,
+      "workspace_tier_helper_refuses_invalid_and_empty_selections": 1,
+      "workspace_tier_helper_runs_safely_outside_repository": 1,
+      "workspace_tier_inventory_matches_live_cargo_metadata": 1,
+      "workspace_tier_membership_matches_live_classification": 1,
+      "a_flip_forward_resolves_the_new_version_and_leaves_the_old_resident": 1,
+      "a_resolution_in_flight_across_a_reconnect_cannot_install_its_stale_pointer": 1,
+      "a_resolution_in_flight_across_an_invalidation_cannot_install_its_stale_pointer": 1,
+      "an_evicted_entry_leaves_behind_no_pointer": 1,
+      "environments_do_not_share_a_pointer": 1,
+      "invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip": 1,
+      "invalidate_all_keeps_the_graphs_so_the_re_read_recompiles_nothing": 1,
+      "invalidate_keeps_the_graphs_so_a_rollback_flip_is_a_hit": 1,
+      "invalidate_sends_the_next_lookup_back_to_the_store": 1,
+      "plugins::effect_span::tests::ack_lag_clamps_a_publish_stamped_in_the_future": 1,
+      "plugins::effect_span::tests::ack_lag_on_the_plain_bind_path_leaves_the_registration_keys_empty": 1,
+      "plugins::effect_span::tests::ack_lag_records_the_message_age_under_its_registration": 1,
+      "plugins::wamn_jetstream::tests::a_release_less_host_admits_no_consumer_bind": 1,
+      "plugins::wamn_jetstream::tests::every_minted_tap_subject_falls_inside_the_gated_namespace": 1,
+      "plugins::wamn_jetstream::tests::exact_registration_bind_mints_the_host_owned_dlq_identity": 1,
+      "plugins::wamn_jetstream::tests::exact_registration_consumer_keeps_transport_redelivery_armed": 1,
+      "plugins::wamn_jetstream::tests::from_header_map_expands_multi_value": 1,
+      "plugins::wamn_jetstream::tests::from_header_map_none_is_empty": 1,
+      "plugins::wamn_jetstream::tests::generic_publish_cannot_name_the_host_owned_event_namespace": 1,
+      "plugins::wamn_jetstream::tests::generic_publish_cannot_name_the_reserved_dlq_namespace": 1,
+      "plugins::wamn_jetstream::tests::generic_publish_refuses_every_reserved_namespace_before_the_wire": 1,
+      "plugins::wamn_jetstream::tests::header_round_trip_preserves_pairs_and_order": 1,
+      "plugins::wamn_jetstream::tests::live_generic_guest_cannot_write_the_provisioned_tap_stream": 1,
+      "plugins::wamn_jetstream::tests::live_publish_dedupe_bind_fetch_ack": 1,
+      "plugins::wamn_jetstream::tests::message_meta_carries_seq_and_delivered": 1,
+      "plugins::wamn_jetstream::tests::message_meta_clamps_negative_delivered": 1,
+      "plugins::wamn_jetstream::tests::nack_positive_delay_is_deferred": 1,
+      "plugins::wamn_jetstream::tests::nack_zero_delay_is_immediate": 1,
+      "plugins::wamn_jetstream::tests::only_a_source_the_serving_release_registers_admits_a_consumer": 1,
+      "plugins::wamn_jetstream::tests::publish_ack_maps_fields_and_duplicate": 1,
+      "plugins::wamn_jetstream::tests::the_dlq_depth_samples_counter_tells_an_empty_subject_from_a_stopped_observer": 1,
+      "wiring_doorbell::tests::a_flip_in_another_environment_does_not_touch_this_one": 1,
+      "wiring_doorbell::tests::a_flip_invalidates_exactly_the_pointer_it_names": 1,
+      "wiring_doorbell::tests::a_flip_invalidates_the_coordinate_across_resident_release_scopes": 1,
+      "wiring_doorbell::tests::a_reconnect_drops_every_pointer_because_the_gap_is_unknowable": 1,
+      "wiring_doorbell::tests::a_resolution_in_flight_across_a_doorbell_ring_cannot_reinstall_the_stale_pointer": 1,
+      "wiring_doorbell::tests::an_unreadable_payload_drops_the_whole_cache_rather_than_guessing": 1,
+      "wiring_doorbell::tests::another_tenants_or_packages_flip_leaves_this_process_alone": 1,
+      "wiring_doorbell::tests::taking_a_wiring_dark_invalidates_like_any_other_flip": 1,
+      "wiring_doorbell::tests::the_next_delivery_serves_the_new_version_and_a_rollback_is_a_hit": 1,
+      "wiring_doorbell::tests::the_subscriber_reads_the_ddls_kebab_case_keys_and_only_those": 1,
+      "every_vendored_http_connection_contract_is_registered_and_byte_identical": 1,
+      "contract_declares_the_mvp_surface": 1,
+      "all_package_copies_are_registered": 1,
+      "all_vendored_copies_are_registered": 1,
+      "a_pointer_flip_makes_the_cache_serve_the_new_active_version": 1
+    },
+    "added_name_multiplicities": {
+      "tests::delivery_advisory_stream_drift_pins_the_subject_cap": 1,
+      "tests::event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs": 1,
+      "dev::native_tui::tests::an_independent_app_workspace_owns_its_target_and_native_watches": 1,
+      "dev::native_tui::tests::component_names_survive_a_directory_rename_and_collisions_refuse": 1,
+      "dev::native_tui::tests::selection_uses_the_declared_component_and_emitter_spelling": 1,
+      "ui::tests::multiple_components_require_an_explicit_selection": 1,
+      "ui::tests::the_app_directory_keeps_the_declared_component_dependency": 1,
+      "host::tests::materializer_binding_keeps_credentials_and_grants_host_owned": 1,
+      "invocation::tests::all_vendored_node_abi_copies_match_the_source": 1,
+      "runtime_inventory::deployed_workloads_preserve_runtime_policy": 1,
+      "runtime_inventory::materializer_keeps_its_command_export": 1,
+      "component_build_requires_declared_app_crates_and_accepts_new_cargo_members": 1,
+      "an_evicted_version_misses": 1,
+      "distinct_versions_remain_resident": 1,
+      "environments_do_not_share_an_entry": 1,
+      "repeated_resolution_shares_the_resident_graph": 1,
+      "plugins::wamn_jetstream::tests::derived_publication_refuses_missing_or_foreign_event_coordinates_before_connect": 1,
+      "plugins::wamn_jetstream::tests::every_minted_tap_subject_preserves_its_host_owned_scope": 1,
+      "plugins::wamn_jetstream::tests::registration_consumer_refuses_changed_broker_bounds": 1,
+      "plugins::wamn_jetstream::tests::registration_preparation_requires_the_exact_release_source": 1,
+      "every_vendored_http_connection_contract_is_byte_identical": 1,
+      "contract_declares_host_registration_and_retained_publishers": 1,
+      "materialize::tests::regeneration_keeps_the_declared_operator_and_does_not_restore_a_generated_main": 1,
+      "declared_operator_keeps_generated_library_bytes_without_a_launcher": 1,
+      "explicit_ui_target_uses_its_dependency_and_refuses_ambiguous_binaries": 1,
+      "generation_resolves_an_app_workspace_before_its_native_crate_exists": 1,
+      "two_declared_components_render_only_their_owned_operations": 1
+    },
+    "interpretation": "Occurrence changes require source reconciliation. A removed case is not a pass."
+  },
+  "step1": {
+    "removed_case_occurrences": [
+      {
+        "name": "wiring_activation::tests::the_env_hot_read_requires_exact_package_membership",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_catalog-e8e7eeb4abeaa92e",
+        "log_line": 478,
+        "target_running_log_line": 417
+      },
+      {
+        "name": "wiring_activation::tests::the_env_hot_read_takes_no_row_lock_and_so_needs_no_write_grant",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_catalog-e8e7eeb4abeaa92e",
+        "log_line": 479,
+        "target_running_log_line": 417
+      },
+      {
+        "name": "wiring_activation::tests::the_notice_shape_is_exactly_the_payload_the_ddl_builds",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_catalog-e8e7eeb4abeaa92e",
+        "log_line": 480,
+        "target_running_log_line": 417
+      },
+      {
+        "name": "tests::dead_letter_stream_drift_pins_the_per_registration_cap",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_cdc_reader-506db6261633d5d5",
+        "log_line": 547,
+        "target_running_log_line": 542
+      },
+      {
+        "name": "dev::native_tui::tests::invalid_names_and_colliding_generated_names_refuse",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-9ef22fcc99dd9d4d",
+        "log_line": 1370,
+        "target_running_log_line": 1313
+      },
+      {
+        "name": "dev::native_tui::tests::selection_uses_the_declared_directory_and_emitter_spelling",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-9ef22fcc99dd9d4d",
+        "log_line": 1372,
+        "target_running_log_line": 1313
+      },
+      {
+        "name": "a_flip_forward_resolves_the_new_version_and_leaves_the_old_resident",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3070,
+        "target_running_log_line": 3067
+      },
+      {
+        "name": "a_resolution_in_flight_across_a_reconnect_cannot_install_its_stale_pointer",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3071,
+        "target_running_log_line": 3067
+      },
+      {
+        "name": "a_resolution_in_flight_across_an_invalidation_cannot_install_its_stale_pointer",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3072,
+        "target_running_log_line": 3067
+      },
+      {
+        "name": "an_evicted_entry_leaves_behind_no_pointer",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3074,
+        "target_running_log_line": 3067
+      },
+      {
+        "name": "environments_do_not_share_a_pointer",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3076,
+        "target_running_log_line": 3067
+      },
+      {
+        "name": "invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3078,
+        "target_running_log_line": 3067
+      },
+      {
+        "name": "invalidate_all_keeps_the_graphs_so_the_re_read_recompiles_nothing",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3079,
+        "target_running_log_line": 3067
+      },
+      {
+        "name": "invalidate_keeps_the_graphs_so_a_rollback_flip_is_a_hit",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3080,
+        "target_running_log_line": 3067
+      },
+      {
+        "name": "invalidate_sends_the_next_lookup_back_to_the_store",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-d2cee1868c7ae7d9",
+        "log_line": 3081,
+        "target_running_log_line": 3067
+      },
+      {
+        "name": "plugins::effect_span::tests::ack_lag_clamps_a_publish_stamped_in_the_future",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3390,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::effect_span::tests::ack_lag_on_the_plain_bind_path_leaves_the_registration_keys_empty",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3391,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::effect_span::tests::ack_lag_records_the_message_age_under_its_registration",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3392,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::a_release_less_host_admits_no_consumer_bind",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3485,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::every_minted_tap_subject_falls_inside_the_gated_namespace",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3491,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::exact_registration_bind_mints_the_host_owned_dlq_identity",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3492,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::exact_registration_consumer_keeps_transport_redelivery_armed",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3493,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::from_header_map_expands_multi_value",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3494,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::from_header_map_none_is_empty",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3495,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::generic_publish_cannot_name_the_host_owned_event_namespace",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3496,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::generic_publish_cannot_name_the_reserved_dlq_namespace",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3497,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::generic_publish_refuses_every_reserved_namespace_before_the_wire",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3498,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::header_round_trip_preserves_pairs_and_order",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3499,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::live_generic_guest_cannot_write_the_provisioned_tap_stream",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3502,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::live_publish_dedupe_bind_fetch_ack",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3507,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::message_meta_carries_seq_and_delivered",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3509,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::message_meta_clamps_negative_delivered",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3510,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::nack_positive_delay_is_deferred",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3511,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::nack_zero_delay_is_immediate",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3512,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::only_a_source_the_serving_release_registers_admits_a_consumer",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3513,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::publish_ack_maps_fields_and_duplicate",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3514,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::the_dlq_depth_samples_counter_tells_an_empty_subject_from_a_stopped_observer",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3515,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "wiring_doorbell::tests::a_flip_in_another_environment_does_not_touch_this_one",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3654,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "wiring_doorbell::tests::a_flip_invalidates_exactly_the_pointer_it_names",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3655,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "wiring_doorbell::tests::a_flip_invalidates_the_coordinate_across_resident_release_scopes",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3656,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "wiring_doorbell::tests::a_reconnect_drops_every_pointer_because_the_gap_is_unknowable",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3657,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "wiring_doorbell::tests::a_resolution_in_flight_across_a_doorbell_ring_cannot_reinstall_the_stale_pointer",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3658,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "wiring_doorbell::tests::an_unreadable_payload_drops_the_whole_cache_rather_than_guessing",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3659,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "wiring_doorbell::tests::another_tenants_or_packages_flip_leaves_this_process_alone",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3660,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "wiring_doorbell::tests::taking_a_wiring_dark_invalidates_like_any_other_flip",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3661,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "wiring_doorbell::tests::the_next_delivery_serves_the_new_version_and_a_rollback_is_a_hit",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3662,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "wiring_doorbell::tests::the_subscriber_reads_the_ddls_kebab_case_keys_and_only_those",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-210f22241a3f09db",
+        "log_line": 3663,
+        "target_running_log_line": 3300
+      },
+      {
+        "name": "contract_declares_the_mvp_surface",
+        "description": "tests/jetstream_wit_coherence.rs",
+        "executable": "target/debug/deps/jetstream_wit_coherence-caf797b949cd5538",
+        "log_line": 3757,
+        "target_running_log_line": 3753
+      },
+      {
+        "name": "a_pointer_flip_makes_the_cache_serve_the_new_active_version",
+        "description": "tests/wiring_doorbell_live.rs",
+        "executable": "target/debug/deps/wiring_doorbell_live-a8225d1df189f009",
+        "log_line": 3941,
+        "target_running_log_line": 3938
+      }
+    ],
+    "added_case_occurrences": [
+      {
+        "name": "tests::delivery_advisory_stream_drift_pins_the_subject_cap",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_cdc_reader-f77a87029b94de92",
+        "log_line": 518,
+        "target_running_log_line": 513
+      },
+      {
+        "name": "tests::event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_cdc_reader-f77a87029b94de92",
+        "log_line": 519,
+        "target_running_log_line": 513
+      },
+      {
+        "name": "dev::native_tui::tests::an_independent_app_workspace_owns_its_target_and_native_watches",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-0ffbcab18fac05c7",
+        "log_line": 1350,
+        "target_running_log_line": 1285
+      },
+      {
+        "name": "dev::native_tui::tests::component_names_survive_a_directory_rename_and_collisions_refuse",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-0ffbcab18fac05c7",
+        "log_line": 1352,
+        "target_running_log_line": 1285
+      },
+      {
+        "name": "dev::native_tui::tests::selection_uses_the_declared_component_and_emitter_spelling",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-0ffbcab18fac05c7",
+        "log_line": 1354,
+        "target_running_log_line": 1285
+      },
+      {
+        "name": "ui::tests::multiple_components_require_an_explicit_selection",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-0ffbcab18fac05c7",
+        "log_line": 1584,
+        "target_running_log_line": 1285
+      },
+      {
+        "name": "ui::tests::the_app_directory_keeps_the_declared_component_dependency",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_ctl-0ffbcab18fac05c7",
+        "log_line": 1588,
+        "target_running_log_line": 1285
+      },
+      {
+        "name": "host::tests::materializer_binding_keeps_credentials_and_grants_host_owned",
+        "description": "unittests src/main.rs",
+        "executable": "target/debug/deps/wamn_host-1c3bb9eacddf775e",
+        "log_line": 2118,
+        "target_running_log_line": 2105
+      },
+      {
+        "name": "an_evicted_version_misses",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-97544030e08d76bb",
+        "log_line": 3116,
+        "target_running_log_line": 3112
+      },
+      {
+        "name": "distinct_versions_remain_resident",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-97544030e08d76bb",
+        "log_line": 3118,
+        "target_running_log_line": 3112
+      },
+      {
+        "name": "environments_do_not_share_an_entry",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-97544030e08d76bb",
+        "log_line": 3119,
+        "target_running_log_line": 3112
+      },
+      {
+        "name": "repeated_resolution_shares_the_resident_graph",
+        "description": "tests/resolution.rs",
+        "executable": "target/debug/deps/resolution-97544030e08d76bb",
+        "log_line": 3121,
+        "target_running_log_line": 3112
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::derived_publication_refuses_missing_or_foreign_event_coordinates_before_connect",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-da394471fc16565b",
+        "log_line": 3525,
+        "target_running_log_line": 3340
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::every_minted_tap_subject_preserves_its_host_owned_scope",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-da394471fc16565b",
+        "log_line": 3528,
+        "target_running_log_line": 3340
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::registration_consumer_refuses_changed_broker_bounds",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-da394471fc16565b",
+        "log_line": 3531,
+        "target_running_log_line": 3340
+      },
+      {
+        "name": "plugins::wamn_jetstream::tests::registration_preparation_requires_the_exact_release_source",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_runtime-da394471fc16565b",
+        "log_line": 3532,
+        "target_running_log_line": 3340
+      },
+      {
+        "name": "contract_declares_host_registration_and_retained_publishers",
+        "description": "tests/jetstream_wit_coherence.rs",
+        "executable": "target/debug/deps/jetstream_wit_coherence-2a7bd31fd8997997",
+        "log_line": 3774,
+        "target_running_log_line": 3770
+      },
+      {
+        "name": "materialize::tests::regeneration_keeps_the_declared_operator_and_does_not_restore_a_generated_main",
+        "description": "unittests src/lib.rs",
+        "executable": "target/debug/deps/wamn_schema_generator-6c824fd95ce5efc0",
+        "log_line": 4266,
+        "target_running_log_line": 4197
+      },
+      {
+        "name": "declared_operator_keeps_generated_library_bytes_without_a_launcher",
+        "description": "tests/tui_emitter.rs",
+        "executable": "target/debug/deps/tui_emitter-098c7f7a24ad5e1b",
+        "log_line": 4424,
+        "target_running_log_line": 4421
+      },
+      {
+        "name": "explicit_ui_target_uses_its_dependency_and_refuses_ambiguous_binaries",
+        "description": "tests/tui_emitter.rs",
+        "executable": "target/debug/deps/tui_emitter-098c7f7a24ad5e1b",
+        "log_line": 4426,
+        "target_running_log_line": 4421
+      },
+      {
+        "name": "generation_resolves_an_app_workspace_before_its_native_crate_exists",
+        "description": "tests/tui_emitter.rs",
+        "executable": "target/debug/deps/tui_emitter-098c7f7a24ad5e1b",
+        "log_line": 4427,
+        "target_running_log_line": 4421
+      },
+      {
+        "name": "two_declared_components_render_only_their_owned_operations",
+        "description": "tests/tui_emitter.rs",
+        "executable": "target/debug/deps/tui_emitter-098c7f7a24ad5e1b",
+        "log_line": 4436,
+        "target_running_log_line": 4421
+      }
+    ],
+    "removed_name_multiplicities": {
+      "wiring_activation::tests::the_env_hot_read_requires_exact_package_membership": 1,
+      "wiring_activation::tests::the_env_hot_read_takes_no_row_lock_and_so_needs_no_write_grant": 1,
+      "wiring_activation::tests::the_notice_shape_is_exactly_the_payload_the_ddl_builds": 1,
+      "tests::dead_letter_stream_drift_pins_the_per_registration_cap": 1,
+      "dev::native_tui::tests::invalid_names_and_colliding_generated_names_refuse": 1,
+      "dev::native_tui::tests::selection_uses_the_declared_directory_and_emitter_spelling": 1,
+      "a_flip_forward_resolves_the_new_version_and_leaves_the_old_resident": 1,
+      "a_resolution_in_flight_across_a_reconnect_cannot_install_its_stale_pointer": 1,
+      "a_resolution_in_flight_across_an_invalidation_cannot_install_its_stale_pointer": 1,
+      "an_evicted_entry_leaves_behind_no_pointer": 1,
+      "environments_do_not_share_a_pointer": 1,
+      "invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip": 1,
+      "invalidate_all_keeps_the_graphs_so_the_re_read_recompiles_nothing": 1,
+      "invalidate_keeps_the_graphs_so_a_rollback_flip_is_a_hit": 1,
+      "invalidate_sends_the_next_lookup_back_to_the_store": 1,
+      "plugins::effect_span::tests::ack_lag_clamps_a_publish_stamped_in_the_future": 1,
+      "plugins::effect_span::tests::ack_lag_on_the_plain_bind_path_leaves_the_registration_keys_empty": 1,
+      "plugins::effect_span::tests::ack_lag_records_the_message_age_under_its_registration": 1,
+      "plugins::wamn_jetstream::tests::a_release_less_host_admits_no_consumer_bind": 1,
+      "plugins::wamn_jetstream::tests::every_minted_tap_subject_falls_inside_the_gated_namespace": 1,
+      "plugins::wamn_jetstream::tests::exact_registration_bind_mints_the_host_owned_dlq_identity": 1,
+      "plugins::wamn_jetstream::tests::exact_registration_consumer_keeps_transport_redelivery_armed": 1,
+      "plugins::wamn_jetstream::tests::from_header_map_expands_multi_value": 1,
+      "plugins::wamn_jetstream::tests::from_header_map_none_is_empty": 1,
+      "plugins::wamn_jetstream::tests::generic_publish_cannot_name_the_host_owned_event_namespace": 1,
+      "plugins::wamn_jetstream::tests::generic_publish_cannot_name_the_reserved_dlq_namespace": 1,
+      "plugins::wamn_jetstream::tests::generic_publish_refuses_every_reserved_namespace_before_the_wire": 1,
+      "plugins::wamn_jetstream::tests::header_round_trip_preserves_pairs_and_order": 1,
+      "plugins::wamn_jetstream::tests::live_generic_guest_cannot_write_the_provisioned_tap_stream": 1,
+      "plugins::wamn_jetstream::tests::live_publish_dedupe_bind_fetch_ack": 1,
+      "plugins::wamn_jetstream::tests::message_meta_carries_seq_and_delivered": 1,
+      "plugins::wamn_jetstream::tests::message_meta_clamps_negative_delivered": 1,
+      "plugins::wamn_jetstream::tests::nack_positive_delay_is_deferred": 1,
+      "plugins::wamn_jetstream::tests::nack_zero_delay_is_immediate": 1,
+      "plugins::wamn_jetstream::tests::only_a_source_the_serving_release_registers_admits_a_consumer": 1,
+      "plugins::wamn_jetstream::tests::publish_ack_maps_fields_and_duplicate": 1,
+      "plugins::wamn_jetstream::tests::the_dlq_depth_samples_counter_tells_an_empty_subject_from_a_stopped_observer": 1,
+      "wiring_doorbell::tests::a_flip_in_another_environment_does_not_touch_this_one": 1,
+      "wiring_doorbell::tests::a_flip_invalidates_exactly_the_pointer_it_names": 1,
+      "wiring_doorbell::tests::a_flip_invalidates_the_coordinate_across_resident_release_scopes": 1,
+      "wiring_doorbell::tests::a_reconnect_drops_every_pointer_because_the_gap_is_unknowable": 1,
+      "wiring_doorbell::tests::a_resolution_in_flight_across_a_doorbell_ring_cannot_reinstall_the_stale_pointer": 1,
+      "wiring_doorbell::tests::an_unreadable_payload_drops_the_whole_cache_rather_than_guessing": 1,
+      "wiring_doorbell::tests::another_tenants_or_packages_flip_leaves_this_process_alone": 1,
+      "wiring_doorbell::tests::taking_a_wiring_dark_invalidates_like_any_other_flip": 1,
+      "wiring_doorbell::tests::the_next_delivery_serves_the_new_version_and_a_rollback_is_a_hit": 1,
+      "wiring_doorbell::tests::the_subscriber_reads_the_ddls_kebab_case_keys_and_only_those": 1,
+      "contract_declares_the_mvp_surface": 1,
+      "a_pointer_flip_makes_the_cache_serve_the_new_active_version": 1
+    },
+    "added_name_multiplicities": {
+      "tests::delivery_advisory_stream_drift_pins_the_subject_cap": 1,
+      "tests::event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs": 1,
+      "dev::native_tui::tests::an_independent_app_workspace_owns_its_target_and_native_watches": 1,
+      "dev::native_tui::tests::component_names_survive_a_directory_rename_and_collisions_refuse": 1,
+      "dev::native_tui::tests::selection_uses_the_declared_component_and_emitter_spelling": 1,
+      "ui::tests::multiple_components_require_an_explicit_selection": 1,
+      "ui::tests::the_app_directory_keeps_the_declared_component_dependency": 1,
+      "host::tests::materializer_binding_keeps_credentials_and_grants_host_owned": 1,
+      "an_evicted_version_misses": 1,
+      "distinct_versions_remain_resident": 1,
+      "environments_do_not_share_an_entry": 1,
+      "repeated_resolution_shares_the_resident_graph": 1,
+      "plugins::wamn_jetstream::tests::derived_publication_refuses_missing_or_foreign_event_coordinates_before_connect": 1,
+      "plugins::wamn_jetstream::tests::every_minted_tap_subject_preserves_its_host_owned_scope": 1,
+      "plugins::wamn_jetstream::tests::registration_consumer_refuses_changed_broker_bounds": 1,
+      "plugins::wamn_jetstream::tests::registration_preparation_requires_the_exact_release_source": 1,
+      "contract_declares_host_registration_and_retained_publishers": 1,
+      "materialize::tests::regeneration_keeps_the_declared_operator_and_does_not_restore_a_generated_main": 1,
+      "declared_operator_keeps_generated_library_bytes_without_a_launcher": 1,
+      "explicit_ui_target_uses_its_dependency_and_refuses_ambiguous_binaries": 1,
+      "generation_resolves_an_app_workspace_before_its_native_crate_exists": 1,
+      "two_declared_components_render_only_their_owned_operations": 1
+    },
+    "interpretation": "Occurrence changes require source reconciliation. A removed case is not a pass."
+  }
+}
