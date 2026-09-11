@@ -1,0 +1,52 @@
+{
+  "checked_inputs": [
+    {
+      "source": "04b72bd0d1cf87a170e44e65266f69208f045978",
+      "path": "apps/wamn_wms/tests/cluster/startup.rs",
+      "bytes": 25484,
+      "sha256": "4f35ff919cb6eb1cc161659252c682b424b8c49cff50f1997a4608f92e634c49"
+    },
+    {
+      "source": "04b72bd0d1cf87a170e44e65266f69208f045978",
+      "path": "apps/wamn_wms/tests/cluster.rs",
+      "bytes": 26222,
+      "sha256": "c7542e799a325b3f02afc4a3eea74b72fac757c98e238f170ff0597d8f0ada7a"
+    },
+    {
+      "source": "e4257128341ebe3574028a88fa2c34e62e4ab694",
+      "path": "tools/wms-cluster-journey-run",
+      "bytes": 143460,
+      "sha256": "ef6007b7ebdd15ceae18d417c5c1f6f2d0f60971775ade077cfc85c97debc09e"
+    },
+    {
+      "source": "e4257128341ebe3574028a88fa2c34e62e4ab694",
+      "path": "tools/journey-probe.sh",
+      "bytes": 7140,
+      "sha256": "6a715d980f3894357a1fe718443175ed0a1ea2a114f7473749aab9e167519c0b"
+    },
+    {
+      "source": "f1a4ec44073bd51a3f0d4d241fc09a5f228920c4",
+      "path": "tools/wms-cluster-journey-run",
+      "bytes": 145180,
+      "sha256": "88d6c52c8f769eae8e5582901142269ab392cd53d582c0fba75695587f272f81"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/wms-startup-live-001/trace-steady.json",
+      "bytes": 27665,
+      "sha256": "841cfece98d19f620ddb6b0d47b2df72593a46fa1333fbd85c6a0a568a606bb2"
+    },
+    {
+      "path": "docs/perf/2026.09/consolidation-step3/wms-startup-live-001/trace-breakdown-steady.json",
+      "bytes": 508,
+      "sha256": "52f29b47861f1f9c34a5cf0c4ccdabd93d50ab2645071abe10b4f52de684fbc4"
+    },
+    {
+      "path": "docs/perf/2026.09/wasmcloud-2-9-cutover/live-wms-startup-002/journey/trace-breakdown-steady.json",
+      "bytes": 515,
+      "sha256": "03214f4d12cec34d2ce25d68486d4c9ffa696bf4719d779cc79475c2fb6f1ad9"
+    }
+  ],
+  "copied_source_matches_git_objects": true,
+  "native_b_deletion": "6feb01aca9c8fcced0c4ec9d3f5958416d2cf371",
+  "no_cargo_services_or_clusters_run": true
+}
