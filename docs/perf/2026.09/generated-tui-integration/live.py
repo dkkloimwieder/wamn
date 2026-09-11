@@ -299,10 +299,10 @@ def main():
     for required in (proof, compose_file, tree / "apps/wamn_receiving/wamn.json", tree / "apps/client_acme_receiving/wamn.json"):
         if not required.is_file():
             raise ProofFailure(f"required source is absent: {required}")
-    for name in ("wamn", "wamn-identity", "wamn-host", "wamn-scenario-worker", "wamn-receiving-tui"):
+    for name in ("wamn", "wamn-identity", "wamn-host", "wamn-scenario-worker", "wamn-receiving"):
         if not os.access(target / "debug" / name, os.X_OK):
             raise ProofFailure(f"required native artifact is absent: {name}")
-    for command in ("docker", "cargo", "curl", "sha256sum"):
+    for command in ("docker", "cargo", "curl", "sha256sum", "psql"):
         if shutil.which(command) is None:
             raise ProofFailure(f"required executable is absent: {command}")
 

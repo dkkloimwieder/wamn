@@ -377,11 +377,11 @@ def host_diagnostics(session, config, activation, http=False):
         for line in log:
             startup |= "wamn-host runtime startup completed" in line
             request |= all(marker in line for marker in
-                           ["handle_http_request{", "http.method=POST", "http.uri=/location/list"])
+                           ["handle_http_request{", "http.method=POST", "http.uri=/purchase_order/query"])
     require(startup, "host diagnostics omitted the runtime startup marker")
-    require(not http or request, "host diagnostics omitted the location-list HTTP trace")
+    require(not http or request, "host diagnostics omitted the purchase-order query HTTP trace")
     return {"path": str(path), "announced_before_operator": True, "mode_0600": True,
-            "startup_retained": startup, "location_list_retained": request}
+            "startup_retained": startup, "purchase_order_query_retained": request}
 
 
 def require_clean_frame(screen):
