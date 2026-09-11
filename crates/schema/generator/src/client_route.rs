@@ -286,7 +286,7 @@ mod tests {
 
     fn package_attachment(package: &str, id: &str) -> (PathBuf, ServingAttachment) {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../packages")
+            .join("../../../apps")
             .join(package)
             .join("publication/attachments.json");
         let attachments: BTreeMap<String, ServingAttachment> =
@@ -315,7 +315,8 @@ mod tests {
 
     #[test]
     fn receiving_claim_route_has_a_direct_declared_response() {
-        let (path, attachment) = package_attachment("receiving", "receiving-record-receipt-http");
+        let (path, attachment) =
+            package_attachment("wamn_receiving", "receiving-record-receipt-http");
         let result = evidence(&path, &attachment).expect("read direct publication evidence");
         assert!(result.direct);
         assert_eq!(result.terminal_operation, attachment.registered_operation);
@@ -328,7 +329,7 @@ mod tests {
 
     #[test]
     fn wms_move_response_belongs_to_the_terminal_store() {
-        let (path, attachment) = package_attachment("wms", "inventory-move-http");
+        let (path, attachment) = package_attachment("wamn_wms", "inventory-move-http");
         let result = evidence(&path, &attachment).expect("read composed publication evidence");
         assert!(!result.direct);
         assert_eq!(
@@ -355,7 +356,7 @@ mod tests {
 
     #[test]
     fn wiring_selection_uses_declared_identity_and_version() {
-        let (_, attachment) = package_attachment("receiving", "receiving-record-receipt-http");
+        let (_, attachment) = package_attachment("wamn_receiving", "receiving-record-receipt-http");
         let fixture = Publication::new();
         let mut unrelated = direct_wiring(&attachment);
         unrelated["version"] = json!(attachment.wiring_version + 1);
@@ -373,7 +374,7 @@ mod tests {
 
     #[test]
     fn missing_wiring_preserves_input_without_inventing_response_evidence() {
-        let (_, attachment) = package_attachment("receiving", "receiving-record-receipt-http");
+        let (_, attachment) = package_attachment("wamn_receiving", "receiving-record-receipt-http");
         let fixture = Publication::new();
         let result =
             evidence(&fixture.attachments(), &attachment).expect("missing wiring is unknown");
@@ -388,7 +389,8 @@ mod tests {
 
     #[test]
     fn malformed_schema_and_wiring_are_contextual_refusals() {
-        let (_, mut attachment) = package_attachment("receiving", "receiving-record-receipt-http");
+        let (_, mut attachment) =
+            package_attachment("wamn_receiving", "receiving-record-receipt-http");
         let fixture = Publication::new();
         attachment.definition["input-schema"] = json!([]);
         let error =
@@ -407,7 +409,7 @@ mod tests {
 
     #[test]
     fn response_selection_follows_reachability_and_refuses_ambiguous_terminals() {
-        let (_, attachment) = package_attachment("receiving", "receiving-record-receipt-http");
+        let (_, attachment) = package_attachment("wamn_receiving", "receiving-record-receipt-http");
         let mut wiring = direct_wiring(&attachment);
         wiring["nodes"]["other"] = wiring["nodes"]["operation"].clone();
         let parsed = WiringDocument::parse(&wiring).expect("parse unreachable terminal");
@@ -422,7 +424,7 @@ mod tests {
 
     #[test]
     fn response_schema_requires_matching_publication_identity_and_preserves_opaque_arrays() {
-        let (_, attachment) = package_attachment("receiving", "receiving-record-receipt-http");
+        let (_, attachment) = package_attachment("wamn_receiving", "receiving-record-receipt-http");
         let fixture = Publication::new();
         fixture.write("wirings/route.json", &direct_wiring(&attachment));
         let operation = attachment
@@ -454,7 +456,7 @@ mod tests {
 
     #[test]
     fn partial_projection_requires_one_exact_committed_component_declaration() {
-        let (path, attachment) = package_attachment("wms", "inventory-move-http");
+        let (path, attachment) = package_attachment("wamn_wms", "inventory-move-http");
         let publication = path.parent().unwrap();
         let wiring =
             super::read_json(&publication.join("wirings/inventory_move_and_label.json")).unwrap();
