@@ -11,3 +11,5 @@ pub mod rendering;
 pub mod scratch;
 pub mod secrets;
 pub mod traces;
+
+pub mod workload;
