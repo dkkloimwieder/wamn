@@ -5825,8 +5825,13 @@ name = "wamn-gate-harness"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "schemars",
+ "serde",
  "serde_json",
  "tokio-postgres",
+ "url",
+ "wamn-control-provision",
+ "wamn-ctl",
 ]
 
 [[package]]
@@ -6074,6 +6079,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-receiving-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "proptest",
+ "reqwest",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tokio-postgres",
+ "uuid",
+ "wamn-catalog",
+ "wamn-execution-contract",
+]
+
+[[package]]
 name = "wamn-receiving-tui"
 version = "0.1.0"
 dependencies = [
@@ -6301,6 +6325,20 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wamn-control-registry",
+]
+
+[[package]]
+name = "wamn-wms-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "wamn-catalog",
+ "wamn-execution-contract",
+ "wamn-gate-harness",
 ]
 
 [[package]]

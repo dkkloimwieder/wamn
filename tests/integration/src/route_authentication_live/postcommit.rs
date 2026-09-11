@@ -1,17 +1,15 @@
 //! Receiving replay and bounded progress through its released materializer.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
 use async_nats::jetstream::{Context, message::StreamMessage, stream::Stream};
 use futures_util::StreamExt as _;
-use schemars::JsonSchema;
-use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use tokio_postgres::Client;
+use wamn_gate_harness::journey::PostcommitPhase;
 use wamn_event_wire::{DeliveryAdvisory, DeliveryAdvisoryKind, Envelope, Op};
 use wamn_runtime::plugins::wamn_jetstream::{
     RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind, router_tap_environment_filter,
@@ -25,19 +23,6 @@ use super::{
 const REGISTRATION: &str = "client_acme_receiving::quality.create_inspection";
 const WIRING: &str = "quality_create_inspection";
 const PROGRESS_BOUND: Duration = Duration::from_secs(90);
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(super) struct PostcommitPhase {
-    pub route_endpoint: String,
-    pub evidence_file: PathBuf,
-    pub kubeconfig: PathBuf,
-    pub context: String,
-    pub namespace: String,
-    pub materializer_workload: String,
-    pub source_commit: String,
-    pub statement_timeout_ms: u64,
-}
 
 async fn kube(phase: &PostcommitPhase, arguments: &[&str]) -> anyhow::Result<Value> {
     let output = tokio::time::timeout(

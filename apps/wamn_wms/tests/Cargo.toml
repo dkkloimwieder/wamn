@@ -1,0 +1,24 @@
+[package]
+name = "wamn-wms-tests"
+description = "WMS application integration tests"
+workspace = "../../.."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+autotests = false
+
+[lib]
+path = "lib.rs"
+
+[dev-dependencies]
+anyhow = { workspace = true }
+reqwest = { workspace = true, features = ["rustls"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["time", "rt", "macros"] }
+uuid = { workspace = true }
+wamn-catalog = { workspace = true }
+wamn-execution-contract = { workspace = true }
+wamn-gate-harness = { workspace = true }
+
+[lints]
+workspace = true

@@ -20,12 +20,6 @@ mod measurement_schema;
 pub mod membershipproof;
 pub mod provisionbench;
 pub mod readerbench;
-#[cfg(test)]
-#[path = "../../../apps/wamn_receiving/tests/receiving_data_access.rs"]
-mod receiving_data_access;
-#[cfg(test)]
-#[path = "../../../apps/wamn_receiving/tests/receiving_publication.rs"]
-mod receiving_publication;
 pub mod retention;
 #[cfg(test)]
 mod route_authentication_live;
@@ -37,12 +31,3 @@ pub mod trusted_http_route;
 #[cfg(test)]
 mod virtualized_std_guest;
 pub mod walbench;
-#[cfg(test)]
-#[path = "../../../apps/wamn_wms/tests/wms_publication.rs"]
-mod wms_publication;
-#[cfg(test)]
-#[path = "../../../apps/wamn_wms/tests/wms_runtime_live.rs"]
-mod wms_runtime_live;
-#[cfg(test)]
-#[path = "../../../apps/wamn_wms/tests/wms_wiring_shape.rs"]
-mod wms_wiring_shape;

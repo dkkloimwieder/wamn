@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
 fn read_json(path: &Path) -> Value {

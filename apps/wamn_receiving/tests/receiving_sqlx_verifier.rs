@@ -8,35 +8,35 @@ mod native {
     pub mod location_list {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/wamn_receiving/generated/native-verifier/location_list.rs"
+            "/../../../apps/wamn_receiving/generated/native-verifier/location_list.rs"
         ));
     }
 
     pub mod purchase_order {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/wamn_receiving/generated/native-verifier/purchase_order.rs"
+            "/../../../apps/wamn_receiving/generated/native-verifier/purchase_order.rs"
         ));
     }
 
     pub mod receipt {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/wamn_receiving/generated/native-verifier/receipt.rs"
+            "/../../../apps/wamn_receiving/generated/native-verifier/receipt.rs"
         ));
     }
 
     pub mod receiving_record_receipt {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/wamn_receiving/generated/native-verifier/receiving_record_receipt.rs"
+            "/../../../apps/wamn_receiving/generated/native-verifier/receiving_record_receipt.rs"
         ));
     }
 
     pub mod receiving_load_receipt_screen {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/wamn_receiving/generated/native-verifier/receiving_load_receipt_screen.rs"
+            "/../../../apps/wamn_receiving/generated/native-verifier/receiving_load_receipt_screen.rs"
         ));
     }
 }
@@ -49,35 +49,35 @@ mod client_acme_native {
     pub mod purchase_order {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/client_acme_receiving/generated/native-verifier/purchase_order.rs"
+            "/../../../apps/client_acme_receiving/generated/native-verifier/purchase_order.rs"
         ));
     }
 
     pub mod quality_approve_inspection {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/client_acme_receiving/generated/native-verifier/quality_approve_inspection.rs"
+            "/../../../apps/client_acme_receiving/generated/native-verifier/quality_approve_inspection.rs"
         ));
     }
 
     pub mod quality_create_inspection {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/client_acme_receiving/generated/native-verifier/quality_create_inspection.rs"
+            "/../../../apps/client_acme_receiving/generated/native-verifier/quality_create_inspection.rs"
         ));
     }
 
     pub mod quality_load_purchase_order_detail {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/client_acme_receiving/generated/native-verifier/quality_load_purchase_order_detail.rs"
+            "/../../../apps/client_acme_receiving/generated/native-verifier/quality_load_purchase_order_detail.rs"
         ));
     }
 
     pub mod receiving_record_receipt {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../apps/client_acme_receiving/generated/native-verifier/receiving_record_receipt.rs"
+            "/../../../apps/client_acme_receiving/generated/native-verifier/receiving_record_receipt.rs"
         ));
     }
 }
@@ -86,16 +86,16 @@ mod client_acme_native {
 fn native_verifier_compiles_the_exact_runtime_sql_files() {
     let _ = sqlx::query_file_as!(
         native::location_list::ListLocationsRow,
-        "../../apps/wamn_receiving/query/location.sql"
+        "../../../apps/wamn_receiving/query/location.sql"
     );
     let _ = sqlx::query_file_as!(
         native::purchase_order::PurchaseOrderRow,
-        "../../apps/wamn_receiving/generated/sql/purchase_order/get.sql",
+        "../../../apps/wamn_receiving/generated/sql/purchase_order/get.sql",
         native::purchase_order::get_id_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         native::purchase_order::PurchaseOrderRow,
-        "../../apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_ascending.sql",
+        "../../../apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_ascending.sql",
         native::purchase_order::query_purchase_order_number_ascending_supplier_id_filter_bind_fixture(),
         native::purchase_order::query_purchase_order_number_ascending_status_filter_bind_fixture(),
         native::purchase_order::query_purchase_order_number_ascending_cursor_key_bind_fixture(),
@@ -104,7 +104,7 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
     );
     let _ = sqlx::query_file_as!(
         native::purchase_order::PurchaseOrderRow,
-        "../../apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_descending.sql",
+        "../../../apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_descending.sql",
         native::purchase_order::query_purchase_order_number_descending_supplier_id_filter_bind_fixture(),
         native::purchase_order::query_purchase_order_number_descending_status_filter_bind_fixture(),
         native::purchase_order::query_purchase_order_number_descending_cursor_key_bind_fixture(),
@@ -113,7 +113,7 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
     );
     let _ = sqlx::query_file_as!(
         native::purchase_order::PurchaseOrderRow,
-        "../../apps/wamn_receiving/query/open_purchase_order_by_status_ascending.sql",
+        "../../../apps/wamn_receiving/query/open_purchase_order_by_status_ascending.sql",
         native::purchase_order::query_status_ascending_supplier_id_filter_bind_fixture(),
         native::purchase_order::query_status_ascending_status_filter_bind_fixture(),
         native::purchase_order::query_status_ascending_cursor_key_bind_fixture(),
@@ -122,7 +122,7 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
     );
     let _ = sqlx::query_file_as!(
         native::purchase_order::PurchaseOrderRow,
-        "../../apps/wamn_receiving/query/open_purchase_order_by_status_descending.sql",
+        "../../../apps/wamn_receiving/query/open_purchase_order_by_status_descending.sql",
         native::purchase_order::query_status_descending_supplier_id_filter_bind_fixture(),
         native::purchase_order::query_status_descending_status_filter_bind_fixture(),
         native::purchase_order::query_status_descending_cursor_key_bind_fixture(),
@@ -131,7 +131,7 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
     );
     let _ = sqlx::query_file_as!(
         native::purchase_order::PurchaseOrderRow,
-        "../../apps/wamn_receiving/query/open_purchase_order.sql",
+        "../../../apps/wamn_receiving/query/open_purchase_order.sql",
         native::purchase_order::query_created_at_ascending_supplier_id_filter_bind_fixture(),
         native::purchase_order::query_created_at_ascending_status_filter_bind_fixture(),
         native::purchase_order::query_created_at_ascending_cursor_key_bind_fixture(),
@@ -140,7 +140,7 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
     );
     let _ = sqlx::query_file_as!(
         native::purchase_order::PurchaseOrderRow,
-        "../../apps/wamn_receiving/query/open_purchase_order_by_created_at_descending.sql",
+        "../../../apps/wamn_receiving/query/open_purchase_order_by_created_at_descending.sql",
         native::purchase_order::query_created_at_descending_supplier_id_filter_bind_fixture(),
         native::purchase_order::query_created_at_descending_status_filter_bind_fixture(),
         native::purchase_order::query_created_at_descending_cursor_key_bind_fixture(),
@@ -149,7 +149,7 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
     );
     let _ = sqlx::query_file_as!(
         native::purchase_order::PurchaseOrderUpdateRow,
-        "../../apps/wamn_receiving/generated/sql/purchase_order/update.sql",
+        "../../../apps/wamn_receiving/generated/sql/purchase_order/update.sql",
         native::purchase_order::update_id_bind_fixture(),
         native::purchase_order::update_expected_row_version_bind_fixture(),
         native::purchase_order::update_supplier_id_present_bind_fixture(),
@@ -157,26 +157,26 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
     );
     let _ = sqlx::query_file_as!(
         native::receipt::ReceiptRow,
-        "../../apps/wamn_receiving/generated/sql/receipt/get.sql",
+        "../../../apps/wamn_receiving/generated/sql/receipt/get.sql",
         native::receipt::get_id_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         native::receipt::ReceiptRow,
-        "../../apps/wamn_receiving/generated/sql/receipt/query_created_at_ascending.sql",
+        "../../../apps/wamn_receiving/generated/sql/receipt/query_created_at_ascending.sql",
         native::receipt::query_created_at_ascending_cursor_key_bind_fixture(),
         native::receipt::query_created_at_ascending_cursor_id_bind_fixture(),
         native::receipt::query_created_at_ascending_limit_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         native::receiving_record_receipt::ClaimCommandRow,
-        "../../apps/wamn_receiving/command/record_receipt/claim_command.sql",
+        "../../../apps/wamn_receiving/command/record_receipt/claim_command.sql",
         native::receiving_record_receipt::claim_command_idempotency_key_bind_fixture(),
         native::receiving_record_receipt::claim_command_canonical_command_bind_fixture(),
         native::receiving_record_receipt::claim_command_purchase_order_id_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         native::receiving_record_receipt::FinalizeCommandRow,
-        "../../apps/wamn_receiving/command/record_receipt/finalize_command.sql",
+        "../../../apps/wamn_receiving/command/record_receipt/finalize_command.sql",
         native::receiving_record_receipt::finalize_command_idempotency_key_bind_fixture(),
         native::receiving_record_receipt::finalize_command_canonical_command_bind_fixture(),
         native::receiving_record_receipt::finalize_command_receipt_id_bind_fixture(),
@@ -185,17 +185,17 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
     );
     let _ = sqlx::query_file_as!(
         native::receiving_record_receipt::FindReplayRow,
-        "../../apps/wamn_receiving/command/record_receipt/find_replay.sql",
+        "../../../apps/wamn_receiving/command/record_receipt/find_replay.sql",
         native::receiving_record_receipt::find_replay_idempotency_key_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         native::receiving_record_receipt::FinishPurchaseOrderRow,
-        "../../apps/wamn_receiving/command/record_receipt/finish_purchase_order.sql",
+        "../../../apps/wamn_receiving/command/record_receipt/finish_purchase_order.sql",
         native::receiving_record_receipt::finish_purchase_order_purchase_order_id_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         native::receiving_record_receipt::InsertReceiptRow,
-        "../../apps/wamn_receiving/command/record_receipt/insert_receipt.sql",
+        "../../../apps/wamn_receiving/command/record_receipt/insert_receipt.sql",
         native::receiving_record_receipt::insert_receipt_receipt_id_bind_fixture(),
         native::receiving_record_receipt::insert_receipt_idempotency_key_bind_fixture(),
         native::receiving_record_receipt::insert_receipt_purchase_order_id_bind_fixture(),
@@ -204,31 +204,31 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
     );
     let _ = sqlx::query_file_as!(
         native::receiving_record_receipt::InsertReceiptLineRow,
-        "../../apps/wamn_receiving/command/record_receipt/insert_receipt_line.sql",
+        "../../../apps/wamn_receiving/command/record_receipt/insert_receipt_line.sql",
         native::receiving_record_receipt::insert_receipt_line_receipt_id_bind_fixture(),
         native::receiving_record_receipt::insert_receipt_line_line_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         native::receiving_record_receipt::LockPurchaseOrderRow,
-        "../../apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql",
+        "../../../apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql",
         native::receiving_record_receipt::lock_purchase_order_purchase_order_id_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         native::receiving_record_receipt::UpdatePurchaseOrderLineRow,
-        "../../apps/wamn_receiving/command/record_receipt/update_purchase_order_line.sql",
+        "../../../apps/wamn_receiving/command/record_receipt/update_purchase_order_line.sql",
         native::receiving_record_receipt::update_purchase_order_line_purchase_order_id_bind_fixture(
         ),
         native::receiving_record_receipt::update_purchase_order_line_line_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         native::receiving_record_receipt::ValidateReceiptLineRow,
-        "../../apps/wamn_receiving/command/record_receipt/validate_receipt_line.sql",
+        "../../../apps/wamn_receiving/command/record_receipt/validate_receipt_line.sql",
         native::receiving_record_receipt::validate_receipt_line_purchase_order_id_bind_fixture(),
         native::receiving_record_receipt::validate_receipt_line_line_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         native::receiving_load_receipt_screen::LoadReceiptScreenRow,
-        "../../apps/wamn_receiving/query/load_receipt_screen.sql",
+        "../../../apps/wamn_receiving/query/load_receipt_screen.sql",
         native::receiving_load_receipt_screen::load_receipt_screen_purchase_order_id_bind_fixture()
     );
 }
@@ -237,12 +237,12 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
 fn client_acme_native_verifier_compiles_the_exact_runtime_sql_files() {
     let _ = sqlx::query_file_as!(
         client_acme_native::purchase_order::PurchaseOrderRow,
-        "../../apps/client_acme_receiving/generated/sql/purchase_order/get.sql",
+        "../../../apps/client_acme_receiving/generated/sql/purchase_order/get.sql",
         client_acme_native::purchase_order::get_id_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         client_acme_native::purchase_order::PurchaseOrderUpdateRow,
-        "../../apps/client_acme_receiving/generated/sql/purchase_order/update.sql",
+        "../../../apps/client_acme_receiving/generated/sql/purchase_order/update.sql",
         client_acme_native::purchase_order::update_id_bind_fixture(),
         client_acme_native::purchase_order::update_expected_row_version_bind_fixture(),
         client_acme_native::purchase_order::update_acme_inspection_required_present_bind_fixture(),
@@ -252,13 +252,13 @@ fn client_acme_native_verifier_compiles_the_exact_runtime_sql_files() {
     );
     let _ = sqlx::query_file_as!(
         client_acme_native::quality_load_purchase_order_detail::LoadPurchaseOrderDetailRow,
-        "../../apps/client_acme_receiving/query/quality_purchase_order_detail.sql",
+        "../../../apps/client_acme_receiving/query/quality_purchase_order_detail.sql",
         client_acme_native::quality_load_purchase_order_detail::
             load_purchase_order_detail_purchase_order_id_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         client_acme_native::quality_approve_inspection::ApproveInspectionRow,
-        "../../apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql",
+        "../../../apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql",
         client_acme_native::quality_approve_inspection::
             approve_inspection_receipt_id_bind_fixture(),
         client_acme_native::quality_approve_inspection::
@@ -266,17 +266,17 @@ fn client_acme_native_verifier_compiles_the_exact_runtime_sql_files() {
     );
     let _ = sqlx::query_file_as!(
         client_acme_native::quality_create_inspection::InsertInspectionRow,
-        "../../apps/client_acme_receiving/command/create_inspection/insert_inspection.sql",
+        "../../../apps/client_acme_receiving/command/create_inspection/insert_inspection.sql",
         client_acme_native::quality_create_inspection::insert_inspection_receipt_id_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         client_acme_native::quality_create_inspection::LoadInspectionRow,
-        "../../apps/client_acme_receiving/command/create_inspection/load_inspection.sql",
+        "../../../apps/client_acme_receiving/command/create_inspection/load_inspection.sql",
         client_acme_native::quality_create_inspection::load_inspection_receipt_id_bind_fixture()
     );
     let _ = sqlx::query_file_as!(
         client_acme_native::receiving_record_receipt::LoadPurchaseOrderDetailRow,
-        "../../apps/client_acme_receiving/query/quality_purchase_order_detail.sql",
+        "../../../apps/client_acme_receiving/query/quality_purchase_order_detail.sql",
         client_acme_native::receiving_record_receipt::
             load_purchase_order_detail_purchase_order_id_bind_fixture()
     );

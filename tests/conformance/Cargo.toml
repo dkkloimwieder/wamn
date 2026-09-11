@@ -41,7 +41,3 @@ wat = "=1.252.0"
 
 [lints]
 workspace = true
-
-[[test]]
-name = "receiving_sqlx_verifier"
-path = "../../apps/wamn_receiving/tests/receiving_sqlx_verifier.rs"

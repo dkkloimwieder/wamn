@@ -6,11 +6,10 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use wamn_ctl::apply_package::{self, ApplyPackageArgs, ApplyPackageError, ApplyPackageErrorKind};
 use wamn_runtime::component_admission::component_digest;
+use wamn_gate_harness::journey::{BaseCandidate, CompatibilityPhase};
 use wamn_schema_introspection::ir::{
     Constraint, ForeignKeyAction, ForeignKeyColumn, postgres_type,
 };
@@ -21,21 +20,6 @@ const INITIAL_MIGRATION: &str = "migrations/0001_initial.sql";
 const ORDER_HEADER: &str = "CREATE TABLE receiving.purchase_order (\n";
 const ADDITIVE_FIELD: &str = "overlay_compatibility_note";
 const CONFLICT_FIELD: &str = "acme_inspection_required";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum BaseCandidate {
-    Baseline,
-    Additive,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(super) struct CompatibilityPhase {
-    pub(super) base: BaseCandidate,
-    pub(super) package_directory: PathBuf,
-    pub(super) evidence_file: PathBuf,
-}
 
 pub(super) fn source(phase: &CompatibilityPhase, package: JourneyPackage) -> PathBuf {
     if package.id == BASE_PACKAGE_ID {

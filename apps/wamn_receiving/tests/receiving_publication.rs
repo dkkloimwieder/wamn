@@ -72,7 +72,7 @@ const OPERATIONS: [Operation; 8] = [
 ];
 
 fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
 fn publication_root() -> PathBuf {

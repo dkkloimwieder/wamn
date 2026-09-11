@@ -653,7 +653,7 @@ if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host
 fi
 if [[ "$receiving_correctness" == true ]]; then
   run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-    cargo test --locked --offline -p wamn-proof-integration \
+    cargo test --locked --offline -p wamn-receiving-tests \
       --test receiving_command_histories_live --no-run
 fi
 if [[ "$fresh_auth_bench" == true ]]; then
@@ -2551,13 +2551,13 @@ if [[ "$receiving_correctness" == true ]]; then
   record_command timeout --signal=TERM --kill-after=10s 600s \
     env WAMN_RECEIVING_CORRECTNESS_DOCUMENT='<private-fixture-path>' \
     CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-    cargo test --locked --offline -p wamn-proof-integration \
+    cargo test --locked --offline -p wamn-receiving-tests \
     --test receiving_command_histories_live production_receiving_command_histories \
     -- --exact --include-ignored --nocapture
   timeout --signal=TERM --kill-after=10s 600s \
     env WAMN_RECEIVING_CORRECTNESS_DOCUMENT="$correctness_document" \
     CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-    cargo test --locked --offline -p wamn-proof-integration \
+    cargo test --locked --offline -p wamn-receiving-tests \
     --test receiving_command_histories_live production_receiving_command_histories \
     -- --exact --include-ignored --nocapture \
     2>&1 | tee "$evidence_dir/receiving-correctness.log"

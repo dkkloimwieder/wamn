@@ -4,14 +4,14 @@
 //!
 //! The gates accreted per-bench copies of the same helpers (`percentile`
 //! existed three times host-side); this crate is the single place they live
-//! (docs/archive/structure-review.md SR1). Scope: pure, dependency-light helpers —
-//! stats over collected samples, the PASS/FAIL check line, and small JSON
-//! response asserts. Bench-specific machinery (harness structs, provisioning,
-//! stepped clocks with a single consumer) stays in its bench module until a
-//! second consumer pulls it here.
+//! (docs/archive/structure-review.md SR1). It also holds the shared application
+//! test inputs and environment calls. Application assertions stay with the app;
+//! provisioning uses the existing control library functions.
 
 pub mod ceiling;
 pub mod claim_law;
+pub mod environment;
+pub mod journey;
 
 use std::path::PathBuf;
 use std::time::Duration;

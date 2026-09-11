@@ -32,6 +32,8 @@ members = [
 exclude = [
     "platform/no-std",
     "wamn_receiving/ui",
+    "wamn_receiving/tests",
+    "wamn_wms/tests",
     "wamn_receiving/generated/receiving-tui",
     "wamn_wms/generated/wms-tui",
     "client_acme_receiving/generated/client_acme_receiving-tui",

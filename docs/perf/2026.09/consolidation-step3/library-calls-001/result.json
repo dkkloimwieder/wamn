@@ -1,0 +1,99 @@
+{
+  "base": "fa9f116c23f08145c0e0af23d7c03ac0fbe8371b",
+  "source_files": {
+    "test-support/harness/Cargo.toml": "7fc0c537d73727139e4aa622a3a4150d7407e77170e4df6c702e8b08e8d22e35",
+    "test-support/harness/src/lib.rs": "18ea3f41132ed715fa95440364d20a6c45518bca1d8e8f581e61826be68b672d",
+    "test-support/harness/src/environment.rs": "c955609ffbee6cad865a3026ac4d5c667584546be4c17fb17bf188a14fb0eede",
+    "test-support/harness/src/journey.rs": "93262d48380072d683c5139ba42ead4db2624ce347e28b9501aec1106531003f"
+  },
+  "preserved": {
+    "shared_type_tokens_comments_literals": true,
+    "parse_journey_document_tokens_comments_literals": true,
+    "journey_document_schema_bytes_tokens_comments_literals": true,
+    "overlay_compatibility_type_tokens_comments_literals": true,
+    "postcommit_type_tokens_comments_literals": true
+  },
+  "build_or_services_run": false,
+  "remaining_validation": "root runs existing strict schema/parser and scoped application tests through its warm Cargo target after integration",
+  "dependency_check": {
+    "source": "fa9f116c",
+    "paths_to_harness": [],
+    "ctl_reachable": [
+      "wamn-authoring-model",
+      "wamn-catalog",
+      "wamn-client",
+      "wamn-client-terminal",
+      "wamn-client-tui",
+      "wamn-component-policy",
+      "wamn-control-provision",
+      "wamn-control-registry",
+      "wamn-ctl",
+      "wamn-event-reg",
+      "wamn-event-wire",
+      "wamn-execution-contract",
+      "wamn-pg-core",
+      "wamn-platform-identity",
+      "wamn-router",
+      "wamn-run-state",
+      "wamn-runtime",
+      "wamn-schema-control",
+      "wamn-schema-generator",
+      "wamn-schema-introspection"
+    ]
+  },
+  "beads": [
+    "wamn-47wm.4.1",
+    "wamn-47wm.4.2"
+  ],
+  "checks": [
+    {
+      "argv": [
+        "rustfmt",
+        "--edition",
+        "2024",
+        "--check",
+        "test-support/harness/src/environment.rs",
+        "test-support/harness/src/journey.rs"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "input_hashes": {
+    "tools/receiving-cluster-journey-run": "93140441a4881bf6df1abda649d015b91bd62672c7696e64ad39522a47190a55",
+    "tools/wms-cluster-journey-run": "ef6007b7ebdd15ceae18d417c5c1f6f2d0f60971775ade077cfc85c97debc09e",
+    "tests/integration/src/route_authentication_live.rs": "881b3e87aee1051ade2977692f0c90edbbfc4a2ab60e3226bb5b227f6f059da0",
+    "tests/integration/src/route_authentication_live/overlay_compatibility.rs": "7b01060f94b9abb1dfc010d495fa644d1a8dae90216758884deef1cfcc229829",
+    "tests/integration/src/route_authentication_live/postcommit.rs": "3dedcf03f434b9471a250bb8aabed0c4a7a7b47230e9d27f6c5334adc3da5b84",
+    "services/ctl/src/dev/environment.rs": "dd7f18eb6ba55dcd2a04d9aa10000e88d8b11f2b23f0dc642e76889ffdf16951",
+    "services/ctl/src/provision_project_env.rs": "5b756bc21cacc70f25c1d1d3447e8dfab9343d57ada0e1bed929035b1ada2f37",
+    "services/ctl/src/enable_cdc_project_env.rs": "6909576e64261400c17f8140827ba487fb521a08aa553b79322f2d631a595d62",
+    "services/ctl/src/push_component.rs": "6cfccf024bdef2f989bfdf7d970a4dcea682c643da74d1fb498857593a8d9e4c",
+    "tests/integration/schema/wamn-journey.schema.json": "8e3737180655fe9d6bcfd6e5cebf21e5a29e95ff4d07b5b9203d8c9b876396fc"
+  },
+  "calls": {
+    "provision_project": "WMS provision-project-env CLI and emitted database application -> existing typed run, role_posture_sql, bounded drain, create_database_named_sql, emitted privilege SQL; caller retains PAT service lifetime",
+    "reconcile_package_data_access": "Receiving installed-set reconciliation and WMS reconcile-package-data-access CLI -> existing typed call plus existing Receiving replay/no-op assertion",
+    "push_component": "Receiving and WMS component publication -> exact current production admit/project/publish sequence; return the admitted digest instead of parsing stdout",
+    "configure_cdc": "Both enable-cdc-project-env CLI calls and psql file application -> typed run and existing SQL builders with publication committed before failover-slot creation"
+  },
+  "remaining_prerequisites": [
+    "root updates Cargo.lock for the harness dependency changes",
+    "scenario lane removes old document definitions and uses shared APIs in the same integrated refactor",
+    "app callers preserve project/family/Secret assertions and PAT service lifecycle",
+    "root performs warm Cargo validation and the retained workspace test run"
+  ],
+  "root_source_modified": false,
+  "worktree_source_modified_outside_harness": false
+}

@@ -917,7 +917,7 @@ fn production_receiving_command_histories() -> Result<()> {
             && inputs.corpus_sha256.len() == 71,
         "source, component and SQL corpus identities are required"
     );
-    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let repository = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let source_head = std::process::Command::new("git")
         .args(["rev-parse", "--verify", "HEAD"])
         .current_dir(&repository)

@@ -24,8 +24,6 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{
     InMemorySpanExporter, InMemorySpanExporterBuilder, SdkTracerProvider, SpanData,
 };
-use schemars::JsonSchema;
-use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio_postgres::Client;
@@ -47,6 +45,9 @@ use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
 use wamn_ctl::push_component::{self, PushComponentArgs};
 use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
 use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
+use wamn_gate_harness::journey::{
+    BaseCandidate, JourneyDocument, MaterializerPhase, journey_document_schema_bytes, parse_journey_document,
+};
 use wamn_execution_host::{
     ROUTER_DELIVERY_ID, RouterDeliveryBridge, RouterDriver, RouterDriverConfig,
     WiringCacheCapacity, authorize_attachment_for_test,
@@ -1205,83 +1206,6 @@ const JOURNEY_SCHEMA_PATH: &str = "schema/wamn-journey.schema.json";
 /// other's reading of the schema.
 const JOURNEY_EXAMPLE_PATH: &str = "schema/wamn-journey.example.json";
 
-/// Sole field authority for the cluster journey's input document.
-///
-/// An environment variable carries a process setting; data crosses a boundary
-/// as a declared, schema'd artifact. This document replaced thirteen
-/// `WAMN_*` environment variables that had grown one name at a time, each
-/// encoding whatever its author was thinking about -- the application, the
-/// test, the database -- until two PG18 URLs sat one segment apart in a flat
-/// namespace with nothing to say they were different things. As fields they
-/// are `system_pg_url` and, in the materializer phase, `project_pg_url`, and
-/// the question does not arise.
-///
-/// The shell writes it once, with `jq`, from the values it owns; this crate
-/// reads it strictly. `deny_unknown_fields` is what makes it a contract: a key
-/// the writer invents and the reader does not know fails here, not forty
-/// minutes into a cluster run as an empty string.
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct JourneyDocument {
-    system_pg_url: String,
-    component_directory: PathBuf,
-    compilation_cache_directory: PathBuf,
-    flow_http_wasm: PathBuf,
-    component_artifact_base: String,
-    release_artifact_base: String,
-    pub(crate) route_host: String,
-    registry_auth_file: PathBuf,
-    host_secret_directory: PathBuf,
-    host_secret_namespace: String,
-    pub(crate) route_caller_secret_output: PathBuf,
-    /// Copied package sources for the dedicated fresh-only proof.
-    /// The initial phase creates this directory before any package admission.
-    fresh_only_packages: Option<PathBuf>,
-    /// Fresh-install proof with unchanged overlay artifacts.
-    overlay_compatibility: Option<overlay_compatibility::CompatibilityPhase>,
-    /// Released materializer replay and retry proof.
-    postcommit: Option<postcommit::PostcommitPhase>,
-    /// Known only after the route phase has provisioned the project
-    /// environment and the materializer trigger has produced a receipt. The
-    /// shell amends the document with it then; before that it is absent, and
-    /// the materializer test refuses to run rather than read an empty string.
-    materializer: Option<MaterializerPhase>,
-    /// Known only once the released route is reachable from this machine and
-    /// the fixture rows exist (wamn-362o.27). The shell amends it in; the
-    /// runtime assertions refuse to run without it rather than guess an
-    /// endpoint or a pallet.
-    pub(crate) runtime: Option<RuntimePhase>,
-}
-
-/// The runtime-assertion phase: where the released route answers from this
-/// machine, and the fixture the journey seeded, declared ONCE there and handed
-/// over here so the test carries no second copy of it.
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct RuntimePhase {
-    /// The route's origin as reachable from the test -- a temporary NodePort
-    /// on a kind node's docker-network address. The Host header still names
-    /// the released route host.
-    pub(crate) route_endpoint: String,
-    /// The fixture pallet the contention moves.
-    pub(crate) pallet_id: String,
-    /// The fixture location it moves to.
-    pub(crate) to_location_id: String,
-}
-
-/// The materializer phase's inputs: the project-environment database the
-/// route phase provisioned, the event stream it subscribes to, and the receipt
-/// the trigger produced. The NATS URL is known from the start, but the only
-/// reader that needs it is this phase's, so it rides here rather than being a
-/// required top-level field a route-only run would have to invent.
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct MaterializerPhase {
-    project_pg_url: String,
-    nats_url: String,
-    receipt_id: String,
-}
-
 async fn connect_event_proof_client(
     url: &str,
     username_key: &str,
@@ -1308,89 +1232,6 @@ async fn connect_event_proof_client(
         .connect(url)
         .await
         .context("connect to the disposable event plane with the scoped proof role")
-}
-
-impl JourneyDocument {
-    pub(crate) fn required() -> anyhow::Result<Self> {
-        let path = required_journey_path(JOURNEY_DOCUMENT_ENV)?;
-        let bytes = std::fs::read(&path).with_context(|| format!("read {}", path.display()))?;
-        parse_journey_document(&bytes)
-            .with_context(|| format!("{} is not a valid journey document", path.display()))
-    }
-
-    /// Every scalar the document carries, named, so emptiness is refused with
-    /// the field's name rather than surfacing as a path that does not exist.
-    fn scalars(&self) -> [(&'static str, &str); 11] {
-        fn path(value: &Path) -> &str {
-            value.to_str().unwrap_or("")
-        }
-        [
-            ("system_pg_url", &self.system_pg_url),
-            ("component_directory", path(&self.component_directory)),
-            (
-                "compilation_cache_directory",
-                path(&self.compilation_cache_directory),
-            ),
-            ("flow_http_wasm", path(&self.flow_http_wasm)),
-            ("component_artifact_base", &self.component_artifact_base),
-            ("release_artifact_base", &self.release_artifact_base),
-            ("route_host", &self.route_host),
-            ("registry_auth_file", path(&self.registry_auth_file)),
-            ("host_secret_directory", path(&self.host_secret_directory)),
-            ("host_secret_namespace", &self.host_secret_namespace),
-            (
-                "route_caller_secret_output",
-                path(&self.route_caller_secret_output),
-            ),
-        ]
-    }
-}
-
-/// Parse one strict journey document. Unknown keys, missing keys and empty
-/// values are all refusals, each naming the field.
-fn parse_journey_document(bytes: &[u8]) -> anyhow::Result<JourneyDocument> {
-    let document: JourneyDocument = serde_json::from_slice(bytes)
-        .context("journey document disagrees with its generated schema")?;
-    for (field, value) in document.scalars() {
-        anyhow::ensure!(!value.is_empty(), "journey document field {field} is empty");
-    }
-    if let Some(root) = &document.fresh_only_packages {
-        anyhow::ensure!(
-            root.is_absolute()
-                && root.file_name().is_some()
-                && root.parent() == document.host_secret_directory.parent()
-                && root != &document.host_secret_directory,
-            "fresh_only_packages must name a separate directory beside the private host secrets"
-        );
-    }
-    if let Some(materializer) = &document.materializer {
-        for (field, value) in [
-            ("materializer.project_pg_url", &materializer.project_pg_url),
-            ("materializer.nats_url", &materializer.nats_url),
-            ("materializer.receipt_id", &materializer.receipt_id),
-        ] {
-            anyhow::ensure!(!value.is_empty(), "journey document field {field} is empty");
-        }
-    }
-    if let Some(runtime) = &document.runtime {
-        for (field, value) in [
-            ("runtime.route_endpoint", &runtime.route_endpoint),
-            ("runtime.pallet_id", &runtime.pallet_id),
-            ("runtime.to_location_id", &runtime.to_location_id),
-        ] {
-            anyhow::ensure!(!value.is_empty(), "journey document field {field} is empty");
-        }
-    }
-    Ok(document)
-}
-
-/// Byte-stable pretty JSON Schema generated from the strict document type.
-fn journey_document_schema_bytes() -> Vec<u8> {
-    let schema = serde_json::to_value(schemars::schema_for!(JourneyDocument))
-        .expect("journey document schema serializes");
-    let mut bytes = serde_json::to_vec_pretty(&schema).expect("journey document schema serializes");
-    bytes.push(b'\n');
-    bytes
 }
 
 #[test]
@@ -4326,7 +4167,7 @@ async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
             &inputs.component_directory,
         )
         .await?;
-        if phase.base == overlay_compatibility::BaseCandidate::Baseline {
+        if phase.base == BaseCandidate::Baseline {
             overlay_compatibility::breaking_refusal(
                 phase,
                 &system_url,

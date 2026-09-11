@@ -35,7 +35,7 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
 
-use crate::route_authentication_live::{JourneyDocument, RuntimePhase};
+use wamn_gate_harness::journey::{JourneyDocument, RuntimePhase};
 
 const REQUEST_ID_A: &str = "contention-a";
 const REQUEST_ID_B: &str = "contention-b";

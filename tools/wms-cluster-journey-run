@@ -2434,7 +2434,7 @@ record_command cargo test wms_runtime_live::contention_and_replay_through_the_co
   '<journey document with the runtime phase redacted>'
 WAMN_JOURNEY_DOCUMENT="$journey_document" \
 CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  cargo test -p wamn-proof-integration --lib --locked --offline \
+  cargo test -p wamn-wms-tests --lib --locked --offline \
   wms_runtime_live::contention_and_replay_through_the_composed_route \
   -- --ignored --exact --nocapture --test-threads=1 \
   2>&1 | tee "$evidence_dir/wms-runtime.log"
@@ -2458,7 +2458,7 @@ record_command cargo test wms_runtime_live::the_remaining_operations_serve_their
   '<journey document with the runtime phase redacted>'
 WAMN_JOURNEY_DOCUMENT="$journey_document" \
 CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-  cargo test -p wamn-proof-integration --lib --locked --offline \
+  cargo test -p wamn-wms-tests --lib --locked --offline \
   wms_runtime_live::the_remaining_operations_serve_their_released_routes \
   -- --ignored --exact --nocapture --test-threads=1 \
   2>&1 | tee "$evidence_dir/wms-operations.log"
@@ -2549,7 +2549,7 @@ if [[ "$prove_partial_completion" == true ]]; then
   partial_status=0
   if WAMN_JOURNEY_DOCUMENT="$partial_journey_document" \
       CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
-      cargo test -p wamn-proof-integration --lib --locked --offline \
+      cargo test -p wamn-wms-tests --lib --locked --offline \
       wms_runtime_live::committed_move_survives_label_store_failure \
       -- --include-ignored --exact --nocapture --test-threads=1 \
       2>&1 | tee "$evidence_dir/wms-partial.log"; then
