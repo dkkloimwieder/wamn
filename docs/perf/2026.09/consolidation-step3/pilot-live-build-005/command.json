@@ -1,0 +1,19 @@
+{
+  "source_commit": "7adc577ec85e5a496ce82ddb2adc75a38bbfd12c",
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "build",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-gates",
+    "--bin",
+    "wamn-gates"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "started_utc": "2026-09-11T23:21:45.571809+00:00"
+}

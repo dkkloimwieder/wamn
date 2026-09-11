@@ -1,0 +1,27 @@
+{
+  "original_directory": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-live-build-005",
+  "source_commit": "7adc577ec85e5a496ce82ddb2adc75a38bbfd12c",
+  "files": [
+    {
+      "path": "cargo.log",
+      "bytes": 9136,
+      "mode": "0664",
+      "sha256": "2132db5663ee2f9d4383a6d1ba51fcd8ebfce2710230613c6c3c930ca88516bd"
+    },
+    {
+      "path": "command.json",
+      "bytes": 348,
+      "mode": "0664",
+      "sha256": "194232e445def6fb352b3877c103c924dff6aa044f9167bb898b7f5bdde40640"
+    },
+    {
+      "path": "record.json",
+      "bytes": 644,
+      "mode": "0664",
+      "sha256": "ee907b5c6467ede930dec3e6fed69ca2b877f1cb0e91464bb12fd447c99f9d3f"
+    }
+  ],
+  "original_file_count": 3,
+  "original_bytes": 10128,
+  "copied_bytes_and_modes_match": true
+}
