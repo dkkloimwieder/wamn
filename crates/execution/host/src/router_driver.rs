@@ -34,6 +34,7 @@ use wamn_runtime::plugins::EffectEvidence;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
     self, CONNECTION_HTTP_ID, ConnectionExecutionClosure, ConnectionHttp, ConnectionInvocation,
+    ConnectionOrigin,
 };
 use wamn_runtime::plugins::flow_http_routing::{AuthenticatedCaller, CredentialKind};
 use wamn_runtime::plugins::wamn_blobstore::plugin as wamn_blobstore_plugin;
@@ -1502,6 +1503,14 @@ impl RouterDriver {
                 release,
             },
             invocation: ConnectionInvocation {
+                origin: ConnectionOrigin {
+                    wiring_package_id: request.package_id.clone(),
+                    package_id: component.scope.package_id.clone(),
+                    component_digest: component.component_digest.clone(),
+                    component: component.component.clone(),
+                    interface_version: component.interface_version.clone(),
+                    operation: call.operation.clone(),
+                },
                 package_id: component.scope.package_id.clone(),
                 wiring_id: request.wiring_id.clone(),
                 wiring_version: active.version,
@@ -1708,6 +1717,7 @@ impl NodeAcquisition {
     /// The component name and the operation move with the package and the
     /// digest. A child that kept the parent's pair would raise its effects under
     /// the caller's identity while naming its own package (`wamn-b2m6.7`).
+    /// The original wiring owner and root component remain in `origin`.
     fn retarget(mut self, target: &AdmittedComponent, operation: &str) -> Self {
         self.invocation.package_id = target.scope.package_id.clone();
         self.invocation.component_digest = target.component_digest.clone();
@@ -3280,9 +3290,28 @@ mod tests {
             acquisition: NodeAcquisition {
                 claims: SessionClaims {
                     tenant: "tenant-a".to_owned(),
-                    ..SessionClaims::default()
+                    project: Some("project-a".to_owned()),
+                    schema: Some("app".to_owned()),
+                    runner: Some("executor-a".to_owned()),
+                    role: Some("operator".to_owned()),
+                    user_id: Some("user-a".to_owned()),
+                    release: Some(ReleaseIdentity {
+                        effective_release_id: 7,
+                        manifest_digest: wamn_catalog::ManifestDigest::parse(
+                            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        )
+                        .expect("valid manifest digest"),
+                    }),
                 },
                 invocation: ConnectionInvocation {
+                    origin: ConnectionOrigin {
+                        wiring_package_id: "org_workflow".to_owned(),
+                        package_id: "client_acme_receiving".to_owned(),
+                        component_digest: "sha256:overlay".to_owned(),
+                        component: "overlay".to_owned(),
+                        interface_version: "1.0.0".to_owned(),
+                        operation: "client-acme-receiving:receiving/record-receipt@1.0.0".to_owned(),
+                    },
                     package_id: "client_acme_receiving".to_owned(),
                     wiring_id: "record-receipt".to_owned(),
                     wiring_version: 1,
@@ -3300,6 +3329,7 @@ mod tests {
         };
 
         assert!(bound.caller.is_none(), "provenance is not caller identity");
+        let original = bound.acquisition.clone();
         let mut target = component_with_operations(BTreeMap::new());
         target.scope.package_id = "wamn_receiving".to_owned();
         target.component = "receiving".to_owned();
@@ -3317,6 +3347,34 @@ mod tests {
         assert_eq!(
             child.invocation.operation,
             "wamn-receiving:receiving/record-receipt@1.0.0"
+        );
+        assert_eq!(child.claims, original.claims);
+        assert_eq!(
+            child.invocation,
+            ConnectionInvocation {
+                package_id: "wamn_receiving".to_owned(),
+                component_digest: "sha256:base".to_owned(),
+                component: "receiving".to_owned(),
+                operation: "wamn-receiving:receiving/record-receipt@1.0.0".to_owned(),
+                ..original.invocation.clone()
+            }
+        );
+
+        target.scope.package_id = "wamn_inventory".to_owned();
+        target.component = "inventory".to_owned();
+        target.component_digest = "sha256:inventory".to_owned();
+        let grandchild = child.retarget(&target, "wamn-inventory:inventory/receive@1.0.0");
+        assert_eq!(grandchild.claims, original.claims);
+        assert_eq!(grandchild.causation, original.causation);
+        assert_eq!(
+            grandchild.invocation,
+            ConnectionInvocation {
+                package_id: "wamn_inventory".to_owned(),
+                component_digest: "sha256:inventory".to_owned(),
+                component: "inventory".to_owned(),
+                operation: "wamn-inventory:inventory/receive@1.0.0".to_owned(),
+                ..original.invocation
+            }
         );
     }
 

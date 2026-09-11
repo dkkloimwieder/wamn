@@ -413,7 +413,7 @@ async fn seed_catalog(
     document: &WiringDocument,
     wiring_hash: &str,
     release: &ReleaseManifestWeld,
-    additional_wiring: Option<(&AdmittedComponent, &WiringDocument)>,
+    additional_wiring: Option<(&AdmittedComponent, &[WiringDocument])>,
 ) -> anyhow::Result<ClassCredentials> {
     let (client, connection) = tokio_postgres::connect(&options.database_url, NoTls)
         .await
@@ -441,7 +441,7 @@ async fn seed_with_client(
     document: &WiringDocument,
     wiring_hash: &str,
     release: &ReleaseManifestWeld,
-    additional_wiring: Option<(&AdmittedComponent, &WiringDocument)>,
+    additional_wiring: Option<(&AdmittedComponent, &[WiringDocument])>,
 ) -> anyhow::Result<ClassCredentials> {
     // `catalog-schema.sql` applies whole only on a fresh install, and its
     // migration blocks take an ACCESS EXCLUSIVE lock — so it must arrive as ONE
@@ -689,8 +689,8 @@ async fn seed_with_client(
         .await
         .context("bind the requirement to the instance")?;
 
-    if let Some((component, document)) = additional_wiring {
-        seed_additional_wiring(client, component, document).await?;
+    if let Some((component, documents)) = additional_wiring {
+        seed_additional_wirings(client, component, documents).await?;
     }
     // All component memberships and connection facts exist before the single
     // immutable snapshot seals this release. No post-seal membership writes.
@@ -782,59 +782,80 @@ async fn seed_with_client(
         ))
 }
 
-async fn seed_additional_wiring(
+async fn seed_additional_wirings(
     client: &tokio_postgres::Client,
     component: &AdmittedComponent,
-    document: &WiringDocument,
+    documents: &[WiringDocument],
 ) -> anyhow::Result<()> {
+    let package = &component.scope.package_id;
+    let package_version = &component.scope.package_version;
+    if package != PACKAGE {
+        let manifest = serde_json::json!({"package": {"id": package, "version": package_version},
+            "models": {}, "custom_operations": {}, "queries": {}, "connections": {}, "components": {}});
+        client.execute(
+            "INSERT INTO catalog.packages (tenant_id, package_id, package_version, manifest_sha256) \
+             VALUES ($1, $2, $3, $4)",
+            &[&TENANT, package, package_version,
+              &wamn_execution_contract::canonical_json_sha256(&manifest)],
+        ).await?;
+        client.execute(
+            "INSERT INTO catalog.effective_release_packages \
+             (tenant_id, effective_release_id, package_id, package_version) VALUES ($1, $2, $3, $4)",
+            &[&TENANT, &EFFECTIVE_RELEASE_ID, package, package_version],
+        ).await?;
+    }
     let projection_hash = admitted_projection_hash(component, &[])?;
-    let version = i32::try_from(document.version)?;
-    let wiring_hash = document.wiring_hash().as_str().to_owned();
     client.execute(
         "INSERT INTO catalog.component_library (tenant_id, package_id, package_version, \
              component, interface_version, operations, component_digest, projection_hash, \
              imports, imports_fingerprint, effects) \
          VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7, $8, $9::text::jsonb, $10, $11::text::jsonb)",
-        &[&TENANT, &PACKAGE, &PACKAGE_VERSION, &component.component, &component.interface_version,
+        &[&TENANT, package, package_version, &component.component, &component.interface_version,
           &serde_json::to_string(&component.operations)?, &component.component_digest, &projection_hash,
           &serde_json::to_string(&component.imports)?, &component.imports_fingerprint,
           &serde_json::to_string(&component.effects)?],
     ).await.context("seed the additional admitted component before sealing")?;
-    client
-        .execute(
-            "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
+    for document in documents {
+        let version = i32::try_from(document.version)?;
+        let wiring_hash = document.wiring_hash().as_str().to_owned();
+        client
+            .execute(
+                "INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
              version, graph_json, wiring_hash) VALUES ($1, $2, $3, $4, $5, $6::text::jsonb, $7)",
-            &[
-                &TENANT,
-                &PACKAGE,
-                &PACKAGE_VERSION,
-                &document.wiring_id,
-                &version,
-                &serde_json::to_string(document)?,
-                &wiring_hash,
-            ],
-        )
-        .await
-        .context("seed the additional immutable wiring")?;
-    client
-        .execute(
-            "INSERT INTO catalog.release_components (tenant_id, effective_release_id, \
+                &[
+                    &TENANT,
+                    &PACKAGE,
+                    &PACKAGE_VERSION,
+                    &document.wiring_id,
+                    &version,
+                    &serde_json::to_string(document)?,
+                    &wiring_hash,
+                ],
+            )
+            .await
+            .context("seed the additional immutable wiring")?;
+        client
+            .execute(
+                "INSERT INTO catalog.release_components (tenant_id, effective_release_id, \
              wiring_package_id, wiring_package_version, wiring_id, wiring_version, node_id, \
              package_id, package_version, component_digest) \
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $3, $4, $8)",
-            &[
-                &TENANT,
-                &EFFECTIVE_RELEASE_ID,
-                &PACKAGE,
-                &PACKAGE_VERSION,
-                &document.wiring_id,
-                &version,
-                &NODE_ID,
-                &component.component_digest,
-            ],
-        )
-        .await
-        .context("seed the additional component membership before sealing")?;
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                &[
+                    &TENANT,
+                    &EFFECTIVE_RELEASE_ID,
+                    &PACKAGE,
+                    &PACKAGE_VERSION,
+                    &document.wiring_id,
+                    &version,
+                    &NODE_ID,
+                    package,
+                    package_version,
+                    &component.component_digest,
+                ],
+            )
+            .await
+            .context("seed the additional component membership before sealing")?;
+    }
     Ok(())
 }
 
@@ -906,6 +927,8 @@ mod tests {
     const ROTATED_AUTHORIZATION: &str = "Bearer rotated-fixture-token";
     const CHILD_OPERATION: &str = "orders:http/send@1.0.0";
     const PARENT_COMPONENT: &str = "nested-http-parent";
+    const PARENT_PACKAGE: &str = "http_adapter";
+    const UNDECLARED_OPERATION: &str = "http-adapter:parent/undeclared@1.0.0";
 
     #[derive(Default)]
     struct RegisteredExport {
@@ -1018,7 +1041,8 @@ mod tests {
             (export "json" (type $json)) (export "node-context" (type $context))
             (export "emission" (type $emission)) (export "node-error" (type $error))
             (export "run" (func $run)))
-          (export "{OPERATION}" (instance $handler)))"#,
+          (export "{OPERATION}" (instance $handler))
+          (export "{UNDECLARED_OPERATION}" (instance $handler)))"#,
         ))?)
     }
 
@@ -1058,15 +1082,23 @@ mod tests {
             digest: child.component_digest.clone(),
             operation: CHILD_OPERATION.to_owned(),
         }];
+        let mut undeclared_operation = operation.clone();
+        undeclared_operation.dependencies.clear();
+        let mut parent_scope = child_declaration.scope.clone();
+        parent_scope.package_id = PARENT_PACKAGE.to_owned();
         let parent_bytes = parent_component()?;
         let parent = validate_component_admission(
             &engine,
             &parent_bytes,
             ComponentAdmissionRequest {
                 declaration: ComponentDeclaration {
+                    scope: parent_scope,
                     component: PARENT_COMPONENT.to_owned(),
                     connections: Vec::new(),
-                    operations: BTreeMap::from([(OPERATION.to_owned(), operation)]),
+                    operations: BTreeMap::from([
+                        (OPERATION.to_owned(), operation),
+                        (UNDECLARED_OPERATION.to_owned(), undeclared_operation),
+                    ]),
                     ..child_declaration
                 },
                 admitted_platform_packages: BTreeSet::from(["wamn:node".to_owned()]),
@@ -1092,23 +1124,38 @@ mod tests {
         node.component = PARENT_COMPONENT.to_owned();
         node.operation = OPERATION.to_owned();
         let nested_hash = nested.wiring_hash().as_str().to_owned();
+        let mut undeclared = nested.clone();
+        undeclared.version = 3;
+        undeclared
+            .nodes
+            .get_mut(NODE_ID)
+            .context("fixture node missing")?
+            .operation = UNDECLARED_OPERATION.to_owned();
         let mut manifest = release_manifest(&child, &direct_hash);
+        manifest["release"]["packages"].as_array_mut().context("fixture packages missing")?
+            .push(serde_json::json!({"package-id": PARENT_PACKAGE, "package-version": PACKAGE_VERSION}));
+        let mut parent_manifest = release_manifest(&parent, &nested_hash)["components"][0].clone();
+        parent_manifest["package-id"] = serde_json::json!(PARENT_PACKAGE);
         manifest["components"]
             .as_array_mut()
             .context("fixture components missing")?
-            .push(release_manifest(&parent, &nested_hash)["components"][0].clone());
-        manifest["wirings"]
-            .as_array_mut()
-            .context("fixture wirings missing")?
-            .push(serde_json::json!({
-                "package-id": PACKAGE, "wiring-id": WIRING_ID, "wiring-version": 2,
-                "graph-hash": nested_hash,
-            }));
+            .push(parent_manifest);
+        for document in [&nested, &undeclared] {
+            manifest["wirings"]
+                .as_array_mut()
+                .context("fixture wirings missing")?
+                .push(serde_json::json!({
+                    "package-id": PACKAGE, "wiring-id": WIRING_ID,
+                    "wiring-version": document.version,
+                    "graph-hash": document.wiring_hash().as_str(),
+                }));
+        }
         manifest["attachments"][ATTACHMENT_ID]["auth-policy"] =
             serde_json::json!({"modes": ["pat"]});
+        let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
         let release = Arc::new(ReleaseManifestWeld::load_canonical_bytes(
-            &wamn_execution_contract::canonical_json_bytes(&manifest),
-            "nested HTTP refusal fixture",
+            &manifest.canonical_bytes(),
+            "nested HTTP authority fixture",
         )?);
         let credentials = seed_catalog(
             options,
@@ -1116,7 +1163,7 @@ mod tests {
             &direct,
             &direct_hash,
             &release,
-            Some((&parent, &nested)),
+            Some((&parent, &[nested, undeclared])),
         )
         .await?;
         let (admin, connection) = tokio_postgres::connect(&options.database_url, NoTls).await?;
@@ -1151,7 +1198,7 @@ mod tests {
                 REGISTRY_IO_TIMEOUT,
             )?),
             RouterDriverConfig {
-                owner_prefix: "nested-http-refusal".to_owned(),
+                owner_prefix: "nested-http-authority".to_owned(),
                 project: PROJECT.to_owned(),
                 schema: None,
                 cache_capacity: WiringCacheCapacity::default(),
@@ -1740,18 +1787,17 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires fresh project PostgreSQL, separate fresh wamnsystem, OCI registry, and actual HTTP guest"]
-    async fn nested_http_keeps_original_caller_and_refuses_unproven_child_authority()
-    -> anyhow::Result<()> {
+    async fn nested_http_authorizes_child_and_preserves_original_caller() -> anyhow::Result<()> {
         anyhow::ensure!(
             std::env::var("WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET").as_deref() == Ok("1"),
             "set WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET=1 for both disposable databases"
         );
-        tokio::time::timeout(Duration::from_secs(180), nested_refusal_proof())
+        tokio::time::timeout(Duration::from_secs(180), nested_authority_proof())
             .await
-            .context("real nested HTTP refusal proof exceeded 180 seconds")?
+            .context("real nested HTTP authority proof exceeded 180 seconds")?
     }
 
-    async fn nested_refusal_proof() -> anyhow::Result<()> {
+    async fn nested_authority_proof() -> anyhow::Result<()> {
         let database_url = std::env::var("WAMN_HTTP_REUSE_PG_URL")
             .context("set WAMN_HTTP_REUSE_PG_URL to fresh disposable PostgreSQL 18")?;
         let system_url = std::env::var("WAMN_HTTP_REUSE_SYSTEM_PG_URL")
@@ -1773,15 +1819,12 @@ mod tests {
             version.parse::<u32>()? / 10_000 == 18,
             "nested proof requires PostgreSQL 18"
         );
-        drop(admin);
-        connection.abort();
-
         let exporter = InMemorySpanExporterBuilder::new().build();
         let provider = SdkTracerProvider::builder()
             .with_simple_exporter(exporter.clone())
             .build();
         let subscriber = tracing_subscriber::registry().with(
-            tracing_opentelemetry::layer().with_tracer(provider.tracer("nested-http-refusal")),
+            tracing_opentelemetry::layer().with_tracer(provider.tracer("nested-http-authority")),
         );
         let _guard = tracing::subscriber::set_default(subscriber);
         let mut origin = origin().await?;
@@ -1796,6 +1839,24 @@ mod tests {
             path_and_query: "/reuse".to_owned(),
         })
         .await?;
+        let parent = route
+            .release
+            .manifest()
+            .components
+            .iter()
+            .find(|component| component.digest.as_str() == parent_digest)
+            .context("release lacks its exact parent component")?;
+        let wiring = route
+            .release
+            .manifest()
+            .wirings
+            .iter()
+            .find(|wiring| wiring.wiring_version == 2)
+            .context("release lacks its exact nested wiring")?;
+        assert_ne!(
+            parent.package_id, wiring.package_id,
+            "proof must distinguish the wiring owner from its root component package"
+        );
         let caller = originating_caller(&system_url, &route, postgres).await?;
         let mut connection_id = None;
         for id in [21, 22] {
@@ -1822,20 +1883,17 @@ mod tests {
             nested.wiring_version = 2;
             nested.resolution = WiringResolution::Frozen;
             nested.caller = Some(caller.clone());
-            let denied = route.driver.execute(nested).await?;
-            let failure = denied
-                .outcome
-                .failure
-                .context("nested HTTP acquired unproven child authority")?;
-            assert_eq!(failure.node, NODE_ID);
-            assert_eq!(failure.detail.code.as_deref(), Some("connection-denied"));
+            let accepted = receipt(
+                &mut origin,
+                route.driver.execute(nested).await?,
+                id,
+                "Bearer fixture-token",
+            )
+            .await?;
             assert_eq!(
-                failure.detail.message,
-                "connection refused: ConnectionError::AttestationInvalid"
-            );
-            assert!(
-                origin.receipts.try_recv().is_err(),
-                "nested refusal dispatched on warm transport"
+                Some(accepted),
+                connection_id,
+                "the admitted child did not reuse its own warm transport"
             );
         }
         provider.force_flush()?;
@@ -1881,8 +1939,73 @@ mod tests {
                 assert_eq!(attribute(span, "wamn.node_id").as_deref(), Some(NODE_ID));
             }
         }
-        // This proves preservation of the existing fail-closed boundary, not
-        // working nested HTTP. wamn-ctc8.33 owns the root-node/child mismatch.
+        // The same component bytes import the child, but this export does not
+        // declare that dependency. Presence in the release grants no authority.
+        let mut undeclared = request(25);
+        undeclared.wiring_version = 3;
+        undeclared.resolution = WiringResolution::Frozen;
+        undeclared.caller = Some(caller.clone());
+        let Err(refusal) = route.driver.execute(undeclared).await else {
+            anyhow::bail!("the undeclared export acquired child authority");
+        };
+        assert!(
+            refusal.chain().any(|cause| cause.to_string()
+                == format!("nested-operation-not-declared-for-export: {CHILD_OPERATION}")),
+            "wrong undeclared-export refusal: {refusal:#}"
+        );
+        assert!(
+            origin.receipts.try_recv().is_err(),
+            "undeclared child reached the wire"
+        );
+
+        set_instance_status(&admin, "disabled").await?;
+        let mut nested = request(26);
+        nested.wiring_version = 2;
+        nested.resolution = WiringResolution::Frozen;
+        nested.caller = Some(caller.clone());
+        let failure = route
+            .driver
+            .execute(nested)
+            .await?
+            .outcome
+            .failure
+            .context("nested HTTP reused authority after the connection was disabled")?;
+        assert_eq!(failure.node, NODE_ID);
+        assert_eq!(
+            failure.detail.code.as_deref(),
+            Some("connection-unavailable")
+        );
+        assert_eq!(
+            failure.detail.message,
+            "connection failed: ConnectionError::CredentialUnavailable"
+        );
+        assert!(
+            origin.receipts.try_recv().is_err(),
+            "disabled nested effect reached the wire"
+        );
+        set_instance_status(&admin, "enabled").await?;
+        let mut nested = request(27);
+        nested.wiring_version = 2;
+        nested.resolution = WiringResolution::Frozen;
+        nested.caller = Some(caller);
+        let restored = receipt(
+            &mut origin,
+            route.driver.execute(nested).await?,
+            27,
+            "Bearer fixture-token",
+        )
+        .await?;
+        assert_eq!(
+            Some(restored),
+            connection_id,
+            "a refused request poisoned the reusable socket"
+        );
+        assert!(
+            origin.receipts.try_recv().is_err(),
+            "unexpected extra nested effect"
+        );
+        drop(admin);
+        connection.abort();
         Ok(())
     }
 }

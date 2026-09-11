@@ -265,10 +265,16 @@ impl WamnBlobstore {
                     .ok_or_else(|| refused("the frozen world holds no binding for this alias"))?,
             ),
         };
-        let (effective_release_id, environment) =
-            release_coordinates(&invocation, released_manifest, &self.tenant).map_err(|_| {
-                refused("release coordinates: tenant, package or closure kind disagree with the manifest")
-            })?;
+        let (effective_release_id, environment) = release_coordinates(
+            &invocation,
+            released_manifest,
+            &self.tenant,
+        )
+        .map_err(|_| {
+            refused(
+                "release coordinates: tenant, package or closure kind disagree with the manifest",
+            )
+        })?;
         let snapshot = self
             .postgres
             .connection_effect_snapshot(
@@ -277,6 +283,13 @@ impl WamnBlobstore {
                 &self.tenant,
                 &ConnectionEffectLookup {
                     package_id: &invocation.package_id,
+                    wiring_package_id: &invocation.origin.wiring_package_id,
+                    origin_package_id: &invocation.origin.package_id,
+                    origin_component_digest: &invocation.origin.component_digest,
+                    origin_component: &invocation.origin.component,
+                    origin_interface_version: &invocation.origin.interface_version,
+                    origin_operation: &invocation.origin.operation,
+                    operation: &invocation.operation,
                     effective_release_id,
                     environment: &environment,
                     wiring_id: &invocation.wiring_id,
@@ -454,11 +467,20 @@ mod tests {
     };
 
     use super::*;
+    use crate::plugins::connection_http::ConnectionOrigin;
     use crate::plugins::effect_span::span_proof::{SpanHarness, expected_attributes};
     use crate::plugins::wamn_postgres::{CandidateBindingWorld, WamnPostgresConfig};
 
     fn released() -> ConnectionInvocation {
         ConnectionInvocation {
+            origin: ConnectionOrigin {
+                wiring_package_id: "package_a".to_string(),
+                package_id: "package_a".to_string(),
+                component_digest: format!("sha256:{}", "a".repeat(64)),
+                component: "archiver".to_string(),
+                interface_version: "0.1.0".to_string(),
+                operation: "orders:archive/store@1.0.0".to_string(),
+            },
             package_id: "package_a".to_string(),
             wiring_id: "orders".to_string(),
             wiring_version: 3,
@@ -618,7 +640,7 @@ mod tests {
             wiring_hash: format!("sha256:{}", "b".repeat(64)),
             component: Some("archiver".to_string()),
             interface_version: Some("0.1.0".to_string()),
-            operation: Some("package-a:orders/archive@1.0.0".to_string()),
+            operation: Some("orders:archive/store@1.0.0".to_string()),
             registered_operation: Some("package-a:orders/archive@1.0.0".to_string()),
             requirement_json: None,
             requirement_hash: Some(binding.requirement_hash.clone()),
@@ -764,6 +786,68 @@ mod tests {
         assert_eq!(
             authorize_closure(&released(), Some(&manifest), None, &snapshot),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn a_nested_blobstore_effect_requires_its_roots_dependency_grant() {
+        let world = frozen_world();
+        let mut snapshot = matching_snapshot(frozen_binding(&world));
+        let mut manifest = carrying_manifest(&snapshot);
+        let mut invocation = released();
+        let mut root = manifest.components.pop_first().expect("root component");
+        let mut child = root.clone();
+        child.package_id = "package_b".to_string();
+        child.component = "child-archiver".to_string();
+        child.digest =
+            ArtifactHash::parse(format!("sha256:{}", "c".repeat(64))).expect("child digest");
+        root.operations
+            .get_mut(&invocation.operation)
+            .expect("root operation")
+            .dependencies
+            .push(wamn_catalog::ComponentOperationDependency {
+                package: child.package_id.clone(),
+                version: "1.0.0".to_string(),
+                digest: child.digest.to_string(),
+                operation: invocation.operation.clone(),
+            });
+        invocation.package_id.clone_from(&child.package_id);
+        invocation.component.clone_from(&child.component);
+        invocation.component_digest = child.digest.to_string();
+        snapshot.component = Some(child.component.clone());
+        manifest
+            .release
+            .packages
+            .insert(PackageCoordinate::new("package_b", "1.0.0").expect("child package"));
+        manifest.components.extend([root.clone(), child]);
+        assert_eq!(
+            authorize_closure(&invocation, Some(&manifest), None, &snapshot),
+            Ok(())
+        );
+
+        manifest.components.remove(&root);
+        root.operations
+            .get_mut(&invocation.origin.operation)
+            .expect("root operation")
+            .dependencies
+            .clear();
+        manifest.components.insert(root);
+        assert_eq!(
+            authorize_closure(&invocation, Some(&manifest), None, &snapshot),
+            Err("the release closure does not carry this component and wiring"),
+        );
+    }
+
+    #[test]
+    fn a_candidate_cannot_retarget_its_frozen_origin() {
+        let world = Arc::new(frozen_world());
+        let binding = frozen_binding(&world);
+        let mut invocation = candidate_with(Arc::clone(&world));
+        let snapshot = matching_snapshot(binding);
+        invocation.origin.operation = "other-operation".to_string();
+        assert_eq!(
+            authorize_closure(&invocation, None, Some(binding), &snapshot),
+            Err("the candidate closure disagrees with the frozen wiring or binding"),
         );
     }
 

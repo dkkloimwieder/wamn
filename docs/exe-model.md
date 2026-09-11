@@ -197,6 +197,12 @@ The transport does not retry requests internally.
 A timeout or cancellation does not prove that the remote operation did nothing.
 The transport change does not alter nested-operation authority or admit standard WASI HTTP.
 
+Under `wamn-ctc8.33`, nested HTTP and blobstore effects authorize the executing component and operation.
+The host retains the original wiring owner, root component, and caller across nested calls.
+The released root must declare the exact dependency path to the executing operation.
+Release membership alone grants no access.
+Candidate execution retains its frozen bindings and still refuses nested calls.
+
 ## Data, identity and generated APIs
 
 Package application rows are tenant-scoped by database residency, not by column.

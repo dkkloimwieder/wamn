@@ -3893,6 +3893,7 @@ The redundant baseline and upstream test checkouts were removed after evidence c
 
 `wamn-ctc8.16` owns HTTP reuse, authority isolation, and resource limits.
 The [report](../perf/2026.09/ctc8-16-http-reuse/README.md) records the limits and evidence.
+`wamn-ctc8.33` owns nested HTTP authorization with the child identity and original caller.
 These commands test correctness, not throughput.
 
 Run the scope guard tests:
@@ -3916,24 +3917,27 @@ Build the real HTTP guest:
 cargo build --manifest-path components/no-std/Cargo.toml -p http-request --target wasm32-wasip2 --locked --offline
 ```
 
-Build the integration tests:
+Build the affected libraries and the shared SQL proof:
 
 ```bash
-cargo test --locked --offline -p wamn-proof-integration --lib --no-run
+cargo test --locked --offline -p wamn-runtime -p wamn-execution-host \
+  -p wamn-proof-integration -p wamn-ctl --lib --test bind_connection_live --no-run
 ```
 
 Run each live proof with a fresh PostgreSQL 18 server and OCI registry:
 
 ```bash
 bash docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority
-bash docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh trusted_http_route::tests::nested_http_keeps_original_caller_and_refuses_unproven_child_authority
+bash docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh trusted_http_route::tests::nested_http_authorizes_child_and_preserves_original_caller
 ```
 
 The runner uses existing debug artifacts and refuses unnamed tests.
 If several integration binaries exist, set `WAMN_HTTP_REUSE_TEST_BINARY` to the exact executable printed by the build command.
 It creates temporary containers, runs one test, and removes only its own containers and volumes.
-The nested proof preserves the current refusal under `wamn-ctc8.33`.
-It does not prove successful nested HTTP dispatch.
+The nested proof requires successful child dispatch when the wiring and parent component belong to different packages.
+It requires the original caller in both component spans, which record each invocation.
+It also requires undeclared child calls and disabled connections to fail before they reach the upstream server.
+Its final request requires successful dispatch after the connection becomes enabled again.
 
 From a clean committed worktree, run the deployed HTTP regression gate with a new evidence directory:
 

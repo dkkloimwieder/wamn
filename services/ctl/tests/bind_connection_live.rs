@@ -89,23 +89,24 @@ fn wiring() -> WiringDocument {
 /// by the control library from the platform's own descriptor.
 async fn admit_component(
     project: &Client,
+    package_id: &str,
     component: &str,
     digest: &str,
+    operation: &str,
     store_alias: &str,
     descriptor: ConnectionTypeDescriptor,
 ) {
     let admitted = AdmittedComponent {
         scope: ComponentPackageScope {
             tenant_id: TENANT.to_owned(),
-            package_id: PACKAGE.to_owned(),
+            package_id: package_id.to_owned(),
             package_version: PACKAGE_VERSION.to_owned(),
         },
         component: component.to_owned(),
         interface_version: "0.1.0".to_owned(),
         operations: BTreeMap::from([(
-            "wamn:node/handler@0.1.0".to_owned(),
-            // A palette node registers no package operation: its handler
-            // is the platform's wamn:node contract, not a wamn_wms one.
+            operation.to_owned(),
+            // These fixture operations register no package operation.
             AdmittedComponentOperation {
                 committed_result_schema: None,
                 fresh_only: false,
@@ -124,6 +125,7 @@ async fn admit_component(
     };
     let projection_hash =
         admitted_projection_hash(&admitted, &[]).expect("hash the admitted fixture projection");
+    let operations = serde_json::to_value(&admitted.operations).expect("serialize operations");
     project
         .execute(
             "INSERT INTO catalog.component_library \
@@ -131,13 +133,13 @@ async fn admit_component(
                     operations, component_digest, projection_hash, imports, \
                     imports_fingerprint, effects) \
              VALUES ($1, $2, $3, $4, '0.1.0', \
-                     '{\"wamn:node/handler@0.1.0\":{\"registered-operation\":null,\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}'::jsonb, \
-                     $5, $6, '[]'::jsonb, $7, '[]'::jsonb)",
+                     $5::jsonb, $6, $7, '[]'::jsonb, $8, '[]'::jsonb)",
             &[
                 &TENANT,
-                &PACKAGE,
+                &package_id,
                 &PACKAGE_VERSION,
                 &component,
+                &operations,
                 &digest,
                 &projection_hash,
                 &FACT_FINGERPRINT,
@@ -227,8 +229,10 @@ async fn provision_project(project: &Client, project_url: &str) {
         .expect("scope the project seed session");
     admit_component(
         project,
+        PACKAGE,
         "blob-put",
         BLOB_PUT,
+        "wamn:node/handler@0.1.0",
         "labels",
         ConnectionTypeDescriptor::blobstore_v1(),
     )
@@ -236,8 +240,10 @@ async fn provision_project(project: &Client, project_url: &str) {
     // A second alias of a DIFFERENT type, for the mismatch control.
     admit_component(
         project,
+        PACKAGE,
         "http-sidecar",
         HTTP_SIDECAR,
+        "wamn:node/handler@0.1.0",
         "erp",
         ConnectionTypeDescriptor::http_v1(),
     )
@@ -371,6 +377,167 @@ async fn rows(project: &Client) -> (i64, i64, i64) {
     )
 }
 
+async fn assert_nested_effect_snapshot(
+    project: &Client,
+    postgres: &WamnPostgres,
+    direct: ConnectionEffectLookup<'_>,
+) {
+    const WIRING_PACKAGE: &str = "nested_wiring";
+    const ORIGIN_PACKAGE: &str = "nested_origin";
+    const ORIGIN_DIGEST: &str =
+        "sha256:4444444444444444444444444444444444444444444444444444444444444444";
+    for package_id in [WIRING_PACKAGE, ORIGIN_PACKAGE] {
+        project
+            .execute(
+                "INSERT INTO catalog.packages \
+                   (tenant_id, package_id, package_version, manifest_sha256) \
+                 VALUES ($1, $2, $3, $4)",
+                &[&TENANT, &package_id, &PACKAGE_VERSION, &FACT_FINGERPRINT],
+            )
+            .await
+            .expect("seed a separate package coordinate for the snapshot proof");
+        project
+            .execute(
+                "INSERT INTO catalog.effective_release_packages \
+                   (tenant_id, effective_release_id, package_id, package_version) \
+                 VALUES ($1, $2, $3, $4)",
+                &[&TENANT, &RELEASE_ID, &package_id, &PACKAGE_VERSION],
+            )
+            .await
+            .expect("include the snapshot package in the same release");
+    }
+    admit_component(
+        project,
+        ORIGIN_PACKAGE,
+        "nested-origin",
+        ORIGIN_DIGEST,
+        "origin-call",
+        "origin-http",
+        ConnectionTypeDescriptor::http_v1(),
+    )
+    .await;
+    let mut document = wiring();
+    let node = document
+        .nodes
+        .get_mut("store")
+        .expect("fixture origin node");
+    "nested-origin".clone_into(&mut node.component);
+    "origin-call".clone_into(&mut node.operation);
+    let graph = serde_json::to_value(&document).expect("serialize the origin wiring");
+    project
+        .execute(
+            "INSERT INTO catalog.wirings \
+               (tenant_id, package_id, package_version, wiring_id, version, graph_json, wiring_hash) \
+             VALUES ($1, $2, $3, $4, 1, $5, $6)",
+            &[
+                &TENANT,
+                &WIRING_PACKAGE,
+                &PACKAGE_VERSION,
+                &document.wiring_id,
+                &graph,
+                &document.wiring_hash().as_str(),
+            ],
+        )
+        .await
+        .expect("seed the immutable origin wiring for the SQL snapshot proof");
+
+    // This proves the SQL snapshot only. The mounted-release helper owns the
+    // separate proof that the origin declares a dependency on this executor.
+    let nested = ConnectionEffectLookup {
+        wiring_package_id: WIRING_PACKAGE,
+        origin_package_id: ORIGIN_PACKAGE,
+        origin_component_digest: ORIGIN_DIGEST,
+        origin_component: "nested-origin",
+        origin_operation: "origin-call",
+        ..direct
+    };
+    let snapshot = postgres
+        .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, TENANT, &nested)
+        .await
+        .expect("load the nested snapshot")
+        .expect("the released wiring exists");
+    assert!(snapshot.node_permitted);
+    assert_eq!(snapshot.component.as_deref(), Some("blob-put"));
+    assert_eq!(snapshot.operation.as_deref(), Some(direct.operation));
+    let resolved = binding::resolve(&snapshot).expect("resolve the executor's bound alias");
+    assert_eq!(resolved.credential_handle, "labels-store");
+
+    for (changed, refused) in [
+        (
+            "wiring package",
+            ConnectionEffectLookup {
+                wiring_package_id: ORIGIN_PACKAGE,
+                ..nested
+            },
+        ),
+        (
+            "origin package",
+            ConnectionEffectLookup {
+                origin_package_id: PACKAGE,
+                ..nested
+            },
+        ),
+        (
+            "origin digest",
+            ConnectionEffectLookup {
+                origin_component_digest: BLOB_PUT,
+                ..nested
+            },
+        ),
+        (
+            "origin component",
+            ConnectionEffectLookup {
+                origin_component: "blob-put",
+                ..nested
+            },
+        ),
+        (
+            "origin interface",
+            ConnectionEffectLookup {
+                origin_interface_version: "wrong-interface",
+                ..nested
+            },
+        ),
+        (
+            "origin operation",
+            ConnectionEffectLookup {
+                origin_operation: direct.operation,
+                ..nested
+            },
+        ),
+        (
+            "origin node",
+            ConnectionEffectLookup {
+                node_id: "missing-node",
+                ..nested
+            },
+        ),
+        (
+            "executing package",
+            ConnectionEffectLookup {
+                package_id: ORIGIN_PACKAGE,
+                ..nested
+            },
+        ),
+        (
+            "executing operation",
+            ConnectionEffectLookup {
+                operation: "origin-call",
+                ..nested
+            },
+        ),
+    ] {
+        let snapshot = postgres
+            .connection_effect_snapshot(COMPONENT_ID, DEFAULT_PROJECT, TENANT, &refused)
+            .await
+            .expect("load the mismatched snapshot");
+        assert!(
+            snapshot.is_none_or(|snapshot| !snapshot.node_permitted),
+            "a mismatched {changed} must not authorize the executor"
+        );
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires two disposable PostgreSQL 18 databases named by WAMN_BIND_CONNECTION_{PROJECT,CONTROL}_PG_URL"]
 async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
@@ -409,7 +576,14 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         .set_tenant(COMPONENT_ID, TENANT)
         .expect("register the component's tenant");
     let lookup = ConnectionEffectLookup {
+        wiring_package_id: PACKAGE,
+        origin_package_id: PACKAGE,
+        origin_component_digest: BLOB_PUT,
+        origin_component: "blob-put",
+        origin_interface_version: "0.1.0",
+        origin_operation: "wamn:node/handler@0.1.0",
         package_id: PACKAGE,
+        operation: "wamn:node/handler@0.1.0",
         effective_release_id: RELEASE_ID,
         environment: ENVIRONMENT,
         wiring_id: "store_label",
@@ -515,6 +689,8 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         .await
         .expect_err("a second bind of the same instance and alias is refused");
     assert_eq!(rows(&project).await, (1, 1, 1));
+
+    assert_nested_effect_snapshot(&project, &postgres, lookup).await;
 
     drop(project);
     drop(control);

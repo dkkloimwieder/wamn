@@ -173,7 +173,14 @@ pub struct SessionClaims {
 /// Host-only identity used to load one HTTP effect authorization snapshot.
 #[derive(Debug, Clone, Copy)]
 pub struct ConnectionEffectLookup<'a> {
+    pub wiring_package_id: &'a str,
+    pub origin_package_id: &'a str,
+    pub origin_component_digest: &'a str,
+    pub origin_component: &'a str,
+    pub origin_interface_version: &'a str,
+    pub origin_operation: &'a str,
     pub package_id: &'a str,
+    pub operation: &'a str,
     pub effective_release_id: i32,
     pub environment: &'a str,
     pub wiring_id: &'a str,
@@ -292,7 +299,7 @@ pub struct ConnectionEffectSnapshot {
     pub credential_handle: Option<String>,
 }
 
-/// Resolve one host-attested wiring node and its component-grain connection.
+/// Resolve the original wiring node and the executing component's connection.
 ///
 /// No run, plan, frame, or effect-ledger row participates. The selected wiring
 /// version is immutable and stays valid for the lifetime of the delivery even
@@ -304,7 +311,7 @@ WITH member AS MATERIALIZED ( \
     SELECT member.tenant_id, member.package_id, member.package_version \
       FROM catalog.effective_release_packages AS member \
      WHERE member.tenant_id = $1 \
-       AND member.package_id = $2 \
+       AND member.package_id = $12 \
        AND member.effective_release_id = $3 \
 ), selected_wiring AS MATERIALIZED ( \
     SELECT wiring.wiring_hash, wiring.graph_json, \
@@ -320,14 +327,16 @@ WITH member AS MATERIALIZED ( \
        AND wiring.graph_json ->> 'version' = $6::text \
 ) \
 SELECT wiring.wiring_hash, component.component, component.interface_version, \
-       node.value ->> 'operation', \
-       component.operations #>> ARRAY[node.value ->> 'operation', 'registered-operation'], \
+       $18::text, \
+       component.operations #>> ARRAY[$18, 'registered-operation'], \
        requirement.requirement_json::text, requirement.requirement_hash, \
        COALESCE( \
            node.value IS NOT NULL \
-           AND node.value ->> 'component' = component.component \
-           AND node.value ->> 'interface-version' = component.interface_version \
-           AND component.operations ? (node.value ->> 'operation'), \
+           AND node.value ->> 'component' = origin_component.component \
+           AND node.value ->> 'interface-version' = origin_component.interface_version \
+           AND node.value ->> 'operation' = $17 \
+           AND origin_component.operations ? $17 \
+           AND component.operations ? $18, \
            false \
        ), \
        binding.binding_status = 'active', binding.validation_status = 'valid', \
@@ -337,10 +346,25 @@ SELECT wiring.wiring_hash, component.component, component.interface_version, \
        generation.generation, generation.definition_json::text, generation.definition_hash, \
        generation.credential_set_handle \
   FROM selected_wiring AS wiring \
+  LEFT JOIN catalog.effective_release_packages AS origin_member \
+    ON origin_member.tenant_id = wiring.tenant_id \
+   AND origin_member.effective_release_id = $3 \
+   AND origin_member.package_id = $13 \
+  LEFT JOIN catalog.component_library AS origin_component \
+    ON origin_component.tenant_id = origin_member.tenant_id \
+   AND origin_component.package_id = origin_member.package_id \
+   AND origin_component.package_version = origin_member.package_version \
+   AND origin_component.component_digest = $14 \
+   AND origin_component.component = $15 \
+   AND origin_component.interface_version = $16 \
+  LEFT JOIN catalog.effective_release_packages AS executing_member \
+    ON executing_member.tenant_id = wiring.tenant_id \
+   AND executing_member.effective_release_id = $3 \
+   AND executing_member.package_id = $2 \
   LEFT JOIN catalog.component_library AS component \
-    ON component.tenant_id = wiring.tenant_id \
-   AND component.package_id = wiring.package_id \
-   AND component.package_version = wiring.package_version \
+    ON component.tenant_id = executing_member.tenant_id \
+   AND component.package_id = executing_member.package_id \
+   AND component.package_version = executing_member.package_version \
    AND component.component_digest = $8 \
   LEFT JOIN LATERAL ( \
       SELECT wiring.graph_json #> ARRAY['nodes', $7] AS value \
@@ -1692,7 +1716,7 @@ impl WamnPostgres {
                 .candidate_binding
                 .map(|binding| binding.instance_id.as_str());
             let candidate_generation = lookup.candidate_binding.map(|binding| binding.generation);
-            let params: [&(dyn ToSql + Sync); 11] = [
+            let params: [&(dyn ToSql + Sync); 18] = [
                 &tenant,
                 &lookup.package_id,
                 &lookup.effective_release_id,
@@ -1704,6 +1728,13 @@ impl WamnPostgres {
                 &lookup.store_alias,
                 &candidate_instance,
                 &candidate_generation,
+                &lookup.wiring_package_id,
+                &lookup.origin_package_id,
+                &lookup.origin_component_digest,
+                &lookup.origin_component,
+                &lookup.origin_interface_version,
+                &lookup.origin_operation,
+                &lookup.operation,
             ];
             let row = conn
                 .query_opt(CONNECTION_EFFECT_SNAPSHOT_SQL, &params)
@@ -2871,17 +2902,17 @@ mod tests {
             "FROM catalog.effective_release_packages AS member",
             "JOIN catalog.wirings AS wiring",
             "member.effective_release_id = $3",
-            "member.package_id = $2",
+            "member.package_id = $12",
             "wiring.package_id = member.package_id",
             "wiring.package_version = member.package_version",
             "wiring.wiring_id = $5",
             "wiring.version = $6",
             "wiring.graph_json ->> 'wiring-id' = $5",
-            "component.tenant_id = wiring.tenant_id",
-            "component.package_id = wiring.package_id",
-            "component.package_version = wiring.package_version",
+            "component.tenant_id = executing_member.tenant_id",
+            "component.package_id = executing_member.package_id",
+            "component.package_version = executing_member.package_version",
             "component.component_digest = $8",
-            "component.operations #>> ARRAY[node.value ->> 'operation', 'registered-operation']",
+            "component.operations #>> ARRAY[$18, 'registered-operation']",
             "wiring.graph_json #> ARRAY['nodes', $7]",
             "requirement.component_digest = $8",
             "requirement.store_alias = $9",
@@ -3665,7 +3696,14 @@ mod tests {
         .expect("the acquiring tenant binds");
 
         let lookup = ConnectionEffectLookup {
+            wiring_package_id: "catalog",
+            origin_package_id: "catalog",
+            origin_component_digest: "digest",
+            origin_component: "component",
+            origin_interface_version: "0.1.0",
+            origin_operation: "operation",
             package_id: "catalog",
+            operation: "operation",
             effective_release_id: 1,
             environment: "dev",
             wiring_id: "wiring",
@@ -3734,7 +3772,14 @@ mod tests {
         );
 
         let lookup = ConnectionEffectLookup {
+            wiring_package_id: "catalog",
+            origin_package_id: "catalog",
+            origin_component_digest: "digest",
+            origin_component: "component",
+            origin_interface_version: "0.1.0",
+            origin_operation: "operation",
             package_id: "catalog",
+            operation: "operation",
             effective_release_id: 1,
             environment: "dev",
             wiring_id: "wiring",
@@ -3849,7 +3894,14 @@ mod tests {
         .expect("the acquiring tenant binds");
 
         let lookup = ConnectionEffectLookup {
+            wiring_package_id: "catalog",
+            origin_package_id: "catalog",
+            origin_component_digest: "digest",
+            origin_component: "component",
+            origin_interface_version: "0.1.0",
+            origin_operation: "operation",
             package_id: "catalog",
+            operation: "operation",
             effective_release_id: 1,
             environment: "dev",
             wiring_id: "wiring",

@@ -10,7 +10,7 @@ test_name=$1
 nested=0
 case "$test_name" in
     trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority) ;;
-    trusted_http_route::tests::nested_http_keeps_original_caller_and_refuses_unproven_child_authority) nested=1 ;;
+    trusted_http_route::tests::nested_http_authorizes_child_and_preserves_original_caller) nested=1 ;;
     *) fail 'name one of the two trusted_http_route::tests live proofs exactly' ;;
 esac
 

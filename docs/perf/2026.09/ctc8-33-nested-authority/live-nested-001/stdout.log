@@ -1,0 +1,22 @@
+test=trusted_http_route::tests::nested_http_authorizes_child_and_preserves_original_caller
+postgres=wamn-http-reuse.vf7En75r-pg
+registry=wamn-http-reuse.vf7En75r-registry
+/wamn-http-reuse.vf7En75r-pg sha256:8d6ed4b5a1f44557313cab42a8951c53d1b86ccc899266bcee2ee1ee84076c14
+/wamn-http-reuse.vf7En75r-registry sha256:26b2eb03618e749084668eaff68cff8f81dda12d06ac641be7a6398b82a6f25b
+27876debfb4fc1e80a883563d0f89e68ce5c89ad727d0c12e48629fd5367eb10  /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/target/debug/deps/wamn_proof_integration-f45cc86d15fb86e8
+d5e90087d611741748ab611cef3c57391b1d93197a850fbf5b6666968c2b900e  /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/components/no-std/target/wasm32-wasip2/debug/http_request.wasm
+e4109bd6296af6a39f02a4310f3e4b95ad340c3ed6e562941d22a00b5ad903f6  /home/kaalin/.cache/wamn-lanes/ctc8-33-nested-authority-20260910/docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh
+
+running 1 test
+test trusted_http_route::tests::nested_http_authorizes_child_and_preserves_original_caller ... Error: serving manifest nested HTTP authority fixture refused: JSON input is not RFC 8785 canonical
+FAILED
+
+failures:
+
+failures:
+    trusted_http_route::tests::nested_http_authorizes_child_and_preserves_original_caller
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 77 filtered out; finished in 5.61s
+
+removed owned container and anonymous volumes: wamn-http-reuse.vf7En75r-registry
+removed owned container and anonymous volumes: wamn-http-reuse.vf7En75r-pg

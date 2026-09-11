@@ -12,7 +12,8 @@ use std::sync::Arc;
 
 use tracing::Instrument as _;
 use wamn_catalog::{
-    ArtifactHash, ConnectionTypeDescriptor, DefinitionHash, ServingManifest, ServingWiring,
+    ArtifactHash, ConnectionTypeDescriptor, DefinitionHash, ServingComponent, ServingManifest,
+    ServingWiring,
 };
 use wamn_execution_contract::EffectOutcome;
 use wamn_execution_contract::node_contract::normalize_portable_http_target;
@@ -72,6 +73,8 @@ const RESPONSE_BODY_LOST: &str = "connection-response-lost";
 /// function ran, not which node operation raised it (`wamn-b2m6.7`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectionInvocation {
+    /// The initial wiring owner and root component, unchanged by nested calls.
+    pub origin: ConnectionOrigin,
     pub package_id: String,
     pub wiring_id: String,
     pub wiring_version: u32,
@@ -83,6 +86,18 @@ pub struct ConnectionInvocation {
     pub closure: ConnectionExecutionClosure,
     /// Optional bounded failure evidence owned by this invocation.
     pub effects: Option<EffectEvidence>,
+}
+
+/// Host-attested root identity for an effect's exact dependency path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionOrigin {
+    /// The wiring can belong to a package that imports the root component.
+    pub wiring_package_id: String,
+    pub package_id: String,
+    pub component_digest: String,
+    pub component: String,
+    pub interface_version: String,
+    pub operation: String,
 }
 
 /// Host-owned authority closure for one component invocation.
@@ -303,6 +318,13 @@ impl ConnectionHttp {
                 &self.tenant,
                 &ConnectionEffectLookup {
                     package_id: &invocation.package_id,
+                    wiring_package_id: &invocation.origin.wiring_package_id,
+                    origin_package_id: &invocation.origin.package_id,
+                    origin_component_digest: &invocation.origin.component_digest,
+                    origin_component: &invocation.origin.component,
+                    origin_interface_version: &invocation.origin.interface_version,
+                    origin_operation: &invocation.origin.operation,
+                    operation: &invocation.operation,
                     effective_release_id,
                     environment,
                     wiring_id: &invocation.wiring_id,
@@ -451,8 +473,7 @@ fn require_direct_transport(
     }
 }
 
-/// Require the exact host-bound component and immutable wiring version/hash to
-/// be members of the digest-verified format-1 release manifest.
+/// Require the executing operation to be reachable from the attested wiring root.
 ///
 /// Shared with the blobstore capability rather than reimplemented there: two
 /// spellings of "does this component belong to this release" could disagree,
@@ -472,6 +493,9 @@ pub(crate) fn authorize_release_closure(
     else {
         return Err(ConnectionError::AttestationInvalid);
     };
+    if component != &invocation.component || operation != &invocation.operation {
+        return Err(ConnectionError::AttestationInvalid);
+    }
     let component = manifest.components.iter().find(|candidate| {
         candidate.package_id == invocation.package_id
             && candidate.component == *component
@@ -482,16 +506,76 @@ pub(crate) fn authorize_release_closure(
         .and_then(|component| component.operations.get(operation))
         .is_some_and(|operation| operation.registered_operation == snapshot.registered_operation);
     let wiring = ServingWiring {
-        package_id: invocation.package_id.clone(),
+        package_id: invocation.origin.wiring_package_id.clone(),
         wiring_id: invocation.wiring_id.clone(),
         wiring_version: invocation.wiring_version,
         graph_hash: DefinitionHash::parse(snapshot.wiring_hash.clone())
             .map_err(|_| ConnectionError::AttestationInvalid)?,
     };
-    if !operation_admitted || !manifest.wirings.contains(&wiring) {
+    let origin = &invocation.origin;
+    let root = manifest.components.iter().find(|component| {
+        component.package_id == origin.package_id
+            && component.component == origin.component
+            && component.interface_version == origin.interface_version
+            && component.digest.as_str() == origin.component_digest
+    });
+    if !operation_admitted
+        || !manifest.wirings.contains(&wiring)
+        || !root.is_some_and(|root| {
+            released_operation_reachable(manifest, root, &origin.operation, invocation)
+        })
+    {
         return Err(ConnectionError::AttestationInvalid);
     }
     Ok(())
+}
+
+fn released_operation_reachable(
+    manifest: &ServingManifest,
+    root: &ServingComponent,
+    root_operation: &str,
+    invocation: &ConnectionInvocation,
+) -> bool {
+    let mut pending = vec![(root, root_operation)];
+    let mut visited = HashSet::new();
+    while let Some((component, operation)) = pending.pop() {
+        if !visited.insert((
+            component.package_id.as_str(),
+            component.component.as_str(),
+            component.interface_version.as_str(),
+            component.digest.as_str(),
+            operation,
+        )) {
+            continue;
+        }
+        let Some(facts) = component.operations.get(operation) else {
+            return false;
+        };
+        if component.package_id == invocation.package_id
+            && component.component == invocation.component
+            && component.digest.as_str() == invocation.component_digest
+            && operation == invocation.operation
+        {
+            return true;
+        }
+        for dependency in &facts.dependencies {
+            if !manifest.release.packages.iter().any(|package| {
+                package.package_id() == dependency.package
+                    && package.package_version() == dependency.version
+            }) {
+                return false;
+            }
+            let Some(target) = manifest.components.iter().find(|candidate| {
+                candidate.package_id == dependency.package
+                    && candidate.digest.as_str() == dependency.digest
+                    && candidate.operations.contains_key(&dependency.operation)
+            }) else {
+                return false;
+            };
+            pending.push((target, dependency.operation.as_str()));
+        }
+    }
+    false
 }
 
 /// Require the snapshot to carry the wiring hash, component and interface
@@ -514,7 +598,12 @@ pub(crate) fn authorize_candidate_closure(
     else {
         return Err(ConnectionError::AttestationInvalid);
     };
-    if snapshot.wiring_hash != *wiring_hash
+    if invocation.package_id != invocation.origin.package_id
+        || invocation.component_digest != invocation.origin.component_digest
+        || invocation.component != invocation.origin.component
+        || invocation.operation != invocation.origin.operation
+        || snapshot.operation.as_deref() != Some(invocation.operation.as_str())
+        || snapshot.wiring_hash != *wiring_hash
         || snapshot.component.as_deref() != Some(component.as_str())
         || snapshot.interface_version.as_deref() != Some(interface_version.as_str())
         || !binding.matches_snapshot(snapshot)
@@ -953,7 +1042,7 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use wamn_catalog::{
-        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingComponent,
+        EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
         ServingComponentOperation, ServingRelease,
     };
 
@@ -967,6 +1056,14 @@ mod tests {
 
     fn invocation() -> ConnectionInvocation {
         ConnectionInvocation {
+            origin: ConnectionOrigin {
+                wiring_package_id: "package_a".to_string(),
+                package_id: "package_a".to_string(),
+                component_digest: digest('a'),
+                component: "notifier".to_string(),
+                interface_version: "0.1".to_string(),
+                operation: "orders:notify/dispatch@1.0.0".to_string(),
+            },
             package_id: "package_a".to_string(),
             wiring_id: "orders".to_string(),
             wiring_version: 3,
@@ -1032,9 +1129,9 @@ mod tests {
     fn snapshot() -> ConnectionEffectSnapshot {
         ConnectionEffectSnapshot {
             wiring_hash: digest('b'),
-            component: Some("http-request".to_string()),
+            component: Some("notifier".to_string()),
             interface_version: Some("0.1".to_string()),
-            operation: Some("package-a:orders/notify@1.0.0".to_string()),
+            operation: Some("orders:notify/dispatch@1.0.0".to_string()),
             registered_operation: Some("package-a:orders/notify@1.0.0".to_string()),
             requirement_json: Some(serde_json::json!({
                 "component-digest": digest('a'),
@@ -1123,6 +1220,96 @@ mod tests {
             authorize_release_closure(&manifest, &invocation, &wrong_wiring_hash),
             Err(ConnectionError::AttestationInvalid)
         ));
+    }
+
+    #[test]
+    fn released_nested_effects_require_the_exact_operation_dependency_path() {
+        let mut manifest = manifest();
+        let mut invocation = invocation();
+        let mut snapshot = snapshot();
+        let mut root = manifest.components.pop_first().expect("root component");
+        let mut child = root.clone();
+        child.package_id = "package_b".to_string();
+        child.component = "child".to_string();
+        child.digest = ArtifactHash::parse(digest('c')).expect("child digest");
+        let mut grandchild = child.clone();
+        grandchild.package_id = "package_c".to_string();
+        grandchild.component = "grandchild".to_string();
+        grandchild.digest = ArtifactHash::parse(digest('d')).expect("grandchild digest");
+        let dependency =
+            |component: &ServingComponent| wamn_catalog::ComponentOperationDependency {
+                package: component.package_id.clone(),
+                version: "1.0.0".to_string(),
+                digest: component.digest.to_string(),
+                operation: invocation.operation.clone(),
+            };
+        root.operations
+            .get_mut(&invocation.operation)
+            .expect("root operation")
+            .dependencies = vec![dependency(&child)];
+        child
+            .operations
+            .get_mut(&invocation.operation)
+            .expect("child operation")
+            .dependencies = vec![dependency(&grandchild)];
+        manifest.release.packages.extend([
+            PackageCoordinate::new("package_b", "1.0.0").expect("child package"),
+            PackageCoordinate::new("package_c", "1.0.0").expect("grandchild package"),
+            PackageCoordinate::new("wiring_owner", "1.0.0").expect("wiring package"),
+        ]);
+        let mut wiring = manifest.wirings.pop_first().expect("wiring");
+        wiring.package_id = "wiring_owner".to_string();
+        manifest.wirings.insert(wiring);
+        invocation.origin.wiring_package_id = "wiring_owner".to_string();
+        invocation.package_id.clone_from(&grandchild.package_id);
+        invocation.component.clone_from(&grandchild.component);
+        invocation.component_digest = grandchild.digest.to_string();
+        snapshot.component = Some(grandchild.component.clone());
+        manifest
+            .components
+            .extend([root.clone(), child, grandchild.clone()]);
+        authorize_release_closure(&manifest, &invocation, &snapshot)
+            .expect("two declared hops retain the distinct wiring owner and origin");
+
+        for field in ["package", "version", "digest", "operation"] {
+            let mut changed = manifest.clone();
+            let mut changed_root = changed.components.take(&root).expect("root");
+            let dependency = &mut changed_root
+                .operations
+                .get_mut(&invocation.origin.operation)
+                .expect("root operation")
+                .dependencies[0];
+            match field {
+                "package" => dependency.package = "foreign".to_string(),
+                "version" => dependency.version = "9.0.0".to_string(),
+                "digest" => dependency.digest = digest('e'),
+                "operation" => dependency.operation = "undeclared".to_string(),
+                _ => unreachable!("fixed dependency field list"),
+            }
+            changed.components.insert(changed_root);
+            assert!(
+                matches!(
+                    authorize_release_closure(&changed, &invocation, &snapshot),
+                    Err(ConnectionError::AttestationInvalid)
+                ),
+                "a different dependency {field} cannot authorize the executor"
+            );
+        }
+
+        let mut unrelated = grandchild;
+        unrelated.component = "unrelated".to_string();
+        unrelated.digest = ArtifactHash::parse(digest('e')).expect("unrelated digest");
+        invocation.component.clone_from(&unrelated.component);
+        invocation.component_digest = unrelated.digest.to_string();
+        snapshot.component = Some(unrelated.component.clone());
+        manifest.components.insert(unrelated);
+        assert!(
+            matches!(
+                authorize_release_closure(&manifest, &invocation, &snapshot),
+                Err(ConnectionError::AttestationInvalid)
+            ),
+            "release membership alone is not a dependency grant"
+        );
     }
 
     /// `HTTP_CONTRACT` is pinned by conformance as an exact source line, while

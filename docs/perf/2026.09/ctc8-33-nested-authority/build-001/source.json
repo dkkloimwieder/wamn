@@ -1,0 +1,12 @@
+{
+  "changed_source_sha256": {
+    "crates/execution/host/src/router_driver.rs": "733d4056ef46e843eeb4ba53dd333ddcc715a47ad0aae150a071ab072fe0a3e7",
+    "crates/platform/runtime/src/plugins/connection_http.rs": "fbc77d67951efdf8e60635dc050c6903b8f4bf4276d23bbab16af2331a6360fd",
+    "crates/platform/runtime/src/plugins/wamn_blobstore/plugin.rs": "f24b621b0f82b6bb524044ee48575a87c4bcebef5eddb9b7196d309ca9bab494",
+    "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs": "506c96683caf3562db98f35490d07998b597c03753b528ecede5b7e875715382",
+    "docs/operations/build-and-test.md": "72cf8e51c3b79e4da3375496d8986e2269717bb0bf435f327920cfa488ea9802",
+    "services/ctl/tests/bind_connection_live.rs": "02378b1dbea2ed72f88144e5fb5906b4589a5e329be103cb357126c1a89191ce",
+    "tests/integration/src/trusted_http_route.rs": "c81a35cbfb39b54d7eb2b4d1ec4d7267d8e379ed0792aa62776e1f295b51e69f"
+  },
+  "head": "cf739ecbe04df413ffad0e506a751c38e5412bca"
+}
