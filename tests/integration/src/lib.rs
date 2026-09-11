@@ -7,6 +7,7 @@ pub use wamn_test_infrastructure::ctl_process;
 #[cfg(test)]
 #[path = "../../../apps/client_acme_receiving/tests/acme_overlay_publication.rs"]
 mod acme_overlay_publication;
+pub mod agent_pilot;
 mod cdc_reader_process;
 pub mod cdcbench;
 #[cfg(test)]

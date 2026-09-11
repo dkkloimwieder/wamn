@@ -10,6 +10,7 @@
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::socketguard;
+use wamn_proof_integration::agent_pilot;
 use wamn_proof_integration::{
     dashproof, host_session_proof, identity_keys_proof, identity_session_proof, membershipproof,
     readerbench, rc, retention,
@@ -35,6 +36,8 @@ struct Cli {
 enum Command {
     /// Run the RC bootstrap and native socket and trace tests on an owned cluster.
     Rc(rc::RcArgs),
+    AgentPilotRun(agent_pilot::RunArgs),
+    AgentPilotGrade(agent_pilot::GradeArgs),
     /// Prove session acceptance and removed-key refusal on two deployed hosts.
     #[command(name = "host-session-proof")]
     HostSessionProof(host_session_proof::HostSessionProofArgs),
@@ -76,8 +79,17 @@ async fn async_main() -> anyhow::Result<()> {
     let shutdown_observability =
         wash_runtime::observability::initialize_observability(level, false, false)?;
 
+    let mut exit_code = 0u8;
     let result = match cli.command {
         Command::Rc(args) => rc::run(args).await,
+        Command::AgentPilotRun(args) => {
+            exit_code = agent_pilot::run(args).await;
+            Ok(())
+        }
+        Command::AgentPilotGrade(args) => {
+            exit_code = agent_pilot::grade(args).await;
+            Ok(())
+        }
         Command::HostSessionProof(args) => host_session_proof::run(args).await,
         Command::IdentityJwks(args) => identity_keys_proof::run(args).await,
         Command::IdentitySession(args) => identity_session_proof::run(args).await,
@@ -92,5 +104,8 @@ async fn async_main() -> anyhow::Result<()> {
     };
 
     shutdown_observability();
+    if exit_code != 0 {
+        std::process::exit(i32::from(exit_code));
+    }
     result
 }
