@@ -1,0 +1,46 @@
+{
+  "source_commit": "5e7b68cc3d35bf14c3b8da5828246033ed11da71",
+  "tracked_source_status": "",
+  "artifact": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/wasm32-wasip2/release/materializer.wasm",
+  "bytes": 552863,
+  "sha256": "983efac480a63b61ce5f0c44b7a8a100af32ba1e148e18d8ca03b4d2e5b94c2f",
+  "commands": [
+    {
+      "command": [
+        "wasm-tools",
+        "validate",
+        "--features",
+        "all",
+        "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/wasm32-wasip2/release/materializer.wasm"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "wasm-tools",
+        "component",
+        "wit",
+        "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/wasm32-wasip2/release/materializer.wasm"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "wasm-tools",
+        "metadata",
+        "show",
+        "--json",
+        "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/wasm32-wasip2/release/materializer.wasm"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "wasm-tools",
+        "print",
+        "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/wasm32-wasip2/release/materializer.wasm"
+      ],
+      "exit_code": 0
+    }
+  ]
+}
