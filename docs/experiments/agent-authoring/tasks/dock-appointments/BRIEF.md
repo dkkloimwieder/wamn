@@ -9,7 +9,7 @@ DONE MEANS ALL OF:
 1. `wamn dev --config "$WAMN_DEV_CONFIG" --overlay-root <overlay_root>` completes
    every stage through Activate, where <overlay_root> is the path named in
    "$WAMN_PILOT_TASK_DIR/task.json". Your package lives there; create it if it
-   does not exist.
+   does not exist. Use the `package_id` declared in that same task file.
 2. You have exercised every operation the scenario names against the running
    release and recorded the exact requests and responses in your report.
 3. REPORT.md exists at "$WAMN_PILOT_RUN_DIR/REPORT.md" in the format below.

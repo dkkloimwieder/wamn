@@ -11,10 +11,9 @@
   "package_sources": [
     "apps/wamn_receiving"
   ],
-  "overlay_root": "packages/dock",
+  "overlay_root": "apps/wamn_dock",
   "allowed_paths": [
-    "packages/dock/**",
-    "components/application/dock/**",
+    "apps/wamn_dock/**",
     "apps/Cargo.toml",
     "apps/Cargo.lock"
   ],
@@ -30,5 +29,6 @@
       "additive-migration",
       "no-environment-data"
     ]
-  }
+  },
+  "package_id": "wamn_dock"
 }
