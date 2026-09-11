@@ -1,0 +1,16 @@
+{
+  "source_commit": "f5cd9e3414b36b3b1aa9a19925d56e3dfd93470b",
+  "exit_code": 2,
+  "failure": "journey-telemetry-proof: error: This proof only reads the disposable Receiving journey",
+  "cause": "The read-only telemetry helper omitted the new postcommit context/namespace from its exact allowlist.",
+  "production_route_test_passed": true,
+  "schema_observation_passed": true,
+  "breaking_ownership_refusal_passed": true,
+  "owned_nodeport_probe_passed": true,
+  "initial_materializer_http_requests_passed": true,
+  "causal_materializer_test_passed": true,
+  "owned_cleanup": "pass",
+  "additive_executed": false,
+  "postcommit_executed": false,
+  "control_score": "not a defect-control run"
+}

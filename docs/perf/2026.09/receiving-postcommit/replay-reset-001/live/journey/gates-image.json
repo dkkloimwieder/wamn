@@ -1,0 +1,65 @@
+[
+    {
+        "Id": "sha256:cf33871330b6ab74276f7d82f25e0b1c0af4c99b2546ce34bb1227bbbe5b848e",
+        "RepoTags": [
+            "wamn-gates:receiving-e581881623a3-2959114-release"
+        ],
+        "RepoDigests": [],
+        "Parent": "",
+        "Comment": "buildkit.dockerfile.v0",
+        "Created": "2026-09-10T21:10:44.710385813-04:00",
+        "DockerVersion": "",
+        "Author": "",
+        "Architecture": "amd64",
+        "Os": "linux",
+        "Size": 325169497,
+        "GraphDriver": {
+            "Data": {
+                "LowerDir": "/var/lib/docker/overlay2/jg7fiicutzonfg8b94s1ao5eq/diff:/var/lib/docker/overlay2/ilwzvrz2xqxkp12sib5aa1eiz/diff:/var/lib/docker/overlay2/4a1i0j2y64p2xddlilqglitiu/diff:/var/lib/docker/overlay2/yfbkyjzp17drdilnv56n90f0j/diff:/var/lib/docker/overlay2/on8zxxj0rl10501gu2cgroxxo/diff:/var/lib/docker/overlay2/bv0tq1q50s4p5fr23b7l1pqwv/diff:/var/lib/docker/overlay2/62bbebdi3czbcjachj7gqbr9q/diff:/var/lib/docker/overlay2/4f10ehqnisid2qy7zvlip421b/diff:/var/lib/docker/overlay2/4pd67u9tkmna2f6uwncpierci/diff:/var/lib/docker/overlay2/0oqhtppm0k6qtv76dn19wjm7d/diff:/var/lib/docker/overlay2/3oq1q3b5hosoyws8z2kzruv0l/diff:/var/lib/docker/overlay2/7c57767d9d551e37a619d77a77d0eaf2462a862e82236fbab1d9eb6ac0772da7/diff",
+                "MergedDir": "/var/lib/docker/overlay2/jesgjktnkmnc1b5lumzi2llw2/merged",
+                "UpperDir": "/var/lib/docker/overlay2/jesgjktnkmnc1b5lumzi2llw2/diff",
+                "WorkDir": "/var/lib/docker/overlay2/jesgjktnkmnc1b5lumzi2llw2/work"
+            },
+            "Name": "overlay2"
+        },
+        "RootFS": {
+            "Type": "layers",
+            "Layers": [
+                "sha256:411a86676185cb54d695a805b238194a64e9b77e0c723f3802fbb87d333ea0b3",
+                "sha256:8e4ed51d39fb1ccacd58d6b312ebcb8e6f3f6314a52fdb98d278bc3c4ede6792",
+                "sha256:738a6c1af6111e38558547a7407679904a1c39800edebe12582226f4d4bbb200",
+                "sha256:5c53f5f82e8b1b8b01d37ed8fbfc022c342aa26f9933e52656829b9feee33d6a",
+                "sha256:54d311caa14a71888af7751c181bcefcfbbf54f5578b7fa30f640d26ebca7af4",
+                "sha256:37e7f149ddf7ceb67417c2a8c0079ac6a6d03b66d4195d576b6df432b9d865df",
+                "sha256:f0498bae6482c058a9d3cb3fc50afd8de92f3d67f6a2d478eb9f41836f26896e",
+                "sha256:d8911b919c499df5ecd3b50b2f367491439f133f8351804de098e74222ba1389",
+                "sha256:44f68dc3203de40c5f0f05c7c7e95aca15af3a18c233aac090f4578bd23a52f0",
+                "sha256:bcc394b644a12bc97696be6be60d5ce71d6c18b28f657ffd6af0dec0dfa55f60",
+                "sha256:b0a18ab656463503b23bc50a740e179dc67f9348f54308087cc0d5c8dd56ced2",
+                "sha256:71358ae5f1be40a2a8145316e6fb0f56e0042ec1a592c0ac345236ac1ad5c4f0",
+                "sha256:558ad43912832203969f7afffd02aeea5bdd2f69c120a64055d330e15a45c384"
+            ]
+        },
+        "Metadata": {
+            "LastTagTime": "2026-09-10T21:10:45.227217932-04:00"
+        },
+        "Config": {
+            "Cmd": null,
+            "Entrypoint": [
+                "/usr/local/bin/wamn-gates"
+            ],
+            "Env": [
+                "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                "HOME=/tmp"
+            ],
+            "Labels": {
+                "wamn.dev/build-profile": "release",
+                "wamn.dev/source-head": "e581881623a3e8f4378f768309242bfaf9eed224"
+            },
+            "OnBuild": null,
+            "User": "",
+            "Volumes": null,
+            "WorkingDir": ""
+        }
+    }
+]

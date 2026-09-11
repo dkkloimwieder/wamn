@@ -1,0 +1,24 @@
+{
+  "verdict": "control-killed",
+  "exit_code": 101,
+  "elapsed_seconds": 2030.52,
+  "failure": "duplicate delivery reset the approved inspection or created another row",
+  "source": "e581881623a3e8f4378f768309242bfaf9eed224",
+  "replay_phases": [
+    "accepted",
+    "settled"
+  ],
+  "settled_outcome": "discard",
+  "ack_floor_advanced_by": 1,
+  "approved_row_before_replay": [
+    {
+      "receipt_id": "06007946-f943-45c5-a3c3-377e417132cc",
+      "row_version": 2,
+      "status": "approved"
+    }
+  ],
+  "cleanup_receipt": "live/journey/cleanup.receipt",
+  "capture_process_absent": 2959072,
+  "served_artifact_observation": "artifact-observation.json",
+  "scope": "The actual repeated handler delivery reaches the state assertion. This run fails before poison-lock and materializer-scale actions."
+}

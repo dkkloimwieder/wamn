@@ -1,0 +1,17 @@
+usage: materialize_replay_pg18.py [-h] --inactive-worktree INACTIVE_WORKTREE
+                                  --cargo-target-dir CARGO_TARGET_DIR
+                                  --mutation-evidence-dir MUTATION_EVIDENCE_DIR
+                                  --evidence-dir EVIDENCE_DIR
+
+Generate the prepared replay-reset control using the normal PG18 authoring
+recipe.
+
+options:
+  -h, --help            show this help message and exit
+  --inactive-worktree INACTIVE_WORKTREE
+  --cargo-target-dir CARGO_TARGET_DIR
+  --mutation-evidence-dir MUTATION_EVIDENCE_DIR
+  --evidence-dir EVIDENCE_DIR
+                        New directory already created by the retained
+                        capture.py wrapper
+{"result": "pass", "scope": "syntax and CLI help only; no builds, database, or guest controls", "helper_sha256": "e30664474daf2c860956cdc34e1c646841ec930b8606995fe75440355eb9ce16"}

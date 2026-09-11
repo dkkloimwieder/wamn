@@ -1,0 +1,68 @@
+2026-09-10T23:58:56Z curl --disable --version 
+2026-09-10T23:58:56Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target RUSTC_WRAPPER= /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/tools/build-components m1 
+2026-09-11T00:00:11Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target RUSTC_WRAPPER= cargo build --locked -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor 
+2026-09-11T00:01:59Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/Dockerfile --target host --tag wamn-host:receiving-72142cf353da-2805270-release --label wamn.dev/source-head=72142cf353da2e39afdb17bbfc153dd9d8ee1790 --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910 
+2026-09-11T00:08:22Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/Dockerfile --target gates --tag wamn-gates:receiving-72142cf353da-2805270-release --label wamn.dev/source-head=72142cf353da2e39afdb17bbfc153dd9d8ee1790 --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910 
+2026-09-11T00:21:16Z kind create cluster --name wamn-receiving-postcommit --config /tmp/tmp.BOWlVpwDE8/kind-config.yaml --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig 
+2026-09-11T00:21:36Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit wait --for=condition=Ready nodes --all --timeout=180s 
+2026-09-11T00:21:50Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit create namespace wamn-receiving-postcommit 
+2026-09-11T00:21:50Z kind load docker-image wamn-host:receiving-72142cf353da-2805270-release --name wamn-receiving-postcommit 
+2026-09-11T00:21:58Z kind load docker-image wamn-gates:receiving-72142cf353da-2805270-release --name wamn-receiving-postcommit 
+2026-09-11T00:22:11Z htpasswd \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T00:22:12Z postgres \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T00:22:12Z docker run --detach --name wamn-receiving-registry-72142cf353da-2805270 --network kind --env REGISTRY_AUTH=htpasswd --env REGISTRY_AUTH_HTPASSWD_REALM=WAMN\ Receiving\ cluster\ journey --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd --volume /tmp/tmp.BOWlVpwDE8/htpasswd:/auth/htpasswd:ro registry:2 
+2026-09-11T00:22:12Z docker run --detach --name wamn-receiving-nats-72142cf353da-2805270 --network kind nats:2.10-alpine --jetstream --store_dir /data --http_port 8222 
+2026-09-11T00:22:15Z psql \<owned\ PostgreSQL\ administrator\> CREATE\ DATABASE\ wamn_system 
+2026-09-11T00:22:15Z cargo test production_two_package_release_serves_all_thirteen_pat_routes \<journey\ document\ with\ disposable\ PostgreSQL\ and\ OCI\ inputs\ redacted\> 
+2026-09-11T00:24:14Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/route-caller-pat-kube.json 
+2026-09-11T00:24:14Z env DOCKER_CONFIG=\<private-registry-directory\> /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/.tools/wash/2.9.0/wash -o json oci push --insecure 172.28.0.9:5000/wamn/flow-http:receiving-72142cf353da-2805270-release /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target/wasm32-wasip2/release/http_route.wasm 
+2026-09-11T00:24:15Z env DOCKER_CONFIG=\<private-registry-directory\> /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/.tools/wash/2.9.0/wash -o json oci push --insecure 172.28.0.9:5000/wamn/materializer:receiving-72142cf353da-2805270-release /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target/wasm32-wasip2/release/materializer.wasm 
+2026-09-11T00:24:15Z enable-cdc-project-env \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T00:24:15Z apply-cdc-role \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T00:24:15Z apply-cdc-stream \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T00:24:15Z prepare-registry-reader \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T00:24:17Z env WAMN_SYSTEM_URL=\<registry-reader\ credential\ redacted\> WAMN_CDC_URL=\<replication\ credential\ redacted\> /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target/debug/wamn-cdc-reader --log-level info --org acme --project receiving --env dev --nats-url nats://172.28.0.10:4222 --sslmode disable --stream-replicas 1 --dup-window-secs 120 --feedback-secs 1 --stall-threshold-secs 30 --slot-poll-secs 0 --slot-safe-wal-warn-bytes 268435456 
+2026-09-11T00:24:18Z print-release-env \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T00:24:18Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/host-secrets/guest-sql.json 
+2026-09-11T00:24:18Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/host-secrets/executor-platform.json 
+2026-09-11T00:24:18Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/host-secrets/identity-reader.json 
+2026-09-11T00:24:18Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/host-secrets/http-admitter.json 
+2026-09-11T00:24:18Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/host-secrets/event-materializer.json 
+2026-09-11T00:24:18Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit create secret generic wamn-registry-pull --type=kubernetes.io/dockerconfigjson --from-file=.dockerconfigjson=\<redacted\> --dry-run=client -o yaml 
+2026-09-11T00:24:18Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/registry-pull.yaml 
+2026-09-11T00:24:18Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/deploy/infra/cert-manager.yaml 
+2026-09-11T00:24:20Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit -n cert-manager wait --for=condition=Available deployment --all --timeout=240s 
+2026-09-11T00:24:32Z helm upgrade --install --create-namespace --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --kube-context kind-wamn-receiving-postcommit --namespace wamn-system wamn oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 -f /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/deploy/infra/values-wamn.yaml -f /tmp/tmp.BOWlVpwDE8/operator-values.yaml --wait --timeout 5m 
+2026-09-11T00:25:06Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-system get deployment runtime-operator -o json 
+2026-09-11T00:25:06Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/runtime-operator-events-rbac.yaml 
+2026-09-11T00:25:06Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit get role wamn-runtime-operator-events -o json 
+2026-09-11T00:25:06Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit get rolebinding wamn-runtime-operator-events -o json 
+2026-09-11T00:25:06Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/deploy/infra/tempo.yaml 
+2026-09-11T00:25:06Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/deploy/infra/otel-collector.yaml 
+2026-09-11T00:25:07Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-system wait --for=condition=Available deployment/tempo deployment/otel-collector --timeout=120s 
+2026-09-11T00:25:13Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/wasmcloud-ca-copy.json 
+2026-09-11T00:25:13Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/deploy/infra/wasmcloud-ca-issuer.yaml 
+2026-09-11T00:25:13Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit wait --for=condition=Ready clusterissuer/wasmcloud-ca --timeout=60s 
+2026-09-11T00:25:13Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/host-environment-certs.yaml 
+2026-09-11T00:25:13Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit wait --for=condition=Ready certificate/wasmcloud-runtime-tls certificate/wasmcloud-data-tls --timeout=120s 
+2026-09-11T00:25:14Z helm upgrade --install --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --kube-context kind-wamn-receiving-postcommit --namespace wamn-receiving-postcommit wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 -f /tmp/tmp.BOWlVpwDE8/host-base.yaml -f /tmp/tmp.BOWlVpwDE8/host-overlay.yaml --wait --timeout 5m 
+2026-09-11T00:25:21Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit rollout status deployment/hostgroup-default --timeout=240s 
+2026-09-11T00:25:21Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/flow-http.yaml 
+2026-09-11T00:25:22Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit wait --for=condition=Ready workloaddeployment/flow-http --timeout=240s 
+2026-09-11T00:25:23Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/postcommit-nodeport.json 
+2026-09-11T00:25:23Z curl --disable --noproxy \* --silent --show-error --connect-timeout 5 --max-time 15 --retry 15 --retry-delay 1 --retry-connrefused --retry-max-time 45 --dump-header /home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/live-005/pair/baseline/flow-http-probe.headers --output /home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/live-005/pair/baseline/flow-http-probe.body --write-out %\{http_code\} --header Host:\ receiving.localhost http://172.28.0.5:32319/no-such-route 
+2026-09-11T00:25:24Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit apply -f /tmp/tmp.BOWlVpwDE8/materializer.yaml 
+2026-09-11T00:25:24Z kubectl --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit wait --for=condition=Ready workloaddeployment/receiving-materializer --timeout=240s 
+2026-09-11T00:25:25Z materializer-http-update \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T00:25:25Z materializer-http-receipt \<credential-bearing\ arguments\ redacted\> 
+2026-09-11T00:25:25Z cargo test production_materializer_consumes_the_causal_receipt_exactly_once \<journey\ document\ amended\ with\ the\ project\ database\ and\ receipt\,\ redacted\> 
+2026-09-11T00:25:26Z python3 /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/tools/journey-telemetry-proof --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig --context kind-wamn-receiving-postcommit --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/live-005/pair/baseline/telemetry --source 72142cf353da2e39afdb17bbfc153dd9d8ee1790 --tenant receiving-route-auth --project receiving --environment dev --namespace wamn-receiving-postcommit --system-namespace wamn-system --update-trace 20283bde06935b6ba7a00a6b6cef08bb --receipt-trace 3542fcf337fd51398a55a88adde474d4 
+2026-09-11T00:26:17Z timeout --signal=TERM --kill-after=10s 600s cargo test route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress 
+2026-09-11T00:28:36Z kill -TERM 2895978 
+2026-09-11T00:28:36Z kind delete cluster --name wamn-receiving-postcommit --kubeconfig /tmp/tmp.BOWlVpwDE8/kubeconfig 
+2026-09-11T00:28:38Z docker rm --force --volumes wamn-receiving-pg18-72142cf353da-2805270 
+2026-09-11T00:28:38Z docker rm --force --volumes wamn-receiving-registry-72142cf353da-2805270 
+2026-09-11T00:28:38Z docker rm --force --volumes wamn-receiving-nats-72142cf353da-2805270 
+2026-09-11T00:28:38Z docker image rm wamn-gates:receiving-72142cf353da-2805270-release 
+2026-09-11T00:28:38Z docker image rm wamn-host:receiving-72142cf353da-2805270-release 
+2026-09-11T00:28:38Z rm -rf -- /tmp/tmp.BOWlVpwDE8 

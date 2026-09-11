@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "cargo",
+    "clean",
+    "--release",
+    "--locked",
+    "--offline",
+    "--manifest-path",
+    "components/Cargo.toml",
+    "--target",
+    "wasm32-wasip2",
+    "-p",
+    "client-acme-receiving",
+    "-p",
+    "wamn-client-acme-receiving-data-access"
+  ],
+  "exit_code": 0,
+  "removed_virtualized_artifact": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-controls-20260910/target/virtualized/std-empty-environment/client_acme_receiving.wasm"
+}

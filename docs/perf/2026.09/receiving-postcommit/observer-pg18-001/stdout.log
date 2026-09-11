@@ -1,0 +1,66 @@
+Creating new PostgreSQL cluster 18/regress ...
+DO
+DO
+DO
+DO
+DO
+DO
+DO
+GRANT ROLE
+CREATE DATABASE
+You are now connected to database "wamn" as user "kaalin".
+CREATE SCHEMA
+GRANT
+DO
+CREATE TABLE
+INSERT 0 40000
+CREATE INDEX
+ALTER TABLE
+ALTER TABLE
+CREATE POLICY
+CREATE POLICY
+CREATE INDEX
+GRANT
+CREATE TABLE
+INSERT 0 2000
+ALTER TABLE
+ALTER TABLE
+CREATE POLICY
+CREATE POLICY
+CREATE INDEX
+GRANT
+CREATE TABLE
+ALTER TABLE
+ALTER TABLE
+CREATE POLICY
+CREATE POLICY
+CREATE INDEX
+GRANT
+CREATE TABLE
+ALTER TABLE
+ALTER TABLE
+CREATE POLICY
+CREATE POLICY
+CREATE INDEX
+GRANT
+GRANT
+
+running 1 test
+applied wamn_receiving@1.0.0: 1 migration(s)
+applied client_acme_receiving@3.0.0: 2 migration(s)
+test route_authentication_live::overlay_compatibility::installed_contract_observer_preserves_acls_and_refuses_changed_requirements ... FAILED
+
+failures:
+
+failures:
+    route_authentication_live::overlay_compatibility::installed_contract_observer_preserves_acls_and_refuses_changed_requirements
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 77 filtered out; finished in 0.39s
+
+*** /tmp/pg_virtualenv.YSoAWl/log/postgresql-18-regress.log (last 100 lines) ***
+2026-09-10 16:37:36.123 EDT [2432928] LOG:  starting PostgreSQL 18.6 (Ubuntu 18.6-1.pgdg26.04+2) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0, 64-bit
+2026-09-10 16:37:36.124 EDT [2432928] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-09-10 16:37:36.124 EDT [2432928] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2026-09-10 16:37:36.126 EDT [2432934] LOG:  database system was shut down at 2026-09-10 16:37:36 EDT
+2026-09-10 16:37:36.128 EDT [2432928] LOG:  database system is ready to accept connections
+Dropping cluster 18/regress ...

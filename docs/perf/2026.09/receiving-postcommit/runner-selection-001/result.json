@@ -1,0 +1,66 @@
+[
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "tools/receiving-cluster-journey-run"
+    ],
+    "expected_exit": 0,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "tools/receiving-postcommit-proof"
+    ],
+    "expected_exit": 0,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "tools/receiving-cluster-journey-run",
+      "--receiving-postcommit",
+      "baseline"
+    ],
+    "expected_exit": 0,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "tools/receiving-cluster-journey-run",
+      "--receiving-postcommit",
+      "additive"
+    ],
+    "expected_exit": 0,
+    "exit_code": 0
+  },
+  {
+    "argv": [
+      "tools/receiving-cluster-journey-run",
+      "--receiving-postcommit",
+      "wrong"
+    ],
+    "expected_exit": 2,
+    "exit_code": 2
+  },
+  {
+    "argv": [
+      "tools/receiving-cluster-journey-run",
+      "--receiving-postcommit",
+      "baseline",
+      "--receiving-correctness"
+    ],
+    "expected_exit": 2,
+    "exit_code": 2
+  },
+  {
+    "argv": [
+      "tools/receiving-postcommit-proof",
+      "--evidence-dir",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/dryrun-unused"
+    ],
+    "expected_exit": 0,
+    "exit_code": 0
+  }
+]

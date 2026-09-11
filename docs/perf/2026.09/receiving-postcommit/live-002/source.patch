@@ -1,0 +1,2053 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index c7fef2ed..48fd0029 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -6016,6 +6016,7 @@ dependencies = [
+  "wamn-scenario-worker",
+  "wamn-schema-control",
+  "wamn-schema-generator",
++ "wamn-schema-introspection",
+  "wamn-test-infrastructure",
+  "wash-runtime",
+  "wasmtime-wasi",
+diff --git a/docs/operations/build-and-test.md b/docs/operations/build-and-test.md
+index 66833e5f..18e52911 100644
+--- a/docs/operations/build-and-test.md
++++ b/docs/operations/build-and-test.md
+@@ -3628,6 +3628,48 @@ cleanup. It cites the immutable RC bootstrap, M2-supersession, socketguard,
+ traceproof, and scoped RegistryReader receipts; it does not rerun those
+ unchanged mechanisms.
+ 
++### `[RECEIVING-POSTCOMMIT]` — unchanged overlay and event progress
++
++`wamn-10yt.78` owns this correctness proof under Increment 2 of `docs/poc/wamn_testing_spec.md`.
++The pair uses separate fresh installations of the baseline and additive base with identical overlay files and component bytes.
++The additive base contains one extra nullable text field in its copied initial migration.
++A third empty database proves that a base-owned `acme_inspection_required` field causes the exact `base-definition-mutation-refused` refusal.
++The schema comparison observes the installed requirements. It does not claim that publication enforces the generated schema contract.
++
++Run from clean committed source in an isolated worktree.
++Use a new evidence directory under the main checkout.
++
++```bash
++tools/receiving-postcommit-proof --apply \
++  --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/live-001
++```
++
++Each installation executes the existing thirteen-route proof with the same overlay component.
++The deployed materializer first completes the existing causal receipt proof.
++The replay case approves that inspection, waits past the observed broker deduplication window, and republishes the original event bytes and headers.
++The second registered delivery must emit matching acceptance and completion records, acknowledge once, and preserve the approved inspection and its revision.
++
++The retry case stops only the owned materializer, commits a new receipt through its released route, and locks that receipt on another connection.
++The proof resumes the same materializer and submits an independent receipt.
++It observes three separate blocked handler queries before the actual `router-retry-exhausted` dead-letter record appears.
++The record must preserve the poison event, headers, stream sequence, and registration identity.
++The independent receipt must produce its inspection within 90 seconds.
++The proof releases the lock and restores the owned materializer on every normal result path.
++
++The router uses three attempts with 100 ms and 200 ms delays.
++The runner records the deployed statement timeout, which must be positive and at most 10 seconds.
++The replay wait permits the existing 120-second broker deduplication window plus two seconds.
++Each post-commit test has a 600-second outer bound.
++The proof assumes that its database, broker, host, and materializer remain available during delivery.
++It proves the named application behavior, not a platform-wide exactly-once guarantee.
++
++`overlay-compatibility.json` records the exact overlay files, component digest, schema observations, and breaking refusal.
++`postcommit.json` records source events, registered deliveries, approved state, observed retries, dead letters, independent state, and restoration.
++`pair.json` requires both installations, unchanged overlay identities, and successful cleanup.
++An absent test, zero executed cases, missing event, or unarmed phase fails the recipe.
++The mutation rules in **Traps** apply to deliberate defects and exact restoration.
++This recipe records no live result by itself.
++
+ ### `[RECEIVING-CLUSTER-JOURNEY]` — released flow-http scheduling and reachability
+ 
+ The same runner wraps the production Receiving route and materializer journeys
+diff --git a/docs/poc/wamn_receiving_layered_application_poc_scenario.md b/docs/poc/wamn_receiving_layered_application_poc_scenario.md
+index 5ca326f6..e35ba92d 100644
+--- a/docs/poc/wamn_receiving_layered_application_poc_scenario.md
++++ b/docs/poc/wamn_receiving_layered_application_poc_scenario.md
+@@ -1150,3 +1150,29 @@ The response control exercises application delivery after transport receipt. It
+ The suite also requires deliberate business-defect evidence, including a contention-protection mutant, under the existing mutation rules.
+ If another database constraint protects the invariant, record the surviving mutant. Do not weaken that constraint to force an unsafe result.
+ Future overlay compatibility uses two independent fresh installations with identical overlay artifacts under `wamn-10yt.78`. It does not reopen in-place upgrades.
++
++
++## 16. Unchanged overlay and post-commit proof
++
++`wamn-10yt.78` owns these invariants under Increment 2 of `wamn_testing_spec.md`.
++The tests use separate fresh installations and the exact same overlay files and component artifact.
++This section defines proof obligations. It records no executed result.
++
++`OVL-SCHEMA` requires the unchanged overlay to operate with both the baseline and an additive base.
++The affected state includes the consumed fields, constraints, and installed package ownership records.
++The observation follows the thirteen released route cases and reads the required columns and named constraints from PostgreSQL catalogs.
++The `overlay_compatibility` test module compares the required schema and proves the typed ownership refusal in a third empty database.
++The production enforcer for that refusal is `apply_package::preflight_add_definition`.
++The schema comparison is a test observation, not a new production admission rule.
++
++`REC-EVENT-REPLAY` requires a second delivery of the same receipt event to preserve its approved inspection and revision.
++The observation follows the first handler completion and broker acknowledgement.
++The enforcer is the primary key on `quality_inspection.receipt_id` and the handler's `ON CONFLICT DO NOTHING` statement.
++`production_materializer_preserves_replay_and_progress` requires the second registered delivery and compares the complete inspection row.
++
++`REC-POSTCOMMIT-PROGRESS` requires retry exhaustion to produce a correlated dead letter while an independent receipt reaches its inspection within 90 seconds.
++The affected state includes the locked receipt, its absent inspection, the independent inspection, and the registration's durable delivery state.
++The test observes three separate blocked handler statements and the actual dead-letter record before it releases the lock.
++The enforcers are the router's default attempt budget and the materializer's settlement policy.
++The same named post-commit test records the limits, source identities, outcomes, and restoration.
++The proof assumes that its database, broker, host, and materializer remain available.
+diff --git a/tests/integration/Cargo.toml b/tests/integration/Cargo.toml
+index 17bd26f7..619a777d 100644
+--- a/tests/integration/Cargo.toml
++++ b/tests/integration/Cargo.toml
+@@ -52,6 +52,7 @@ proptest.workspace = true
+ wamn-client = { workspace = true }
+ wamn-receiving-tui = { workspace = true }
+ wamn-schema-generator = { workspace = true }
++wamn-schema-introspection = { workspace = true }
+ wat = "=1.252.0"
+ http-body-util = { workspace = true }
+ hyper = { workspace = true }
+diff --git a/tests/integration/schema/wamn-journey.schema.json b/tests/integration/schema/wamn-journey.schema.json
+index 44fe609c..1d443b8a 100644
+--- a/tests/integration/schema/wamn-journey.schema.json
++++ b/tests/integration/schema/wamn-journey.schema.json
+@@ -2,6 +2,33 @@
+   "$schema": "http://json-schema.org/draft-07/schema#",
+   "additionalProperties": false,
+   "definitions": {
++    "BaseCandidate": {
++      "enum": [
++        "baseline",
++        "additive"
++      ],
++      "type": "string"
++    },
++    "CompatibilityPhase": {
++      "additionalProperties": false,
++      "properties": {
++        "base": {
++          "$ref": "#/definitions/BaseCandidate"
++        },
++        "evidence_file": {
++          "type": "string"
++        },
++        "package_directory": {
++          "type": "string"
++        }
++      },
++      "required": [
++        "base",
++        "evidence_file",
++        "package_directory"
++      ],
++      "type": "object"
++    },
+     "MaterializerPhase": {
+       "additionalProperties": false,
+       "description": "The materializer phase's inputs: the project-environment database the route phase provisioned, the event stream it subscribes to, and the receipt the trigger produced. The NATS URL is known from the start, but the only reader that needs it is this phase's, so it rides here rather than being a required top-level field a route-only run would have to invent.",
+@@ -23,6 +50,48 @@
+       ],
+       "type": "object"
+     },
++    "PostcommitPhase": {
++      "additionalProperties": false,
++      "properties": {
++        "context": {
++          "type": "string"
++        },
++        "evidence_file": {
++          "type": "string"
++        },
++        "kubeconfig": {
++          "type": "string"
++        },
++        "materializer_workload": {
++          "type": "string"
++        },
++        "namespace": {
++          "type": "string"
++        },
++        "route_endpoint": {
++          "type": "string"
++        },
++        "source_commit": {
++          "type": "string"
++        },
++        "statement_timeout_ms": {
++          "format": "uint64",
++          "minimum": 0.0,
++          "type": "integer"
++        }
++      },
++      "required": [
++        "context",
++        "evidence_file",
++        "kubeconfig",
++        "materializer_workload",
++        "namespace",
++        "route_endpoint",
++        "source_commit",
++        "statement_timeout_ms"
++      ],
++      "type": "object"
++    },
+     "RuntimePhase": {
+       "additionalProperties": false,
+       "description": "The runtime-assertion phase: where the released route answers from this machine, and the fixture the journey seeded, declared ONCE there and handed over here so the test carries no second copy of it.",
+@@ -86,6 +155,28 @@
+       ],
+       "description": "Known only after the route phase has provisioned the project environment and the materializer trigger has produced a receipt. The shell amends the document with it then; before that it is absent, and the materializer test refuses to run rather than read an empty string."
+     },
++    "overlay_compatibility": {
++      "anyOf": [
++        {
++          "$ref": "#/definitions/CompatibilityPhase"
++        },
++        {
++          "type": "null"
++        }
++      ],
++      "description": "Fresh-install proof with unchanged overlay artifacts."
++    },
++    "postcommit": {
++      "anyOf": [
++        {
++          "$ref": "#/definitions/PostcommitPhase"
++        },
++        {
++          "type": "null"
++        }
++      ],
++      "description": "Released materializer replay and retry proof."
++    },
+     "registry_auth_file": {
+       "type": "string"
+     },
+diff --git a/tests/integration/src/route_authentication_live.rs b/tests/integration/src/route_authentication_live.rs
+index 7e502553..13428382 100644
+--- a/tests/integration/src/route_authentication_live.rs
++++ b/tests/integration/src/route_authentication_live.rs
+@@ -2,7 +2,9 @@
+ //! fresh disposable PostgreSQL 18 server.
+ 
+ mod fresh_only;
++mod overlay_compatibility;
+ mod p3_shell;
++mod postcommit;
+ mod session_client;
+ 
+ use std::collections::{BTreeSet, HashMap};
+@@ -392,6 +394,13 @@ fn journey_package_root(package: JourneyPackage) -> PathBuf {
+                 .expect("the proof package has a directory name"),
+         );
+     }
++    if std::env::var_os(JOURNEY_DOCUMENT_ENV).is_some()
++        && let Some(phase) = JourneyDocument::required()
++            .expect("the compatibility proof requires a valid input document")
++            .overlay_compatibility
++    {
++        return overlay_compatibility::source(&phase, package);
++    }
+     source
+ }
+ 
+@@ -1228,6 +1237,10 @@ pub(crate) struct JourneyDocument {
+     /// Copied package sources for the dedicated fresh-only proof.
+     /// The initial phase creates this directory before any package admission.
+     fresh_only_packages: Option<PathBuf>,
++    /// Fresh-install proof with unchanged overlay artifacts.
++    overlay_compatibility: Option<overlay_compatibility::CompatibilityPhase>,
++    /// Released materializer replay and retry proof.
++    postcommit: Option<postcommit::PostcommitPhase>,
+     /// Known only after the route phase has provisioned the project
+     /// environment and the materializer trigger has produced a receipt. The
+     /// shell amends the document with it then; before that it is absent, and
+@@ -1392,8 +1405,14 @@ fn generated_journey_schema_and_strict_parser_share_one_field_authority() {
+         assert!(properties.contains_key(field), "schema lacks {field}");
+         assert!(required.contains(&field), "schema does not require {field}");
+     }
+-    assert_eq!(properties.len(), example.scalars().len() + 3);
+-    for phase in ["materializer", "runtime", "fresh_only_packages"] {
++    assert_eq!(properties.len(), example.scalars().len() + 5);
++    for phase in [
++        "materializer",
++        "runtime",
++        "fresh_only_packages",
++        "overlay_compatibility",
++        "postcommit",
++    ] {
+         assert!(properties.contains_key(phase));
+         assert!(!required.contains(&phase));
+     }
+@@ -3591,6 +3610,13 @@ async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
+     if let Some(root) = &inputs.fresh_only_packages {
+         prepare_fresh_only_packages(root)?;
+     }
++    if let Some(phase) = &inputs.overlay_compatibility {
++        anyhow::ensure!(
++            !fresh_only,
++            "overlay compatibility cannot combine with fresh-only"
++        );
++        overlay_compatibility::prepare(phase)?;
++    }
+     let system_url = inputs.system_pg_url.clone();
+     let scratch = ScratchRoot::create()?;
+     let root = scratch.path();
+@@ -4260,6 +4286,22 @@ async fn receiving_pat_journey(fresh_only: bool) -> anyhow::Result<()> {
+     reconcile_journey_data_access(&route.database_url).await?;
+     verify_journey_operation_grants(project.as_ref()).await?;
+     seed_materializer_trigger_rows(project.as_ref()).await?;
++    if let Some(phase) = &inputs.overlay_compatibility {
++        overlay_compatibility::after_install(
++            phase,
++            &route.database_url,
++            &inputs.component_directory,
++        )
++        .await?;
++        if phase.base == overlay_compatibility::BaseCandidate::Baseline {
++            overlay_compatibility::breaking_refusal(
++                phase,
++                &system_url,
++                &inputs.component_directory,
++            )
++            .await?;
++        }
++    }
+ 
+     let gate_stop = management_server.shutdown().await;
+     identity_task.abort();
+diff --git a/tests/integration/src/route_authentication_live/overlay_compatibility.rs b/tests/integration/src/route_authentication_live/overlay_compatibility.rs
+new file mode 100644
+index 00000000..a8016bf4
+--- /dev/null
++++ b/tests/integration/src/route_authentication_live/overlay_compatibility.rs
+@@ -0,0 +1,684 @@
++//! Fresh installations with one immutable Acme overlay.
++
++use std::collections::BTreeMap;
++use std::fs::OpenOptions;
++use std::io::Write as _;
++use std::path::{Path, PathBuf};
++
++use anyhow::{Context as _, ensure};
++use schemars::JsonSchema;
++use serde::{Deserialize, Serialize};
++use serde_json::{Value, json};
++use wamn_ctl::apply_package::{self, ApplyPackageArgs, ApplyPackageError, ApplyPackageErrorKind};
++use wamn_runtime::component_admission::component_digest;
++use wamn_schema_introspection::ir::{
++    Constraint, ForeignKeyAction, ForeignKeyColumn, postgres_type,
++};
++
++use super::{BASE_PACKAGE_ID, JourneyPackage, OVERLAY_COMPONENT, OVERLAY_PACKAGE_ID, TENANT};
++
++const INITIAL_MIGRATION: &str = "migrations/0001_initial.sql";
++const ORDER_HEADER: &str = "CREATE TABLE receiving.purchase_order (\n";
++const ADDITIVE_FIELD: &str = "overlay_compatibility_note";
++const CONFLICT_FIELD: &str = "acme_inspection_required";
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, JsonSchema)]
++#[serde(rename_all = "snake_case")]
++pub(super) enum BaseCandidate {
++    Baseline,
++    Additive,
++}
++
++#[derive(Debug, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub(super) struct CompatibilityPhase {
++    pub(super) base: BaseCandidate,
++    pub(super) package_directory: PathBuf,
++    pub(super) evidence_file: PathBuf,
++}
++
++pub(super) fn source(phase: &CompatibilityPhase, package: JourneyPackage) -> PathBuf {
++    if package.id == BASE_PACKAGE_ID {
++        phase.package_directory.join("receiving")
++    } else {
++        super::overlay_package_root()
++    }
++}
++
++pub(super) fn prepare(phase: &CompatibilityPhase) -> anyhow::Result<()> {
++    ensure!(
++        phase.package_directory.is_absolute(),
++        "compatibility package directory must be absolute"
++    );
++    std::fs::create_dir(&phase.package_directory)
++        .context("create fresh compatibility package directory")?;
++    let base = phase.package_directory.join("receiving");
++    super::copy_fresh_only_package(&super::package_root(), &base)?;
++    if matches!(phase.base, BaseCandidate::Additive) {
++        add_initial_field(&base, &format!("{ADDITIVE_FIELD} text"))?;
++    }
++    let evidence = json!({
++        "case":"unchanged-overlay-compatibility", "invariant":"OVL-SCHEMA", "stage":"prepared", "base":phase.base,
++        "base_initial_migration_sha256":digest_file(&base.join(INITIAL_MIGRATION))?,
++        "overlay_files":tree_digests(&super::overlay_package_root())?,
++    });
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(&phase.evidence_file)
++        .context("create compatibility evidence without replacing an earlier run")?;
++    serde_json::to_writer_pretty(&mut file, &evidence)?;
++    file.write_all(b"\n")?;
++    Ok(())
++}
++
++fn add_initial_field(base: &Path, field: &str) -> anyhow::Result<()> {
++    let path = base.join(INITIAL_MIGRATION);
++    let migration = std::fs::read_to_string(&path)?;
++    ensure!(
++        migration.matches(ORDER_HEADER).count() == 1,
++        "initial migration must declare purchase_order exactly once"
++    );
++    // Apply preflights all mutations before it executes any DDL. The candidate
++    // changes its fresh CREATE, not an ALTER against a relation absent at preflight.
++    std::fs::write(
++        path,
++        migration.replacen(ORDER_HEADER, &format!("{ORDER_HEADER}    {field},\n"), 1),
++    )?;
++    Ok(())
++}
++
++pub(super) async fn after_install(
++    phase: &CompatibilityPhase,
++    project_url: &str,
++    component_directory: &Path,
++) -> anyhow::Result<()> {
++    let overlay = super::overlay_package_root();
++    let weld: Value =
++        serde_json::from_slice(&std::fs::read(overlay.join("generated/package-weld.json"))?)?;
++    let (project, connection_task) = super::connect(project_url).await?;
++    let observation = observe_installed_contract(&project, &weld["required_schema_contract"]).await;
++    drop(project);
++    connection_task
++        .await
++        .context("join installed schema observer")?;
++    let observed = observation?;
++    let requirements = required_contract_observation(&weld["required_schema_contract"], &observed)?;
++    let purchase_order = observed["tables"]
++        .as_array()
++        .context("catalog tables must be an array")?
++        .iter()
++        .find(|table| table["schema"] == "receiving" && table["name"] == "purchase_order")
++        .context("fresh installation must contain purchase_order")?;
++    let additive = purchase_order["columns"]
++        .as_array()
++        .context("catalog columns must be an array")?
++        .iter()
++        .find(|field| field["name"] == ADDITIVE_FIELD);
++    match phase.base {
++        BaseCandidate::Baseline => ensure!(
++            additive.is_none(),
++            "baseline unexpectedly contains the candidate field"
++        ),
++        BaseCandidate::Additive => ensure!(
++            additive.is_some_and(|field| field["type"] == "text" && field["nullable"] == true),
++            "additive fresh installation lacks its nullable text field"
++        ),
++    }
++    let mut evidence = read_evidence(phase)?;
++    ensure_unchanged_overlay(&evidence)?;
++    evidence["stage"] = json!("installed-schema-observed");
++    evidence["schema_observation"] = requirements;
++    evidence["observed_schema_sha256"] = json!(component_digest(&serde_json::to_vec(&observed)?));
++    evidence["overlay_component_sha256"] = json!(digest_file(
++        &component_directory.join(format!("{OVERLAY_COMPONENT}.wasm"))
++    )?);
++    evidence["required_schema_contract"] = weld["required_schema_contract"].clone();
++    evidence["schema_admission_claim"] = json!(false);
++    write_evidence(phase, &evidence)
++}
++
++// This projection observes installed facts, including granted schemas. It does
++// not admit authoring input or construct a complete authoring catalog identity.
++async fn observe_installed_contract(
++    project: &tokio_postgres::Client,
++    required: &Value,
++) -> anyhow::Result<Value> {
++    let mut tables = Vec::new();
++    for table in required["tables"]
++        .as_array()
++        .context("required tables must be an array")?
++    {
++        let schema = table["schema"]
++            .as_str()
++            .context("required schema must be a name")?;
++        let name = table["table"]
++            .as_str()
++            .context("required table must be a name")?;
++        let rows = project
++            .query(wamn_schema_control::select_schema_columns_sql(), &[&schema])
++            .await?;
++        let mut columns = Vec::new();
++        for row in rows.iter().filter(|row| row.get::<_, &str>(0) == name) {
++            columns.push(json!({
++                "name":row.get::<_, &str>(1),
++                "type":postgres_type(row.get::<_, &str>(4))?.as_str(),
++                "nullable":!row.get::<_, bool>(2),
++            }));
++        }
++        ensure!(
++            !columns.is_empty(),
++            "unsatisfied overlay schema requirement: {schema}.{name}"
++        );
++        let mut constraints = Vec::new();
++        for constraint in table["constraints"]
++            .as_array()
++            .context("required constraints must be an array")?
++        {
++            let constraint_name = constraint["name"]
++                .as_str()
++                .context("required constraint must be a name")?;
++            // Ordered key pairs and pg_get_expr(false) match the existing IR
++            // representation; rendered pg_get_constraintdef text does not.
++            let row = project.query_opt(
++                "SELECT con.contype::text, \
++                    ARRAY(SELECT att.attname::text FROM unnest(con.conkey) WITH ORDINALITY key(attnum, position) \
++                          JOIN pg_catalog.pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = key.attnum \
++                          ORDER BY key.position), \
++                    referenced_namespace.nspname::text, referenced_relation.relname::text, \
++                    ARRAY(SELECT att.attname::text FROM unnest(con.confkey) WITH ORDINALITY key(attnum, position) \
++                          JOIN pg_catalog.pg_attribute att ON att.attrelid = con.confrelid AND att.attnum = key.attnum \
++                          ORDER BY key.position), \
++                    con.confupdtype::text, con.confdeltype::text, \
++                    pg_catalog.pg_get_expr(con.conbin, con.conrelid, false), con.conenforced, con.convalidated, con.condeferrable, con.condeferred \
++                 FROM pg_catalog.pg_constraint con \
++                 JOIN pg_catalog.pg_class relation ON relation.oid = con.conrelid \
++                 JOIN pg_catalog.pg_namespace namespace ON namespace.oid = relation.relnamespace \
++                 LEFT JOIN pg_catalog.pg_class referenced_relation ON referenced_relation.oid = con.confrelid \
++                 LEFT JOIN pg_catalog.pg_namespace referenced_namespace ON referenced_namespace.oid = referenced_relation.relnamespace \
++                 WHERE namespace.nspname = $1 AND relation.relname = $2 AND con.conname = $3 AND relation.relkind = 'r'",
++                &[&schema, &name, &constraint_name],
++            ).await?.with_context(|| format!("unsatisfied overlay schema requirement: {schema}.{name}.{constraint_name}"))?;
++            ensure!(
++                row.get::<_, bool>(8)
++                    && row.get::<_, bool>(9)
++                    && !row.get::<_, bool>(10)
++                    && !row.get::<_, bool>(11),
++                "unsatisfied overlay schema requirement: {schema}.{name}.{constraint_name} must be enforced, validated, and immediate"
++            );
++            let local: Vec<String> = row.get(1);
++            let observed = match row.get::<_, &str>(0) {
++                "p" => Constraint::primary_key(constraint_name, local)?,
++                "u" => Constraint::unique(constraint_name, local)?,
++                "c" => Constraint::check(constraint_name, row.get::<_, String>(7))?,
++                "f" => {
++                    let referenced: Vec<String> = row.get(4);
++                    ensure!(
++                        local.len() == referenced.len(),
++                        "foreign key column pairing differs"
++                    );
++                    Constraint::foreign_key(
++                        constraint_name,
++                        local
++                            .into_iter()
++                            .zip(referenced)
++                            .map(|(local, remote)| ForeignKeyColumn::new(local, remote))
++                            .collect(),
++                        row.get::<_, String>(2),
++                        row.get::<_, String>(3),
++                        foreign_key_action(row.get(5))?,
++                        foreign_key_action(row.get(6))?,
++                    )?
++                }
++                kind => anyhow::bail!(
++                    "unsatisfied overlay schema requirement: {schema}.{name}.{constraint_name} has kind {kind}"
++                ),
++            };
++            constraints.push(serde_json::to_value(observed)?);
++        }
++        tables
++            .push(json!({"schema":schema,"name":name,"columns":columns,"constraints":constraints}));
++    }
++    Ok(json!({"tables":tables}))
++}
++
++fn foreign_key_action(action: &str) -> anyhow::Result<ForeignKeyAction> {
++    match action {
++        "a" => Ok(ForeignKeyAction::NoAction),
++        "r" => Ok(ForeignKeyAction::Restrict),
++        "c" => Ok(ForeignKeyAction::Cascade),
++        "n" => Ok(ForeignKeyAction::SetNull),
++        "d" => Ok(ForeignKeyAction::SetDefault),
++        other => anyhow::bail!("unsupported observed foreign key action {other}"),
++    }
++}
++
++fn required_contract_observation(required: &Value, observed: &Value) -> anyhow::Result<Value> {
++    let tables = required["tables"]
++        .as_array()
++        .context("overlay weld must carry required tables")?;
++    ensure!(
++        !tables.is_empty(),
++        "overlay schema observation must execute at least one requirement"
++    );
++    let live = observed["tables"]
++        .as_array()
++        .context("live catalog must carry tables")?;
++    let mut field_count = 0;
++    let mut constraint_count = 0;
++    for table in tables {
++        let schema = table["schema"]
++            .as_str()
++            .context("required schema must be a name")?;
++        let name = table["table"]
++            .as_str()
++            .context("required table must be a name")?;
++        let actual = live
++            .iter()
++            .find(|item| item["schema"] == schema && item["name"] == name)
++            .with_context(|| format!("unsatisfied overlay schema requirement: {schema}.{name}"))?;
++        let columns = actual["columns"]
++            .as_array()
++            .context("live relation must carry columns")?;
++        for field in table["fields"]
++            .as_array()
++            .context("required relation must carry fields")?
++        {
++            let field_name = field["name"]
++                .as_str()
++                .context("required field must be a name")?;
++            let column = columns
++                .iter()
++                .find(|item| item["name"] == field_name)
++                .with_context(|| {
++                    format!("unsatisfied overlay schema requirement: {schema}.{name}.{field_name}")
++                })?;
++            ensure!(
++                column["type"] == field["type"] && column["nullable"] == field["nullable"],
++                "unsatisfied overlay schema requirement: {schema}.{name}.{field_name} expected type={} nullable={}, observed type={} nullable={}",
++                field["type"],
++                field["nullable"],
++                column["type"],
++                column["nullable"]
++            );
++            field_count += 1;
++        }
++        let constraints = actual["constraints"]
++            .as_array()
++            .context("live relation must carry constraints")?;
++        for constraint in table["constraints"]
++            .as_array()
++            .context("required relation must carry constraints")?
++        {
++            let constraint_name = constraint["name"]
++                .as_str()
++                .context("required constraint must be a name")?;
++            let actual = constraints
++                .iter()
++                .find(|item| item["name"] == constraint_name)
++                .with_context(|| {
++                    format!(
++                        "unsatisfied overlay schema requirement: {schema}.{name}.{constraint_name}"
++                    )
++                })?;
++            let mut definition = actual
++                .as_object()
++                .context("live constraint must be an object")?
++                .clone();
++            definition.remove("name");
++            ensure!(
++                Value::Object(definition) == constraint["definition"],
++                "unsatisfied overlay schema requirement: {schema}.{name}.{constraint_name} definition differs"
++            );
++            constraint_count += 1;
++        }
++    }
++    ensure!(
++        field_count > 0 && constraint_count > 0,
++        "overlay schema observation must execute field and constraint requirements"
++    );
++    Ok(
++        json!({"tables":tables.len(),"fields":field_count,"constraints":constraint_count,"result":"satisfied"}),
++    )
++}
++
++/// Prove the unchanged overlay refuses a conflicting base in another empty database.
++pub(super) async fn breaking_refusal(
++    phase: &CompatibilityPhase,
++    system_url: &str,
++    component_directory: &Path,
++) -> anyhow::Result<()> {
++    let root = phase.package_directory.join("breaking");
++    std::fs::create_dir(&root).context("create fresh breaking candidate source directory")?;
++    let base = root.join("receiving");
++    super::copy_fresh_only_package(&super::package_root(), &base)?;
++    add_initial_field(
++        &base,
++        &format!("{CONFLICT_FIELD} boolean NOT NULL DEFAULT false"),
++    )?;
++    let database = format!("receiving_overlay_break_{}", uuid::Uuid::new_v4().simple());
++    let mut url = reqwest::Url::parse(system_url).context("parse owned PostgreSQL server URL")?;
++    url.set_path(&format!("/{database}"));
++    url.set_query(None);
++    url.set_fragment(None);
++    let (admin, admin_task) = super::connect(system_url).await?;
++    admin
++        .batch_execute(&format!(
++            "CREATE DATABASE \"{database}\" OWNER wamn_db_owner TEMPLATE template0"
++        ))
++        .await
++        .context("create separate empty database for breaking candidate")?;
++    let proof = breaking_install(&base, url.as_str()).await;
++    let cleanup = admin
++        .batch_execute(&format!("DROP DATABASE \"{database}\""))
++        .await
++        .context("remove the exact breaking candidate database");
++    let absent = admin
++        .query_one(
++            "SELECT NOT EXISTS (SELECT FROM pg_database WHERE datname = $1)",
++            &[&database],
++        )
++        .await
++        .context("observe breaking candidate database cleanup");
++    drop(admin);
++    admin_task.abort();
++    cleanup?;
++    ensure!(
++        absent?.get::<_, bool>(0),
++        "breaking candidate database remains after cleanup"
++    );
++    let refusal = proof?;
++    let mut evidence = read_evidence(phase)?;
++    ensure_unchanged_overlay(&evidence)?;
++    ensure!(
++        evidence["overlay_component_sha256"]
++            == digest_file(&component_directory.join(format!("{OVERLAY_COMPONENT}.wasm")))?,
++        "overlay component changed between compatibility and breaking installations"
++    );
++    evidence["breaking"] = json!({
++        "database":database,"base_initial_migration_sha256":digest_file(&base.join(INITIAL_MIGRATION))?,
++        "refusal":refusal,"cleanup":"database-absent","overlay_unchanged":true,
++    });
++    write_evidence(phase, &evidence)
++}
++
++async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Value> {
++    let (project, connection_task) = super::connect(database_url).await?;
++    let result = async {
++        project.batch_execute("SET statement_timeout = '20s'; SET lock_timeout = '10s'").await?;
++        super::install_journey_platform_floor(project.as_ref()).await?;
++        let apply = |package: PathBuf| apply_package::run(ApplyPackageArgs {
++            package,database_url:database_url.to_owned(),tenant:TENANT.to_owned(),
++        });
++        apply(base.to_owned()).await.context("apply the breaking base through the production boundary")?;
++        let before = project.query_one("SELECT count(*) FROM catalog.packages WHERE tenant_id = $1", &[&TENANT]).await?.get::<_, i64>(0);
++        let error = apply(super::overlay_package_root()).await.err().context("unchanged overlay must refuse a base-owned field collision")?;
++        let refusal = error.downcast_ref::<ApplyPackageError>().context("breaking combination must produce a typed package refusal")?;
++        ensure!(refusal.kind() == ApplyPackageErrorKind::BaseDefinitionMutation
++            && refusal.schema() == Some("receiving") && refusal.relation() == Some("purchase_order")
++            && refusal.definition() == Some(CONFLICT_FIELD) && refusal.owner_package() == Some(BASE_PACKAGE_ID),
++            "breaking combination refused for a different reason: {refusal}");
++        let after = project.query_one(
++            "SELECT (SELECT count(*) FROM catalog.packages WHERE tenant_id = $1), \
++             (SELECT count(*) FROM catalog.packages WHERE tenant_id = $1 AND package_id = $2), \
++             to_regclass('receiving.quality_inspection') IS NULL, \
++             NOT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'receiving' \
++             AND table_name = 'purchase_order' AND column_name = 'acme_quality_status')",
++            &[&TENANT, &OVERLAY_PACKAGE_ID]).await?;
++        ensure!(before == 1 && after.get::<_, i64>(0) == before && after.get::<_, i64>(1) == 0
++            && after.get::<_, bool>(2) && after.get::<_, bool>(3),
++            "refused overlay left package metadata or partial business schema");
++        Ok(json!({"code":refusal.kind().as_str(),"schema":refusal.schema(),"relation":refusal.relation(),
++            "definition":refusal.definition(),"owner":refusal.owner_package(),"partial_overlay_state":false}))
++    }.await;
++    drop(project);
++    connection_task
++        .await
++        .context("join breaking database observer")?;
++    result
++}
++
++fn digest_file(path: &Path) -> anyhow::Result<String> {
++    Ok(component_digest(&std::fs::read(path).with_context(
++        || format!("read artifact {}", path.display()),
++    )?))
++}
++
++fn tree_digests(root: &Path) -> anyhow::Result<BTreeMap<String, String>> {
++    fn visit(
++        root: &Path,
++        directory: &Path,
++        entries: &mut BTreeMap<String, String>,
++    ) -> anyhow::Result<()> {
++        for entry in std::fs::read_dir(directory)? {
++            let entry = entry?;
++            let kind = entry.file_type()?;
++            if kind.is_dir() {
++                visit(root, &entry.path(), entries)?;
++            } else {
++                ensure!(kind.is_file(), "overlay artifacts must be regular files");
++                let path = entry.path();
++                let relative = path
++                    .strip_prefix(root)?
++                    .to_str()
++                    .context("overlay artifact path must be UTF-8")?
++                    .to_owned();
++                entries.insert(relative, digest_file(&path)?);
++            }
++        }
++        Ok(())
++    }
++    let mut entries = BTreeMap::new();
++    visit(root, root, &mut entries)?;
++    ensure!(
++        !entries.is_empty(),
++        "overlay artifact identity must include files"
++    );
++    Ok(entries)
++}
++
++fn read_evidence(phase: &CompatibilityPhase) -> anyhow::Result<Value> {
++    Ok(serde_json::from_slice(&std::fs::read(
++        &phase.evidence_file,
++    )?)?)
++}
++
++fn ensure_unchanged_overlay(evidence: &Value) -> anyhow::Result<()> {
++    ensure!(
++        evidence["overlay_files"]
++            == serde_json::to_value(tree_digests(&super::overlay_package_root())?)?,
++        "overlay input or generated artifact changed during compatibility proof"
++    );
++    Ok(())
++}
++
++fn write_evidence(phase: &CompatibilityPhase, evidence: &Value) -> anyhow::Result<()> {
++    std::fs::write(&phase.evidence_file, serde_json::to_vec_pretty(evidence)?)?;
++    Ok(())
++}
++
++#[test]
++fn required_contract_observation_refuses_changed_consumed_fields_and_constraints() {
++    let required = json!({"tables":[{"schema":"receiving","table":"odd_probe",
++        "fields":[{"name":"probe_key","type":"uuid","nullable":false}],
++        "constraints":[{"name":"odd_probe_key","definition":{"kind":"primary_key","columns":["probe_key"]}}]}]});
++    let live = json!({"tables":[{"schema":"receiving","name":"odd_probe",
++        "columns":[{"name":"probe_key","type":"uuid","nullable":false},{"name":"unused","type":"text","nullable":true}],
++        "constraints":[{"name":"odd_probe_key","kind":"primary_key","columns":["probe_key"]}]}]});
++    assert_eq!(
++        required_contract_observation(&required, &live).unwrap(),
++        json!({"tables":1,"fields":1,"constraints":1,"result":"satisfied"})
++    );
++    for changed in [json!("text"), json!("int64")] {
++        let mut candidate = live.clone();
++        candidate["tables"][0]["columns"][0]["type"] = changed;
++        let error = required_contract_observation(&required, &candidate).unwrap_err();
++        assert!(error.to_string().contains("receiving.odd_probe.probe_key"));
++    }
++    let mut nullable = live.clone();
++    nullable["tables"][0]["columns"][0]["nullable"] = json!(true);
++    assert!(
++        required_contract_observation(&required, &nullable)
++            .unwrap_err()
++            .to_string()
++            .contains("receiving.odd_probe.probe_key")
++    );
++    let mut constraint = live;
++    constraint["tables"][0]["constraints"][0]["columns"] = json!(["unused"]);
++    assert!(
++        required_contract_observation(&required, &constraint)
++            .unwrap_err()
++            .to_string()
++            .contains("receiving.odd_probe.odd_probe_key")
++    );
++}
++
++/// Narrow seam check; the paired journey remains the fresh-install proof.
++#[tokio::test]
++#[ignore = "requires a fresh disposable PostgreSQL 18 server and retained evidence path"]
++async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirements()
++-> anyhow::Result<()> {
++    use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorKind, read_catalog};
++
++    let url = std::env::var("WAMN_OVERLAY_OBSERVER_DATABASE_URL")?;
++    let evidence_path = std::env::var("WAMN_OVERLAY_OBSERVER_EVIDENCE_FILE")?;
++    let (project, connection_task) = super::connect(&url).await?;
++    let server = project.query_one("SELECT current_setting('server_version_num')::integer, current_database()::text, to_regnamespace('receiving') IS NULL AND to_regnamespace('catalog') IS NULL", &[]).await?;
++    let version: i32 = server.get(0);
++    ensure!(
++        (180_000..190_000).contains(&version) && server.get::<_, bool>(2),
++        "observer check requires fresh PostgreSQL 18"
++    );
++    project
++        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
++        .await?;
++    project
++        .batch_execute(&wamn_control_provision::sql::set_database_owner_sql(
++            server.get(1),
++        ))
++        .await?;
++    super::install_journey_platform_floor(&project).await?;
++    for package in [super::package_root(), super::overlay_package_root()] {
++        apply_package::run(ApplyPackageArgs {
++            package,
++            database_url: url.clone(),
++            tenant: TENANT.to_owned(),
++        })
++        .await?;
++    }
++    wamn_ctl::reconcile_package_data_access::run(
++        wamn_ctl::reconcile_package_data_access::ReconcilePackageDataAccessArgs {
++            packages: vec![super::package_root(), super::overlay_package_root()],
++            database_url: url.clone(),
++            tenant: TENANT.to_owned(),
++        },
++    )
++    .await?;
++    let schema_acl = project
++        .query_one(
++            "SELECT nspacl::text FROM pg_namespace WHERE nspname = 'receiving'",
++            &[],
++        )
++        .await?
++        .get::<_, Option<String>>(0)
++        .context("production install must retain an explicit schema ACL")?;
++    let refusal = read_catalog(&project, &["receiving"]).await.unwrap_err();
++    ensure!(
++        refusal.kind() == PostgresIntrospectionErrorKind::UnsupportedAcl,
++        "authoring ACL refusal changed: {refusal}"
++    );
++    let weld: Value = serde_json::from_slice(&std::fs::read(
++        super::overlay_package_root().join("generated/package-weld.json"),
++    )?)?;
++    let required = &weld["required_schema_contract"];
++    let baseline = observe_installed_contract(&project, required).await?;
++    let positive = required_contract_observation(required, &baseline)?;
++    project
++        .batch_execute(
++            "ALTER TABLE receiving.purchase_order ADD COLUMN overlay_compatibility_note text",
++        )
++        .await?;
++    let additive = observe_installed_contract(&project, required).await?;
++    ensure!(
++        baseline != additive,
++        "all-column projection omitted the additive field"
++    );
++    ensure!(
++        required_contract_observation(required, &additive)? == positive,
++        "additive observation changed satisfied requirements"
++    );
++    let controls = [
++        (
++            "consumed-nullability",
++            "ALTER TABLE receiving.purchase_order ALTER COLUMN status DROP NOT NULL",
++            "receiving.purchase_order.status",
++        ),
++        (
++            "consumed-check",
++            "ALTER TABLE receiving.quality_inspection DROP CONSTRAINT quality_inspection_status_check; ALTER TABLE receiving.quality_inspection ADD CONSTRAINT quality_inspection_status_check CHECK (status IN ('pending', 'approved', 'rejected'))",
++            "receiving.quality_inspection.quality_inspection_status_check",
++        ),
++        (
++            "unvalidated-check",
++            "ALTER TABLE receiving.quality_inspection DROP CONSTRAINT quality_inspection_status_check; ALTER TABLE receiving.quality_inspection ADD CONSTRAINT quality_inspection_status_check CHECK (status IN ('pending', 'approved')) NOT VALID",
++            "receiving.quality_inspection.quality_inspection_status_check",
++        ),
++        (
++            "deferrable-foreign-key",
++            "ALTER TABLE receiving.quality_inspection ALTER CONSTRAINT quality_inspection_receipt_id_fkey DEFERRABLE",
++            "receiving.quality_inspection.quality_inspection_receipt_id_fkey",
++        ),
++    ];
++    let mut negative = Vec::new();
++    for (name, sql, expected) in controls {
++        project.batch_execute("BEGIN").await?;
++        project.batch_execute(sql).await?;
++        let outcome = match observe_installed_contract(&project, required).await {
++            Ok(observed) => required_contract_observation(required, &observed),
++            Err(error) => Err(error),
++        };
++        project.batch_execute("ROLLBACK").await?;
++        let error = outcome
++            .err()
++            .with_context(|| format!("observer accepted {name}"))?;
++        ensure!(
++            error.to_string().contains(expected),
++            "{name} refused for a different reason: {error}"
++        );
++        negative.push(json!({"control":name,"refusal":error.to_string(),"result":"refused"}));
++    }
++    let restored = observe_installed_contract(&project, required).await?;
++    ensure!(
++        restored == additive,
++        "rolled-back controls changed the installed projection"
++    );
++    let retained_acl: String = project
++        .query_one(
++            "SELECT nspacl::text FROM pg_namespace WHERE nspname = 'receiving'",
++            &[],
++        )
++        .await?
++        .get(0);
++    ensure!(
++        retained_acl == schema_acl,
++        "observer changed installed ACLs"
++    );
++    let evidence = json!({
++        "case":"installed-overlay-contract-observer", "server_version_num":version,
++        "installed_schema_acl":schema_acl, "retained_schema_acl":retained_acl,
++        "authoring_refusal":refusal.to_string(), "schema_admission_claim":false,
++        "positive":positive, "controls":negative,
++        "baseline_observed_schema_sha256":component_digest(&serde_json::to_vec(&baseline)?),
++        "additive_observed_schema_sha256":component_digest(&serde_json::to_vec(&additive)?),
++        "result":"pass",
++    });
++    let mut file = OpenOptions::new()
++        .write(true)
++        .create_new(true)
++        .open(evidence_path)?;
++    serde_json::to_writer_pretty(&mut file, &evidence)?;
++    file.write_all(b"\n")?;
++    drop(project);
++    connection_task.await?;
++    Ok(())
++}
+diff --git a/tests/integration/src/route_authentication_live/postcommit.rs b/tests/integration/src/route_authentication_live/postcommit.rs
+new file mode 100644
+index 00000000..86495c8e
+--- /dev/null
++++ b/tests/integration/src/route_authentication_live/postcommit.rs
+@@ -0,0 +1,681 @@
++//! Receiving replay and bounded progress through its released materializer.
++
++use std::collections::BTreeSet;
++use std::path::PathBuf;
++use std::time::{Duration, Instant};
++
++use anyhow::{Context as _, ensure};
++use async_nats::jetstream::{Context, message::StreamMessage, stream::Stream};
++use futures_util::StreamExt as _;
++use schemars::JsonSchema;
++use serde::Deserialize;
++use serde_json::{Value, json};
++use tokio::process::Command;
++use tokio_postgres::Client;
++use wamn_event_wire::{DeadLetter, Envelope, Op};
++use wamn_runtime::plugins::wamn_jetstream::{
++    RouterTapRecord, RouterTapRecordPhase, RouterTapSourceKind, router_tap_environment_filter,
++};
++
++use super::{
++    BASE_PACKAGE_ID, ENVIRONMENT, JourneyDocument, MATERIALIZER_DURABLE, MATERIALIZER_STREAM,
++    OVERLAY_PACKAGE_ID, PROJECT, TENANT, connect, overlay_route_path, secret_value,
++};
++
++const REGISTRATION: &str = "client_acme_receiving::quality.create_inspection";
++const WIRING: &str = "quality_create_inspection";
++const PROGRESS_BOUND: Duration = Duration::from_secs(90);
++
++#[derive(Debug, Deserialize, JsonSchema)]
++#[serde(deny_unknown_fields)]
++pub(super) struct PostcommitPhase {
++    pub route_endpoint: String,
++    pub evidence_file: PathBuf,
++    pub kubeconfig: PathBuf,
++    pub context: String,
++    pub namespace: String,
++    pub materializer_workload: String,
++    pub source_commit: String,
++    pub statement_timeout_ms: u64,
++}
++
++async fn kube(phase: &PostcommitPhase, arguments: &[&str]) -> anyhow::Result<Value> {
++    let output = tokio::time::timeout(
++        Duration::from_secs(15),
++        Command::new("kubectl")
++            .arg("--kubeconfig")
++            .arg(&phase.kubeconfig)
++            .arg("--context")
++            .arg(&phase.context)
++            .arg("--namespace")
++            .arg(&phase.namespace)
++            .arg("--request-timeout=10s")
++            .args(arguments)
++            .kill_on_drop(true)
++            .output(),
++    )
++    .await
++    .context("the owned materializer command exceeded 15 seconds")??;
++    ensure!(
++        output.status.success(),
++        "owned materializer command failed: {}",
++        String::from_utf8_lossy(&output.stderr)
++    );
++    serde_json::from_slice(&output.stdout).context("decode the owned materializer object")
++}
++
++async fn scale(phase: &PostcommitPhase, uid: &str, replicas: u64) -> anyhow::Result<()> {
++    let patch = json!([
++        {"op":"test", "path":"/metadata/uid", "value":uid},
++        {"op":"replace", "path":"/spec/replicas", "value":replicas}
++    ])
++    .to_string();
++    kube(
++        phase,
++        &[
++            "patch",
++            "workloaddeployment",
++            &phase.materializer_workload,
++            "--type=json",
++            "-p",
++            &patch,
++            "-o",
++            "json",
++        ],
++    )
++    .await?;
++    Ok(())
++}
++
++async fn owned_workloads(phase: &PostcommitPhase, replica_uid: &str) -> anyhow::Result<Vec<Value>> {
++    let document = kube(phase, &["get", "workloads", "-o", "json"]).await?;
++    Ok(document["items"]
++        .as_array()
++        .context("Workload list carries items")?
++        .iter()
++        .filter(|item| {
++            item["metadata"]["ownerReferences"]
++                .as_array()
++                .is_some_and(|owners| owners.iter().any(|owner| owner["uid"] == replica_uid))
++        })
++        .cloned()
++        .collect())
++}
++
++async fn ready(phase: &PostcommitPhase) -> anyhow::Result<Value> {
++    let deadline = Instant::now() + PROGRESS_BOUND;
++    loop {
++        let deployment = kube(
++            phase,
++            &[
++                "get",
++                "workloaddeployment",
++                &phase.materializer_workload,
++                "-o",
++                "json",
++            ],
++        )
++        .await?;
++        if deployment["spec"]["replicas"] == 1
++            && deployment["status"]["conditions"]
++                .as_array()
++                .is_some_and(|conditions| {
++                    conditions.iter().any(|condition| {
++                        condition["type"] == "Ready" && condition["status"] == "True"
++                    })
++                })
++        {
++            return Ok(deployment);
++        }
++        ensure!(
++            Instant::now() < deadline,
++            "owned materializer did not become Ready within 90 seconds"
++        );
++        tokio::time::sleep(Duration::from_millis(200)).await;
++    }
++}
++
++async fn request(
++    http: &reqwest::Client,
++    document: &JourneyDocument,
++    phase: &PostcommitPhase,
++    path: &str,
++    body: Value,
++) -> anyhow::Result<Value> {
++    let token = secret_value(&document.route_caller_secret_output, "token")?;
++    let response = http
++        .post(format!(
++            "{}{}",
++            phase.route_endpoint.trim_end_matches('/'),
++            path
++        ))
++        .header("Host", &document.route_host)
++        .bearer_auth(token)
++        .json(&body)
++        .send()
++        .await?;
++    ensure!(
++        response.status() == reqwest::StatusCode::OK,
++        "released Receiving route returned {}",
++        response.status()
++    );
++    let result: Value = response.json().await?;
++    ensure!(
++        result.as_array().is_some_and(|items| items.len() == 1)
++            && result[0]["request_id"] == body[0]["request_id"]
++            && result[0].get("value").is_some()
++            && result[0].get("error").is_none(),
++        "released Receiving command refused: {result}"
++    );
++    Ok(result[0]["value"].clone())
++}
++
++async fn inspection(project: &Client, receipt: &str) -> anyhow::Result<Value> {
++    Ok(project
++        .query_one(
++            "SELECT COALESCE(jsonb_agg(to_jsonb(row)), '[]'::jsonb) \
++         FROM receiving.quality_inspection AS row WHERE receipt_id = $1::text::uuid",
++            &[&receipt],
++        )
++        .await?
++        .get(0))
++}
++
++async fn source(stream: &mut Stream, receipt: &str) -> anyhow::Result<StreamMessage> {
++    let deadline = Instant::now() + Duration::from_secs(30);
++    loop {
++        let state = stream.info().await?.state.clone();
++        if state.messages > 0 {
++            for sequence in state.first_sequence..=state.last_sequence {
++                let message = stream.get_raw_message(sequence).await?;
++                if let Ok(event) = serde_json::from_slice::<Envelope>(&message.payload)
++                    && event.package_id == BASE_PACKAGE_ID
++                    && event.entity == "receipt"
++                    && event.op == Op::Insert
++                    && event
++                        .new
++                        .as_ref()
++                        .and_then(|row| row.get("id"))
++                        .and_then(Value::as_str)
++                        == Some(receipt)
++                {
++                    return Ok(message);
++                }
++            }
++        }
++        ensure!(
++            Instant::now() < deadline,
++            "real receipt {receipt} did not reach the event stream within 30 seconds"
++        );
++        tokio::time::sleep(Duration::from_millis(100)).await;
++    }
++}
++
++fn source_receipt(message: &StreamMessage) -> Value {
++    json!({"subject":message.subject.as_str(), "sequence":message.sequence,
++        "headers":message.headers, "body":serde_json::from_slice::<Value>(&message.payload).unwrap_or(Value::Null)})
++}
++
++fn consumer_receipt(info: &async_nats::jetstream::consumer::Info) -> Value {
++    json!({"name":info.name, "config":info.config,
++        "delivered":{"consumer_sequence":info.delivered.consumer_sequence,
++            "stream_sequence":info.delivered.stream_sequence},
++        "ack_floor":{"consumer_sequence":info.ack_floor.consumer_sequence,
++            "stream_sequence":info.ack_floor.stream_sequence},
++        "num_ack_pending":info.num_ack_pending,"num_pending":info.num_pending,
++        "num_redelivered":info.num_redelivered})
++}
++
++async fn delivery_taps(
++    subscriber: &mut async_nats::Subscriber,
++    delivery_id: &str,
++    expected_input: &Value,
++    expected_outcome: &str,
++) -> anyhow::Result<Vec<Value>> {
++    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
++    let mut observed = Vec::new();
++    let mut accepted = false;
++    let mut settled = false;
++    while !accepted || !settled {
++        let message = tokio::time::timeout_at(deadline, subscriber.next())
++            .await
++            .context(
++                "the private handler did not produce both delivery boundaries within 30 seconds",
++            )?
++            .context("the router tap subscription ended")?;
++        let record: RouterTapRecord = serde_json::from_slice(&message.payload)?;
++        if record.delivery_id.as_ref() != delivery_id {
++            continue;
++        }
++        record.validate()?;
++        ensure!(
++            record.source_id.as_ref() == REGISTRATION
++                && record.source_kind == RouterTapSourceKind::Registration
++                && record.wiring_id.as_ref() == WIRING
++                && record.wiring_version == 1
++                && !record.redacted
++                && record.over_ceiling_bytes.is_none(),
++            "the delivery tap does not identify the unchanged private handler"
++        );
++        match record.phase {
++            RouterTapRecordPhase::Accepted => {
++                ensure!(
++                    !accepted && record.payload == *expected_input,
++                    "duplicate handler input differs from the original event"
++                );
++                accepted = true;
++            }
++            RouterTapRecordPhase::Settled => {
++                ensure!(
++                    !settled && record.outcome.as_deref() == Some(expected_outcome),
++                    "private handler settled with the wrong outcome"
++                );
++                settled = true;
++            }
++        }
++        observed.push(json!({"subject":message.subject.as_str(), "record":record}));
++    }
++    Ok(observed)
++}
++
++async fn fixture(project: &Client, label: &str) -> anyhow::Result<(String, String)> {
++    let order = uuid::Uuid::new_v4().to_string();
++    let line = uuid::Uuid::new_v4().to_string();
++    project.execute(
++        "INSERT INTO receiving.purchase_order \
++         (id,purchase_order_number,supplier_id,status,row_version,created_at,updated_at,acme_inspection_required,acme_quality_status) \
++         VALUES ($1::text::uuid,$2,'00000000-0000-0000-0000-000000000404','open',1,now(),now(),true,'pending')",
++        &[&order, &format!("POSTCOMMIT-{label}-{order}")],
++    ).await?;
++    project.execute(
++        "INSERT INTO receiving.purchase_order_line (id,purchase_order_id,line_number,item_id,ordered_quantity,received_quantity) \
++         VALUES ($1::text::uuid,$2::text::uuid,1,'00000000-0000-0000-0000-000000000101',1.0000,0.0000)",
++        &[&line, &order],
++    ).await?;
++    Ok((order, line))
++}
++
++async fn receipt(
++    http: &reqwest::Client,
++    document: &JourneyDocument,
++    phase: &PostcommitPhase,
++    fixture: &(String, String),
++    label: &str,
++) -> anyhow::Result<String> {
++    let value = request(http, document, phase, overlay_route_path("receiving_record_receipt"), json!([{
++        "request_id":label, "value":{"idempotency_key":format!("{label}-{}",fixture.0),
++        "purchase_order_id":fixture.0, "receipt_reference":format!("{label}-{}",fixture.0),
++        "occurred_at":"2026-09-10T12:00:00.000000Z", "line":[{"purchase_order_line_id":fixture.1,
++            "quantity":"1.0000", "location_id":"00000000-0000-0000-0000-000000000201"}]}
++    }])).await?;
++    Ok(value["receipt_id"]
++        .as_str()
++        .context("the real receipt command returned an identity")?
++        .to_owned())
++}
++
++async fn matching_dead_letter(
++    jetstream: &Context,
++    sequence: u64,
++) -> anyhow::Result<Option<(String, DeadLetter)>> {
++    let mut stream = jetstream
++        .get_stream(wamn_event_wire::DEAD_LETTER_STREAM)
++        .await?;
++    let state = stream.info().await?.state.clone();
++    if state.messages == 0 {
++        return Ok(None);
++    }
++    for index in state.first_sequence..=state.last_sequence {
++        let message = stream.get_raw_message(index).await?;
++        let letter = DeadLetter::from_slice(&message.payload)?;
++        if letter.source_stream == MATERIALIZER_STREAM && letter.source_stream_sequence == sequence
++        {
++            return Ok(Some((message.subject.to_string(), letter)));
++        }
++    }
++    Ok(None)
++}
++
++async fn prove(
++    document: &JourneyDocument,
++    phase: &PostcommitPhase,
++    project: &Client,
++    lock: &Client,
++    evidence: &mut Value,
++) -> anyhow::Result<()> {
++    let materializer = document
++        .materializer
++        .as_ref()
++        .context("the causal materializer baseline must run first")?;
++    let http = reqwest::Client::builder()
++        .no_proxy()
++        .redirect(reqwest::redirect::Policy::none())
++        .retry(reqwest::retry::never())
++        .timeout(Duration::from_secs(60))
++        .build()?;
++    let nats = async_nats::connect(&materializer.nats_url).await?;
++    let jetstream = async_nats::jetstream::new(nats.clone());
++    let mut events = jetstream.get_stream(MATERIALIZER_STREAM).await?;
++    let mut taps = nats
++        .subscribe(
++            router_tap_environment_filter(TENANT, PROJECT, ENVIRONMENT)
++                .context("the journey identifies a router tap subject")?,
++        )
++        .await?;
++    nats.flush().await?;
++    let graph: Value = project.query_one(
++        "SELECT graph_json FROM catalog.wirings WHERE tenant_id=$1 AND package_id=$2 AND wiring_id=$3 AND version=1",
++        &[&TENANT, &OVERLAY_PACKAGE_ID, &WIRING],
++    ).await?.get(0);
++    ensure!(
++        graph["nodes"]
++            .as_object()
++            .is_some_and(|nodes| nodes.len() == 1)
++            && graph["entry"] == "operation"
++            && graph["nodes"]["operation"]["operation"]
++                == "client-acme-receiving:quality/create-inspection@3.0.0"
++            && graph["nodes"]["operation"]["config"].get("retry").is_none(),
++        "the proof requires the unchanged one-node private handler and default retry policy"
++    );
++    evidence["wiring"] = graph;
++    let registration: Value = project.query_one(
++        "SELECT registration FROM catalog.event_registrations WHERE tenant_id=$1 AND package_id=$2 AND registration_id='quality.create_inspection'",
++        &[&TENANT, &OVERLAY_PACKAGE_ID],
++    ).await?.get(0);
++    evidence["registration"] = registration;
++    let original = source(&mut events, &materializer.receipt_id).await?;
++    let before_consumer = events.consumer_info(MATERIALIZER_DURABLE).await?;
++    ensure!(
++        before_consumer.num_ack_pending == 0
++            && before_consumer.num_pending == 0
++            && before_consumer.ack_floor.stream_sequence >= original.sequence,
++        "the first handler must finish and acknowledge before replay"
++    );
++    evidence["original_source"] = source_receipt(&original);
++    evidence["consumer_before"] = consumer_receipt(&before_consumer);
++    let approved = request(&http, document, phase, overlay_route_path("quality_approve_inspection"), json!([{
++        "request_id":"postcommit-approve", "receipt_id":materializer.receipt_id, "expected_row_version":"1"
++    }])).await?;
++    let approved_state = inspection(project, &materializer.receipt_id).await?;
++    ensure!(
++        approved_state
++            .as_array()
++            .is_some_and(|rows| rows.len() == 1)
++            && approved_state[0]["status"] == "approved"
++            && approved_state[0]["row_version"] == 2,
++        "the real approval command did not establish a distinguishable replay state: {approved}"
++    );
++    evidence["approved_state"] = approved_state.clone();
++    let dedup = events.info().await?.config.duplicate_window;
++    ensure!(
++        dedup > Duration::ZERO && dedup <= Duration::from_secs(120),
++        "event deduplication horizon exceeds the 150-second replay budget"
++    );
++    let wait = dedup + Duration::from_secs(2);
++    evidence["dedup_wait_ms"] = json!(wait.as_millis());
++    tokio::time::sleep(wait).await;
++    let replay = jetstream
++        .publish_with_headers(
++            original.subject.clone(),
++            original.headers.clone(),
++            original.payload.clone(),
++        )
++        .await?
++        .await?;
++    ensure!(
++        !replay.duplicate
++            && replay.stream == MATERIALIZER_STREAM
++            && replay.sequence > original.sequence,
++        "broker deduplication prevented the required second handler delivery"
++    );
++    let envelope: Envelope = serde_json::from_slice(&original.payload)?;
++    let source_id = wamn_event_wire::msg_id(PROJECT, ENVIRONMENT, envelope.lsn);
++    let expected_input = json!({"event":"insert", "new":envelope.new});
++    let replay_id = format!("{REGISTRATION}:event:{}:{source_id}", replay.sequence);
++    evidence["replay_taps"] =
++        json!(delivery_taps(&mut taps, &replay_id, &expected_input, "discard").await?);
++    let deadline = Instant::now() + Duration::from_secs(30);
++    loop {
++        let consumer = events.consumer_info(MATERIALIZER_DURABLE).await?;
++        if consumer.ack_floor.stream_sequence >= replay.sequence && consumer.num_ack_pending == 0 {
++            ensure!(
++                consumer.ack_floor.consumer_sequence
++                    == before_consumer.ack_floor.consumer_sequence + 1,
++                "replay did not acknowledge exactly one further registered delivery"
++            );
++            evidence["consumer_after_replay"] = consumer_receipt(&consumer);
++            break;
++        }
++        ensure!(
++            Instant::now() < deadline,
++            "the replay did not acknowledge within 30 seconds"
++        );
++        tokio::time::sleep(Duration::from_millis(100)).await;
++    }
++    ensure!(
++        inspection(project, &materializer.receipt_id).await? == approved_state,
++        "duplicate delivery reset the approved inspection or created another row"
++    );
++    evidence["replay_sequence"] = json!(replay.sequence);
++
++    let original_deployment = kube(
++        phase,
++        &[
++            "get",
++            "workloaddeployment",
++            &phase.materializer_workload,
++            "-o",
++            "json",
++        ],
++    )
++    .await?;
++    ensure!(
++        original_deployment["spec"]["replicas"] == 1,
++        "the owned materializer must start with one replica"
++    );
++    let uid = original_deployment["metadata"]["uid"]
++        .as_str()
++        .context("the deployment has a UID")?;
++    let replica_name = original_deployment["status"]["currentReplicaSet"]["name"]
++        .as_str()
++        .context("the materializer has a native ReplicaSet")?;
++    let replica = kube(
++        phase,
++        &["get", "workloadreplicaset", replica_name, "-o", "json"],
++    )
++    .await?;
++    let replica_uid = replica["metadata"]["uid"]
++        .as_str()
++        .context("the ReplicaSet has a UID")?;
++    let old_workloads = owned_workloads(phase, replica_uid).await?;
++    ensure!(
++        old_workloads.len() == 1,
++        "the owned materializer must have exactly one native Workload"
++    );
++    evidence["deployment_before"] = original_deployment.clone();
++    evidence["workloads_before"] = json!(old_workloads);
++    let poison_fixture = fixture(project, "poison").await?;
++    let valid_fixture = fixture(project, "independent").await?;
++    // Every exit from this scope rolls back the observer lock and restores the replica.
++    let result: anyhow::Result<()> = async {
++        scale(phase, uid, 0).await?;
++        let deadline = Instant::now() + PROGRESS_BOUND;
++        loop {
++            if owned_workloads(phase, replica_uid).await?.is_empty() { break; }
++            ensure!(Instant::now() < deadline, "the owned materializer Workload did not stop within 90 seconds");
++            tokio::time::sleep(Duration::from_millis(200)).await;
++        }
++        evidence["stopped_workload_uid"] = old_workloads[0]["metadata"]["uid"].clone();
++        let poison_receipt = receipt(&http, document, phase, &poison_fixture, "postcommit-poison").await?;
++        let poison_source = source(&mut events, &poison_receipt).await?;
++        ensure!(inspection(project, &poison_receipt).await? == json!([]), "poison handler ran before the controlled lock");
++        lock.batch_execute("BEGIN").await?;
++        lock.query_one("SELECT id FROM receiving.receipt WHERE id=$1::text::uuid FOR UPDATE", &[&poison_receipt]).await?;
++        let blocker: i32 = lock.query_one("SELECT pg_backend_pid()", &[]).await?.get(0);
++        evidence["poison_source"] = source_receipt(&poison_source);
++        evidence["blocker_pid"] = json!(blocker);
++        let started = Instant::now();
++        let deadline = started + PROGRESS_BOUND;
++        scale(phase, uid, 1).await?;
++        let mut attempts = BTreeSet::new();
++        let mut waits = Vec::new();
++        let observed = async {
++        loop {
++            for row in project.query(
++                "SELECT pid, query_start::text, query, wait_event, \
++                 EXTRACT(epoch FROM clock_timestamp()-query_start)::float8 \
++                 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) \
++                 AND wait_event_type='Lock' AND query ILIKE '%INSERT INTO quality_inspection%'",
++                &[&blocker],
++            ).await? {
++                let pid: i32 = row.get(0);
++                let query_start: String = row.get(1);
++                if attempts.insert((pid, query_start.clone())) {
++                    waits.push(json!({"pid":pid,"query_start":query_start,"query":row.get::<_,String>(2),
++                        "wait_event":row.get::<_,String>(3),"observed_seconds":row.get::<_,f64>(4)}));
++                    evidence["blocked_handler_attempts"] = json!(waits);
++                }
++            }
++            if let Some(letter) = matching_dead_letter(&jetstream, poison_source.sequence).await? { return Ok::<_, anyhow::Error>(letter); }
++            ensure!(Instant::now() < deadline, "poison did not reach its actual dead-letter record within 90 seconds");
++            tokio::time::sleep(Duration::from_millis(50)).await;
++        }
++        };
++        let (valid_receipt, (subject, letter)) = tokio::try_join!(
++            receipt(&http, document, phase, &valid_fixture, "postcommit-independent"), observed,
++        )?;
++        let resumed = ready(phase).await?;
++        ensure!(resumed["spec"]["template"] == original_deployment["spec"]["template"], "materializer restart changed the deployed artifacts or configuration");
++        evidence["deployment_resumed"] = resumed;
++        ensure!(attempts.len() == 3, "expected three real blocked handler attempts, observed {}", attempts.len());
++        let mut expected_headers = poison_source.headers.iter().flat_map(|(name, values)|
++            values.iter().map(move |value| (name.to_string().to_ascii_lowercase(), value.as_str().to_owned())))
++            .collect::<Vec<_>>();
++        let mut actual_headers = letter.headers.iter().map(|header|
++            (header.name.to_ascii_lowercase(), header.value.clone())).collect::<Vec<_>>();
++        expected_headers.sort();
++        actual_headers.sort();
++        ensure!(subject == wamn_event_wire::dead_letter_subject(TENANT, ENVIRONMENT, OVERLAY_PACKAGE_ID, "quality.create_inspection")
++            && letter.reason == "router-retry-exhausted" && letter.delivered == 1
++            && letter.original_subject == poison_source.subject.as_str()
++            && letter.body.as_slice() == poison_source.payload.as_ref()
++            && actual_headers == expected_headers,
++            "dead-letter evidence does not correlate to the real retry exhaustion: {letter:?}");
++        evidence["dead_letter"] = json!({"subject":subject,"record":letter});
++        loop {
++            let state = inspection(project, &valid_receipt).await?;
++            if state.as_array().is_some_and(|rows| rows.len() == 1)
++                && state[0]["status"] == "pending" && state[0]["row_version"] == 1
++            {
++                evidence["independent_inspection"] = state;
++                break;
++            }
++            ensure!(Instant::now() < deadline, "valid independent receipt did not progress within 90 seconds");
++            tokio::time::sleep(Duration::from_millis(100)).await;
++        }
++        ensure!(inspection(project, &poison_receipt).await? == json!([]), "failed poison committed an inspection");
++        ensure!(inspection(project, &materializer.receipt_id).await? == approved_state, "poison handling changed the approved replay state");
++        let valid_source = source(&mut events, &valid_receipt).await?;
++        ensure!(valid_source.sequence > poison_source.sequence, "independent valid event did not follow poison");
++        evidence["independent_source"] = source_receipt(&valid_source);
++        loop {
++            let consumer = events.consumer_info(MATERIALIZER_DURABLE).await?;
++            if consumer.ack_floor.stream_sequence >= valid_source.sequence
++                && consumer.num_ack_pending == 0 && consumer.num_pending == 0
++            {
++                evidence["consumer_after_poison"] = consumer_receipt(&consumer);
++                break;
++            }
++            ensure!(Instant::now() < deadline, "poison and valid deliveries did not settle within 90 seconds");
++            tokio::time::sleep(Duration::from_millis(100)).await;
++        }
++        evidence["progress_elapsed_ms"] = json!(started.elapsed().as_millis());
++        evidence["retry_policy"] = json!({"handler_attempts":3,"backoff_ms":[100,200],
++            "statement_timeout_ms":phase.statement_timeout_ms,"materializer_max_deliver":5,
++            "broker_delivered":1,"progress_bound_seconds":90});
++        Ok(())
++    }.await;
++    let rollback = lock
++        .batch_execute("ROLLBACK")
++        .await
++        .context("release the exact poison receipt lock");
++    let restoration = async {
++        scale(phase, uid, 1).await?;
++        ready(phase).await?;
++        Ok::<(), anyhow::Error>(())
++    }
++    .await;
++    evidence["cleanup"] =
++        json!({"lock_released":rollback.is_ok(),"materializer_restored":restoration.is_ok()});
++    rollback?;
++    restoration?;
++    result?;
++    let registration_after: Value = project.query_one(
++        "SELECT registration FROM catalog.event_registrations WHERE tenant_id=$1 AND package_id=$2 AND registration_id='quality.create_inspection'",
++        &[&TENANT, &OVERLAY_PACKAGE_ID],
++    ).await?.get(0);
++    ensure!(
++        registration_after == evidence["registration"],
++        "post-commit proof changed its registration"
++    );
++    Ok(())
++}
++
++#[tokio::test]
++#[ignore = "requires the disposable Receiving journey after its causal materializer baseline"]
++async fn production_materializer_preserves_replay_and_progress() -> anyhow::Result<()> {
++    let document = JourneyDocument::required()?;
++    let phase = document
++        .postcommit
++        .as_ref()
++        .context("the journey omitted the armed postcommit phase")?;
++    ensure!(
++        phase.context == "kind-wamn-receiving-postcommit"
++            && phase.namespace == "wamn-receiving-postcommit"
++            && phase.materializer_workload == "receiving-materializer"
++            && phase.kubeconfig.is_file(),
++        "post-commit proof requires the exact owned disposable Receiving materializer"
++    );
++    ensure!(
++        phase.source_commit.len() == 40
++            && phase
++                .source_commit
++                .bytes()
++                .all(|byte| byte.is_ascii_hexdigit())
++            && phase.statement_timeout_ms > 0
++            && phase.statement_timeout_ms <= 10_000,
++        "post-commit proof requires source identity and a bounded deployed statement timeout"
++    );
++    ensure!(
++        !phase.evidence_file.exists(),
++        "post-commit evidence must use a fresh output file"
++    );
++    let materializer = document
++        .materializer
++        .as_ref()
++        .context("the journey omitted its materializer baseline")?;
++    let (project, project_task) = connect(&materializer.project_pg_url).await?;
++    let (lock, lock_task) = connect(&materializer.project_pg_url).await?;
++    let mut evidence = json!({"schema":"wamn-receiving-postcommit/v0.1", "source":phase.source_commit,
++        "verdict":"fail", "invariants":["REC-EVENT-REPLAY","REC-POSTCOMMIT-PROGRESS"], "recovery_assumptions":"The owned database, broker, host, and materializer remain available. The poison lock lasts through retry exhaustion."});
++    let result = prove(
++        &document,
++        phase,
++        project.as_ref(),
++        lock.as_ref(),
++        &mut evidence,
++    )
++    .await;
++    project_task.abort();
++    lock_task.abort();
++    match &result {
++        Ok(()) => evidence["verdict"] = json!("pass"),
++        Err(error) => evidence["failure"] = json!(format!("{error:#}")),
++    }
++    std::fs::write(&phase.evidence_file, serde_json::to_vec_pretty(&evidence)?)?;
++    result?;
++    println!(
++        "RECEIVING_POSTCOMMIT_PASS replay_deliveries=2 blocked_handler_attempts=3 dead_letters=1 independent_inspections=1"
++    );
++    Ok(())
++}
+diff --git a/tools/receiving-cluster-journey-run b/tools/receiving-cluster-journey-run
+index aafb3c70..077c6717 100755
+--- a/tools/receiving-cluster-journey-run
++++ b/tools/receiving-cluster-journey-run
+@@ -5,7 +5,7 @@ set -euo pipefail
+ 
+ usage() {
+   cat >&2 <<'EOF'
+-usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--fresh-auth-bench] [--membershipproof] [--session-host-proof] [--fresh-only-proof] [--session-client-proof] [--receiving-correctness] --evidence-dir DIR
++usage: receiving-cluster-journey-run [--apply] [--measure-startup] [--throughput] [--fresh-auth-bench] [--membershipproof] [--session-host-proof] [--fresh-only-proof] [--session-client-proof] [--receiving-correctness] [--receiving-postcommit baseline|additive] --evidence-dir DIR
+ 
+ Without --apply, print the immutable plan and exit.
+ 
+@@ -20,6 +20,8 @@ Without --apply, print the immutable plan and exit.
+                        reachable and unavailable JWKS; cannot combine modes
+   --receiving-correctness Prove command histories, rollback, replay, authorization, and contention
+                          Cannot combine modes. Does not measure performance.
++  --receiving-postcommit BASE Prove unchanged overlay compatibility and materializer progress
++                         BASE is baseline or additive. Cannot combine modes.
+   --fresh-only-proof   Prove direct/nested session refusal, same-human PAT success, and
+                        next-request revocation and prior commits, plus the session-host proof
+   --session-client-proof Prove client login, session use, explicit PAT selection, and
+@@ -41,6 +43,7 @@ throughput=false
+ membershipproof=false
+ session_host_proof=false
+ receiving_correctness=false
++receiving_postcommit=
+ fresh_only_proof=false
+ session_client_proof=false
+ session_host_requested=false
+@@ -57,6 +60,7 @@ while (($#)); do
+     --fresh-only-proof) fresh_only_proof=true; session_host_proof=true; shift ;;
+     --session-client-proof) session_client_proof=true; session_host_proof=true; shift ;;
+     --receiving-correctness) receiving_correctness=true; shift ;;
++    --receiving-postcommit) receiving_postcommit=${2-}; shift 2 ;;
+     --fresh-auth-bench) fresh_auth_bench=true; throughput=true; measure_startup=true; shift ;;
+     --evidence-dir) evidence_dir=${2-}; shift 2 ;;
+     --help|-h) usage; exit 0 ;;
+@@ -83,7 +87,16 @@ if [[ "$receiving_correctness" == true && ( "$membershipproof" == true || "$sess
+   echo "--receiving-correctness cannot combine with other proof or measurement modes" >&2
+   exit 2
+ fi
+-if [[ "$membershipproof" == true || "$session_host_proof" == true || "$receiving_correctness" == true ]]; then
++if [[ -n "$receiving_postcommit" ]]; then
++  case "$receiving_postcommit" in baseline|additive) ;; *)
++    echo "--receiving-postcommit requires baseline or additive" >&2; exit 2 ;;
++  esac
++  if [[ "$membershipproof" == true || "$session_host_proof" == true || "$receiving_correctness" == true || "$measure_startup" == true ]]; then
++    echo "--receiving-postcommit cannot combine with other modes" >&2
++    exit 2
++  fi
++fi
++if [[ "$membershipproof" == true || "$session_host_proof" == true || "$receiving_correctness" == true || -n "$receiving_postcommit" ]]; then
+   standard_images=true
+ fi
+ 
+@@ -116,6 +129,8 @@ short_head=${head:0:12}
+ cluster=wamn-receiving-journey
+ if [[ "$receiving_correctness" == true ]]; then
+   cluster=wamn-receiving-correctness
++elif [[ -n "$receiving_postcommit" ]]; then
++  cluster=wamn-receiving-postcommit
+ fi
+ context=kind-$cluster
+ namespace=$cluster
+@@ -214,7 +229,9 @@ if [[ "$apply" != true ]]; then
+   printf '  cluster/context: %s / %s\n' "$cluster" "$context"
+   printf '  namespace: %s\n' "$namespace"
+   printf '  route host: %s (setup overlay only)\n' "$route_host"
+-  if [[ "$receiving_correctness" == true ]]; then
++  if [[ -n "$receiving_postcommit" ]]; then
++    printf '  order: fresh %s base + unchanged overlay -> thirteen released routes -> CDC + registered materializer -> duplicate handler delivery -> retry exhaustion and independent progress -> exact teardown\n' "$receiving_postcommit"
++  elif [[ "$receiving_correctness" == true ]]; then
+     printf '  order: compile correctness proof -> Dockerfile host + gates -> production admission + release -> deployed HTTP command histories, rollback, replay, authorization, and contention -> exact teardown\n'
+     printf '  correctness: 16 generated histories with seed 7701, explicit histories, and seven boundary cases. No performance measurement.\n'
+   elif [[ "$session_client_proof" == true ]]; then
+@@ -522,7 +539,10 @@ cleanup() {
+   fi
+ 
+   if [[ $status -eq 0 && "$run_complete" == true && "$cleanup_failed" == false ]]; then
+-    if [[ "$receiving_correctness" == true ]]; then
++    if [[ -n "$receiving_postcommit" ]]; then
++      printf 'RECEIVING POSTCOMMIT PASS source=%s namespace=%s base=%s cleanup=pass\n' \
++        "$head" "$namespace" "$receiving_postcommit" >"$evidence_dir/postcommit-journey.receipt"
++    elif [[ "$receiving_correctness" == true ]]; then
+       printf 'RECEIVING CORRECTNESS PASS source=%s namespace=%s generated_cases=16 boundary_cases=7 cleanup=pass\n' \
+         "$head" "$namespace" >"$evidence_dir/receiving-correctness-journey.receipt"
+     elif [[ "$session_client_proof" == true ]]; then
+@@ -561,6 +581,8 @@ trap 'exit 130' HUP INT TERM
+ lock_file=${TMPDIR:-/tmp}/wamn-receiving-cluster-journey.lock
+ if [[ "$receiving_correctness" == true ]]; then
+   lock_file=${TMPDIR:-/tmp}/wamn-receiving-correctness.lock
++elif [[ -n "$receiving_postcommit" ]]; then
++  lock_file=${TMPDIR:-/tmp}/wamn-receiving-postcommit.lock
+ fi
+ exec 9>"$lock_file"
+ if ! flock -n 9; then
+@@ -618,7 +640,7 @@ fi
+ run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+   cargo build --locked -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor
+ export WAMN_IDENTITY_BINARY="$cargo_target_dir/debug/wamn-identity"
+-if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true ]]; then
++if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true && -z "$receiving_postcommit" ]]; then
+   run env CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
+     cargo test --locked --offline -p wamn-proof-integration --test startup_burst_live --no-run
+ fi
+@@ -989,6 +1011,12 @@ if [[ "$fresh_only_proof" == true || "$session_client_proof" == true ]]; then
+   route_phase_test=production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes
+ fi
+ write_journey_document journey_spec "$journey_schema" "$journey_document"
++if [[ -n "$receiving_postcommit" ]]; then
++  amend_journey_document "$journey_schema" "$journey_document" overlay_compatibility \
++    "$(jq -n --arg base "$receiving_postcommit" --arg directory "$work_dir/compatibility-packages" \
++      --arg evidence "$evidence_dir/overlay-compatibility.json" \
++      '{base:$base,package_directory:$directory,evidence_file:$evidence}')"
++fi
+ record_command cargo test "$route_phase_test" \
+   '<journey document with disposable PostgreSQL and OCI inputs redacted>'
+ WAMN_JOURNEY_DOCUMENT="$journey_document" \
+@@ -1180,7 +1208,7 @@ manifest_digest=${digest_lines[0]#*=}
+ 
+ # Reuse the released closure and scoped generations before materializer traffic.
+ # This proves real idle executor probes and shutdown, not queued delivery drain.
+-if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true ]]; then
++if [[ "$measure_startup" != true && "$membershipproof" != true && "$session_host_proof" != true && "$receiving_correctness" != true && -z "$receiving_postcommit" ]]; then
+ record_command executor-native-lifecycle "$cargo_target_dir/debug/wamn-run-worker" \
+   '<private fixture credentials>' "$manifest_digest" SIGTERM SIGINT
+ python3 - "$cargo_target_dir/debug/wamn-run-worker" "$host_secret_directory" \
+@@ -3334,6 +3362,72 @@ run python3 "$repo_root/tools/journey-telemetry-proof" \
+   --namespace "$namespace" --system-namespace "$system_namespace" \
+   --update-trace "$materializer_update_trace" --receipt-trace "$materializer_receipt_trace"
+ 
++if [[ -n "$receiving_postcommit" ]]; then
++  postcommit_nodeport=$work_dir/postcommit-nodeport.json
++  jq -n --arg namespace "$namespace" \
++    --slurpfile slices "$evidence_dir/flow-http-endpointslices.json" \
++    --slurpfile service "$evidence_dir/flow-http-service.json" '
++    $slices[0].items[0] as $slice |
++    {apiVersion:"v1",kind:"List",items:[
++      {apiVersion:"v1",kind:"Service",
++       metadata:{name:"receiving-postcommit-nodeport",namespace:$namespace},
++       spec:{type:"NodePort",ports:[{name:"http",protocol:"TCP",
++         port:$service[0].spec.ports[0].port,targetPort:$slice.ports[0].port}]}},
++      {apiVersion:"discovery.k8s.io/v1",kind:"EndpointSlice",
++       metadata:{name:"receiving-postcommit-nodeport",namespace:$namespace,
++         labels:{"kubernetes.io/service-name":"receiving-postcommit-nodeport"}},
++       addressType:$slice.addressType,ports:$slice.ports,
++       endpoints:[$slice.endpoints[] | {addresses,conditions}]}]}
++  ' >"$postcommit_nodeport"
++  run "${kube[@]}" apply -f "$postcommit_nodeport"
++  "${kube[@]}" -n "$namespace" get service receiving-postcommit-nodeport -o json \
++    >"$evidence_dir/postcommit-service.json"
++  postcommit_port=$(jq -er '.spec.ports[0].nodePort' "$evidence_dir/postcommit-service.json")
++  postcommit_ip=$(docker inspect --format '{{.NetworkSettings.Networks.kind.IPAddress}}' \
++    "$cluster-control-plane")
++  [[ $postcommit_port =~ ^[0-9]{4,5}$ && -n $postcommit_ip ]] || exit 1
++  "${kube[@]}" -n "$namespace" get deployment hostgroup-default -o json \
++    >"$evidence_dir/postcommit-host-configuration.json"
++  postcommit_timeout=$(jq -er '
++    [.spec.template.spec.containers[] | select(.name == "host") |
++      .env[]? | select(.name == "WAMN_PG_STATEMENT_TIMEOUT_MS")] as $values |
++    if ($values | length) == 0 then 5000
++    elif ($values | length) == 1 and ($values[0].value | type) == "string"
++    then ($values[0].value | tonumber)
++    else error("ambiguous host statement timeout") end |
++    select(. > 0 and . <= 10000)
++  ' "$evidence_dir/postcommit-host-configuration.json")
++  amend_journey_document "$journey_schema" "$journey_document" postcommit \
++    "$(jq -n --arg endpoint "http://$postcommit_ip:$postcommit_port" \
++      --arg evidence "$evidence_dir/postcommit.json" --arg kubeconfig "$kubeconfig" \
++      --arg context "$context" --arg namespace "$namespace" \
++      --arg workload "$app_materializer_workload" --arg source "$head" \
++      --argjson timeout "$postcommit_timeout" \
++      '{route_endpoint:$endpoint,evidence_file:$evidence,kubeconfig:$kubeconfig,
++        context:$context,namespace:$namespace,materializer_workload:$workload,
++        source_commit:$source,statement_timeout_ms:$timeout}')"
++  record_command timeout --signal=TERM --kill-after=10s 600s \
++    cargo test route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress
++  timeout --signal=TERM --kill-after=10s 600s \
++    env WAMN_JOURNEY_DOCUMENT="$journey_document" CARGO_TARGET_DIR="$cargo_target_dir" RUSTC_WRAPPER= \
++    cargo test --locked --offline -p wamn-proof-integration --lib \
++    route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress \
++    -- --ignored --exact --nocapture --test-threads=1 \
++    2>&1 | tee "$evidence_dir/postcommit.log"
++  assert_one_test_ran "$evidence_dir/postcommit.log" \
++    production_materializer_preserves_replay_and_progress 'route_authentication_live::postcommit::'
++  [[ $(git rev-parse HEAD) == "$head" ]] || exit 1
++  [[ -z $(git status --porcelain --untracked-files=normal -- . \
++      ':(exclude).beads/issues.jsonl' ':(exclude).beads/interactions.jsonl') ]] || exit 1
++  jq -n --arg source "$head" --arg base "$receiving_postcommit" \
++    '{schema:"wamn-receiving-postcommit/v1",verdict:"pass",source:$source,base:$base,
++      passing_arms:["unchanged-overlay-routes","schema-requirements-observed",
++        "duplicate-handler-delivery","retry-exhaustion-dlq","independent-event-progress"]}' \
++    >"$evidence_dir/verdict.json"
++  run_complete=true
++  exit 0
++fi
++
+ # Full journey only. This fresh process uses the published production HTTP shell
+ # and the existing private authorities. Measurement modes have already exited.
+ startup_private=$work_dir/startup-burst
+diff --git a/tools/receiving-postcommit-proof b/tools/receiving-postcommit-proof
+new file mode 100755
+index 00000000..35152bd2
+--- /dev/null
++++ b/tools/receiving-postcommit-proof
+@@ -0,0 +1,149 @@
++#!/usr/bin/env bash
++# Prove unchanged overlay reuse in two independent Receiving installations.
++set -euo pipefail
++
++usage() {
++  echo 'usage: receiving-postcommit-proof [--apply] --evidence-dir NEW_DIRECTORY' >&2
++}
++apply=false
++evidence_dir=
++while (($#)); do
++  case "$1" in
++    --apply) apply=true; shift ;;
++    --evidence-dir)
++      [[ $# -ge 2 && -n "$2" ]] || { usage; exit 2; }
++      evidence_dir=$2; shift 2 ;;
++    --help|-h) usage; exit 0 ;;
++    *) usage; exit 2 ;;
++  esac
++done
++[[ -n "$evidence_dir" ]] || { usage; exit 2; }
++repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
++cd -- "$repo_root"
++source_head=$(git rev-parse --verify HEAD)
++main_root=$(dirname -- "$(git rev-parse --path-format=absolute --git-common-dir)")
++evidence_dir=$(realpath -m -- "$evidence_dir")
++evidence_root=$main_root/docs/perf/2026.09/receiving-postcommit
++[[ "$evidence_dir" == "$evidence_root/"* && ! -e "$evidence_dir" ]] || {
++  echo "Evidence must name a new directory under $evidence_root/" >&2
++  exit 2
++}
++runner=$repo_root/tools/receiving-cluster-journey-run
++if [[ "$apply" == false ]]; then
++  printf 'Source: %s\n' "$source_head"
++  printf 'Run two independent installations, then compare the unchanged overlay artifacts.\n'
++  for base in baseline additive; do
++    printf '  %q --apply --receiving-postcommit %s --evidence-dir %q\n' \
++      "$runner" "$base" "$evidence_dir/$base"
++  done
++  printf 'Require both post-commit proofs, the ownership refusal, and both resource cleanup results.\n'
++  exit 0
++fi
++
++ensure_source() {
++  [[ $(git rev-parse HEAD) == "$source_head" && -z $(git status --porcelain \
++    --untracked-files=normal -- . ':(exclude).beads/issues.jsonl' \
++    ':(exclude).beads/interactions.jsonl') ]] || {
++    echo 'The proof requires committed source that stays unchanged across both installations.' >&2
++    return 1
++  }
++}
++ensure_source
++mkdir -- "$evidence_dir"
++for base in baseline additive; do
++  ensure_source
++  printf 'Run the %s installation.\n' "$base"
++  if "$runner" --apply --receiving-postcommit "$base" \
++      --evidence-dir "$evidence_dir/$base" 2>&1 | tee "$evidence_dir/$base.log"; then
++    printf '0\n' >"$evidence_dir/$base.exit-code"
++  else
++    status=$?
++    printf '%s\n' "$status" >"$evidence_dir/$base.exit-code"
++    exit "$status"
++  fi
++  ensure_source
++done
++
++python3 - "$evidence_dir" "$source_head" <<'PY'
++import json
++import re
++import sys
++from pathlib import Path
++
++root = Path(sys.argv[1])
++source = sys.argv[2]
++sha256 = re.compile(r"sha256:[0-9a-f]{64}\Z")
++namespace = "wamn-receiving-postcommit"
++
++def require(condition, detail):
++    if not condition:
++        raise SystemExit(detail)
++
++observations = {}
++for base in ("baseline", "additive"):
++    directory = root / base
++    require((root / f"{base}.exit-code").read_text() == "0\n", f"{base} did not exit successfully")
++    cleanup = (directory / "cleanup.receipt").read_text().split()
++    require([item for item in cleanup if item.startswith("verdict=")] == ["verdict=pass"],
++            f"{base} has no exact successful cleanup verdict")
++    require([item for item in cleanup if item.startswith("cluster=")] == [f"cluster={namespace}"],
++            f"{base} cleanup identifies another cluster")
++    expected = f"RECEIVING POSTCOMMIT PASS source={source} namespace={namespace} base={base} cleanup=pass\n"
++    require((directory / "postcommit-journey.receipt").read_text() == expected,
++            f"{base} has no exact successful proof receipt for this source")
++    verdict = json.loads((directory / "verdict.json").read_text())
++    require(verdict == {
++        "schema": "wamn-receiving-postcommit/v1", "verdict": "pass", "source": source, "base": base,
++        "passing_arms": ["unchanged-overlay-routes", "schema-requirements-observed",
++                         "duplicate-handler-delivery", "retry-exhaustion-dlq", "independent-event-progress"],
++    }, f"{base} did not pass every required proof arm")
++    postcommit = json.loads((directory / "postcommit.json").read_text())
++    require(postcommit["schema"] == "wamn-receiving-postcommit/v0.1"
++            and postcommit["source"] == source and postcommit["verdict"] == "pass"
++            and postcommit["cleanup"] == {"lock_released": True, "materializer_restored": True},
++            f"{base} post-commit proof lacks a successful result and resource restoration")
++    document = json.loads((directory / "overlay-compatibility.json").read_text())
++    require(document["case"] == "unchanged-overlay-compatibility" and document["base"] == base
++            and document["stage"] == "installed-schema-observed", f"{base} compatibility observation is incomplete")
++    schema = document["schema_observation"]
++    require(schema["result"] == "satisfied" and all(type(schema[key]) is int and schema[key] > 0
++            for key in ("tables", "fields", "constraints")), f"{base} did not execute every schema observation")
++    files = document["overlay_files"]
++    require(isinstance(files, dict) and "wamn.json" in files and "generated/package-weld.json" in files
++            and all(isinstance(value, str) and sha256.fullmatch(value) for value in files.values()),
++            f"{base} omitted the immutable overlay file identities")
++    for key in ("overlay_component_sha256", "base_initial_migration_sha256", "observed_schema_sha256"):
++        require(isinstance(document[key], str) and sha256.fullmatch(document[key]), f"{base} has invalid {key}")
++    require(document["schema_admission_claim"] is False, "A schema observation cannot claim production admission enforcement")
++    observations[base] = document
++
++baseline, additive = observations["baseline"], observations["additive"]
++for key in ("overlay_files", "overlay_component_sha256", "required_schema_contract"):
++    require(baseline[key] == additive[key], f"The overlay changed between installations: {key}")
++for key in ("base_initial_migration_sha256", "observed_schema_sha256"):
++    require(baseline[key] != additive[key], f"The additive candidate did not change {key}")
++breaking = baseline["breaking"]
++require(breaking["cleanup"] == "database-absent" and breaking["overlay_unchanged"] is True,
++        "The breaking installation lacks cleanup or unchanged overlay evidence")
++require(re.fullmatch(r"receiving_overlay_break_[0-9a-f]{32}", breaking["database"]),
++        "The breaking candidate lacks a separate database identity")
++require(sha256.fullmatch(breaking["base_initial_migration_sha256"]), "The breaking candidate lacks its migration identity")
++require(breaking["refusal"] == {
++    "code": "base-definition-mutation-refused", "schema": "receiving", "relation": "purchase_order",
++    "definition": "acme_inspection_required", "owner": "wamn_receiving", "partial_overlay_state": False,
++}, "The breaking installation did not produce the required ownership refusal")
++result = {
++    "case": "receiving-postcommit-pair", "result": "pass", "source_commit": source,
++    "independent_installations": 2, "overlay_file_count": len(baseline["overlay_files"]),
++    "overlay_component_sha256": baseline["overlay_component_sha256"],
++    "baseline_observed_schema_sha256": baseline["observed_schema_sha256"], "additive_observed_schema_sha256": additive["observed_schema_sha256"],
++    "breaking_refusal": breaking["refusal"], "cleanup": "pass",
++}
++(root / "pair.json").write_text(json.dumps(result, indent=2) + "\n")
++(root / "pair.receipt").write_text(f"RECEIVING POSTCOMMIT PAIR PASS source={source} installations=2 overlay=unchanged breaking=refused cleanup=pass\n")
++PY
++if ! ensure_source; then
++  rm -- "$evidence_dir/pair.json" "$evidence_dir/pair.receipt"
++  exit 1
++fi
++cat -- "$evidence_dir/pair.receipt"

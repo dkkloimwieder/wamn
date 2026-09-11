@@ -1,0 +1,7 @@
+{
+  "scope": "Prepared only. Apply at an inactive source boundary before the restored positive proof.",
+  "path": "tests/integration/src/route_authentication_live/postcommit.rs",
+  "before_sha256": "15b04be59eeda950470da138fb2fe23f5fe46ea0dcb645de4017d12560709e15",
+  "after_sha256": "60f8fc27735b13de2e66a0c36d3659f6e623dfa33715c52badb9abcbf7897a8f",
+  "patch_sha256": "ce6861e120243de49fe892d15ae0358d170ba8bb3313521b6b34bcb987ba766c"
+}

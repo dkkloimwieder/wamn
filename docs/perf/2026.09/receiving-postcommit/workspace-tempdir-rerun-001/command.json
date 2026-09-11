@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "env",
+    "TMPDIR=/home/kaalin/.cache/wamn-lanes/receiving-postcommit-tier-kt3oxuxe",
+    "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/debug/deps/workspace_tiers-1fc3bea20794013f",
+    "--exact",
+    "workspace_tier_helper_runs_safely_outside_repository",
+    "--include-ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910"
+}

@@ -1,0 +1,1 @@
+[{"request_id":"materializer-receipt","value":{"acme_inspection_required":true,"acme_quality_status":"pending","purchase_order_id":"00000000-0000-0000-0000-000000000304","purchase_order_status":"complete","receipt_id":"b8e30ed9-6537-4e1a-97a9-5192a24b8711","row_version":"3"}}]

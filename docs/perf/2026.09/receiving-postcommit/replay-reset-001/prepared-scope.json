@@ -1,0 +1,22 @@
+{
+  "paths": [
+    "packages/client_acme_receiving/command/create_inspection/load_inspection.sql",
+    "packages/client_acme_receiving/generated/contracts/quality/create_inspection.operation.json",
+    "packages/client_acme_receiving/generated/package-weld.json",
+    "packages/client_acme_receiving/generated/platform-policy/data-access.json",
+    "packages/client_acme_receiving/generated/source-map/quality_create_inspection.json",
+    "packages/client_acme_receiving/generated/wamn/quality_create_inspection.rs",
+    "packages/client_acme_receiving/wamn.json"
+  ],
+  "component_sha256": {
+    "wasm32-wasip2/release/http_route.wasm": "33e08d96ece969573bb2dd153b8617d1d0755700fef168372a0d8b88a90b7da8",
+    "wasm32-wasip2/release/materializer.wasm": "c9d206ac4111e613e203988c1317d0596072253e2702504daed20851582ec1ef",
+    "virtualized/std-empty-environment/receiving.wasm": "a092149c1c8df8b4f74babf64122f9747d15d7b1a78b82b35cb6e496f98fd9a1",
+    "virtualized/std-empty-environment/client_acme_receiving.wasm": "566decee50b89abd0c336caed59bc268dcf6f7db5fc18775b8b2809a3ce63e2a"
+  },
+  "changed_components": [
+    "virtualized/std-empty-environment/client_acme_receiving.wasm"
+  ],
+  "base_component_unchanged": true,
+  "source_patch": "source.patch"
+}

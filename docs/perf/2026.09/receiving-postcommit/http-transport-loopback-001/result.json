@@ -1,0 +1,71 @@
+{
+  "scope": "loopback synthetic HTTP transport fixture; no cluster, image, or build",
+  "source": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/tools/receiving-cluster-journey-run",
+  "source_sha256": "bf7063c8a91264cdcfcadc98d28d6ef3de34259b9fc6450418fe38ad1bba1757",
+  "extracted_shell_sha256": "2a1de20c9a8afc89e25e6721294f73b63e8b45f6dd48491e166b61763f304f22",
+  "expected_requests_from": "HEAD:tools/receiving-cluster-journey-run legacy Job payloads",
+  "responses_from": "/home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-009/journey",
+  "cases": [
+    {
+      "case": "positive",
+      "exit_code": 0,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/no-such-route",
+          "host": "receiving.localhost",
+          "response_status": 404
+        },
+        {
+          "method": "POST",
+          "path": "/acme/purchase_order/update",
+          "host": "receiving.localhost",
+          "exact_body": true,
+          "exact_trace": true,
+          "authorization_matches_synthetic_token": true,
+          "private_config_mode": "0o600",
+          "response_status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/acme/receiving/record_receipt",
+          "host": "receiving.localhost",
+          "exact_body": true,
+          "exact_trace": true,
+          "authorization_matches_synthetic_token": true,
+          "private_config_mode": "0o600",
+          "response_status": 200
+        }
+      ],
+      "retained_artifacts_exclude_synthetic_token": true,
+      "no_post_retries": true,
+      "verdict": "pass"
+    },
+    {
+      "case": "update-503-no-retry",
+      "exit_code": 1,
+      "requests": [
+        {
+          "method": "GET",
+          "path": "/no-such-route",
+          "host": "receiving.localhost",
+          "response_status": 404
+        },
+        {
+          "method": "POST",
+          "path": "/acme/purchase_order/update",
+          "host": "receiving.localhost",
+          "exact_body": true,
+          "exact_trace": true,
+          "authorization_matches_synthetic_token": true,
+          "private_config_mode": "0o600",
+          "response_status": 503
+        }
+      ],
+      "retained_artifacts_exclude_synthetic_token": true,
+      "no_post_retries": true,
+      "verdict": "pass"
+    }
+  ],
+  "verdict": "pass"
+}

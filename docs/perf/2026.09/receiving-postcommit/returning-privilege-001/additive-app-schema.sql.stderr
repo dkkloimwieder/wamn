@@ -1,0 +1,2 @@
+psql:/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/deploy/sql/app-schema.sql:155: NOTICE:  42P06: schema "wamn_authority" already exists, skipping
+LOCATION:  CreateSchemaCommand, schemacmds.c:132

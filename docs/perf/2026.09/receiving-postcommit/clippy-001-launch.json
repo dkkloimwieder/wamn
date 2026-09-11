@@ -1,0 +1,21 @@
+{
+  "pid": 2289199,
+  "argv": [
+    "python3",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/tools/capture.py",
+    "--tree",
+    "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910",
+    "--evidence-dir",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/clippy-001",
+    "--",
+    "cargo",
+    "clippy",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-proof-integration",
+    "--lib",
+    "--tests",
+    "--no-deps"
+  ]
+}

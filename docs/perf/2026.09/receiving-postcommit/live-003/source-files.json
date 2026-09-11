@@ -1,0 +1,17 @@
+{
+  "base": "b8c527975028931386cf11849a8e6144e9f14848",
+  "head": "f5cd9e3414b36b3b1aa9a19925d56e3dfd93470b",
+  "files_sha256": {
+    "Cargo.lock": "45692669c2b03b585e0091c2a175255a0b5bb5e7e6edfd0533e08131eb40c9d8",
+    "docs/operations/build-and-test.md": "bc425d6d14cfb267be60143312d0e9e81fb1c2de783e75a4e1038e8d35524bc3",
+    "docs/poc/wamn_receiving_layered_application_poc_scenario.md": "a58fd0a14bb9bd6cc86bd2e54694bce9b23b73ca1718101a1a72bcebac0e59ff",
+    "tests/integration/Cargo.toml": "ad018d9091c9413614b0543b93d86c807a5a9ef4472af361f2f195cf24f2a7dd",
+    "tests/integration/schema/wamn-journey.schema.json": "8e3737180655fe9d6bcfd6e5cebf21e5a29e95ff4d07b5b9203d8c9b876396fc",
+    "tests/integration/src/route_authentication_live.rs": "91032a38f43156a2601774f01cf15ae4337b6436ce9ef0487ddfda0acd940540",
+    "tests/integration/src/route_authentication_live/overlay_compatibility.rs": "7b01060f94b9abb1dfc010d495fa644d1a8dae90216758884deef1cfcc229829",
+    "tests/integration/src/route_authentication_live/postcommit.rs": "60f8fc27735b13de2e66a0c36d3659f6e623dfa33715c52badb9abcbf7897a8f",
+    "tools/receiving-cluster-journey-run": "bf7063c8a91264cdcfcadc98d28d6ef3de34259b9fc6450418fe38ad1bba1757",
+    "tools/receiving-postcommit-proof": "c32093a20269315469c626c776482aa663c97f48bcb3c73b23149fcf8493eab4"
+  },
+  "patch_sha256": "47cd7ee0cd87482a7a77abeace2c25efef703d978a4bb6fda49ef0abbdaf9501"
+}

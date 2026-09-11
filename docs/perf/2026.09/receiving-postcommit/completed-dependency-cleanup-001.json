@@ -1,0 +1,8 @@
+{
+  "issue": "wamn-10yt.81",
+  "published_commit": "ccd3ac401f7be09ddca39d43b727dfa092297db5",
+  "removed_worktree": "/home/kaalin/.cache/wamn-lanes/receiving-update-projection-20260910",
+  "branch_preserved": "lane/receiving-update-projection-20260910",
+  "cache_transferred_to_active_issue": true,
+  "git_and_dolt_publication_verified": true
+}

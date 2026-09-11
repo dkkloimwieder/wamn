@@ -1,0 +1,13 @@
+{
+  "schema": "wamn-receiving-postcommit/v1",
+  "verdict": "pass",
+  "source": "95dc61c1fe2d1ec624f899aa89a63da5c72abe0d",
+  "base": "baseline",
+  "passing_arms": [
+    "unchanged-overlay-routes",
+    "schema-requirements-observed",
+    "duplicate-handler-delivery",
+    "retry-exhaustion-dlq",
+    "independent-event-progress"
+  ]
+}

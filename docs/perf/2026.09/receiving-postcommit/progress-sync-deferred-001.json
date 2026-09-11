@@ -1,0 +1,9 @@
+{
+  "issue": "wamn-10yt.78",
+  "note_saved": true,
+  "push_executed": false,
+  "command": "env GIT_SSH_COMMAND=<bounded SSH options> timeout --kill-after=10s 110 bd dolt push",
+  "automatic_review_reason": "Full sensitive Beads database and memories would be published before issue .78 completion; review treats user authorization as conditional on completion.",
+  "next_sync_condition": "Complete issue .78, then publish the full database under the existing explicit authorization. No intermediate retry or proxy requested.",
+  "implementation_continues": true
+}

@@ -1,0 +1,28 @@
+2026-09-10T21:47:56Z curl --disable --version 
+2026-09-10T21:47:56Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target RUSTC_WRAPPER= /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/tools/build-components m1 
+2026-09-10T21:47:59Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target RUSTC_WRAPPER= cargo build --locked -p wamn-ctl -p wamn-identity -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor 
+2026-09-10T21:48:00Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/Dockerfile --target host --tag wamn-host:receiving-95dc61c1fe2d-2579720-release --label wamn.dev/source-head=95dc61c1fe2d1ec624f899aa89a63da5c72abe0d --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910 
+2026-09-10T21:48:00Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/Dockerfile --target gates --tag wamn-gates:receiving-95dc61c1fe2d-2579720-release --label wamn.dev/source-head=95dc61c1fe2d1ec624f899aa89a63da5c72abe0d --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910 
+2026-09-10T21:48:00Z kind create cluster --name wamn-receiving-postcommit --config /tmp/tmp.9kIH6YmjHw/kind-config.yaml --kubeconfig /tmp/tmp.9kIH6YmjHw/kubeconfig 
+2026-09-10T21:48:20Z kubectl --kubeconfig /tmp/tmp.9kIH6YmjHw/kubeconfig --context kind-wamn-receiving-postcommit wait --for=condition=Ready nodes --all --timeout=180s 
+2026-09-10T21:48:34Z kubectl --kubeconfig /tmp/tmp.9kIH6YmjHw/kubeconfig --context kind-wamn-receiving-postcommit create namespace wamn-receiving-postcommit 
+2026-09-10T21:48:34Z kind load docker-image wamn-host:receiving-95dc61c1fe2d-2579720-release --name wamn-receiving-postcommit 
+2026-09-10T21:48:39Z kind load docker-image wamn-gates:receiving-95dc61c1fe2d-2579720-release --name wamn-receiving-postcommit 
+2026-09-10T21:48:51Z htpasswd \<credential-bearing\ arguments\ redacted\> 
+2026-09-10T21:48:51Z postgres \<credential-bearing\ arguments\ redacted\> 
+2026-09-10T21:48:51Z docker run --detach --name wamn-receiving-registry-95dc61c1fe2d-2579720 --network kind --env REGISTRY_AUTH=htpasswd --env REGISTRY_AUTH_HTPASSWD_REALM=WAMN\ Receiving\ cluster\ journey --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd --volume /tmp/tmp.9kIH6YmjHw/htpasswd:/auth/htpasswd:ro registry:2 
+2026-09-10T21:48:52Z docker run --detach --name wamn-receiving-nats-95dc61c1fe2d-2579720 --network kind nats:2.10-alpine --jetstream --store_dir /data --http_port 8222 
+2026-09-10T21:48:54Z psql \<owned\ PostgreSQL\ administrator\> CREATE\ DATABASE\ wamn_system 
+2026-09-10T21:48:54Z cargo test production_two_package_release_serves_all_thirteen_pat_routes \<journey\ document\ with\ disposable\ PostgreSQL\ and\ OCI\ inputs\ redacted\> 
+2026-09-10T21:49:21Z kubectl --kubeconfig /tmp/tmp.9kIH6YmjHw/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit get deployment hostgroup-default -o json 
+2026-09-10T21:49:21Z kubectl --kubeconfig /tmp/tmp.9kIH6YmjHw/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit get pods -o json 
+2026-09-10T21:49:21Z kubectl --kubeconfig /tmp/tmp.9kIH6YmjHw/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit get events -o json 
+2026-09-10T21:49:21Z kubectl --kubeconfig /tmp/tmp.9kIH6YmjHw/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit get secrets -o name 
+2026-09-10T21:49:21Z kubectl --kubeconfig /tmp/tmp.9kIH6YmjHw/kubeconfig --context kind-wamn-receiving-postcommit -n wamn-receiving-postcommit get jobs -o json 
+2026-09-10T21:49:21Z kind delete cluster --name wamn-receiving-postcommit --kubeconfig /tmp/tmp.9kIH6YmjHw/kubeconfig 
+2026-09-10T21:49:22Z docker rm --force --volumes wamn-receiving-pg18-95dc61c1fe2d-2579720 
+2026-09-10T21:49:22Z docker rm --force --volumes wamn-receiving-registry-95dc61c1fe2d-2579720 
+2026-09-10T21:49:23Z docker rm --force --volumes wamn-receiving-nats-95dc61c1fe2d-2579720 
+2026-09-10T21:49:23Z docker image rm wamn-gates:receiving-95dc61c1fe2d-2579720-release 
+2026-09-10T21:49:23Z docker image rm wamn-host:receiving-95dc61c1fe2d-2579720-release 
+2026-09-10T21:49:23Z rm -rf -- /tmp/tmp.9kIH6YmjHw 
