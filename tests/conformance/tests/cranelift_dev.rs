@@ -338,7 +338,7 @@ fn stable_defaults_and_shipping_command_surfaces_exclude_cranelift() {
     }
 
     let mut command_surfaces = Vec::new();
-    for path in ["architecture", "components", "deploy", "tools"] {
+    for path in ["architecture", "apps", "deploy", "tools"] {
         text_files(&root.join(path), &mut command_surfaces);
     }
     command_surfaces.retain(|path| path != &root.join(HELPER));

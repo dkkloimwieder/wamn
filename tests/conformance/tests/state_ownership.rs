@@ -361,7 +361,7 @@ fn validate_principals(repository: &Path, manifest: &Manifest) -> Result<(), Str
         validate_repository_path(repository, &principal.path, &format!("principal `{id}`"))?;
         if !matches!(
             first_component(&principal.path),
-            Some("crates" | "services" | "components" | "deploy")
+            Some("crates" | "services" | "apps" | "deploy")
         ) {
             return Err(format!(
                 "principal `{id}` path `{}` is outside production ownership roots",
@@ -790,7 +790,7 @@ fn extract_create_tables(source: &str) -> BTreeSet<String> {
 }
 
 fn validate_scan_policy(repository: &Path, manifest: &Manifest) -> Result<(), String> {
-    let expected_roots = ["components", "crates", "deploy/sql", "services"];
+    let expected_roots = ["apps", "crates", "deploy/sql", "services"];
     let actual_roots: BTreeSet<&str> = manifest
         .scan_policy
         .roots
@@ -2301,11 +2301,8 @@ fn the_generic_copy_channel_declares_why_it_authors_nothing() {
 /// The two session claims wamn-0h0g.22.23 measured a guest session can forge.
 const SESSION_FORGEABLE_CLAIMS: [&str; 2] = ["app.role", "app.user_id"];
 
-/// Scanned for the claim fence on top of the manifest's production roots.
-/// `packages` is the developer data-access surface of the wamn-0h0g.22 epic and
-/// the first place a per-user RLS policy would land, so the fence has to see it
-/// even though no static writer lives there.
-const CLAIM_FENCE_EXTRA_ROOTS: [&str; 1] = ["packages"];
+/// App data-access SQL must remain visible to the claim fence.
+const CLAIM_FENCE_EXTRA_ROOTS: [&str; 1] = ["apps"];
 
 /// Every `current_setting` read of a [`SESSION_FORGEABLE_CLAIMS`] entry in
 /// `sql`, as `(claim, call)`.
