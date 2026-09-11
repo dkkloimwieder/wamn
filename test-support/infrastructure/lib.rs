@@ -4,6 +4,7 @@
 
 pub mod ctl_process;
 pub mod declarations;
+pub mod platform;
 
 pub mod rendering;
 pub mod scratch;
