@@ -29,7 +29,7 @@ const OCCURRED_AT: &str = "2026-09-09T12:00:00.000000Z";
 // Secrets cross only through this private file. The evidence excludes them.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Inputs {
+pub(crate) struct Inputs {
     project_pg_url: String,
     route_endpoint: String,
     route_host: String,
@@ -906,6 +906,10 @@ fn production_receiving_command_histories() -> Result<()> {
     let path = std::env::var_os("WAMN_RECEIVING_CORRECTNESS_DOCUMENT")
         .context("WAMN_RECEIVING_CORRECTNESS_DOCUMENT must name the private fixture document")?;
     let inputs: Inputs = serde_json::from_slice(&std::fs::read(path)?)?;
+    assert_histories(inputs)
+}
+
+pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
     ensure!(
         (1..=64).contains(&inputs.cases),
         "case count must be within 1..=64"
