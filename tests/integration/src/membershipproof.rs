@@ -448,7 +448,7 @@ mod tests {
     #[test]
     fn permission_uses_the_generated_canonical_operation_grant() {
         let contract: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../packages/receiving/generated/contracts/purchase_order/get.operation.json"
+            "../../../apps/wamn_receiving/generated/contracts/purchase_order/get.operation.json"
         ))
         .expect("parse the generated purchase-order/get contract");
         assert_eq!(contract["grant"], OPERATION_GRANT);

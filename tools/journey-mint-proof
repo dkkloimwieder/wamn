@@ -8,10 +8,10 @@ repo_root=${1:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}
 source "$repo_root/tools/journey-mint.sh"
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 failures=0
-WMS_TPL=$repo_root/packages/wms/publication/components/wms.json.in
-LABEL_TPL=$repo_root/components/no-std/label-render/declaration.json.in
-BLOB_TPL=$repo_root/components/execution/blob-put/declaration.json.in
-WIRING=$repo_root/packages/wms/publication/wirings/inventory_move_and_label.json
+WMS_TPL=$repo_root/apps/wamn_wms/publication/components/wms.json.in
+LABEL_TPL=$repo_root/apps/platform/no-std/label-render/declaration.json.in
+BLOB_TPL=$repo_root/apps/platform/execution/blob-put/declaration.json.in
+WIRING=$repo_root/apps/wamn_wms/publication/wirings/inventory_move_and_label.json
 
 check() {
   if [[ $2 -eq 0 ]]; then printf '  ok    %s\n' "$1"

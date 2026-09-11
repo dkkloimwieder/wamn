@@ -70,7 +70,7 @@ fn supplier_omission_stays_absent_while_explicit_null_is_refused() {
         },
     ];
     let attachments: Value = serde_json::from_str(include_str!(
-        "../../../../packages/receiving/publication/attachments.json"
+        "../../../../apps/wamn_receiving/publication/attachments.json"
     ))
     .expect("parse Receiving publication");
     let schema = &attachments["purchase-order-update-http"]["definition"]["input-schema"];

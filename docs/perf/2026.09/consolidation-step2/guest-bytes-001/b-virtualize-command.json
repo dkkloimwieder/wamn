@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "./tools/build-components",
+    "virtualize-only",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/guest-bytes-001/b-all.json"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-bytes-b-20260911",
+  "disk_free_bytes_after": 290585796608,
+  "ended_utc": "2026-09-11T13:11:06.154732+00:00",
+  "environment": {
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "CARGO_TARGET_DIR": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-bytes-b-20260911/target/guest-digest-all",
+    "RUSTC_WORKSPACE_WRAPPER": "",
+    "RUSTC_WRAPPER": "",
+    "RUSTFLAGS": null
+  },
+  "exit_code": 0,
+  "seconds": 70.374,
+  "started_utc": "2026-09-11T13:09:55.780702+00:00",
+  "stderr": "b-virtualize-stderr.log",
+  "stdout": "b-virtualize.log"
+}

@@ -1799,12 +1799,12 @@ fn missing_scan_exclusion_path_is_rejected() {
     let mut manifest = read_manifest(&repository);
     manifest.scan_policy.exclusions.push(ScanExclusion {
         kind: "path-prefix".to_string(),
-        value: "components/does-not-exist".to_string(),
+        value: "apps/does-not-exist".to_string(),
         source_class: "mutation".to_string(),
     });
     let error = validate_scan_policy(&repository, &manifest).unwrap_err();
     assert!(
-        error.contains("scan exclusion path `components/does-not-exist` does not exist"),
+        error.contains("scan exclusion path `apps/does-not-exist` does not exist"),
         "{error}"
     );
 }
@@ -2056,11 +2056,11 @@ fn producer_side_direct_run_admission_is_rejected() {
             "INSERT INTO wamn_run.runs (tenant_id, run_id) VALUES ('t1', 'bypass')",
         ),
         (
-            "components/rogue-producer/src/lib.rs",
+            "apps/rogue-producer/src/lib.rs",
             "INSERT INTO wamn_run.run_queue (tenant_id, run_id) VALUES ('t1', 'bypass')",
         ),
         (
-            "components/rogue-producer/src/lib.rs",
+            "apps/rogue-producer/src/lib.rs",
             "UPDATE wamn_run.run_queue SET attempts=attempts+1 WHERE run_id='bypass'",
         ),
     ] {
@@ -2351,7 +2351,7 @@ fn forgeable_claim_reads(sql: &str) -> Vec<(&'static str, String)> {
 /// prerequisite instead of one discovered under schedule pressure.
 ///
 /// The subject is production SQL TEXT: the `CREATE POLICY` DDL of
-/// `deploy/sql/*.sql`, the package SQL under `packages/`, and the SQL string
+/// `deploy/sql/*.sql`, the package SQL under `apps/`, and the SQL string
 /// literals of production Rust — which is where this repository's run-plane
 /// policies actually live (`crates/schema/control/src/run_plane.rs` emits
 /// `CREATE POLICY` from a literal), so the Rust half is a source scan and there

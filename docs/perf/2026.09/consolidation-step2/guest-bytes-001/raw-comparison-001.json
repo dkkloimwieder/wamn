@@ -1,0 +1,11 @@
+{
+  "passed": true,
+  "count": 14,
+  "missing_from_b": [],
+  "missing_from_a": [],
+  "different": [],
+  "workspace_counts": {
+    "apps/Cargo.toml": 11,
+    "apps/platform/no-std/Cargo.toml": 3
+  }
+}

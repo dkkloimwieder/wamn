@@ -378,7 +378,7 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
     );
 
     apply_package::run(ApplyPackageArgs {
-        package: repository.join("packages/receiving"),
+        package: repository.join("apps/wamn_receiving"),
         database_url: url.to_string(),
         tenant: "protected-relation-audit".to_string(),
     })

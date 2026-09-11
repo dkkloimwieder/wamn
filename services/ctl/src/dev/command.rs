@@ -762,14 +762,14 @@ mod tests {
             "--config",
             "dev.json",
             "--overlay-root",
-            "packages/client_acme_receiving",
+            "apps/client_acme_receiving",
             "--watch",
         ])
         .expect("parse complete command inputs");
         assert_eq!(parsed.args.config, PathBuf::from("dev.json"));
         assert_eq!(
             parsed.args.overlay_root,
-            PathBuf::from("packages/client_acme_receiving")
+            PathBuf::from("apps/client_acme_receiving")
         );
         assert!(parsed.args.watch);
         assert!(parsed.args.tui.is_none());
@@ -780,7 +780,7 @@ mod tests {
             "--config",
             "dev.json",
             "--overlay-root",
-            "packages/client_acme_receiving",
+            "apps/client_acme_receiving",
         ])
         .expect("parse the default one-shot command");
         assert!(!one_shot.args.watch);
@@ -792,7 +792,7 @@ mod tests {
             "--config",
             "dev.json",
             "--overlay-root",
-            "packages/client_acme_receiving",
+            "apps/client_acme_receiving",
             "--tui",
         ])
         .expect("parse the interactive terminal client");
@@ -821,7 +821,7 @@ mod tests {
                 "--config",
                 "dev.json",
                 "--overlay-root",
-                "packages/client_acme_receiving",
+                "apps/client_acme_receiving",
             ];
             argv.extend_from_slice(extra);
             TestCli::try_parse_from(argv).map(|parsed| parsed.args)

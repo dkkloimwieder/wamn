@@ -24,14 +24,14 @@ readonly WAMN_REPOSITORY_ROOT="$(
   pwd -P
 )"
 readonly WAMN_ROOT_MANIFEST="$WAMN_REPOSITORY_ROOT/Cargo.toml"
-readonly WAMN_COMPONENT_MANIFEST="$WAMN_REPOSITORY_ROOT/components/Cargo.toml"
-readonly WAMN_NO_STD_MANIFEST="$WAMN_REPOSITORY_ROOT/components/no-std/Cargo.toml"
+readonly WAMN_COMPONENT_MANIFEST="$WAMN_REPOSITORY_ROOT/apps/Cargo.toml"
+readonly WAMN_NO_STD_MANIFEST="$WAMN_REPOSITORY_ROOT/apps/platform/no-std/Cargo.toml"
 readonly WAMN_CARGO="${CARGO:-cargo}"
 # A no_std guest supplies its own #[panic_handler], and the precompiled core
 # library panics by unwinding, so a NATIVE check of one fails to link with
 # "unwinding panics are not supported without std" unless panics abort. The
 # wasm32-wasip2 checks need no such flag. Measured at 72107f35: without it,
-# the components/no-std native leg exits 101 on both members.
+# the apps/platform/no-std native leg exits 101 on both members.
 readonly WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS='-C panic=abort'
 readonly WAMN_NO_STD_NATIVE_RUSTFLAGS='-C panic=abort'
 

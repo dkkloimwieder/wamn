@@ -29,11 +29,11 @@ async fn connect(url: &str) -> Client {
 }
 
 fn receiving_package_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving")
 }
 
 fn overlay_package_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/client_acme_receiving")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/client_acme_receiving")
 }
 
 fn generation_url(admin_url: &str, role: &str) -> String {

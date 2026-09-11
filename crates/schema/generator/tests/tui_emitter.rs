@@ -12,8 +12,8 @@ fn release(package: &str) -> ClientContractIr {
     let manifest = manifest(package);
     ClientContractIr::from_release(
         &manifest.package.id,
-        &root.join(format!("packages/{package}/generated/contracts")),
-        &root.join(format!("packages/{package}/publication/attachments.json")),
+        &root.join(format!("apps/{package}/generated/contracts")),
+        &root.join(format!("apps/{package}/publication/attachments.json")),
     )
     .unwrap_or_else(|error| panic!("{package} projects: {error}"))
 }
@@ -21,7 +21,7 @@ fn release(package: &str) -> ClientContractIr {
 fn manifest(package: &str) -> PackageManifest {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     PackageManifest::from_slice(
-        &std::fs::read(root.join(format!("packages/{package}/wamn.json"))).unwrap(),
+        &std::fs::read(root.join(format!("apps/{package}/wamn.json"))).unwrap(),
     )
     .unwrap()
 }
@@ -58,18 +58,21 @@ fn spec<'a>(source: &'a str, name: &str) -> &'a str {
 
 #[test]
 fn shipped_operator_crates_are_deterministic_and_cover_each_callable_operation() {
-    for package in ["receiving", "client_acme_receiving", "wms"] {
+    for package in ["wamn_receiving", "client_acme_receiving", "wamn_wms"] {
         let ir = release(package);
-        let selected = component_contract(&ir, &manifest(package), package).unwrap();
+        let manifest = manifest(package);
+        assert_eq!(manifest.components.len(), 1);
+        let component = manifest.components.keys().next().unwrap();
+        let selected = component_contract(&ir, &manifest, component).unwrap();
         assert_eq!(
             selected, ir,
             "the sole declared component owns the existing release"
         );
-        let first = emit_tui(&selected, package).unwrap();
-        let second = emit_tui(&selected, package).unwrap();
+        let first = emit_tui(&selected, component).unwrap();
+        let second = emit_tui(&selected, component).unwrap();
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../..")
-            .join("packages")
+            .join("apps")
             .join(package);
         for file in &first {
             assert_eq!(
@@ -81,7 +84,7 @@ fn shipped_operator_crates_are_deterministic_and_cover_each_callable_operation()
         }
         assert_eq!(first, second, "{package}");
         assert_eq!(first.len(), 4 + ir.models.len());
-        let library = source(&first, &format!("generated/{package}-tui/src/lib.rs"));
+        let library = source(&first, &format!("generated/{component}-tui/src/lib.rs"));
         let calls = library
             .lines()
             .map(str::trim)
@@ -106,7 +109,7 @@ fn shipped_operator_crates_are_deterministic_and_cover_each_callable_operation()
             assert!(library.contains(&format!("#[path = \"../../client/{}.rs\"]", model.name)));
             let screens = source(
                 &first,
-                &format!("generated/{package}-tui/src/screens/{}.rs", model.name),
+                &format!("generated/{component}-tui/src/screens/{}.rs", model.name),
             );
             let module = declared_identifier(library, "pub mod ", &model.name, ';')
                 .expect("the library declares its client module");
@@ -133,8 +136,8 @@ fn shipped_operator_crates_are_deterministic_and_cover_each_callable_operation()
 
 #[test]
 fn two_declared_components_render_only_their_owned_operations() {
-    let ir = release("receiving");
-    let mut value = serde_json::to_value(manifest("receiving")).unwrap();
+    let ir = release("wamn_receiving");
+    let mut value = serde_json::to_value(manifest("wamn_receiving")).unwrap();
     value["connections"]["reporting"] = value["connections"]["postgres"].clone();
     value["components"]["reports"] = json!({"connections":["postgres", "reporting"]});
     for model in value["models"].as_object_mut().unwrap().values_mut() {
@@ -227,7 +230,7 @@ fn workspace_package_and_binary_names_keep_the_reference_crate_distinct() {
 
 #[test]
 fn receiving_replay_and_wms_composed_completion_use_the_served_contract() {
-    let receiving = emit_tui(&release("receiving"), "receiving").unwrap();
+    let receiving = emit_tui(&release("wamn_receiving"), "receiving").unwrap();
     let command = spec(
         source(
             &receiving,
@@ -240,7 +243,7 @@ fn receiving_replay_and_wms_composed_completion_use_the_served_contract() {
     assert!(command.contains("connection_unavailable"));
     assert!(command.contains("direct: true"));
 
-    let ir = release("wms");
+    let ir = release("wamn_wms");
     let files = emit_tui(&ir, "wms").unwrap();
     let command = spec(
         source(&files, "generated/wms-tui/src/screens/inventory.rs"),

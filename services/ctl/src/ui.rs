@@ -72,9 +72,9 @@ fn selected_package(repository: &Path, selector: &str) -> anyhow::Result<PathBuf
             && selector.bytes().all(|byte| byte.is_ascii_lowercase()
                 || byte.is_ascii_digit()
                 || matches!(byte, b'_' | b'-')),
-        "package must name one directory under packages/"
+        "package must name one directory under apps/"
     );
-    let authored = repository.join("packages").join(selector);
+    let authored = repository.join("apps").join(selector);
     let root = authored
         .canonicalize()
         .with_context(|| format!("read package directory {}", authored.display()))?;
@@ -356,7 +356,7 @@ fn scaffold_files(
         interaction_tests(&crate_name, chosen),
     );
     files.insert(PathBuf::from("README.md"), format!(
-        "This crate is developer-owned Rust over the generated {component} screens.\nEdit the copied functions in `src/screens/` to add composition.\nKeep the direct calls in `src/lib.rs` for screens that you do not override.\nTo remove an override, call its function under `generated::screens` again.\n\nTyped API incompatibilities fail this crate's build.\nThis scaffold must pass its declared interaction tests against regenerated bindings.\nThe initial tests cover the selected operation kind and session reset.\nAdd assertions for your custom workflow.\nAn additive field that no assertion reads can pass.\n\nAfter Generate completes, run `cargo test --manifest-path packages/{directory}/ui/Cargo.toml`.\nSupply `WAMN_BASE_URL`, `WAMN_HOST`, `WAMN_TOKEN`, and `WAMN_TARGET_INSTANCE` from the active development session before launch.\n"
+        "This crate is developer-owned Rust over the generated {component} screens.\nEdit the copied functions in `src/screens/` to add composition.\nKeep the direct calls in `src/lib.rs` for screens that you do not override.\nTo remove an override, call its function under `generated::screens` again.\n\nTyped API incompatibilities fail this crate's build.\nThis scaffold must pass its declared interaction tests against regenerated bindings.\nThe initial tests cover the selected operation kind and session reset.\nAdd assertions for your custom workflow.\nAn additive field that no assertion reads can pass.\n\nAfter Generate completes, run `cargo test --manifest-path apps/{directory}/ui/Cargo.toml`.\nSupply `WAMN_BASE_URL`, `WAMN_HOST`, `WAMN_TOKEN`, and `WAMN_TARGET_INSTANCE` from the active development session before launch.\n"
     ));
     Ok(files)
 }
@@ -461,9 +461,9 @@ mod tests {
                 std::process::id(),
                 SEQUENCE.fetch_add(1, Ordering::Relaxed)
             ));
-            fs::create_dir_all(root.join("packages/receiving")).expect("create scaffold fixture");
-            let original = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
-            let package = root.join("packages/receiving");
+            fs::create_dir_all(root.join("apps/wamn_receiving")).expect("create scaffold fixture");
+            let original = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
+            let package = root.join("apps/wamn_receiving");
             fs::copy(original.join("wamn.json"), package.join("wamn.json"))
                 .expect("copy package manifest");
             copy_tree(
@@ -497,7 +497,7 @@ mod tests {
 
     fn args(screen: Option<&str>) -> ScaffoldArgs {
         ScaffoldArgs {
-            package: "receiving".to_owned(),
+            package: "wamn_receiving".to_owned(),
             screen: screen.map(str::to_owned),
             component: None,
         }
@@ -558,7 +558,7 @@ mod tests {
     #[test]
     fn a_model_named_generated_cannot_shadow_the_generated_dependency() {
         let fixture = Fixture::new();
-        let package = fixture.root.join("packages/receiving");
+        let package = fixture.root.join("apps/wamn_receiving");
         let mut ir = ClientContractIr::from_release(
             "receiving",
             &package.join("generated/contracts"),
@@ -573,7 +573,7 @@ mod tests {
         let emitted = emit_tui(&ir, "receiving").expect("generated is a valid model name");
         let screens = screen_functions(&ir, "receiving", &emitted).expect("find emitted screens");
         let files = scaffold_files(
-            "receiving",
+            "wamn_receiving",
             "receiving",
             &ir.package,
             &screens,
@@ -602,13 +602,8 @@ mod tests {
     }
 
     #[test]
-    fn a_renamed_directory_keeps_the_declared_component_dependency() {
+    fn the_app_directory_keeps_the_declared_component_dependency() {
         let fixture = Fixture::new();
-        fs::rename(
-            fixture.root.join("packages/receiving"),
-            fixture.root.join("packages/wamn_receiving"),
-        )
-        .expect("rename the app directory");
         let mut selection = args(None);
         selection.package = "wamn_receiving".to_owned();
         selection.component = Some("receiving".to_owned());
@@ -623,14 +618,14 @@ mod tests {
     #[test]
     fn multiple_components_require_an_explicit_selection() {
         let fixture = Fixture::new();
-        let path = fixture.root.join("packages/receiving/wamn.json");
+        let path = fixture.root.join("apps/wamn_receiving/wamn.json");
         let mut manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         manifest["components"]["reports"] = serde_json::json!({"connections":["postgres"]});
         fs::write(path, serde_json::to_vec(&manifest).unwrap()).unwrap();
         let error = scaffold_package(&fixture.root, &args(None)).unwrap_err();
         assert!(error.to_string().contains("--component NAME"));
-        assert!(!fixture.root.join("packages/receiving/ui").exists());
+        assert!(!fixture.root.join("apps/wamn_receiving/ui").exists());
     }
 
     #[test]
@@ -652,20 +647,20 @@ mod tests {
         fs::write(
             fixture
                 .root
-                .join("packages/receiving/generated/receiving-tui/src/screens/purchase_order.rs"),
+                .join("apps/wamn_receiving/generated/receiving-tui/src/screens/purchase_order.rs"),
             "stale source\n",
         )
         .expect("change the generated source");
         let error = scaffold_package(&fixture.root, &args(None))
             .expect_err("refuse stale generated screens");
         assert!(error.to_string().contains("run Generate"));
-        assert!(!fixture.root.join("packages/receiving/ui").exists());
+        assert!(!fixture.root.join("apps/wamn_receiving/ui").exists());
     }
 
     #[test]
     fn package_and_screen_selection_refuse_traversal_and_missing_names() {
         let fixture = Fixture::new();
-        for package in ["../receiving", "wamn_receiving", "receiving/other"] {
+        for package in ["../receiving", "receiving", "wamn_receiving/other"] {
             let args = ScaffoldArgs {
                 package: package.to_owned(),
                 screen: None,
@@ -680,6 +675,6 @@ mod tests {
         ] {
             assert!(scaffold_package(&fixture.root, &args(Some(screen))).is_err());
         }
-        assert!(!fixture.root.join("packages/receiving/ui").exists());
+        assert!(!fixture.root.join("apps/wamn_receiving/ui").exists());
     }
 }

@@ -161,10 +161,10 @@ app_probe_route=/pallet/get
 app_probe_body='{"id":"'"$app_fixture_pallet_id"'"}'
 app_probe_value_check='.id == "'"$app_fixture_pallet_id"'"'
 # pallet.get is one generated statement on the connection, no transaction --
-# components/data/wms-data/src/pallet.rs -- in every phase alike.
+# apps/wamn_wms/data/src/pallet.rs -- in every phase alike.
 app_probe_statement_spans=1
 # The JetStream stream the platform creates for this application's events.
-# WMS declares none (packages/wms/wamn.json), so nothing flows on it; it is
+# WMS declares none (apps/wamn_wms/wamn.json), so nothing flows on it; it is
 # derived, not spelled, for the same reason as everywhere else.
 app_event_stream=EVT_${app_org}_${app_environment}
 # The CDC materializer workload THIS application deploys. WMS sends nothing
@@ -187,7 +187,7 @@ app_no_std_components=(label_render)
 # no overlay: WMS has no client-specific package the way Receiving does.
 app_package_id=wamn_wms
 app_package_version=1.0.0
-app_package_dir=$repo_root/packages/$app_project
+app_package_dir=$repo_root/apps/$app_package_id
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
 chart_version=2.9.0
 route_host=wms.localhost
@@ -766,8 +766,8 @@ run docker run --detach --name "$registry_container" --network kind \
 # Broker credentials stay in the journey's private directory and Secret mounts.
 event_nats_directory=$work_dir/event-nats
 install -d -m 0700 "$event_nats_directory"
-python3 - "$event_nats_directory" "$repo_root" "$app_org" "$app_project" \
-  "$app_environment" "$app_tenant" "${app_components[@]}" <<'PY_EVENT_NATS'
+python3 - "$event_nats_directory" "$app_org" "$app_project" \
+  "$app_environment" "$app_tenant" "$app_package_dir" <<'PY_EVENT_NATS'
 import json
 import os
 from pathlib import Path
@@ -775,8 +775,8 @@ import re
 import secrets
 import sys
 
-out, root, org, project, environment, tenant, *components = sys.argv[1:]
-out, root = Path(out), Path(root)
+out, org, project, environment, tenant, *app_directories = sys.argv[1:]
+out = Path(out)
 os.umask(0o077)
 if any(not re.fullmatch(r"[A-Za-z0-9_-]+", value)
        for value in (org, project, environment, tenant)):
@@ -784,11 +784,10 @@ if any(not re.fullmatch(r"[A-Za-z0-9_-]+", value)
 stream = f"EVT_{org}_{environment}"
 subject = f"evt.{org}.{project}.{environment}.>"
 tap = f"tap.{tenant}.{project}.{environment}.>"
-# Read registrations from the package declarations of the selected app guests.
-# Data-only guests have no package manifest and declare no registrations.
+# Read registrations from the declarations in the selected app directories.
 durables = []
-for component in components:
-    manifest = root / "packages" / component / "wamn.json"
+for app_directory in app_directories:
+    manifest = Path(app_directory) / "wamn.json"
     if not manifest.is_file():
         continue
     package = json.loads(manifest.read_text())
@@ -1239,7 +1238,7 @@ run_sensitive reconcile-package-data-access "$ctl" reconcile-package-data-access
   --package "$app_package_dir" --database-url "$project_url" --tenant "$app_tenant"
 
 # 3. PUSH the three components under the wms package scope. Each declaration
-#    template carries the placeholders components/no-std/publish.sh renders;
+#    template carries the placeholders apps/platform/no-std/publish.sh renders;
 #    blob-put additionally names the store alias its connection binds to.
 push_journey_component() { # <name> <bytes> <template.in> <store alias or ""> <admitted platform packages...>
   local name=$1 bytes=$2 template=$3 alias=$4; shift 4
@@ -1267,9 +1266,9 @@ declare -A pushed_digest=()
 push_journey_component wms "$component_directory/wms.wasm" \
   "$app_package_dir/publication/components/wms.json.in" "" wamn:node wamn:postgres
 push_journey_component label-render "$no_std_component_directory/label_render.wasm" \
-  "$repo_root/components/no-std/label-render/declaration.json.in" "" wamn:node
+  "$repo_root/apps/platform/no-std/label-render/declaration.json.in" "" wamn:node
 push_journey_component blob-put "$component_directory/blob_put.wasm" \
-  "$repo_root/components/execution/blob-put/declaration.json.in" labels wamn:node wasmcloud:blobstore
+  "$repo_root/apps/platform/execution/blob-put/declaration.json.in" labels wamn:node wasmcloud:blobstore
 
 # 4. GATE every wiring, then AUTHOR it. author-wiring requires a gate report
 #    keyed on the wiring's hash and takes no report argument; the report is

@@ -28,13 +28,13 @@
 //! mutant that leaked the environment WITHOUT using the word `inherit_env`.
 //! Running a guest answers the question the scan only approximated.
 //!
-//! # Why the guest is WAT and not a `components/fixtures` crate
+//! # Why the guest is WAT and not a `apps/platform/fixtures` crate
 //!
 //! `executor_plugin_no_trap_live.rs` records the reason and it applies here
-//! unchanged: a guest compiled from `components/fixtures/` makes this test depend
+//! unchanged: a guest compiled from `apps/platform/fixtures/` makes this test depend
 //! on a `wasm32-wasip2` build of a SEPARATE WORKSPACE, and a test that silently
 //! skips when that artifact is missing is exactly the vacuous pass this file
-//! exists to prevent. The `components/fixtures` guests (`sockprobe`, `busyloop`,
+//! exists to prevent. The `apps/platform/fixtures` guests (`sockprobe`, `busyloop`,
 //! `connection-http-standard`) are driven by IN-CLUSTER gates through mounted
 //! volumes. The hermetic precedent for an in-process guest is component-model WAT
 //! encoded at run time. No cluster, no daemon, no prebuilt artifact, no skip.

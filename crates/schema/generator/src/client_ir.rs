@@ -1,7 +1,7 @@
 //! The canonical client-contract IR.
 //!
 //! ONE generator input: the effective-release contract projection under
-//! `packages/<package>/generated/contracts/`. `wamn.json` is a contributor to
+//! `apps/<package>/generated/contracts/`. `wamn.json` is a contributor to
 //! that projection, not the boundary — the IR describes what a release
 //! actually ships, so a client generated from it cannot drift from the
 //! deployed contract by reading the authoring manifest instead.
@@ -1227,18 +1227,18 @@ mod tests {
     }
 
     fn receiving_contracts() -> std::path::PathBuf {
-        repository_root().join("packages/receiving/generated/contracts")
+        repository_root().join("apps/wamn_receiving/generated/contracts")
     }
 
     fn receiving_ir() -> ClientContractIr {
-        ClientContractIr::from_contract_directory("receiving", &receiving_contracts())
+        ClientContractIr::from_contract_directory("wamn_receiving", &receiving_contracts())
             .expect("the shipped Receiving contract projection reads as an IR")
     }
 
     fn overlay_ir() -> ClientContractIr {
         ClientContractIr::from_contract_directory(
             "client_acme_receiving",
-            &repository_root().join("packages/client_acme_receiving/generated/contracts"),
+            &repository_root().join("apps/client_acme_receiving/generated/contracts"),
         )
         .expect("the shipped Acme overlay projection reads as an IR")
     }
@@ -1312,7 +1312,7 @@ mod tests {
         std::fs::write(&contract, serde_json::to_vec(&document).expect("serialize"))
             .expect("write");
 
-        let refusal = ClientContractIr::from_contract_directory("receiving", &scratch)
+        let refusal = ClientContractIr::from_contract_directory("wamn_receiving", &scratch)
             .expect_err("a public operation with no grant is malformed");
         assert_eq!(refusal.kind, ClientIrErrorKind::MissingMember);
         assert!(refusal.to_string().contains("grant"), "{refusal}");
@@ -1397,13 +1397,13 @@ mod tests {
     }
 
     fn attachments(package: &str) -> std::path::PathBuf {
-        repository_root().join(format!("packages/{package}/publication/attachments.json"))
+        repository_root().join(format!("apps/{package}/publication/attachments.json"))
     }
 
     fn released(package: &str) -> ClientContractIr {
         ClientContractIr::from_release(
             package,
-            &repository_root().join(format!("packages/{package}/generated/contracts")),
+            &repository_root().join(format!("apps/{package}/generated/contracts")),
             &attachments(package),
         )
         .unwrap_or_else(|error| panic!("{package} projects with its routes: {error}"))
@@ -1413,7 +1413,7 @@ mod tests {
     /// release, with its method and its authored template.
     #[test]
     fn an_operation_carries_the_route_its_release_publishes() {
-        let ir = released("receiving");
+        let ir = released("wamn_receiving");
         let get = operation(&ir, "purchase_order", "get");
         let route = get.route.as_ref().expect("the get is exposed");
         assert_eq!(route.method, "POST");
@@ -1425,7 +1425,7 @@ mod tests {
     /// name and must come from the release.
     #[test]
     fn the_overlay_publishes_its_own_path_for_its_own_operation() {
-        let base = released("receiving");
+        let base = released("wamn_receiving");
         let overlay = released("client_acme_receiving");
 
         let base_get = operation(&base, "purchase_order", "get");
@@ -1454,7 +1454,7 @@ mod tests {
     /// route silently going missing cannot pass.
     #[test]
     fn every_shipped_operation_carries_its_published_route() {
-        for package in ["receiving", "client_acme_receiving"] {
+        for package in ["wamn_receiving", "client_acme_receiving"] {
             let ir = released(package);
             let published: BTreeMap<String, (String, String)> =
                 serde_json::from_value::<BTreeMap<String, wamn_catalog::ServingAttachment>>(
@@ -1519,7 +1519,7 @@ mod tests {
         let file = scratch.join("attachments.json");
 
         let mut published: BTreeMap<String, Value> =
-            serde_json::from_value(read_json(&attachments("receiving")).expect("read"))
+            serde_json::from_value(read_json(&attachments("wamn_receiving")).expect("read"))
                 .expect("decode");
         let (_, mut alias) = published
             .iter()
@@ -1530,8 +1530,9 @@ mod tests {
         published.insert("receiving-purchase-order-get-v2".to_owned(), alias);
         std::fs::write(&file, serde_json::to_vec(&published).expect("serialize")).expect("write");
 
-        let refusal = ClientContractIr::from_release("receiving", &receiving_contracts(), &file)
-            .expect_err("one operation at two paths refuses");
+        let refusal =
+            ClientContractIr::from_release("wamn_receiving", &receiving_contracts(), &file)
+                .expect_err("one operation at two paths refuses");
         assert_eq!(refusal.kind, ClientIrErrorKind::AmbiguousRoute);
         assert!(
             refusal.to_string().contains("/v2/purchase_order/get"),
@@ -1555,7 +1556,7 @@ mod tests {
         let file = scratch.join("attachments.json");
 
         let mut published: BTreeMap<String, Value> =
-            serde_json::from_value(read_json(&attachments("receiving")).expect("read"))
+            serde_json::from_value(read_json(&attachments("wamn_receiving")).expect("read"))
                 .expect("decode");
         let first = published.keys().next().cloned().expect("not empty");
         edit(published.get_mut(&first).expect("present"));
@@ -1578,7 +1579,7 @@ mod tests {
             attachment["definition"]["route"]["path"] =
                 Value::String("/purchase_order/{id}".to_owned());
         });
-        let ir = ClientContractIr::from_release("receiving", &receiving_contracts(), &file)
+        let ir = ClientContractIr::from_release("wamn_receiving", &receiving_contracts(), &file)
             .expect("a parameterized route projects");
         let templates: Vec<&str> = ir
             .models
@@ -1612,8 +1613,8 @@ mod tests {
                 .filter(|operation| operation.route.is_some())
                 .count()
         };
-        let published = released("receiving");
-        let ir = ClientContractIr::from_release("receiving", &receiving_contracts(), &file)
+        let published = released("wamn_receiving");
+        let ir = ClientContractIr::from_release("wamn_receiving", &receiving_contracts(), &file)
             .expect("a studio attachment projects");
         // The DELTA is the invariant, not a count: turning exactly one http
         // attachment into a studio one must remove exactly one client route,
@@ -1638,15 +1639,16 @@ mod tests {
         let file = scratch.join("attachments.json");
 
         let mut published: BTreeMap<String, Value> =
-            serde_json::from_value(read_json(&attachments("receiving")).expect("read"))
+            serde_json::from_value(read_json(&attachments("wamn_receiving")).expect("read"))
                 .expect("decode");
         let first = published.keys().next().cloned().expect("not empty");
         published.get_mut(&first).expect("present")["definition"]["route"]["method"] =
             Value::String("post".to_owned());
         std::fs::write(&file, serde_json::to_vec(&published).expect("serialize")).expect("write");
 
-        let refusal = ClientContractIr::from_release("receiving", &receiving_contracts(), &file)
-            .expect_err("a lowercase method refuses");
+        let refusal =
+            ClientContractIr::from_release("wamn_receiving", &receiving_contracts(), &file)
+                .expect_err("a lowercase method refuses");
         assert_eq!(refusal.kind, ClientIrErrorKind::UnnormalizedRoute);
         assert!(refusal.to_string().contains("POST"), "{refusal}");
         let _ = std::fs::remove_dir_all(&scratch);
@@ -1676,7 +1678,7 @@ mod tests {
         let scratch = std::env::temp_dir().join("wamn-client-ir-reordered");
         let _ = std::fs::remove_dir_all(&scratch);
         copy_tree(&receiving_contracts(), &scratch);
-        let straight = ClientContractIr::from_contract_directory("receiving", &scratch)
+        let straight = ClientContractIr::from_contract_directory("wamn_receiving", &scratch)
             .expect("the copied projection reads")
             .canonical_bytes();
 
@@ -1687,7 +1689,7 @@ mod tests {
         // bytes for it would be wrong. A canonical IR cannot notice the
         // former; an IR that merely echoes its input will.
         reverse_unordered_lists_in_tree(&scratch);
-        let reordered = ClientContractIr::from_contract_directory("receiving", &scratch)
+        let reordered = ClientContractIr::from_contract_directory("wamn_receiving", &scratch)
             .expect("the reordered projection reads")
             .canonical_bytes();
 
@@ -1785,7 +1787,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&scratch);
         copy_tree(&receiving_contracts(), &scratch);
 
-        let before = ClientContractIr::from_contract_directory("receiving", &scratch)
+        let before = ClientContractIr::from_contract_directory("wamn_receiving", &scratch)
             .expect("the copied projection reads");
 
         // A new result field on one operation — the smallest contract change a
@@ -1809,7 +1811,7 @@ mod tests {
         )
         .expect("write the changed contract");
 
-        let after = ClientContractIr::from_contract_directory("receiving", &scratch)
+        let after = ClientContractIr::from_contract_directory("wamn_receiving", &scratch)
             .expect("the changed projection reads");
         assert_ne!(
             before.canonical_bytes(),

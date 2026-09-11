@@ -70,7 +70,7 @@
 #   wamn_wash=$(tools/install-wash)
 #   DOCKER_CONFIG="$WAMN_REGISTRY_DOCKER_CONFIG" "$wamn_wash" oci push \
 #     localhost:5000/wamn/materializer:dev \
-#     components/target/wasm32-wasip2/release/materializer.wasm \
+#     apps/target/wasm32-wasip2/release/materializer.wasm \
 #     --ca-path /tmp/wamn-ca.crt
 # WAMN_REGISTRY_DOCKER_CONFIG names a private directory whose config.json
 # contains only the selected registry's push robot credential.

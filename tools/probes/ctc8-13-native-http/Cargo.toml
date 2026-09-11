@@ -21,7 +21,7 @@ serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "sync", "time", "io-util"] }
 tokio-rustls = "0.26"
 wamn-runtime = { path = "../../../crates/platform/runtime" }
-wamn-execution-contract = { path = "../../../components/execution/contract" }
+wamn-execution-contract = { path = "../../../apps/platform/execution/contract" }
 wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "68ebece9c537f8bb4b5c9999f274ec68d60f35a9", default-features = false }
 wasmtime-wasi = "=47.0.4"
 wasmtime-wasi-http = "=47.0.4"

@@ -94,7 +94,7 @@ fn repository_root() -> PathBuf {
 }
 
 fn publication_root() -> PathBuf {
-    repository_root().join("packages/wms/publication")
+    repository_root().join("apps/wamn_wms/publication")
 }
 
 fn read_json(path: &Path) -> Value {
@@ -224,7 +224,7 @@ fn the_move_route_demands_exactly_what_the_command_requires() {
     // The declared contract is the authority: every field the operation's
     // input contract names must be demanded by the route that carries it.
     let contract = read_json(
-        &repository_root().join("packages/wms/generated/contracts/inventory/move.input.json"),
+        &repository_root().join("apps/wamn_wms/generated/contracts/inventory/move.input.json"),
     );
     for field in contract["fields"].as_array().expect("fields") {
         let path = field["path"].as_str().expect("path");

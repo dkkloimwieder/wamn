@@ -1,0 +1,18 @@
+{
+  "crates/schema/generator/tests/client_emitter.rs": "5572fc5135f6a27c8ed37b860a4265e15b4242347c48c6894732b46e192ad751",
+  "crates/schema/generator/tests/client_contract_metadata.rs": "0418fd35bfeb19a2b998a3fc9582953e8924bce2ed944e654280323366151428",
+  "crates/schema/generator/tests/parity.rs": "b19147d3142b87a189d2fee52c54d5ce363561446b7b90fbf94284c28675b0bd",
+  "crates/schema/generator/tests/generation.rs": "3c7a88b483e9f6cd1944d520faf5a2e1d0b5d74a9c51cc6eb28b7d4421c5d283",
+  "crates/schema/generator/tests/tui_emitter.rs": "b0b016f10a8c1d9c3ffda48273a1fbd5ba90dd96109384ded36aac5bea4beaaa",
+  "crates/schema/generator/tests/client_projection.rs": "b7ee89a845b9d6f2c73c492b90d132afda9befbed3f00598aaf1e2e1da52f354",
+  "crates/schema/generator/tests/cursor.rs": "a1d9a3251dfa64bfdba3d7c35dba314e9f0eff91411f15dd2c349bf178dc4d80",
+  "crates/schema/generator/src/client_ir.rs": "e5cee5dc6eaf5f8be8a72452ffe3033f0cb6aee19b1084832132661ac5a14bc2",
+  "crates/schema/generator/src/client_rust.rs": "1d10eb9bba0fd9b426ec16930c2414560c57853cd7f65b831d52724a5b634a09",
+  "crates/schema/generator/src/client_tui.rs": "d39fbf272fb75e2fba0d7849a67bd59d8dbb1ffda0b388e92c8d3bd72431b1d2",
+  "crates/schema/generator/src/materialize.rs": "a9333ca315544ee9dbada3808eea48dcbbb6dae237b55c89a29f0179b4f62a60",
+  "services/ctl/src/ui.rs": "06a38acd9f105dd57d69619464142af1fdc49339af229d7e50a28c455a6a00d5",
+  "services/ctl/src/dev/native_tui.rs": "21d8f01cb101e44c1817c45a9544c37da92d5746c14729ab5f17bae2801624a3",
+  "services/ctl/src/dev/watch.rs": "80ca4b21393c1ae2a5b656d335acc6718da7842e535efaa066d34db4abd2c723",
+  "services/ctl/src/dev/command.rs": "bcd0e19e45268ce593f9123111b9fadd658d31d7560ed2f579a8d248215b4995",
+  "services/ctl/src/dev/coordinator.rs": "5ad931675b948139c307a1db77d5d85157dc7018bb830b86625e2d600aa31ca6"
+}

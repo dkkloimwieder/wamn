@@ -24,7 +24,7 @@ readonly WAMN_REPOSITORY_ROOT="$(
   pwd -P
 )"
 readonly WAMN_ROOT_MANIFEST="$WAMN_REPOSITORY_ROOT/Cargo.toml"
-readonly WAMN_COMPONENT_MANIFEST="$WAMN_REPOSITORY_ROOT/components/Cargo.toml"
+readonly WAMN_COMPONENT_MANIFEST="$WAMN_REPOSITORY_ROOT/apps/Cargo.toml"
 readonly WAMN_CARGO="${CARGO:-cargo}"
 
 readonly -a WAMN_AUTHORING=(

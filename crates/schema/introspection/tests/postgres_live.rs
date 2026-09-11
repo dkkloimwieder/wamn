@@ -45,7 +45,7 @@ impl Fixture {
             role: format!("wamn_intro_migrator_{id}"),
             password: format!("wamn_intro_password_{id}"),
             migration_path: Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../packages/receiving/migrations/0001_initial.sql"),
+                .join("../../../apps/wamn_receiving/migrations/0001_initial.sql"),
         }
     }
 }

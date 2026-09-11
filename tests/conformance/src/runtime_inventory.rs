@@ -425,7 +425,7 @@ fn deployed_workloads_preserve_runtime_policy() {
 #[test]
 fn materializer_keeps_its_command_export() {
     let root = repository_root();
-    let component = root.join("components/execution/materializer");
+    let component = root.join("apps/platform/execution/materializer");
     assert!(
         component.join("src/main.rs").is_file(),
         "materializer must remain a command component"

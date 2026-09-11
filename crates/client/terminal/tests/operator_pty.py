@@ -50,7 +50,7 @@ def require(condition, message):
 
 
 def check_descriptors(root):
-    package = root / "packages/receiving"
+    package = root / "apps/wamn_receiving"
     contracts = package / "generated/contracts/location"
     operation = json.loads((contracts / "list.operation.json").read_text())
     result = json.loads((contracts / "list.result.json").read_text())

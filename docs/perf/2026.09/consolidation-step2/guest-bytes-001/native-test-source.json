@@ -1,0 +1,12 @@
+{
+  "native_root": "/home/kaalin/dev/wamn",
+  "commit": "411ab2c42ab69726691a073d3644eea5ecb5d427",
+  "test_path": "tests/conformance/tests/guest_workspace_closure.rs",
+  "native_test_sha256": "c48252692c19ed7317cc7c92fffedb59b4510f94cfbf2ccb6c05ca5874f32b2e",
+  "frozen_test_sha256": "a4d7930fe90aa64d716c3a26148db894ae2121f23f54a304d6db043b22fa0409",
+  "only_difference": "The guest workspace path constant changed. It is used by another test; the three selected runs read only their supplied artifact paths and plans.",
+  "selected_test_bodies_and_helpers_identical": true,
+  "scope": "Only the three existing exact comparison runs are authorized here. This is not an integrated workspace test run.",
+  "native_test_sha256_after": "c48252692c19ed7317cc7c92fffedb59b4510f94cfbf2ccb6c05ca5874f32b2e",
+  "unchanged_during_native_comparisons": true
+}

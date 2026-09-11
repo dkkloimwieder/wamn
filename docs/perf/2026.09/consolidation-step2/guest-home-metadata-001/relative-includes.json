@@ -1,0 +1,536 @@
+[
+  {
+    "file": "apps/wamn_receiving/component/src/lib.rs",
+    "literal": "../data/wit",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_receiving/data/wit"
+  },
+  {
+    "file": "apps/wamn_wms/component/src/lib.rs",
+    "literal": "../data/wit",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_wms/data/wit"
+  },
+  {
+    "file": "apps/client_acme_receiving/component/src/lib.rs",
+    "literal": "../../wamn_receiving/data/wit/deps/wamn-node",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_receiving/data/wit/deps/wamn-node"
+  },
+  {
+    "file": "apps/client_acme_receiving/component/src/lib.rs",
+    "literal": "../../wamn_receiving/data/wit/deps/wamn-postgres",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_receiving/data/wit/deps/wamn-postgres"
+  },
+  {
+    "file": "apps/wamn_receiving/data/src/error.rs",
+    "literal": "../generated/contracts",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_receiving/generated/contracts"
+  },
+  {
+    "file": "apps/wamn_receiving/data/src/error.rs",
+    "literal": "../generated/contracts/purchase_order/update.errors.json",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_receiving/generated/contracts/purchase_order/update.errors.json"
+  },
+  {
+    "file": "apps/wamn_receiving/data/src/generated.rs",
+    "literal": "/../generated/wamn/location_list.rs",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_receiving/generated/wamn/location_list.rs"
+  },
+  {
+    "file": "apps/wamn_receiving/data/src/generated.rs",
+    "literal": "/../generated/wamn/purchase_order.rs",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_receiving/generated/wamn/purchase_order.rs"
+  },
+  {
+    "file": "apps/wamn_receiving/data/src/generated.rs",
+    "literal": "/../generated/wamn/receipt.rs",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_receiving/generated/wamn/receipt.rs"
+  },
+  {
+    "file": "apps/wamn_receiving/data/src/generated.rs",
+    "literal": "/../generated/wamn/receiving_record_receipt.rs",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_receiving/generated/wamn/receiving_record_receipt.rs"
+  },
+  {
+    "file": "apps/wamn_receiving/data/src/generated.rs",
+    "literal": "/../generated/wamn/receiving_load_receipt_screen.rs",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_receiving/generated/wamn/receiving_load_receipt_screen.rs"
+  },
+  {
+    "file": "apps/wamn_wms/data/src/error.rs",
+    "literal": "../generated/contracts",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_wms/generated/contracts"
+  },
+  {
+    "file": "apps/wamn_wms/data/src/generated.rs",
+    "literal": "/../generated/wamn/inventory_adjust.rs",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_wms/generated/wamn/inventory_adjust.rs"
+  },
+  {
+    "file": "apps/wamn_wms/data/src/generated.rs",
+    "literal": "/../generated/wamn/inventory_aggregate.rs",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_wms/generated/wamn/inventory_aggregate.rs"
+  },
+  {
+    "file": "apps/wamn_wms/data/src/generated.rs",
+    "literal": "/../generated/wamn/inventory_merge.rs",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_wms/generated/wamn/inventory_merge.rs"
+  },
+  {
+    "file": "apps/wamn_wms/data/src/generated.rs",
+    "literal": "/../generated/wamn/inventory_move.rs",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_wms/generated/wamn/inventory_move.rs"
+  },
+  {
+    "file": "apps/wamn_wms/data/src/generated.rs",
+    "literal": "/../generated/wamn/inventory_split.rs",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_wms/generated/wamn/inventory_split.rs"
+  },
+  {
+    "file": "apps/wamn_wms/data/src/generated.rs",
+    "literal": "/../generated/wamn/pallet.rs",
+    "anchor": "manifest",
+    "resolves": "apps/wamn_wms/generated/wamn/pallet.rs"
+  },
+  {
+    "file": "apps/client_acme_receiving/data/src/error.rs",
+    "literal": "../generated/contracts",
+    "anchor": "manifest",
+    "resolves": "apps/client_acme_receiving/generated/contracts"
+  },
+  {
+    "file": "apps/client_acme_receiving/data/src/error.rs",
+    "literal": "../generated/contracts/purchase_order/update.errors.json",
+    "anchor": "manifest",
+    "resolves": "apps/client_acme_receiving/generated/contracts/purchase_order/update.errors.json"
+  },
+  {
+    "file": "apps/client_acme_receiving/data/src/generated.rs",
+    "literal": "/../generated/wamn/purchase_order.rs",
+    "anchor": "manifest",
+    "resolves": "apps/client_acme_receiving/generated/wamn/purchase_order.rs"
+  },
+  {
+    "file": "apps/client_acme_receiving/data/src/generated.rs",
+    "literal": "/../generated/wamn/quality_approve_inspection.rs",
+    "anchor": "manifest",
+    "resolves": "apps/client_acme_receiving/generated/wamn/quality_approve_inspection.rs"
+  },
+  {
+    "file": "apps/client_acme_receiving/data/src/generated.rs",
+    "literal": "/../generated/wamn/quality_create_inspection.rs",
+    "anchor": "manifest",
+    "resolves": "apps/client_acme_receiving/generated/wamn/quality_create_inspection.rs"
+  },
+  {
+    "file": "apps/client_acme_receiving/data/src/generated.rs",
+    "literal": "/../generated/wamn/quality_load_purchase_order_detail.rs",
+    "anchor": "manifest",
+    "resolves": "apps/client_acme_receiving/generated/wamn/quality_load_purchase_order_detail.rs"
+  },
+  {
+    "file": "apps/client_acme_receiving/data/src/generated.rs",
+    "literal": "/../generated/wamn/receiving_record_receipt.rs",
+    "anchor": "manifest",
+    "resolves": "apps/client_acme_receiving/generated/wamn/receiving_record_receipt.rs"
+  },
+  {
+    "file": "apps/platform/data/postgres-sqlx/tests/wit_coherence.rs",
+    "literal": "../wit/deps/wamn-postgres/package.wit",
+    "anchor": "source",
+    "resolves": "apps/platform/data/postgres-sqlx/wit/deps/wamn-postgres/package.wit"
+  },
+  {
+    "file": "apps/platform/data/postgres-sqlx/tests/wit_coherence.rs",
+    "literal": "../../../execution/materializer/wit/deps/wamn-postgres/package.wit",
+    "anchor": "source",
+    "resolves": "apps/platform/execution/materializer/wit/deps/wamn-postgres/package.wit"
+  },
+  {
+    "file": "apps/platform/fixtures/std-virtualization-probe/src/lib.rs",
+    "literal": "../../no-std/http-request/wit",
+    "anchor": "manifest",
+    "resolves": "apps/platform/no-std/http-request/wit"
+  },
+  {
+    "file": "apps/platform/no-std/http-request/src/lib.rs",
+    "literal": "../../guest_runtime.rs",
+    "anchor": "source",
+    "resolves": "apps/platform/no-std/guest_runtime.rs"
+  },
+  {
+    "file": "apps/platform/no-std/label-render/src/lib.rs",
+    "literal": "../../guest_runtime.rs",
+    "anchor": "source",
+    "resolves": "apps/platform/no-std/guest_runtime.rs"
+  },
+  {
+    "file": "apps/platform/no-std/transform/src/lib.rs",
+    "literal": "../../guest_runtime.rs",
+    "anchor": "source",
+    "resolves": "apps/platform/no-std/guest_runtime.rs"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_adjust.rs",
+    "literal": "../../command/inventory_adjust/claim_command.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_adjust/claim_command.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_adjust.rs",
+    "literal": "../../command/inventory_adjust/finalize_command.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_adjust/finalize_command.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_adjust.rs",
+    "literal": "../../command/inventory_adjust/find_replay.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_adjust/find_replay.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_adjust.rs",
+    "literal": "../../command/inventory_adjust/insert_movement.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_adjust/insert_movement.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_adjust.rs",
+    "literal": "../../command/inventory_adjust/lock_pallet.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_adjust/lock_pallet.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_adjust.rs",
+    "literal": "../../command/inventory_adjust/set_quantity.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_adjust/set_quantity.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_adjust.rs",
+    "literal": "../../command/inventory_adjust/touch_pallet.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_adjust/touch_pallet.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_aggregate.rs",
+    "literal": "../../query/inventory_aggregate.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/query/inventory_aggregate.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_merge.rs",
+    "literal": "../../command/inventory_merge/add_to_target.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_merge/add_to_target.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_merge.rs",
+    "literal": "../../command/inventory_merge/claim_command.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_merge/claim_command.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_merge.rs",
+    "literal": "../../command/inventory_merge/consume_source.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_merge/consume_source.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_merge.rs",
+    "literal": "../../command/inventory_merge/finalize_command.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_merge/finalize_command.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_merge.rs",
+    "literal": "../../command/inventory_merge/find_replay.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_merge/find_replay.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_merge.rs",
+    "literal": "../../command/inventory_merge/insert_movement.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_merge/insert_movement.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_merge.rs",
+    "literal": "../../command/inventory_merge/lock_both_pallets.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_merge/lock_both_pallets.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_merge.rs",
+    "literal": "../../command/inventory_merge/place_on_target.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_merge/place_on_target.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_merge.rs",
+    "literal": "../../command/inventory_merge/select_source_quantity.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_merge/select_source_quantity.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_merge.rs",
+    "literal": "../../command/inventory_merge/touch_target.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_merge/touch_target.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_move.rs",
+    "literal": "../../command/inventory_move/claim_command.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_move/claim_command.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_move.rs",
+    "literal": "../../command/inventory_move/finalize_command.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_move/finalize_command.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_move.rs",
+    "literal": "../../command/inventory_move/find_replay.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_move/find_replay.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_move.rs",
+    "literal": "../../command/inventory_move/insert_movement.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_move/insert_movement.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_move.rs",
+    "literal": "../../command/inventory_move/lock_pallet.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_move/lock_pallet.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_move.rs",
+    "literal": "../../command/inventory_move/move_pallet.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_move/move_pallet.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_move.rs",
+    "literal": "../../command/inventory_move/select_pallet_quantity.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_move/select_pallet_quantity.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_move.rs",
+    "literal": "../../command/inventory_move/validate_location.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_move/validate_location.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_split.rs",
+    "literal": "../../command/inventory_split/claim_command.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_split/claim_command.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_split.rs",
+    "literal": "../../command/inventory_split/create_pallet.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_split/create_pallet.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_split.rs",
+    "literal": "../../command/inventory_split/finalize_command.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_split/finalize_command.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_split.rs",
+    "literal": "../../command/inventory_split/find_replay.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_split/find_replay.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_split.rs",
+    "literal": "../../command/inventory_split/insert_movement.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_split/insert_movement.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_split.rs",
+    "literal": "../../command/inventory_split/lock_pallet.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_split/lock_pallet.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_split.rs",
+    "literal": "../../command/inventory_split/place_quantity.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_split/place_quantity.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_split.rs",
+    "literal": "../../command/inventory_split/select_quantity.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_split/select_quantity.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_split.rs",
+    "literal": "../../command/inventory_split/take_from_source.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_split/take_from_source.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_split.rs",
+    "literal": "../../command/inventory_split/touch_source.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_split/touch_source.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/inventory_split.rs",
+    "literal": "../../command/inventory_split/validate_location.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/command/inventory_split/validate_location.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/pallet.rs",
+    "literal": "../sql/pallet/get.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/generated/sql/pallet/get.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/pallet.rs",
+    "literal": "../../query/open_pallet_by_pallet_code_ascending.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/query/open_pallet_by_pallet_code_ascending.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/pallet.rs",
+    "literal": "../../query/open_pallet_by_pallet_code_descending.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/query/open_pallet_by_pallet_code_descending.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/pallet.rs",
+    "literal": "../../query/open_pallet_by_location_id_ascending.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/query/open_pallet_by_location_id_ascending.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/pallet.rs",
+    "literal": "../../query/open_pallet_by_location_id_descending.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/query/open_pallet_by_location_id_descending.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/pallet.rs",
+    "literal": "../../query/open_pallet_by_updated_at_ascending.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/query/open_pallet_by_updated_at_ascending.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/pallet.rs",
+    "literal": "../../query/open_pallet_by_updated_at_descending.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/query/open_pallet_by_updated_at_descending.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/pallet.rs",
+    "literal": "../../query/open_pallet.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/query/open_pallet.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/native-verifier/pallet.rs",
+    "literal": "../../query/open_pallet_by_created_at_descending.sql",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/query/open_pallet_by_created_at_descending.sql"
+  },
+  {
+    "file": "apps/wamn_wms/generated/wms-tui/src/lib.rs",
+    "literal": "../../client/inventory.rs",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/generated/client/inventory.rs"
+  },
+  {
+    "file": "apps/wamn_wms/generated/wms-tui/src/lib.rs",
+    "literal": "../../client/pallet.rs",
+    "anchor": "source",
+    "resolves": "apps/wamn_wms/generated/client/pallet.rs"
+  },
+  {
+    "file": "apps/client_acme_receiving/generated/client_acme_receiving-tui/src/lib.rs",
+    "literal": "../../client/purchase_order.rs",
+    "anchor": "source",
+    "resolves": "apps/client_acme_receiving/generated/client/purchase_order.rs"
+  },
+  {
+    "file": "apps/client_acme_receiving/generated/client_acme_receiving-tui/src/lib.rs",
+    "literal": "../../client/quality.rs",
+    "anchor": "source",
+    "resolves": "apps/client_acme_receiving/generated/client/quality.rs"
+  },
+  {
+    "file": "apps/client_acme_receiving/generated/client_acme_receiving-tui/src/lib.rs",
+    "literal": "../../client/receiving.rs",
+    "anchor": "source",
+    "resolves": "apps/client_acme_receiving/generated/client/receiving.rs"
+  },
+  {
+    "file": "apps/client_acme_receiving/generated/native-verifier/purchase_order.rs",
+    "literal": "../sql/purchase_order/get.sql",
+    "anchor": "source",
+    "resolves": "apps/client_acme_receiving/generated/sql/purchase_order/get.sql"
+  },
+  {
+    "file": "apps/client_acme_receiving/generated/native-verifier/purchase_order.rs",
+    "literal": "../sql/purchase_order/update.sql",
+    "anchor": "source",
+    "resolves": "apps/client_acme_receiving/generated/sql/purchase_order/update.sql"
+  },
+  {
+    "file": "apps/client_acme_receiving/generated/native-verifier/quality_approve_inspection.rs",
+    "literal": "../../command/approve_inspection/approve_inspection.sql",
+    "anchor": "source",
+    "resolves": "apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql"
+  },
+  {
+    "file": "apps/client_acme_receiving/generated/native-verifier/quality_create_inspection.rs",
+    "literal": "../../command/create_inspection/insert_inspection.sql",
+    "anchor": "source",
+    "resolves": "apps/client_acme_receiving/command/create_inspection/insert_inspection.sql"
+  },
+  {
+    "file": "apps/client_acme_receiving/generated/native-verifier/quality_create_inspection.rs",
+    "literal": "../../command/create_inspection/load_inspection.sql",
+    "anchor": "source",
+    "resolves": "apps/client_acme_receiving/command/create_inspection/load_inspection.sql"
+  },
+  {
+    "file": "apps/client_acme_receiving/generated/native-verifier/quality_load_purchase_order_detail.rs",
+    "literal": "../../query/quality_purchase_order_detail.sql",
+    "anchor": "source",
+    "resolves": "apps/client_acme_receiving/query/quality_purchase_order_detail.sql"
+  },
+  {
+    "file": "apps/client_acme_receiving/generated/native-verifier/receiving_record_receipt.rs",
+    "literal": "../../query/quality_purchase_order_detail.sql",
+    "anchor": "source",
+    "resolves": "apps/client_acme_receiving/query/quality_purchase_order_detail.sql"
+  }
+]

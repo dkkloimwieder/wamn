@@ -24,7 +24,7 @@
 //! The host functions these plugins install live behind each plugin's PRIVATE
 //! `mod bindings`, so no `Host` trait is nameable from outside the crate — the
 //! only way to reach them is a real guest. A guest compiled from
-//! `components/fixtures/` would make these tests depend on a `wasm32-wasip2`
+//! `apps/platform/fixtures/` would make these tests depend on a `wasm32-wasip2`
 //! build of a separate workspace, and a test that silently skips when that
 //! artifact is missing is exactly the vacuous pass this bead exists to prevent.
 //! So each guest is authored as component-model WAT and encoded in-process,

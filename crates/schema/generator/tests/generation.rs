@@ -45,97 +45,97 @@ const QUERY_SOURCES: [AuthoredSql<'static>; 6] = [
     ),
 ];
 
-const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../packages/receiving/wamn.json");
+const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
 const RECEIVING_SOURCES: [AuthoredSql<'static>; 17] = [
     AuthoredSql::new(
         "command/record_receipt/claim_command.sql",
-        include_bytes!("../../../../packages/receiving/command/record_receipt/claim_command.sql"),
+        include_bytes!("../../../../apps/wamn_receiving/command/record_receipt/claim_command.sql"),
     ),
     AuthoredSql::new(
         "command/record_receipt/finalize_command.sql",
         include_bytes!(
-            "../../../../packages/receiving/command/record_receipt/finalize_command.sql"
+            "../../../../apps/wamn_receiving/command/record_receipt/finalize_command.sql"
         ),
     ),
     AuthoredSql::new(
         "command/record_receipt/find_replay.sql",
-        include_bytes!("../../../../packages/receiving/command/record_receipt/find_replay.sql"),
+        include_bytes!("../../../../apps/wamn_receiving/command/record_receipt/find_replay.sql"),
     ),
     AuthoredSql::new(
         "command/record_receipt/finish_purchase_order.sql",
         include_bytes!(
-            "../../../../packages/receiving/command/record_receipt/finish_purchase_order.sql"
+            "../../../../apps/wamn_receiving/command/record_receipt/finish_purchase_order.sql"
         ),
     ),
     AuthoredSql::new(
         "command/record_receipt/insert_receipt.sql",
-        include_bytes!("../../../../packages/receiving/command/record_receipt/insert_receipt.sql"),
+        include_bytes!("../../../../apps/wamn_receiving/command/record_receipt/insert_receipt.sql"),
     ),
     AuthoredSql::new(
         "command/record_receipt/insert_receipt_line.sql",
         include_bytes!(
-            "../../../../packages/receiving/command/record_receipt/insert_receipt_line.sql"
+            "../../../../apps/wamn_receiving/command/record_receipt/insert_receipt_line.sql"
         ),
     ),
     AuthoredSql::new(
         "command/record_receipt/lock_purchase_order.sql",
         include_bytes!(
-            "../../../../packages/receiving/command/record_receipt/lock_purchase_order.sql"
+            "../../../../apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql"
         ),
     ),
     AuthoredSql::new(
         "command/record_receipt/update_purchase_order_line.sql",
         include_bytes!(
-            "../../../../packages/receiving/command/record_receipt/update_purchase_order_line.sql"
+            "../../../../apps/wamn_receiving/command/record_receipt/update_purchase_order_line.sql"
         ),
     ),
     AuthoredSql::new(
         "command/record_receipt/validate_receipt_line.sql",
         include_bytes!(
-            "../../../../packages/receiving/command/record_receipt/validate_receipt_line.sql"
+            "../../../../apps/wamn_receiving/command/record_receipt/validate_receipt_line.sql"
         ),
     ),
     AuthoredSql::new(
         "query/open_purchase_order_by_purchase_order_number_ascending.sql",
         include_bytes!(
-            "../../../../packages/receiving/query/open_purchase_order_by_purchase_order_number_ascending.sql"
+            "../../../../apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_ascending.sql"
         ),
     ),
     AuthoredSql::new(
         "query/open_purchase_order_by_purchase_order_number_descending.sql",
         include_bytes!(
-            "../../../../packages/receiving/query/open_purchase_order_by_purchase_order_number_descending.sql"
+            "../../../../apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_descending.sql"
         ),
     ),
     AuthoredSql::new(
         "query/open_purchase_order_by_status_ascending.sql",
         include_bytes!(
-            "../../../../packages/receiving/query/open_purchase_order_by_status_ascending.sql"
+            "../../../../apps/wamn_receiving/query/open_purchase_order_by_status_ascending.sql"
         ),
     ),
     AuthoredSql::new(
         "query/open_purchase_order_by_status_descending.sql",
         include_bytes!(
-            "../../../../packages/receiving/query/open_purchase_order_by_status_descending.sql"
+            "../../../../apps/wamn_receiving/query/open_purchase_order_by_status_descending.sql"
         ),
     ),
     AuthoredSql::new(
         "query/open_purchase_order.sql",
-        include_bytes!("../../../../packages/receiving/query/open_purchase_order.sql"),
+        include_bytes!("../../../../apps/wamn_receiving/query/open_purchase_order.sql"),
     ),
     AuthoredSql::new(
         "query/open_purchase_order_by_created_at_descending.sql",
         include_bytes!(
-            "../../../../packages/receiving/query/open_purchase_order_by_created_at_descending.sql"
+            "../../../../apps/wamn_receiving/query/open_purchase_order_by_created_at_descending.sql"
         ),
     ),
     AuthoredSql::new(
         "query/load_receipt_screen.sql",
-        include_bytes!("../../../../packages/receiving/query/load_receipt_screen.sql"),
+        include_bytes!("../../../../apps/wamn_receiving/query/load_receipt_screen.sql"),
     ),
     AuthoredSql::new(
         "query/location.sql",
-        include_bytes!("../../../../packages/receiving/query/location.sql"),
+        include_bytes!("../../../../apps/wamn_receiving/query/location.sql"),
     ),
 ];
 
@@ -2473,7 +2473,7 @@ fn generic_custom_operation_path_preserves_shipped_receiving_bytes() {
         ])),
     ))
     .unwrap();
-    let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../packages/receiving");
+    let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
     let generated_root = package_root.join("generated");
     for relative in [
         "contracts/receiving/record_receipt.operation.json",

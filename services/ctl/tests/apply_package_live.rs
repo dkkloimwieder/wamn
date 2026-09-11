@@ -80,13 +80,13 @@ fn fixture_root() -> PathBuf {
 }
 
 fn overlay_package_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/client_acme_receiving")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/client_acme_receiving")
 }
 
 fn copy_receiving_package(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
     std::fs::create_dir_all(root.join("migrations")).expect("create package fixture directory");
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
     std::fs::copy(source.join("wamn.json"), root.join("wamn.json"))
         .expect("copy strict package manifest");
     std::fs::copy(

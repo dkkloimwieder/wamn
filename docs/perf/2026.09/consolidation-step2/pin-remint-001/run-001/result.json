@@ -1,0 +1,46 @@
+{
+  "after_digest": "sha256:b85757dc167ad385804fbc6e670a47ca0c66bc272860142b6faed11f2e93c436",
+  "before_digest": "sha256:a092149c1c8df8b4f74babf64122f9747d15d7b1a78b82b35cb6e496f98fd9a1",
+  "build_evidence": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/guest-bytes-001",
+  "changed_generated_paths": [
+    "apps/client_acme_receiving/generated/contracts/receiving/record_receipt.inherited-tests.json",
+    "apps/client_acme_receiving/generated/contracts/receiving/record_receipt.operation.json",
+    "apps/client_acme_receiving/generated/platform-policy/data-access.json",
+    "apps/client_acme_receiving/generated/source-map/receiving_record_receipt.json"
+  ],
+  "cleanup_complete": true,
+  "container": "wamn-app-move-remint-4c38e6bc46f5",
+  "expected_changed_generated_paths": [
+    "apps/client_acme_receiving/generated/contracts/receiving/record_receipt.inherited-tests.json",
+    "apps/client_acme_receiving/generated/contracts/receiving/record_receipt.operation.json",
+    "apps/client_acme_receiving/generated/platform-policy/data-access.json",
+    "apps/client_acme_receiving/generated/source-map/receiving_record_receipt.json"
+  ],
+  "generated_bytes_match_pin_update": true,
+  "generated_diff_matches": true,
+  "generator_evidence": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/pin-remint-001/generator-build-001",
+  "only_authored_pin_changed": true,
+  "packages": {
+    "client_acme_receiving": {
+      "migrations": [
+        "apps/client_acme_receiving/migrations/0001_add_inspection_required.sql",
+        "apps/client_acme_receiving/migrations/0002_quality_inspection.sql"
+      ],
+      "shipped_check_passed": true
+    },
+    "wamn_receiving": {
+      "migrations": [
+        "apps/wamn_receiving/migrations/0001_initial.sql"
+      ],
+      "shipped_check_passed": true
+    }
+  },
+  "passed": true,
+  "readiness": {
+    "attempts": 6,
+    "limit_seconds": 30,
+    "seconds": 1.688
+  },
+  "seconds": 3.697,
+  "server_version_num": 180006
+}

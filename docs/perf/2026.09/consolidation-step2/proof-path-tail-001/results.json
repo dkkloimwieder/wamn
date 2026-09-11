@@ -1,0 +1,59 @@
+{
+  "change_type": "mechanical_path_tail",
+  "files": [
+    {
+      "path": "docs/perf/2026.09/generated-tui-parity/tools/live_environment.py",
+      "before_sha256": "714361881f2a42ef139b8179d761098a4ce4983e9f275f71b65343d64d59cdb4",
+      "after_sha256": "cbdb16e432c5b7f2da13dd2b50084fb38734e67243fb4b8dfe6900645b6956ad",
+      "ast_parse": "pass"
+    },
+    {
+      "path": "docs/perf/2026.09/generated-tui-parity/tools/negative_control.py",
+      "before_sha256": "364a77eaba68908c974cfa62558fd3489705dacd5031eb4e20328f876409f06f",
+      "after_sha256": "12f1e249eda27dd565a85dacedc5b45df8c5e7717c1156a8b84053ecdaaee5e3",
+      "ast_parse": "pass"
+    },
+    {
+      "path": "docs/perf/2026.09/generated-tui-parity/tools/database_preflight.py",
+      "before_sha256": "dd6dbc6ec655ed52e254151cc00fcb3e2c8e9304c2e00671e5061b9f7b609664",
+      "after_sha256": "58c583d01e9558b48aace96a3743b3c20e16f0455315bbf171250c9b09fec7d8",
+      "ast_parse": "pass"
+    },
+    {
+      "path": "docs/perf/2026.09/generated-tui-wms/tools/database_preflight.py",
+      "before_sha256": "0b3f0f5998aa109793fd2ce3ee0094ad62d5b867aedb18518ed7686b65003656",
+      "after_sha256": "0f0f2d23069708f9f90f4a077c7fda33862c5f8cc29f2792ec85a5b1f010f700",
+      "ast_parse": "pass"
+    },
+    {
+      "path": "docs/perf/2026.09/generated-tui-recipe/tools/run.py",
+      "before_sha256": "c51f2277ff2379ad0caad0f9942a76f9f51b74d1636eb34e5444f8f888ea6677",
+      "after_sha256": "bc99bbab9ba4a2ed4edd28b832b024fb41f0140f39acf9e5947035199e905fc8",
+      "ast_parse": "pass"
+    }
+  ],
+  "execution": "Python AST and --help checks only. No builds, test runs, commits, or index changes.",
+  "recipe_adaptation": "The existing Acme Receiving app supplies the temporary scaffold. Existing generated-source, regeneration, and cleanup assertions remain. The real Receiving composition still runs afterward.",
+  "help_checks": [
+    {
+      "path": "docs/perf/2026.09/generated-tui-parity/tools/live_environment.py",
+      "exit_code": 0
+    },
+    {
+      "path": "docs/perf/2026.09/generated-tui-parity/tools/negative_control.py",
+      "exit_code": 0
+    },
+    {
+      "path": "docs/perf/2026.09/generated-tui-parity/tools/database_preflight.py",
+      "exit_code": 0
+    },
+    {
+      "path": "docs/perf/2026.09/generated-tui-wms/tools/database_preflight.py",
+      "exit_code": 0
+    },
+    {
+      "path": "docs/perf/2026.09/generated-tui-recipe/tools/run.py",
+      "exit_code": 0
+    }
+  ]
+}

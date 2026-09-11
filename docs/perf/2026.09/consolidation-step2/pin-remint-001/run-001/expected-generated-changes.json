@@ -1,0 +1,6 @@
+{
+  "apps/client_acme_receiving/generated/contracts/receiving/record_receipt.inherited-tests.json": "Receiving component digest",
+  "apps/client_acme_receiving/generated/contracts/receiving/record_receipt.operation.json": "Receiving component digest",
+  "apps/client_acme_receiving/generated/platform-policy/data-access.json": "Acme manifest hash after its Receiving pin changes",
+  "apps/client_acme_receiving/generated/source-map/receiving_record_receipt.json": "Receiving component digest"
+}

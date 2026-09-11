@@ -1,0 +1,825 @@
+{
+  "bead": "wamn-47wm.3.2",
+  "change_type": "mechanical_move",
+  "base_commit": "fa0dc6fe3567f82885efde852a9ede041e3a3cea",
+  "worktree": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+  "moves": [
+    {
+      "old": "packages/receiving/command/record_receipt/claim_command.sql",
+      "new": "apps/wamn_receiving/command/record_receipt/claim_command.sql",
+      "before_sha256": "6b854d40de1d42cab4ab852d0d6b1b6d869e7d5117a0dbd9c7f00b3602874430",
+      "after_sha256": "6b854d40de1d42cab4ab852d0d6b1b6d869e7d5117a0dbd9c7f00b3602874430"
+    },
+    {
+      "old": "packages/receiving/command/record_receipt/finalize_command.sql",
+      "new": "apps/wamn_receiving/command/record_receipt/finalize_command.sql",
+      "before_sha256": "a5bb7392dff080e683c8fad4a3abd813bcd8db55230ff2a826552c9f8cb5fd15",
+      "after_sha256": "a5bb7392dff080e683c8fad4a3abd813bcd8db55230ff2a826552c9f8cb5fd15"
+    },
+    {
+      "old": "packages/receiving/command/record_receipt/find_replay.sql",
+      "new": "apps/wamn_receiving/command/record_receipt/find_replay.sql",
+      "before_sha256": "21136f24dadfdf9f5bf9f17b25beb189f50cca409acae2ff3ea97c7997107025",
+      "after_sha256": "21136f24dadfdf9f5bf9f17b25beb189f50cca409acae2ff3ea97c7997107025"
+    },
+    {
+      "old": "packages/receiving/command/record_receipt/finish_purchase_order.sql",
+      "new": "apps/wamn_receiving/command/record_receipt/finish_purchase_order.sql",
+      "before_sha256": "2add12d3a2d7bd9fe80df600e7c46e77c0b55f7213b75131a5e3ef4473004b36",
+      "after_sha256": "2add12d3a2d7bd9fe80df600e7c46e77c0b55f7213b75131a5e3ef4473004b36"
+    },
+    {
+      "old": "packages/receiving/command/record_receipt/insert_receipt.sql",
+      "new": "apps/wamn_receiving/command/record_receipt/insert_receipt.sql",
+      "before_sha256": "6ee94d218f33fda99dcc91f7b72265119b16db159624597c9e5d584d7a35a7b0",
+      "after_sha256": "6ee94d218f33fda99dcc91f7b72265119b16db159624597c9e5d584d7a35a7b0"
+    },
+    {
+      "old": "packages/receiving/command/record_receipt/insert_receipt_line.sql",
+      "new": "apps/wamn_receiving/command/record_receipt/insert_receipt_line.sql",
+      "before_sha256": "46af356f1b2e4640f42ffb8040f14aa7bd88d303f54941cf1d707456337c781d",
+      "after_sha256": "46af356f1b2e4640f42ffb8040f14aa7bd88d303f54941cf1d707456337c781d"
+    },
+    {
+      "old": "packages/receiving/command/record_receipt/lock_purchase_order.sql",
+      "new": "apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql",
+      "before_sha256": "f54302c31a8ac7d1d26fdc1eaa4886f1d60b3656d6850cc5589c1bb2abeb85e2",
+      "after_sha256": "f54302c31a8ac7d1d26fdc1eaa4886f1d60b3656d6850cc5589c1bb2abeb85e2"
+    },
+    {
+      "old": "packages/receiving/command/record_receipt/update_purchase_order_line.sql",
+      "new": "apps/wamn_receiving/command/record_receipt/update_purchase_order_line.sql",
+      "before_sha256": "1a3515d4c1b24fba54ef76a771a23d00d54c7d745fc868042095a50e5cdff716",
+      "after_sha256": "1a3515d4c1b24fba54ef76a771a23d00d54c7d745fc868042095a50e5cdff716"
+    },
+    {
+      "old": "packages/receiving/command/record_receipt/validate_receipt_line.sql",
+      "new": "apps/wamn_receiving/command/record_receipt/validate_receipt_line.sql",
+      "before_sha256": "32821a6fdbadf9d5946194e95b5f3b4465c44e8412fb40129ae01858a8001f2e",
+      "after_sha256": "32821a6fdbadf9d5946194e95b5f3b4465c44e8412fb40129ae01858a8001f2e"
+    },
+    {
+      "old": "packages/receiving/generated/client/location.rs",
+      "new": "apps/wamn_receiving/generated/client/location.rs",
+      "before_sha256": "911d0fea316fcf6536e8302c8171e7f4917b138d0be103779a03abbf0a1f781b",
+      "after_sha256": "911d0fea316fcf6536e8302c8171e7f4917b138d0be103779a03abbf0a1f781b"
+    },
+    {
+      "old": "packages/receiving/generated/client/purchase_order.rs",
+      "new": "apps/wamn_receiving/generated/client/purchase_order.rs",
+      "before_sha256": "7ac00072869cd4564f9d71ef2b62c43de92594e99c32ec384394b1148105bfea",
+      "after_sha256": "7ac00072869cd4564f9d71ef2b62c43de92594e99c32ec384394b1148105bfea"
+    },
+    {
+      "old": "packages/receiving/generated/client/receipt.rs",
+      "new": "apps/wamn_receiving/generated/client/receipt.rs",
+      "before_sha256": "cbafdce40acaf3f833d29296877e6a3577763b9af972045b9bc724f8425ab50e",
+      "after_sha256": "cbafdce40acaf3f833d29296877e6a3577763b9af972045b9bc724f8425ab50e"
+    },
+    {
+      "old": "packages/receiving/generated/client/receiving.rs",
+      "new": "apps/wamn_receiving/generated/client/receiving.rs",
+      "before_sha256": "6a60a8dd61c0a1934717e24e0ba3e013d49f985677e9d3cf5bcad86ec8b321d5",
+      "after_sha256": "6a60a8dd61c0a1934717e24e0ba3e013d49f985677e9d3cf5bcad86ec8b321d5"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/cursor-v1.json",
+      "new": "apps/wamn_receiving/generated/contracts/cursor-v1.json",
+      "before_sha256": "370d6499ff527d1165f369bae235a0af31e516094edf5b52e536719dcddc9896",
+      "after_sha256": "370d6499ff527d1165f369bae235a0af31e516094edf5b52e536719dcddc9896"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/location/list.errors.json",
+      "new": "apps/wamn_receiving/generated/contracts/location/list.errors.json",
+      "before_sha256": "29e7996ea6c42df151a3337cdfb7f41b6823eac98972f7b6ab7828628f6033a9",
+      "after_sha256": "29e7996ea6c42df151a3337cdfb7f41b6823eac98972f7b6ab7828628f6033a9"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/location/list.input.json",
+      "new": "apps/wamn_receiving/generated/contracts/location/list.input.json",
+      "before_sha256": "17492871fc910d16e1baf9e5b37b3b1b7c2a2c6116047d2dbb8d00698064abe8",
+      "after_sha256": "17492871fc910d16e1baf9e5b37b3b1b7c2a2c6116047d2dbb8d00698064abe8"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/location/list.operation.json",
+      "new": "apps/wamn_receiving/generated/contracts/location/list.operation.json",
+      "before_sha256": "33d8476c5f3b67ad3f56b72dc56fc89fa6d34dd40f0141023563817f1661656e",
+      "after_sha256": "33d8476c5f3b67ad3f56b72dc56fc89fa6d34dd40f0141023563817f1661656e"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/location/list.result.json",
+      "new": "apps/wamn_receiving/generated/contracts/location/list.result.json",
+      "before_sha256": "57a3191f6e0fbc1fb4df3e3aaa2be63acae10585c790ee3fcdd198e96e417dd1",
+      "after_sha256": "57a3191f6e0fbc1fb4df3e3aaa2be63acae10585c790ee3fcdd198e96e417dd1"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/get.errors.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/get.errors.json",
+      "before_sha256": "47b2f26223eb9fa838e742224e757b07152ed92af1698aaefcfa6eb5c17b6214",
+      "after_sha256": "47b2f26223eb9fa838e742224e757b07152ed92af1698aaefcfa6eb5c17b6214"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/get.input.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/get.input.json",
+      "before_sha256": "6d99bd0bd53ab935a9fc6a2838e2209ddd816bcb93fa54d62184198579149aff",
+      "after_sha256": "6d99bd0bd53ab935a9fc6a2838e2209ddd816bcb93fa54d62184198579149aff"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/get.operation.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/get.operation.json",
+      "before_sha256": "f4aac9271c41f97b8a9f215c7063b4abe4de645221b4123f8500f9866314ddd1",
+      "after_sha256": "f4aac9271c41f97b8a9f215c7063b4abe4de645221b4123f8500f9866314ddd1"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/get.result.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/get.result.json",
+      "before_sha256": "fe6d857ebafb9cdefd1ac556627400012be409178ec3e9a79d4d0ae0217d0039",
+      "after_sha256": "fe6d857ebafb9cdefd1ac556627400012be409178ec3e9a79d4d0ae0217d0039"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/query.errors.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/query.errors.json",
+      "before_sha256": "d35381d7213933c2347f9476b7d500da45ad4cb0247be5d2e61413cb88d12c93",
+      "after_sha256": "d35381d7213933c2347f9476b7d500da45ad4cb0247be5d2e61413cb88d12c93"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/query.input.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/query.input.json",
+      "before_sha256": "1b2cea888fd7c48aac65c51c2ed68008f0dae73921c614ef0e4a484512e8ed26",
+      "after_sha256": "1b2cea888fd7c48aac65c51c2ed68008f0dae73921c614ef0e4a484512e8ed26"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/query.operation.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/query.operation.json",
+      "before_sha256": "22d739287ae393c11d495de2f1232fd7c9a364227c4b4b4ea741eb868684d0f3",
+      "after_sha256": "22d739287ae393c11d495de2f1232fd7c9a364227c4b4b4ea741eb868684d0f3"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/query.result.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/query.result.json",
+      "before_sha256": "72c01fd12d04ae4113d4bc34731f7695ce96e6fdbc61756717d6795338bd1ca8",
+      "after_sha256": "72c01fd12d04ae4113d4bc34731f7695ce96e6fdbc61756717d6795338bd1ca8"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/update.errors.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/update.errors.json",
+      "before_sha256": "cbea86e3a6b450ca445bd52f1fb9845d568f08f93402f0c0dc83d8a7a7b21508",
+      "after_sha256": "cbea86e3a6b450ca445bd52f1fb9845d568f08f93402f0c0dc83d8a7a7b21508"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/update.input.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/update.input.json",
+      "before_sha256": "c3c236a4f11f8a9df8a2e27cdee7b83563180082356199e8c15775e7aa5a4866",
+      "after_sha256": "c3c236a4f11f8a9df8a2e27cdee7b83563180082356199e8c15775e7aa5a4866"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/update.operation.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/update.operation.json",
+      "before_sha256": "9351d0636fa88524359b9ccdf1ebdfe70dce3d7ec0b893e375b16666db4b10ec",
+      "after_sha256": "9351d0636fa88524359b9ccdf1ebdfe70dce3d7ec0b893e375b16666db4b10ec"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/purchase_order/update.result.json",
+      "new": "apps/wamn_receiving/generated/contracts/purchase_order/update.result.json",
+      "before_sha256": "fe6d857ebafb9cdefd1ac556627400012be409178ec3e9a79d4d0ae0217d0039",
+      "after_sha256": "fe6d857ebafb9cdefd1ac556627400012be409178ec3e9a79d4d0ae0217d0039"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receipt/get.errors.json",
+      "new": "apps/wamn_receiving/generated/contracts/receipt/get.errors.json",
+      "before_sha256": "47b2f26223eb9fa838e742224e757b07152ed92af1698aaefcfa6eb5c17b6214",
+      "after_sha256": "47b2f26223eb9fa838e742224e757b07152ed92af1698aaefcfa6eb5c17b6214"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receipt/get.input.json",
+      "new": "apps/wamn_receiving/generated/contracts/receipt/get.input.json",
+      "before_sha256": "320b273dbeb35b5ec66eb19cae0e1f44f161f3b45e8145d57c99084db88f467f",
+      "after_sha256": "320b273dbeb35b5ec66eb19cae0e1f44f161f3b45e8145d57c99084db88f467f"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receipt/get.operation.json",
+      "new": "apps/wamn_receiving/generated/contracts/receipt/get.operation.json",
+      "before_sha256": "6cd89cec815336eb932e56e33fafeabf409826b30fd1bce1d3b528f0647a1a5c",
+      "after_sha256": "6cd89cec815336eb932e56e33fafeabf409826b30fd1bce1d3b528f0647a1a5c"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receipt/get.result.json",
+      "new": "apps/wamn_receiving/generated/contracts/receipt/get.result.json",
+      "before_sha256": "61d3ca5379de1e49f3d82efbb2c230217e8b648219e6fb6aaee5aa068bdb4fee",
+      "after_sha256": "61d3ca5379de1e49f3d82efbb2c230217e8b648219e6fb6aaee5aa068bdb4fee"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receipt/query.errors.json",
+      "new": "apps/wamn_receiving/generated/contracts/receipt/query.errors.json",
+      "before_sha256": "d35381d7213933c2347f9476b7d500da45ad4cb0247be5d2e61413cb88d12c93",
+      "after_sha256": "d35381d7213933c2347f9476b7d500da45ad4cb0247be5d2e61413cb88d12c93"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receipt/query.input.json",
+      "new": "apps/wamn_receiving/generated/contracts/receipt/query.input.json",
+      "before_sha256": "35b9db73867d9cd1ea3aea2a6b1c9847af21c1e9b4fe69e6d9e50981b648e351",
+      "after_sha256": "35b9db73867d9cd1ea3aea2a6b1c9847af21c1e9b4fe69e6d9e50981b648e351"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receipt/query.operation.json",
+      "new": "apps/wamn_receiving/generated/contracts/receipt/query.operation.json",
+      "before_sha256": "7b2b23b57facf12a98d0832084c02ea4388c955c83e0ad8f7a3958949529fa22",
+      "after_sha256": "7b2b23b57facf12a98d0832084c02ea4388c955c83e0ad8f7a3958949529fa22"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receipt/query.result.json",
+      "new": "apps/wamn_receiving/generated/contracts/receipt/query.result.json",
+      "before_sha256": "049b0d37edb27af468ad041f046277e313298a5323c5b3dd934a7cd7b7946b39",
+      "after_sha256": "049b0d37edb27af468ad041f046277e313298a5323c5b3dd934a7cd7b7946b39"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receiving/load_receipt_screen.errors.json",
+      "new": "apps/wamn_receiving/generated/contracts/receiving/load_receipt_screen.errors.json",
+      "before_sha256": "fefae97b5f43fb89767fccbc0639147f0c74205cd0bca6035e12fea11f38b2db",
+      "after_sha256": "fefae97b5f43fb89767fccbc0639147f0c74205cd0bca6035e12fea11f38b2db"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receiving/load_receipt_screen.input.json",
+      "new": "apps/wamn_receiving/generated/contracts/receiving/load_receipt_screen.input.json",
+      "before_sha256": "85b9b57bf7280c25e119f8892496573590e68509c5cee127f61538c4e2d33175",
+      "after_sha256": "85b9b57bf7280c25e119f8892496573590e68509c5cee127f61538c4e2d33175"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receiving/load_receipt_screen.operation.json",
+      "new": "apps/wamn_receiving/generated/contracts/receiving/load_receipt_screen.operation.json",
+      "before_sha256": "9c465c5714d122d5f6a891f69b6cbb968a59cce6657e0cc7d0af7e900de34194",
+      "after_sha256": "9c465c5714d122d5f6a891f69b6cbb968a59cce6657e0cc7d0af7e900de34194"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receiving/load_receipt_screen.result.json",
+      "new": "apps/wamn_receiving/generated/contracts/receiving/load_receipt_screen.result.json",
+      "before_sha256": "34c98fe52667fe818a7b4d7de395e44257e199099168c56f3d97c1af7396c77f",
+      "after_sha256": "34c98fe52667fe818a7b4d7de395e44257e199099168c56f3d97c1af7396c77f"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receiving/record_receipt.claim-tests.json",
+      "new": "apps/wamn_receiving/generated/contracts/receiving/record_receipt.claim-tests.json",
+      "before_sha256": "c9ea2c354b656792d42c38b403dc4bf03a5b631c3b36e0f9571eb0990cfbbd3b",
+      "after_sha256": "c9ea2c354b656792d42c38b403dc4bf03a5b631c3b36e0f9571eb0990cfbbd3b"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receiving/record_receipt.errors.json",
+      "new": "apps/wamn_receiving/generated/contracts/receiving/record_receipt.errors.json",
+      "before_sha256": "c4b18726c0fa3607aee7505e5f88eb29cafb93fa280750d94d9598492093c82e",
+      "after_sha256": "c4b18726c0fa3607aee7505e5f88eb29cafb93fa280750d94d9598492093c82e"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receiving/record_receipt.input.json",
+      "new": "apps/wamn_receiving/generated/contracts/receiving/record_receipt.input.json",
+      "before_sha256": "39da7d79082b6f376832e96cdda7af74a51fb3ba0404a08d294806ef0142cf85",
+      "after_sha256": "39da7d79082b6f376832e96cdda7af74a51fb3ba0404a08d294806ef0142cf85"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receiving/record_receipt.operation.json",
+      "new": "apps/wamn_receiving/generated/contracts/receiving/record_receipt.operation.json",
+      "before_sha256": "6593d72ba95abc2500f7e6997fa6ce5900df900936b12320ae68ddac17e420e9",
+      "after_sha256": "6593d72ba95abc2500f7e6997fa6ce5900df900936b12320ae68ddac17e420e9"
+    },
+    {
+      "old": "packages/receiving/generated/contracts/receiving/record_receipt.result.json",
+      "new": "apps/wamn_receiving/generated/contracts/receiving/record_receipt.result.json",
+      "before_sha256": "f6d27d3978b373bf8fe71587c9de00e71f2aabf69279d9b1b282d6d6622a5c8f",
+      "after_sha256": "f6d27d3978b373bf8fe71587c9de00e71f2aabf69279d9b1b282d6d6622a5c8f"
+    },
+    {
+      "old": "packages/receiving/generated/models/item.json",
+      "new": "apps/wamn_receiving/generated/models/item.json",
+      "before_sha256": "56e3b837280a61d15f192bdfa386a0138c41ceb349b6cd21739a5d2a1a410638",
+      "after_sha256": "56e3b837280a61d15f192bdfa386a0138c41ceb349b6cd21739a5d2a1a410638"
+    },
+    {
+      "old": "packages/receiving/generated/models/location.json",
+      "new": "apps/wamn_receiving/generated/models/location.json",
+      "before_sha256": "c4c237ee1aa2cd61d18bc221ff10efd4725556f782c504cbfa420e575e7d1d52",
+      "after_sha256": "c4c237ee1aa2cd61d18bc221ff10efd4725556f782c504cbfa420e575e7d1d52"
+    },
+    {
+      "old": "packages/receiving/generated/models/purchase_order.json",
+      "new": "apps/wamn_receiving/generated/models/purchase_order.json",
+      "before_sha256": "b88e605371344d46e3630e4799d282fe20ef86b8162f06e124dd2d426f54089a",
+      "after_sha256": "b88e605371344d46e3630e4799d282fe20ef86b8162f06e124dd2d426f54089a"
+    },
+    {
+      "old": "packages/receiving/generated/models/purchase_order_line.json",
+      "new": "apps/wamn_receiving/generated/models/purchase_order_line.json",
+      "before_sha256": "28e2197b2ad5e307462ad353276c2e0251dc2c6a017934452b1a98efb4793d32",
+      "after_sha256": "28e2197b2ad5e307462ad353276c2e0251dc2c6a017934452b1a98efb4793d32"
+    },
+    {
+      "old": "packages/receiving/generated/models/receipt.json",
+      "new": "apps/wamn_receiving/generated/models/receipt.json",
+      "before_sha256": "28807cebd96f0c96887bd72dccf8aacd4560c7b0c0f5ae367686581124152b7c",
+      "after_sha256": "28807cebd96f0c96887bd72dccf8aacd4560c7b0c0f5ae367686581124152b7c"
+    },
+    {
+      "old": "packages/receiving/generated/models/receipt_line.json",
+      "new": "apps/wamn_receiving/generated/models/receipt_line.json",
+      "before_sha256": "12f93b41d83e80f6dbb6a224802f8dcef9c1c4f3b6e2c8f962925aa1c93a8e59",
+      "after_sha256": "12f93b41d83e80f6dbb6a224802f8dcef9c1c4f3b6e2c8f962925aa1c93a8e59"
+    },
+    {
+      "old": "packages/receiving/generated/native-verifier/item.rs",
+      "new": "apps/wamn_receiving/generated/native-verifier/item.rs",
+      "before_sha256": "cbf591bf73b3d8682278b1297c49177d649e2ccc3e2890e85f158f3335de89d9",
+      "after_sha256": "cbf591bf73b3d8682278b1297c49177d649e2ccc3e2890e85f158f3335de89d9"
+    },
+    {
+      "old": "packages/receiving/generated/native-verifier/location.rs",
+      "new": "apps/wamn_receiving/generated/native-verifier/location.rs",
+      "before_sha256": "97f0052f414686662dee65f6369d5d29a17756f9a0618562602ec46d3aca7019",
+      "after_sha256": "97f0052f414686662dee65f6369d5d29a17756f9a0618562602ec46d3aca7019"
+    },
+    {
+      "old": "packages/receiving/generated/native-verifier/location_list.rs",
+      "new": "apps/wamn_receiving/generated/native-verifier/location_list.rs",
+      "before_sha256": "7e1b069cc857c48a15b18259a9033d47340fc061e55cd0f0a77dfdf8695b5e7e",
+      "after_sha256": "7e1b069cc857c48a15b18259a9033d47340fc061e55cd0f0a77dfdf8695b5e7e"
+    },
+    {
+      "old": "packages/receiving/generated/native-verifier/purchase_order.rs",
+      "new": "apps/wamn_receiving/generated/native-verifier/purchase_order.rs",
+      "before_sha256": "e49f97dd4141ee80e4b30bab3c7ef8a85da949d29d2cc70a6f59e8180461ad29",
+      "after_sha256": "e49f97dd4141ee80e4b30bab3c7ef8a85da949d29d2cc70a6f59e8180461ad29"
+    },
+    {
+      "old": "packages/receiving/generated/native-verifier/purchase_order_line.rs",
+      "new": "apps/wamn_receiving/generated/native-verifier/purchase_order_line.rs",
+      "before_sha256": "d86100080d71e77093ab41b1f0aa0e883118b728d0bb1b27de56ee95805c4cf6",
+      "after_sha256": "d86100080d71e77093ab41b1f0aa0e883118b728d0bb1b27de56ee95805c4cf6"
+    },
+    {
+      "old": "packages/receiving/generated/native-verifier/receipt.rs",
+      "new": "apps/wamn_receiving/generated/native-verifier/receipt.rs",
+      "before_sha256": "bd0f4b7823ae2affa5f2cd82c1bb1b5e175435d12246c20095c871cb4a1e70a9",
+      "after_sha256": "bd0f4b7823ae2affa5f2cd82c1bb1b5e175435d12246c20095c871cb4a1e70a9"
+    },
+    {
+      "old": "packages/receiving/generated/native-verifier/receipt_line.rs",
+      "new": "apps/wamn_receiving/generated/native-verifier/receipt_line.rs",
+      "before_sha256": "0528b0659746c4f8f24b69f1bf78ed46dc0aaac61c94f011cbd64fa28fd0d265",
+      "after_sha256": "0528b0659746c4f8f24b69f1bf78ed46dc0aaac61c94f011cbd64fa28fd0d265"
+    },
+    {
+      "old": "packages/receiving/generated/native-verifier/receiving_load_receipt_screen.rs",
+      "new": "apps/wamn_receiving/generated/native-verifier/receiving_load_receipt_screen.rs",
+      "before_sha256": "9ba28b7029cabbb78eb832234f41f10ef112c248ac618b8fcc67df9715b39a41",
+      "after_sha256": "9ba28b7029cabbb78eb832234f41f10ef112c248ac618b8fcc67df9715b39a41"
+    },
+    {
+      "old": "packages/receiving/generated/native-verifier/receiving_record_receipt.rs",
+      "new": "apps/wamn_receiving/generated/native-verifier/receiving_record_receipt.rs",
+      "before_sha256": "9976d85336e7068e36d091c03108df6956b2f7afebb07773ba2cbcfaea82a708",
+      "after_sha256": "9976d85336e7068e36d091c03108df6956b2f7afebb07773ba2cbcfaea82a708"
+    },
+    {
+      "old": "packages/receiving/generated/package-weld.json",
+      "new": "apps/wamn_receiving/generated/package-weld.json",
+      "before_sha256": "b0b514592413df397c83160f4cabc3d31d7f2d63cccce840cf84452237aa181f",
+      "after_sha256": "b0b514592413df397c83160f4cabc3d31d7f2d63cccce840cf84452237aa181f"
+    },
+    {
+      "old": "packages/receiving/generated/parity/item.json",
+      "new": "apps/wamn_receiving/generated/parity/item.json",
+      "before_sha256": "0d1592e074348fa8afbba3f1e8d433d367368477349476069fa5d1715688984b",
+      "after_sha256": "0d1592e074348fa8afbba3f1e8d433d367368477349476069fa5d1715688984b"
+    },
+    {
+      "old": "packages/receiving/generated/parity/location.json",
+      "new": "apps/wamn_receiving/generated/parity/location.json",
+      "before_sha256": "dc70b9e64cdbe7be52d29bb927bf04d7cef696e0c0c8944d47d7c84aeeb2bf43",
+      "after_sha256": "dc70b9e64cdbe7be52d29bb927bf04d7cef696e0c0c8944d47d7c84aeeb2bf43"
+    },
+    {
+      "old": "packages/receiving/generated/parity/location_list.json",
+      "new": "apps/wamn_receiving/generated/parity/location_list.json",
+      "before_sha256": "cbc618de9c3cb2405a4ffa57fd330032a8e0ab2850fe3db2e439c8142a71635a",
+      "after_sha256": "cbc618de9c3cb2405a4ffa57fd330032a8e0ab2850fe3db2e439c8142a71635a"
+    },
+    {
+      "old": "packages/receiving/generated/parity/purchase_order.json",
+      "new": "apps/wamn_receiving/generated/parity/purchase_order.json",
+      "before_sha256": "ffdedb6d65391033e8ceeafd8f386593153951e1fc36910d7bd5ec8253e04b07",
+      "after_sha256": "ffdedb6d65391033e8ceeafd8f386593153951e1fc36910d7bd5ec8253e04b07"
+    },
+    {
+      "old": "packages/receiving/generated/parity/purchase_order_line.json",
+      "new": "apps/wamn_receiving/generated/parity/purchase_order_line.json",
+      "before_sha256": "c73bc57e1c667abee819d8ba4c584adae5a209f4eb4f049f9d18027ba5e2d2c2",
+      "after_sha256": "c73bc57e1c667abee819d8ba4c584adae5a209f4eb4f049f9d18027ba5e2d2c2"
+    },
+    {
+      "old": "packages/receiving/generated/parity/receipt.json",
+      "new": "apps/wamn_receiving/generated/parity/receipt.json",
+      "before_sha256": "57cfe37806702c67342c28902223a2971ad59c5dcb4fd5fec289a8e3a03893da",
+      "after_sha256": "57cfe37806702c67342c28902223a2971ad59c5dcb4fd5fec289a8e3a03893da"
+    },
+    {
+      "old": "packages/receiving/generated/parity/receipt_line.json",
+      "new": "apps/wamn_receiving/generated/parity/receipt_line.json",
+      "before_sha256": "9909572a8b5c2e9dd9f36b6993366c2fa8f6faf9cacac8e8f4b61e169f6729e4",
+      "after_sha256": "9909572a8b5c2e9dd9f36b6993366c2fa8f6faf9cacac8e8f4b61e169f6729e4"
+    },
+    {
+      "old": "packages/receiving/generated/parity/receiving_load_receipt_screen.json",
+      "new": "apps/wamn_receiving/generated/parity/receiving_load_receipt_screen.json",
+      "before_sha256": "358c5bd9e8155f6a23c23b841837bfa01329b4270bd6891a5fcea57409b9deec",
+      "after_sha256": "358c5bd9e8155f6a23c23b841837bfa01329b4270bd6891a5fcea57409b9deec"
+    },
+    {
+      "old": "packages/receiving/generated/parity/receiving_record_receipt.json",
+      "new": "apps/wamn_receiving/generated/parity/receiving_record_receipt.json",
+      "before_sha256": "14397a13cbe9e4f4e7a6db011f91bde824f4c2de91301df8e8b29299ba578886",
+      "after_sha256": "14397a13cbe9e4f4e7a6db011f91bde824f4c2de91301df8e8b29299ba578886"
+    },
+    {
+      "old": "packages/receiving/generated/platform-policy/data-access.json",
+      "new": "apps/wamn_receiving/generated/platform-policy/data-access.json",
+      "before_sha256": "a6ea7c3b7166cc1d470486dd0081384f0766690f65f73952b8c35158ab06abca",
+      "after_sha256": "a6ea7c3b7166cc1d470486dd0081384f0766690f65f73952b8c35158ab06abca"
+    },
+    {
+      "old": "packages/receiving/generated/receiving-tui/Cargo.toml",
+      "new": "apps/wamn_receiving/generated/receiving-tui/Cargo.toml",
+      "before_sha256": "fd5031262093600a56e343a75a8b5a509e0557f9ea4f3d97f7e707a6bfdb031a",
+      "after_sha256": "b09a8bff8c6cbed9d1df4f1bf2ee0d3c14222ed7a87d54eef69ad52aa1462467"
+    },
+    {
+      "old": "packages/receiving/generated/receiving-tui/src/lib.rs",
+      "new": "apps/wamn_receiving/generated/receiving-tui/src/lib.rs",
+      "before_sha256": "12a6619363c8ee1d99bc17fb90a6fe88e4fec40c7819f0e2a6fb209bb1229285",
+      "after_sha256": "12a6619363c8ee1d99bc17fb90a6fe88e4fec40c7819f0e2a6fb209bb1229285"
+    },
+    {
+      "old": "packages/receiving/generated/receiving-tui/src/main.rs",
+      "new": "apps/wamn_receiving/generated/receiving-tui/src/main.rs",
+      "before_sha256": "0dae3602c44a9f18a031d822561fadabc177986bc248199a8b364c4162d34849",
+      "after_sha256": "0dae3602c44a9f18a031d822561fadabc177986bc248199a8b364c4162d34849"
+    },
+    {
+      "old": "packages/receiving/generated/receiving-tui/src/screens/location.rs",
+      "new": "apps/wamn_receiving/generated/receiving-tui/src/screens/location.rs",
+      "before_sha256": "11005e67b39747af28f140e426e283e71b817e5fa3a428fb7dc51616d8e06ed5",
+      "after_sha256": "11005e67b39747af28f140e426e283e71b817e5fa3a428fb7dc51616d8e06ed5"
+    },
+    {
+      "old": "packages/receiving/generated/receiving-tui/src/screens/mod.rs",
+      "new": "apps/wamn_receiving/generated/receiving-tui/src/screens/mod.rs",
+      "before_sha256": "3b78c7dd2a803e7001f0a0794102430aa216d3ac50a41833ddbf304b7c8bb37d",
+      "after_sha256": "3b78c7dd2a803e7001f0a0794102430aa216d3ac50a41833ddbf304b7c8bb37d"
+    },
+    {
+      "old": "packages/receiving/generated/receiving-tui/src/screens/purchase_order.rs",
+      "new": "apps/wamn_receiving/generated/receiving-tui/src/screens/purchase_order.rs",
+      "before_sha256": "7641f2ef3b75c066cadd030da436c2f7ec7fb3b5cfb175c92d2d86e9ec7beb71",
+      "after_sha256": "7641f2ef3b75c066cadd030da436c2f7ec7fb3b5cfb175c92d2d86e9ec7beb71"
+    },
+    {
+      "old": "packages/receiving/generated/receiving-tui/src/screens/receipt.rs",
+      "new": "apps/wamn_receiving/generated/receiving-tui/src/screens/receipt.rs",
+      "before_sha256": "79bf7c3b9d618991f01f0aab9483b205c85aad650e5a93c9b167220f1f8b4227",
+      "after_sha256": "79bf7c3b9d618991f01f0aab9483b205c85aad650e5a93c9b167220f1f8b4227"
+    },
+    {
+      "old": "packages/receiving/generated/receiving-tui/src/screens/receiving.rs",
+      "new": "apps/wamn_receiving/generated/receiving-tui/src/screens/receiving.rs",
+      "before_sha256": "4881f76013c5e5167b1e4edc4ce66afbebbc907e63029d0538af3c58af5e1ef3",
+      "after_sha256": "4881f76013c5e5167b1e4edc4ce66afbebbc907e63029d0538af3c58af5e1ef3"
+    },
+    {
+      "old": "packages/receiving/generated/source-map/item.json",
+      "new": "apps/wamn_receiving/generated/source-map/item.json",
+      "before_sha256": "4a6dbe5ca30d0cbb510ff8bb2e8b854fbfd3a005cf8ead1c0f8db4e175571143",
+      "after_sha256": "4a6dbe5ca30d0cbb510ff8bb2e8b854fbfd3a005cf8ead1c0f8db4e175571143"
+    },
+    {
+      "old": "packages/receiving/generated/source-map/location.json",
+      "new": "apps/wamn_receiving/generated/source-map/location.json",
+      "before_sha256": "8c65f68a7ed1bdf3372625b7ff9aed0a011b40e81cbb245b686bf49855e88da5",
+      "after_sha256": "8c65f68a7ed1bdf3372625b7ff9aed0a011b40e81cbb245b686bf49855e88da5"
+    },
+    {
+      "old": "packages/receiving/generated/source-map/location_list.json",
+      "new": "apps/wamn_receiving/generated/source-map/location_list.json",
+      "before_sha256": "cacc4e22e69772d4196665981f9f0b2ab842f11608ea87d2cd72764bd1f16eb3",
+      "after_sha256": "cacc4e22e69772d4196665981f9f0b2ab842f11608ea87d2cd72764bd1f16eb3"
+    },
+    {
+      "old": "packages/receiving/generated/source-map/purchase_order.json",
+      "new": "apps/wamn_receiving/generated/source-map/purchase_order.json",
+      "before_sha256": "4bab516893e0e84dde53f7719c9d8505721f33cc7cfa341a662ef385786fcc2a",
+      "after_sha256": "4bab516893e0e84dde53f7719c9d8505721f33cc7cfa341a662ef385786fcc2a"
+    },
+    {
+      "old": "packages/receiving/generated/source-map/purchase_order_line.json",
+      "new": "apps/wamn_receiving/generated/source-map/purchase_order_line.json",
+      "before_sha256": "b879db0804b196670ccc5f473a16c1cfd272b5e527272b6af6db581b15c61566",
+      "after_sha256": "b879db0804b196670ccc5f473a16c1cfd272b5e527272b6af6db581b15c61566"
+    },
+    {
+      "old": "packages/receiving/generated/source-map/receipt.json",
+      "new": "apps/wamn_receiving/generated/source-map/receipt.json",
+      "before_sha256": "1057566222d80d0d57820293eaef5692ce3e8034893f759014f028e441a21ab6",
+      "after_sha256": "1057566222d80d0d57820293eaef5692ce3e8034893f759014f028e441a21ab6"
+    },
+    {
+      "old": "packages/receiving/generated/source-map/receipt_line.json",
+      "new": "apps/wamn_receiving/generated/source-map/receipt_line.json",
+      "before_sha256": "a78e16378e51ec4f8b2b4027136aa2443f4a64f2c8e4236840536bc0cd225435",
+      "after_sha256": "a78e16378e51ec4f8b2b4027136aa2443f4a64f2c8e4236840536bc0cd225435"
+    },
+    {
+      "old": "packages/receiving/generated/source-map/receiving_load_receipt_screen.json",
+      "new": "apps/wamn_receiving/generated/source-map/receiving_load_receipt_screen.json",
+      "before_sha256": "960d5e6a3491946bfec5fdb8cdf987823e5ea9c535a6ccddaa14e0326707d63e",
+      "after_sha256": "960d5e6a3491946bfec5fdb8cdf987823e5ea9c535a6ccddaa14e0326707d63e"
+    },
+    {
+      "old": "packages/receiving/generated/source-map/receiving_record_receipt.json",
+      "new": "apps/wamn_receiving/generated/source-map/receiving_record_receipt.json",
+      "before_sha256": "0e0d84e4015ea528f9cd7c8e10583d21dc62bdc0e9b979037289bbe2ebf97b57",
+      "after_sha256": "0e0d84e4015ea528f9cd7c8e10583d21dc62bdc0e9b979037289bbe2ebf97b57"
+    },
+    {
+      "old": "packages/receiving/generated/sql/purchase_order/get.sql",
+      "new": "apps/wamn_receiving/generated/sql/purchase_order/get.sql",
+      "before_sha256": "2eb6a5c78c23fe93f83c17877b291b537411cce8c055b38b252a17a11dd52873",
+      "after_sha256": "2eb6a5c78c23fe93f83c17877b291b537411cce8c055b38b252a17a11dd52873"
+    },
+    {
+      "old": "packages/receiving/generated/sql/purchase_order/update.sql",
+      "new": "apps/wamn_receiving/generated/sql/purchase_order/update.sql",
+      "before_sha256": "a972049a3023f1c87ac95c07a3716f75aff4f520b37c8dcdecd74c49090eb6ab",
+      "after_sha256": "a972049a3023f1c87ac95c07a3716f75aff4f520b37c8dcdecd74c49090eb6ab"
+    },
+    {
+      "old": "packages/receiving/generated/sql/receipt/get.sql",
+      "new": "apps/wamn_receiving/generated/sql/receipt/get.sql",
+      "before_sha256": "73e18a76c60b67894ed4b7abb362953da0cc6d29254054096454ae837e3245d1",
+      "after_sha256": "73e18a76c60b67894ed4b7abb362953da0cc6d29254054096454ae837e3245d1"
+    },
+    {
+      "old": "packages/receiving/generated/sql/receipt/query_created_at_ascending.sql",
+      "new": "apps/wamn_receiving/generated/sql/receipt/query_created_at_ascending.sql",
+      "before_sha256": "7c9d3439ce29d392049e5bda1e005e146eb4882d22fee290ed7de80c3b4e1eb3",
+      "after_sha256": "7c9d3439ce29d392049e5bda1e005e146eb4882d22fee290ed7de80c3b4e1eb3"
+    },
+    {
+      "old": "packages/receiving/generated/wamn/item.rs",
+      "new": "apps/wamn_receiving/generated/wamn/item.rs",
+      "before_sha256": "85f28061d39bee6729d3df6eb90e6de4ab738bae5021f32fd66f0f24b33a109a",
+      "after_sha256": "85f28061d39bee6729d3df6eb90e6de4ab738bae5021f32fd66f0f24b33a109a"
+    },
+    {
+      "old": "packages/receiving/generated/wamn/location.rs",
+      "new": "apps/wamn_receiving/generated/wamn/location.rs",
+      "before_sha256": "f57b66efb396f110490b8dd1608de566a6d4d56608011d830fd14d9ce2b47a39",
+      "after_sha256": "f57b66efb396f110490b8dd1608de566a6d4d56608011d830fd14d9ce2b47a39"
+    },
+    {
+      "old": "packages/receiving/generated/wamn/location_list.rs",
+      "new": "apps/wamn_receiving/generated/wamn/location_list.rs",
+      "before_sha256": "1be49a8433f43766b9ffd17099d4f45bae758ccf7f5bc15676e3315e48da19a3",
+      "after_sha256": "1be49a8433f43766b9ffd17099d4f45bae758ccf7f5bc15676e3315e48da19a3"
+    },
+    {
+      "old": "packages/receiving/generated/wamn/purchase_order.rs",
+      "new": "apps/wamn_receiving/generated/wamn/purchase_order.rs",
+      "before_sha256": "e94f728150e6012f64ff5c68113a580ccaeee53514c653d341eb8fc586011c00",
+      "after_sha256": "e94f728150e6012f64ff5c68113a580ccaeee53514c653d341eb8fc586011c00"
+    },
+    {
+      "old": "packages/receiving/generated/wamn/purchase_order_line.rs",
+      "new": "apps/wamn_receiving/generated/wamn/purchase_order_line.rs",
+      "before_sha256": "6328892cd426786f1d5c6e44d3e25eaa5cb2e86fa99e4508b8ce95eb903ded1b",
+      "after_sha256": "6328892cd426786f1d5c6e44d3e25eaa5cb2e86fa99e4508b8ce95eb903ded1b"
+    },
+    {
+      "old": "packages/receiving/generated/wamn/receipt.rs",
+      "new": "apps/wamn_receiving/generated/wamn/receipt.rs",
+      "before_sha256": "e0825b71cac6f57b88cdb777307669e2dc2da651a5bac2679f26e07029fa7433",
+      "after_sha256": "e0825b71cac6f57b88cdb777307669e2dc2da651a5bac2679f26e07029fa7433"
+    },
+    {
+      "old": "packages/receiving/generated/wamn/receipt_line.rs",
+      "new": "apps/wamn_receiving/generated/wamn/receipt_line.rs",
+      "before_sha256": "c08d9fad0db04594ecff7d83128318bdbdc34eb6c95fa52f3276bcfeef654c7d",
+      "after_sha256": "c08d9fad0db04594ecff7d83128318bdbdc34eb6c95fa52f3276bcfeef654c7d"
+    },
+    {
+      "old": "packages/receiving/generated/wamn/receiving_load_receipt_screen.rs",
+      "new": "apps/wamn_receiving/generated/wamn/receiving_load_receipt_screen.rs",
+      "before_sha256": "f1744fc1ec86446a09b165aaec451d89165c7dad995e931650b611199ac36d94",
+      "after_sha256": "f1744fc1ec86446a09b165aaec451d89165c7dad995e931650b611199ac36d94"
+    },
+    {
+      "old": "packages/receiving/generated/wamn/receiving_record_receipt.rs",
+      "new": "apps/wamn_receiving/generated/wamn/receiving_record_receipt.rs",
+      "before_sha256": "03ca17525e4063c31f2e12042ecfea6dc88c902c4083f8fd83862dbbe49db355",
+      "after_sha256": "03ca17525e4063c31f2e12042ecfea6dc88c902c4083f8fd83862dbbe49db355"
+    },
+    {
+      "old": "packages/receiving/migrations/0001_initial.sql",
+      "new": "apps/wamn_receiving/migrations/0001_initial.sql",
+      "before_sha256": "46f703e4e9bc83001bbd6293cd3aea6b01dad4feb3a5458d88ef1308ac37d16a",
+      "after_sha256": "46f703e4e9bc83001bbd6293cd3aea6b01dad4feb3a5458d88ef1308ac37d16a"
+    },
+    {
+      "old": "packages/receiving/publication/attachments.json",
+      "new": "apps/wamn_receiving/publication/attachments.json",
+      "before_sha256": "89a834ba5d523d1b681071d359e79db84d601d7fe4e47f26c563b99c6b79bbe5",
+      "after_sha256": "89a834ba5d523d1b681071d359e79db84d601d7fe4e47f26c563b99c6b79bbe5"
+    },
+    {
+      "old": "packages/receiving/publication/components/receiving.json.in",
+      "new": "apps/wamn_receiving/publication/components/receiving.json.in",
+      "before_sha256": "f3d6c1e63f4fcaa9588db1464a6b5d355671b65fc429282b1d1d207d23f932af",
+      "after_sha256": "f3d6c1e63f4fcaa9588db1464a6b5d355671b65fc429282b1d1d207d23f932af"
+    },
+    {
+      "old": "packages/receiving/publication/wirings/location_list.json",
+      "new": "apps/wamn_receiving/publication/wirings/location_list.json",
+      "before_sha256": "af277c9f0f594c4c0e1b998d632b974a9aba4bf3472499f881148bb322db1f44",
+      "after_sha256": "af277c9f0f594c4c0e1b998d632b974a9aba4bf3472499f881148bb322db1f44"
+    },
+    {
+      "old": "packages/receiving/publication/wirings/purchase_order_get.json",
+      "new": "apps/wamn_receiving/publication/wirings/purchase_order_get.json",
+      "before_sha256": "f7618f603fcb6ac74bc978562d13fe643831bfd586adc385c34429864a67a09f",
+      "after_sha256": "f7618f603fcb6ac74bc978562d13fe643831bfd586adc385c34429864a67a09f"
+    },
+    {
+      "old": "packages/receiving/publication/wirings/purchase_order_query.json",
+      "new": "apps/wamn_receiving/publication/wirings/purchase_order_query.json",
+      "before_sha256": "d5a74f458ace123b0c7777f28ac865396ec92616c03b07a350bed1b08553e60d",
+      "after_sha256": "d5a74f458ace123b0c7777f28ac865396ec92616c03b07a350bed1b08553e60d"
+    },
+    {
+      "old": "packages/receiving/publication/wirings/purchase_order_update.json",
+      "new": "apps/wamn_receiving/publication/wirings/purchase_order_update.json",
+      "before_sha256": "8eef7d76e428dafceea2f517dabc6c6178e626ebd8b8dae9ce587cc50754db5a",
+      "after_sha256": "8eef7d76e428dafceea2f517dabc6c6178e626ebd8b8dae9ce587cc50754db5a"
+    },
+    {
+      "old": "packages/receiving/publication/wirings/receipt_get.json",
+      "new": "apps/wamn_receiving/publication/wirings/receipt_get.json",
+      "before_sha256": "5427f95c4b80c26c33c94326c3e3897014748378551224ad2ea6dec96ff09a8c",
+      "after_sha256": "5427f95c4b80c26c33c94326c3e3897014748378551224ad2ea6dec96ff09a8c"
+    },
+    {
+      "old": "packages/receiving/publication/wirings/receipt_query.json",
+      "new": "apps/wamn_receiving/publication/wirings/receipt_query.json",
+      "before_sha256": "6518f494e060c1f6bfadfeca5e09985f0258892cf5e03b7dd325020a1bf35842",
+      "after_sha256": "6518f494e060c1f6bfadfeca5e09985f0258892cf5e03b7dd325020a1bf35842"
+    },
+    {
+      "old": "packages/receiving/publication/wirings/receiving_load_receipt_screen.json",
+      "new": "apps/wamn_receiving/publication/wirings/receiving_load_receipt_screen.json",
+      "before_sha256": "b6c832c179cdb0cef459888a82a87a72e9f0f5c896d6b5fce480d66969ae9e49",
+      "after_sha256": "b6c832c179cdb0cef459888a82a87a72e9f0f5c896d6b5fce480d66969ae9e49"
+    },
+    {
+      "old": "packages/receiving/publication/wirings/receiving_record_receipt.json",
+      "new": "apps/wamn_receiving/publication/wirings/receiving_record_receipt.json",
+      "before_sha256": "7de2c86cab8a334c3ac1078b5603363645a832fac2284c96b1d2ffb9955dfecc",
+      "after_sha256": "7de2c86cab8a334c3ac1078b5603363645a832fac2284c96b1d2ffb9955dfecc"
+    },
+    {
+      "old": "packages/receiving/query/load_receipt_screen.sql",
+      "new": "apps/wamn_receiving/query/load_receipt_screen.sql",
+      "before_sha256": "d10b99c537b6c8b826c9d8e4f61f3aae4683073aaefc0915356ae7b41157b068",
+      "after_sha256": "d10b99c537b6c8b826c9d8e4f61f3aae4683073aaefc0915356ae7b41157b068"
+    },
+    {
+      "old": "packages/receiving/query/location.sql",
+      "new": "apps/wamn_receiving/query/location.sql",
+      "before_sha256": "35923fd698b2742abe220aeb88e5318ddf8e9fd3adbb56a913d07dc01957e38a",
+      "after_sha256": "35923fd698b2742abe220aeb88e5318ddf8e9fd3adbb56a913d07dc01957e38a"
+    },
+    {
+      "old": "packages/receiving/query/open_purchase_order.sql",
+      "new": "apps/wamn_receiving/query/open_purchase_order.sql",
+      "before_sha256": "61505031f82c3e321f1ba595f393e1dd4b24ce81543992687e77ca1df4e37fe4",
+      "after_sha256": "61505031f82c3e321f1ba595f393e1dd4b24ce81543992687e77ca1df4e37fe4"
+    },
+    {
+      "old": "packages/receiving/query/open_purchase_order_by_created_at_descending.sql",
+      "new": "apps/wamn_receiving/query/open_purchase_order_by_created_at_descending.sql",
+      "before_sha256": "eca2e9c5412c8137418e3703ec957fa59cfa10232143eab50f2d489de98b4368",
+      "after_sha256": "eca2e9c5412c8137418e3703ec957fa59cfa10232143eab50f2d489de98b4368"
+    },
+    {
+      "old": "packages/receiving/query/open_purchase_order_by_purchase_order_number_ascending.sql",
+      "new": "apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_ascending.sql",
+      "before_sha256": "47a7f14532525b24ebee265ee292d2d94be43b489d485bbac0e85266c7802a54",
+      "after_sha256": "47a7f14532525b24ebee265ee292d2d94be43b489d485bbac0e85266c7802a54"
+    },
+    {
+      "old": "packages/receiving/query/open_purchase_order_by_purchase_order_number_descending.sql",
+      "new": "apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_descending.sql",
+      "before_sha256": "aa601d2ee46c27f2639aa2293fff212b90ad4ffb35ee35e820ff0d72aa2aa7ff",
+      "after_sha256": "aa601d2ee46c27f2639aa2293fff212b90ad4ffb35ee35e820ff0d72aa2aa7ff"
+    },
+    {
+      "old": "packages/receiving/query/open_purchase_order_by_status_ascending.sql",
+      "new": "apps/wamn_receiving/query/open_purchase_order_by_status_ascending.sql",
+      "before_sha256": "b896cab6620a3ff895611111659791d505cf7f9518b12eba53f5873655c4ae07",
+      "after_sha256": "b896cab6620a3ff895611111659791d505cf7f9518b12eba53f5873655c4ae07"
+    },
+    {
+      "old": "packages/receiving/query/open_purchase_order_by_status_descending.sql",
+      "new": "apps/wamn_receiving/query/open_purchase_order_by_status_descending.sql",
+      "before_sha256": "4ca93e4ff637cb3d9da2719d7bf4c509e05618438645195e3fbb653729177d3b",
+      "after_sha256": "4ca93e4ff637cb3d9da2719d7bf4c509e05618438645195e3fbb653729177d3b"
+    },
+    {
+      "old": "packages/receiving/wamn.json",
+      "new": "apps/wamn_receiving/wamn.json",
+      "before_sha256": "b8899211b46b05a2eb6ee59c6dee8cd816763b1914c6b36c5435e16158136d6b",
+      "after_sha256": "b8899211b46b05a2eb6ee59c6dee8cd816763b1914c6b36c5435e16158136d6b"
+    },
+    {
+      "old": "crates/client/receiving/Cargo.toml",
+      "new": "apps/wamn_receiving/ui/Cargo.toml",
+      "before_sha256": "5a08a55c40fe95ab32217527ca1d5656bb29ffaa7358396c1c9eb5d3db931f93",
+      "after_sha256": "a993013dad4e6987faa5fa95c1a8fd56d8317815db69e5fd9a8f0ed656b227e4"
+    },
+    {
+      "old": "crates/client/receiving/src/application.rs",
+      "new": "apps/wamn_receiving/ui/src/application.rs",
+      "before_sha256": "f42b51dd4d865f6baf6da2f7a2748e027636e59e820c27163a1bdf9394b2b969",
+      "after_sha256": "f42b51dd4d865f6baf6da2f7a2748e027636e59e820c27163a1bdf9394b2b969"
+    },
+    {
+      "old": "crates/client/receiving/src/lib.rs",
+      "new": "apps/wamn_receiving/ui/src/lib.rs",
+      "before_sha256": "e5487f23b2b1020a08e98c7499b2b98201fc3acd9b9ebba95bae7d23f3098ac0",
+      "after_sha256": "e5487f23b2b1020a08e98c7499b2b98201fc3acd9b9ebba95bae7d23f3098ac0"
+    },
+    {
+      "old": "crates/client/receiving/src/login.rs",
+      "new": "apps/wamn_receiving/ui/src/login.rs",
+      "before_sha256": "6b2e3cdc21b6c9bbbb515853ff0b6872b7f4760de269906e0663723e7e0371e2",
+      "after_sha256": "6b2e3cdc21b6c9bbbb515853ff0b6872b7f4760de269906e0663723e7e0371e2"
+    },
+    {
+      "old": "crates/client/receiving/src/main.rs",
+      "new": "apps/wamn_receiving/ui/src/main.rs",
+      "before_sha256": "091e33f4f308c5a613c305714d324bf39e17a863f8fcbbbfc71e134c0f6851d2",
+      "after_sha256": "091e33f4f308c5a613c305714d324bf39e17a863f8fcbbbfc71e134c0f6851d2"
+    },
+    {
+      "old": "crates/client/receiving/tests/login.rs",
+      "new": "apps/wamn_receiving/ui/tests/login.rs",
+      "before_sha256": "a4f4de3b3cf9def31495aa1c52d780fc8ec18114f015e0c94daf94a23b204e6b",
+      "after_sha256": "a4f4de3b3cf9def31495aa1c52d780fc8ec18114f015e0c94daf94a23b204e6b"
+    },
+    {
+      "old": "crates/client/receiving/tests/reducer.rs",
+      "new": "apps/wamn_receiving/ui/tests/reducer.rs",
+      "before_sha256": "d64af3b4bb9674aef9302cbeb72c8a17d78170f8b97138b7118255e8a1721008",
+      "after_sha256": "d64af3b4bb9674aef9302cbeb72c8a17d78170f8b97138b7118255e8a1721008"
+    },
+    {
+      "old": "crates/client/receiving/tests/support/mod.rs",
+      "new": "apps/wamn_receiving/ui/tests/support/mod.rs",
+      "before_sha256": "fc20b6cc383fe1e21998549b04d74449fccf542dcdde418d5e1a877e2440bda1",
+      "after_sha256": "fc20b6cc383fe1e21998549b04d74449fccf542dcdde418d5e1a877e2440bda1"
+    },
+    {
+      "old": "crates/client/receiving/tests/workflow.rs",
+      "new": "apps/wamn_receiving/ui/tests/workflow.rs",
+      "before_sha256": "5225d4dcb974b9fcb63d61937d20d79e59b7fcd475d19b45278a42e746201532",
+      "after_sha256": "5225d4dcb974b9fcb63d61937d20d79e59b7fcd475d19b45278a42e746201532"
+    },
+    {
+      "old": "tests/integration/tests/receiving_history/database.rs",
+      "new": "apps/wamn_receiving/tests/receiving_history/database.rs",
+      "before_sha256": "43b97fdb06601487c1815dea07e3d6b3195c127304ce15c46c7fc36b1de7aae1",
+      "after_sha256": "43b97fdb06601487c1815dea07e3d6b3195c127304ce15c46c7fc36b1de7aae1"
+    },
+    {
+      "old": "tests/integration/tests/receiving_history/model.rs",
+      "new": "apps/wamn_receiving/tests/receiving_history/model.rs",
+      "before_sha256": "6adbfc92f90d28e1ddea4debc48b0e7f9c22cfebda65b62bedb502e3781f9506",
+      "after_sha256": "6adbfc92f90d28e1ddea4debc48b0e7f9c22cfebda65b62bedb502e3781f9506"
+    },
+    {
+      "old": "tests/integration/tests/receiving_command_histories_live.rs",
+      "new": "apps/wamn_receiving/tests/receiving_command_histories_live.rs",
+      "before_sha256": "ea2cd408ed708950e4aa2d267f6f0bdd44160e7a95e8cff7135bc49983f0a720",
+      "after_sha256": "84c4f5db5bddf0fecab7a36a060a6f2d2590046816d1c4f2a61680dbab47cea8"
+    }
+  ],
+  "unchanged_files": 132,
+  "required_path_tail_files": [
+    "apps/wamn_receiving/generated/receiving-tui/Cargo.toml",
+    "apps/wamn_receiving/ui/Cargo.toml",
+    "apps/wamn_receiving/tests/receiving_command_histories_live.rs"
+  ],
+  "validation": "No builds or commits were run, as instructed. Hashes compare the exact tracked bytes before and after git mv."
+}

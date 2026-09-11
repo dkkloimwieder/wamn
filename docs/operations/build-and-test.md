@@ -79,10 +79,10 @@ Each invocation uses its workspace's existing target directory and release profi
 For a debug guest build, name its package explicitly:
 
 ```bash
-cargo build --manifest-path components/Cargo.toml -p http-route --target wasm32-wasip2
+cargo build --manifest-path apps/Cargo.toml -p http-route --target wasm32-wasip2
 ```
 
-For an app build, run `tools/build-components app packages/receiving`.
+For an app build, run `tools/build-components app apps/wamn_receiving`.
 Pass each app directory that the caller needs, including the resolved base apps for an overlay.
 The tool reads each app manifest to select its components.
 Cargo builds their dependencies, including generated data libraries.
@@ -376,11 +376,11 @@ WAMN routing, authentication, and delivery imports remain synchronous.
 Build and inspect the actual shell in the isolated worktree:
 
 ```bash
-cargo build --manifest-path components/Cargo.toml -p http-route \
+cargo build --manifest-path apps/Cargo.toml -p http-route \
   --target wasm32-wasip2 --locked --offline
-wasm-tools validate --features all components/target/wasm32-wasip2/debug/http_route.wasm
-wasm-tools component wit components/target/wasm32-wasip2/debug/http_route.wasm
-cargo test --manifest-path components/Cargo.toml -p http-route \
+wasm-tools validate --features all apps/target/wasm32-wasip2/debug/http_route.wasm
+wasm-tools component wit apps/target/wasm32-wasip2/debug/http_route.wasm
+cargo test --manifest-path apps/Cargo.toml -p http-route \
   --test adversarial --locked --offline -- --nocapture --test-threads=1
 bash tools/journey-workload-proof
 ```
@@ -599,7 +599,7 @@ WAMN_RECEIVING_PG_URL="$RECEIVING_DATABASE_URL" cargo test \
 database corrupts the base generation: `client_acme_receiving` adds
 `acme_inspection_required` and `acme_quality_status` to
 `receiving.purchase_order`, so introspecting afterwards writes those overlay
-columns into 14 `packages/receiving/generated/` files. Use three isolated
+columns into 14 `apps/wamn_receiving/generated/` files. Use three isolated
 databases: `receiving` alone, `wms` alone, and `receiving` plus its overlay.
 
 **Editing a `wamn.json` moves two pinned artifacts, not one.** The manifest
@@ -608,7 +608,7 @@ sha256 lives in `generated/platform-policy/data-access.json`, and
 whole introspected catalog, so an introspection change moves it as well.
 Regenerate after either kind of edit.
 
-# EVERY package root under packages/, derived from the tree and never listed.
+# EVERY package root under apps/, derived from the tree and never listed.
 # The list used to be the single literal `packages/receiving`, which is why
 # packages/wms/generated/client could go missing at 891aa296 and nothing went
 # red (wamn-10yt.57): no gate named wms. A hardcoded list makes the next package
@@ -620,7 +620,7 @@ Regenerate after either kind of edit.
 # (`application_schemas` in crates/schema/generator/src/data_access.rs):
 # `wamn ctl apply-package` creates those schemas and the migrations assume them.
 mapfile -t MATERIALIZE_ROOTS < <(
-  find packages -mindepth 2 -maxdepth 2 -name wamn.json -printf '%h\n' | sort
+  find apps -mindepth 2 -maxdepth 2 -name wamn.json -printf '%h\n' | sort
 )
 declare -A MATERIALIZE_ROOT_BY_ID=()
 for MATERIALIZE_ROOT in "${MATERIALIZE_ROOTS[@]}"; do
@@ -666,7 +666,7 @@ done
 # the count, the way "Live gates: arming" requires of anything a rename or a
 # moved directory can deselect.
 test "$MATERIALIZE_CHECKED" \
-  -eq "$(find packages -mindepth 2 -maxdepth 2 -name wamn.json | wc -l)"
+  -eq "$(find apps -mindepth 2 -maxdepth 2 -name wamn.json | wc -l)"
 # Measured at `2a4cd288` on a fresh postgres:18, one root per database:
 # packages/wms passes; packages/receiving and packages/client_acme_receiving
 # each FAIL, on generated/source-map/purchase_order.json and
@@ -680,9 +680,9 @@ test "$MATERIALIZE_CHECKED" \
 # Normal builds consume the committed .sqlx evidence without a database.
 SQLX_OFFLINE=true cargo test -p wamn-proof-conformance \
   --test receiving_sqlx_verifier --locked --offline
-cargo test --manifest-path components/Cargo.toml \
+cargo test --manifest-path apps/Cargo.toml \
   -p wamn-receiving-data-access --all-targets --locked --offline
-cargo check --manifest-path components/Cargo.toml \
+cargo check --manifest-path apps/Cargo.toml \
   -p wamn-receiving-data-access --target wasm32-wasip2 --locked --offline
 
 # On the disposable database, compile the native sibling and verify metadata.
@@ -698,7 +698,7 @@ These commands inject the mutations; compiler and typed-validator outcomes
 provide the proof. No test inspects source text for an implementation substring.
 
 ```bash
-RECEIVING_SQL_FILE=packages/receiving/query/open_purchase_order.sql
+RECEIVING_SQL_FILE=apps/wamn_receiving/query/open_purchase_order.sql
 RECEIVING_SQL_BASELINE_SHA="$(sha256sum "$RECEIVING_SQL_FILE" | cut -d ' ' -f 1)"
 (
   RECEIVING_SQL_BACKUP="$(mktemp)"
@@ -785,12 +785,12 @@ EFFECTIVE_RELEASE_PORT=54334
 EFFECTIVE_RELEASE_ROOT="$(pwd -P)"
 # `cargo test -p wamn-ctl --lib` runs with the working directory
 # `services/ctl`, so the path the test opens must be absolute.
-EFFECTIVE_RELEASE_BASE_COMPONENT="$EFFECTIVE_RELEASE_ROOT/components/target/virtualized/std-empty-environment/receiving.wasm"
+EFFECTIVE_RELEASE_BASE_COMPONENT="$EFFECTIVE_RELEASE_ROOT/apps/target/virtualized/std-empty-environment/receiving.wasm"
 # The base component digest is authored EXACTLY ONCE, in the package manifest
 # (wamn-10yt.50). Derive it here; never restate it. The guard below compares a
 # bare sha256sum, so the `sha256:` prefix comes off.
 EFFECTIVE_RELEASE_BASE_DIGEST="$(jq -r '.base_dependencies[].digest' \
-  "$EFFECTIVE_RELEASE_ROOT/packages/client_acme_receiving/wamn.json" \
+  "$EFFECTIVE_RELEASE_ROOT/apps/client_acme_receiving/wamn.json" \
   | sed 's/^sha256://')"
 if docker container inspect "$EFFECTIVE_RELEASE_CONTAINER" >/dev/null 2>&1; then
   echo "$EFFECTIVE_RELEASE_CONTAINER already exists" >&2
@@ -817,10 +817,10 @@ trap effective_release_cleanup EXIT
 tools/build-components proof
 test "$(sha256sum "$EFFECTIVE_RELEASE_BASE_COMPONENT" | cut -d ' ' -f 1)" = \
   "$EFFECTIVE_RELEASE_BASE_DIGEST"
-cargo build --manifest-path components/Cargo.toml --locked --offline \
+cargo build --manifest-path apps/Cargo.toml --locked --offline \
   --target wasm32-wasip2 -p client-acme-receiving
 cargo run -p wamn-component-virtualizer --locked --offline -- \
-  --input components/target/wasm32-wasip2/debug/client_acme_receiving.wasm \
+  --input apps/target/wasm32-wasip2/debug/client_acme_receiving.wasm \
   --output "$EFFECTIVE_RELEASE_SCRATCH/client_acme_receiving.wasm"
 
 docker run --detach --name "$EFFECTIVE_RELEASE_CONTAINER" \
@@ -908,7 +908,7 @@ The guard reads `connection_http.rs` and its `transport.rs` module with Python 3
 It refuses invocation identity in client keys and retained clients outside the complete isolation key.
 That key covers tenant, project, environment, binding, credential generation, destination, and TLS identity.
 Runtime isolation tests prove the behavior, while the guard prevents changes to the required structure.
-The Cargo legs run rustfmt and Clippy across the root, components, and `no-std` workspaces, including native and Wasm targets.
+The Cargo legs run rustfmt and Clippy across the root, `apps`, and `apps/platform/no-std` workspaces, including native and Wasm targets.
 The runner reports every leg and exits nonzero if any leg fails.
 
 **`tools/repo-lint run` has never been green.** Measured at `1bffa614`, unpiped:
@@ -952,7 +952,7 @@ tools/contract-diff run > contract-diff.txt 2>&1
 The reason it is not redundant with `cargo test --workspace`: legs 1 and 2 name
 `crates/authoring/model` and `crates/platform/runtime`, both root-workspace
 default members, so the sweep does run them. **Leg 3 names `http-route`, which
-is in the `components/` workspace and is not a root workspace member at all**
+is in the `apps/` workspace and is not a root workspace member at all**
 (measured at `2179f9c7` from `cargo metadata --no-deps`: 35 root members,
 `http-route` absent). No root sweep reaches it. `tools/contract-diff run` is the
 only command in this document that does.
@@ -1068,10 +1068,10 @@ set -euo pipefail
 tools/build-components proof
 
 STD_VIRT_REPOSITORY_ROOT="$(pwd -P)"
-STD_VIRT_DIRECTORY="$STD_VIRT_REPOSITORY_ROOT/components/target/virtualized/std-empty-environment"
+STD_VIRT_DIRECTORY="$STD_VIRT_REPOSITORY_ROOT/apps/target/virtualized/std-empty-environment"
 mkdir -p "$STD_VIRT_DIRECTORY"
 cargo run -p wamn-component-virtualizer --locked --offline -- \
-  --input components/target/wasm32-wasip2/release/std_virtualization_probe.wasm \
+  --input apps/target/wasm32-wasip2/release/std_virtualization_probe.wasm \
   --output "$STD_VIRT_DIRECTORY/std_virtualization_probe.wasm"
 
 WAMN_STD_VIRTUALIZATION_COMPONENT_WASM="$STD_VIRT_DIRECTORY/std_virtualization_probe.wasm" \
@@ -1099,7 +1099,7 @@ WAMN_STD_VIRTUALIZATION_SENTINEL=must-not-cross \
 WAMN_STD_VIRTUALIZATION_PG_URL="$STD_VIRT_PG_URL" \
 WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE="127.0.0.1:${STD_VIRT_REGISTRY_PORT}/wamn/std-proof" \
 WAMN_STD_VIRTUALIZATION_COMPONENT_WASM="$STD_VIRT_DIRECTORY/std_virtualization_probe.wasm" \
-WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM="$STD_VIRT_REPOSITORY_ROOT/components/target/wasm32-wasip2/release/http_route.wasm" \
+WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM="$STD_VIRT_REPOSITORY_ROOT/apps/target/wasm32-wasip2/release/http_route.wasm" \
   cargo test -p wamn-proof-integration --lib --locked --offline \
   virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal \
   -- --ignored --exact --nocapture --test-threads=1
@@ -1119,14 +1119,14 @@ A later `m1` rebuild alone does not prove that the two profiles produce identica
 
 `tests/integration/src/claim_law_live.rs` with the runner in
 `test-support/harness/src/claim_law.rs` (`wamn-f89v`). The generator emits
-`packages/wms/generated/contracts/inventory/move.claim-tests.json` and nothing
+`apps/wamn_wms/generated/contracts/inventory/move.claim-tests.json` and nothing
 executed it. The runner reads that file and its sibling `move.operation.json`.
 The sibling names the SQL file and the binds for every statement a case runs.
 The runner then runs that SQL on a live server.
 
 The database must be a **fresh disposable PostgreSQL 18** with no `wms` schema.
 The tests refuse a database that already has one, create it, and apply
-`packages/wms/migrations/0001_initial.sql` themselves. Nothing else is needed:
+`apps/wamn_wms/migrations/0001_initial.sql` themselves. Nothing else is needed:
 the claim ledger table has no foreign key to the pallet.
 
 ```bash
@@ -1354,9 +1354,9 @@ cluster-wide roles. It never uses kind.
 docker run -d --name wamn-sqlx-pg -e POSTGRES_PASSWORD=probe \
   -p 127.0.0.1:5437:5432 postgres:18
 until docker exec wamn-sqlx-pg psql -U postgres -tAc 'select 1' >/dev/null 2>&1; do :; done
-cargo build --manifest-path components/Cargo.toml -p sqlx-command --target wasm32-wasip2
+cargo build --manifest-path apps/Cargo.toml -p sqlx-command --target wasm32-wasip2
 WAMN_SQLX_TRANSACTION_PG_URL=postgres://postgres:probe@localhost:5437/postgres \
-WAMN_SQLX_TRANSACTION_COMPONENT="$PWD/components/target/wasm32-wasip2/debug/sqlx-command.wasm" \
+WAMN_SQLX_TRANSACTION_COMPONENT="$PWD/apps/target/wasm32-wasip2/debug/sqlx-command.wasm" \
   cargo test -p wamn-runtime --test sqlx_transaction_live -- --include-ignored
 docker rm -f wamn-sqlx-pg      # BY EXPLICIT NAME. Never prune.
 ```
@@ -2216,7 +2216,7 @@ RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
   cargo build -p wamn-identity --bin wamn-identity --locked --offline
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_LIVE_TARGET" \
-  cargo build --manifest-path "$WAMN_DEV_LIVE_ROOT/components/Cargo.toml" \
+  cargo build --manifest-path "$WAMN_DEV_LIVE_ROOT/apps/Cargo.toml" \
     -p http-route --target wasm32-wasip2 --locked --offline
 WAMN_DEV_LIVE_BIN="$WAMN_DEV_LIVE_TARGET/debug/wamn"
 WAMN_DEV_LIVE_HOST_BIN="$WAMN_DEV_LIVE_TARGET/debug/wamn-host"
@@ -2387,7 +2387,7 @@ RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
   cargo build -p wamn-identity --bin wamn-identity --locked --offline
 RUSTC_WRAPPER= CARGO_TARGET_DIR="$WAMN_DEV_ENV_TARGET" \
-  cargo build --manifest-path "$WAMN_DEV_ENV_TREE/components/Cargo.toml" \
+  cargo build --manifest-path "$WAMN_DEV_ENV_TREE/apps/Cargo.toml" \
     -p http-route --target wasm32-wasip2 --locked --offline
 WAMN_DEV_ENV_FLOW_HTTP="$WAMN_DEV_ENV_TARGET/wasm32-wasip2/debug/http_route.wasm"
 test -x "$WAMN_DEV_ENV_TARGET/debug/wamn"
@@ -2458,8 +2458,8 @@ WAMN_IDENTITY_BINARY="$WAMN_DEV_ENV_TARGET/debug/wamn-identity" \
   --flow-http-workload-image "$WAMN_DEV_ENV_FLOW_HTTP_IMAGE" \
   --host-binary "$WAMN_DEV_ENV_TARGET/debug/wamn-host" \
   --scenario-worker-binary "$WAMN_DEV_ENV_TARGET/debug/wamn-scenario-worker" \
-  --package "$WAMN_DEV_ENV_TREE/packages/receiving" \
-  --overlay-root "$WAMN_DEV_ENV_TREE/packages/client_acme_receiving"
+  --package "$WAMN_DEV_ENV_TREE/apps/wamn_receiving" \
+  --overlay-root "$WAMN_DEV_ENV_TREE/apps/client_acme_receiving"
 ```
 
 The command prints the Gate URL, the configuration path, and the exact `wamn
@@ -2468,7 +2468,7 @@ in a second terminal:
 
 ```bash
 "$WAMN_DEV_ENV_TARGET/debug/wamn" dev --config "$WAMN_DEV_ENV_DIR/dev.json" \
-  --overlay-root "$WAMN_DEV_ENV_TREE/packages/client_acme_receiving" --tui
+  --overlay-root "$WAMN_DEV_ENV_TREE/apps/client_acme_receiving" --tui
 ```
 
 Stop the Gate with Ctrl-C when the loop is done, then remove the services and
@@ -2497,7 +2497,7 @@ From that source tree, launch the generated Receiving terminal:
 
 ```bash
 target/debug/wamn dev --config "$WAMN_DEV_ENV_DIR/dev.json" \
-  --overlay-root "$PWD/packages/client_acme_receiving" --watch --tui receiving
+  --overlay-root "$PWD/apps/client_acme_receiving" --watch --tui receiving
 ```
 
 Bare `--tui` opens the developer console.
@@ -2532,17 +2532,18 @@ These entries describe different limits:
 #### Customize one screen
 
 A scaffold is a developer-owned crate copied from generated screens.
-After Generate completes, create the Receiving override:
+Receiving already owns its composition in `apps/wamn_receiving/ui/`.
+After Generate completes, create an override for the Acme Receiving overlay:
 
 ```bash
-target/debug/wamn ui scaffold receiving receiving.record_receipt
+target/debug/wamn ui scaffold client_acme_receiving receiving.record_receipt
 CARGO_TARGET_DIR="$PWD/target" cargo test --offline \
-  --manifest-path packages/receiving/ui/Cargo.toml -- --include-ignored
+  --manifest-path apps/client_acme_receiving/ui/Cargo.toml -- --include-ignored
 ```
 
 If the app declares several components, add `--component NAME` to select the component that owns the screens.
 
-The command creates `packages/receiving/ui/` and refuses to overwrite an existing crate.
+The command creates `apps/client_acme_receiving/ui/` and refuses to overwrite an existing crate.
 Edit the selected constructor under `src/screens/` as ordinary Rust.
 Keep direct generated calls for screens that need no override.
 To remove an override, call the generated constructor again.
@@ -2573,7 +2574,7 @@ The runner builds the required native binaries and runs the focused client and g
 It builds `wamn-identity` and uses `wamn_system` for each disposable PAT bootstrap.
 These tests exercise typed request bytes, protected revisions, submission states, operation coverage, and declared error rendering.
 It regenerates Receiving, its Acme overlay, and WMS through the normal materializer against fresh PostgreSQL databases.
-It compares generated bytes, creates the temporary Receiving scaffold, and runs its declared tests.
+It compares generated bytes, creates the temporary Acme Receiving scaffold, and runs its declared tests.
 It removes only that owned scaffold before the live runs.
 
 The generated-terminal run exercises a real request, source edit, watch restart, empty replacement state, operator exit, and terminal restoration.
@@ -2637,8 +2638,8 @@ subcommands of `wamn-ctl`, a different binary, and typing one after `wamn` gets
 an unrecognized-subcommand error.
 
 **Two target directories, on purpose.** The workspace binaries build into the
-tree's own `target/`. `components/Cargo.toml` is a SEPARATE workspace, so
-`http_route.wasm` lands under `components/target/`, not `target/`, and the
+tree's own `target/`. `apps/Cargo.toml` is a SEPARATE workspace, so
+`http_route.wasm` lands under `apps/target/`, not `target/`, and the
 push below names that path. The loop's own Build stage runs
 `tools/build-components`, which uses the same two directories, so a run costs
 one component build and not two.
@@ -2651,7 +2652,7 @@ umask 077
 
 WAMN_TUI_TREE="$(pwd -P)"
 test "$(git -C "$WAMN_TUI_TREE" rev-parse --show-toplevel)" = "$WAMN_TUI_TREE"
-test -f "$WAMN_TUI_TREE/packages/receiving/wamn.json"
+test -f "$WAMN_TUI_TREE/apps/wamn_receiving/wamn.json"
 command -v wash >/dev/null
 
 WAMN_TUI_ROOT="${WAMN_TUI_ROOT:-${TMPDIR:-/tmp}/wamn-receiving-tui}"
@@ -2666,7 +2667,7 @@ WAMN_TUI_GATE_PORT="${WAMN_TUI_GATE_PORT:-8092}"
 
 WAMN_TUI_COMPOSE="$WAMN_TUI_TREE/test-support/infrastructure/std-virtualization.compose.yaml"
 WAMN_TUI_TARGET="$WAMN_TUI_TREE/target"
-WAMN_TUI_FLOW_HTTP="$WAMN_TUI_TREE/components/target/wasm32-wasip2/debug/http_route.wasm"
+WAMN_TUI_FLOW_HTTP="$WAMN_TUI_TREE/apps/target/wasm32-wasip2/debug/http_route.wasm"
 WAMN_TUI_AUTHORITY="127.0.0.1:${WAMN_TUI_REGISTRY_PORT}"
 WAMN_TUI_USERNAME=wamn-receiving-tui
 WAMN_TUI_HTPASSWD="$WAMN_TUI_ROOT/htpasswd"
@@ -2702,7 +2703,7 @@ RUSTC_WRAPPER= cargo build -p wamn-ctl --bin wamn --locked --offline
 RUSTC_WRAPPER= cargo build -p wamn-host -p wamn-scenario-worker --locked --offline
 RUSTC_WRAPPER= cargo build -p wamn-identity --bin wamn-identity --locked --offline
 RUSTC_WRAPPER= cargo build -p wamn-receiving-tui --bin wamn-receiving --locked --offline
-RUSTC_WRAPPER= cargo build --manifest-path "$WAMN_TUI_TREE/components/Cargo.toml" \
+RUSTC_WRAPPER= cargo build --manifest-path "$WAMN_TUI_TREE/apps/Cargo.toml" \
   -p http-route --target wasm32-wasip2 --locked --offline
 
 test -x "$WAMN_TUI_TARGET/debug/wamn"
@@ -2779,8 +2780,8 @@ WAMN_IDENTITY_BINARY="$WAMN_TUI_TARGET/debug/wamn-identity" \
   --route-host receiving.localhost \
   --flow-http-workload-image "$WAMN_TUI_FLOW_HTTP_IMAGE" \
   --host-binary "$WAMN_TUI_TARGET/debug/wamn-host" \
-  --package "$WAMN_TUI_TREE/packages/receiving" \
-  --overlay-root "$WAMN_TUI_TREE/packages/client_acme_receiving" \
+  --package "$WAMN_TUI_TREE/apps/wamn_receiving" \
+  --overlay-root "$WAMN_TUI_TREE/apps/client_acme_receiving" \
   2>&1 | tee "$WAMN_TUI_UP_LOG"
 ```
 
@@ -2793,7 +2794,7 @@ environment ready
   config: /tmp/wamn-receiving-tui/environment/dev.json
 
 run the loop from the repository root, in another terminal:
-  wamn dev --config /tmp/wamn-receiving-tui/environment/dev.json --overlay-root …/packages/client_acme_receiving --tui
+  wamn dev --config /tmp/wamn-receiving-tui/environment/dev.json --overlay-root …/apps/client_acme_receiving --tui
 
 this process holds the Gate; stop it with Ctrl-C when the loop is done
 ```
@@ -2825,7 +2826,7 @@ process is interrupted.
 ```bash
 "$WAMN_TUI_TARGET/debug/wamn" dev \
   --config "$WAMN_TUI_ENV_DIR/dev.json" \
-  --overlay-root "$WAMN_TUI_TREE/packages/client_acme_receiving" \
+  --overlay-root "$WAMN_TUI_TREE/apps/client_acme_receiving" \
   --hold 2>&1 | tee "$WAMN_TUI_RUN_LOG"
 ```
 
@@ -2908,8 +2909,8 @@ Generate writes a Rust client beside each package's contracts
 the set materialization owns and refuses to find anything else in:
 
 ```
-packages/receiving/generated/client/{location,purchase_order,receipt,receiving}.rs
-packages/client_acme_receiving/generated/client/{purchase_order,quality,receiving}.rs
+apps/wamn_receiving/generated/client/{location,purchase_order,receipt,receiving}.rs
+apps/client_acme_receiving/generated/client/{purchase_order,quality,receiving}.rs
 ```
 
 Each module carries its model's field descriptors, a request and a result type
@@ -2919,7 +2920,7 @@ over `wamn-client`. No base URL and no host: those are the caller's deployment
 config, which is why this recipe reads them from `run served` and the PAT file.
 
 `wamn-receiving` depends on the generated crate at
-`packages/receiving/generated/receiving-tui/`.
+`apps/wamn_receiving/generated/receiving-tui/`.
 That crate exports the generated screens and bindings.
 The Receiving composition connects the projection, line editors, location picker, and receipt command.
 Rebuild the terminal after regeneration:
@@ -3139,6 +3140,7 @@ only pass from the directory the pin happened to be minted in
 the guest workspace, fixed by relocating those crates under `components/`; and
 absolute `file!()` strings baked in by `include!`d package sources, fixed by
 `--remap-path-prefix` in `tools/build-components`.
+The guest workspace now lives at `apps/Cargo.toml`, with shared guests under `apps/platform/` and application guests under their app homes.
 
 `tests/conformance/tests/guest_workspace_closure.rs` asserts both properties
 structurally on every run. This gate proves the property they exist to protect.
@@ -3210,7 +3212,7 @@ mkdir -p -- "$HOME/.cache/wamn-lanes" "$GUEST_PROFILE_EVIDENCE"
 mkdir -- "$GUEST_PROFILE_SCRATCH"
 git rev-parse HEAD > "$GUEST_PROFILE_EVIDENCE/commit.txt"
 CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/app" RUSTC_WRAPPER= \
-  ./tools/build-components build-only app packages/receiving \
+  ./tools/build-components build-only app apps/wamn_receiving \
   > "$GUEST_PROFILE_EVIDENCE/app.json" \
   2> "$GUEST_PROFILE_EVIDENCE/app-build.log"
 CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/proof" RUSTC_WRAPPER= \
@@ -3231,7 +3233,7 @@ Use separate target directories for the two profiles.
 A shared target directory lets the second build reuse the first build's artifacts.
 The empty `RUSTC_WRAPPER` prevents a wrapper from reusing cached artifacts across the two profiles.
 
-Run this comparison whenever a dependency or its features change under `components/`.
+Run this comparison whenever a dependency or its features change under `apps/`.
 If the comparison fails, inspect the named packages.
 Compare the `features` fields in `.fingerprint/*/lib-*.json` under the two targets.
 Use `cargo tree -e features -i <crate>` to identify the dependency that requested a different feature.
@@ -4063,7 +4065,7 @@ cargo test --locked --offline -p wamn-runtime --lib plugins::connection_http:: -
 Build the real HTTP guest:
 
 ```bash
-cargo build --manifest-path components/no-std/Cargo.toml -p http-request --target wasm32-wasip2 --locked --offline
+cargo build --manifest-path apps/platform/no-std/Cargo.toml -p http-request --target wasm32-wasip2 --locked --offline
 ```
 
 Build the affected libraries and the shared SQL proof:

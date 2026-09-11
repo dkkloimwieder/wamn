@@ -129,7 +129,7 @@ fi
 cd -- "$WAMN_REPOSITORY_ROOT"
 
 # Separate Cargo workspaces keep no-std guests isolated from std features.
-readonly -a WAMN_MANIFESTS=(components/Cargo.toml components/no-std/Cargo.toml)
+readonly -a WAMN_MANIFESTS=(apps/Cargo.toml apps/platform/no-std/Cargo.toml)
 readonly WAMN_MANIFEST_LIST="$(printf '%s\n' "${WAMN_MANIFESTS[@]}" | jq -Rn '[inputs]')"
 readonly WAMN_APPLICATION_LIST="$(printf '%s\n' "${WAMN_APPLICATIONS[@]}" | jq -Rn '[inputs | select(length > 0)]')"
 
@@ -141,7 +141,7 @@ if [[ "$WAMN_PROFILE" == app ]]; then
     WAMN_APPLICATION_MANIFESTS+=("$application/wamn.json")
   done
 else
-  for application in "$WAMN_REPOSITORY_ROOT"/{packages,apps}/*/wamn.json; do
+  for application in "$WAMN_REPOSITORY_ROOT"/apps/*/wamn.json; do
     [[ -f "$application" ]] || continue
     WAMN_APPLICATION_MANIFESTS+=("$application")
   done
@@ -330,7 +330,7 @@ wamn_build() {
     manifest="$(jq -r --argjson leg "$leg" '.[$leg].manifest' <<<"$WAMN_PLAN")"
     # RELEASE, NOT DEBUG. The served guest was a debug artifact: 20,496,492
     # bytes against 533,473 for the same component under
-    # components/Cargo.toml's [profile.release] (opt-level "s", strip true) --
+    # apps/Cargo.toml's [profile.release] (opt-level "s", strip true) --
     # 38x on the wire, and 24.4 s of compile against 9.2 s. The profile existed
     # and this build path never asked for it, so every OCI push, every cold
     # pull and every host compile paid for debuginfo nobody reads. The Dockerfile's

@@ -1,0 +1,14 @@
+[
+  "crates/schema/generator/tests/client_emitter.rs",
+  "crates/schema/generator/tests/generation.rs",
+  "crates/schema/generator/tests/tui_emitter.rs",
+  "crates/schema/generator/tests/client_projection.rs",
+  "crates/schema/generator/src/client_ir.rs",
+  "crates/schema/generator/src/client_rust.rs",
+  "crates/schema/generator/src/client_tui.rs",
+  "services/ctl/src/ui.rs",
+  "services/ctl/src/dev/native_tui.rs",
+  "services/ctl/src/dev/watch.rs",
+  "services/ctl/src/dev/command.rs",
+  "services/ctl/src/dev/coordinator.rs"
+]

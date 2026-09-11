@@ -1,11 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/identity", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/terminal", "crates/client/receiving", "crates/authoring/model", "crates/catalog/model", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "packages/receiving/generated/receiving-tui", "packages/wms/generated/wms-tui", "packages/client_acme_receiving/generated/client_acme_receiving-tui"]
+members = ["services/host", "services/identity", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/infrastructure", "test-support/simulator", "crates/client/core", "crates/client/tui", "crates/client/terminal", "apps/wamn_receiving/ui", "crates/authoring/model", "crates/catalog/model", "crates/execution/host", "crates/execution/router", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/control", "crates/schema/generator", "crates/schema/introspection", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/component-virtualizer", "crates/platform/runtime", "crates/scenarios/model", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "apps/wamn_receiving/generated/receiving-tui", "apps/wamn_wms/generated/wms-tui", "apps/client_acme_receiving/generated/client_acme_receiving-tui"]
 default-members = [
   "crates/authoring/model",
   "crates/catalog/model",
   "crates/client/core",
-  "crates/client/receiving",
+  "apps/wamn_receiving/ui",
   "crates/client/terminal",
   "crates/client/tui",
   "crates/execution/host",
@@ -22,8 +22,8 @@ default-members = [
   "services/identity",
   "services/scenario-worker",
 ]
-# Guest components are built separately for wasm32-wasip2 (see components/*).
-exclude = ["components"]
+# Guest components are built separately for wasm32-wasip2 (see apps/*).
+exclude = ["apps"]
 
 [workspace.package]
 version = "0.1.0"
@@ -195,10 +195,10 @@ wamn-catalog = { path = "crates/catalog/model", version = "0.1.0" }
 wamn-client = { path = "crates/client/core", version = "0.1.0" }
 wamn-client-terminal = { path = "crates/client/terminal", version = "0.1.0" }
 wamn-client-tui = { path = "crates/client/tui", version = "0.1.0" }
-wamn-generated-client-acme-receiving-tui = { path = "packages/client_acme_receiving/generated/client_acme_receiving-tui", version = "0.1.0" }
-wamn-generated-receiving-tui = { path = "packages/receiving/generated/receiving-tui", version = "0.1.0" }
-wamn-generated-wms-tui = { path = "packages/wms/generated/wms-tui", version = "0.1.0" }
-wamn-receiving-tui = { path = "crates/client/receiving", version = "0.1.0" }
+wamn-generated-client-acme-receiving-tui = { path = "apps/client_acme_receiving/generated/client_acme_receiving-tui", version = "0.1.0" }
+wamn-generated-receiving-tui = { path = "apps/wamn_receiving/generated/receiving-tui", version = "0.1.0" }
+wamn-generated-wms-tui = { path = "apps/wamn_wms/generated/wms-tui", version = "0.1.0" }
+wamn-receiving-tui = { path = "apps/wamn_receiving/ui", version = "0.1.0" }
 wamn-cdc-reader = { path = "services/cdc-reader", version = "0.1.0" }
 wamn-component-policy = { path = "crates/platform/component-policy", version = "0.1.0" }
 wamn-component-virtualizer = { path = "crates/platform/component-virtualizer", version = "0.1.0" }
@@ -207,15 +207,15 @@ wamn-control-registry = { path = "crates/control/registry", version = "0.1.0" }
 wamn-ctl = { path = "services/ctl", version = "0.1.0" }
 wamn-identity = { path = "services/identity", version = "0.1.0" }
 wamn-dispatcher = { path = "services/dispatcher", version = "0.1.0" }
-wamn-event-reg = { path = "components/events/registration", version = "0.1.0" }
-wamn-event-wire = { path = "components/events/wire", version = "0.1.0" }
-wamn-execution-contract = { path = "components/execution/contract", version = "0.1.0" }
+wamn-event-reg = { path = "apps/platform/events/registration", version = "0.1.0" }
+wamn-event-wire = { path = "apps/platform/events/wire", version = "0.1.0" }
+wamn-execution-contract = { path = "apps/platform/execution/contract", version = "0.1.0" }
 wamn-execution-host = { path = "crates/execution/host", version = "0.1.0" }
 wamn-executor = { path = "services/executor", version = "0.1.0" }
 wamn-gate-harness = { path = "test-support/harness", version = "0.1.0" }
 wamn-gates = { path = "tests/orchestrator", version = "0.1.0" }
 wamn-host = { path = "services/host", version = "0.1.0" }
-wamn-materializer = { path = "components/events/materializer", version = "0.1.0" }
+wamn-materializer = { path = "apps/platform/events/materializer", version = "0.1.0" }
 wamn-pg-core = { path = "crates/platform/pg-core", version = "0.1.0" }
 wamn-platform-identity = { path = "crates/identity/platform", version = "0.1.0" }
 wamn-project-state = { path = "crates/identity/project-state", version = "0.1.0" }

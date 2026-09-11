@@ -10,8 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const TOOL: &str = "tools/repo-lint";
 const HTTP_SOURCE: &str = "crates/platform/runtime/src/plugins/connection_http.rs";
 const HTTP_TRANSPORT: &str = "crates/platform/runtime/src/plugins/connection_http/transport.rs";
-const COMPONENT_MANIFEST: &str = "components/Cargo.toml";
-const NO_STD_MANIFEST: &str = "components/no-std/Cargo.toml";
+const COMPONENT_MANIFEST: &str = "apps/Cargo.toml";
+const NO_STD_MANIFEST: &str = "apps/platform/no-std/Cargo.toml";
 const LEG_LABELS: [&str; 10] = [
     "connection HTTP scoped retained clients",
     "root rustfmt",

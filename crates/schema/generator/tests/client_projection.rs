@@ -359,15 +359,15 @@ fn release(package: &str) -> ClientContractIr {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     ClientContractIr::from_release(
         package,
-        &root.join(format!("packages/{package}/generated/contracts")),
-        &root.join(format!("packages/{package}/publication/attachments.json")),
+        &root.join(format!("apps/{package}/generated/contracts")),
+        &root.join(format!("apps/{package}/publication/attachments.json")),
     )
     .unwrap_or_else(|error| panic!("{package} projects: {error}"))
 }
 
 #[test]
 fn receiving_update_preserves_writable_type_presence_and_null_refusal() {
-    let receiving = release("receiving");
+    let receiving = release("wamn_receiving");
     let update = operation(&receiving, "update");
     let schema = update
         .route
@@ -394,7 +394,7 @@ fn receiving_update_preserves_writable_type_presence_and_null_refusal() {
 
 #[test]
 fn receiving_query_closed_string_domains_remain_typed_without_explicit_schema_types() {
-    let receiving = release("receiving");
+    let receiving = release("wamn_receiving");
     let query = receiving
         .models
         .iter()
@@ -432,7 +432,7 @@ fn receiving_query_closed_string_domains_remain_typed_without_explicit_schema_ty
 
 #[test]
 fn receiving_direct_claim_grants_replay_but_wms_composition_does_not() {
-    let receiving = release("receiving");
+    let receiving = release("wamn_receiving");
     let command = operation(&receiving, "record_receipt");
     let route = command.route.as_ref().expect("Receiving route");
     assert!(route.direct);
@@ -453,7 +453,7 @@ fn receiving_direct_claim_grants_replay_but_wms_composition_does_not() {
         );
     }
 
-    let wms = release("wms");
+    let wms = release("wamn_wms");
     let command = operation(&wms, "move");
     assert_eq!(command.idempotent_by, Some(json!("claim")));
     assert!(

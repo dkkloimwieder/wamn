@@ -459,7 +459,7 @@ def main():
         wamn, config_path = args.wamn.resolve(strict=True), args.config.resolve(strict=True)
         overlay = args.overlay_root.resolve(strict=True)
         require(wamn.is_file() and os.access(wamn, os.X_OK), "--wamn must name a built executable")
-        require(overlay == REPOSITORY / "packages/client_acme_receiving", "--overlay-root must name this worktree's Receiving overlay")
+        require(overlay == REPOSITORY / "apps/client_acme_receiving", "--overlay-root must name this worktree's Receiving overlay")
         config = json.loads(config_path.read_text())
         require(config.get("operator_bearer_token") and config.get("target_template_database"),
                 "configuration must come from a disposable dev-up environment with an operator token")

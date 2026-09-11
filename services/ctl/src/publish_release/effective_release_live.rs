@@ -66,7 +66,7 @@ fn repository_root() -> PathBuf {
 /// wamn-10yt.50: this proof used to restate the same `sha256:` literal the
 /// overlay manifest pins, which is a third copy of a value that must be one.
 fn base_component_digest() -> String {
-    let overlay = repository_root().join("packages/client_acme_receiving");
+    let overlay = repository_root().join("apps/client_acme_receiving");
     crate::dev::coordinator::authored_base_digests(&overlay)
         .expect("the overlay manifest authors its base digest")["wamn_receiving@1.0.0"]
         .to_string()
@@ -74,8 +74,8 @@ fn base_component_digest() -> String {
 
 fn packages() -> [PackageInput; 2] {
     let root = repository_root();
-    let base = root.join("packages/receiving");
-    let overlay = root.join("packages/client_acme_receiving");
+    let base = root.join("apps/wamn_receiving");
+    let overlay = root.join("apps/client_acme_receiving");
     [
         PackageInput {
             id: "wamn_receiving",

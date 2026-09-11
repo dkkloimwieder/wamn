@@ -145,7 +145,7 @@ async fn provision_project(project: &Client, project_url: &str) {
         .and_then(Path::parent)
         .expect("ctl crate lives under services/ctl");
     apply_package::run(ApplyPackageArgs {
-        package: repository.join("packages/receiving"),
+        package: repository.join("apps/wamn_receiving"),
         database_url: project_url.to_string(),
         tenant: TENANT.to_string(),
     })

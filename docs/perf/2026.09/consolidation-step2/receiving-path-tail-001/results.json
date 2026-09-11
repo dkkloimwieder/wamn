@@ -1,0 +1,154 @@
+{
+  "beads": [
+    "wamn-47wm.3.2",
+    "wamn-47wm.3.6"
+  ],
+  "change_type": "mechanical_path_tail",
+  "worktree": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+  "source_sha256": {
+    "crates/schema/generator/tests/client_emitter.rs": "64d4886dd31f683ae531019891c24e9c7b4ef25a6a5c9a51138f53e0fc0200b4",
+    "crates/schema/generator/tests/generation.rs": "d478ac4e1712fa8fdcbd3af8d1619e3f6834e0a980d1ba420494df84f1f734ba",
+    "crates/schema/generator/tests/tui_emitter.rs": "2016c328ac7a568b52846c54c33206eaa5178e29a58bac7d139e49834b890180",
+    "crates/schema/generator/tests/client_projection.rs": "db6ac35ad2c0ce3f8ceac489a4ee2b69881b180d139ca87c49dc1e4645186055",
+    "crates/schema/generator/src/client_ir.rs": "d74fa184dfdb443cc991b394ac626f1f2aa9ce31fd9b24b865eb757362a135db",
+    "crates/schema/generator/src/client_rust.rs": "11fa3b65cb01cd288a8192c7b5a62fbcc983f8c38c2aa6054ea561e119004e3a",
+    "crates/schema/generator/src/client_tui.rs": "c7e6694663fb6fb42b8d13f11fc59345db54244ba3a5d14485bb07a9dd34e89f",
+    "services/ctl/src/ui.rs": "5aa57ec6faa88634a5da891dfeb91edf0d925247fe0d5c822fcbc13f9162b3a4",
+    "services/ctl/src/dev/native_tui.rs": "58632adcf7b10fe136fa7dd6c62a9e49f79e85a953667d9f405bff3fed85c958",
+    "services/ctl/src/dev/watch.rs": "ff3883d44a5ae3187fc7ca9dab68687e8bd419fba311454f646d09b303635849",
+    "services/ctl/src/dev/command.rs": "394572b62f06eb4732c2466a207df23237283a236c8c7a72a6090c3042afa7c6",
+    "services/ctl/src/dev/coordinator.rs": "8df42aa1cdb4a22268c95b30e53008360671f84d44f46d9bd8118becca79ddeb"
+  },
+  "literal_include_targets": [
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/wamn.json",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/command/record_receipt/claim_command.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/command/record_receipt/finalize_command.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/command/record_receipt/find_replay.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/command/record_receipt/finish_purchase_order.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/command/record_receipt/insert_receipt.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/command/record_receipt/insert_receipt_line.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/command/record_receipt/update_purchase_order_line.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/command/record_receipt/validate_receipt_line.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_ascending.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_descending.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/query/open_purchase_order_by_status_ascending.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/query/open_purchase_order_by_status_descending.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/query/open_purchase_order.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/query/open_purchase_order_by_created_at_descending.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/query/load_receipt_screen.sql",
+      "exists": true
+    },
+    {
+      "source": "crates/schema/generator/tests/generation.rs",
+      "target": "apps/wamn_receiving/query/location.sql",
+      "exists": true
+    },
+    {
+      "source": "services/ctl/src/dev/watch.rs",
+      "target": "apps/wamn_receiving/wamn.json",
+      "exists": true
+    },
+    {
+      "source": "services/ctl/src/dev/coordinator.rs",
+      "target": "apps/wamn_receiving/wamn.json",
+      "exists": true
+    },
+    {
+      "source": "services/ctl/src/dev/coordinator.rs",
+      "target": "apps/client_acme_receiving/wamn.json",
+      "exists": true
+    }
+  ],
+  "generated_cargo_templates": [
+    {
+      "path": "apps/wamn_receiving/generated/receiving-tui/Cargo.toml",
+      "sha256": "b09a8bff8c6cbed9d1df4f1bf2ee0d3c14222ed7a87d54eef69ad52aa1462467",
+      "matches_emitted_template": true
+    },
+    {
+      "path": "apps/wamn_wms/generated/wms-tui/Cargo.toml",
+      "sha256": "b2131d5dc4f3e538feba4eefd0a2c585538fcfd28428b70dc8d734e53a1fccc0",
+      "matches_emitted_template": true
+    },
+    {
+      "path": "apps/client_acme_receiving/generated/client_acme_receiving-tui/Cargo.toml",
+      "sha256": "c63e03314c739cabfa0ad36349086bc85a339b7b938b0874fa2f9ff7ac94ba8a",
+      "matches_emitted_template": true
+    }
+  ],
+  "rustfmt_exit_code": 0,
+  "cargo_run": false,
+  "commit_created": false,
+  "deferred_validation": "Root runs final-tree generator and ctl tests with its own warm target, after Native C integration.",
+  "retained_fixture_paths": [
+    "services/ctl/src/dev/coordinator.rs uses /packages/{id} for an in-memory synthetic package root.",
+    "services/ctl/src/dev/watch.rs uses components/no-std in a temporary overlapping-root ignore fixture, without reading repository components."
+  ]
+}

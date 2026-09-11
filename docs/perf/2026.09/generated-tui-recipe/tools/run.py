@@ -44,9 +44,9 @@ def main():
     stages = []
     started = time.monotonic()
     result = {'passed': False, 'source': source, 'stages': stages}
-    ui = tree / 'packages/receiving/ui'
+    ui = tree / 'apps/client_acme_receiving/ui'
     if ui.exists():
-        parser.error('the recipe requires packages/receiving/ui to be absent')
+        parser.error('the recipe requires apps/client_acme_receiving/ui to be absent')
     scaffold_owned = False
     scaffold_before = {}
 
@@ -91,7 +91,7 @@ def main():
             '--test', 'tui_emitter', '--', '--include-ignored'])
         # The absent path and exact captured file set establish ownership of this scratch scaffold.
         scaffold_owned = True
-        run('scaffold-create', [tree / 'target/debug/wamn', 'ui', 'scaffold', 'receiving', 'receiving.record_receipt'])
+        run('scaffold-create', [tree / 'target/debug/wamn', 'ui', 'scaffold', 'client_acme_receiving', 'receiving.record_receipt'])
         scaffold_before = scaffold_snapshot()
         profile = tomllib.loads((tree / 'Cargo.toml').read_text())['profile']['dev']
         scaffold_environment = environment | {'CARGO_TARGET_DIR': str(tree / 'target'),

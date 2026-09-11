@@ -213,7 +213,7 @@ pub fn emit_tui(
 
 fn cargo_manifest(slug: &str) -> String {
     format!(
-        "# @generated; do not edit.\n[package]\nname = \"wamn-generated-{slug}-tui\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\n\n[[bin]]\nname = \"wamn-{slug}-tui\"\npath = \"src/main.rs\"\n\n[dependencies]\nwamn-client = {{ workspace = true }}\nwamn-client-tui = {{ workspace = true }}\nwamn-client-terminal = {{ workspace = true }}\nserde_json = {{ workspace = true }}\nchrono = {{ workspace = true }}\nrust_decimal = {{ workspace = true }}\nuuid = {{ workspace = true }}\ntokio = {{ workspace = true, features = [\"macros\", \"rt-multi-thread\"] }}\n\n[lints]\nworkspace = true\n"
+        "# @generated; do not edit.\n[package]\nworkspace = \"../../../..\"\nname = \"wamn-generated-{slug}-tui\"\nversion.workspace = true\nedition.workspace = true\nlicense.workspace = true\n\n[[bin]]\nname = \"wamn-{slug}-tui\"\npath = \"src/main.rs\"\n\n[dependencies]\nwamn-client = {{ workspace = true }}\nwamn-client-tui = {{ workspace = true }}\nwamn-client-terminal = {{ workspace = true }}\nserde_json = {{ workspace = true }}\nchrono = {{ workspace = true }}\nrust_decimal = {{ workspace = true }}\nuuid = {{ workspace = true }}\ntokio = {{ workspace = true, features = [\"macros\", \"rt-multi-thread\"] }}\n\n[lints]\nworkspace = true\n"
     )
 }
 

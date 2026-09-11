@@ -64,3 +64,7 @@ wasmtime-wasi-http = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "receiving_command_histories_live"
+path = "../../apps/wamn_receiving/tests/receiving_command_histories_live.rs"

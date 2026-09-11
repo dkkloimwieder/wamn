@@ -1723,7 +1723,7 @@ mod tests {
     const ENDPOINT_COUNT: usize = 16;
     const DEV_CONFIG_SCHEMA_PATH: &str = "schema/wamn-dev.schema.json";
     const OVERLAY_MANIFEST: &[u8] =
-        include_bytes!("../../../../packages/client_acme_receiving/wamn.json");
+        include_bytes!("../../../../apps/client_acme_receiving/wamn.json");
 
     struct TempPackage {
         root: PathBuf,

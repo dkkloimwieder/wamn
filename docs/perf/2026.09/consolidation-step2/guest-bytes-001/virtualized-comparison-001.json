@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "count": 4,
+  "different": [],
+  "outputs": {
+    "blob_put.wasm": {
+      "bytes": 302702,
+      "package": "blob-put",
+      "sha256": "718510ed722cde58f648b8b3bc6f6554e5317afe32f4731fcfd16476340437b4"
+    },
+    "client_acme_receiving.wasm": {
+      "bytes": 444344,
+      "package": "client-acme-receiving",
+      "sha256": "4aa2accd63eea6e08966cb05410248271376f77010ddecb1499caf8b3ccab09f"
+    },
+    "receiving.wasm": {
+      "bytes": 672592,
+      "package": "receiving",
+      "sha256": "b85757dc167ad385804fbc6e670a47ca0c66bc272860142b6faed11f2e93c436"
+    },
+    "wms.wasm": {
+      "bytes": 705442,
+      "package": "wms",
+      "sha256": "9c0b0cad10c245bed158fe54e4eda33f9fe0206abfdc694396716c05a37f8b31"
+    }
+  }
+}

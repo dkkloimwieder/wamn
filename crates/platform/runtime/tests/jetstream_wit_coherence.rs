@@ -15,7 +15,7 @@ fn component_copies_match_the_built_contract() {
     // host contract without re-vendoring it fails here.
     let built = fs::read_to_string(root().join("wit/deps/wamn-jetstream/package.wit"))
         .expect("wit/deps/wamn-jetstream/package.wit reads");
-    let copy = "../../../components/execution/materializer/wit/deps/wamn-jetstream/package.wit";
+    let copy = "../../../apps/platform/execution/materializer/wit/deps/wamn-jetstream/package.wit";
     let vendored =
         fs::read_to_string(root().join(copy)).unwrap_or_else(|e| panic!("{copy} reads: {e}"));
     assert_eq!(

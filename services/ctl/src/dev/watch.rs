@@ -1280,7 +1280,7 @@ impl FilesystemInvalidationSource {
     ///
     /// The ignore rules are the filter because the loop's own outputs are
     /// exactly what they cover: the Build stage writes into
-    /// `components/target/`, which lies inside a component build root, so a
+    /// `apps/target/`, which lies inside a component build root, so a
     /// watch that descended there invalidated on its own artifacts and reran
     /// forever with no edit at all (wamn-10yt.55). Ignored bytes are already
     /// not source by this module's other definition — [`GitSource::snapshot`]
@@ -1702,7 +1702,7 @@ mod tests {
             fs::create_dir_all(self.component().join("src")).expect("create component source root");
             fs::write(
                 self.package().join("wamn.json"),
-                include_bytes!("../../../../packages/receiving/wamn.json"),
+                include_bytes!("../../../../apps/wamn_receiving/wamn.json"),
             )
             .expect("write package manifest");
             fs::write(

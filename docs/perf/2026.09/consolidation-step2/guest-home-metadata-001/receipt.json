@@ -1,0 +1,104 @@
+{
+  "source": "071b1eadc3028326e15d7ff1220e66df2b5c8ea3",
+  "workspaces": [
+    {
+      "workspace": "native",
+      "root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+      "members": 40,
+      "local_packages": 43,
+      "dependency_graph_features_and_versions_unchanged": true,
+      "local_guest_dependencies_contained": null,
+      "target_directory": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/target",
+      "cargo_path_id_display_changes": []
+    },
+    {
+      "workspace": "std",
+      "root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/apps",
+      "members": 20,
+      "local_packages": 20,
+      "dependency_graph_features_and_versions_unchanged": true,
+      "local_guest_dependencies_contained": true,
+      "target_directory": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/apps/target",
+      "cargo_path_id_display_changes": [
+        {
+          "name": "client-acme-receiving",
+          "before": "path+file:///home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/components/application/client-acme-receiving#0.1.0",
+          "after": "path+file:///home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/apps/client_acme_receiving/component#client-acme-receiving@0.1.0"
+        },
+        {
+          "name": "receiving",
+          "before": "path+file:///home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/components/application/receiving#0.1.0",
+          "after": "path+file:///home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/apps/wamn_receiving/component#receiving@0.1.0"
+        },
+        {
+          "name": "wms",
+          "before": "path+file:///home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/components/application/wms#0.1.0",
+          "after": "path+file:///home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/apps/wamn_wms/component#wms@0.1.0"
+        }
+      ]
+    },
+    {
+      "workspace": "no-std",
+      "root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/apps/platform/no-std",
+      "members": 4,
+      "local_packages": 4,
+      "dependency_graph_features_and_versions_unchanged": true,
+      "local_guest_dependencies_contained": true,
+      "target_directory": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/apps/platform/no-std/target",
+      "cargo_path_id_display_changes": []
+    }
+  ],
+  "git_moved_files": 371,
+  "unchanged_moved_file_bytes": 355,
+  "path_corrected_moved_files": [
+    "apps/Cargo.toml",
+    "apps/wamn_receiving/component/src/lib.rs",
+    "apps/wamn_wms/component/src/lib.rs",
+    "apps/client_acme_receiving/component/src/lib.rs",
+    "apps/wamn_receiving/data/src/error.rs",
+    "apps/wamn_receiving/data/src/generated.rs",
+    "apps/wamn_wms/data/src/cursor.rs",
+    "apps/wamn_wms/data/src/error.rs",
+    "apps/wamn_wms/data/src/generated.rs",
+    "apps/client_acme_receiving/data/src/error.rs",
+    "apps/client_acme_receiving/data/src/generated.rs",
+    "apps/platform/events/materializer/Cargo.toml",
+    "apps/platform/no-std/Cargo.toml",
+    "apps/platform/no-std/publish.sh",
+    "apps/wamn_wms/generated/wms-tui/Cargo.toml",
+    "apps/client_acme_receiving/generated/client_acme_receiving-tui/Cargo.toml"
+  ],
+  "all_moved_modes_preserved": true,
+  "both_guest_lockfiles_byte_identical": true,
+  "validated_relative_references": 89,
+  "publish_script_syntax_exit": 0,
+  "git_diff_check_exit": 0,
+  "builds_run": false,
+  "artifact_pins_updated": false,
+  "baseline_source": "fa0dc6fe3567f82885efde852a9ede041e3a3cea",
+  "scope": "tracker_scope owns 371 moved files: 144 guest files and 227 WMS/client overlay authored files; Receiving authored/UI/history moves are independently owned by repo_scope. Root owns external source/tool/test readers.",
+  "normalization": "Compare complete Cargo metadata after mapping approved old filesystem paths to final paths, matching Cargo package IDs by unchanged name/version/source, and resolving dot segments in absolute paths. The three app guest path IDs now include package names because their directories are named component.",
+  "intermediate_commits": "Root fast-forwarded fa0dc6fe to 071b1ead while preserving pending moved bytes/modes; final dependency graph, features, versions, target names, and membership equal baseline after path normalization.",
+  "validation_limit": "Metadata and relative-reference validation only. No guest build, native test execution, digest comparison, remint, commit, or live proof in this lane.",
+  "external_consumer_scan": {
+    "command": [
+      "rg",
+      "-n",
+      "components/|packages/(receiving|wms|client_acme_receiving)/|crates/client/receiving/",
+      "--glob",
+      "!docs/**",
+      "--glob",
+      "!apps/**",
+      "--glob",
+      "!AGENTS.md",
+      "--glob",
+      "!CLAUDE.md",
+      "--glob",
+      "!README.md",
+      "--glob",
+      "!Cargo.lock"
+    ],
+    "exit": 1,
+    "note": "Root edits these files concurrently; matches include comments, intentional old-path guards, and OCI paths. This is a handoff, not an unresolved-defect count."
+  }
+}

@@ -1,0 +1,1514 @@
+{
+  "Cargo.toml": {
+    "sha256": "0f85a819c1d0cb407f2586bd64aa932d71d906774ffbefba1f50fc89d1c1c15d",
+    "mode": "0o664"
+  },
+  "apps/Cargo.lock": {
+    "sha256": "3b44f325ea7584ac6f2153ba2874624b50c54cf4ccc95b9222c99092c95c4a5d",
+    "mode": "0o664"
+  },
+  "apps/Cargo.toml": {
+    "sha256": "fdf88d139f4870cb834ce3552d1fa395a44f1b01abce4c23ec1b5f62fd03b440",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/README.md": {
+    "sha256": "4db2c3e1c21e35c315a9ec610a9029c775b831286e3fa825fe4e6bbdcd826998",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql": {
+    "sha256": "1049669b64fe0491694988be7e38771a8c4068839c06371b2bd3a81cd09140c0",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/command/create_inspection/insert_inspection.sql": {
+    "sha256": "5e18c52dedc3857274c7f6a246a1e486b50d4afebff4081edebd3232ceadba14",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/command/create_inspection/load_inspection.sql": {
+    "sha256": "0f21db223ec017fa15f04c26dd646b85270965bda939885c2195674960e9242a",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/component/Cargo.toml": {
+    "sha256": "f70cc8986be145510b47d183389d6b47a983478e4f9a53250807f3b7e36df915",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/component/src/lib.rs": {
+    "sha256": "f4daae07d3d71c5e67b04dd60dd313b0984c0d1a78ebf3ce65553ba02978653a",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/component/wit/deps/client-acme-receiving-purchase-order/package.wit": {
+    "sha256": "a2f82aab5bd479667d9db419c6af3281bb28c2504d85675eaf680dc7e3894a54",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/component/wit/deps/client-acme-receiving-quality/package.wit": {
+    "sha256": "46628edd6a3cf0a9a99ef4bb3565b21274394f95c10e3047b37c5b7c4353691c",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/component/wit/deps/client-acme-receiving-receiving/package.wit": {
+    "sha256": "32509ffb827018870a0f112fce633ccfa0c41f0b0fdf4a8598f48e07fef5d50a",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/component/wit/deps/wamn-receiving-receiving/package.wit": {
+    "sha256": "9cfa93e153b0e5d565a71789105579dcdb82865d88e44c82fcd1eb280a35b566",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/data/Cargo.toml": {
+    "sha256": "6c90543bc8232f977c6123e53162fc31f6e6ad9af01ca1905f202c0535a2760c",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/data/src/error.rs": {
+    "sha256": "c14154634cc9acdceaaec90f9ca05c60dbc4b32c49fb80d7f758b76016506ad0",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/data/src/generated.rs": {
+    "sha256": "60f93c3d7e017ccc4a24fc754feda0a2ff877b453bf9df6cf6745ecebbaed93d",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/data/src/lib.rs": {
+    "sha256": "47642b72b2011941bd0137b1bb07ae30baa94d9f07816d3d77328f505758ba2c",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/data/src/operation.rs": {
+    "sha256": "1a79a7a2addc12dbdc645c6f5a9dac8918d5191737fa389049b438cdabd52ae2",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/client/purchase_order.rs": {
+    "sha256": "126a065ede68e2f9ce6be3c8384f9b67779c63f00e3b6fe179f51a354cb73909",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/client/quality.rs": {
+    "sha256": "e1247f1790765bf0d26698b95c8309bc58c5c3d36c8e0dee9a88b914b0b6803a",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/client/receiving.rs": {
+    "sha256": "c47b8bd219751e8be43fe3e276af82c9553ba84fb639303e9fe5e0ba2478636c",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/client_acme_receiving-tui/Cargo.toml": {
+    "sha256": "c63e03314c739cabfa0ad36349086bc85a339b7b938b0874fa2f9ff7ac94ba8a",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/client_acme_receiving-tui/src/lib.rs": {
+    "sha256": "d1cc4e27daf6c734f890f4d5b79293b765040de3c446e4b3f886c1886fca23f5",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/client_acme_receiving-tui/src/main.rs": {
+    "sha256": "79696b928461a9c51cad220bc8545287534634516ed93973827b9da788482267",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/mod.rs": {
+    "sha256": "90ab5f38d9c976634f2bc3f78925bac3f0223422fc7edc115bb02145294939d5",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/purchase_order.rs": {
+    "sha256": "81b4cc565cb5435c0fb788a8b1bd3ac98a53fc84564144a772894e4dec556bce",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/quality.rs": {
+    "sha256": "9478ad496eb04cf818c3e0825baed02a8e0220176eea9063ee89c71afbb55aed",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/receiving.rs": {
+    "sha256": "d1b351dabb3ca44201211bdeaa4e5e270721877a19a3d75006e75383e5ff618f",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/cursor-v1.json": {
+    "sha256": "370d6499ff527d1165f369bae235a0af31e516094edf5b52e536719dcddc9896",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/purchase_order/get.errors.json": {
+    "sha256": "47b2f26223eb9fa838e742224e757b07152ed92af1698aaefcfa6eb5c17b6214",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/purchase_order/get.input.json": {
+    "sha256": "2f4c7781440d4fb240fe60218d5a6fcb7be1c64951df8dcfd346e4c65fcb0211",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/purchase_order/get.operation.json": {
+    "sha256": "65826f9be839f632c4b204b473cb98ceae263d70700544576bef822e3df52a51",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/purchase_order/get.result.json": {
+    "sha256": "57993820130d6cf5aa0f35c0e4400aa46b208df51d5e07c378b18809bc20b4da",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/purchase_order/update.errors.json": {
+    "sha256": "cbea86e3a6b450ca445bd52f1fb9845d568f08f93402f0c0dc83d8a7a7b21508",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/purchase_order/update.input.json": {
+    "sha256": "3f0bbb6b8524b0e7a373a404c3a24672dd454de34c0838aa74980e2bb4b2f823",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/purchase_order/update.operation.json": {
+    "sha256": "06c893ebfa13a5a21d015c32991c0b08221347f5e55d4a4c23ed2e47396c56ba",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/purchase_order/update.result.json": {
+    "sha256": "57993820130d6cf5aa0f35c0e4400aa46b208df51d5e07c378b18809bc20b4da",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/approve_inspection.errors.json": {
+    "sha256": "61f4a2a485616a74abf44ec55ea3fece2cc7233c0b3521e0360522aecc8fbc8c",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/approve_inspection.input.json": {
+    "sha256": "3cb51ca957c1c3fb7db09a63f8a3f5eeca7dda2d1f30e57f6897573aa9988e3d",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/approve_inspection.operation.json": {
+    "sha256": "8987b51b99fa565b791f7a91382378687d7242bcb238d9214893c344261d66e3",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/approve_inspection.result.json": {
+    "sha256": "f1f05480e32d0528e052e1877345c4b06c89886d72fdc527d64c1677e5e72b4d",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/approve_inspection.state-tests.json": {
+    "sha256": "d5287c395ccf6803e6e56377537e7b1c9d05456265ca4605151028d2e2bac42f",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/create_inspection.errors.json": {
+    "sha256": "66deb474345cbf510025df0f5e4f5ed04c17776ebda40e46c89625fa811790f2",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/create_inspection.input.json": {
+    "sha256": "4114c477821a7864d0ff66a9b518e29782fb3d10f6bdd7b058fcff3831ed9a53",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/create_inspection.operation.json": {
+    "sha256": "846e88cb0f9d1a6bc6542d463dad2d50c819195d5424e1a6f49c662eea754237",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.errors.json": {
+    "sha256": "fefae97b5f43fb89767fccbc0639147f0c74205cd0bca6035e12fea11f38b2db",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.input.json": {
+    "sha256": "85b9b57bf7280c25e119f8892496573590e68509c5cee127f61538c4e2d33175",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.operation.json": {
+    "sha256": "a750d65f3d15d17241d1ec4efc79d6c499071754ac5617ea552d33ff462aa28c",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.result.json": {
+    "sha256": "5bb919ad94f560e56a7edf257a10726ad38f0d062dce303672a5a80cc816a756",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/receiving/record_receipt.errors.json": {
+    "sha256": "d63be50f8d4cd04fc59ec70535b5e61590d44cd85968be2637e1f89ea0a8a8f9",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/receiving/record_receipt.inherited-tests.json": {
+    "sha256": "5b122e1bce11cc73c65838c004dfca98f448f10bc494f3cd75ca868ad54830d1",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/receiving/record_receipt.input.json": {
+    "sha256": "e7d44e0e6942d7c8a17b757e3341fa5cbafa86d2fe52de9394ad4a636a86a162",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/receiving/record_receipt.operation.json": {
+    "sha256": "ced742329526d7f851b6ac8300b44dbb1e74bc9704c0e7143870c5edbe3eecb3",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/contracts/receiving/record_receipt.result.json": {
+    "sha256": "b0ad87ce68312e28967b7d140a8b3267081926e1d5de68284b923a868278717e",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/models/purchase_order.json": {
+    "sha256": "20b7fa5928fc5e06459d31bbe9eb297231834efc0f0082eeda1996774eb7e761",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/models/quality_inspection.json": {
+    "sha256": "8052874b8f666a4bc2b02df64381f4e23fca34c950722417a11d3cf2c0403baa",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/native-verifier/purchase_order.rs": {
+    "sha256": "f642e3eb1f183b983e59511ee650534c5b49acd44fe7685478b386d6abff2d0e",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/native-verifier/quality_approve_inspection.rs": {
+    "sha256": "1f27b70fd459faddd2e4347111c42f1c03bb5b5d22c477a2cdf02bf69ce4849b",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/native-verifier/quality_create_inspection.rs": {
+    "sha256": "dbb7ba271e2677f204b3f7754a83791233fffd6ee4caa75ad511f66dc038ce8c",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/native-verifier/quality_inspection.rs": {
+    "sha256": "2ae369886718bb720b496c3d2b6296bcbd7cef8bc1d43b25ce3820bf24bd7fc7",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/native-verifier/quality_load_purchase_order_detail.rs": {
+    "sha256": "61887a412a9b88be58527cf710a08ae2666cc37e022e17e02c8d6b38f36767d9",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/native-verifier/receiving_record_receipt.rs": {
+    "sha256": "61887a412a9b88be58527cf710a08ae2666cc37e022e17e02c8d6b38f36767d9",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/package-weld.json": {
+    "sha256": "e932b35aaa24309cc99555a53ad8a31eb9f4f53e63ebb7974a6c03056537d7ab",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/parity/purchase_order.json": {
+    "sha256": "3c9e7b58bb09fbae828f4c7f0b34e154ab4026edb39485214e1d5221006d93b7",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/parity/quality_approve_inspection.json": {
+    "sha256": "c90144f4b32eb1674f2ea7bf4c0e4735c0bc75db1c803a3ef4b927d21e2deee4",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/parity/quality_create_inspection.json": {
+    "sha256": "19e00fd56367c8b63d39ba0c1b626d1024283a39b9c1a6604cc71bd7d8fac48a",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/parity/quality_inspection.json": {
+    "sha256": "a44f4c521f0bc2669cdc2469f02d58852bd60577ad8f8b5a8d20f4cd41c722d4",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/parity/quality_load_purchase_order_detail.json": {
+    "sha256": "b2f92b4fdd8737ff47545e69ce126a6a0148d0c0c95a196551916db108a185fb",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/parity/receiving_record_receipt.json": {
+    "sha256": "34c47faeb00a2cd79c53d8e7bf5d2ba469dd7e6884375fc2307f06d97c26fe5d",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/platform-policy/data-access.json": {
+    "sha256": "c7bffdb0d9cdac8fe102d62d9952e5484753a95c8512b55bfcd79089d9373e74",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/source-map/purchase_order.json": {
+    "sha256": "28e08a51487090b4660b14f6cc5a6fb735dbe0a31f3dfd5545c4d3fc75ffab6d",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/source-map/quality_approve_inspection.json": {
+    "sha256": "b31a001a6ec0abbf40b8a0c8e89a0380fc34ca451c13f3974da1706f43f13782",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/source-map/quality_create_inspection.json": {
+    "sha256": "6a9f870dad1763f836d35281f23765f1ba4c4fda0820ecc4f85d5b21415739b1",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/source-map/quality_inspection.json": {
+    "sha256": "f9c5e664a98084cc9f684fa7798e85402b8a998846d4fd4661edf35a25979b60",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/source-map/quality_load_purchase_order_detail.json": {
+    "sha256": "b6062ac3bc4128b4970aded1d532027af3ad43bd482ebd1eaf3c287f12635d7c",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/source-map/receiving_record_receipt.json": {
+    "sha256": "e524df52047adeb785c236b0fb453e341e0b1c3a82fb6f346b2c2d90b3e77e07",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/sql/purchase_order/get.sql": {
+    "sha256": "15c3318293f29e75b0b47d5c77e6628706597407fe300e0f771731870751d4cc",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/sql/purchase_order/update.sql": {
+    "sha256": "0c8ddebddf00a12125acec9fb36f9cbd8619c99773ee79102b5dcd9afe844a95",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/wamn/purchase_order.rs": {
+    "sha256": "d10218958775ef64275344391b6ce7b7da9a4f8443d0c4c3e5b34b7e4d51fcf8",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/wamn/quality_approve_inspection.rs": {
+    "sha256": "0aaa9ad12b4c8c0228dee394099d6ae153a76a258a3472ec6762ab4bfd537076",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/wamn/quality_create_inspection.rs": {
+    "sha256": "f376553bce005e00b97318d603ebdc9f8e66c9f4125126a4c6e76c408c9a4b93",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/wamn/quality_inspection.rs": {
+    "sha256": "316380e204e76981f3bc0e70d37c05f6556bc4e0b2740c352028ccdee1f39785",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/wamn/quality_load_purchase_order_detail.rs": {
+    "sha256": "b061f62038dfe0e2cd793e7a137aab8159a6f81a4752e4e5cd15b8a56c56ad5b",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/generated/wamn/receiving_record_receipt.rs": {
+    "sha256": "b061f62038dfe0e2cd793e7a137aab8159a6f81a4752e4e5cd15b8a56c56ad5b",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/migrations/0001_add_inspection_required.sql": {
+    "sha256": "059c9eb628bcb5abd1e2d2c7045771fc481fcebb23336719cff5d3ed6f285508",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/migrations/0002_quality_inspection.sql": {
+    "sha256": "b908a316dd43bc5b5ea429ffec795d4e98e486fbacb6c667bf2dd56437809c02",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/publication/attachments.json": {
+    "sha256": "7e2f48cdf9fe444fe541b6594eebbea22e00e3291e356237efa6318c5ebe5b62",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/publication/components/client_acme_receiving.json.in": {
+    "sha256": "08dd953e863f2e24cb02657fb0947db9719e6eeff00eef615650392b3d7cc93e",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/publication/wirings/purchase_order_get.json": {
+    "sha256": "eebd3faf7a5e0b39d42f4b5e4a2554361dc6f4c7a326ea31213b2b478cb2409e",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/publication/wirings/purchase_order_update.json": {
+    "sha256": "71f51a8c1965940f52b3b5f6ba53b774da8880a533cfcef5688a80defadc9f0c",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/publication/wirings/quality_approve_inspection.json": {
+    "sha256": "4b4b8e1d57416c54332949f4f3cb9a0d3b9797c975eedacd1997dee051f462d6",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/publication/wirings/quality_create_inspection.json": {
+    "sha256": "9ef894a05bb77b8184fe7d814b9f33d9a2065d4110cd435d4d2c2f9cec52f204",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/publication/wirings/quality_load_purchase_order_detail.json": {
+    "sha256": "d193b44a092e9df43a6a50ed3eb1a87183425d56a6f523f57e2eb2d06c7f51b0",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/publication/wirings/receiving_record_receipt.json": {
+    "sha256": "37e72536f4291bd1c77116faf5503f695afc0cf028bf568723fcf08dce4b4bd9",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/query/quality_purchase_order_detail.sql": {
+    "sha256": "80ee1d1fc0391b2167f4ad4360f2c8d2876d5d0303dc1996cb1a757288eb536f",
+    "mode": "0o664"
+  },
+  "apps/client_acme_receiving/wamn.json": {
+    "sha256": "b642a2e25b4cdd266587025c50d1026922b5ada8bd81df85febf4c6ca38d9b4d",
+    "mode": "0o664"
+  },
+  "apps/platform/data/postgres-sqlx/Cargo.toml": {
+    "sha256": "35f75829120bc3289b289eb804cdb2a2447f15fbc65db5bb74be4d024a19fa38",
+    "mode": "0o664"
+  },
+  "apps/platform/data/postgres-sqlx/src/lib.rs": {
+    "sha256": "d276e4c0cdd5482402bf54c8f2e86ef5aac78e48bdd57350efa7f3984f7bbc67",
+    "mode": "0o664"
+  },
+  "apps/platform/data/postgres-sqlx/tests/wit_coherence.rs": {
+    "sha256": "6b875cca74b9946324e4a5f8e601091912b5d00e62e749d4a4b1695324fbe62c",
+    "mode": "0o664"
+  },
+  "apps/platform/data/postgres-sqlx/wit/deps/wamn-postgres/package.wit": {
+    "sha256": "53a3f5ffa4f02e15c6708d43f8bb7b6fb2f4ee29d2cc32ed3957cdd137655aaf",
+    "mode": "0o664"
+  },
+  "apps/platform/data/postgres-sqlx/wit/world.wit": {
+    "sha256": "c8c05e15ef16abc9e607a79ec4fb06ff5ff9a760b5ed13218f735c509dc00ca6",
+    "mode": "0o664"
+  },
+  "apps/platform/data/postgres-statements/Cargo.toml": {
+    "sha256": "91c830b4b2f5d4959452f9ba8453b0c27582ce0b5f38b4e85aba0ec3987019e8",
+    "mode": "0o664"
+  },
+  "apps/platform/data/postgres-statements/src/lib.rs": {
+    "sha256": "7a52073f3177d0db93ea44543464dbb39b0c7a812dbe9cd1125269ee3b7351a5",
+    "mode": "0o664"
+  },
+  "apps/platform/data/postgres-statements/wit/deps/wamn-postgres/package.wit": {
+    "sha256": "53a3f5ffa4f02e15c6708d43f8bb7b6fb2f4ee29d2cc32ed3957cdd137655aaf",
+    "mode": "0o664"
+  },
+  "apps/platform/data/postgres-statements/wit/world.wit": {
+    "sha256": "1436241f7fdb3a7335040fed914b116a19955ec4d7d4a537631459c39bba307e",
+    "mode": "0o664"
+  },
+  "apps/platform/events/materializer/Cargo.toml": {
+    "sha256": "4d2555dc95dbe6581a6b29f1d8daa13be5031076df9869f69e864db6eff1af29",
+    "mode": "0o664"
+  },
+  "apps/platform/events/materializer/src/condition.rs": {
+    "sha256": "1cea841faacd1cbe2e3434c4fef5b943317300c401c4460d14b9a1ea896301d7",
+    "mode": "0o664"
+  },
+  "apps/platform/events/materializer/src/context.rs": {
+    "sha256": "904b80a8d2213d4c6b2d80ac9d885dd2e8d56e6e16c8e14a108b4dbe73cee2bc",
+    "mode": "0o664"
+  },
+  "apps/platform/events/materializer/src/decide.rs": {
+    "sha256": "41e467bcde35c7637d1bebe0f42baa6551a18573b208057e102e3f0304770b82",
+    "mode": "0o664"
+  },
+  "apps/platform/events/materializer/src/input.rs": {
+    "sha256": "0c9a2e2137c9c1b035646f1c0f55968fb415610301a38862b2a63f90dbf65bc3",
+    "mode": "0o664"
+  },
+  "apps/platform/events/materializer/src/lib.rs": {
+    "sha256": "a25528abd9d64ce2b61f91152cebeed419cfcda8d0addf0120201ba7ceba77b5",
+    "mode": "0o664"
+  },
+  "apps/platform/events/materializer/src/sql.rs": {
+    "sha256": "24ee353cfb33efebd6da6ed2c967bfb654627173fe9d1f0a86dd7fb943f2d50b",
+    "mode": "0o664"
+  },
+  "apps/platform/events/registration/Cargo.toml": {
+    "sha256": "6557fd89ed7f5e0c070739284969cf574f7689254358b41eebe67a94c94ec9a4",
+    "mode": "0o664"
+  },
+  "apps/platform/events/registration/src/lib.rs": {
+    "sha256": "b5d827a0fa510b6bde5c1d538788517a9ad2e6b459561823132302cf4ee4473e",
+    "mode": "0o664"
+  },
+  "apps/platform/events/registration/src/model.rs": {
+    "sha256": "90619b8975ed40e46b9b70936225c1df60831322051679f170c7258dfc422683",
+    "mode": "0o664"
+  },
+  "apps/platform/events/registration/src/oldref.rs": {
+    "sha256": "c1b0160d6fe8be90556bc0da1ddb6474bf5b0063261a5d6da47d2e20553abde4",
+    "mode": "0o664"
+  },
+  "apps/platform/events/registration/src/reconcile.rs": {
+    "sha256": "96e31188961ac7537157a94c9bb4e09ec878f52e04676efb71c28803caef6282",
+    "mode": "0o664"
+  },
+  "apps/platform/events/registration/src/validate.rs": {
+    "sha256": "de180f9ff60d8dc735ca1a577519285e6b7d19da3318c6fcfe70b80f60310683",
+    "mode": "0o664"
+  },
+  "apps/platform/events/registration/tests/event_reg.rs": {
+    "sha256": "73bb97473b1c8853eec4a54eafe61bd927b729e87ed64464dc5b49f8852fd4cf",
+    "mode": "0o664"
+  },
+  "apps/platform/events/registration/tests/reconcile_live.rs": {
+    "sha256": "7e63d7bcdf108bbaf2afe37f2a4d27143744e545f69075c9808c4c86c2810a83",
+    "mode": "0o664"
+  },
+  "apps/platform/events/wire/Cargo.toml": {
+    "sha256": "95516e170b2df04b9d654a05c144e181831b29de0377c8526e8e9e422d607213",
+    "mode": "0o664"
+  },
+  "apps/platform/events/wire/src/lib.rs": {
+    "sha256": "845e617035eec3b455c0898f0462b3f9bbe3f3ea50515e80eb2375118f85af27",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/blob-put/Cargo.toml": {
+    "sha256": "b10c42d4c240c3c3b4a679db4baa1a80e183e93b2cd59ead8526f17d45f9043c",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/blob-put/declaration.json.in": {
+    "sha256": "8deea73a79d80c39bf87bfdffd6b348bcdea81160de89536c576481bd41d54df",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/blob-put/src/lib.rs": {
+    "sha256": "24ef0761692b71e137d68c224cd8a610ed684ae1353e367899cfaa1ccf8a60a6",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/blob-put/wit/deps/wamn-node/package.wit": {
+    "sha256": "4e06c115cf872768835d22c780c1fa9f896ed5561bef22533d81992f3e7024e3",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/blob-put/wit/deps/wasmcloud-blobstore/package.wit": {
+    "sha256": "15a6738da4017953c5348212e4a10d2036705a9824d04f258f7d9550b9ca8efb",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/blob-put/wit/world.wit": {
+    "sha256": "4e06f2d4ae4c3aca17126f863c9093af97b942b673bab7491a5806d2d5861044",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/contract/Cargo.toml": {
+    "sha256": "173a5bc5323a45859cd32eb23eaea6462759354e78537de4ac7e31b97db5f633",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/contract/src/effect_outcome.rs": {
+    "sha256": "2336a6919fe8a44a70b02dc556ecbf74324e5128d241932381bc17ffe65830c0",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/contract/src/expect.rs": {
+    "sha256": "e7df4eb1fd013419bfcb9c5340d4bdb9229e699475b88aff04762b8364d9759a",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/contract/src/lib.rs": {
+    "sha256": "78a5d21dd6dd3dd67e9a1cbb141d53e8e4e85844d9169df58e042fe7525936cd",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/contract/src/node_contract.rs": {
+    "sha256": "1884ac605f8ea21eed1db1665d8557255e10b132e48189fc1b080cc6de3f230d",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/contract/src/portable_http_target.rs": {
+    "sha256": "2f3949fb96bfd8d1aca63a173b95f1d7b6a9cf17b63bd059137681ae7e4fd7eb",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/contract/src/ports.rs": {
+    "sha256": "b85b7849b9f0434e32810f2db32f91704c747754638c7a98c16a9b4b36f2499a",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/contract/src/status.rs": {
+    "sha256": "aa827c797d65e5cadb62eaea741089c3aa124f02257c2a53d6254101399f2b68",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/contract/src/test_set.rs": {
+    "sha256": "c531256ba63090ff79ce2a24002242637086de5d9c423fce1a5faacd7cfaba8f",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/materializer/Cargo.toml": {
+    "sha256": "982f0a65a5badda6c9b876feb27c65d334587891b48b700dc2852d30fcb2f4d1",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/materializer/src/main.rs": {
+    "sha256": "39df015408164a4402bfd009b690c58243bb32e075dc23c77e23b96797af9396",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/materializer/wit/deps/wamn-flow-http-routing/package.wit": {
+    "sha256": "8d9b4d9d6380d5984075b8da9bed72520fb9a0177fc3fbdf50484a43167593b6",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/materializer/wit/deps/wamn-jetstream/package.wit": {
+    "sha256": "7ecc756bb2d5752349c40b552335b46f329dee9f07e144e82c582f300ccc0845",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/materializer/wit/deps/wamn-postgres/package.wit": {
+    "sha256": "53a3f5ffa4f02e15c6708d43f8bb7b6fb2f4ee29d2cc32ed3957cdd137655aaf",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/materializer/wit/deps/wamn-router-delivery/package.wit": {
+    "sha256": "c52a74d9bd88a6c77a904df34345b59c6cb188ac12020a14aace1b0ec43d2433",
+    "mode": "0o664"
+  },
+  "apps/platform/execution/materializer/wit/world.wit": {
+    "sha256": "90e88d6eb5d4dbdea250e7e31123859a279a8529d44817c00fd8d0a28e34f3a7",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/busyloop/Cargo.toml": {
+    "sha256": "799a53aec9035089b86c6bec47c30c07b6355a027c43e01ff6432a351f5b0149",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/busyloop/src/main.rs": {
+    "sha256": "b512ad2016795bc818c171984e20089c6eeae384dc2083f75cfc282c67d9717a",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/connection-http-standard/Cargo.toml": {
+    "sha256": "5dbf6e59e7b22bba04ffd9b38223ef06fdb5ccb42d20ad0da37cc5db0302aeaa",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/connection-http-standard/src/lib.rs": {
+    "sha256": "414e973bd46827f00962767dc985c82c3bc1024521aa6ca6610e8aaedb7f25a8",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/connection-http-standard/wit/deps/wamn-connection/package.wit": {
+    "sha256": "8012dd0bd4facad7c5da772be400024dae6dd76bc7ad7a5e5fd243608d6516e5",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/connection-http-standard/wit/world.wit": {
+    "sha256": "5320f4dd297e89c04aac96b5a1b6354277a1c07f9722ff6d7845e6046a7cae12",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/sockprobe/Cargo.toml": {
+    "sha256": "1e3584f6585a499110932d9203151f14a79df81ffafb2734470154eceb8bb719",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/sockprobe/src/main.rs": {
+    "sha256": "277aa7b3d5d2b2a68770b3b1091f42b020e513c85638601c6249c4796c73874e",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/sqlx-command/Cargo.toml": {
+    "sha256": "41168f13e62f7c2b53605818cd1e95fac51b868cdeb0414e632e7dbf840bb31d",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/sqlx-command/src/main.rs": {
+    "sha256": "e6f0b06830ec81ffd257b7dfd527d0df4a88358224499f21c4cb74ec3c0c5295",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/std-virtualization-probe/Cargo.toml": {
+    "sha256": "0257045a4e9ef4bc22cdc0edb1cf46ce8876738b3ef8fcd5aea4ea674d1df233",
+    "mode": "0o664"
+  },
+  "apps/platform/fixtures/std-virtualization-probe/src/lib.rs": {
+    "sha256": "f133ba1e983d1ca82a92028fbb91f287f7d341e83b66cc89576cb5c128f81bde",
+    "mode": "0o664"
+  },
+  "apps/platform/ingress/http-route/Cargo.toml": {
+    "sha256": "260e03359d2eaab0165655141ecfb3ca5ba2f1aed1f3fb3707a1e167fb8fff8e",
+    "mode": "0o664"
+  },
+  "apps/platform/ingress/http-route/src/guest.rs": {
+    "sha256": "81ded2029ba1b2404ee0d886fbafdcab897ec4bd150b19f0df389c740634f243",
+    "mode": "0o664"
+  },
+  "apps/platform/ingress/http-route/src/lib.rs": {
+    "sha256": "ae379a2d74e85675cff43bc01f2bbebf6fffb1a5b5e1815aa404b921497fd9f7",
+    "mode": "0o664"
+  },
+  "apps/platform/ingress/http-route/tests/adversarial.rs": {
+    "sha256": "01e3cf6cd20e23ea458cd3b26e0db9e6ef44d418c834e31a14972bdcf7691313",
+    "mode": "0o664"
+  },
+  "apps/platform/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit": {
+    "sha256": "8d9b4d9d6380d5984075b8da9bed72520fb9a0177fc3fbdf50484a43167593b6",
+    "mode": "0o664"
+  },
+  "apps/platform/ingress/http-route/wit/deps/wamn-router-delivery/package.wit": {
+    "sha256": "c52a74d9bd88a6c77a904df34345b59c6cb188ac12020a14aace1b0ec43d2433",
+    "mode": "0o664"
+  },
+  "apps/platform/ingress/http-route/wit/deps/wasi-clocks/package.wit": {
+    "sha256": "a09d3ad97d1facfe85802b457ca7decfb67909bb5d8cb202c717a2a7223153d1",
+    "mode": "0o664"
+  },
+  "apps/platform/ingress/http-route/wit/deps/wasi-http/package.wit": {
+    "sha256": "0c4b4e422f6e9ee6f0b34c6682a39f0097edce6124774e648c991f9d6215e63e",
+    "mode": "0o664"
+  },
+  "apps/platform/ingress/http-route/wit/deps/wasi-random/package.wit": {
+    "sha256": "48578c40213d5cab6650980905fa146a0be8c39c4433ee5e7e00637b87dbe08f",
+    "mode": "0o664"
+  },
+  "apps/platform/ingress/http-route/wit/world.wit": {
+    "sha256": "8b44cb191de5143dcca9a120677ade962b121d463cde73edb334cb1b6343eafb",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/Cargo.lock": {
+    "sha256": "43b63a298427ab10d65e738eced2426d8d3a12c77e9594ef4bd41051dce2ac8d",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/Cargo.toml": {
+    "sha256": "3804f37cef1e002a72413122aa7a50016b9212702db35adc80845aacb79ff93f",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/guest_runtime.rs": {
+    "sha256": "345ed9c9dec1644dddfbd5c063c4fc99ad6fa52a87fb5b3c3b6014c061361421",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/http-request/Cargo.toml": {
+    "sha256": "4d4b31651195d94f2f67d008cda207ef158194559cb3004c6b790112c7edbc20",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/http-request/declaration.json.in": {
+    "sha256": "c6714ba4e5582ec33e63050576a84e54b967b3b3a1bf73ccbfe3f277f8c617f8",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/http-request/src/lib.rs": {
+    "sha256": "830b33852377942932a4f76e9e5413b25ec9a730a71a8deba9bcedc2ec619e18",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/http-request/wit/deps/wamn-connection/package.wit": {
+    "sha256": "8012dd0bd4facad7c5da772be400024dae6dd76bc7ad7a5e5fd243608d6516e5",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/http-request/wit/deps/wamn-node/package.wit": {
+    "sha256": "4e06c115cf872768835d22c780c1fa9f896ed5561bef22533d81992f3e7024e3",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/http-request/wit/world.wit": {
+    "sha256": "8101182fac070b6542ae3c064c1238308e0c08937bc1ffdb2e085f2ac4dde6c1",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/label-render/Cargo.toml": {
+    "sha256": "aaa0eba9cc0b28251661865f7a024acfdf176f361d572462b0f2e29ef42dc2b8",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/label-render/declaration.json.in": {
+    "sha256": "215211d245f9b4626649e63a0fd5e96b6dfd42caa85f253508eb679fc45daa8a",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/label-render/src/lib.rs": {
+    "sha256": "28d30647b6e4cf2d9c5ba7f3e0eb686f83dee842897574e34f32cdaec635b6c3",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/label-render/wit/deps/wamn-node/package.wit": {
+    "sha256": "4e06c115cf872768835d22c780c1fa9f896ed5561bef22533d81992f3e7024e3",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/label-render/wit/world.wit": {
+    "sha256": "8be2adaf2f9ed69c1ba28af4be64ddb6eab2edec306384cf5d736a3beb890651",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/label-template/Cargo.toml": {
+    "sha256": "f4ab675207c0fa525fd0db4266492018dacf0f8494879ae1e1e83114c2842485",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/label-template/src/lib.rs": {
+    "sha256": "8eca66f686e2966e3782f4598d4a714389cb5cee84e6fcb901ead51a1c9824c1",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/label-template/tests/golden.rs": {
+    "sha256": "4c003121d73e0f9f6d5dfcfd7aa8114f712863e238d9aff585b82e70a52f9bdd",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/publish.sh": {
+    "sha256": "832865efc73bc478bd577b6197ace7d1466530a7ee45ae3649696ada4d4f78af",
+    "mode": "0o775"
+  },
+  "apps/platform/no-std/transform/Cargo.toml": {
+    "sha256": "fb329e697d1262ad29e0898269b176b8a69c6031ff545993d34b005e732e2aff",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/transform/declaration.json.in": {
+    "sha256": "da7c8ce83b441b5331b6f43e42c6103f32c07e0641d163f470371e8b57829b77",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/transform/src/lib.rs": {
+    "sha256": "a66bfed9f75ccf5be91a5cb86f94bb20fccd667a9ab522fee1383c4d1e934ae7",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/transform/wit/deps/wamn-node/package.wit": {
+    "sha256": "4e06c115cf872768835d22c780c1fa9f896ed5561bef22533d81992f3e7024e3",
+    "mode": "0o664"
+  },
+  "apps/platform/no-std/transform/wit/world.wit": {
+    "sha256": "322df6e04337af9697fca1bf0b0c655a28cc4a695a1fbb20ffdf930c56c6858c",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/component/Cargo.toml": {
+    "sha256": "9ea125831effc31f8c7460dc042b9420e8dfc41fe83f80bd186fdf2e5dd5076c",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/component/src/lib.rs": {
+    "sha256": "a791aed341ae7063e0ecf1fb2bb6ede7584f290ef188fafd386a6d598a23547b",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/Cargo.toml": {
+    "sha256": "07f928aae61721ff0fe88b2cea8b963335e522bb5baebca9643c81ae1b38fd1b",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/src/cursor.rs": {
+    "sha256": "4ec578d646aae44f35ea6d12f3110cdd9c4377626cdc624b41d178d7db711300",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/src/error.rs": {
+    "sha256": "479ff37c6561f8229a412246c72697303f5f33fae5b9147c5b3fb51ef9285e3b",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/src/generated.rs": {
+    "sha256": "0a85eb919acb9413ec875587ad290386f5885f9a463af9bdadf23214cf69e82a",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/src/lib.rs": {
+    "sha256": "fe2443d99abf7d0929ba777713dcf2727fe325129754482c74c63958233c1d8d",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/src/operation.rs": {
+    "sha256": "1d58cf3783a1a000cc917f85eecc4d6cd40b51d7450d8b5253236d2bfde8ab8e",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/src/purchase_order.rs": {
+    "sha256": "acf75ef83a1da260b3474a7091a9b6ec00558c904ebdd8a065271d82d5d9ebcb",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/src/receipt.rs": {
+    "sha256": "9d76d0a0b7721c120ee24a77a4c1f5c2f6a93f7e1d56690b2efb411f58bf81e4",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/src/record_receipt.rs": {
+    "sha256": "f72f48b6aef9235cac957e5b92d8bd0af51499c93be15ab38fead0f3872a1fa8",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/wit/deps/wamn-node/package.wit": {
+    "sha256": "4e06c115cf872768835d22c780c1fa9f896ed5561bef22533d81992f3e7024e3",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/wit/deps/wamn-postgres/package.wit": {
+    "sha256": "53a3f5ffa4f02e15c6708d43f8bb7b6fb2f4ee29d2cc32ed3957cdd137655aaf",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/wit/deps/wamn-receiving-location/package.wit": {
+    "sha256": "656cf6208d51231e42c352415c7cd553efc4ddfb948966806fb847d7710850f3",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/wit/deps/wamn-receiving-purchase-order/package.wit": {
+    "sha256": "0a5bbceb7bf366211c884ba9420b83cbfbdb2bb70d2705eba2d953c5d8eda281",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/wit/deps/wamn-receiving-receipt/package.wit": {
+    "sha256": "2149f54d94a75495806cc7bf2d915fadf77e0c1aa92ac8c13955c64630b75bd0",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/wit/deps/wamn-receiving-receiving/package.wit": {
+    "sha256": "43c02150f3bacd420e3dded6ed7bd10a92902c3e7a505c6b25ab689537a7f7c7",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/data/wit/world.wit": {
+    "sha256": "a926b2b561c99f3568490dbd6da67933d66f46a85838b804ba6a51a39222b45f",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/generated/receiving-tui/Cargo.toml": {
+    "sha256": "b09a8bff8c6cbed9d1df4f1bf2ee0d3c14222ed7a87d54eef69ad52aa1462467",
+    "mode": "0o664"
+  },
+  "apps/wamn_receiving/ui/Cargo.toml": {
+    "sha256": "a993013dad4e6987faa5fa95c1a8fd56d8317815db69e5fd9a8f0ed656b227e4",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/README.md": {
+    "sha256": "d442e55bbda38abef03b2b6b7d359348672f5111844a5c93c682b2abcbbd376d",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_adjust/claim_command.sql": {
+    "sha256": "bfc2b9ff0c01e1d082ba1858c040fd8f5705ce80cbc642edde939502c6da2e7c",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_adjust/finalize_command.sql": {
+    "sha256": "95fceeb3dd95c108d959511e94edbb52da891da2111910aa1b25b70181f319cf",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_adjust/find_replay.sql": {
+    "sha256": "982241a393ffb1d4289136cbee42de40f91dda86a47188c34665eed34ecd69e6",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_adjust/insert_movement.sql": {
+    "sha256": "cd00a091fed66f2f78e28f58d1264017a2b105a2666cfddd5b288f5a8a99c940",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_adjust/lock_pallet.sql": {
+    "sha256": "a55bfebbebf5bba9540074165b1e5750116fda67b8ef07439c89469ed1ffece3",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_adjust/set_quantity.sql": {
+    "sha256": "013414bd90ba990f46f429326fbb956c10e709e3a355ee5f91fcea7d82c3ef86",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_adjust/touch_pallet.sql": {
+    "sha256": "520d48df78ae4ba6b655106f7785d0ca1e2887fcd3db489836f783e80ac88ea8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_merge/add_to_target.sql": {
+    "sha256": "0e3ab67e560416a19b68cc0003cdc1f52e97c5a9267ffa5224c64de8c6dd84b1",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_merge/claim_command.sql": {
+    "sha256": "28b172e9d7ca08c84145653187ca6b234e21228f966a0b31209c9f00c4f4d9b2",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_merge/consume_source.sql": {
+    "sha256": "605d3de9fd482e0e290cfc9c198f717ecd89f8a171e9e2b7b0be02b4c9dc562e",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_merge/finalize_command.sql": {
+    "sha256": "c44c7e84564e5796433d1f1cece5709c6c1695d12e138cf00e297b2df0309a07",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_merge/find_replay.sql": {
+    "sha256": "2db8575b15514d01b3a1dbdbd6e5663ace03c60bbe97b4c05becffc2d2e86266",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_merge/insert_movement.sql": {
+    "sha256": "bb2256f51ee5bf3496731b4a77bf372e60d1cdad76aae282bab3ae17b7950229",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_merge/lock_both_pallets.sql": {
+    "sha256": "1169fa9ccfdf21804049cb6c9698544af13f9d2e2460f8a871bfb5011e84480f",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_merge/place_on_target.sql": {
+    "sha256": "7441c97e8175dadd886f000b59b6f1706a55e89f183b2e5bd4a154a7ba5b74f8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_merge/select_source_quantity.sql": {
+    "sha256": "7788b618608496d40d21c0bbfec54e4508661fbea826075abb61e5cceeec6288",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_merge/touch_target.sql": {
+    "sha256": "520d48df78ae4ba6b655106f7785d0ca1e2887fcd3db489836f783e80ac88ea8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_move/claim_command.sql": {
+    "sha256": "b919dc1461addbaf6b2ec0e3f5f383db196ef48ab2e6f31328ceddc0eb027010",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_move/finalize_command.sql": {
+    "sha256": "25ad208233b35158b2a8b6e86a2168259833ddefe767314378bef992efa4113e",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_move/find_replay.sql": {
+    "sha256": "1de97cab3802dcc898f61fc86c29fb776b9b33cd81b080b6d1567fa48e449b54",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_move/insert_movement.sql": {
+    "sha256": "4ecddcc7be1836213dd4b10c5e039ae2f6a10e590e4228131a1ffffb41b978a7",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_move/lock_pallet.sql": {
+    "sha256": "a55bfebbebf5bba9540074165b1e5750116fda67b8ef07439c89469ed1ffece3",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_move/move_pallet.sql": {
+    "sha256": "0253289ea4de402bbf488abeb841b2ee2bd63f324d7936200fe533e42282d7eb",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_move/select_pallet_quantity.sql": {
+    "sha256": "7788b618608496d40d21c0bbfec54e4508661fbea826075abb61e5cceeec6288",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_move/validate_location.sql": {
+    "sha256": "043f1cb7e8359f79c83b7944e308c1d4238a2bc7b0eac50a0093e53e7563d516",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_split/claim_command.sql": {
+    "sha256": "2256a274724c0d79beee91fb5f94f0963c428848099dfbd226833dcb9d943a67",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_split/create_pallet.sql": {
+    "sha256": "1e17d1f7ab74aecb89b4da78a6e946859719a78eb07af7d52efb2f6c0a8a52c6",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_split/finalize_command.sql": {
+    "sha256": "1193cc2835abd0b43372c07d60852e801bb579b85a34f4480d1199bd485f9ed8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_split/find_replay.sql": {
+    "sha256": "38c3a3247c43b4fd938d7a66737f80bd31e45ab2ce676e169f2d4143dfebb810",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_split/insert_movement.sql": {
+    "sha256": "e4ccda97b9ef5cb01093515c83086ba546dec9f46691c2f3ca477764991ad3ef",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_split/lock_pallet.sql": {
+    "sha256": "a55bfebbebf5bba9540074165b1e5750116fda67b8ef07439c89469ed1ffece3",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_split/place_quantity.sql": {
+    "sha256": "7441c97e8175dadd886f000b59b6f1706a55e89f183b2e5bd4a154a7ba5b74f8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_split/select_quantity.sql": {
+    "sha256": "9e8cae601ec91090165e5d3e72999e7c7aaf5937c7e0ec1b8c17f52b7d54d4f3",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_split/take_from_source.sql": {
+    "sha256": "d2d1f7e49de0b5cb74c0d1d672bb9cf8a50e930b529463f93d054f5f5145467c",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_split/touch_source.sql": {
+    "sha256": "520d48df78ae4ba6b655106f7785d0ca1e2887fcd3db489836f783e80ac88ea8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/command/inventory_split/validate_location.sql": {
+    "sha256": "043f1cb7e8359f79c83b7944e308c1d4238a2bc7b0eac50a0093e53e7563d516",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/component/Cargo.toml": {
+    "sha256": "1eb652e180a0ac1ffb57da7f541b21416e47bfa2c00743841107a6fe817eed90",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/component/src/lib.rs": {
+    "sha256": "2d982349d1d81d6c371260cdccb792e9df1b44167c559ecd20edeaeac5afc429",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/Cargo.toml": {
+    "sha256": "4951145111136f0c2b84d0f3578438d38ed4ee4cf431b6a76b07efc28bacb8e8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/cursor.rs": {
+    "sha256": "68ea90afae2cf047aed6037bdee755066aaf8d6ebb352b0523631e9546e712f3",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/error.rs": {
+    "sha256": "b5e1e15d751ccafcf9dc5a02e6137c871f86fc2ec1d0b18a7719460cdd1f122e",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/generated.rs": {
+    "sha256": "1a9c56dbe35291f91f85c4833e833d03deda83a68d0926d1e2fe068cc1e359ac",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/inventory_adjust.rs": {
+    "sha256": "2515694da1c6596e1c0cdc354e884359c3ce726a0ed5f9cec8a5411ab1f76c12",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/inventory_aggregate.rs": {
+    "sha256": "e7074006d599be4c1fe87f5bc559ce8ed238d5f61093122822175afc1909fad1",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/inventory_merge.rs": {
+    "sha256": "bbeb989d00ff7c3cc01abe1b1157948d25faa16501fdce2eed5f887cacf516ef",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/inventory_move.rs": {
+    "sha256": "330a6665b4488c04063587696e4ff8e7c4838f41d424fd88c71466b45b01d13a",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/inventory_split.rs": {
+    "sha256": "0dde395c1260c92c56abdadc917527daa011db189661ea358a7efcf7747509e8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/lib.rs": {
+    "sha256": "69ed10a3e0337f945e6bb036f216ace345b57de409caabb52307b7d85b0f2157",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/operation.rs": {
+    "sha256": "020a715882c88cd0747beeb7a1368acb6cf9127f0225ba762f81db7f9d525fa3",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/pallet.rs": {
+    "sha256": "7a7692ff2cdd35fd4d7535d81a09de19f6aa9b1715dbdf06937570dd8207f169",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/src/scalar.rs": {
+    "sha256": "687aaa8ff3f6a8212226b40663a414a8903a8919b4988be28a096e3fff800dca",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/wit/deps/wamn-node/package.wit": {
+    "sha256": "4e06c115cf872768835d22c780c1fa9f896ed5561bef22533d81992f3e7024e3",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/wit/deps/wamn-postgres/package.wit": {
+    "sha256": "53a3f5ffa4f02e15c6708d43f8bb7b6fb2f4ee29d2cc32ed3957cdd137655aaf",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/wit/deps/wamn-wms-inventory/package.wit": {
+    "sha256": "4a7cc679cf8348224576597a81300682e4899e87121de40abad9d3a052c8ef87",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/wit/deps/wamn-wms-pallet/package.wit": {
+    "sha256": "972ecd731762a84ea62822543856394fe050963ae856872fb14eb975a3fa1839",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/data/wit/world.wit": {
+    "sha256": "c07ecf1f504f699548ad109282c6fa11d26065e9380ee8190eb0293c86f6cf67",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/client/inventory.rs": {
+    "sha256": "964dd0c6bad971e384e887584d100e8ab73a89f215dbedcad22fe54a5f7f43c1",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/client/pallet.rs": {
+    "sha256": "44a4a8d27957cee3086470bfd259480293dbcd794a2ec7043c84d8bf82148d49",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/cursor-v1.json": {
+    "sha256": "370d6499ff527d1165f369bae235a0af31e516094edf5b52e536719dcddc9896",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/adjust.claim-tests.json": {
+    "sha256": "9bdf3c749caaac15a139e68d1e37cd9a28c81fdda3729bd4cf4c0eb8fd7d4eaf",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/adjust.errors.json": {
+    "sha256": "3d787bfaf8a06f3d6ba601a8c82d59e3a7ed8f8e41ce0afb5f06e42b80e1145c",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/adjust.input.json": {
+    "sha256": "955943f6aabd9fa831e3dee0752ad7413141b01960a4a60a782b83845d830cba",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/adjust.operation.json": {
+    "sha256": "3c3a2c5c163ae26eaa9b29684bd5cfae8a9e5b1954632369e7f0eeaead5a5f33",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/adjust.result.json": {
+    "sha256": "27ff32613bc51df96544e253f98873155d64b2170f9c600c5e4ebad7c1d2b439",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/aggregate.errors.json": {
+    "sha256": "29e7996ea6c42df151a3337cdfb7f41b6823eac98972f7b6ab7828628f6033a9",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/aggregate.input.json": {
+    "sha256": "17492871fc910d16e1baf9e5b37b3b1b7c2a2c6116047d2dbb8d00698064abe8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/aggregate.operation.json": {
+    "sha256": "8d9122e9ef18349ae7bf0dafcc255b850c3250ffd9e69a7ffca68b04d574bb66",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/aggregate.result.json": {
+    "sha256": "9895b6c774e58d7f19393629e597dd4470e7b1c855f2fa01fd396186c3e13169",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/merge.claim-tests.json": {
+    "sha256": "60c9bbda69b49e45c4559796355ba59211352cc8e1bc6abe663ff4a920472d30",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/merge.errors.json": {
+    "sha256": "ce8d344495da8a156faa29b83efe2c2f8e674b5f46580615bd51248dc98a0a2f",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/merge.input.json": {
+    "sha256": "a52d31d4731b564b7db6891d3c917860ad72cdc459f00119be5b9de8a8af3ee8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/merge.operation.json": {
+    "sha256": "f783259637c82574357b0b3b03dfc1ab38e6d054ce0a325ddd4950c8d9678b72",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/merge.result.json": {
+    "sha256": "6048ece4876a3bd27ddf703e6f4fc29f448b2bb240cf11e651b430b3bd560832",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/move.claim-tests.json": {
+    "sha256": "354528f8f787b6126380b4fd96a56f9598a28f86e5f7a83d3bac08800df5220b",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/move.errors.json": {
+    "sha256": "635531d834a836f14e866e98358eca79286bf18f2d505fefe6c4dcbea2e846ee",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/move.input.json": {
+    "sha256": "a257f19af05932e7809c6ad082d89df9034f150eeb67f97ee85c413bf2b8bf2b",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/move.operation.json": {
+    "sha256": "c88fd9f528d5fd46ca110d415c26085bf86f22d3ff2e157843d4219742888e41",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/move.result.json": {
+    "sha256": "2e223f8ed989fffb0606fcba45478349b59841d348cc800731b2f1606eb8cb10",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/split.claim-tests.json": {
+    "sha256": "db8ae7fbecc0f5f6b3a7487f47bbd15c67a9296a09217b1fed015573244ea94d",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/split.errors.json": {
+    "sha256": "5f54e47720901b5300de7e27f755b6c9fdd338bac3a1462b08c2ad2c22ca8fb8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/split.input.json": {
+    "sha256": "9ee6ac811f16762b64ab43c51988a0924d8ddf05fc39ad4942bfb9bf2878e3cf",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/split.operation.json": {
+    "sha256": "e4290f2311c6903ee47c4abcca0d5b202d4f35fc4a42b9474ce23566aa2c8d7e",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/inventory/split.result.json": {
+    "sha256": "2aded5ef1ae1a8bf350eb3e5179bf10b3475c3a4b3b5e1ae376f754270eea5df",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/pallet/get.errors.json": {
+    "sha256": "47b2f26223eb9fa838e742224e757b07152ed92af1698aaefcfa6eb5c17b6214",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/pallet/get.input.json": {
+    "sha256": "e0aa7b2b028d1a33657433705e974b1d8da74f9e30a6588543f65a44166badc2",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/pallet/get.operation.json": {
+    "sha256": "85a99df19ed4b5378c4081bb39fd0401a5183df778fd3b7ccfb5108c22698d2b",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/pallet/get.result.json": {
+    "sha256": "aad59900e1475290b8c3352a42b8778a3c6748734982e0590cf901b0a78b4ac8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/pallet/query.errors.json": {
+    "sha256": "d35381d7213933c2347f9476b7d500da45ad4cb0247be5d2e61413cb88d12c93",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/pallet/query.input.json": {
+    "sha256": "c00defbaf90d390c28f975b56d6db308cc74e60ce1bdfe223b5a7dd63d4aaca1",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/pallet/query.operation.json": {
+    "sha256": "36bcb6847730886557a45a0827e289b7b61d1b9f387cd2986cf915b5634e15d7",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/contracts/pallet/query.result.json": {
+    "sha256": "0a7b8fcc6d2de3276987655af4df3beb6ffba641ccefef4f9f1571959f143e18",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/models/inventory_movement.json": {
+    "sha256": "b06b28438f8852ff9cfc107e68982324a1872ddcbb928c4e3af452736117379f",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/models/location.json": {
+    "sha256": "22bfb00c3f722ebf803954d9d9afd361cbe2e45eb7a48afb6acb77bb30bf075a",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/models/pallet.json": {
+    "sha256": "350deb5ec700fd3ced5ea794e0925259a6d24a3b54fce6cc0db2882e0c71c07f",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/models/pallet_quantity.json": {
+    "sha256": "4aef771fe5327ba100dc52224d90dfd295ad4dae9a18ddb2c2383f1f16fc094a",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/models/product.json": {
+    "sha256": "c3f074274ad967e4a737bc95914648d51afd83986eef2b44989854607f629480",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/native-verifier/inventory_adjust.rs": {
+    "sha256": "edee01882e14208d7f7c81bc7fc74841c0fa2c438da8397d6bad65d276136e3b",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/native-verifier/inventory_aggregate.rs": {
+    "sha256": "0ba19caabed93435873d052d65cffbc5f7c69573b70e0976e9817d44eb9a0c96",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/native-verifier/inventory_merge.rs": {
+    "sha256": "92502a94f4f67addd0dd94eed1d330931a74c95a94a2f23a084140fc8232c59b",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/native-verifier/inventory_move.rs": {
+    "sha256": "bcf0d2be6c2abc7e91d0cb0642e942161f24121c460982c1e029d0b593c25166",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/native-verifier/inventory_movement.rs": {
+    "sha256": "f97ef71d47769ecd3a4174eaf0f2618ba27ec378de7ef00d91a7316cdd0248c8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/native-verifier/inventory_split.rs": {
+    "sha256": "9e8393b96897e3fcb4ef0b53d151cbeca65d28f148522c7d2a3a4d470b92f860",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/native-verifier/location.rs": {
+    "sha256": "97f0052f414686662dee65f6369d5d29a17756f9a0618562602ec46d3aca7019",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/native-verifier/pallet.rs": {
+    "sha256": "3435ac67aaf9028b04b4e2bc3f16a95be8b08f435a3f64d58ada4df2ae367276",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/native-verifier/pallet_quantity.rs": {
+    "sha256": "f4f33357b0b01b8c9a633a19a87d14105767e2017241139e2027bd2655413b22",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/native-verifier/product.rs": {
+    "sha256": "3eef78b00e3d4cbbfcc69fdb02599e9734564f03a18a5d44453cc397f2954155",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/package-weld.json": {
+    "sha256": "4f1826ea675a6aa6d5c70e0ed8720f22e978f7c7a45ba4441a9b39d5a92dc8b3",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/parity/inventory_adjust.json": {
+    "sha256": "9be5d5813581e78745688e87873c7c632bbedf16d5842881202c8109fca65139",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/parity/inventory_aggregate.json": {
+    "sha256": "336d6a765065d6f59f3e7c6c2338d5b85001474abeed8af3712dae20b793d0d0",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/parity/inventory_merge.json": {
+    "sha256": "2b2c8bfd6c101909948ef7a229613a6a197a6c16cc2054fe3d0880de5495967f",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/parity/inventory_move.json": {
+    "sha256": "9b49bcc02515fb1aa92c795a47220495d0a34fc0bc6a1813869372b6f3887b80",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/parity/inventory_movement.json": {
+    "sha256": "a8f04ff81005231c9d11d7843bac0806bf6b8616a0eadabbe258fd87841672d8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/parity/inventory_split.json": {
+    "sha256": "f78c339591b42b3c868d524bdedfac35e991d52469fff63ef24ff6b2e553a807",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/parity/location.json": {
+    "sha256": "dc70b9e64cdbe7be52d29bb927bf04d7cef696e0c0c8944d47d7c84aeeb2bf43",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/parity/pallet.json": {
+    "sha256": "7654a8c0285899898f761586de1a5fb5543a088a7cc56ddbd22c99649246c0c0",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/parity/pallet_quantity.json": {
+    "sha256": "d72a47d77155d8f1ad046e9ddd3e2cb2fb895ffde33574e9f06606d5674fc67a",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/parity/product.json": {
+    "sha256": "cf213440aebc4b03d0e49e6286d8a2a78242d0737da78f6c2a9bea4c59fe8b62",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/platform-policy/data-access.json": {
+    "sha256": "cce8426236ec5e6c794cd9975def116f57861c0e50a5080e610991aaae114f51",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/source-map/inventory_adjust.json": {
+    "sha256": "6364d0ab2e312f3c0e13d82073eda51f0dd4d1b3098ee84dc8ad13bee7f5132b",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/source-map/inventory_aggregate.json": {
+    "sha256": "42464acb5446992b1960faace33b4dc3d7b90f8f7f811c630a69a4e64dbab570",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/source-map/inventory_merge.json": {
+    "sha256": "5a386c594ba4a523c19df80ca93961c553abb3917018d7517cd010d9d5cab535",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/source-map/inventory_move.json": {
+    "sha256": "451a5748db0b3aec32233fadb47fad3ecce7137ff25b270a1f6a1ccc1b8aa03a",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/source-map/inventory_movement.json": {
+    "sha256": "2c2957b219e28b5d01c2be31618bfb79dd91d13dfd4d11e234c1be4eb2a7c630",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/source-map/inventory_split.json": {
+    "sha256": "e32d164bb9adf9f1c170658c92e79f7e0c8641fd67ce8e103b87db1d32fb08c9",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/source-map/location.json": {
+    "sha256": "f576fe53122afb51fd9d8e24ae98b4fc162511897f3864088c0f66ac2f377aaa",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/source-map/pallet.json": {
+    "sha256": "d5e3740848178ca455c277bbfc1d61ed52bbd9dffab04495a955d8cb84ac7643",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/source-map/pallet_quantity.json": {
+    "sha256": "e62599648f8f085afc8e0fabb2f1adc0274e82b8909bdf1e96619e5d031f8a37",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/source-map/product.json": {
+    "sha256": "7e3f9618425eab3588a5c404f81977d33e5f106c476c9d361435cbdda4718703",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/sql/pallet/get.sql": {
+    "sha256": "5d1c6823fbfd92249a2aa7f2ef32ae68c7f8dcea402a0445a2268b6c5bbe89b9",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wamn/inventory_adjust.rs": {
+    "sha256": "087501eec283a3f5fdaeb967914ce879c3cd2cc8ac1c76c4553b72aa2fb4186c",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wamn/inventory_aggregate.rs": {
+    "sha256": "17550a6c044b0b508fb8fd5c3bc287de39b88cffb29d374c8f545a3c77908cbc",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wamn/inventory_merge.rs": {
+    "sha256": "f28507d546576ecccceeaa132b4abe38b63d1be358efeb7ceb891e5be80425db",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wamn/inventory_move.rs": {
+    "sha256": "c3b20770fbf93fb250f574121ee810db8d02655d7418aaa135b7b95981adea6c",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wamn/inventory_movement.rs": {
+    "sha256": "58e86d416900b734edef56559d2b0d2dfddc0f759e07985a1ee1f06944d62c5d",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wamn/inventory_split.rs": {
+    "sha256": "e7213c3f8040d63b2c6ce5d73848d080b5e4113078dbdf0f2be652c8d7855034",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wamn/location.rs": {
+    "sha256": "f57b66efb396f110490b8dd1608de566a6d4d56608011d830fd14d9ce2b47a39",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wamn/pallet.rs": {
+    "sha256": "e69587471a6d244591d78e0abebbc036ecfe13a708c460c4f3c6d8c55926147f",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wamn/pallet_quantity.rs": {
+    "sha256": "adf328b56326a92401446c39e681d46601b890c36686845bb1d71d11d18830c0",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wamn/product.rs": {
+    "sha256": "1ceea3173c198f4021629927e41773feabbb806d72c2afa336efb6b15ab43e84",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wms-tui/Cargo.toml": {
+    "sha256": "b2131d5dc4f3e538feba4eefd0a2c585538fcfd28428b70dc8d734e53a1fccc0",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wms-tui/src/lib.rs": {
+    "sha256": "8ea5b65659ce0479d68081c4f2903de1db11bfc4fddfd9a21f1ae7b08e3994cf",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wms-tui/src/main.rs": {
+    "sha256": "06e5148d22e7441e6c011cd473eaffa2da8f796a03dfdf929bf1e8f21891f230",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wms-tui/src/screens/inventory.rs": {
+    "sha256": "8e7777894ee280b46259270806a93e8eb6adca9a1141bca3dca34b5abb7234b5",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wms-tui/src/screens/mod.rs": {
+    "sha256": "071078a1ea05d0c6117ca0810af8029cf09d13c96f27577a8f411425a7fa198b",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/generated/wms-tui/src/screens/pallet.rs": {
+    "sha256": "260a69a37a9dddc0fe19957c40fd6d3808a88ab81136cca0c302325f32ccae79",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/migrations/0001_initial.sql": {
+    "sha256": "8a41695e7515503af0fcd994dad51201a5a5e8f93b6232c64ea2eeaca031cc18",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/publication/attachments.json": {
+    "sha256": "c1f32429e6c2f5fac7c97fda05f5f7382100ae8d8710fa023da371426b197d59",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/publication/components/wms.json.in": {
+    "sha256": "3b4e11e7323288754433a46bf222a268a984571579362856d7ce02a51f2f17eb",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/publication/wirings/inventory_adjust.json": {
+    "sha256": "0a0f50700af0eed8365a44c8694b17a1c72e2c23e91a57e323f354a2303eabe8",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/publication/wirings/inventory_aggregate.json": {
+    "sha256": "990c341071e68f1f69cc58780e74c732dffe41faa8b25d061caea37dcc95154c",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/publication/wirings/inventory_merge.json": {
+    "sha256": "4ead7552df459109eb5f50848e7918129c7f209553c18b891edeb62bbe987984",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/publication/wirings/inventory_move.json": {
+    "sha256": "05dcb72e2ff34759e4b7c63cc375381ac2b1ea33e3f660c5ad96b857a39d9064",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/publication/wirings/inventory_move_and_label.json": {
+    "sha256": "6efef033cad00e14f24d7b77f70d95f5fd74d0a87e0e715e8d21810d7fe87738",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/publication/wirings/inventory_split.json": {
+    "sha256": "571593cde70f4471a645aeed2387734d9398c8c3de5a6bd14b5a5577faba82b6",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/publication/wirings/pallet_get.json": {
+    "sha256": "a39fc80917ec2ce6fb264534d3c8900b1e0844cb769ac015c6cefc664702fb38",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/publication/wirings/pallet_query.json": {
+    "sha256": "6489ca22e3e4bb4e1d27609ba40e1a59929eb07d11e3cefc1b15435ec869d566",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/query/inventory_aggregate.sql": {
+    "sha256": "51442e209ad8e0f13c6221274cf9e2a1cc9f615cc78976ecbe61174c8e3b068d",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/query/open_pallet.sql": {
+    "sha256": "bf0d1e3ecbc0c28de1b76e3251676e38c54ba063d30945890c0fba022726f78e",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/query/open_pallet_by_created_at_descending.sql": {
+    "sha256": "c12cb794daff757f02a8df8a91b27e9d1328cd2e4deded765a19fcb0c9aa80d6",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/query/open_pallet_by_location_id_ascending.sql": {
+    "sha256": "7a2804291a43ead7fe73e124e2c16de5b509c8bfb00f4e810bc38a1e08289fce",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/query/open_pallet_by_location_id_descending.sql": {
+    "sha256": "398b50da5833accfdda221902f1b7e11b6f176f28595ed6cddf6c15ea67c70d4",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/query/open_pallet_by_pallet_code_ascending.sql": {
+    "sha256": "0ffb462ced2154ea4eb6abcb97c3c6c5551780fca3e4558a88223652f1fdc081",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/query/open_pallet_by_pallet_code_descending.sql": {
+    "sha256": "12dffafe7a7ad065bdb61b6098cda17f0f4240d85886f9ae4e206baf0f76c7d2",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/query/open_pallet_by_updated_at_ascending.sql": {
+    "sha256": "96f8476ca0f6d7212461fe9a274ab1da5747704070e461015cac0ffd4c34d375",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/query/open_pallet_by_updated_at_descending.sql": {
+    "sha256": "7b234eda921a228673eb91de24df5d4159ec55a65bf5ba0dc8c864e3bd40a0eb",
+    "mode": "0o664"
+  },
+  "apps/wamn_wms/wamn.json": {
+    "sha256": "a76fef7ca4c2c2cdedf64b21ea0f7ae3f1ca996e613c630a859b052b2c043d58",
+    "mode": "0o664"
+  },
+  "architecture/state-owners.json": {
+    "sha256": "0b3cbdf15a972d0e6caec1b1edc147b7905962d7ffd47ecc7c34d758e1195238",
+    "mode": "0o664"
+  },
+  "tests/integration/Cargo.toml": {
+    "sha256": "e6ac2f48a02c8c74f5182c5c4460557b7a6e91fa12d2526b0d4b7fac6ae7a1ce",
+    "mode": "0o664"
+  }
+}

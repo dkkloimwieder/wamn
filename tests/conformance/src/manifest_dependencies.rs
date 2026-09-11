@@ -287,7 +287,7 @@ fn governed_dependency_identities_are_workspace_owned() {
     let repository = repository_root();
 
     assert_workspace_inheritance(&repository.join("Cargo.toml"), "native");
-    assert_workspace_inheritance(&repository.join("components/Cargo.toml"), "component");
+    assert_workspace_inheritance(&repository.join("apps/Cargo.toml"), "component");
 }
 
 #[test]

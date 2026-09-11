@@ -2073,7 +2073,7 @@ mod tests {
 
     fn repository_receiving_component() -> AdmittedComponent {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../packages/receiving/publication/components/receiving.json.in"
+            "../../../apps/wamn_receiving/publication/components/receiving.json.in"
         ))
         .expect("repository component declaration is JSON");
         document["scope"]["tenant-id"] = serde_json::json!("tenant-a");
@@ -2142,9 +2142,9 @@ mod tests {
 
     #[test]
     fn package_evidence_binds_exact_sql_to_each_manifest_operation() {
-        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
+        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
         let manifest = wamn_schema_generator::PackageManifest::from_slice(include_bytes!(
-            "../../../packages/receiving/wamn.json"
+            "../../../apps/wamn_receiving/wamn.json"
         ))
         .expect("repository package manifest parses");
         let mut component = repository_receiving_component();
@@ -2173,10 +2173,10 @@ mod tests {
 
     #[test]
     fn fresh_only_requires_authored_component_and_generated_contract_agreement() {
-        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
+        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
         let operation = "wamn-receiving:purchase-order/get@1.0.0";
         let baseline = wamn_schema_generator::PackageManifest::from_slice(include_bytes!(
-            "../../../packages/receiving/wamn.json"
+            "../../../apps/wamn_receiving/wamn.json"
         ))
         .unwrap();
         for (authored, declared) in [(true, false), (false, true), (true, true)] {
@@ -2235,7 +2235,7 @@ mod tests {
 
     #[test]
     fn unsafe_paths_and_digest_drift_are_typed_statement_refusals() {
-        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
+        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
         let canonical_root = package_root.canonicalize().expect("package root resolves");
         let path_error = read_package_owned_file(
             &package_root,
@@ -2286,7 +2286,7 @@ mod tests {
     #[test]
     fn private_manifest_operation_cannot_cross_component_ownership() {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../packages/client_acme_receiving/wamn.json"
+            "../../../apps/client_acme_receiving/wamn.json"
         ))
         .expect("repository overlay manifest is JSON");
         let primary = "client_acme_receiving";
@@ -2361,7 +2361,7 @@ mod tests {
 
     fn overlay_manifest() -> wamn_schema_generator::PackageManifest {
         serde_json::from_str(include_str!(
-            "../../../packages/client_acme_receiving/wamn.json"
+            "../../../apps/client_acme_receiving/wamn.json"
         ))
         .expect("repository overlay manifest parses")
     }
@@ -2638,7 +2638,7 @@ mod tests {
             .await
             .expect("restore test administrator");
 
-        let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
+        let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
         let directory = crate::apply_package::read_package_directory(&package_path)
             .expect("read real Receiving package");
         let package = plan_package_migrations(&directory, None).expect("plan real package");
@@ -3036,7 +3036,7 @@ mod tests {
             .await
             .expect("restore test administrator");
 
-        let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/receiving");
+        let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
         let directory = crate::apply_package::read_package_directory(&package_path)
             .expect("read real Receiving package");
         let package = plan_package_migrations(&directory, None).expect("plan real package");

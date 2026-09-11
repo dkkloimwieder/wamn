@@ -76,7 +76,7 @@ fn repository_root() -> PathBuf {
 }
 
 fn publication_root() -> PathBuf {
-    repository_root().join("packages/receiving/publication")
+    repository_root().join("apps/wamn_receiving/publication")
 }
 
 fn read_json(path: &Path) -> Value {
@@ -106,7 +106,7 @@ fn wiring(operation: &Operation) -> WiringDocument {
 
 #[test]
 fn package_owned_inputs_declare_the_exact_eight_route_closure() {
-    let package_manifest = read_json(&repository_root().join("packages/receiving/wamn.json"));
+    let package_manifest = read_json(&repository_root().join("apps/wamn_receiving/wamn.json"));
     let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
         serde_json::from_value(read_json(&publication_root().join("attachments.json")))
             .expect("the attachment map has the serving wire shape");

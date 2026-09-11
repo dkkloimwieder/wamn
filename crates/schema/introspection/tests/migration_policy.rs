@@ -48,7 +48,7 @@ fn refusal(sql: &str) -> MigrationPolicyError {
 #[test]
 fn accepts_the_package_owned_receiving_migration() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../packages/receiving/migrations/0001_initial.sql");
+        .join("../../../apps/wamn_receiving/migrations/0001_initial.sql");
     validate_migration_file(&path, "receiving").expect("Receiving migration must be admitted");
 }
 

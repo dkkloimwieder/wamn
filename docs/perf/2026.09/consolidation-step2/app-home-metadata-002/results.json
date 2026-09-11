@@ -1,0 +1,27 @@
+{
+  "base": "411ab2c42ab69726691a073d3644eea5ecb5d427",
+  "workspaces": [
+    {
+      "workspace": "native",
+      "members": 40,
+      "local_packages": 43,
+      "metadata_equal_after_path_mapping": true,
+      "local_guest_dependencies_inside_workspace": null
+    },
+    {
+      "workspace": "std",
+      "members": 20,
+      "local_packages": 20,
+      "metadata_equal_after_path_mapping": true,
+      "local_guest_dependencies_inside_workspace": true
+    },
+    {
+      "workspace": "no-std",
+      "members": 4,
+      "local_packages": 4,
+      "metadata_equal_after_path_mapping": true,
+      "local_guest_dependencies_inside_workspace": true
+    }
+  ],
+  "guest_builds_run": false
+}

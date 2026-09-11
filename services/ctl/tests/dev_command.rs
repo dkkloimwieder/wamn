@@ -49,7 +49,7 @@ fn dev_up_names_the_scenario_worker_binary_and_its_fixed_port() {
 /// Adding `up` must not have made the loop's own required input optional.
 #[test]
 fn the_bare_development_command_still_requires_its_configuration() {
-    let output = output(&["dev", "--overlay-root", "packages/client_acme_receiving"]);
+    let output = output(&["dev", "--overlay-root", "apps/client_acme_receiving"]);
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
     assert!(
@@ -97,7 +97,7 @@ fn dev_up_refuses_an_ephemeral_gate_port_and_names_it() {
             "--host-binary",
             "/nonexistent/wamn-host",
             "--package",
-            "packages/receiving",
+            "apps/wamn_receiving",
         ])
         .output()
         .expect("run wamn dev up with an ephemeral gate port");
@@ -159,7 +159,7 @@ fn unreadable_configuration_refuses_before_any_stage_runs() {
     let output = Command::new(env!("CARGO_BIN_EXE_wamn"))
         .args(["dev", "--config"])
         .arg(&missing)
-        .args(["--overlay-root", "packages/client_acme_receiving"])
+        .args(["--overlay-root", "apps/client_acme_receiving"])
         .output()
         .expect("run wamn dev with a missing config");
     assert!(!output.status.success());

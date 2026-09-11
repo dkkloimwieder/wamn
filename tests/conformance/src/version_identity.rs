@@ -64,7 +64,7 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     // portable_http_target and ports, none of which carries a SCHEMA_VERSION —
     // so the constant has no subject and there is nothing to repoint to.
     GovernedLiteral {
-        path: "components/events/registration/src/model.rs",
+        path: "apps/platform/events/registration/src/model.rs",
         exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
         expected_count: 1,
     },
@@ -399,7 +399,7 @@ fn workspace_owned_packages_stay_at_mvp_version() {
     let mut violations = Vec::new();
     for manifest in [
         repository.join("Cargo.toml"),
-        repository.join("components/Cargo.toml"),
+        repository.join("apps/Cargo.toml"),
     ] {
         violations.extend(workspace_version_violations(&cargo_metadata(&manifest)));
     }

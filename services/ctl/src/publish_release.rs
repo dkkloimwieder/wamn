@@ -2381,20 +2381,20 @@ mod tests {
     #[test]
     fn real_package_attachment_documents_merge_into_one_release() {
         let base: BTreeMap<String, ServingAttachment> = serde_json::from_slice(include_bytes!(
-            "../../../packages/receiving/publication/attachments.json"
+            "../../../apps/wamn_receiving/publication/attachments.json"
         ))
         .expect("the Receiving package attachments have the serving wire shape");
         let overlay: BTreeMap<String, ServingAttachment> = serde_json::from_slice(include_bytes!(
-            "../../../packages/client_acme_receiving/publication/attachments.json"
+            "../../../apps/client_acme_receiving/publication/attachments.json"
         ))
         .expect("the Acme package attachments have the serving wire shape");
         let authored = merge_package_attachment_documents(vec![
             (
-                PathBuf::from("packages/receiving/publication/attachments.json"),
+                PathBuf::from("apps/wamn_receiving/publication/attachments.json"),
                 base,
             ),
             (
-                PathBuf::from("packages/client_acme_receiving/publication/attachments.json"),
+                PathBuf::from("apps/client_acme_receiving/publication/attachments.json"),
                 overlay,
             ),
         ])
@@ -2442,11 +2442,11 @@ mod tests {
         );
         let error = merge_package_attachment_documents(vec![
             (
-                PathBuf::from("packages/receiving/publication/attachments.json"),
+                PathBuf::from("apps/wamn_receiving/publication/attachments.json"),
                 BTreeMap::from([("receiving-http".to_owned(), base)]),
             ),
             (
-                PathBuf::from("packages/client_acme_receiving/publication/attachments.json"),
+                PathBuf::from("apps/client_acme_receiving/publication/attachments.json"),
                 BTreeMap::from([("receiving-http".to_owned(), overlay)]),
             ),
         ])
@@ -2455,8 +2455,8 @@ mod tests {
         assert_eq!(error.kind(), MintManifestErrorKind::DuplicateAttachmentId);
         assert_eq!(error.kind().as_str(), "duplicate-attachment-id");
         assert!(error.detail().contains("receiving-http"));
-        assert!(error.detail().contains("packages/receiving"));
-        assert!(error.detail().contains("packages/client_acme_receiving"));
+        assert!(error.detail().contains("apps/wamn_receiving"));
+        assert!(error.detail().contains("apps/client_acme_receiving"));
     }
 
     #[test]
@@ -2477,11 +2477,11 @@ mod tests {
         );
         let authored = merge_package_attachment_documents(vec![
             (
-                PathBuf::from("packages/receiving/publication/attachments.json"),
+                PathBuf::from("apps/wamn_receiving/publication/attachments.json"),
                 BTreeMap::from([("first-http".to_owned(), first)]),
             ),
             (
-                PathBuf::from("packages/client_acme_receiving/publication/attachments.json"),
+                PathBuf::from("apps/client_acme_receiving/publication/attachments.json"),
                 BTreeMap::from([("second-http".to_owned(), second)]),
             ),
         ])
@@ -2742,7 +2742,7 @@ mod tests {
 
     fn dependency_manifest(digest: &str) -> wamn_schema_generator::PackageManifest {
         let mut document: serde_json::Value =
-            serde_json::from_str(include_str!("../../../packages/receiving/wamn.json"))
+            serde_json::from_str(include_str!("../../../apps/wamn_receiving/wamn.json"))
                 .expect("the repository package manifest parses as JSON");
         document["base_dependencies"] = serde_json::json!({
             "base": {
@@ -2757,10 +2757,10 @@ mod tests {
 
     #[test]
     fn release_mint_consumes_the_package_owned_weld_and_refuses_unsatisfied_policy() {
-        let manifest_bytes = include_bytes!("../../../packages/receiving/wamn.json");
+        let manifest_bytes = include_bytes!("../../../apps/wamn_receiving/wamn.json");
         let manifest = wamn_schema_generator::PackageManifest::from_slice(manifest_bytes)
             .expect("the Receiving manifest is valid");
-        let weld_bytes = include_bytes!("../../../packages/receiving/generated/package-weld.json");
+        let weld_bytes = include_bytes!("../../../apps/wamn_receiving/generated/package-weld.json");
         let weld = wamn_schema_generator::PackageWeld::from_slice(weld_bytes)
             .expect("the Receiving weld is canonical");
         validate_package_weld(&manifest, &weld)
@@ -2806,13 +2806,13 @@ mod tests {
 
     fn handler_manifest() -> wamn_schema_generator::PackageManifest {
         serde_json::from_str(include_str!(
-            "../../../packages/client_acme_receiving/wamn.json"
+            "../../../apps/client_acme_receiving/wamn.json"
         ))
         .expect("the repository handler manifest parses")
     }
 
     fn source_manifest() -> wamn_schema_generator::PackageManifest {
-        serde_json::from_str(include_str!("../../../packages/receiving/wamn.json"))
+        serde_json::from_str(include_str!("../../../apps/wamn_receiving/wamn.json"))
             .expect("the repository source manifest parses")
     }
 
@@ -2831,7 +2831,7 @@ mod tests {
     /// placeholder into a dependency and resolve nothing.
     fn repository_overlay_declaration() -> wamn_catalog::ComponentDeclaration {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../packages/client_acme_receiving");
+            .join("../../apps/client_acme_receiving");
         let base_digests = crate::dev::coordinator::authored_base_digests(&root)
             .expect("the repository overlay manifest authors its base digest");
         let document = crate::dev::coordinator::render_declaration_document(
@@ -2847,7 +2847,7 @@ mod tests {
     fn resolve_repository_private_handler_entry() -> String {
         let declaration = repository_overlay_declaration();
         let document_value = serde_json::from_str(include_str!(
-            "../../../packages/client_acme_receiving/publication/wirings/quality_create_inspection.json"
+            "../../../apps/client_acme_receiving/publication/wirings/quality_create_inspection.json"
         ))
         .expect("the repository handler wiring parses as JSON");
         let document = WiringDocument::parse(&document_value)

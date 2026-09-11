@@ -22,7 +22,7 @@ use wamn_execution_contract::canonical_json_bytes;
 use crate::Event;
 
 /// The array envelope's hard ceiling, mirroring the guest-side authority in
-/// `components/data/receiving-data/src/operation.rs`. Batching is not pacing:
+/// `apps/wamn_receiving/data/src/operation.rs`. Batching is not pacing:
 /// [`Profile::rate`](crate::Profile::rate) never feeds this.
 pub const MAX_ENVELOPE_ITEMS: usize = 100;
 

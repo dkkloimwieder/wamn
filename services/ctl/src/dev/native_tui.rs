@@ -442,11 +442,11 @@ mod tests {
     use super::*;
 
     fn roots() -> Vec<PathBuf> {
-        ["receiving", "client_acme_receiving"]
+        ["wamn_receiving", "client_acme_receiving"]
             .into_iter()
             .map(|name| {
                 Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../packages")
+                    .join("../../apps")
                     .join(name)
                     .canonicalize()
                     .expect("resolve source package root")
@@ -578,7 +578,7 @@ mod tests {
     fn graph() -> Value {
         json!({
             "packages":[
-                {"id":"app","name":"wamn-generated-receiving-tui","manifest_path":"/repo/packages/receiving/generated/receiving-tui/Cargo.toml"},
+                {"id":"app","name":"wamn-generated-receiving-tui","manifest_path":"/repo/apps/wamn_receiving/generated/receiving-tui/Cargo.toml"},
                 {"id":"client","name":"wamn-client","manifest_path":"/repo/crates/client/core/Cargo.toml"},
                 {"id":"build","name":"local-builder","manifest_path":"/repo/crates/build/Cargo.toml"},
                 {"id":"dev","name":"test-only","manifest_path":"/repo/test-support/test-only/Cargo.toml"},
@@ -612,10 +612,10 @@ mod tests {
         assert_eq!(
             inputs.directories,
             [
+                "/repo/apps/wamn_receiving/generated/receiving-tui",
                 "/repo/crates/build",
                 "/repo/crates/client/core",
-                "/repo/crates/local-patch",
-                "/repo/packages/receiving/generated/receiving-tui"
+                "/repo/crates/local-patch"
             ]
             .map(PathBuf::from)
         );

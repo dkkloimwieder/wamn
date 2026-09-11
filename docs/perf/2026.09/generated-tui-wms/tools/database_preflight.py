@@ -36,7 +36,7 @@ try:
         time.sleep(0.2)
     db = driver.support.Database(url, evidence)
     db.sql('00-schema', 'CREATE SCHEMA wms;')
-    db.sql('00-migration', (tree / 'packages/wms/migrations/0001_initial.sql').read_text())
+    db.sql('00-migration', (tree / 'apps/wamn_wms/migrations/0001_initial.sql').read_text())
     ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ('pallet','product','source','destination')})
     driver.seed(db, ids, 'PREFLIGHT-' + uuid.uuid4().hex[:8])
     observed = driver.snapshot(db, '03-observation', ids)

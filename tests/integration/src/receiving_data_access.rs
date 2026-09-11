@@ -12,54 +12,54 @@ mod tests {
     use uuid::Uuid;
     use wamn_execution_contract::canonical_json_bytes;
 
-    const MANIFEST: &[u8] = include_bytes!("../../../packages/receiving/wamn.json");
-    const MIGRATION: &str = include_str!("../../../packages/receiving/migrations/0001_initial.sql");
+    const MANIFEST: &[u8] = include_bytes!("../../../apps/wamn_receiving/wamn.json");
+    const MIGRATION: &str = include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
     const UPDATE_SQL: &str =
-        include_str!("../../../packages/receiving/generated/sql/purchase_order/update.sql");
+        include_str!("../../../apps/wamn_receiving/generated/sql/purchase_order/update.sql");
     const CLAIM_COMMAND_SQL: &str =
-        include_str!("../../../packages/receiving/command/record_receipt/claim_command.sql");
+        include_str!("../../../apps/wamn_receiving/command/record_receipt/claim_command.sql");
     const FINALIZE_COMMAND_SQL: &str =
-        include_str!("../../../packages/receiving/command/record_receipt/finalize_command.sql");
+        include_str!("../../../apps/wamn_receiving/command/record_receipt/finalize_command.sql");
     const FIND_REPLAY_SQL: &str =
-        include_str!("../../../packages/receiving/command/record_receipt/find_replay.sql");
+        include_str!("../../../apps/wamn_receiving/command/record_receipt/find_replay.sql");
     const FINISH_PURCHASE_ORDER_SQL: &str = include_str!(
-        "../../../packages/receiving/command/record_receipt/finish_purchase_order.sql"
+        "../../../apps/wamn_receiving/command/record_receipt/finish_purchase_order.sql"
     );
     const INSERT_RECEIPT_SQL: &str =
-        include_str!("../../../packages/receiving/command/record_receipt/insert_receipt.sql");
+        include_str!("../../../apps/wamn_receiving/command/record_receipt/insert_receipt.sql");
     const INSERT_RECEIPT_LINE_SQL: &str =
-        include_str!("../../../packages/receiving/command/record_receipt/insert_receipt_line.sql");
+        include_str!("../../../apps/wamn_receiving/command/record_receipt/insert_receipt_line.sql");
     const LOCK_PURCHASE_ORDER_SQL: &str =
-        include_str!("../../../packages/receiving/command/record_receipt/lock_purchase_order.sql");
+        include_str!("../../../apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql");
     const UPDATE_PURCHASE_ORDER_LINE_SQL: &str = include_str!(
-        "../../../packages/receiving/command/record_receipt/update_purchase_order_line.sql"
+        "../../../apps/wamn_receiving/command/record_receipt/update_purchase_order_line.sql"
     );
     const VALIDATE_RECEIPT_LINE_SQL: &str = include_str!(
-        "../../../packages/receiving/command/record_receipt/validate_receipt_line.sql"
+        "../../../apps/wamn_receiving/command/record_receipt/validate_receipt_line.sql"
     );
     const OVERLAY_FIELDS_MIGRATION: &str = include_str!(
-        "../../../packages/client_acme_receiving/migrations/0001_add_inspection_required.sql"
+        "../../../apps/client_acme_receiving/migrations/0001_add_inspection_required.sql"
     );
     const OVERLAY_INSPECTION_MIGRATION: &str = include_str!(
-        "../../../packages/client_acme_receiving/migrations/0002_quality_inspection.sql"
+        "../../../apps/client_acme_receiving/migrations/0002_quality_inspection.sql"
     );
     const OVERLAY_GET_SQL: &str = include_str!(
-        "../../../packages/client_acme_receiving/generated/sql/purchase_order/get.sql"
+        "../../../apps/client_acme_receiving/generated/sql/purchase_order/get.sql"
     );
     const OVERLAY_UPDATE_SQL: &str = include_str!(
-        "../../../packages/client_acme_receiving/generated/sql/purchase_order/update.sql"
+        "../../../apps/client_acme_receiving/generated/sql/purchase_order/update.sql"
     );
     const OVERLAY_LOAD_DETAIL_SQL: &str = include_str!(
-        "../../../packages/client_acme_receiving/query/quality_purchase_order_detail.sql"
+        "../../../apps/client_acme_receiving/query/quality_purchase_order_detail.sql"
     );
     const OVERLAY_APPROVE_INSPECTION_SQL: &str = include_str!(
-        "../../../packages/client_acme_receiving/command/approve_inspection/approve_inspection.sql"
+        "../../../apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql"
     );
     const OVERLAY_INSERT_INSPECTION_SQL: &str = include_str!(
-        "../../../packages/client_acme_receiving/command/create_inspection/insert_inspection.sql"
+        "../../../apps/client_acme_receiving/command/create_inspection/insert_inspection.sql"
     );
     const OVERLAY_LOAD_INSPECTION_SQL: &str = include_str!(
-        "../../../packages/client_acme_receiving/command/create_inspection/load_inspection.sql"
+        "../../../apps/client_acme_receiving/command/create_inspection/load_inspection.sql"
     );
 
     #[derive(Debug, Deserialize)]
@@ -197,10 +197,10 @@ mod tests {
             .collect::<Vec<_>>();
         let overlays = [
             DataAccessOverlay::from_slice(include_bytes!(
-                "../../../packages/receiving/generated/platform-policy/data-access.json"
+                "../../../apps/wamn_receiving/generated/platform-policy/data-access.json"
             ))?,
             DataAccessOverlay::from_slice(include_bytes!(
-                "../../../packages/client_acme_receiving/generated/platform-policy/data-access.json"
+                "../../../apps/client_acme_receiving/generated/platform-policy/data-access.json"
             ))?,
         ];
         let authority = derive_effective_data_access(&inventory, &overlays)?;

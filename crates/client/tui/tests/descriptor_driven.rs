@@ -51,8 +51,8 @@ fn purchase_order_fields() -> Vec<FieldDescriptor> {
     let root = repository_root();
     let ir = ClientContractIr::from_release(
         "receiving",
-        &root.join("packages/receiving/generated/contracts"),
-        &root.join("packages/receiving/publication/attachments.json"),
+        &root.join("apps/wamn_receiving/generated/contracts"),
+        &root.join("apps/wamn_receiving/publication/attachments.json"),
     )
     .expect("the shipped Receiving release projects");
     ir.models

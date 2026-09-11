@@ -56,17 +56,24 @@ crates/                 shared Rust workspace packages
   scenarios/
     model               wamn-scenario-model: test-set/assertion vocabulary
 
-components/             wasm32-wasip2 guests and guest libraries
-  data/                 capability-shaped SQLx transport/transaction runner;
-                        generated Receiving data-access kernel
-  ingress/              product ingress components (flow-http)
-  events/               guest-consumed event rlibs (wamn-event-wire,
+apps/                   application homes and the guest Cargo workspace
+  wamn_receiving/        Receiving manifest, SQL, and generated output
+    component/          Receiving guest
+    data/               generated Receiving data-access kernel
+    ui/                 composed wamn-receiving operator
+    tests/              Receiving command histories
+  wamn_wms/             WMS manifest, SQL, generated output, component, and data
+  client_acme_receiving/ Acme Receiving overlay with its component and data
+  platform/             shared guests and guest libraries
+    data/               capability-shaped SQLx transport/transaction runner
+    ingress/            product ingress components (flow-http)
+    events/             guest-consumed event rlibs (wamn-event-wire,
                         wamn-event-reg, wamn-materializer)
-  execution/            product execution components (materializer) and the
+    execution/          product execution components (materializer) and the
                         node contract rlib (wamn-execution-contract)
-  fixtures/             non-product proof fixtures (busyloop,
+    fixtures/           non-product test fixtures (busyloop,
                         connection-http-standard, sockprobe, sqlx-command)
-  no-std/               SECOND cargo workspace: the no_std palette guests
+    no-std/             separate Cargo workspace for the no_std palette guests
                         (http-request, transform), isolated from serde_json/std
 
 test-support/
@@ -161,7 +168,7 @@ Example (S1, no backend):
 
 ```bash
 ./target/release/wamn-gates --log-level warn socketguard \
-  --component components/target/wasm32-wasip2/release/sockprobe.wasm
+  --component apps/target/wasm32-wasip2/release/sockprobe.wasm
 ```
 
 ## Deploy (in-cluster)

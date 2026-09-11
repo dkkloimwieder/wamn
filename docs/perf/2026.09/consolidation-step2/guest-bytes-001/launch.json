@@ -1,0 +1,34 @@
+[
+  {
+    "side": "a",
+    "pid": 4100539,
+    "argv": [
+      "python3",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/guest-bytes-001/capture.py",
+      "build-a",
+      "--tree-a",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911",
+      "--tree-b",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-guest-bytes-b-20260911",
+      "--evidence",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/guest-bytes-001"
+    ],
+    "started_utc": "2026-09-11T13:06:06.603394+00:00"
+  },
+  {
+    "side": "b",
+    "pid": 4100540,
+    "argv": [
+      "python3",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/guest-bytes-001/capture.py",
+      "build-b",
+      "--tree-a",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911",
+      "--tree-b",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-guest-bytes-b-20260911",
+      "--evidence",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/guest-bytes-001"
+    ],
+    "started_utc": "2026-09-11T13:06:06.603873+00:00"
+  }
+]

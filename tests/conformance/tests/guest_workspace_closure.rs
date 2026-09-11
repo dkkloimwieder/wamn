@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest as _, Sha256};
 
 /// Every workspace whose members are compiled into guest artifacts.
-const GUEST_WORKSPACES: [&str; 2] = ["components/Cargo.toml", "components/no-std/Cargo.toml"];
+const GUEST_WORKSPACES: [&str; 2] = ["apps/Cargo.toml", "apps/platform/no-std/Cargo.toml"];
 
 /// The one call every guest workspace leg compiles through.
 const BUILD_TOOL: &str = "tools/build-components";

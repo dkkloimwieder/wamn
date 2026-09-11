@@ -113,13 +113,13 @@ fn every_embedded_component_comes_from_the_locked_builder() {
     }
 
     assert!(DOCKERFILE.contains("FROM component-toolchain AS component-builder"));
-    assert!(DOCKERFILE.contains("COPY components /build/components"));
+    assert!(DOCKERFILE.contains("COPY apps /build/apps"));
     assert!(DOCKERFILE.contains("rustup target add --toolchain 1.97.0 wasm32-wasip2"));
     assert!(DOCKERFILE.contains("cargo +1.97.0 build --locked --release --target wasm32-wasip2"));
     assert!(
         DOCKERIGNORE
             .lines()
-            .any(|line| line == "/components/target")
+            .any(|line| line == "/apps/target")
     );
 }
 
@@ -225,7 +225,7 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
 fn build_graph_has_no_shared_or_retired_cook_leg() {
     assert!(DOCKERFILE.contains("cargo install cargo-chef --version 0.1.77 --locked"));
     assert!(DOCKERFILE.contains("COPY Cargo.toml Cargo.lock ./"));
-    assert!(stage("root-planner").contains("COPY packages ./packages"));
+    assert!(stage("root-planner").contains("COPY apps ./apps"));
     assert!(
         DOCKERFILE.contains("COPY --from=root-planner /build/root-recipe.json ./root-recipe.json")
     );
@@ -234,7 +234,7 @@ fn build_graph_has_no_shared_or_retired_cook_leg() {
     assert!(!DOCKERFILE.contains(" AS builder\n"));
     assert!(!DOCKERFILE.contains("--from=builder"));
     assert!(DOCKERFILE.contains("id=wamn-root-target,target=/build/target"));
-    assert!(DOCKERFILE.contains("id=wamn-component-target,target=/build/components/target"));
+    assert!(DOCKERFILE.contains("id=wamn-component-target,target=/build/apps/target"));
 
     let gates = stage("build-gates");
     assert_eq!(selected_packages(gates), ["wamn-gates"]);

@@ -45,7 +45,7 @@
       "role": "persistence"
     },
     "event-registration-model": {
-      "path": "components/events/registration",
+      "path": "apps/platform/events/registration",
       "role": "semantic"
     },
     "run-state": {
@@ -57,7 +57,7 @@
       "role": "effect"
     },
     "execution-contract": {
-      "path": "components/execution/contract",
+      "path": "apps/platform/execution/contract",
       "role": "semantic"
     },
     "catalog-model": {
@@ -119,7 +119,7 @@
       "note": "The host reads catalog facts and current application permissions. These reads change no rows."
     },
     "event-materializer": {
-      "path": "components/events/materializer",
+      "path": "apps/platform/events/materializer",
       "role": "reader",
       "note": "reader-only: the materializer guest's registration sweep SQL"
     },
@@ -129,7 +129,7 @@
       "note": "reader-only: the run-plane DDL's trigger bodies read the durability projection and the effect ledger; the relations' migration owners are schema-control and run-state"
     },
     "materializer": {
-      "path": "components/execution/materializer",
+      "path": "apps/platform/execution/materializer",
       "role": "effect"
     }
   },
@@ -193,7 +193,7 @@
     "roots": [
       "crates",
       "services",
-      "components",
+      "apps",
       "deploy/sql"
     ],
     "extensions": [
@@ -214,7 +214,7 @@
       },
       {
         "kind": "path-prefix",
-        "value": "components/fixtures",
+        "value": "apps/platform/fixtures",
         "source_class": "gate-fixture"
       },
       {

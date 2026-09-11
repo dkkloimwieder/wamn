@@ -8,7 +8,7 @@
   "artifacts": [
     {
       "package": "blob-put",
-      "workspace_manifest": "components/Cargo.toml",
+      "workspace_manifest": "apps/Cargo.toml",
       "raw_file": "blob_put.wasm",
       "output_file": "blob_put.wasm"
     }

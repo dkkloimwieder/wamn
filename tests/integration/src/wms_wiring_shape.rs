@@ -63,7 +63,7 @@ fn parameter_names(node: &Value) -> Vec<String> {
 #[test]
 fn the_move_result_carries_every_field_the_pallet_label_names() {
     let result = read_json(
-        &repository_root().join("packages/wms/generated/contracts/inventory/move.result.json"),
+        &repository_root().join("apps/wamn_wms/generated/contracts/inventory/move.result.json"),
     );
     let emitted: Vec<&str> = result["fields"]
         .as_array()
@@ -97,7 +97,7 @@ fn label_render_declares_the_envelope_on_both_ports() {
     // each item's value (enrich it with zpl) is the guest's contract, held in
     // its docs and by the composed route's runtime assertions, not in a port
     // schema the gate would then refuse.
-    let document = declaration("components/no-std/label-render/declaration.json.in");
+    let document = declaration("apps/platform/no-std/label-render/declaration.json.in");
     let node = handler(&document);
     let envelope = entry_envelope_schema();
     assert_eq!(node["input-ports"][0]["schema"], envelope, "input is the envelope");
@@ -108,7 +108,7 @@ fn label_render_declares_the_envelope_on_both_ports() {
 /// The schema the entry operation emits on `main`: the route envelope. Every
 /// edge in the composed wiring must carry exactly this.
 fn entry_envelope_schema() -> serde_json::Value {
-    let document = declaration("packages/wms/publication/components/wms.json.in");
+    let document = declaration("apps/wamn_wms/publication/components/wms.json.in");
     let operation = &document["operations"]["wamn-wms:inventory/move@1.0.0"];
     let schema = operation["output-ports"][0]["schema"].clone();
     assert_eq!(schema, serde_json::json!({"type": "array"}), "the entry emits the envelope");
@@ -119,7 +119,7 @@ fn entry_envelope_schema() -> serde_json::Value {
 /// predecessor it was not shaped around.
 #[test]
 fn blob_put_locates_its_key_and_body_by_wiring_parameter() {
-    let document = declaration("components/execution/blob-put/declaration.json.in");
+    let document = declaration("apps/platform/execution/blob-put/declaration.json.in");
     let node = async_handler(&document);
     assert_eq!(
         parameter_names(node),
@@ -128,7 +128,7 @@ fn blob_put_locates_its_key_and_body_by_wiring_parameter() {
 
     // Both are JSON pointers, the same shape `transform` uses — one mapping
     // mechanism in the palette, not two.
-    let transform_document = declaration("components/no-std/transform/declaration.json.in");
+    let transform_document = declaration("apps/platform/no-std/transform/declaration.json.in");
     let transform = handler(&transform_document);
     let pointer_pattern = transform["parameters"][0]["schema"]["pattern"].clone();
     assert!(
@@ -168,7 +168,7 @@ fn blob_put_locates_its_key_and_body_by_wiring_parameter() {
 #[test]
 fn the_wirer_can_point_at_a_key_and_a_body() {
     let result = read_json(
-        &repository_root().join("packages/wms/generated/contracts/inventory/move.result.json"),
+        &repository_root().join("apps/wamn_wms/generated/contracts/inventory/move.result.json"),
     );
     let mut available: Vec<&str> = result["fields"]
         .as_array()
@@ -204,7 +204,7 @@ fn the_wirer_can_point_at_a_key_and_a_body() {
 #[test]
 fn the_aggregate_excludes_consumed_pallets() {
     let sql = std::fs::read_to_string(
-        repository_root().join("packages/wms/query/inventory_aggregate.sql"),
+        repository_root().join("apps/wamn_wms/query/inventory_aggregate.sql"),
     )
     .expect("the aggregate query is authored");
 
@@ -234,7 +234,7 @@ fn the_aggregate_excludes_consumed_pallets() {
 #[test]
 fn the_composed_wiring_is_a_three_node_graph() {
     let document = read_json(
-        &repository_root().join("packages/wms/publication/wirings/inventory_move_and_label.json"),
+        &repository_root().join("apps/wamn_wms/publication/wirings/inventory_move_and_label.json"),
     );
     let wiring = wamn_catalog::WiringDocument::parse(&document)
         .expect("the composed wiring is a valid document");
@@ -269,7 +269,7 @@ fn the_composed_wiring_is_a_three_node_graph() {
 #[test]
 fn the_wirings_params_carry_the_mapping() {
     let document = read_json(
-        &repository_root().join("packages/wms/publication/wirings/inventory_move_and_label.json"),
+        &repository_root().join("apps/wamn_wms/publication/wirings/inventory_move_and_label.json"),
     );
     let wiring = wamn_catalog::WiringDocument::parse(&document).expect("parses");
 
@@ -288,7 +288,7 @@ fn the_wirings_params_carry_the_mapping() {
     // move's result, plus the `zpl` label-render adds. This is the assertion
     // that ties the params to the contracts rather than to intent.
     let result = read_json(
-        &repository_root().join("packages/wms/generated/contracts/inventory/move.result.json"),
+        &repository_root().join("apps/wamn_wms/generated/contracts/inventory/move.result.json"),
     );
     let mut available: Vec<String> = result["fields"]
         .as_array()

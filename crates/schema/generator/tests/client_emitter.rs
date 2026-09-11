@@ -25,8 +25,8 @@ fn release(package: &str) -> ClientContractIr {
     let root = repository_root();
     ClientContractIr::from_release(
         package,
-        &root.join(format!("packages/{package}/generated/contracts")),
-        &root.join(format!("packages/{package}/publication/attachments.json")),
+        &root.join(format!("apps/{package}/generated/contracts")),
+        &root.join(format!("apps/{package}/publication/attachments.json")),
     )
     .unwrap_or_else(|error| panic!("{package} projects: {error}"))
 }
@@ -85,7 +85,7 @@ fn check_compiles(ir: &ClientContractIr, scratch_name: &str) -> String {
 /// EXIT GATE: the emitted client compiles against the real `wamn-client`.
 #[test]
 fn the_emitted_receiving_client_compiles() {
-    let source = check_compiles(&release("receiving"), "wamn-emitted-client-receiving");
+    let source = check_compiles(&release("wamn_receiving"), "wamn-emitted-client-receiving");
     // Guard the guard: an empty emission would compile trivially.
     assert!(
         source.contains("pub struct PurchaseOrderUpdateRequest"),
@@ -115,7 +115,7 @@ fn the_emitted_overlay_client_compiles() {
 /// client that emitted neither would pass the negative half alone.
 #[test]
 fn generated_code_carries_release_facts_and_no_deployment_facts() {
-    for package in ["receiving", "client_acme_receiving"] {
+    for package in ["wamn_receiving", "client_acme_receiving"] {
         let files = emit_rust_client(&release(package)).expect("emits");
         let source: String = files
             .iter()
@@ -157,7 +157,7 @@ fn a_field_added_to_a_contract_appears_without_a_hand_edit() {
     let _ = std::fs::remove_dir_all(&scratch);
     let contracts = scratch.join("contracts");
     copy_tree(
-        &root.join("packages/receiving/generated/contracts"),
+        &root.join("apps/wamn_receiving/generated/contracts"),
         &contracts,
     );
 
@@ -203,7 +203,7 @@ fn an_error_added_to_a_contract_appears_without_a_hand_edit() {
     let _ = std::fs::remove_dir_all(&scratch);
     let contracts = scratch.join("contracts");
     copy_tree(
-        &root.join("packages/receiving/generated/contracts"),
+        &root.join("apps/wamn_receiving/generated/contracts"),
         &contracts,
     );
 
@@ -219,7 +219,7 @@ fn an_error_added_to_a_contract_appears_without_a_hand_edit() {
     let ir = ClientContractIr::from_release(
         "receiving",
         &contracts,
-        &root.join("packages/receiving/publication/attachments.json"),
+        &root.join("apps/wamn_receiving/publication/attachments.json"),
     )
     .expect("projects");
     let source: String = emit_rust_client(&ir)
@@ -238,7 +238,7 @@ fn an_error_added_to_a_contract_appears_without_a_hand_edit() {
 /// Emission is byte-stable: the same IR emits the same bytes.
 #[test]
 fn emission_is_byte_stable() {
-    let ir = release("receiving");
+    let ir = release("wamn_receiving");
     let first = emit_rust_client(&ir).expect("emits");
     let second = emit_rust_client(&ir).expect("emits");
     assert_eq!(first, second);
@@ -259,7 +259,7 @@ fn copy_tree(from: &Path, to: &Path) {
 
 #[test]
 fn valid_operations_cannot_collide_with_route_helpers_or_their_fallbacks() {
-    let mut ir = release("receiving");
+    let mut ir = release("wamn_receiving");
     ir.models.retain(|model| model.name == "purchase_order");
     let model = &mut ir.models[0];
     let template = model

@@ -26,16 +26,16 @@ use wamn_execution_contract::canonical_json_bytes;
 use wamn_gate_harness::claim_law::{self, BindValue, ClaimContract, CommandFixture};
 
 const URL_ENV: &str = "WAMN_CLAIM_LAW_PG_URL";
-const PACKAGE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../packages/wms");
+const PACKAGE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/wamn_wms");
 const CLAIM_TESTS: &str = "generated/contracts/inventory/move.claim-tests.json";
 const OPERATION: &str = "wamn-wms:inventory/move@1.0.0";
-const MIGRATION: &str = include_str!("../../../packages/wms/migrations/0001_initial.sql");
+const MIGRATION: &str = include_str!("../../../apps/wamn_wms/migrations/0001_initial.sql");
 
 const REPLAY_CASE: &str = "replay_returns_the_immutable_original";
 const CONFLICT_CASE: &str = "changed_request_under_a_live_key_refuses";
 
 /// The canonical command fields, spelled the way
-/// `components/data/wms-data/src/inventory_move.rs` spells them.
+/// `apps/wamn_wms/data/src/inventory_move.rs` spells them.
 const PALLET_ID: Uuid = Uuid::from_u128(0xc1a1_0001);
 const TO_LOCATION_ID: Uuid = Uuid::from_u128(0xc1a1_0002);
 const CHANGED_LOCATION_ID: Uuid = Uuid::from_u128(0xc1a1_0003);
@@ -194,7 +194,7 @@ fn contract() -> Result<ClaimContract> {
 }
 
 /// The canonical command bytes for one move, built the way
-/// `components/data/wms-data/src/inventory_move.rs` builds them: the request
+/// `apps/wamn_wms/data/src/inventory_move.rs` builds them: the request
 /// value without the idempotency key, as canonical JSON.
 fn canonical_move_command(to_location_id: Uuid) -> Vec<u8> {
     canonical_json_bytes(&json!({

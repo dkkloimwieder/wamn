@@ -17,7 +17,7 @@
 //!
 //! The first two legs are root-workspace default members, so `cargo test
 //! --workspace` also runs them. The third is NOT a root workspace member at
-//! all — `http-route` lives in `components/`, and no root sweep reaches it.
+//! all — `http-route` lives in `apps/platform/`, and no root sweep reaches it.
 //! `tools/contract-diff run` is therefore the only runner of record for leg 3,
 //! and `docs/operations/build-and-test.md` now records it in the sweep of
 //! record (wamn-0h0g.15.138). Do not read this file's green as covering it.
@@ -136,7 +136,7 @@ fn captured_invocations(path: &Path) -> Vec<Vec<String>> {
 fn expected_invocations(root: &Path) -> Vec<Vec<String>> {
     let root = root.display().to_string();
     let root_manifest = format!("{root}/Cargo.toml");
-    let component_manifest = format!("{root}/components/Cargo.toml");
+    let component_manifest = format!("{root}/apps/Cargo.toml");
     vec![
         vec![
             root.clone(),

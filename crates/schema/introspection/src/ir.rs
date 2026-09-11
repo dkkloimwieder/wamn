@@ -1,6 +1,6 @@
 //! Normalized schema IR derived from PostgreSQL migrations.
 //!
-//! Frozen transport literals: `components/data/postgres-sqlx/wit/deps/wamn-postgres/package.wit`.
+//! Frozen transport literals: `apps/platform/data/postgres-sqlx/wit/deps/wamn-postgres/package.wit`.
 //! That contract returns the violated constraint or index name for SQLSTATE
 //! 23505/23503/23514, so supported names are explicit authored IR, never
 //! PostgreSQL-generated names.

@@ -1,0 +1,128 @@
+[
+  {
+    "label": "native",
+    "command": [
+      "cargo",
+      "metadata",
+      "--locked",
+      "--offline",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      "Cargo.toml"
+    ],
+    "exit": 0,
+    "seconds": 0.4199233480030671,
+    "stderr": "",
+    "workspace_root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+    "members": 40
+  },
+  {
+    "label": "std",
+    "command": [
+      "cargo",
+      "metadata",
+      "--locked",
+      "--offline",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      "apps/Cargo.toml"
+    ],
+    "exit": 0,
+    "seconds": 0.12695222604088485,
+    "stderr": "",
+    "workspace_root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/apps",
+    "members": 20
+  },
+  {
+    "label": "no-std",
+    "command": [
+      "cargo",
+      "metadata",
+      "--locked",
+      "--offline",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      "apps/platform/no-std/Cargo.toml"
+    ],
+    "exit": 0,
+    "seconds": 0.0696315789828077,
+    "stderr": "",
+    "workspace_root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911/apps/platform/no-std",
+    "members": 4
+  },
+  {
+    "label": "receiving-ui",
+    "command": [
+      "cargo",
+      "metadata",
+      "--locked",
+      "--offline",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      "apps/wamn_receiving/ui/Cargo.toml"
+    ],
+    "exit": 0,
+    "seconds": 0.3882790899951942,
+    "stderr": "",
+    "workspace_root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+    "members": 40
+  },
+  {
+    "label": "receiving-generated-ui",
+    "command": [
+      "cargo",
+      "metadata",
+      "--locked",
+      "--offline",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      "apps/wamn_receiving/generated/receiving-tui/Cargo.toml"
+    ],
+    "exit": 0,
+    "seconds": 0.3994807939743623,
+    "stderr": "",
+    "workspace_root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+    "members": 40
+  },
+  {
+    "label": "wms-generated-ui",
+    "command": [
+      "cargo",
+      "metadata",
+      "--locked",
+      "--offline",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      "apps/wamn_wms/generated/wms-tui/Cargo.toml"
+    ],
+    "exit": 0,
+    "seconds": 0.4112236359505914,
+    "stderr": "",
+    "workspace_root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+    "members": 40
+  },
+  {
+    "label": "overlay-generated-ui",
+    "command": [
+      "cargo",
+      "metadata",
+      "--locked",
+      "--offline",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      "apps/client_acme_receiving/generated/client_acme_receiving-tui/Cargo.toml"
+    ],
+    "exit": 0,
+    "seconds": 0.3862970710033551,
+    "stderr": "",
+    "workspace_root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+    "members": 40
+  }
+]

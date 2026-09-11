@@ -1,0 +1,97 @@
+[
+  {
+    "label": "receiving-ui",
+    "command": [
+      "cargo",
+      "metadata",
+      "--locked",
+      "--offline",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      "apps/wamn_receiving/ui/Cargo.toml"
+    ],
+    "exit": 0,
+    "workspace_root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+    "manifest": "apps/wamn_receiving/ui/Cargo.toml",
+    "package_name": "wamn-receiving-tui",
+    "member": true,
+    "target_names": [
+      "wamn_receiving_tui",
+      "wamn-receiving",
+      "login",
+      "reducer",
+      "workflow"
+    ],
+    "raw_metadata_sha256": "95a899d81945aa70340ae9625b64695c6712cbc06859d635c8a2b0ca72712394"
+  },
+  {
+    "label": "receiving-generated-ui",
+    "command": [
+      "cargo",
+      "metadata",
+      "--locked",
+      "--offline",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      "apps/wamn_receiving/generated/receiving-tui/Cargo.toml"
+    ],
+    "exit": 0,
+    "workspace_root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+    "manifest": "apps/wamn_receiving/generated/receiving-tui/Cargo.toml",
+    "package_name": "wamn-generated-receiving-tui",
+    "member": true,
+    "target_names": [
+      "wamn_generated_receiving_tui",
+      "wamn-receiving-tui"
+    ],
+    "raw_metadata_sha256": "d030adedfaa7365040b29327b28fcb1fbaa0b98017130f3a187f788122d38e97"
+  },
+  {
+    "label": "wms-generated-ui",
+    "command": [
+      "cargo",
+      "metadata",
+      "--locked",
+      "--offline",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      "apps/wamn_wms/generated/wms-tui/Cargo.toml"
+    ],
+    "exit": 0,
+    "workspace_root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+    "manifest": "apps/wamn_wms/generated/wms-tui/Cargo.toml",
+    "package_name": "wamn-generated-wms-tui",
+    "member": true,
+    "target_names": [
+      "wamn_generated_wms_tui",
+      "wamn-wms-tui"
+    ],
+    "raw_metadata_sha256": "f512e936fea7d3042190472f717e072190d163d633dd19f60c0acd6a60fec4bb"
+  },
+  {
+    "label": "overlay-generated-ui",
+    "command": [
+      "cargo",
+      "metadata",
+      "--locked",
+      "--offline",
+      "--format-version",
+      "1",
+      "--manifest-path",
+      "apps/client_acme_receiving/generated/client_acme_receiving-tui/Cargo.toml"
+    ],
+    "exit": 0,
+    "workspace_root": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-home-20260911",
+    "manifest": "apps/client_acme_receiving/generated/client_acme_receiving-tui/Cargo.toml",
+    "package_name": "wamn-generated-client-acme-receiving-tui",
+    "member": true,
+    "target_names": [
+      "wamn_generated_client_acme_receiving_tui",
+      "wamn-client-acme-receiving-tui"
+    ],
+    "raw_metadata_sha256": "41aded66f61bde5f5b56725eebd2f8db7acd6793405f9555747b1b165398a536"
+  }
+]

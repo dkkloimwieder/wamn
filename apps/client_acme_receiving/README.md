@@ -1,0 +1,1 @@
+`apps/client_acme_receiving/` owns package `client_acme_receiving`, guest component `client-acme-receiving`, data crate `wamn-client-acme-receiving-data-access`, and generated native UI crate `wamn-generated-client-acme-receiving-tui`.

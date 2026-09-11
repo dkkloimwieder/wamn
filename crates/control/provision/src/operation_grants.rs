@@ -316,7 +316,7 @@ pub fn reconcile_operation_grants_sql(
 mod tests {
     use super::*;
 
-    const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../packages/receiving/wamn.json");
+    const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
 
     #[test]
     fn receiving_manifest_yields_the_eight_canonical_operation_grants() {

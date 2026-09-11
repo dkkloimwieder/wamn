@@ -1,0 +1,17 @@
+{
+  "source": "The preserved capture.py assigns these nonsecret inputs directly from these artifact plans before the three recorded Cargo calls.",
+  "cross_checkout": {
+    "WAMN_DIGEST_REPRO_A": "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911/target/guest-digest-all/virtualized/std-empty-environment",
+    "WAMN_DIGEST_REPRO_B": "/home/kaalin/.cache/wamn-lanes/consolidation-guest-bytes-b-20260911/target/guest-digest-all/virtualized/std-empty-environment"
+  },
+  "cross_selection": {
+    "a": {
+      "WAMN_DIGEST_PROFILE_APP_PLAN": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/guest-bytes-001/a-app.json",
+      "WAMN_DIGEST_PROFILE_PROOF_PLAN": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/guest-bytes-001/a-all.json"
+    },
+    "b": {
+      "WAMN_DIGEST_PROFILE_APP_PLAN": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/guest-bytes-001/b-app.json",
+      "WAMN_DIGEST_PROFILE_PROOF_PLAN": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/guest-bytes-001/b-all.json"
+    }
+  }
+}

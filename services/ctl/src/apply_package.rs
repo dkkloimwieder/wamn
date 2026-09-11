@@ -1695,7 +1695,7 @@ mod tests {
     #[test]
     fn overlay_registration_projection_does_not_require_redeclaring_the_base_entity() {
         let manifest: wamn_schema_generator::PackageManifest = serde_json::from_str(include_str!(
-            "../../../packages/client_acme_receiving/wamn.json"
+            "../../../apps/client_acme_receiving/wamn.json"
         ))
         .expect("the repository overlay manifest parses");
         wamn_schema_generator::validate_operation_vocabulary(&manifest)

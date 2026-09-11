@@ -11,7 +11,7 @@ const ROOT_MANIFEST: &str = "Cargo.toml";
 /// The guests live in more than one Cargo workspace. Feature unification is
 /// additive-only inside one invocation, so the `no_std` palette guests are
 /// isolated from the members that reach `serde_json/std` (wamn-0h0g.11.56).
-const COMPONENT_MANIFESTS: [&str; 2] = ["components/Cargo.toml", "components/no-std/Cargo.toml"];
+const COMPONENT_MANIFESTS: [&str; 2] = ["apps/Cargo.toml", "apps/platform/no-std/Cargo.toml"];
 const COMPONENT_TOOL: &str = "tools/build-components";
 const COMPONENT_VIRTUALIZATION: &str = "tools/component-virtualization.json";
 
@@ -87,7 +87,7 @@ fn names_for_ids(metadata: &CargoMetadata, ids: &[String]) -> Vec<String> {
 
 fn package_components(root: &Path) -> Vec<String> {
     let mut names = BTreeSet::new();
-    for entry in fs::read_dir(root.join("packages")).expect("read application packages") {
+    for entry in fs::read_dir(root.join("apps")).expect("read application packages") {
         let path = entry
             .expect("read application entry")
             .path()
@@ -339,7 +339,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
     }
 
     for profile in ["app", "proof"] {
-        let app = root.join("packages/receiving");
+        let app = root.join("apps/wamn_receiving");
         let application_arguments = if profile == "app" { vec![app] } else { vec![] };
         let selected = if profile == "app" {
             let manifest: Value = serde_json::from_slice(
@@ -486,17 +486,17 @@ fn component_build_requires_declared_app_crates_and_accepts_new_cargo_members() 
             .expect("failed to create fixture directory");
         fs::copy(root.join(relative), destination).expect("failed to copy component tool fixture");
     }
-    for entry in fs::read_dir(root.join("packages")).expect("failed to list packages") {
+    for entry in fs::read_dir(root.join("apps")).expect("failed to list packages") {
         let package = entry.expect("package entry must be readable");
         let manifest = package.path().join("wamn.json");
         if manifest.is_file() {
-            let destination = scratch.join("packages").join(package.file_name());
+            let destination = scratch.join("apps").join(package.file_name());
             fs::create_dir_all(&destination).expect("failed to create package fixture");
             fs::copy(manifest, destination.join("wamn.json"))
                 .expect("failed to copy package declaration");
         }
     }
-    let new_package = scratch.join("packages/fresh-package");
+    let new_package = scratch.join("apps/fresh-package");
     fs::create_dir_all(&new_package).expect("failed to create new package fixture");
     let new_manifest = new_package.join("wamn.json");
     fs::write(&new_manifest, r#"{"components":{"fresh_component":{}}}"#)
@@ -794,7 +794,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
     for normalized in &normalized_outputs {
         fs::write(normalized, "preserved-other-app").expect("seed outputs before app build");
     }
-    let receiving = root.join("packages/receiving");
+    let receiving = root.join("apps/wamn_receiving");
     let _ = fs::remove_file(&capture);
     let app_build = Command::new(root.join(COMPONENT_TOOL))
         .current_dir(&scratch)

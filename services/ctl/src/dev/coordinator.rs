@@ -2133,7 +2133,7 @@ mod tests {
     }
 
     fn overlay_package_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/client_acme_receiving")
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/client_acme_receiving")
     }
 
     fn overlay_declaration_template() -> PathBuf {
@@ -2254,16 +2254,16 @@ mod tests {
     #[test]
     fn package_catalog_projection_keeps_base_contract_additive() {
         let base = PackageInput {
-            root: PathBuf::from("/packages/receiving"),
+            root: PathBuf::from("/apps/wamn_receiving"),
             manifest: PackageManifest::from_slice(include_bytes!(
-                "../../../../packages/receiving/wamn.json"
+                "../../../../apps/wamn_receiving/wamn.json"
             ))
             .expect("parse shipped base manifest"),
         };
         let overlay = PackageInput {
-            root: PathBuf::from("/packages/client_acme_receiving"),
+            root: PathBuf::from("/apps/client_acme_receiving"),
             manifest: PackageManifest::from_slice(include_bytes!(
-                "../../../../packages/client_acme_receiving/wamn.json"
+                "../../../../apps/client_acme_receiving/wamn.json"
             ))
             .expect("parse shipped overlay manifest"),
         };

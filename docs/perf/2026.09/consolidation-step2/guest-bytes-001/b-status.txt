@@ -1,0 +1,599 @@
+M  .dockerignore
+M  .gitignore
+M  CLAUDE.md
+M  Cargo.toml
+M  Dockerfile
+M  README.md
+R  components/Cargo.lock -> apps/Cargo.lock
+R  components/Cargo.toml -> apps/Cargo.toml
+A  apps/client_acme_receiving/README.md
+R  packages/client_acme_receiving/command/approve_inspection/approve_inspection.sql -> apps/client_acme_receiving/command/approve_inspection/approve_inspection.sql
+R  packages/client_acme_receiving/command/create_inspection/insert_inspection.sql -> apps/client_acme_receiving/command/create_inspection/insert_inspection.sql
+R  packages/client_acme_receiving/command/create_inspection/load_inspection.sql -> apps/client_acme_receiving/command/create_inspection/load_inspection.sql
+R  components/application/client-acme-receiving/Cargo.toml -> apps/client_acme_receiving/component/Cargo.toml
+R  components/application/client-acme-receiving/src/lib.rs -> apps/client_acme_receiving/component/src/lib.rs
+R  components/application/client-acme-receiving/wit/deps/client-acme-receiving-purchase-order/package.wit -> apps/client_acme_receiving/component/wit/deps/client-acme-receiving-purchase-order/package.wit
+R  components/application/client-acme-receiving/wit/deps/client-acme-receiving-quality/package.wit -> apps/client_acme_receiving/component/wit/deps/client-acme-receiving-quality/package.wit
+R  components/application/client-acme-receiving/wit/deps/client-acme-receiving-receiving/package.wit -> apps/client_acme_receiving/component/wit/deps/client-acme-receiving-receiving/package.wit
+R  components/application/client-acme-receiving/wit/deps/wamn-receiving-receiving/package.wit -> apps/client_acme_receiving/component/wit/deps/wamn-receiving-receiving/package.wit
+R  components/data/client-acme-receiving-data/Cargo.toml -> apps/client_acme_receiving/data/Cargo.toml
+R  components/data/client-acme-receiving-data/src/error.rs -> apps/client_acme_receiving/data/src/error.rs
+R  components/data/client-acme-receiving-data/src/generated.rs -> apps/client_acme_receiving/data/src/generated.rs
+R  components/data/client-acme-receiving-data/src/lib.rs -> apps/client_acme_receiving/data/src/lib.rs
+R  components/data/client-acme-receiving-data/src/operation.rs -> apps/client_acme_receiving/data/src/operation.rs
+R  packages/client_acme_receiving/generated/client/purchase_order.rs -> apps/client_acme_receiving/generated/client/purchase_order.rs
+R  packages/client_acme_receiving/generated/client/quality.rs -> apps/client_acme_receiving/generated/client/quality.rs
+R  packages/client_acme_receiving/generated/client/receiving.rs -> apps/client_acme_receiving/generated/client/receiving.rs
+R  packages/client_acme_receiving/generated/client_acme_receiving-tui/Cargo.toml -> apps/client_acme_receiving/generated/client_acme_receiving-tui/Cargo.toml
+R  packages/client_acme_receiving/generated/client_acme_receiving-tui/src/lib.rs -> apps/client_acme_receiving/generated/client_acme_receiving-tui/src/lib.rs
+R  packages/client_acme_receiving/generated/client_acme_receiving-tui/src/main.rs -> apps/client_acme_receiving/generated/client_acme_receiving-tui/src/main.rs
+R  packages/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/mod.rs -> apps/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/mod.rs
+R  packages/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/purchase_order.rs -> apps/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/purchase_order.rs
+R  packages/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/quality.rs -> apps/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/quality.rs
+R  packages/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/receiving.rs -> apps/client_acme_receiving/generated/client_acme_receiving-tui/src/screens/receiving.rs
+R  packages/client_acme_receiving/generated/contracts/cursor-v1.json -> apps/client_acme_receiving/generated/contracts/cursor-v1.json
+R  packages/client_acme_receiving/generated/contracts/purchase_order/get.errors.json -> apps/client_acme_receiving/generated/contracts/purchase_order/get.errors.json
+R  packages/client_acme_receiving/generated/contracts/purchase_order/get.input.json -> apps/client_acme_receiving/generated/contracts/purchase_order/get.input.json
+R  packages/client_acme_receiving/generated/contracts/purchase_order/get.operation.json -> apps/client_acme_receiving/generated/contracts/purchase_order/get.operation.json
+R  packages/client_acme_receiving/generated/contracts/purchase_order/get.result.json -> apps/client_acme_receiving/generated/contracts/purchase_order/get.result.json
+R  packages/client_acme_receiving/generated/contracts/purchase_order/update.errors.json -> apps/client_acme_receiving/generated/contracts/purchase_order/update.errors.json
+R  packages/client_acme_receiving/generated/contracts/purchase_order/update.input.json -> apps/client_acme_receiving/generated/contracts/purchase_order/update.input.json
+R  packages/client_acme_receiving/generated/contracts/purchase_order/update.operation.json -> apps/client_acme_receiving/generated/contracts/purchase_order/update.operation.json
+R  packages/client_acme_receiving/generated/contracts/purchase_order/update.result.json -> apps/client_acme_receiving/generated/contracts/purchase_order/update.result.json
+R  packages/client_acme_receiving/generated/contracts/quality/approve_inspection.errors.json -> apps/client_acme_receiving/generated/contracts/quality/approve_inspection.errors.json
+R  packages/client_acme_receiving/generated/contracts/quality/approve_inspection.input.json -> apps/client_acme_receiving/generated/contracts/quality/approve_inspection.input.json
+R  packages/client_acme_receiving/generated/contracts/quality/approve_inspection.operation.json -> apps/client_acme_receiving/generated/contracts/quality/approve_inspection.operation.json
+R  packages/client_acme_receiving/generated/contracts/quality/approve_inspection.result.json -> apps/client_acme_receiving/generated/contracts/quality/approve_inspection.result.json
+R  packages/client_acme_receiving/generated/contracts/quality/approve_inspection.state-tests.json -> apps/client_acme_receiving/generated/contracts/quality/approve_inspection.state-tests.json
+R  packages/client_acme_receiving/generated/contracts/quality/create_inspection.errors.json -> apps/client_acme_receiving/generated/contracts/quality/create_inspection.errors.json
+R  packages/client_acme_receiving/generated/contracts/quality/create_inspection.input.json -> apps/client_acme_receiving/generated/contracts/quality/create_inspection.input.json
+R  packages/client_acme_receiving/generated/contracts/quality/create_inspection.operation.json -> apps/client_acme_receiving/generated/contracts/quality/create_inspection.operation.json
+R  packages/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.errors.json -> apps/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.errors.json
+R  packages/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.input.json -> apps/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.input.json
+R  packages/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.operation.json -> apps/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.operation.json
+R  packages/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.result.json -> apps/client_acme_receiving/generated/contracts/quality/load_purchase_order_detail.result.json
+R  packages/client_acme_receiving/generated/contracts/receiving/record_receipt.errors.json -> apps/client_acme_receiving/generated/contracts/receiving/record_receipt.errors.json
+R  packages/client_acme_receiving/generated/contracts/receiving/record_receipt.inherited-tests.json -> apps/client_acme_receiving/generated/contracts/receiving/record_receipt.inherited-tests.json
+R  packages/client_acme_receiving/generated/contracts/receiving/record_receipt.input.json -> apps/client_acme_receiving/generated/contracts/receiving/record_receipt.input.json
+R  packages/client_acme_receiving/generated/contracts/receiving/record_receipt.operation.json -> apps/client_acme_receiving/generated/contracts/receiving/record_receipt.operation.json
+R  packages/client_acme_receiving/generated/contracts/receiving/record_receipt.result.json -> apps/client_acme_receiving/generated/contracts/receiving/record_receipt.result.json
+R  packages/client_acme_receiving/generated/models/purchase_order.json -> apps/client_acme_receiving/generated/models/purchase_order.json
+R  packages/client_acme_receiving/generated/models/quality_inspection.json -> apps/client_acme_receiving/generated/models/quality_inspection.json
+R  packages/client_acme_receiving/generated/native-verifier/purchase_order.rs -> apps/client_acme_receiving/generated/native-verifier/purchase_order.rs
+R  packages/client_acme_receiving/generated/native-verifier/quality_approve_inspection.rs -> apps/client_acme_receiving/generated/native-verifier/quality_approve_inspection.rs
+R  packages/client_acme_receiving/generated/native-verifier/quality_create_inspection.rs -> apps/client_acme_receiving/generated/native-verifier/quality_create_inspection.rs
+R  packages/client_acme_receiving/generated/native-verifier/quality_inspection.rs -> apps/client_acme_receiving/generated/native-verifier/quality_inspection.rs
+R  packages/client_acme_receiving/generated/native-verifier/quality_load_purchase_order_detail.rs -> apps/client_acme_receiving/generated/native-verifier/quality_load_purchase_order_detail.rs
+R  packages/client_acme_receiving/generated/native-verifier/receiving_record_receipt.rs -> apps/client_acme_receiving/generated/native-verifier/receiving_record_receipt.rs
+R  packages/client_acme_receiving/generated/package-weld.json -> apps/client_acme_receiving/generated/package-weld.json
+R  packages/client_acme_receiving/generated/parity/purchase_order.json -> apps/client_acme_receiving/generated/parity/purchase_order.json
+R  packages/client_acme_receiving/generated/parity/quality_approve_inspection.json -> apps/client_acme_receiving/generated/parity/quality_approve_inspection.json
+R  packages/client_acme_receiving/generated/parity/quality_create_inspection.json -> apps/client_acme_receiving/generated/parity/quality_create_inspection.json
+R  packages/client_acme_receiving/generated/parity/quality_inspection.json -> apps/client_acme_receiving/generated/parity/quality_inspection.json
+R  packages/client_acme_receiving/generated/parity/quality_load_purchase_order_detail.json -> apps/client_acme_receiving/generated/parity/quality_load_purchase_order_detail.json
+R  packages/client_acme_receiving/generated/parity/receiving_record_receipt.json -> apps/client_acme_receiving/generated/parity/receiving_record_receipt.json
+R  packages/client_acme_receiving/generated/platform-policy/data-access.json -> apps/client_acme_receiving/generated/platform-policy/data-access.json
+R  packages/client_acme_receiving/generated/source-map/purchase_order.json -> apps/client_acme_receiving/generated/source-map/purchase_order.json
+R  packages/client_acme_receiving/generated/source-map/quality_approve_inspection.json -> apps/client_acme_receiving/generated/source-map/quality_approve_inspection.json
+R  packages/client_acme_receiving/generated/source-map/quality_create_inspection.json -> apps/client_acme_receiving/generated/source-map/quality_create_inspection.json
+R  packages/client_acme_receiving/generated/source-map/quality_inspection.json -> apps/client_acme_receiving/generated/source-map/quality_inspection.json
+R  packages/client_acme_receiving/generated/source-map/quality_load_purchase_order_detail.json -> apps/client_acme_receiving/generated/source-map/quality_load_purchase_order_detail.json
+R  packages/client_acme_receiving/generated/source-map/receiving_record_receipt.json -> apps/client_acme_receiving/generated/source-map/receiving_record_receipt.json
+R  packages/client_acme_receiving/generated/sql/purchase_order/get.sql -> apps/client_acme_receiving/generated/sql/purchase_order/get.sql
+R  packages/client_acme_receiving/generated/sql/purchase_order/update.sql -> apps/client_acme_receiving/generated/sql/purchase_order/update.sql
+R  packages/client_acme_receiving/generated/wamn/purchase_order.rs -> apps/client_acme_receiving/generated/wamn/purchase_order.rs
+R  packages/client_acme_receiving/generated/wamn/quality_approve_inspection.rs -> apps/client_acme_receiving/generated/wamn/quality_approve_inspection.rs
+R  packages/client_acme_receiving/generated/wamn/quality_create_inspection.rs -> apps/client_acme_receiving/generated/wamn/quality_create_inspection.rs
+R  packages/client_acme_receiving/generated/wamn/quality_inspection.rs -> apps/client_acme_receiving/generated/wamn/quality_inspection.rs
+R  packages/client_acme_receiving/generated/wamn/quality_load_purchase_order_detail.rs -> apps/client_acme_receiving/generated/wamn/quality_load_purchase_order_detail.rs
+R  packages/client_acme_receiving/generated/wamn/receiving_record_receipt.rs -> apps/client_acme_receiving/generated/wamn/receiving_record_receipt.rs
+R  packages/client_acme_receiving/migrations/0001_add_inspection_required.sql -> apps/client_acme_receiving/migrations/0001_add_inspection_required.sql
+R  packages/client_acme_receiving/migrations/0002_quality_inspection.sql -> apps/client_acme_receiving/migrations/0002_quality_inspection.sql
+R  packages/client_acme_receiving/publication/attachments.json -> apps/client_acme_receiving/publication/attachments.json
+R  packages/client_acme_receiving/publication/components/client_acme_receiving.json.in -> apps/client_acme_receiving/publication/components/client_acme_receiving.json.in
+R  packages/client_acme_receiving/publication/wirings/purchase_order_get.json -> apps/client_acme_receiving/publication/wirings/purchase_order_get.json
+R  packages/client_acme_receiving/publication/wirings/purchase_order_update.json -> apps/client_acme_receiving/publication/wirings/purchase_order_update.json
+R  packages/client_acme_receiving/publication/wirings/quality_approve_inspection.json -> apps/client_acme_receiving/publication/wirings/quality_approve_inspection.json
+R  packages/client_acme_receiving/publication/wirings/quality_create_inspection.json -> apps/client_acme_receiving/publication/wirings/quality_create_inspection.json
+R  packages/client_acme_receiving/publication/wirings/quality_load_purchase_order_detail.json -> apps/client_acme_receiving/publication/wirings/quality_load_purchase_order_detail.json
+R  packages/client_acme_receiving/publication/wirings/receiving_record_receipt.json -> apps/client_acme_receiving/publication/wirings/receiving_record_receipt.json
+R  packages/client_acme_receiving/query/quality_purchase_order_detail.sql -> apps/client_acme_receiving/query/quality_purchase_order_detail.sql
+R  packages/client_acme_receiving/wamn.json -> apps/client_acme_receiving/wamn.json
+R  components/data/postgres-sqlx/Cargo.toml -> apps/platform/data/postgres-sqlx/Cargo.toml
+R  components/data/postgres-sqlx/src/lib.rs -> apps/platform/data/postgres-sqlx/src/lib.rs
+R  components/data/postgres-sqlx/tests/wit_coherence.rs -> apps/platform/data/postgres-sqlx/tests/wit_coherence.rs
+R  components/data/postgres-sqlx/wit/deps/wamn-postgres/package.wit -> apps/platform/data/postgres-sqlx/wit/deps/wamn-postgres/package.wit
+R  components/data/postgres-sqlx/wit/world.wit -> apps/platform/data/postgres-sqlx/wit/world.wit
+R  components/data/postgres-statements/Cargo.toml -> apps/platform/data/postgres-statements/Cargo.toml
+R  components/data/postgres-statements/src/lib.rs -> apps/platform/data/postgres-statements/src/lib.rs
+R  components/data/postgres-statements/wit/deps/wamn-postgres/package.wit -> apps/platform/data/postgres-statements/wit/deps/wamn-postgres/package.wit
+R  components/data/postgres-statements/wit/world.wit -> apps/platform/data/postgres-statements/wit/world.wit
+R  components/events/materializer/Cargo.toml -> apps/platform/events/materializer/Cargo.toml
+R  components/events/materializer/src/condition.rs -> apps/platform/events/materializer/src/condition.rs
+R  components/events/materializer/src/context.rs -> apps/platform/events/materializer/src/context.rs
+R  components/events/materializer/src/decide.rs -> apps/platform/events/materializer/src/decide.rs
+R  components/events/materializer/src/input.rs -> apps/platform/events/materializer/src/input.rs
+R  components/events/materializer/src/lib.rs -> apps/platform/events/materializer/src/lib.rs
+R  components/events/materializer/src/sql.rs -> apps/platform/events/materializer/src/sql.rs
+R  components/events/registration/Cargo.toml -> apps/platform/events/registration/Cargo.toml
+R  components/events/registration/src/lib.rs -> apps/platform/events/registration/src/lib.rs
+R  components/events/registration/src/model.rs -> apps/platform/events/registration/src/model.rs
+R  components/events/registration/src/oldref.rs -> apps/platform/events/registration/src/oldref.rs
+R  components/events/registration/src/reconcile.rs -> apps/platform/events/registration/src/reconcile.rs
+R  components/events/registration/src/validate.rs -> apps/platform/events/registration/src/validate.rs
+R  components/events/registration/tests/event_reg.rs -> apps/platform/events/registration/tests/event_reg.rs
+R  components/events/registration/tests/reconcile_live.rs -> apps/platform/events/registration/tests/reconcile_live.rs
+R  components/events/wire/Cargo.toml -> apps/platform/events/wire/Cargo.toml
+R  components/events/wire/src/lib.rs -> apps/platform/events/wire/src/lib.rs
+R  components/execution/blob-put/Cargo.toml -> apps/platform/execution/blob-put/Cargo.toml
+R  components/execution/blob-put/declaration.json.in -> apps/platform/execution/blob-put/declaration.json.in
+R  components/execution/blob-put/src/lib.rs -> apps/platform/execution/blob-put/src/lib.rs
+R  components/data/receiving-data/wit/deps/wamn-node/package.wit -> apps/platform/execution/blob-put/wit/deps/wamn-node/package.wit
+R  components/execution/blob-put/wit/deps/wasmcloud-blobstore/package.wit -> apps/platform/execution/blob-put/wit/deps/wasmcloud-blobstore/package.wit
+R  components/execution/blob-put/wit/world.wit -> apps/platform/execution/blob-put/wit/world.wit
+R  components/execution/contract/Cargo.toml -> apps/platform/execution/contract/Cargo.toml
+R  components/execution/contract/src/effect_outcome.rs -> apps/platform/execution/contract/src/effect_outcome.rs
+R  components/execution/contract/src/expect.rs -> apps/platform/execution/contract/src/expect.rs
+R  components/execution/contract/src/lib.rs -> apps/platform/execution/contract/src/lib.rs
+R  components/execution/contract/src/node_contract.rs -> apps/platform/execution/contract/src/node_contract.rs
+R  components/execution/contract/src/portable_http_target.rs -> apps/platform/execution/contract/src/portable_http_target.rs
+R  components/execution/contract/src/ports.rs -> apps/platform/execution/contract/src/ports.rs
+R  components/execution/contract/src/status.rs -> apps/platform/execution/contract/src/status.rs
+R  components/execution/contract/src/test_set.rs -> apps/platform/execution/contract/src/test_set.rs
+R  components/execution/materializer/Cargo.toml -> apps/platform/execution/materializer/Cargo.toml
+R  components/execution/materializer/src/main.rs -> apps/platform/execution/materializer/src/main.rs
+R  components/execution/materializer/wit/deps/wamn-flow-http-routing/package.wit -> apps/platform/execution/materializer/wit/deps/wamn-flow-http-routing/package.wit
+R  components/execution/materializer/wit/deps/wamn-jetstream/package.wit -> apps/platform/execution/materializer/wit/deps/wamn-jetstream/package.wit
+R  components/data/receiving-data/wit/deps/wamn-postgres/package.wit -> apps/platform/execution/materializer/wit/deps/wamn-postgres/package.wit
+R  components/execution/materializer/wit/deps/wamn-router-delivery/package.wit -> apps/platform/execution/materializer/wit/deps/wamn-router-delivery/package.wit
+R  components/execution/materializer/wit/deps/wasmcloud-nats/package.wit -> apps/platform/execution/materializer/wit/deps/wasmcloud-nats/package.wit
+R  components/execution/materializer/wit/world.wit -> apps/platform/execution/materializer/wit/world.wit
+R  components/fixtures/busyloop/Cargo.toml -> apps/platform/fixtures/busyloop/Cargo.toml
+R  components/fixtures/busyloop/src/main.rs -> apps/platform/fixtures/busyloop/src/main.rs
+R  components/fixtures/connection-http-standard/Cargo.toml -> apps/platform/fixtures/connection-http-standard/Cargo.toml
+R  components/fixtures/connection-http-standard/src/lib.rs -> apps/platform/fixtures/connection-http-standard/src/lib.rs
+R  components/fixtures/connection-http-standard/wit/deps/wamn-connection/package.wit -> apps/platform/fixtures/connection-http-standard/wit/deps/wamn-connection/package.wit
+R  components/fixtures/connection-http-standard/wit/world.wit -> apps/platform/fixtures/connection-http-standard/wit/world.wit
+R  components/fixtures/sockprobe/Cargo.toml -> apps/platform/fixtures/sockprobe/Cargo.toml
+R  components/fixtures/sockprobe/src/main.rs -> apps/platform/fixtures/sockprobe/src/main.rs
+R  components/fixtures/sqlx-command/Cargo.toml -> apps/platform/fixtures/sqlx-command/Cargo.toml
+R  components/fixtures/sqlx-command/src/main.rs -> apps/platform/fixtures/sqlx-command/src/main.rs
+R  components/fixtures/std-virtualization-probe/Cargo.toml -> apps/platform/fixtures/std-virtualization-probe/Cargo.toml
+R  components/fixtures/std-virtualization-probe/src/lib.rs -> apps/platform/fixtures/std-virtualization-probe/src/lib.rs
+R  components/ingress/http-route/Cargo.toml -> apps/platform/ingress/http-route/Cargo.toml
+R  components/ingress/http-route/src/guest.rs -> apps/platform/ingress/http-route/src/guest.rs
+R  components/ingress/http-route/src/lib.rs -> apps/platform/ingress/http-route/src/lib.rs
+R  components/ingress/http-route/tests/adversarial.rs -> apps/platform/ingress/http-route/tests/adversarial.rs
+R  components/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit -> apps/platform/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit
+R  components/ingress/http-route/wit/deps/wamn-router-delivery/package.wit -> apps/platform/ingress/http-route/wit/deps/wamn-router-delivery/package.wit
+R  components/ingress/http-route/wit/deps/wasi-clocks/package.wit -> apps/platform/ingress/http-route/wit/deps/wasi-clocks/package.wit
+R  components/ingress/http-route/wit/deps/wasi-http/package.wit -> apps/platform/ingress/http-route/wit/deps/wasi-http/package.wit
+R  components/ingress/http-route/wit/deps/wasi-random/package.wit -> apps/platform/ingress/http-route/wit/deps/wasi-random/package.wit
+R  components/ingress/http-route/wit/world.wit -> apps/platform/ingress/http-route/wit/world.wit
+R  components/no-std/Cargo.lock -> apps/platform/no-std/Cargo.lock
+R  components/no-std/Cargo.toml -> apps/platform/no-std/Cargo.toml
+R  components/no-std/guest_runtime.rs -> apps/platform/no-std/guest_runtime.rs
+R  components/no-std/http-request/Cargo.toml -> apps/platform/no-std/http-request/Cargo.toml
+R  components/no-std/http-request/declaration.json.in -> apps/platform/no-std/http-request/declaration.json.in
+R  components/no-std/http-request/src/lib.rs -> apps/platform/no-std/http-request/src/lib.rs
+R  components/no-std/http-request/wit/deps/wamn-connection/package.wit -> apps/platform/no-std/http-request/wit/deps/wamn-connection/package.wit
+R  components/data/wms-data/wit/deps/wamn-node/package.wit -> apps/platform/no-std/http-request/wit/deps/wamn-node/package.wit
+R  components/no-std/http-request/wit/world.wit -> apps/platform/no-std/http-request/wit/world.wit
+R  components/no-std/label-render/Cargo.toml -> apps/platform/no-std/label-render/Cargo.toml
+R  components/no-std/label-render/declaration.json.in -> apps/platform/no-std/label-render/declaration.json.in
+R  components/no-std/label-render/src/lib.rs -> apps/platform/no-std/label-render/src/lib.rs
+R  components/execution/blob-put/wit/deps/wamn-node/package.wit -> apps/platform/no-std/label-render/wit/deps/wamn-node/package.wit
+R  components/no-std/label-render/wit/world.wit -> apps/platform/no-std/label-render/wit/world.wit
+R  components/no-std/label-template/Cargo.toml -> apps/platform/no-std/label-template/Cargo.toml
+R  components/no-std/label-template/src/lib.rs -> apps/platform/no-std/label-template/src/lib.rs
+R  components/no-std/label-template/tests/golden.rs -> apps/platform/no-std/label-template/tests/golden.rs
+R  components/no-std/publish.sh -> apps/platform/no-std/publish.sh
+R  components/no-std/transform/Cargo.toml -> apps/platform/no-std/transform/Cargo.toml
+R  components/no-std/transform/declaration.json.in -> apps/platform/no-std/transform/declaration.json.in
+R  components/no-std/transform/src/lib.rs -> apps/platform/no-std/transform/src/lib.rs
+R  components/no-std/http-request/wit/deps/wamn-node/package.wit -> apps/platform/no-std/transform/wit/deps/wamn-node/package.wit
+R  components/no-std/transform/wit/world.wit -> apps/platform/no-std/transform/wit/world.wit
+A  apps/wamn_receiving/README.md
+R  packages/receiving/command/record_receipt/claim_command.sql -> apps/wamn_receiving/command/record_receipt/claim_command.sql
+R  packages/receiving/command/record_receipt/finalize_command.sql -> apps/wamn_receiving/command/record_receipt/finalize_command.sql
+R  packages/receiving/command/record_receipt/find_replay.sql -> apps/wamn_receiving/command/record_receipt/find_replay.sql
+R  packages/receiving/command/record_receipt/finish_purchase_order.sql -> apps/wamn_receiving/command/record_receipt/finish_purchase_order.sql
+R  packages/receiving/command/record_receipt/insert_receipt.sql -> apps/wamn_receiving/command/record_receipt/insert_receipt.sql
+R  packages/receiving/command/record_receipt/insert_receipt_line.sql -> apps/wamn_receiving/command/record_receipt/insert_receipt_line.sql
+R  packages/receiving/command/record_receipt/lock_purchase_order.sql -> apps/wamn_receiving/command/record_receipt/lock_purchase_order.sql
+R  packages/receiving/command/record_receipt/update_purchase_order_line.sql -> apps/wamn_receiving/command/record_receipt/update_purchase_order_line.sql
+R  packages/receiving/command/record_receipt/validate_receipt_line.sql -> apps/wamn_receiving/command/record_receipt/validate_receipt_line.sql
+R  components/application/receiving/Cargo.toml -> apps/wamn_receiving/component/Cargo.toml
+R  components/application/receiving/src/lib.rs -> apps/wamn_receiving/component/src/lib.rs
+R  components/data/receiving-data/Cargo.toml -> apps/wamn_receiving/data/Cargo.toml
+R  components/data/receiving-data/src/cursor.rs -> apps/wamn_receiving/data/src/cursor.rs
+R  components/data/receiving-data/src/error.rs -> apps/wamn_receiving/data/src/error.rs
+R  components/data/receiving-data/src/generated.rs -> apps/wamn_receiving/data/src/generated.rs
+R  components/data/receiving-data/src/lib.rs -> apps/wamn_receiving/data/src/lib.rs
+R  components/data/receiving-data/src/operation.rs -> apps/wamn_receiving/data/src/operation.rs
+R  components/data/receiving-data/src/purchase_order.rs -> apps/wamn_receiving/data/src/purchase_order.rs
+R  components/data/receiving-data/src/receipt.rs -> apps/wamn_receiving/data/src/receipt.rs
+R  components/data/receiving-data/src/record_receipt.rs -> apps/wamn_receiving/data/src/record_receipt.rs
+R  components/no-std/label-render/wit/deps/wamn-node/package.wit -> apps/wamn_receiving/data/wit/deps/wamn-node/package.wit
+R  components/data/wms-data/wit/deps/wamn-postgres/package.wit -> apps/wamn_receiving/data/wit/deps/wamn-postgres/package.wit
+R  components/data/receiving-data/wit/deps/wamn-receiving-location/package.wit -> apps/wamn_receiving/data/wit/deps/wamn-receiving-location/package.wit
+R  components/data/receiving-data/wit/deps/wamn-receiving-purchase-order/package.wit -> apps/wamn_receiving/data/wit/deps/wamn-receiving-purchase-order/package.wit
+R  components/data/receiving-data/wit/deps/wamn-receiving-receipt/package.wit -> apps/wamn_receiving/data/wit/deps/wamn-receiving-receipt/package.wit
+R  components/data/receiving-data/wit/deps/wamn-receiving-receiving/package.wit -> apps/wamn_receiving/data/wit/deps/wamn-receiving-receiving/package.wit
+R  components/data/receiving-data/wit/world.wit -> apps/wamn_receiving/data/wit/world.wit
+R  packages/receiving/generated/client/location.rs -> apps/wamn_receiving/generated/client/location.rs
+R  packages/receiving/generated/client/purchase_order.rs -> apps/wamn_receiving/generated/client/purchase_order.rs
+R  packages/receiving/generated/client/receipt.rs -> apps/wamn_receiving/generated/client/receipt.rs
+R  packages/receiving/generated/client/receiving.rs -> apps/wamn_receiving/generated/client/receiving.rs
+R  packages/receiving/generated/contracts/cursor-v1.json -> apps/wamn_receiving/generated/contracts/cursor-v1.json
+R  packages/receiving/generated/contracts/location/list.errors.json -> apps/wamn_receiving/generated/contracts/location/list.errors.json
+R  packages/receiving/generated/contracts/location/list.input.json -> apps/wamn_receiving/generated/contracts/location/list.input.json
+R  packages/receiving/generated/contracts/location/list.operation.json -> apps/wamn_receiving/generated/contracts/location/list.operation.json
+R  packages/receiving/generated/contracts/location/list.result.json -> apps/wamn_receiving/generated/contracts/location/list.result.json
+R  packages/receiving/generated/contracts/purchase_order/get.errors.json -> apps/wamn_receiving/generated/contracts/purchase_order/get.errors.json
+R  packages/receiving/generated/contracts/purchase_order/get.input.json -> apps/wamn_receiving/generated/contracts/purchase_order/get.input.json
+R  packages/receiving/generated/contracts/purchase_order/get.operation.json -> apps/wamn_receiving/generated/contracts/purchase_order/get.operation.json
+R  packages/receiving/generated/contracts/purchase_order/get.result.json -> apps/wamn_receiving/generated/contracts/purchase_order/get.result.json
+R  packages/receiving/generated/contracts/purchase_order/query.errors.json -> apps/wamn_receiving/generated/contracts/purchase_order/query.errors.json
+R  packages/receiving/generated/contracts/purchase_order/query.input.json -> apps/wamn_receiving/generated/contracts/purchase_order/query.input.json
+R  packages/receiving/generated/contracts/purchase_order/query.operation.json -> apps/wamn_receiving/generated/contracts/purchase_order/query.operation.json
+R  packages/receiving/generated/contracts/purchase_order/query.result.json -> apps/wamn_receiving/generated/contracts/purchase_order/query.result.json
+R  packages/receiving/generated/contracts/purchase_order/update.errors.json -> apps/wamn_receiving/generated/contracts/purchase_order/update.errors.json
+R  packages/receiving/generated/contracts/purchase_order/update.input.json -> apps/wamn_receiving/generated/contracts/purchase_order/update.input.json
+R  packages/receiving/generated/contracts/purchase_order/update.operation.json -> apps/wamn_receiving/generated/contracts/purchase_order/update.operation.json
+R  packages/receiving/generated/contracts/purchase_order/update.result.json -> apps/wamn_receiving/generated/contracts/purchase_order/update.result.json
+R  packages/receiving/generated/contracts/receipt/get.errors.json -> apps/wamn_receiving/generated/contracts/receipt/get.errors.json
+R  packages/receiving/generated/contracts/receipt/get.input.json -> apps/wamn_receiving/generated/contracts/receipt/get.input.json
+R  packages/receiving/generated/contracts/receipt/get.operation.json -> apps/wamn_receiving/generated/contracts/receipt/get.operation.json
+R  packages/receiving/generated/contracts/receipt/get.result.json -> apps/wamn_receiving/generated/contracts/receipt/get.result.json
+R  packages/receiving/generated/contracts/receipt/query.errors.json -> apps/wamn_receiving/generated/contracts/receipt/query.errors.json
+R  packages/receiving/generated/contracts/receipt/query.input.json -> apps/wamn_receiving/generated/contracts/receipt/query.input.json
+R  packages/receiving/generated/contracts/receipt/query.operation.json -> apps/wamn_receiving/generated/contracts/receipt/query.operation.json
+R  packages/receiving/generated/contracts/receipt/query.result.json -> apps/wamn_receiving/generated/contracts/receipt/query.result.json
+R  packages/receiving/generated/contracts/receiving/load_receipt_screen.errors.json -> apps/wamn_receiving/generated/contracts/receiving/load_receipt_screen.errors.json
+R  packages/receiving/generated/contracts/receiving/load_receipt_screen.input.json -> apps/wamn_receiving/generated/contracts/receiving/load_receipt_screen.input.json
+R  packages/receiving/generated/contracts/receiving/load_receipt_screen.operation.json -> apps/wamn_receiving/generated/contracts/receiving/load_receipt_screen.operation.json
+R  packages/receiving/generated/contracts/receiving/load_receipt_screen.result.json -> apps/wamn_receiving/generated/contracts/receiving/load_receipt_screen.result.json
+R  packages/receiving/generated/contracts/receiving/record_receipt.claim-tests.json -> apps/wamn_receiving/generated/contracts/receiving/record_receipt.claim-tests.json
+R  packages/receiving/generated/contracts/receiving/record_receipt.errors.json -> apps/wamn_receiving/generated/contracts/receiving/record_receipt.errors.json
+R  packages/receiving/generated/contracts/receiving/record_receipt.input.json -> apps/wamn_receiving/generated/contracts/receiving/record_receipt.input.json
+R  packages/receiving/generated/contracts/receiving/record_receipt.operation.json -> apps/wamn_receiving/generated/contracts/receiving/record_receipt.operation.json
+R  packages/receiving/generated/contracts/receiving/record_receipt.result.json -> apps/wamn_receiving/generated/contracts/receiving/record_receipt.result.json
+R  packages/receiving/generated/models/item.json -> apps/wamn_receiving/generated/models/item.json
+R  packages/receiving/generated/models/location.json -> apps/wamn_receiving/generated/models/location.json
+R  packages/receiving/generated/models/purchase_order.json -> apps/wamn_receiving/generated/models/purchase_order.json
+R  packages/receiving/generated/models/purchase_order_line.json -> apps/wamn_receiving/generated/models/purchase_order_line.json
+R  packages/receiving/generated/models/receipt.json -> apps/wamn_receiving/generated/models/receipt.json
+R  packages/receiving/generated/models/receipt_line.json -> apps/wamn_receiving/generated/models/receipt_line.json
+R  packages/receiving/generated/native-verifier/item.rs -> apps/wamn_receiving/generated/native-verifier/item.rs
+R  packages/receiving/generated/native-verifier/location.rs -> apps/wamn_receiving/generated/native-verifier/location.rs
+R  packages/receiving/generated/native-verifier/location_list.rs -> apps/wamn_receiving/generated/native-verifier/location_list.rs
+R  packages/receiving/generated/native-verifier/purchase_order.rs -> apps/wamn_receiving/generated/native-verifier/purchase_order.rs
+R  packages/receiving/generated/native-verifier/purchase_order_line.rs -> apps/wamn_receiving/generated/native-verifier/purchase_order_line.rs
+R  packages/receiving/generated/native-verifier/receipt.rs -> apps/wamn_receiving/generated/native-verifier/receipt.rs
+R  packages/receiving/generated/native-verifier/receipt_line.rs -> apps/wamn_receiving/generated/native-verifier/receipt_line.rs
+R  packages/receiving/generated/native-verifier/receiving_load_receipt_screen.rs -> apps/wamn_receiving/generated/native-verifier/receiving_load_receipt_screen.rs
+R  packages/receiving/generated/native-verifier/receiving_record_receipt.rs -> apps/wamn_receiving/generated/native-verifier/receiving_record_receipt.rs
+R  packages/receiving/generated/package-weld.json -> apps/wamn_receiving/generated/package-weld.json
+R  packages/receiving/generated/parity/item.json -> apps/wamn_receiving/generated/parity/item.json
+R  packages/receiving/generated/parity/location.json -> apps/wamn_receiving/generated/parity/location.json
+R  packages/receiving/generated/parity/location_list.json -> apps/wamn_receiving/generated/parity/location_list.json
+R  packages/receiving/generated/parity/purchase_order.json -> apps/wamn_receiving/generated/parity/purchase_order.json
+R  packages/receiving/generated/parity/purchase_order_line.json -> apps/wamn_receiving/generated/parity/purchase_order_line.json
+R  packages/receiving/generated/parity/receipt.json -> apps/wamn_receiving/generated/parity/receipt.json
+R  packages/receiving/generated/parity/receipt_line.json -> apps/wamn_receiving/generated/parity/receipt_line.json
+R  packages/receiving/generated/parity/receiving_load_receipt_screen.json -> apps/wamn_receiving/generated/parity/receiving_load_receipt_screen.json
+R  packages/receiving/generated/parity/receiving_record_receipt.json -> apps/wamn_receiving/generated/parity/receiving_record_receipt.json
+R  packages/receiving/generated/platform-policy/data-access.json -> apps/wamn_receiving/generated/platform-policy/data-access.json
+R  packages/receiving/generated/receiving-tui/Cargo.toml -> apps/wamn_receiving/generated/receiving-tui/Cargo.toml
+R  packages/receiving/generated/receiving-tui/src/lib.rs -> apps/wamn_receiving/generated/receiving-tui/src/lib.rs
+R  packages/receiving/generated/receiving-tui/src/main.rs -> apps/wamn_receiving/generated/receiving-tui/src/main.rs
+R  packages/receiving/generated/receiving-tui/src/screens/location.rs -> apps/wamn_receiving/generated/receiving-tui/src/screens/location.rs
+R  packages/receiving/generated/receiving-tui/src/screens/mod.rs -> apps/wamn_receiving/generated/receiving-tui/src/screens/mod.rs
+R  packages/receiving/generated/receiving-tui/src/screens/purchase_order.rs -> apps/wamn_receiving/generated/receiving-tui/src/screens/purchase_order.rs
+R  packages/receiving/generated/receiving-tui/src/screens/receipt.rs -> apps/wamn_receiving/generated/receiving-tui/src/screens/receipt.rs
+R  packages/receiving/generated/receiving-tui/src/screens/receiving.rs -> apps/wamn_receiving/generated/receiving-tui/src/screens/receiving.rs
+R  packages/receiving/generated/source-map/item.json -> apps/wamn_receiving/generated/source-map/item.json
+R  packages/receiving/generated/source-map/location.json -> apps/wamn_receiving/generated/source-map/location.json
+R  packages/receiving/generated/source-map/location_list.json -> apps/wamn_receiving/generated/source-map/location_list.json
+R  packages/receiving/generated/source-map/purchase_order.json -> apps/wamn_receiving/generated/source-map/purchase_order.json
+R  packages/receiving/generated/source-map/purchase_order_line.json -> apps/wamn_receiving/generated/source-map/purchase_order_line.json
+R  packages/receiving/generated/source-map/receipt.json -> apps/wamn_receiving/generated/source-map/receipt.json
+R  packages/receiving/generated/source-map/receipt_line.json -> apps/wamn_receiving/generated/source-map/receipt_line.json
+R  packages/receiving/generated/source-map/receiving_load_receipt_screen.json -> apps/wamn_receiving/generated/source-map/receiving_load_receipt_screen.json
+R  packages/receiving/generated/source-map/receiving_record_receipt.json -> apps/wamn_receiving/generated/source-map/receiving_record_receipt.json
+R  packages/receiving/generated/sql/purchase_order/get.sql -> apps/wamn_receiving/generated/sql/purchase_order/get.sql
+R  packages/receiving/generated/sql/purchase_order/update.sql -> apps/wamn_receiving/generated/sql/purchase_order/update.sql
+R  packages/receiving/generated/sql/receipt/get.sql -> apps/wamn_receiving/generated/sql/receipt/get.sql
+R  packages/receiving/generated/sql/receipt/query_created_at_ascending.sql -> apps/wamn_receiving/generated/sql/receipt/query_created_at_ascending.sql
+R  packages/receiving/generated/wamn/item.rs -> apps/wamn_receiving/generated/wamn/item.rs
+R  packages/receiving/generated/wamn/location.rs -> apps/wamn_receiving/generated/wamn/location.rs
+R  packages/receiving/generated/wamn/location_list.rs -> apps/wamn_receiving/generated/wamn/location_list.rs
+R  packages/receiving/generated/wamn/purchase_order.rs -> apps/wamn_receiving/generated/wamn/purchase_order.rs
+R  packages/receiving/generated/wamn/purchase_order_line.rs -> apps/wamn_receiving/generated/wamn/purchase_order_line.rs
+R  packages/receiving/generated/wamn/receipt.rs -> apps/wamn_receiving/generated/wamn/receipt.rs
+R  packages/receiving/generated/wamn/receipt_line.rs -> apps/wamn_receiving/generated/wamn/receipt_line.rs
+R  packages/receiving/generated/wamn/receiving_load_receipt_screen.rs -> apps/wamn_receiving/generated/wamn/receiving_load_receipt_screen.rs
+R  packages/receiving/generated/wamn/receiving_record_receipt.rs -> apps/wamn_receiving/generated/wamn/receiving_record_receipt.rs
+R  packages/receiving/migrations/0001_initial.sql -> apps/wamn_receiving/migrations/0001_initial.sql
+R  packages/receiving/publication/attachments.json -> apps/wamn_receiving/publication/attachments.json
+R  packages/receiving/publication/components/receiving.json.in -> apps/wamn_receiving/publication/components/receiving.json.in
+R  packages/receiving/publication/wirings/location_list.json -> apps/wamn_receiving/publication/wirings/location_list.json
+R  packages/receiving/publication/wirings/purchase_order_get.json -> apps/wamn_receiving/publication/wirings/purchase_order_get.json
+R  packages/receiving/publication/wirings/purchase_order_query.json -> apps/wamn_receiving/publication/wirings/purchase_order_query.json
+R  packages/receiving/publication/wirings/purchase_order_update.json -> apps/wamn_receiving/publication/wirings/purchase_order_update.json
+R  packages/receiving/publication/wirings/receipt_get.json -> apps/wamn_receiving/publication/wirings/receipt_get.json
+R  packages/receiving/publication/wirings/receipt_query.json -> apps/wamn_receiving/publication/wirings/receipt_query.json
+R  packages/receiving/publication/wirings/receiving_load_receipt_screen.json -> apps/wamn_receiving/publication/wirings/receiving_load_receipt_screen.json
+R  packages/receiving/publication/wirings/receiving_record_receipt.json -> apps/wamn_receiving/publication/wirings/receiving_record_receipt.json
+R  packages/receiving/query/load_receipt_screen.sql -> apps/wamn_receiving/query/load_receipt_screen.sql
+R  packages/receiving/query/location.sql -> apps/wamn_receiving/query/location.sql
+R  packages/receiving/query/open_purchase_order.sql -> apps/wamn_receiving/query/open_purchase_order.sql
+R  packages/receiving/query/open_purchase_order_by_created_at_descending.sql -> apps/wamn_receiving/query/open_purchase_order_by_created_at_descending.sql
+R  packages/receiving/query/open_purchase_order_by_purchase_order_number_ascending.sql -> apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_ascending.sql
+R  packages/receiving/query/open_purchase_order_by_purchase_order_number_descending.sql -> apps/wamn_receiving/query/open_purchase_order_by_purchase_order_number_descending.sql
+R  packages/receiving/query/open_purchase_order_by_status_ascending.sql -> apps/wamn_receiving/query/open_purchase_order_by_status_ascending.sql
+R  packages/receiving/query/open_purchase_order_by_status_descending.sql -> apps/wamn_receiving/query/open_purchase_order_by_status_descending.sql
+R  tests/integration/tests/receiving_command_histories_live.rs -> apps/wamn_receiving/tests/receiving_command_histories_live.rs
+R  tests/integration/tests/receiving_history/database.rs -> apps/wamn_receiving/tests/receiving_history/database.rs
+R  tests/integration/tests/receiving_history/model.rs -> apps/wamn_receiving/tests/receiving_history/model.rs
+R  crates/client/receiving/Cargo.toml -> apps/wamn_receiving/ui/Cargo.toml
+R  crates/client/receiving/src/application.rs -> apps/wamn_receiving/ui/src/application.rs
+R  crates/client/receiving/src/lib.rs -> apps/wamn_receiving/ui/src/lib.rs
+R  crates/client/receiving/src/login.rs -> apps/wamn_receiving/ui/src/login.rs
+R  crates/client/receiving/src/main.rs -> apps/wamn_receiving/ui/src/main.rs
+R  crates/client/receiving/tests/login.rs -> apps/wamn_receiving/ui/tests/login.rs
+R  crates/client/receiving/tests/reducer.rs -> apps/wamn_receiving/ui/tests/reducer.rs
+R  crates/client/receiving/tests/support/mod.rs -> apps/wamn_receiving/ui/tests/support/mod.rs
+R  crates/client/receiving/tests/workflow.rs -> apps/wamn_receiving/ui/tests/workflow.rs
+R  packages/receiving/wamn.json -> apps/wamn_receiving/wamn.json
+A  apps/wamn_wms/README.md
+R  packages/wms/command/inventory_adjust/claim_command.sql -> apps/wamn_wms/command/inventory_adjust/claim_command.sql
+R  packages/wms/command/inventory_adjust/finalize_command.sql -> apps/wamn_wms/command/inventory_adjust/finalize_command.sql
+R  packages/wms/command/inventory_adjust/find_replay.sql -> apps/wamn_wms/command/inventory_adjust/find_replay.sql
+R  packages/wms/command/inventory_adjust/insert_movement.sql -> apps/wamn_wms/command/inventory_adjust/insert_movement.sql
+R  packages/wms/command/inventory_adjust/lock_pallet.sql -> apps/wamn_wms/command/inventory_adjust/lock_pallet.sql
+R  packages/wms/command/inventory_adjust/set_quantity.sql -> apps/wamn_wms/command/inventory_adjust/set_quantity.sql
+R  packages/wms/command/inventory_adjust/touch_pallet.sql -> apps/wamn_wms/command/inventory_adjust/touch_pallet.sql
+R  packages/wms/command/inventory_merge/add_to_target.sql -> apps/wamn_wms/command/inventory_merge/add_to_target.sql
+R  packages/wms/command/inventory_merge/claim_command.sql -> apps/wamn_wms/command/inventory_merge/claim_command.sql
+R  packages/wms/command/inventory_merge/consume_source.sql -> apps/wamn_wms/command/inventory_merge/consume_source.sql
+R  packages/wms/command/inventory_merge/finalize_command.sql -> apps/wamn_wms/command/inventory_merge/finalize_command.sql
+R  packages/wms/command/inventory_merge/find_replay.sql -> apps/wamn_wms/command/inventory_merge/find_replay.sql
+R  packages/wms/command/inventory_merge/insert_movement.sql -> apps/wamn_wms/command/inventory_merge/insert_movement.sql
+R  packages/wms/command/inventory_merge/lock_both_pallets.sql -> apps/wamn_wms/command/inventory_merge/lock_both_pallets.sql
+R  packages/wms/command/inventory_merge/place_on_target.sql -> apps/wamn_wms/command/inventory_merge/place_on_target.sql
+R  packages/wms/command/inventory_merge/select_source_quantity.sql -> apps/wamn_wms/command/inventory_merge/select_source_quantity.sql
+R  packages/wms/command/inventory_merge/touch_target.sql -> apps/wamn_wms/command/inventory_merge/touch_target.sql
+R  packages/wms/command/inventory_move/claim_command.sql -> apps/wamn_wms/command/inventory_move/claim_command.sql
+R  packages/wms/command/inventory_move/finalize_command.sql -> apps/wamn_wms/command/inventory_move/finalize_command.sql
+R  packages/wms/command/inventory_move/find_replay.sql -> apps/wamn_wms/command/inventory_move/find_replay.sql
+R  packages/wms/command/inventory_move/insert_movement.sql -> apps/wamn_wms/command/inventory_move/insert_movement.sql
+R  packages/wms/command/inventory_move/lock_pallet.sql -> apps/wamn_wms/command/inventory_move/lock_pallet.sql
+R  packages/wms/command/inventory_move/move_pallet.sql -> apps/wamn_wms/command/inventory_move/move_pallet.sql
+R  packages/wms/command/inventory_move/select_pallet_quantity.sql -> apps/wamn_wms/command/inventory_move/select_pallet_quantity.sql
+R  packages/wms/command/inventory_move/validate_location.sql -> apps/wamn_wms/command/inventory_move/validate_location.sql
+R  packages/wms/command/inventory_split/claim_command.sql -> apps/wamn_wms/command/inventory_split/claim_command.sql
+R  packages/wms/command/inventory_split/create_pallet.sql -> apps/wamn_wms/command/inventory_split/create_pallet.sql
+R  packages/wms/command/inventory_split/finalize_command.sql -> apps/wamn_wms/command/inventory_split/finalize_command.sql
+R  packages/wms/command/inventory_split/find_replay.sql -> apps/wamn_wms/command/inventory_split/find_replay.sql
+R  packages/wms/command/inventory_split/insert_movement.sql -> apps/wamn_wms/command/inventory_split/insert_movement.sql
+R  packages/wms/command/inventory_split/lock_pallet.sql -> apps/wamn_wms/command/inventory_split/lock_pallet.sql
+R  packages/wms/command/inventory_split/place_quantity.sql -> apps/wamn_wms/command/inventory_split/place_quantity.sql
+R  packages/wms/command/inventory_split/select_quantity.sql -> apps/wamn_wms/command/inventory_split/select_quantity.sql
+R  packages/wms/command/inventory_split/take_from_source.sql -> apps/wamn_wms/command/inventory_split/take_from_source.sql
+R  packages/wms/command/inventory_split/touch_source.sql -> apps/wamn_wms/command/inventory_split/touch_source.sql
+R  packages/wms/command/inventory_split/validate_location.sql -> apps/wamn_wms/command/inventory_split/validate_location.sql
+R  components/application/wms/Cargo.toml -> apps/wamn_wms/component/Cargo.toml
+R  components/application/wms/src/lib.rs -> apps/wamn_wms/component/src/lib.rs
+R  components/data/wms-data/Cargo.toml -> apps/wamn_wms/data/Cargo.toml
+R  components/data/wms-data/src/cursor.rs -> apps/wamn_wms/data/src/cursor.rs
+R  components/data/wms-data/src/error.rs -> apps/wamn_wms/data/src/error.rs
+R  components/data/wms-data/src/generated.rs -> apps/wamn_wms/data/src/generated.rs
+R  components/data/wms-data/src/inventory_adjust.rs -> apps/wamn_wms/data/src/inventory_adjust.rs
+R  components/data/wms-data/src/inventory_aggregate.rs -> apps/wamn_wms/data/src/inventory_aggregate.rs
+R  components/data/wms-data/src/inventory_merge.rs -> apps/wamn_wms/data/src/inventory_merge.rs
+R  components/data/wms-data/src/inventory_move.rs -> apps/wamn_wms/data/src/inventory_move.rs
+R  components/data/wms-data/src/inventory_split.rs -> apps/wamn_wms/data/src/inventory_split.rs
+R  components/data/wms-data/src/lib.rs -> apps/wamn_wms/data/src/lib.rs
+R  components/data/wms-data/src/operation.rs -> apps/wamn_wms/data/src/operation.rs
+R  components/data/wms-data/src/pallet.rs -> apps/wamn_wms/data/src/pallet.rs
+R  components/data/wms-data/src/scalar.rs -> apps/wamn_wms/data/src/scalar.rs
+R  components/no-std/transform/wit/deps/wamn-node/package.wit -> apps/wamn_wms/data/wit/deps/wamn-node/package.wit
+R  components/execution/materializer/wit/deps/wamn-postgres/package.wit -> apps/wamn_wms/data/wit/deps/wamn-postgres/package.wit
+R  components/data/wms-data/wit/deps/wamn-wms-inventory/package.wit -> apps/wamn_wms/data/wit/deps/wamn-wms-inventory/package.wit
+R  components/data/wms-data/wit/deps/wamn-wms-pallet/package.wit -> apps/wamn_wms/data/wit/deps/wamn-wms-pallet/package.wit
+R  components/data/wms-data/wit/world.wit -> apps/wamn_wms/data/wit/world.wit
+R  packages/wms/generated/client/inventory.rs -> apps/wamn_wms/generated/client/inventory.rs
+R  packages/wms/generated/client/pallet.rs -> apps/wamn_wms/generated/client/pallet.rs
+R  packages/wms/generated/contracts/cursor-v1.json -> apps/wamn_wms/generated/contracts/cursor-v1.json
+R  packages/wms/generated/contracts/inventory/adjust.claim-tests.json -> apps/wamn_wms/generated/contracts/inventory/adjust.claim-tests.json
+R  packages/wms/generated/contracts/inventory/adjust.errors.json -> apps/wamn_wms/generated/contracts/inventory/adjust.errors.json
+R  packages/wms/generated/contracts/inventory/adjust.input.json -> apps/wamn_wms/generated/contracts/inventory/adjust.input.json
+R  packages/wms/generated/contracts/inventory/adjust.operation.json -> apps/wamn_wms/generated/contracts/inventory/adjust.operation.json
+R  packages/wms/generated/contracts/inventory/adjust.result.json -> apps/wamn_wms/generated/contracts/inventory/adjust.result.json
+R  packages/wms/generated/contracts/inventory/aggregate.errors.json -> apps/wamn_wms/generated/contracts/inventory/aggregate.errors.json
+R  packages/wms/generated/contracts/inventory/aggregate.input.json -> apps/wamn_wms/generated/contracts/inventory/aggregate.input.json
+R  packages/wms/generated/contracts/inventory/aggregate.operation.json -> apps/wamn_wms/generated/contracts/inventory/aggregate.operation.json
+R  packages/wms/generated/contracts/inventory/aggregate.result.json -> apps/wamn_wms/generated/contracts/inventory/aggregate.result.json
+R  packages/wms/generated/contracts/inventory/merge.claim-tests.json -> apps/wamn_wms/generated/contracts/inventory/merge.claim-tests.json
+R  packages/wms/generated/contracts/inventory/merge.errors.json -> apps/wamn_wms/generated/contracts/inventory/merge.errors.json
+R  packages/wms/generated/contracts/inventory/merge.input.json -> apps/wamn_wms/generated/contracts/inventory/merge.input.json
+R  packages/wms/generated/contracts/inventory/merge.operation.json -> apps/wamn_wms/generated/contracts/inventory/merge.operation.json
+R  packages/wms/generated/contracts/inventory/merge.result.json -> apps/wamn_wms/generated/contracts/inventory/merge.result.json
+R  packages/wms/generated/contracts/inventory/move.claim-tests.json -> apps/wamn_wms/generated/contracts/inventory/move.claim-tests.json
+R  packages/wms/generated/contracts/inventory/move.errors.json -> apps/wamn_wms/generated/contracts/inventory/move.errors.json
+R  packages/wms/generated/contracts/inventory/move.input.json -> apps/wamn_wms/generated/contracts/inventory/move.input.json
+R  packages/wms/generated/contracts/inventory/move.operation.json -> apps/wamn_wms/generated/contracts/inventory/move.operation.json
+R  packages/wms/generated/contracts/inventory/move.result.json -> apps/wamn_wms/generated/contracts/inventory/move.result.json
+R  packages/wms/generated/contracts/inventory/split.claim-tests.json -> apps/wamn_wms/generated/contracts/inventory/split.claim-tests.json
+R  packages/wms/generated/contracts/inventory/split.errors.json -> apps/wamn_wms/generated/contracts/inventory/split.errors.json
+R  packages/wms/generated/contracts/inventory/split.input.json -> apps/wamn_wms/generated/contracts/inventory/split.input.json
+R  packages/wms/generated/contracts/inventory/split.operation.json -> apps/wamn_wms/generated/contracts/inventory/split.operation.json
+R  packages/wms/generated/contracts/inventory/split.result.json -> apps/wamn_wms/generated/contracts/inventory/split.result.json
+R  packages/wms/generated/contracts/pallet/get.errors.json -> apps/wamn_wms/generated/contracts/pallet/get.errors.json
+R  packages/wms/generated/contracts/pallet/get.input.json -> apps/wamn_wms/generated/contracts/pallet/get.input.json
+R  packages/wms/generated/contracts/pallet/get.operation.json -> apps/wamn_wms/generated/contracts/pallet/get.operation.json
+R  packages/wms/generated/contracts/pallet/get.result.json -> apps/wamn_wms/generated/contracts/pallet/get.result.json
+R  packages/wms/generated/contracts/pallet/query.errors.json -> apps/wamn_wms/generated/contracts/pallet/query.errors.json
+R  packages/wms/generated/contracts/pallet/query.input.json -> apps/wamn_wms/generated/contracts/pallet/query.input.json
+R  packages/wms/generated/contracts/pallet/query.operation.json -> apps/wamn_wms/generated/contracts/pallet/query.operation.json
+R  packages/wms/generated/contracts/pallet/query.result.json -> apps/wamn_wms/generated/contracts/pallet/query.result.json
+R  packages/wms/generated/models/inventory_movement.json -> apps/wamn_wms/generated/models/inventory_movement.json
+R  packages/wms/generated/models/location.json -> apps/wamn_wms/generated/models/location.json
+R  packages/wms/generated/models/pallet.json -> apps/wamn_wms/generated/models/pallet.json
+R  packages/wms/generated/models/pallet_quantity.json -> apps/wamn_wms/generated/models/pallet_quantity.json
+R  packages/wms/generated/models/product.json -> apps/wamn_wms/generated/models/product.json
+R  packages/wms/generated/native-verifier/inventory_adjust.rs -> apps/wamn_wms/generated/native-verifier/inventory_adjust.rs
+R  packages/wms/generated/native-verifier/inventory_aggregate.rs -> apps/wamn_wms/generated/native-verifier/inventory_aggregate.rs
+R  packages/wms/generated/native-verifier/inventory_merge.rs -> apps/wamn_wms/generated/native-verifier/inventory_merge.rs
+R  packages/wms/generated/native-verifier/inventory_move.rs -> apps/wamn_wms/generated/native-verifier/inventory_move.rs
+R  packages/wms/generated/native-verifier/inventory_movement.rs -> apps/wamn_wms/generated/native-verifier/inventory_movement.rs
+R  packages/wms/generated/native-verifier/inventory_split.rs -> apps/wamn_wms/generated/native-verifier/inventory_split.rs
+R  packages/wms/generated/native-verifier/location.rs -> apps/wamn_wms/generated/native-verifier/location.rs
+R  packages/wms/generated/native-verifier/pallet.rs -> apps/wamn_wms/generated/native-verifier/pallet.rs
+R  packages/wms/generated/native-verifier/pallet_quantity.rs -> apps/wamn_wms/generated/native-verifier/pallet_quantity.rs
+R  packages/wms/generated/native-verifier/product.rs -> apps/wamn_wms/generated/native-verifier/product.rs
+R  packages/wms/generated/package-weld.json -> apps/wamn_wms/generated/package-weld.json
+R  packages/wms/generated/parity/inventory_adjust.json -> apps/wamn_wms/generated/parity/inventory_adjust.json
+R  packages/wms/generated/parity/inventory_aggregate.json -> apps/wamn_wms/generated/parity/inventory_aggregate.json
+R  packages/wms/generated/parity/inventory_merge.json -> apps/wamn_wms/generated/parity/inventory_merge.json
+R  packages/wms/generated/parity/inventory_move.json -> apps/wamn_wms/generated/parity/inventory_move.json
+R  packages/wms/generated/parity/inventory_movement.json -> apps/wamn_wms/generated/parity/inventory_movement.json
+R  packages/wms/generated/parity/inventory_split.json -> apps/wamn_wms/generated/parity/inventory_split.json
+R  packages/wms/generated/parity/location.json -> apps/wamn_wms/generated/parity/location.json
+R  packages/wms/generated/parity/pallet.json -> apps/wamn_wms/generated/parity/pallet.json
+R  packages/wms/generated/parity/pallet_quantity.json -> apps/wamn_wms/generated/parity/pallet_quantity.json
+R  packages/wms/generated/parity/product.json -> apps/wamn_wms/generated/parity/product.json
+R  packages/wms/generated/platform-policy/data-access.json -> apps/wamn_wms/generated/platform-policy/data-access.json
+R  packages/wms/generated/source-map/inventory_adjust.json -> apps/wamn_wms/generated/source-map/inventory_adjust.json
+R  packages/wms/generated/source-map/inventory_aggregate.json -> apps/wamn_wms/generated/source-map/inventory_aggregate.json
+R  packages/wms/generated/source-map/inventory_merge.json -> apps/wamn_wms/generated/source-map/inventory_merge.json
+R  packages/wms/generated/source-map/inventory_move.json -> apps/wamn_wms/generated/source-map/inventory_move.json
+R  packages/wms/generated/source-map/inventory_movement.json -> apps/wamn_wms/generated/source-map/inventory_movement.json
+R  packages/wms/generated/source-map/inventory_split.json -> apps/wamn_wms/generated/source-map/inventory_split.json
+R  packages/wms/generated/source-map/location.json -> apps/wamn_wms/generated/source-map/location.json
+R  packages/wms/generated/source-map/pallet.json -> apps/wamn_wms/generated/source-map/pallet.json
+R  packages/wms/generated/source-map/pallet_quantity.json -> apps/wamn_wms/generated/source-map/pallet_quantity.json
+R  packages/wms/generated/source-map/product.json -> apps/wamn_wms/generated/source-map/product.json
+R  packages/wms/generated/sql/pallet/get.sql -> apps/wamn_wms/generated/sql/pallet/get.sql
+R  packages/wms/generated/wamn/inventory_adjust.rs -> apps/wamn_wms/generated/wamn/inventory_adjust.rs
+R  packages/wms/generated/wamn/inventory_aggregate.rs -> apps/wamn_wms/generated/wamn/inventory_aggregate.rs
+R  packages/wms/generated/wamn/inventory_merge.rs -> apps/wamn_wms/generated/wamn/inventory_merge.rs
+R  packages/wms/generated/wamn/inventory_move.rs -> apps/wamn_wms/generated/wamn/inventory_move.rs
+R  packages/wms/generated/wamn/inventory_movement.rs -> apps/wamn_wms/generated/wamn/inventory_movement.rs
+R  packages/wms/generated/wamn/inventory_split.rs -> apps/wamn_wms/generated/wamn/inventory_split.rs
+R  packages/wms/generated/wamn/location.rs -> apps/wamn_wms/generated/wamn/location.rs
+R  packages/wms/generated/wamn/pallet.rs -> apps/wamn_wms/generated/wamn/pallet.rs
+R  packages/wms/generated/wamn/pallet_quantity.rs -> apps/wamn_wms/generated/wamn/pallet_quantity.rs
+R  packages/wms/generated/wamn/product.rs -> apps/wamn_wms/generated/wamn/product.rs
+R  packages/wms/generated/wms-tui/Cargo.toml -> apps/wamn_wms/generated/wms-tui/Cargo.toml
+R  packages/wms/generated/wms-tui/src/lib.rs -> apps/wamn_wms/generated/wms-tui/src/lib.rs
+R  packages/wms/generated/wms-tui/src/main.rs -> apps/wamn_wms/generated/wms-tui/src/main.rs
+R  packages/wms/generated/wms-tui/src/screens/inventory.rs -> apps/wamn_wms/generated/wms-tui/src/screens/inventory.rs
+R  packages/wms/generated/wms-tui/src/screens/mod.rs -> apps/wamn_wms/generated/wms-tui/src/screens/mod.rs
+R  packages/wms/generated/wms-tui/src/screens/pallet.rs -> apps/wamn_wms/generated/wms-tui/src/screens/pallet.rs
+R  packages/wms/migrations/0001_initial.sql -> apps/wamn_wms/migrations/0001_initial.sql
+R  packages/wms/publication/attachments.json -> apps/wamn_wms/publication/attachments.json
+R  packages/wms/publication/components/wms.json.in -> apps/wamn_wms/publication/components/wms.json.in
+R  packages/wms/publication/wirings/inventory_adjust.json -> apps/wamn_wms/publication/wirings/inventory_adjust.json
+R  packages/wms/publication/wirings/inventory_aggregate.json -> apps/wamn_wms/publication/wirings/inventory_aggregate.json
+R  packages/wms/publication/wirings/inventory_merge.json -> apps/wamn_wms/publication/wirings/inventory_merge.json
+R  packages/wms/publication/wirings/inventory_move.json -> apps/wamn_wms/publication/wirings/inventory_move.json
+R  packages/wms/publication/wirings/inventory_move_and_label.json -> apps/wamn_wms/publication/wirings/inventory_move_and_label.json
+R  packages/wms/publication/wirings/inventory_split.json -> apps/wamn_wms/publication/wirings/inventory_split.json
+R  packages/wms/publication/wirings/pallet_get.json -> apps/wamn_wms/publication/wirings/pallet_get.json
+R  packages/wms/publication/wirings/pallet_query.json -> apps/wamn_wms/publication/wirings/pallet_query.json
+R  packages/wms/query/inventory_aggregate.sql -> apps/wamn_wms/query/inventory_aggregate.sql
+R  packages/wms/query/open_pallet.sql -> apps/wamn_wms/query/open_pallet.sql
+R  packages/wms/query/open_pallet_by_created_at_descending.sql -> apps/wamn_wms/query/open_pallet_by_created_at_descending.sql
+R  packages/wms/query/open_pallet_by_location_id_ascending.sql -> apps/wamn_wms/query/open_pallet_by_location_id_ascending.sql
+R  packages/wms/query/open_pallet_by_location_id_descending.sql -> apps/wamn_wms/query/open_pallet_by_location_id_descending.sql
+R  packages/wms/query/open_pallet_by_pallet_code_ascending.sql -> apps/wamn_wms/query/open_pallet_by_pallet_code_ascending.sql
+R  packages/wms/query/open_pallet_by_pallet_code_descending.sql -> apps/wamn_wms/query/open_pallet_by_pallet_code_descending.sql
+R  packages/wms/query/open_pallet_by_updated_at_ascending.sql -> apps/wamn_wms/query/open_pallet_by_updated_at_ascending.sql
+R  packages/wms/query/open_pallet_by_updated_at_descending.sql -> apps/wamn_wms/query/open_pallet_by_updated_at_descending.sql
+R  packages/wms/wamn.json -> apps/wamn_wms/wamn.json
+M  architecture/state-owners.json
+M  crates/client/core/tests/captured.rs
+M  crates/client/core/tests/request.rs
+M  crates/client/terminal/tests/operator_pty.py
+M  crates/client/tui/tests/descriptor_driven.rs
+M  crates/client/tui/tests/submission.rs
+M  crates/control/provision/src/operation_grants.rs
+M  crates/control/provision/tests/operation_grants.rs
+M  crates/platform/runtime/src/plugins/connection_http.rs
+M  crates/platform/runtime/src/plugins/flow_http_routing.rs
+M  crates/platform/runtime/tests/executor_plugin_no_trap_live.rs
+M  crates/platform/runtime/tests/flow_http_routing_wit_coherence.rs
+M  crates/platform/runtime/tests/guest_environment_isolation.rs
+M  crates/platform/runtime/tests/jetstream_wit_coherence.rs
+M  crates/platform/runtime/tests/port_constant_agreement.rs
+M  crates/schema/generator/src/client_ir.rs
+M  crates/schema/generator/src/client_rust.rs
+M  crates/schema/generator/src/client_tui.rs
+M  crates/schema/generator/src/lib.rs
+M  crates/schema/generator/tests/client_emitter.rs
+M  crates/schema/generator/tests/client_projection.rs
+M  crates/schema/generator/tests/generation.rs
+M  crates/schema/generator/tests/tui_emitter.rs
+M  crates/schema/introspection/src/ir.rs
+M  crates/schema/introspection/tests/migration_policy.rs
+M  crates/schema/introspection/tests/postgres_live.rs
+M  deploy/README.md
+M  deploy/platform/registry.yaml
+M  docs/operations/build-and-test.md
+M  docs/perf/2026.09/generated-tui-parity/tools/database_preflight.py
+M  docs/perf/2026.09/generated-tui-parity/tools/live_environment.py
+M  docs/perf/2026.09/generated-tui-parity/tools/negative_control.py
+M  docs/perf/2026.09/generated-tui-recipe/tools/run.py
+M  docs/perf/2026.09/generated-tui-wms/tools/database_preflight.py
+M  services/ctl/src/apply_package.rs
+M  services/ctl/src/dev/command.rs
+M  services/ctl/src/dev/config.rs
+M  services/ctl/src/dev/coordinator.rs
+M  services/ctl/src/dev/native_tui.rs
+M  services/ctl/src/dev/verification_world.rs
+M  services/ctl/src/dev/watch.rs
+M  services/ctl/src/publish_release.rs
+M  services/ctl/src/publish_release/effective_release_live.rs
+M  services/ctl/src/push_component.rs
+M  services/ctl/src/ui.rs
+M  services/ctl/tests/apply_package_live.rs
+M  services/ctl/tests/author_wiring_gate_report_live.rs
+M  services/ctl/tests/bind_connection_live.rs
+M  services/ctl/tests/dev_command.rs
+M  services/ctl/tests/generated_operator_live.py
+M  services/ctl/tests/package_data_access_live.rs
+M  services/ctl/tests/protected_relations_live.rs
+M  test-support/simulator/src/emit.rs
+M  tests/conformance/src/docker_component_provenance.rs
+M  tests/conformance/src/manifest_dependencies.rs
+M  tests/conformance/src/runtime_inventory.rs
+M  tests/conformance/src/version_identity.rs
+M  tests/conformance/tests/chart_seam_governance.rs
+M  tests/conformance/tests/contract_diff.rs
+M  tests/conformance/tests/guest_workspace_closure.rs
+M  tests/conformance/tests/profile_selectors.rs
+M  tests/conformance/tests/receiving_sqlx_verifier.rs
+M  tests/conformance/tests/repo_lint.rs
+M  tests/conformance/tests/state_ownership.rs
+M  tests/integration/Cargo.toml
+M  tests/integration/src/acme_overlay_publication.rs
+M  tests/integration/src/claim_law_live.rs
+M  tests/integration/src/membershipproof.rs
+M  tests/integration/src/receiving_data_access.rs
+M  tests/integration/src/receiving_publication.rs
+M  tests/integration/src/route_authentication_live.rs
+M  tests/integration/src/trusted_http_route.rs
+M  tests/integration/src/wms_publication.rs
+M  tests/integration/src/wms_wiring_shape.rs
+M  tools/agent-pilot-run
+M  tools/build-components
+M  tools/component-virtualization.json
+M  tools/contract-diff
+M  tools/journey-mint-proof
+M  tools/probes/ctc8-13-native-http/Cargo.toml
+M  tools/receiving-cluster-journey-run
+M  tools/repo-lint
+M  tools/wms-cluster-journey-run

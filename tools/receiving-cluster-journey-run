@@ -210,6 +210,8 @@ app_materializer_trigger=${app_materializer_workload}-trigger
 # the virtualizer's output stems, which is why they carry underscores where
 # the package names carry hyphens.
 app_components=(receiving client_acme_receiving)
+app_base_dir=$repo_root/apps/wamn_receiving
+app_package_dir=$repo_root/apps/client_acme_receiving
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
 chart_version=2.9.0
 route_host=receiving.localhost
@@ -856,8 +858,8 @@ run docker run --detach --name "$registry_container" --network kind \
 # Broker credentials stay in the journey's private directory and Secret mounts.
 event_nats_directory=$work_dir/event-nats
 install -d -m 0700 "$event_nats_directory"
-python3 - "$event_nats_directory" "$repo_root" "$app_org" "$app_project" \
-  "$app_environment" "$app_tenant" "${app_components[@]}" <<'PY_EVENT_NATS'
+python3 - "$event_nats_directory" "$app_org" "$app_project" \
+  "$app_environment" "$app_tenant" "$app_base_dir" "$app_package_dir" <<'PY_EVENT_NATS'
 import json
 import os
 from pathlib import Path
@@ -865,8 +867,8 @@ import re
 import secrets
 import sys
 
-out, root, org, project, environment, tenant, *components = sys.argv[1:]
-out, root = Path(out), Path(root)
+out, org, project, environment, tenant, *app_directories = sys.argv[1:]
+out = Path(out)
 os.umask(0o077)
 if any(not re.fullmatch(r"[A-Za-z0-9_-]+", value)
        for value in (org, project, environment, tenant)):
@@ -874,11 +876,10 @@ if any(not re.fullmatch(r"[A-Za-z0-9_-]+", value)
 stream = f"EVT_{org}_{environment}"
 subject = f"evt.{org}.{project}.{environment}.>"
 tap = f"tap.{tenant}.{project}.{environment}.>"
-# Read registrations from the package declarations of the selected app guests.
-# Data-only guests have no package manifest and declare no registrations.
+# Read registrations from the declarations in the selected app directories.
 durables = []
-for component in components:
-    manifest = root / "packages" / component / "wamn.json"
+for app_directory in app_directories:
+    manifest = Path(app_directory) / "wamn.json"
     if not manifest.is_file():
         continue
     package = json.loads(manifest.read_text())
@@ -2007,8 +2008,8 @@ if [[ "$session_host_proof" == true ]]; then
     sha256sum tests/integration/src/route_authentication_live/session_client.rs \
       crates/client/core/src/lib.rs crates/client/core/src/credentials.rs \
       crates/client/core/src/credentials/session.rs crates/client/core/src/error.rs \
-      crates/client/receiving/src/login.rs crates/client/receiving/src/main.rs \
-      crates/client/receiving/src/lib.rs crates/client/core/Cargo.toml \
+      apps/wamn_receiving/ui/src/login.rs apps/wamn_receiving/ui/src/main.rs \
+      apps/wamn_receiving/ui/src/lib.rs crates/client/core/Cargo.toml \
       tests/integration/Cargo.toml \
       >>"$evidence_dir/session-source-inputs.sha256"
   fi
@@ -2502,7 +2503,7 @@ if [[ "$receiving_correctness" == true ]]; then
   done
   correctness_corpus=$(jq -er \
     '.application_sql_corpus_identity | select(test("^sha256:[0-9a-f]{64}$"))' \
-    "$repo_root/packages/receiving/generated/package-weld.json")
+    "$app_base_dir/generated/package-weld.json")
   correctness_document=$work_dir/receiving-correctness.json
   correctness_evidence=$evidence_dir/receiving-correctness.jsonl
   (
@@ -3047,7 +3048,7 @@ if [[ "$measure_startup" == true ]]; then
     # would measure a different query.
     bench_sql=$(sed -e "s/^FROM purchase_order AS model\$/FROM $app_schema.purchase_order AS model/" \
       -e "s/= \$1::uuid;\$/= '$bench_id'::uuid;/" \
-      "$repo_root/packages/receiving/generated/sql/purchase_order/get.sql")
+      "$app_base_dir/generated/sql/purchase_order/get.sql")
     grep -qF "FROM $app_schema.purchase_order AS model" <<<"$bench_sql" &&
       grep -qF "'$bench_id'::uuid" <<<"$bench_sql" || {
       echo "the bench statement did not derive from the generated read" >&2

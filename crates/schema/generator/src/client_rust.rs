@@ -646,11 +646,11 @@ mod tests {
             .and_then(std::path::Path::parent)
             .and_then(std::path::Path::parent)
             .expect("repository root");
-        for package in ["receiving", "client_acme_receiving"] {
+        for package in ["wamn_receiving", "client_acme_receiving"] {
             let ir = ClientContractIr::from_release(
                 package,
-                &root.join(format!("packages/{package}/generated/contracts")),
-                &root.join(format!("packages/{package}/publication/attachments.json")),
+                &root.join(format!("apps/{package}/generated/contracts")),
+                &root.join(format!("apps/{package}/publication/attachments.json")),
             )
             .expect("projects");
             for model in &ir.models {

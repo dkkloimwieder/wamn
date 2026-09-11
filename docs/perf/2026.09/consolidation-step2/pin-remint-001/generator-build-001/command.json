@@ -1,0 +1,21 @@
+{
+  "argv": [
+    "cargo",
+    "build",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-schema-generator",
+    "--example",
+    "materialize_package"
+  ],
+  "capture_sha256": "ee7eb5b79dfe9a6de96069d6a90e1fb5bd8c17d577def44e068c1054bcea3468",
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911",
+  "default_target": "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911/target",
+  "environment": {
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_TARGET_DIR": null,
+    "KUBECONFIG": "/dev/null",
+    "RUSTC_WRAPPER": ""
+  }
+}

@@ -452,8 +452,8 @@ fn receiving_update_validates_the_public_success_row_without_sql_bookkeeping_col
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let ir = ClientContractIr::from_release(
         "receiving",
-        &root.join("packages/receiving/generated/contracts"),
-        &root.join("packages/receiving/publication/attachments.json"),
+        &root.join("apps/wamn_receiving/generated/contracts"),
+        &root.join("apps/wamn_receiving/publication/attachments.json"),
     )
     .expect("project regenerated Receiving release");
     let operation = ir
@@ -693,8 +693,8 @@ fn wms_move_contract() -> ResponseContract {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let ir = ClientContractIr::from_release(
         "wms",
-        &root.join("packages/wms/generated/contracts"),
-        &root.join("packages/wms/publication/attachments.json"),
+        &root.join("apps/wamn_wms/generated/contracts"),
+        &root.join("apps/wamn_wms/publication/attachments.json"),
     )
     .expect("project WMS served response declarations");
     let operation = ir

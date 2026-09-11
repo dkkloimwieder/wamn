@@ -136,7 +136,7 @@ async fn build_with_credentials(
         format!(
             "read component bytes {} — build it with a SEPARATE cargo invocation \
              (`cargo build -p http-request --target wasm32-wasip2` inside \
-             components/no-std/, which is a separate workspace because sharing one \
+             apps/platform/no-std/, which is a separate workspace because sharing one \
              invocation with flow-http/materializer unifies serde_json/std into the \
              no_std guest and fails with E0152 — wamn-0h0g.11.56)",
             options.component_wasm.display()
@@ -231,7 +231,7 @@ async fn build_with_credentials(
 }
 
 /// The SHIPPED palette declaration, rendered the way
-/// `components/no-std/publish.sh` renders it.
+/// `apps/platform/no-std/publish.sh` renders it.
 ///
 /// Read from the template rather than restated here: a copy would drift from
 /// the guest's real parameter contract, and `validate_parameters` in
@@ -240,7 +240,7 @@ async fn build_with_credentials(
 fn declaration() -> anyhow::Result<ComponentDeclaration> {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let template = std::fs::read_to_string(format!(
-        "{root}/components/no-std/http-request/declaration.json.in"
+        "{root}/apps/platform/no-std/http-request/declaration.json.in"
     ))
     .context("read the http-request declaration template")?;
     let rendered = template

@@ -25,13 +25,12 @@ RUN --mount=type=cache,id=wamn-chef-cargo-registry,target=/usr/local/cargo/regis
 
 # The planner may see source changes. The recipe copied into each cook stage
 # changes only when the root workspace manifests or Cargo.lock change, but the
-# cook stages also carry `components/` below, so a component source change does
+# cook stages also carry `apps/` below, so a component source change does
 # re-run them.
 FROM chef AS root-planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-COPY components ./components
-COPY packages ./packages
+COPY apps ./apps
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests
@@ -45,19 +44,11 @@ FROM chef AS root-recipe
 # per-developer RUSTC_WRAPPER setting -- see .cargo/config.toml.
 COPY .cargo/config.toml ./.cargo/config.toml
 COPY --from=root-planner /build/root-recipe.json ./root-recipe.json
-# The root workspace `exclude`s `components/` and then takes four path
-# dependencies into it: wamn-event-reg, wamn-event-wire, wamn-execution-contract
-# and wamn-materializer. The planner records manifests for workspace
-# MEMBERS only, so the recipe carries none of the four and every cook stage
-# fails at `failed to read /build/components/<crate>/Cargo.toml` before it
-# compiles anything (wamn-0h0g.10.19; broken since a0c95163 moved the execution
-# contract here). The whole tree is copied, not the four crate directories,
-# because all four inherit `version.workspace`, `[lints] workspace` and their
-# dependency versions from `components/Cargo.toml`, whose `members` list names
-# all 21 component crates. The cost is that a component source change re-runs
-# the cook stages; the cargo target cache mount they share keeps that re-run
-# incremental.
-COPY components ./components
+# Native packages use shared guest libraries under apps/platform.
+# Those libraries inherit the apps workspace declarations, which cargo-chef
+# does not include in the native recipe. Copy their full workspace here.
+# The shared target cache keeps rebuilds incremental.
+COPY apps ./apps
 
 FROM root-recipe AS cook-host
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
@@ -200,13 +191,13 @@ RUN rustup target add --toolchain 1.97.0 wasm32-wasip2
 COPY .cargo/config.toml /build/.cargo/config.toml
 COPY Cargo.toml /build/Cargo.toml
 COPY crates /build/crates
-COPY components /build/components
-WORKDIR /build/components
+COPY apps /build/apps
+WORKDIR /build/apps
 
 FROM component-toolchain AS component-builder
 RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=wamn-component-target,target=/build/components/target,sharing=locked \
+    --mount=type=cache,id=wamn-component-target,target=/build/apps/target,sharing=locked \
     cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
       -p http-route \
  && cargo +1.97.0 build --locked --release --target wasm32-wasip2 \

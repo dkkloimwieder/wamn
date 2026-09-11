@@ -13,7 +13,7 @@ use wamn_client::{
     WamnClient,
 };
 
-#[path = "../../../../packages/receiving/generated/client/purchase_order.rs"]
+#[path = "../../../../apps/wamn_receiving/generated/client/purchase_order.rs"]
 pub mod purchase_order;
 
 #[derive(Debug, Default)]
@@ -172,7 +172,7 @@ async fn generated_supplier_contract_preserves_absence_and_value_on_the_wire_and
         transport.clone(),
     );
     let attachments: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../packages/receiving/publication/attachments.json"
+        "../../../../apps/wamn_receiving/publication/attachments.json"
     ))
     .expect("read the Receiving serving schema");
     let schema = &attachments["purchase-order-update-http"]["definition"]["input-schema"];

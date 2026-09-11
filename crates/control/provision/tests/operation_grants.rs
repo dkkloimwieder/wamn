@@ -12,7 +12,7 @@ use wamn_control_provision::operation_grants::{
 };
 
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../packages/receiving/wamn.json");
+const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
 const ENV_VAR: &str = "WAMN_OPERATION_GRANTS_PG18_URL";
 
 fn psql(url: &str, script: &str) -> (bool, String, String) {

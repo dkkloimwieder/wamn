@@ -1,0 +1,29 @@
+{
+  "argv": [
+    "/home/kaalin/.cargo/bin/cargo",
+    "metadata",
+    "--manifest-path",
+    "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911/apps/Cargo.toml",
+    "--locked",
+    "--offline",
+    "--no-deps",
+    "--format-version",
+    "1"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911",
+  "disk_free_bytes_after": 294073995264,
+  "ended_utc": "2026-09-11T13:05:37.518668+00:00",
+  "environment": {
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_ENCODED_RUSTFLAGS": null,
+    "CARGO_TARGET_DIR": "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911/target/guest-digest-all",
+    "RUSTC_WORKSPACE_WRAPPER": "",
+    "RUSTC_WRAPPER": "",
+    "RUSTFLAGS": null
+  },
+  "exit_code": 0,
+  "seconds": 0.029,
+  "started_utc": "2026-09-11T13:05:37.489537+00:00",
+  "stderr": "a-metadata-0-stderr.log",
+  "stdout": "a-metadata-0.json"
+}

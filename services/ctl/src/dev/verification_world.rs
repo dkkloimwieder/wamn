@@ -442,7 +442,7 @@ mod tests {
         ));
         std::fs::create_dir(&scratch).expect("create unique admission scratch directory");
 
-        let wit = root.join("components/data/receiving-data/wit");
+        let wit = root.join("apps/wamn_receiving/data/wit");
         let mut resolve = Resolve::new();
         let (package, _) = resolve
             .push_dir(&wit)
@@ -463,7 +463,7 @@ mod tests {
         std::fs::write(&component_path, component).expect("write Receiving component bytes");
 
         let declaration_source =
-            root.join("packages/receiving/publication/components/receiving.json.in");
+            root.join("apps/wamn_receiving/publication/components/receiving.json.in");
         let mut declaration: serde_json::Value = serde_json::from_slice(
             &std::fs::read(&declaration_source).expect("read Receiving component declaration"),
         )
@@ -562,8 +562,8 @@ mod tests {
 
         let root = repository_root();
         for package in [
-            root.join("packages/receiving"),
-            root.join("packages/client_acme_receiving"),
+            root.join("apps/wamn_receiving"),
+            root.join("apps/client_acme_receiving"),
         ] {
             apply_package::run(ApplyPackageArgs {
                 package,
@@ -583,7 +583,7 @@ mod tests {
 
         let (scratch, component_bytes, declaration) = receiving_admission_files(&root);
         let admission = admit_component(AdmitComponentArgs {
-            package: root.join("packages/receiving"),
+            package: root.join("apps/wamn_receiving"),
             component_bytes,
             declaration,
             admitted_platform_packages: vec!["wamn:postgres".to_owned()],

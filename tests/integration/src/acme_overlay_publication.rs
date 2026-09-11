@@ -62,7 +62,7 @@ fn repository_root() -> PathBuf {
 }
 
 fn package_root() -> PathBuf {
-    repository_root().join("packages/client_acme_receiving")
+    repository_root().join("apps/client_acme_receiving")
 }
 
 fn publication_root() -> PathBuf {

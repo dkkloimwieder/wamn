@@ -1,6 +1,6 @@
 /target
-/components/target
-/components/no-std/target
+/apps/target
+/apps/platform/no-std/target
 .git
 .dolt
 .beads

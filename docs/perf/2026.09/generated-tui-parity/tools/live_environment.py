@@ -153,7 +153,7 @@ def main():
     evidence = args.evidence_dir.resolve()
     evidence.mkdir(parents=True, exist_ok=False)
     compose_file = tree / "test-support/infrastructure/std-virtualization.compose.yaml"
-    for required in (proof, compose_file, tree / "packages/receiving/wamn.json", tree / "packages/client_acme_receiving/wamn.json"):
+    for required in (proof, compose_file, tree / "apps/wamn_receiving/wamn.json", tree / "apps/client_acme_receiving/wamn.json"):
         if not required.is_file():
             raise ProofFailure(f"required source is absent: {required}")
     for name in ("wamn", "wamn-identity", "wamn-host", "wamn-scenario-worker", "wamn-receiving"):
@@ -172,7 +172,7 @@ def main():
     environment = os.environ.copy()
     environment.update(RUSTUP_TOOLCHAIN="1.98.0", RUSTC_WRAPPER="", CARGO_BUILD_JOBS="2",
                        WAMN_IDENTITY_BINARY=str(target / "debug/wamn-identity"))
-    # The dev loop uses the lane's native target and normal components/target.
+    # The dev loop uses the lane's native target and normal apps/target.
     environment.pop("CARGO_TARGET_DIR", None)
     environment.pop("CARGO_BUILD_TARGET_DIR", None)
     held = {}
@@ -208,9 +208,9 @@ def main():
 
     previous_signals = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
-        guest_environment = environment | {"CARGO_TARGET_DIR": str(tree / "components/target")}
-        owned.run("build-http-route", ["cargo", "build", "--manifest-path", tree / "components/Cargo.toml", "-p", "http-route", "--target", "wasm32-wasip2", "--locked", "--offline"], timeout=1800, environment=guest_environment)
-        guest = tree / "components/target/wasm32-wasip2/debug/http_route.wasm"
+        guest_environment = environment | {"CARGO_TARGET_DIR": str(tree / "apps/target")}
+        owned.run("build-http-route", ["cargo", "build", "--manifest-path", tree / "apps/Cargo.toml", "-p", "http-route", "--target", "wasm32-wasip2", "--locked", "--offline"], timeout=1800, environment=guest_environment)
+        guest = tree / "apps/target/wasm32-wasip2/debug/http_route.wasm"
         if not guest.is_file() or guest.stat().st_size == 0:
             raise ProofFailure("http-route guest artifact is absent")
         artifacts = [guest, *(target / "debug" / name for name in
@@ -255,7 +255,7 @@ def main():
             "--release-artifact-base", authority + "/wamn/releases",
             "--registry-auth-file", auth, "--route-host", "receiving.localhost",
             "--flow-http-workload-image", image, "--host-binary", target / "debug/wamn-host",
-            "--package", tree / "packages/receiving", "--overlay-root", tree / "packages/client_acme_receiving",
+            "--package", tree / "apps/wamn_receiving", "--overlay-root", tree / "apps/client_acme_receiving",
         ])
         config = env_root / "dev.json"
 
@@ -270,7 +270,7 @@ def main():
 
         wait_until("dev up and Gate ready", ready, 300, alive=up)
         loop = owned.start("dev-run", [target / "debug/wamn", "dev", "--config", config,
-                                             "--overlay-root", tree / "packages/client_acme_receiving", "--hold"])
+                                             "--overlay-root", tree / "apps/client_acme_receiving", "--hold"])
         served = re.compile(r"^run served: (\S+) host=(\S+) target_instance=(\S+)$", re.MULTILINE)
         wait_until("served activation", lambda: served.search((scratch / "dev-run.log").read_text(errors="replace")),
                    args.proof_timeout, alive=loop)

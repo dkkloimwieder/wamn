@@ -842,7 +842,7 @@ pub fn requires_session_route_authentication(manifest: &ServingManifest) -> bool
 }
 
 /// Exactly the host and method predicates the adapter's own `select_route`
-/// applies (`components/ingress/http-route/src/lib.rs`).
+/// applies (`apps/platform/ingress/http-route/src/lib.rs`).
 ///
 /// Mirrored rather than tightened on purpose: this provider returns candidates and
 /// the adapter performs final selection and path matching, so a candidate dropped

@@ -1,0 +1,23 @@
+{
+  "utc": "2026-09-11T13:08:22.744018+00:00",
+  "sides": {
+    "a": {
+      "process_present": true,
+      "all_build_invocations_started": 9,
+      "all_last_lines": [
+        "   Compiling syn v2.0.119",
+        "   Compiling zerovec-derive v0.11.6",
+        "   Compiling synstructure v0.13.2"
+      ]
+    },
+    "b": {
+      "process_present": true,
+      "all_build_invocations_started": 9,
+      "all_last_lines": [
+        "   Compiling syn v3.0.4",
+        "   Compiling syn v2.0.119",
+        "   Compiling zerovec-derive v0.11.6"
+      ]
+    }
+  }
+}

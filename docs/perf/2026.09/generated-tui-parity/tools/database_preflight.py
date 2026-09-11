@@ -36,7 +36,7 @@ try:
         time.sleep(0.2)
     db = driver.Database(url, evidence)
     db.sql('00-schema', 'CREATE SCHEMA receiving;')
-    db.sql('00-migration', (tree / 'packages/receiving/migrations/0001_initial.sql').read_text())
+    db.sql('00-migration', (tree / 'apps/wamn_receiving/migrations/0001_initial.sql').read_text())
     ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ('order','supplier','item','dock1','dock2','line1','line2')})
     navigation = driver.seed(db, ids, 'PREFLIGHT-' + uuid.uuid4().hex[:8])
     observed = driver.snapshot(db, '03-observation', ids)

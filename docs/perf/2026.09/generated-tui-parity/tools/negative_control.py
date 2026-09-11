@@ -16,7 +16,7 @@ args = parser.parse_args()
 tree = args.tree.resolve(strict=True)
 evidence = args.evidence_dir.resolve()
 evidence.mkdir(parents=True, exist_ok=False)
-relative = 'crates/client/receiving/src/application.rs'
+relative = 'apps/wamn_receiving/ui/src/application.rs'
 source = tree / relative
 original = source.read_bytes()
 digest = hashlib.sha256(original).hexdigest()

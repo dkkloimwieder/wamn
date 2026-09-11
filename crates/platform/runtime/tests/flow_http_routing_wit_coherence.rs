@@ -5,26 +5,26 @@ use std::path::{Path, PathBuf};
 
 const HOST_FLOW_COPY: &str = include_str!("../wit/deps/wamn-flow-http-routing/package.wit");
 const HTTP_FLOW_COPY: &str = include_str!(
-    "../../../../components/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit"
+    "../../../../apps/platform/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit"
 );
 const DELIVERY_FLOW_COPY: &str =
     include_str!("../../../execution/host/wit/deps/wamn-flow-http-routing/package.wit");
 const MATERIALIZER_FLOW_COPY: &str = include_str!(
-    "../../../../components/execution/materializer/wit/deps/wamn-flow-http-routing/package.wit"
+    "../../../../apps/platform/execution/materializer/wit/deps/wamn-flow-http-routing/package.wit"
 );
 
 const NATIVE_DELIVERY_COPY: &str =
     include_str!("../../../execution/host/wit/deps/wamn-router-delivery/package.wit");
 const HTTP_DELIVERY_COPY: &str = include_str!(
-    "../../../../components/ingress/http-route/wit/deps/wamn-router-delivery/package.wit"
+    "../../../../apps/platform/ingress/http-route/wit/deps/wamn-router-delivery/package.wit"
 );
 const MATERIALIZER_DELIVERY_COPY: &str = include_str!(
-    "../../../../components/execution/materializer/wit/deps/wamn-router-delivery/package.wit"
+    "../../../../apps/platform/execution/materializer/wit/deps/wamn-router-delivery/package.wit"
 );
 
 const REGISTERED_FLOW_COPIES: [&str; 4] = [
-    "components/execution/materializer/wit/deps/wamn-flow-http-routing/package.wit",
-    "components/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit",
+    "apps/platform/execution/materializer/wit/deps/wamn-flow-http-routing/package.wit",
+    "apps/platform/ingress/http-route/wit/deps/wamn-flow-http-routing/package.wit",
     "crates/execution/host/wit/deps/wamn-flow-http-routing/package.wit",
     "crates/platform/runtime/wit/deps/wamn-flow-http-routing/package.wit",
 ];
