@@ -1,0 +1,11 @@
+{
+  "recorded_utc": "2026-09-11T23:21:59.558938+00:00",
+  "action": "Copy the private run902s env.log into docs/perf/2026.09/consolidation-step3/pilot-stub-live-002/env.log for repository publication.",
+  "source_bytes": 41205,
+  "source_sha256": "ab392ff6a06937836dfc0c16dad95d624e854beffa71bb8d0bb1070306749a3b",
+  "copy_executed": false,
+  "automatic_approval_review": "rejected",
+  "reason": "This copies a private pilot log to repository evidence despite authorization covering only run901s; pattern checks do not prove the run902 log is free of sensitive data or credentials.",
+  "retry_or_workaround_attempted": false,
+  "private_original_unchanged": true
+}

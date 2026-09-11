@@ -1,0 +1,175 @@
+{
+  "observed_utc": "2026-09-11T23:16:35.298086+00:00",
+  "resource_and_source_result": "pass",
+  "commands": [
+    {
+      "command": [
+        "docker",
+        "ps",
+        "-aq",
+        "--filter",
+        "label=com.docker.compose.project=wamn-pilot-902s"
+      ],
+      "cwd": "/home/kaalin/dev/wamn",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "docker",
+        "network",
+        "ls",
+        "-q",
+        "--filter",
+        "label=com.docker.compose.project=wamn-pilot-902s"
+      ],
+      "cwd": "/home/kaalin/dev/wamn",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "docker",
+        "volume",
+        "ls",
+        "-q",
+        "--filter",
+        "label=com.docker.compose.project=wamn-pilot-902s"
+      ],
+      "cwd": "/home/kaalin/dev/wamn",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "kind",
+        "get",
+        "clusters"
+      ],
+      "cwd": "/home/kaalin/dev/wamn",
+      "exit_code": 0,
+      "stdout": "wamn\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "ss",
+        "-Hltn",
+        "sport = :54332"
+      ],
+      "cwd": "/home/kaalin/dev/wamn",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "ss",
+        "-Hltn",
+        "sport = :5004"
+      ],
+      "cwd": "/home/kaalin/dev/wamn",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "ss",
+        "-Hltn",
+        "sport = :4224"
+      ],
+      "cwd": "/home/kaalin/dev/wamn",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "ss",
+        "-Hltn",
+        "sport = :3201"
+      ],
+      "cwd": "/home/kaalin/dev/wamn",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "ss",
+        "-Hltn",
+        "sport = :4319"
+      ],
+      "cwd": "/home/kaalin/dev/wamn",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "ss",
+        "-Hltn",
+        "sport = :8088"
+      ],
+      "cwd": "/home/kaalin/dev/wamn",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "source_commands": [
+    {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911",
+      "exit_code": 0,
+      "stdout": "8671f63c3eda1a114417edf5e9023166757fa597\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911/wamn-pilot/runs/902s-stub-dock-appointments/worktree",
+      "exit_code": 0,
+      "stdout": "9d16e94026095ab60a1f1b6bc0a901337c0396bc\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "git",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911/wamn-pilot/runs/902s-stub-dock-appointments/worktree",
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "private_run_directory_retained": true,
+  "private_environment_directory_retained": true,
+  "note": "This observation reads resources and source. It performs no cleanup."
+}

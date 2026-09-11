@@ -1,0 +1,9 @@
+{
+  "completed_utc": "2026-09-11T23:18:05.402577+00:00",
+  "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911/wamn-pilot/runs/902s-stub-dock-appointments/env",
+  "removed_files": 15,
+  "private_environment_directory_present": false,
+  "run_records_retained": true,
+  "prepared_worktree_retained": true,
+  "scope": "Only the stopped run 902s private environment directory. The separate resource observation and credential comparison ran first."
+}

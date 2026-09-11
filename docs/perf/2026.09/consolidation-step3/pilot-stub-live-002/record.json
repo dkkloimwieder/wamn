@@ -1,0 +1,70 @@
+{
+  "driver_source_commit": "8671f63c3eda1a114417edf5e9023166757fa597",
+  "prepared_product_source_commit": "9d16e94026095ab60a1f1b6bc0a901337c0396bc",
+  "records": [
+    {
+      "phase": "up",
+      "driver_source_commit": "8671f63c3eda1a114417edf5e9023166757fa597",
+      "prepared_product_source_commit": "9d16e94026095ab60a1f1b6bc0a901337c0396bc",
+      "command": [
+        "/home/kaalin/dev/wamn/target/debug/wamn-gates",
+        "agent-pilot-run",
+        "--repository",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911",
+        "up",
+        "--run",
+        "902s",
+        "--agent",
+        "stub",
+        "--task",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911/docs/experiments/agent-authoring/tasks/dock-appointments",
+        "--commit",
+        "9d16e94026095ab60a1f1b6bc0a901337c0396bc",
+        "--standup",
+        "dev-env"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911",
+      "environment": {
+        "XDG_CACHE_HOME": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911",
+        "XDG_STATE_HOME": "/home/kaalin/.local/state/wamn-pilot-stub-20260911",
+        "RUSTUP_TOOLCHAIN": "1.98.0",
+        "CARGO_BUILD_JOBS": "2",
+        "RUSTC_WRAPPER": ""
+      },
+      "started_utc": "2026-09-11T23:12:40.772225+00:00",
+      "exit_code": 10,
+      "elapsed_seconds": 216.7598277659854,
+      "finished_utc": "2026-09-11T23:16:17.532207+00:00"
+    },
+    {
+      "phase": "down",
+      "driver_source_commit": "8671f63c3eda1a114417edf5e9023166757fa597",
+      "prepared_product_source_commit": "9d16e94026095ab60a1f1b6bc0a901337c0396bc",
+      "command": [
+        "/home/kaalin/dev/wamn/target/debug/wamn-gates",
+        "agent-pilot-run",
+        "--repository",
+        "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911",
+        "down",
+        "--run",
+        "902s"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-source-20260911",
+      "environment": {
+        "XDG_CACHE_HOME": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911",
+        "XDG_STATE_HOME": "/home/kaalin/.local/state/wamn-pilot-stub-20260911",
+        "RUSTUP_TOOLCHAIN": "1.98.0",
+        "CARGO_BUILD_JOBS": "2",
+        "RUSTC_WRAPPER": ""
+      },
+      "started_utc": "2026-09-11T23:16:17.532380+00:00",
+      "exit_code": 0,
+      "elapsed_seconds": 2.594984684023075,
+      "finished_utc": "2026-09-11T23:16:20.127428+00:00"
+    }
+  ],
+  "all_selected_commands_passed": false,
+  "binary_sha256_after": "c5a9444c739a227d0a08d30746f8eb885e8123ea81d9cee8f25507b924387be5",
+  "source_head_after": "8671f63c3eda1a114417edf5e9023166757fa597",
+  "source_status_after": ""
+}
