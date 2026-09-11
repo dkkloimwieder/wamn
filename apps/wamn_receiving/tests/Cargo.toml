@@ -74,5 +74,9 @@ path = "receiving_command_histories_live.rs"
 name = "receiving_sqlx_verifier"
 path = "receiving_sqlx_verifier.rs"
 
+[[test]]
+name = "generation"
+path = "generation.rs"
+
 [lints]
 workspace = true
