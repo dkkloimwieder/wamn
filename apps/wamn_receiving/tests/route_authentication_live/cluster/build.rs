@@ -98,8 +98,8 @@ pub(super) async fn components_and_tools(
             path.display()
         );
         component_hashes.push_str(&format!(
-            "{:x}  {}\n",
-            Sha256::digest(fs::read(&path)?),
+            "{}  {}\n",
+            hex::encode(Sha256::digest(fs::read(&path)?)),
             path.display()
         ));
     }

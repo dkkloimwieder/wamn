@@ -27,7 +27,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
         let mut digests = serde_json::Map::new();
         for component in ["receiving", "client_acme_receiving"] {
             let bytes = fs::read(cluster.artifacts.components.join(format!("{component}.wasm")))?;
-            digests.insert(component.into(), json!(format!("sha256:{:x}", Sha256::digest(bytes))));
+            digests.insert(component.into(), json!(format!("sha256:{}", hex::encode(Sha256::digest(bytes)))));
         }
         let package: Value = serde_json::from_slice(&fs::read(cluster.resources.repository
             .join("apps/wamn_receiving/generated/package-weld.json"))?)?;

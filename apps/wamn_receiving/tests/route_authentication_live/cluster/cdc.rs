@@ -170,10 +170,18 @@ pub(super) async fn ready(
                         && advisory_info.config.name == advisory_name,
                     "the reader must use its declared event and advisory streams"
                 );
+                let observed = |info: &async_nats::jetstream::stream::Info| {
+                    serde_json::json!({
+                        "config":info.config,
+                        "state":{"messages":info.state.messages,"bytes":info.state.bytes,
+                            "first_seq":info.state.first_sequence,"last_seq":info.state.last_sequence,
+                            "consumer_count":info.state.consumer_count},
+                    })
+                };
                 fs::write(
                     evidence.join("nats-reader-ready.json"),
                     serde_json::to_vec_pretty(
-                        &serde_json::json!({"source":source_info,"advisories":advisory_info}),
+                        &serde_json::json!({"source":observed(source_info),"advisories":observed(advisory_info)}),
                     )?,
                 )?;
                 fs::write(

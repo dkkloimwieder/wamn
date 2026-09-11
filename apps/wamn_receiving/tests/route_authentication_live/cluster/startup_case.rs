@@ -42,7 +42,7 @@ pub(super) async fn assert_startup(
         ensure!(limit > 0, "the deployed native start limit must be positive");
         final_result["deployment_resources"] = host["resources"].clone();
         final_result["local_process_resource_limit"] = json!("inherits runner cgroup; not the Kubernetes 6-CPU quota");
-        final_result["host_binary_sha256"] = json!(format!("{:x}",Sha256::digest(fs::read(cluster.artifacts.target.join("release/wamn-host"))?)));
+        final_result["host_binary_sha256"] = json!(hex::encode(Sha256::digest(fs::read(cluster.artifacts.target.join("release/wamn-host"))?)));
         final_result["profile"] = json!("release");
         final_result["source_requirements"] = json!({"wasmtime_parallel_compilation":"Cargo.toml workspace Wasmtime features, captured by source SHA",
             "guest_memory_mode":"count","meter_mode":"duration","start_limit":limit});
@@ -50,7 +50,7 @@ pub(super) async fn assert_startup(
             ("Cargo.lock",cluster.resources.repository.join("Cargo.lock")),
             ("host-deployment.json",cluster.resources.evidence.join("host-deployment.json")),
             ("production-workload.json",cluster.resources.evidence.join("flow-http-workload.json"))] {
-            final_result["input_sha256"][name] = json!(format!("{:x}",Sha256::digest(fs::read(path)?)));
+            final_result["input_sha256"][name] = json!(hex::encode(Sha256::digest(fs::read(path)?)));
         }
         let scheduler = forward(cluster, &private, "scheduler", "service/nats", 4222, &mut forwards).await?;
         let otlp = forward(cluster, &private, "otlp", "deployment/otel-collector", 4317, &mut forwards).await?;
@@ -168,8 +168,8 @@ pub(super) async fn assert_startup(
     for path in paths {
         if path.is_file() {
             hashes.push_str(&format!(
-                "{:x}  {}\n",
-                Sha256::digest(fs::read(&path)?),
+                "{}  {}\n",
+                hex::encode(Sha256::digest(fs::read(&path)?)),
                 path.file_name()
                     .context("evidence has a filename")?
                     .to_string_lossy()

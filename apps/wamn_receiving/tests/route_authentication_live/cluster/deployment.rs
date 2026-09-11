@@ -63,7 +63,7 @@ pub(super) async fn publish_http(cluster: &ReceivingCluster) -> anyhow::Result<S
 }
 
 async fn install_wash(cluster: &ReceivingCluster) -> anyhow::Result<PathBuf> {
-    let output = checked(Command::new(
+    let output = checked(&mut Command::new(
         cluster.resources.repository.join("tools/install-wash"),
     ))
     .await?;
