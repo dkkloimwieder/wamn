@@ -173,6 +173,7 @@ rustix = { version = "1", features = ["fs", "process"] }
 schemars = "0.8"
 serde = "1"
 serde_json = "1"
+serde_yaml = "=0.9.34"
 sha2 = "0.11"
 subtle = "2"
 tokio = "1"
