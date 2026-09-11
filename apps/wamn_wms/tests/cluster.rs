@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use futures_util::FutureExt as _;
-use serde_json::{Value, json};
+use serde_json::json;
 use tokio::process::Command;
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_registry::Triple;
