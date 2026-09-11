@@ -1,6 +1,6 @@
 # Pilot recorded replay
 
-Six recorded sets reproduced their original outcomes and all 66 step verdicts; run 030 lacks the hidden grading inputs needed to produce a comparison.
+Six recorded sets reproduce their original outcomes and all 66 step verdicts. Run 030 lacks the hidden grading inputs needed for comparison.
 
 | Recorded run | Original outcome | Tracked-input exit | Recovered-input exit | Comparison |
 |---|---|---:|---:|---|
@@ -12,10 +12,17 @@ Six recorded sets reproduced their original outcomes and all 66 step verdicts; r
 | 031 | PASS | 10 | 0 | Recovered original inputs retain outcome and 11 step verdicts |
 | 032 | PASS | 10 | 0 | Recovered original inputs retain outcome and 11 step verdicts |
 
-The nine invocations used the existing `target/debug/wamn-gates agent-pilot-grade --replay` binary at repository HEAD `cc729d9eafebc6d459921785e7f15971e113cef9`, with full arguments, exits, elapsed times, section comparisons, input hashes and output locations in [result.json](result.json).
+The nine invocations use the existing `target/debug/wamn-gates agent-pilot-grade --replay` binary. Its source is `cc729d9eafebc6d459921785e7f15971e113cef9`.
+[The result](result.json) records arguments, exits, elapsed times, section comparisons, input hashes, and output locations.
 
-Tracked-input runs isolated both grading lookup roots, while the two additional runs used byte-identical copies of the authorized legacy `031` and `032` task/steps files; [recovery.json](recovery.json) records every checked file and its presence or absence.
+The first seven invocations isolate both grading lookup directories and use only tracked inputs.
+Two additional invocations use exact copies of the original task and steps files for runs 031 and 032.
+[The recovery record](recovery.json) lists each requested historical file and whether it exists.
 
-All original records, copied original inputs, repository HEAD and the 281,795,424-byte executable stayed unchanged, with executable SHA-256 `d34f90211d439c4e7f4b198c597ff2878d917d0f19e6702273ef1b2dfaf68cae`; no Cargo command, service or agent launched.
+All original records, copied inputs, repository HEAD, and the 281,795,424-byte executable stay unchanged.
+The executable SHA-256 is `d34f90211d439c4e7f4b198c597ff2878d917d0f19e6702273ef1b2dfaf68cae`.
+No Cargo command, service, or agent runs.
 
-The original worktrees and published contracts are absent and were not reconstructed, so this run does not establish current application behavior or contract equality; runs 010–012 also retain their outcome despite the non-gating explanation changing from `no replay step in the fixture` to `no step declares claim-replay`.
+The original worktrees and published contracts are absent. This replay does not reconstruct them or establish current application behavior or contract equality.
+Runs 010–012 retain their outcomes despite a changed explanation that does not determine the result.
+The old text is `no replay step in the fixture`. The new text is `no step declares claim-replay`.

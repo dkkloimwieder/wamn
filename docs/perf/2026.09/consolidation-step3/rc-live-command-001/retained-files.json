@@ -1,0 +1,20 @@
+[
+  {
+    "path": "cargo.log",
+    "bytes": 12217,
+    "mode": "0o664",
+    "sha256": "1e56142c81452566063ec635e1ed6f3266a6ead3e5645e9e15d1e1e3fa25da2f"
+  },
+  {
+    "path": "command.json",
+    "bytes": 567,
+    "mode": "0o664",
+    "sha256": "f495d0ca3d920ccae04b35f61371ef8cb4b28fd9311e7c80094de11f44a97446"
+  },
+  {
+    "path": "record.json",
+    "bytes": 615,
+    "mode": "0o664",
+    "sha256": "6392acd3776a1298f7f8afb42f7ee6b20621706cdf18a7f65568fdda29f32816"
+  }
+]

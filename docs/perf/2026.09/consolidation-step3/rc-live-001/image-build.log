@@ -1,0 +1,814 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.43kB done
+#1 DONE 0.1s
+
+#2 [internal] load metadata for docker.io/library/rust:1.98-trixie
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/debian:trixie-slim
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context:
+#4 transferring context: 242B done
+#4 DONE 0.1s
+
+#5 [base 1/2] FROM docker.io/library/debian:trixie-slim
+#5 DONE 0.0s
+
+#6 [native  1/13] FROM docker.io/library/rust:1.98-trixie
+#6 CACHED
+
+#7 [internal] load build context
+#7 transferring context: 16.97MB 0.3s done
+#7 DONE 0.4s
+
+#8 [native  2/13] RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git  && rm -rf /var/lib/apt/lists/*
+#8 0.498 Hit:1 http://deb.debian.org/debian trixie InRelease
+#8 0.520 Get:2 http://deb.debian.org/debian trixie-updates InRelease [47.3 kB]
+#8 0.572 Get:3 http://deb.debian.org/debian-security trixie-security InRelease [43.4 kB]
+#8 0.614 Get:4 http://deb.debian.org/debian trixie/main amd64 Packages [9673 kB]
+#8 0.913 Get:5 http://deb.debian.org/debian trixie-updates/main amd64 Packages [4412 B]
+#8 0.932 Get:6 http://deb.debian.org/debian-security trixie-security/main amd64 Packages [257 kB]
+#8 1.773 Fetched 10.0 MB in 1s (7300 kB/s)
+#8 1.773 Reading package lists...
+#8 2.313 Reading package lists...
+#8 2.792 Building dependency tree...
+#8 2.906 Reading state information...
+#8 3.058 git is already the newest version (1:2.47.3-0+deb13u1).
+#8 3.058 The following additional packages will be installed:
+#8 3.058   clang-19 libclang-common-19-dev libclang-cpp19 libclang1-19 libgc1 libllvm19
+#8 3.058   libobjc-14-dev libobjc4 libprotobuf-lite32t64 libprotobuf32t64
+#8 3.059   libprotoc32t64 libz3-4 llvm-19-linker-tools
+#8 3.060 Suggested packages:
+#8 3.060   clang-19-doc wasi-libc protobuf-mode-el
+#8 3.060 Recommended packages:
+#8 3.060   llvm-19-dev clang-tools-19 libclang-rt-19-dev
+#8 3.207 The following NEW packages will be installed:
+#8 3.207   clang clang-19 libclang-common-19-dev libclang-cpp19 libclang1-19 libgc1
+#8 3.207   libllvm19 libobjc-14-dev libobjc4 libprotobuf-dev libprotobuf-lite32t64
+#8 3.208   libprotobuf32t64 libprotoc32t64 libz3-4 llvm-19-linker-tools mold
+#8 3.208   protobuf-compiler
+#8 3.311 0 upgraded, 17 newly installed, 0 to remove and 12 not upgraded.
+#8 3.311 Need to get 64.0 MB of archives.
+#8 3.311 After this operation, 333 MB of additional disk space will be used.
+#8 3.311 Get:1 http://deb.debian.org/debian trixie/main amd64 libz3-4 amd64 4.13.3-1 [8560 kB]
+#8 3.600 Get:2 http://deb.debian.org/debian trixie/main amd64 libllvm19 amd64 1:19.1.7-3+b1 [26.0 MB]
+#8 4.130 Get:3 http://deb.debian.org/debian trixie/main amd64 libclang-cpp19 amd64 1:19.1.7-3+b1 [13.2 MB]
+#8 4.389 Get:4 http://deb.debian.org/debian trixie/main amd64 libgc1 amd64 1:8.2.8-1 [247 kB]
+#8 4.394 Get:5 http://deb.debian.org/debian trixie/main amd64 libobjc4 amd64 14.2.0-19 [43.3 kB]
+#8 4.395 Get:6 http://deb.debian.org/debian trixie/main amd64 libobjc-14-dev amd64 14.2.0-19 [173 kB]
+#8 4.421 Get:7 http://deb.debian.org/debian trixie/main amd64 libclang-common-19-dev amd64 1:19.1.7-3+b1 [740 kB]
+#8 4.466 Get:8 http://deb.debian.org/debian trixie/main amd64 llvm-19-linker-tools amd64 1:19.1.7-3+b1 [1263 kB]
+#8 4.506 Get:9 http://deb.debian.org/debian trixie/main amd64 libclang1-19 amd64 1:19.1.7-3+b1 [7623 kB]
+#8 4.671 Get:10 http://deb.debian.org/debian trixie/main amd64 clang-19 amd64 1:19.1.7-3+b1 [117 kB]
+#8 4.672 Get:11 http://deb.debian.org/debian trixie/main amd64 clang amd64 1:19.0-63 [6244 B]
+#8 4.691 Get:12 http://deb.debian.org/debian trixie/main amd64 libprotobuf32t64 amd64 3.21.12-11+deb13u1 [981 kB]
+#8 4.774 Get:13 http://deb.debian.org/debian trixie/main amd64 libprotobuf-lite32t64 amd64 3.21.12-11+deb13u1 [275 kB]
+#8 4.798 Get:14 http://deb.debian.org/debian trixie/main amd64 libprotobuf-dev amd64 3.21.12-11+deb13u1 [1329 kB]
+#8 4.857 Get:15 http://deb.debian.org/debian trixie/main amd64 libprotoc32t64 amd64 3.21.12-11+deb13u1 [922 kB]
+#8 4.896 Get:16 http://deb.debian.org/debian trixie/main amd64 mold amd64 2.37.1+dfsg-1 [2510 kB]
+#8 4.936 Get:17 http://deb.debian.org/debian trixie/main amd64 protobuf-compiler amd64 3.21.12-11+deb13u1 [85.0 kB]
+#8 5.115 debconf: unable to initialize frontend: Dialog
+#8 5.115 debconf: (TERM is not set, so the dialog frontend is not usable.)
+#8 5.115 debconf: falling back to frontend: Readline
+#8 5.120 debconf: unable to initialize frontend: Readline
+#8 5.120 debconf: (This frontend requires a controlling tty.)
+#8 5.120 debconf: falling back to frontend: Teletype
+#8 5.122 debconf: unable to initialize frontend: Teletype
+#8 5.122 debconf: (This frontend requires a controlling tty.)
+#8 5.122 debconf: falling back to frontend: Noninteractive
+#8 5.638 Fetched 64.0 MB in 2s (37.3 MB/s)
+#8 5.699 Selecting previously unselected package libz3-4:amd64.
+#8 5.699 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 26061 files and directories currently installed.)
+#8 5.751 Preparing to unpack .../00-libz3-4_4.13.3-1_amd64.deb ...
+#8 5.787 Unpacking libz3-4:amd64 (4.13.3-1) ...
+#8 6.189 Selecting previously unselected package libllvm19:amd64.
+#8 6.190 Preparing to unpack .../01-libllvm19_1%3a19.1.7-3+b1_amd64.deb ...
+#8 6.208 Unpacking libllvm19:amd64 (1:19.1.7-3+b1) ...
+#8 6.842 Selecting previously unselected package libclang-cpp19.
+#8 6.843 Preparing to unpack .../02-libclang-cpp19_1%3a19.1.7-3+b1_amd64.deb ...
+#8 6.861 Unpacking libclang-cpp19 (1:19.1.7-3+b1) ...
+#8 7.307 Selecting previously unselected package libgc1:amd64.
+#8 7.308 Preparing to unpack .../03-libgc1_1%3a8.2.8-1_amd64.deb ...
+#8 7.326 Unpacking libgc1:amd64 (1:8.2.8-1) ...
+#8 7.444 Selecting previously unselected package libobjc4:amd64.
+#8 7.446 Preparing to unpack .../04-libobjc4_14.2.0-19_amd64.deb ...
+#8 7.463 Unpacking libobjc4:amd64 (14.2.0-19) ...
+#8 7.550 Selecting previously unselected package libobjc-14-dev:amd64.
+#8 7.552 Preparing to unpack .../05-libobjc-14-dev_14.2.0-19_amd64.deb ...
+#8 7.569 Unpacking libobjc-14-dev:amd64 (14.2.0-19) ...
+#8 7.664 Selecting previously unselected package libclang-common-19-dev:amd64.
+#8 7.665 Preparing to unpack .../06-libclang-common-19-dev_1%3a19.1.7-3+b1_amd64.deb ...
+#8 7.683 Unpacking libclang-common-19-dev:amd64 (1:19.1.7-3+b1) ...
+#8 7.829 Selecting previously unselected package llvm-19-linker-tools.
+#8 7.830 Preparing to unpack .../07-llvm-19-linker-tools_1%3a19.1.7-3+b1_amd64.deb ...
+#8 7.848 Unpacking llvm-19-linker-tools (1:19.1.7-3+b1) ...
+#8 8.008 Selecting previously unselected package libclang1-19.
+#8 8.011 Preparing to unpack .../08-libclang1-19_1%3a19.1.7-3+b1_amd64.deb ...
+#8 8.029 Unpacking libclang1-19 (1:19.1.7-3+b1) ...
+#8 8.395 Selecting previously unselected package clang-19.
+#8 8.396 Preparing to unpack .../09-clang-19_1%3a19.1.7-3+b1_amd64.deb ...
+#8 8.414 Unpacking clang-19 (1:19.1.7-3+b1) ...
+#8 8.530 Selecting previously unselected package clang.
+#8 8.531 Preparing to unpack .../10-clang_1%3a19.0-63_amd64.deb ...
+#8 8.549 Unpacking clang (1:19.0-63) ...
+#8 8.662 Selecting previously unselected package libprotobuf32t64:amd64.
+#8 8.664 Preparing to unpack .../11-libprotobuf32t64_3.21.12-11+deb13u1_amd64.deb ...
+#8 8.685 Unpacking libprotobuf32t64:amd64 (3.21.12-11+deb13u1) ...
+#8 8.830 Selecting previously unselected package libprotobuf-lite32t64:amd64.
+#8 8.831 Preparing to unpack .../12-libprotobuf-lite32t64_3.21.12-11+deb13u1_amd64.deb ...
+#8 8.849 Unpacking libprotobuf-lite32t64:amd64 (3.21.12-11+deb13u1) ...
+#8 8.945 Selecting previously unselected package libprotobuf-dev:amd64.
+#8 8.946 Preparing to unpack .../13-libprotobuf-dev_3.21.12-11+deb13u1_amd64.deb ...
+#8 8.964 Unpacking libprotobuf-dev:amd64 (3.21.12-11+deb13u1) ...
+#8 9.131 Selecting previously unselected package libprotoc32t64:amd64.
+#8 9.132 Preparing to unpack .../14-libprotoc32t64_3.21.12-11+deb13u1_amd64.deb ...
+#8 9.150 Unpacking libprotoc32t64:amd64 (3.21.12-11+deb13u1) ...
+#8 9.276 Selecting previously unselected package mold.
+#8 9.277 Preparing to unpack .../15-mold_2.37.1+dfsg-1_amd64.deb ...
+#8 9.295 Unpacking mold (2.37.1+dfsg-1) ...
+#8 9.488 Selecting previously unselected package protobuf-compiler.
+#8 9.490 Preparing to unpack .../16-protobuf-compiler_3.21.12-11+deb13u1_amd64.deb ...
+#8 9.507 Unpacking protobuf-compiler (3.21.12-11+deb13u1) ...
+#8 9.621 Setting up libprotobuf-lite32t64:amd64 (3.21.12-11+deb13u1) ...
+#8 9.674 Setting up libprotobuf32t64:amd64 (3.21.12-11+deb13u1) ...
+#8 9.728 Setting up libclang-common-19-dev:amd64 (1:19.1.7-3+b1) ...
+#8 9.782 Setting up mold (2.37.1+dfsg-1) ...
+#8 9.834 Setting up libprotobuf-dev:amd64 (3.21.12-11+deb13u1) ...
+#8 9.886 Setting up libz3-4:amd64 (4.13.3-1) ...
+#8 9.940 Setting up libgc1:amd64 (1:8.2.8-1) ...
+#8 9.992 Setting up libprotoc32t64:amd64 (3.21.12-11+deb13u1) ...
+#8 10.04 Setting up libllvm19:amd64 (1:19.1.7-3+b1) ...
+#8 10.10 Setting up libclang1-19 (1:19.1.7-3+b1) ...
+#8 10.15 Setting up protobuf-compiler (3.21.12-11+deb13u1) ...
+#8 10.22 Setting up libobjc4:amd64 (14.2.0-19) ...
+#8 10.28 Setting up libobjc-14-dev:amd64 (14.2.0-19) ...
+#8 10.33 Setting up llvm-19-linker-tools (1:19.1.7-3+b1) ...
+#8 10.39 Setting up libclang-cpp19 (1:19.1.7-3+b1) ...
+#8 10.44 Setting up clang-19 (1:19.1.7-3+b1) ...
+#8 10.50 Setting up clang (1:19.0-63) ...
+#8 10.61 Processing triggers for libc-bin (2.41-12+deb13u3) ...
+#8 DONE 11.5s
+
+#9 [native  3/13] WORKDIR /build
+#9 DONE 0.1s
+
+#10 [native  4/13] COPY Cargo.toml Cargo.lock ./
+#10 DONE 0.2s
+
+#11 [native  5/13] COPY Dockerfile ./Dockerfile
+#11 DONE 0.2s
+
+#12 [native  6/13] COPY .cargo ./.cargo
+#12 DONE 0.2s
+
+#13 [native  7/13] COPY apps ./apps
+#13 DONE 0.2s
+
+#14 [native  8/13] COPY crates ./crates
+#14 DONE 0.2s
+
+#15 [native  9/13] COPY services ./services
+#15 DONE 0.1s
+
+#16 [native 10/13] COPY test-support ./test-support
+#16 DONE 0.1s
+
+#17 [native 11/13] COPY tests ./tests
+#17 DONE 0.1s
+
+#18 [native 12/13] COPY deploy ./deploy
+#18 DONE 0.1s
+
+#19 [native 13/13] RUN --mount=type=cache,id=wamn-rc-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-rc-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-rc-debug-target,target=/build/target,sharing=locked     RUSTC_WRAPPER= cargo build --locked -p wamn-gates -p wamn-host  && install -D -m 0755 target/debug/wamn-host /native-output/wamn-host  && install -D -m 0755 target/debug/wamn-gates /native-output/wamn-gates
+#19 0.394     Updating git repository `https://github.com/wasmCloud/wasmCloud`
+#19 3.084     Updating crates.io index
+#19 3.113     Updating git repository `https://github.com/bytecodealliance/WASI-Virt.git`
+#19 6.557  Downloading crates ...
+#19 6.781   Downloaded asn1-rs-derive v0.6.0
+#19 6.782   Downloaded asn1-rs-impl v0.2.0
+#19 6.783   Downloaded approx v0.5.1
+#19 6.784   Downloaded document-features v0.2.12
+#19 6.785   Downloaded asn1-rs v0.7.2
+#19 6.789   Downloaded base64ct v1.8.3
+#19 6.790   Downloaded kasuari v0.4.12
+#19 6.791   Downloaded indoc v2.0.7
+#19 6.793   Downloaded const-oid v0.9.6
+#19 6.794   Downloaded curve25519-dalek-derive v0.1.1
+#19 6.795   Downloaded directories-next v2.0.0
+#19 6.795   Downloaded by_address v1.2.1
+#19 6.796   Downloaded dirs-sys-next v0.1.2
+#19 6.796   Downloaded castaway v0.2.4
+#19 6.797   Downloaded instability v0.3.13
+#19 6.798   Downloaded num_threads v0.1.7
+#19 6.799   Downloaded palette_math v0.7.7
+#19 6.800   Downloaded crossbeam-deque v0.8.7
+#19 6.801   Downloaded ed25519 v2.2.3
+#19 6.802   Downloaded data-encoding v2.11.0
+#19 6.802   Downloaded line-clipping v0.3.8
+#19 6.803   Downloaded nkeys v0.4.5
+#19 6.804   Downloaded litrs v1.0.0
+#19 6.806   Downloaded rustc_version v0.4.1
+#19 6.807   Downloaded rusticata-macros v4.1.0
+#19 6.808   Downloaded signal-hook-mio v0.2.5
+#19 6.808   Downloaded oid-registry v0.8.1
+#19 6.809   Downloaded palette_derive v0.7.7
+#19 6.810   Downloaded pem v3.0.6
+#19 6.811   Downloaded pem-rfc7468 v0.7.0
+#19 6.812   Downloaded pkcs8 v0.10.2
+#19 6.814   Downloaded bit-vec v0.9.1
+#19 6.815   Downloaded convert_case v0.10.0
+#19 6.816   Downloaded der v0.7.10
+#19 6.819   Downloaded lru v0.18.4
+#19 6.820   Downloaded ratatui-crossterm v0.1.2
+#19 6.821   Downloaded serde_spanned v1.1.1
+#19 6.821   Downloaded spki v0.7.3
+#19 6.823   Downloaded strum v0.28.0
+#19 6.823   Downloaded der-parser v10.0.0
+#19 6.825   Downloaded derive_more v2.1.1
+#19 6.831   Downloaded ratatui v0.30.2
+#19 6.834   Downloaded rayon-core v1.13.0
+#19 6.836   Downloaded rcgen v0.14.8
+#19 6.837   Downloaded serde_yaml v0.9.34+deprecated
+#19 6.839   Downloaded spin v0.10.1
+#19 6.841   Downloaded static_assertions v1.1.0
+#19 6.841   Downloaded strum_macros v0.28.0
+#19 6.843   Downloaded toml_writer v1.1.2+spec-1.1.0
+#19 6.844   Downloaded compact_str v0.9.1
+#19 6.846   Downloaded derive_more-impl v2.1.1
+#19 6.849   Downloaded ed25519-dalek v2.2.0
+#19 6.851   Downloaded minimal-lexical v0.2.1
+#19 6.853   Downloaded signal-hook v0.3.18
+#19 6.855   Downloaded toml_datetime v0.7.5+spec-1.1.0
+#19 6.856   Downloaded toml_parser v1.1.3+spec-1.1.0
+#19 6.857   Downloaded nom v7.1.3
+#19 6.860   Downloaded toml v0.9.12+spec-1.1.0
+#19 6.862   Downloaded crossterm v0.29.0
+#19 6.866   Downloaded unicode-truncate v2.0.1
+#19 6.867   Downloaded itertools v0.15.0
+#19 6.871   Downloaded signatory v0.27.1
+#19 6.874   Downloaded unsafe-libyaml v0.2.11
+#19 6.876   Downloaded ratatui-core v0.1.2
+#19 6.879   Downloaded rayon v1.12.0
+#19 6.885   Downloaded wasmtime-internal-cache v47.0.4
+#19 6.886   Downloaded unicode-segmentation v1.13.3
+#19 6.888   Downloaded curve25519-dalek v4.1.3
+#19 6.893   Downloaded object_store v0.14.1
+#19 6.897   Downloaded quick-xml v0.41.0
+#19 6.901   Downloaded ratatui-widgets v0.3.2
+#19 6.905   Downloaded palette v0.7.7
+#19 6.911   Downloaded unicode-width v0.2.2
+#19 6.915   Downloaded yasna v0.6.0
+#19 6.916   Downloaded zstd-safe v7.2.4
+#19 6.917   Downloaded winnow v1.0.4
+#19 6.922   Downloaded crc-fast v1.10.0
+#19 6.934   Downloaded winnow v0.7.15
+#19 6.939   Downloaded x509-parser v0.18.1
+#19 6.942   Downloaded zstd v0.13.3
+#19 6.944   Downloaded zstd-sys v2.0.16+zstd.1.5.7
+#19 7.294    Compiling hashbrown v0.17.1
+#19 7.299    Compiling mio v1.2.2
+#19 7.305    Compiling digest v0.10.7
+#19 7.312    Compiling rustix v1.1.4
+#19 7.492    Compiling hashbrown v0.16.1
+#19 7.753    Compiling tokio v1.53.1
+#19 7.882    Compiling indexmap v2.14.0
+#19 8.024    Compiling semver v1.0.28
+#19 8.281    Compiling wasmtime-internal-core v47.0.4
+#19 8.509    Compiling sha2 v0.10.9
+#19 8.827    Compiling gimli v0.33.0
+#19 8.983    Compiling cranelift-bitset v0.134.4
+#19 9.139    Compiling cranelift-entity v0.134.4
+#19 9.454    Compiling cranelift-bforest v0.134.4
+#19 9.692    Compiling uuid v1.26.0
+#19 10.03    Compiling cpp_demangle v0.5.1
+#19 10.36    Compiling winnow v1.0.4
+#19 10.63    Compiling toml_parser v1.1.3+spec-1.1.0
+#19 11.21    Compiling wasmparser v0.252.0
+#19 12.16    Compiling tokio-util v0.7.19
+#19 12.24    Compiling tokio-rustls v0.26.4
+#19 12.44    Compiling zstd-sys v2.0.16+zstd.1.5.7
+#19 12.72    Compiling toml_datetime v0.7.5+spec-1.1.0
+#19 12.93    Compiling h2 v0.4.19
+#19 13.09    Compiling tower v0.5.3
+#19 13.63    Compiling serde_spanned v1.1.1
+#19 13.71    Compiling toml_writer v1.1.2+spec-1.1.0
+#19 13.85    Compiling winnow v0.7.15
+#19 14.01    Compiling regalloc2 v0.15.2
+#19 15.27    Compiling toml v0.9.12+spec-1.1.0
+#19 16.68    Compiling hyper v1.11.0
+#19 18.52    Compiling hyper-util v0.1.20
+#19 19.57    Compiling object v0.39.1
+#19 20.35    Compiling pulley-interpreter v47.0.4
+#19 20.67    Compiling signature v2.2.0
+#19 20.76    Compiling rustc-demangle v0.1.28
+#19 21.17    Compiling crossbeam-deque v0.8.7
+#19 21.35    Compiling base64ct v1.8.3
+#19 21.59    Compiling zstd-safe v7.2.4
+#19 21.78    Compiling pem-rfc7468 v0.7.0
+#19 22.06    Compiling fs-set-times v0.20.3
+#19 22.17    Compiling wamn-execution-contract v0.1.0 (/build/apps/platform/execution/contract)
+#19 23.16    Compiling tokio-stream v0.1.19
+#19 23.59    Compiling wasmtime-environ v47.0.4
+#19 24.46    Compiling rustix-linux-procfs v0.1.1
+#19 24.65    Compiling rustc_version v0.4.1
+#19 24.90    Compiling const-oid v0.9.6
+#19 25.02    Compiling rayon-core v1.13.0
+#19 25.15    Compiling der v0.7.10
+#19 26.52    Compiling cranelift-codegen v0.134.4
+#19 28.19    Compiling curve25519-dalek v4.1.3
+#19 28.52    Compiling postgres-types v0.2.14
+#19 29.11    Compiling wit-parser v0.252.0
+#19 29.27    Compiling dirs-sys-next v0.1.2
+#19 29.50    Compiling wasmtime-internal-cache v47.0.4
+#19 29.74    Compiling tokio-postgres v0.7.18
+#19 32.73    Compiling wasmtime-internal-wit-bindgen v47.0.4
+#19 34.49    Compiling directories-next v2.0.0
+#19 34.61    Compiling zstd v0.13.3
+#19 35.40    Compiling spki v0.7.3
+#19 35.45    Compiling hyper-rustls v0.27.9
+#19 35.55    Compiling tower-http v0.6.11
+#19 35.66    Compiling wasmtime v47.0.4
+#19 35.87    Compiling wamn-event-wire v0.1.0 (/build/apps/platform/events/wire)
+#19 35.95    Compiling curve25519-dalek-derive v0.1.1
+#19 36.76    Compiling reqwest v0.13.4
+#19 37.52    Compiling pkcs8 v0.10.2
+#19 37.73    Compiling wasmtime-internal-component-macro v47.0.4
+#19 39.70    Compiling rayon v1.12.0
+#19 41.64    Compiling wasmtime-internal-fiber v47.0.4
+#19 41.74    Compiling ed25519 v2.2.3
+#19 41.86    Compiling addr2line v0.26.1
+#19 41.87    Compiling memfd v0.6.5
+#19 42.06    Compiling wasmtime-internal-jit-icache-coherence v47.0.4
+#19 42.13    Compiling wasmparser v0.253.0
+#19 42.24    Compiling unicode-segmentation v1.13.3
+#19 42.44    Compiling axum v0.8.9
+#19 42.62    Compiling ed25519-dalek v2.2.0
+#19 42.86    Compiling wiggle-generate v47.0.4
+#19 44.47    Compiling cap-primitives v4.0.3
+#19 45.21    Compiling signatory v0.27.1
+#19 45.36    Compiling hyper-timeout v0.5.2
+#19 45.51    Compiling wasmparser v0.254.0
+#19 45.81    Compiling data-encoding v2.11.0
+#19 46.57    Compiling wasmtime-internal-unwinder v47.0.4
+#19 46.82    Compiling cranelift-native v0.134.4
+#19 46.93    Compiling cranelift-frontend v0.134.4
+#19 47.85    Compiling wasmtime-internal-cranelift v47.0.4
+#19 54.97    Compiling wamn-component-policy v0.1.0 (/build/crates/platform/component-policy)
+#19 55.21    Compiling wamn-catalog v0.1.0 (/build/crates/catalog/model)
+#19 55.37    Compiling wasm-encoder v0.253.0
+#19 56.90 warning: function `canonical_serialized` is never used
+#19 56.90    --> crates/catalog/model/src/lib.rs:791:4
+#19 56.90     |
+#19 56.90 791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+#19 56.90     |    ^^^^^^^^^^^^^^^^^^^^
+#19 56.90     |
+#19 56.90     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#19 56.90 
+#19 57.23    Compiling nkeys v0.4.5
+#19 57.42    Compiling tonic v0.14.6
+#19 60.30 warning: `wamn-catalog` (lib) generated 1 warning
+#19 60.30    Compiling cap-std v4.0.3
+#19 60.55    Compiling wiggle-macro v47.0.4
+#19 61.00    Compiling wamn-schema-introspection v0.1.0 (/build/crates/schema/introspection)
+#19 62.10    Compiling tryhard v0.5.2
+#19 62.23    Compiling wamn-pg-core v0.1.0 (/build/crates/platform/pg-core)
+#19 62.31    Compiling async-nats v0.49.1
+#19 63.74    Compiling opentelemetry_sdk v0.31.0
+#19 64.20    Compiling wamn-schema-generator v0.1.0 (/build/crates/schema/generator)
+#19 67.59    Compiling wiggle v47.0.4
+#19 67.92    Compiling wasmtime-wasi-io v47.0.4
+#19 69.16    Compiling cap-primitives v3.4.6
+#19 69.91    Compiling cap-fs-ext v4.0.3
+#19 69.98    Compiling tonic-prost v0.14.6
+#19 70.12    Compiling wasm-metadata v0.253.0
+#19 70.46    Compiling wasm-encoder v0.254.0
+#19 72.39    Compiling wit-parser v0.253.0
+#19 73.05    Compiling jsonwebtoken v10.4.0
+#19 74.49    Compiling wamn-control-registry v0.1.0 (/build/crates/control/registry)
+#19 74.79    Compiling oci-client v0.17.0
+#19 74.97    Compiling wit-component v0.253.0
+#19 77.35    Compiling wasm-metadata v0.254.0
+#19 77.46    Compiling opentelemetry-proto v0.31.0
+#19 77.70    Compiling wasmtime-wasi v47.0.4
+#19 78.62    Compiling cap-std v3.4.6
+#19 78.88    Compiling wamn-run-state v0.1.0 (/build/crates/execution/run-state)
+#19 79.05    Compiling wit-parser v0.254.0
+#19 80.14    Compiling castaway v0.2.4
+#19 80.22    Compiling combine v4.6.8
+#19 80.39    Compiling deadpool-runtime v0.3.1
+#19 80.51    Compiling strum_macros v0.28.0
+#19 82.97    Compiling unicode-width v0.2.2
+#19 83.17    Compiling static_assertions v1.1.0
+#19 83.22    Compiling signal-hook v0.3.18
+#19 83.34    Compiling spin v0.10.1
+#19 83.50    Compiling crc-fast v1.10.0
+#19 84.40    Compiling redis v0.27.6
+#19 85.28    Compiling moka v0.12.16
+#19 85.69    Compiling compact_str v0.9.1
+#19 86.15    Compiling unicode-truncate v2.0.1
+#19 86.26    Compiling strum v0.28.0
+#19 86.29    Compiling wit-component v0.254.0
+#19 86.34    Compiling deadpool v0.13.1
+#19 86.57    Compiling opentelemetry-otlp v0.31.1
+#19 87.42    Compiling wamn-control-provision v0.1.0 (/build/crates/control/provision)
+#19 89.23    Compiling cap-net-ext v3.4.6
+#19 89.39    Compiling oci-wasm v0.6.0
+#19 89.88    Compiling convert_case v0.10.0
+#19 90.17    Compiling tempfile v3.27.0
+#19 90.54    Compiling kasuari v0.4.12
+#19 91.14    Compiling lru v0.18.4
+#19 91.29    Compiling itertools v0.15.0
+#19 91.57    Compiling quick-xml v0.41.0
+#19 91.60    Compiling instability v0.3.13
+#19 91.73    Compiling ratatui-core v0.1.2
+#19 92.82    Compiling derive_more-impl v2.1.1
+#19 93.37    Compiling object_store v0.14.1
+#19 93.38    Compiling deadpool-postgres v0.14.2
+#19 93.80    Compiling wamn-router v0.1.0 (/build/crates/execution/router)
+#19 94.84    Compiling wamn-platform-identity v0.1.0 (/build/crates/identity/platform)
+#19 95.01    Compiling indoc v2.0.7
+#19 95.36    Compiling litrs v1.0.0
+#19 95.87    Compiling document-features v0.2.12
+#19 96.43    Compiling signal-hook-mio v0.2.5
+#19 96.50    Compiling derive_more v2.1.1
+#19 96.54    Compiling crossterm v0.29.0
+#19 96.63    Compiling line-clipping v0.3.8
+#19 96.85    Compiling ratatui-widgets v0.3.2
+#19 97.82    Compiling ratatui-crossterm v0.1.2
+#19 97.96    Compiling wamn-event-reg v0.1.0 (/build/apps/platform/events/registration)
+#19 98.50    Compiling wamn-client v0.1.0 (/build/crates/client/core)
+#19 98.54    Compiling wamn-authoring-model v0.1.0 (/build/crates/authoring/model)
+#19 99.83    Compiling wamn-client-tui v0.1.0 (/build/crates/client/tui)
+#19 101.0    Compiling wamn-schema-control v0.1.0 (/build/crates/schema/control)
+#19 101.9    Compiling wasmtime-wasi-http v47.0.4
+#19 102.0    Compiling ratatui v0.30.2
+#19 102.2    Compiling yasna v0.6.0
+#19 102.9    Compiling pem v3.0.6
+#19 103.2    Compiling rcgen v0.14.8
+#19 104.1    Compiling wamn-client-terminal v0.1.0 (/build/crates/client/terminal)
+#19 104.1    Compiling unsafe-libyaml v0.2.11
+#19 104.9    Compiling serde_yaml v0.9.34+deprecated
+#19 106.0    Compiling wamn-proof-system v0.1.0 (/build/tests/system)
+#19 106.2    Compiling wamn-test-infrastructure v0.1.0 (/build/test-support/infrastructure)
+#19 106.6    Compiling pg_walstream v0.8.0 (https://github.com/dkkloimwieder/pg-walstream?rev=0b007cd627bb913d4b159c705a106b6d4152c91a#0b007cd6)
+#19 109.2    Compiling wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)
+#19 148.2    Compiling wamn-runtime v0.1.0 (/build/crates/platform/runtime)
+#19 149.1 warning: the item `Future` is imported redundantly
+#19 149.1  --> crates/platform/runtime/src/connection_authority.rs:3:5
+#19 149.1   |
+#19 149.1 3 | use std::future::Future;
+#19 149.1   |     ^^^^^^^^^^^^^^^^^^^
+#19 149.1   |
+#19 149.1  --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+#19 149.1   |
+#19 149.1   = note: the item `Future` is already defined here
+#19 149.1   |
+#19 149.1   = note: requested on the command line with `-W redundant-imports`
+#19 149.1 
+#19 160.1 warning: constant `HTTP_CONTRACT` is never used
+#19 160.1   --> crates/platform/runtime/src/plugins/connection_http.rs:56:7
+#19 160.1    |
+#19 160.1 56 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+#19 160.1    |       ^^^^^^^^^^^^^
+#19 160.1    |
+#19 160.1    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#19 160.1 
+#19 160.1 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 160.1    --> crates/platform/runtime/src/plugins/connection_http.rs:131:1
+#19 160.1     |
+#19 160.1 131 | / pub struct ConnectionHttp {
+#19 160.1 132 | |     postgres: Arc<WamnPostgres>,
+#19 160.1 133 | |     transport: Arc<HttpTransport>,
+#19 160.1 134 | |     vault: Arc<WamnCredentials>,
+#19 160.1 ...   |
+#19 160.1 151 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+#19 160.1 152 | | }
+#19 160.1     | |_^
+#19 160.1     |
+#19 160.1     = note: requested on the command line with `-W missing-debug-implementations`
+#19 160.1 
+#19 160.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 160.2   --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+#19 160.2    |
+#19 160.2 27 | / pub struct WamnCredentials {
+#19 160.2 28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+#19 160.2 29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+#19 160.2 30 | |     /// config-shaped).
+#19 160.2 ...  |
+#19 160.2 33 | |     projects: HashMap<String, HashMap<String, String>>,
+#19 160.2 34 | | }
+#19 160.2    | |_^
+#19 160.2 
+#19 160.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 160.2    --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:507:1
+#19 160.2     |
+#19 160.2 507 | / pub struct WamnJetstream {
+#19 160.2 508 | |     nats_url: Option<String>,
+#19 160.2 509 | |     stream_replicas: Option<usize>,
+#19 160.2 510 | |     dup_window_secs: Option<u64>,
+#19 160.2 ...   |
+#19 160.2 536 | |     release: Option<Arc<ReleaseManifestWeld>>,
+#19 160.2 537 | | }
+#19 160.2     | |_^
+#19 160.2 
+#19 160.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 160.2    --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+#19 160.2     |
+#19 160.2 213 | / pub struct Capture {
+#19 160.2 214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+#19 160.2 215 | | }
+#19 160.2     | |_^
+#19 160.2 
+#19 160.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 160.2    --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+#19 160.2     |
+#19 160.2 235 | / pub struct WamnLogging {
+#19 160.2 236 | |     /// component id → host-trusted {tenant, project}.
+#19 160.2 237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+#19 160.2 238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+#19 160.2 ...   |
+#19 160.2 243 | |     _drain: tokio::task::JoinHandle<()>,
+#19 160.2 244 | | }
+#19 160.2     | |_^
+#19 160.2 
+#19 160.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 160.2    --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:54:1
+#19 160.2     |
+#19 160.2  54 | / pub struct WamnPostgres {
+#19 160.2  55 | |     /// Resolves a project id → its database connection + policy.
+#19 160.2  56 | |     provider: Arc<dyn CredentialProvider>,
+#19 160.2  57 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+#19 160.2 ...   |
+#19 160.2 117 | |     pub(super) bind_counters: super::BindCounters,
+#19 160.2 118 | | }
+#19 160.2     | |_^
+#19 160.2 
+#19 160.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 160.2    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:248:1
+#19 160.2     |
+#19 160.2 248 | / pub struct StaticCredentialProvider {
+#19 160.2 249 | |     projects: HashMap<String, ProjectConfig>,
+#19 160.2 250 | | }
+#19 160.2     | |_^
+#19 160.2 
+#19 160.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 160.2    --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:423:1
+#19 160.2     |
+#19 160.2 423 | / pub struct K8sSecretProvider {
+#19 160.2 424 | |     pub namespace: String,
+#19 160.2 425 | | }
+#19 160.2     | |_^
+#19 160.2 
+#19 160.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 160.2    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+#19 160.2     |
+#19 160.2  99 | / pub struct PgTransaction {
+#19 160.2 100 | |     state: SharedTxnState,
+#19 160.2 101 | |     destroyed: Arc<AtomicU64>,
+#19 160.2 102 | |     cursor_seq: u32,
+#19 160.2 103 | |     /// Row limit of the project this transaction's connection belongs to.
+#19 160.2 104 | |     row_limit: u64,
+#19 160.2 105 | | }
+#19 160.2     | |_^
+#19 160.2 
+#19 160.2 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 160.2    --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+#19 160.2     |
+#19 160.2 145 | / pub struct PgCursor {
+#19 160.2 146 | |     state: SharedTxnState,
+#19 160.2 147 | |     destroyed: Arc<AtomicU64>,
+#19 160.2 148 | |     name: String,
+#19 160.2 149 | | }
+#19 160.2     | |_^
+#19 160.2 
+#19 168.0    Compiling wamn-ctl v0.1.0 (/build/services/ctl)
+#19 170.7    Compiling wamn-execution-host v0.1.0 (/build/crates/execution/host)
+#19 172.2    Compiling wamn-scenario-worker v0.1.0 (/build/services/scenario-worker)
+#19 173.3 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 173.3    --> services/scenario-worker/src/authoring.rs:218:1
+#19 173.3     |
+#19 173.3 218 | / pub struct InternalAuthoringBackend {
+#19 173.3 219 | |     authority: InternalDevAdmin,
+#19 173.3 220 | |     client: Client,
+#19 173.3 221 | |     connection_task: tokio::task::JoinHandle<()>,
+#19 173.3 222 | |     tenant_id: Box<str>,
+#19 173.3 223 | |     source_schema: BareSchemaName,
+#19 173.3 224 | | }
+#19 173.3     | |_^
+#19 173.3     |
+#19 173.3     = note: requested on the command line with `-W missing-debug-implementations`
+#19 173.3 
+#19 173.3 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 173.3    --> services/scenario-worker/src/store/admission.rs:316:1
+#19 173.3     |
+#19 173.3 316 | / pub struct AdmissionSurface {
+#19 173.3 317 | |     /// The explicit credential and exact server-side predicates are retained so
+#19 173.3 318 | |     /// every replacement physical connection is checked identically.
+#19 173.3 319 | |     probe: CredentialExactnessProbe,
+#19 173.3 ...   |
+#19 173.3 322 | |     tenant_id: Box<str>,
+#19 173.3 323 | | }
+#19 173.3     | |_^
+#19 173.3 
+#19 176.0 warning: `wamn-scenario-worker` (lib) generated 2 warnings
+#19 177.1 warning: function `run_once_stages` is never used
+#19 177.1    --> services/ctl/src/dev.rs:604:10
+#19 177.1     |
+#19 177.1 604 | async fn run_once_stages<R>(
+#19 177.1     |          ^^^^^^^^^^^^^^^
+#19 177.1     |
+#19 177.1     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#19 177.1 
+#19 177.1 warning: function `verify_source_package_with_client` is never used
+#19 177.1     --> services/ctl/src/push_component.rs:1301:10
+#19 177.1      |
+#19 177.1 1301 | async fn verify_source_package_with_client(
+#19 177.1      |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+#19 177.1 
+#19 177.3 warning: `wamn-runtime` (lib) generated 12 warnings
+#19 180.0    Compiling wamn-gate-harness v0.1.0 (/build/test-support/harness)
+#19 180.8 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 180.8   --> test-support/harness/src/ceiling.rs:72:1
+#19 180.8    |
+#19 180.8 72 | / pub struct Ramp {
+#19 180.8 73 | |     tolerance: f64,
+#19 180.8 74 | |     max_levels: usize,
+#19 180.8 75 | |     levels: Vec<LevelStats>,
+#19 180.8 ...  |
+#19 180.8 82 | |     retrying: bool,
+#19 180.8 83 | | }
+#19 180.8    | |_^
+#19 180.8    |
+#19 180.8    = note: requested on the command line with `-W missing-debug-implementations`
+#19 180.8 
+#19 181.9    Compiling wamn-proof-conformance v0.1.0 (/build/tests/conformance)
+#19 182.2 warning: `wamn-gate-harness` (lib) generated 1 warning
+#19 184.0    Compiling wamn-proof-integration v0.1.0 (/build/tests/integration)
+#19 184.5 warning: unused import: `anyhow::Context as _`
+#19 184.5   --> tests/integration/src/agent_pilot/runner/process.rs:10:5
+#19 184.5    |
+#19 184.5 10 | use anyhow::Context as _;
+#19 184.5    |     ^^^^^^^^^^^^^^^^^^^^
+#19 184.5    |
+#19 184.5    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+#19 184.5 
+#19 186.2    Compiling wamn-host v0.1.0 (/build/services/host)
+#19 187.0 warning: `wamn-ctl` (lib) generated 2 warnings
+#19 189.3 warning: function `models` is never used
+#19 189.3   --> tests/integration/src/measurement_schema.rs:25:8
+#19 189.3    |
+#19 189.3 25 | pub fn models(schema: &str) -> Vec<ManagedModel> {
+#19 189.3    |        ^^^^^^
+#19 189.3    |
+#19 189.3    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+#19 189.3 
+#19 189.3 warning: field `release` is never read
+#19 189.3    --> tests/integration/src/trusted_http_route.rs:110:16
+#19 189.3     |
+#19 189.3 105 | pub struct TrustedHttpRoute {
+#19 189.3     |            ---------------- field in this struct
+#19 189.3 ...
+#19 189.3 110 |     pub(crate) release: Arc<ReleaseManifestWeld>,
+#19 189.3     |                ^^^^^^^
+#19 189.3 
+#19 189.4 warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+#19 189.4    --> tests/integration/src/trusted_http_route.rs:105:1
+#19 189.4     |
+#19 189.4 105 | / pub struct TrustedHttpRoute {
+#19 189.4 106 | |     pub driver: Arc<RouterDriver>,
+#19 189.4 107 | |     /// The same welded release the driver authorizes. Callers that exercise a
+#19 189.4 108 | |     /// release-owned ingress plugin must share this exact weld rather than mint
+#19 189.4 ...   |
+#19 189.4 116 | |     pub wiring_hash: String,
+#19 189.4 117 | | }
+#19 189.4     | |_^
+#19 189.4     |
+#19 189.4     = note: requested on the command line with `-W missing-debug-implementations`
+#19 189.4 
+#19 194.5 warning: `wamn-proof-integration` (lib) generated 4 warnings (run `cargo fix --lib -p wamn-proof-integration` to apply 1 suggestion)
+#19 194.5    Compiling wamn-gates v0.1.0 (/build/tests/orchestrator)
+#19 196.6     Finished `dev` profile [unoptimized + debuginfo] target(s) in 3m 16s
+#19 DONE 198.4s
+
+#20 [base 2/2] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates  && rm -rf /var/lib/apt/lists/*
+#20 CACHED
+
+#21 [host 1/1] COPY --from=native /native-output/wamn-host /usr/local/bin/wamn-host
+#21 DONE 0.4s
+
+#22 [gates 1/1] COPY --from=native /native-output/wamn-gates /usr/local/bin/wamn-gates
+#22 DONE 0.3s
+
+#23 exporting to image
+#23 exporting layers
+#23 exporting layers 0.9s done
+#23 writing image sha256:ca7f0e1b2275007a43bfd8784e19daa4a733d7893b148aa1a2cc012c0071063c done
+#23 naming to docker.io/library/wamn-gates:rc-cc729d9eafeb-702254-debug 0.0s done
+#23 DONE 0.9s
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 DONE 0.0s
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.43kB done
+#1 DONE 0.1s
+
+#2 [internal] load metadata for docker.io/library/debian:trixie-slim
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/rust:1.98-trixie
+#3 DONE 0.0s
+
+#4 [internal] load .dockerignore
+#4 transferring context: 242B done
+#4 DONE 0.0s
+
+#5 [base 1/2] FROM docker.io/library/debian:trixie-slim
+#5 DONE 0.0s
+
+#6 [native  1/13] FROM docker.io/library/rust:1.98-trixie
+#6 DONE 0.0s
+
+#7 [internal] load build context
+#7 transferring context: 101.61kB 0.0s done
+#7 DONE 0.1s
+
+#8 [native  4/13] COPY Cargo.toml Cargo.lock ./
+#8 CACHED
+
+#9 [native 11/13] COPY tests ./tests
+#9 CACHED
+
+#10 [native  8/13] COPY crates ./crates
+#10 CACHED
+
+#11 [native  7/13] COPY apps ./apps
+#11 CACHED
+
+#12 [native  3/13] WORKDIR /build
+#12 CACHED
+
+#13 [native  6/13] COPY .cargo ./.cargo
+#13 CACHED
+
+#14 [native  9/13] COPY services ./services
+#14 CACHED
+
+#15 [native 13/13] RUN --mount=type=cache,id=wamn-rc-cargo-registry,target=/usr/local/cargo/registry,sharing=locked     --mount=type=cache,id=wamn-rc-cargo-git,target=/usr/local/cargo/git,sharing=locked     --mount=type=cache,id=wamn-rc-debug-target,target=/build/target,sharing=locked     RUSTC_WRAPPER= cargo build --locked -p wamn-gates -p wamn-host  && install -D -m 0755 target/debug/wamn-host /native-output/wamn-host  && install -D -m 0755 target/debug/wamn-gates /native-output/wamn-gates
+#15 CACHED
+
+#16 [native  5/13] COPY Dockerfile ./Dockerfile
+#16 CACHED
+
+#17 [native  2/13] RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git  && rm -rf /var/lib/apt/lists/*
+#17 CACHED
+
+#18 [native 12/13] COPY deploy ./deploy
+#18 CACHED
+
+#19 [native 10/13] COPY test-support ./test-support
+#19 CACHED
+
+#20 [base 2/2] RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates  && rm -rf /var/lib/apt/lists/*
+#20 CACHED
+
+#21 [host 1/1] COPY --from=native /native-output/wamn-host /usr/local/bin/wamn-host
+#21 CACHED
+
+#22 exporting to image
+#22 exporting layers done
+#22 writing image sha256:32ffaa60d24cb7e09d3620d2a450c08ac19e09255cf36e7909d67986d38e3484 done
+#22 naming to docker.io/library/wamn-host:rc-cc729d9eafeb-702254-debug
+#22 naming to docker.io/library/wamn-host:rc-cc729d9eafeb-702254-debug 0.0s done
+#22 DONE 0.1s
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from m1-postgres.Dockerfile
+#1 transferring dockerfile: 418B done
+#1 WARN: FromPlatformFlagConstDisallowed: FROM --platform flag should not use constant value "linux/amd64" (line 1)
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/postgres:18.6-trixie@sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/1] FROM docker.io/library/postgres:18.6-trixie@sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a
+#4 CACHED
+
+#5 exporting to image
+#5 exporting layers done
+#5 writing image sha256:9a1a67579dc39ae2790d10ac66102510a1644bbe96f995aa722acf9168b95574
+#5 writing image sha256:9a1a67579dc39ae2790d10ac66102510a1644bbe96f995aa722acf9168b95574 0.0s done
+#5 naming to docker.io/library/wamn-postgres:rc-cc729d9eafeb-702254 0.0s done
+#5 DONE 0.1s
+
+ [33m1 warning found (use docker --debug to expand):
+[0m - FromPlatformFlagConstDisallowed: FROM --platform flag should not use constant value "linux/amd64" (line 1)

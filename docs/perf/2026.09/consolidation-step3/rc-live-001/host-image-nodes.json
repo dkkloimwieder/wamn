@@ -1,0 +1,17 @@
+[
+  {
+    "config_id": "sha256:32ffaa60d24cb7e09d3620d2a450c08ac19e09255cf36e7909d67986d38e3484",
+    "node": "wamn-rc-control-plane",
+    "runtime_digest": "sha256:46e9ea35ab00bd5c978e33b5146cbda3d278e45874409f08d1afed9ea123341c"
+  },
+  {
+    "config_id": "sha256:32ffaa60d24cb7e09d3620d2a450c08ac19e09255cf36e7909d67986d38e3484",
+    "node": "wamn-rc-worker",
+    "runtime_digest": "sha256:46e9ea35ab00bd5c978e33b5146cbda3d278e45874409f08d1afed9ea123341c"
+  },
+  {
+    "config_id": "sha256:32ffaa60d24cb7e09d3620d2a450c08ac19e09255cf36e7909d67986d38e3484",
+    "node": "wamn-rc-worker2",
+    "runtime_digest": "sha256:46e9ea35ab00bd5c978e33b5146cbda3d278e45874409f08d1afed9ea123341c"
+  }
+]
