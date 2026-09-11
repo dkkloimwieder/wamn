@@ -1,0 +1,138 @@
+{
+  "loop": {
+    "pass": false,
+    "stages": 0,
+    "base_url": ""
+  },
+  "paths": {
+    "pass": true,
+    "outside": [],
+    "tracker": ""
+  },
+  "steps": [
+    {
+      "id": "create-carrier",
+      "must": true,
+      "invariant": "DOCK-0",
+      "pass": false,
+      "evidence": "not run: the loop served no release"
+    },
+    {
+      "id": "create-dock",
+      "must": true,
+      "invariant": "DOCK-0",
+      "pass": false,
+      "evidence": "not run: the loop served no release"
+    },
+    {
+      "id": "book-first",
+      "must": true,
+      "invariant": "DOCK-2",
+      "pass": false,
+      "evidence": "not run: the loop served no release"
+    },
+    {
+      "id": "book-replay",
+      "must": true,
+      "invariant": "DOCK-2",
+      "pass": false,
+      "evidence": "not run: the loop served no release"
+    },
+    {
+      "id": "book-changed-body",
+      "must": true,
+      "invariant": "DOCK-3",
+      "pass": false,
+      "evidence": "not run: the loop served no release"
+    },
+    {
+      "id": "overlap-a",
+      "must": false,
+      "invariant": "DOCK-1",
+      "pass": false,
+      "evidence": "not run: the loop served no release"
+    },
+    {
+      "id": "overlap-b",
+      "must": false,
+      "invariant": "DOCK-1",
+      "pass": false,
+      "evidence": "not run: the loop served no release"
+    },
+    {
+      "id": "overlap-refuses-exactly-one",
+      "must": true,
+      "invariant": "DOCK-1",
+      "pass": false,
+      "evidence": "not run: the loop served no release"
+    },
+    {
+      "id": "check-in",
+      "must": true,
+      "invariant": "DOCK-4",
+      "pass": false,
+      "evidence": "not run: the loop served no release"
+    },
+    {
+      "id": "check-in-unknown",
+      "must": true,
+      "invariant": "DOCK-5",
+      "pass": false,
+      "evidence": "not run: the loop served no release"
+    },
+    {
+      "id": "list-one-dock-one-day",
+      "must": true,
+      "invariant": "DOCK-6",
+      "pass": false,
+      "evidence": "not run: the loop served no release"
+    }
+  ],
+  "checks": {
+    "claim-replay": "not run: the loop served no release",
+    "row_version": "pass",
+    "naming": "pass"
+  },
+  "fences": {
+    "capability-surface": {
+      "source": "Admit",
+      "verdict": "Admit passed"
+    },
+    "additive-migration": {
+      "source": "Migrate",
+      "verdict": "Migrate passed"
+    },
+    "no-environment-data": {
+      "source": "Admit",
+      "verdict": "unfenced"
+    }
+  },
+  "teardown": {
+    "verification_database_removed": true
+  },
+  "human": {
+    "Q3": null,
+    "Q7": null,
+    "Q8": null,
+    "Q9": null,
+    "Q10.activated": null,
+    "Q11": null,
+    "E1": null,
+    "E2": null,
+    "E3": null,
+    "E4": null,
+    "E5": null,
+    "E6": null,
+    "E7": null,
+    "H-1": null,
+    "H-2": null,
+    "H-3": null,
+    "H-4": null,
+    "H-5": null,
+    "H-6": null,
+    "S-1": null,
+    "S-2": null,
+    "S-3": null
+  },
+  "outcome": "FAIL (items: loop steps: create-carrier,create-dock,book-first,book-replay,book-changed-body,overlap-refuses-exactly-one,check-in,check-in-unknown,list-one-dock-one-day)"
+}

@@ -1,0 +1,104 @@
+{
+  "input_kind": "tracked",
+  "run": "031-claude-dock-appointments",
+  "argv": [
+    "/home/kaalin/dev/wamn/target/debug/wamn-gates",
+    "agent-pilot-grade",
+    "--replay",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/tracked/031-claude-dock-appointments"
+  ],
+  "cwd": "/home/kaalin/dev/wamn",
+  "environment": {
+    "removed_prefixes": [
+      "WAMN",
+      "PG",
+      "OTEL"
+    ],
+    "removed_names": [
+      "DATABASE_URL"
+    ],
+    "XDG_CACHE_HOME": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/unused-lookups/cache",
+    "XDG_STATE_HOME": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/unused-lookups/state"
+  },
+  "exit_code": 10,
+  "elapsed_seconds": 0.008118629455566406,
+  "original_outcome": "PASS",
+  "replay_outcome": null,
+  "outcome_equal": null,
+  "original_step_count": 11,
+  "replay_step_count": null,
+  "changed_step_verdicts": [],
+  "section_comparison": {},
+  "original_inputs": {
+    "checklist.json": {
+      "source": "docs/experiments/agent-authoring/031-claude-dock-appointments/checklist.json",
+      "sha256": "c07f8e2f177e2d11ea40abc6803237b549548d27ea1cbad49b39876de20f7fb4",
+      "bytes": 3466,
+      "mode": 384
+    },
+    "fixture/SCENARIO.md": {
+      "source": "docs/experiments/agent-authoring/031-claude-dock-appointments/fixture/SCENARIO.md",
+      "sha256": "0c8a26b0c50c4586dd0f0d6d09d429e379236023c59ebad10f1e38c70b9199d8",
+      "bytes": 3819,
+      "mode": 436
+    },
+    "grade/dev.out": {
+      "source": "docs/experiments/agent-authoring/031-claude-dock-appointments/grade/dev.out",
+      "sha256": "446796088bc4d47e5616b6d58765406da6d79a02ee775f43d9185b221461069d",
+      "bytes": 14639,
+      "mode": 384
+    },
+    "grade/http.jsonl": {
+      "source": "docs/experiments/agent-authoring/031-claude-dock-appointments/grade/http.jsonl",
+      "sha256": "2862759d210cbeb1621ec4e0a4507bc90b0423d7986e4cfb76235e8f51acad39",
+      "bytes": 4410,
+      "mode": 384
+    },
+    "grade/overlap-refuses-exactly-one-overlap-a.out": {
+      "source": "docs/experiments/agent-authoring/031-claude-dock-appointments/grade/overlap-refuses-exactly-one-overlap-a.out",
+      "sha256": "7995d6c2b27ee05c7dc5dca2823b2f023fb290665d2d3907911c31bfe2cdefea",
+      "bytes": 147,
+      "mode": 384
+    },
+    "grade/overlap-refuses-exactly-one-overlap-b.out": {
+      "source": "docs/experiments/agent-authoring/031-claude-dock-appointments/grade/overlap-refuses-exactly-one-overlap-b.out",
+      "sha256": "ba5123964be35b02f546064d84d5872d087e87bff7b2c9d2eceab35900049750",
+      "bytes": 134,
+      "mode": 384
+    },
+    "grade/results.json": {
+      "source": "docs/experiments/agent-authoring/031-claude-dock-appointments/grade/results.json",
+      "sha256": "946a3b1f47966ab2a20985e8c2bb960029df62d6103752589e6f7eda18bfbdec",
+      "bytes": 1181,
+      "mode": 384
+    },
+    "run.json": {
+      "source": "docs/experiments/agent-authoring/031-claude-dock-appointments/run.json",
+      "sha256": "659e4a7b2c6867f0b032e9b16731779efb8fa937b177678b2af698b08e7bca36",
+      "bytes": 1032,
+      "mode": 384
+    },
+    "task.json": {
+      "source": "docs/experiments/agent-authoring/031-claude-dock-appointments/task.json",
+      "sha256": "fb49ca5de394814a2e1a54d1e6eba15e111fe2f1c9e3fcc8b8e33e92bf6aefa6",
+      "bytes": 458,
+      "mode": 384
+    }
+  },
+  "missing_tracked_inputs": [
+    "fixture/steps.json"
+  ],
+  "copied_original_inputs_unchanged": {
+    "checklist.json": true,
+    "fixture/SCENARIO.md": true,
+    "grade/dev.out": true,
+    "grade/http.jsonl": true,
+    "grade/overlap-refuses-exactly-one-overlap-a.out": true,
+    "grade/overlap-refuses-exactly-one-overlap-b.out": true,
+    "grade/results.json": true,
+    "run.json": true,
+    "task.json": true
+  },
+  "missing_worktree_and_contracts": true,
+  "stderr": "agent-pilot-grade: no grade block for 031-claude-dock-appointments in /home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/unused-lookups/cache/wamn-pilot/grading/031 or /home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/tracked/031-claude-dock-appointments/task.json\n"
+}

@@ -1,0 +1,90 @@
+{
+  "input_kind": "tracked",
+  "run": "030-claude-dock-appointments",
+  "argv": [
+    "/home/kaalin/dev/wamn/target/debug/wamn-gates",
+    "agent-pilot-grade",
+    "--replay",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/tracked/030-claude-dock-appointments"
+  ],
+  "cwd": "/home/kaalin/dev/wamn",
+  "environment": {
+    "removed_prefixes": [
+      "WAMN",
+      "PG",
+      "OTEL"
+    ],
+    "removed_names": [
+      "DATABASE_URL"
+    ],
+    "XDG_CACHE_HOME": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/unused-lookups/cache",
+    "XDG_STATE_HOME": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/unused-lookups/state"
+  },
+  "exit_code": 10,
+  "elapsed_seconds": 0.016321659088134766,
+  "original_outcome": "FAIL (items: loop steps: create-carrier,create-dock,book-first,book-replay,book-changed-body,overlap-refuses-exactly-one,check-in,check-in-unknown,list-one-dock-one-day)",
+  "replay_outcome": null,
+  "outcome_equal": null,
+  "original_step_count": 11,
+  "replay_step_count": null,
+  "changed_step_verdicts": [],
+  "section_comparison": {},
+  "original_inputs": {
+    "checklist.json": {
+      "source": "docs/experiments/agent-authoring/030-claude-dock-appointments/checklist.json",
+      "sha256": "a809d1375962e718c4525f9b6c1142bf8f0e13167255e6f48b9c712890f8de71",
+      "bytes": 3329,
+      "mode": 384
+    },
+    "fixture/SCENARIO.md": {
+      "source": "docs/experiments/agent-authoring/030-claude-dock-appointments/fixture/SCENARIO.md",
+      "sha256": "7a48e948e5beb170501102fa72d15595ed08e984bd862d29d02a78bb23f8d899",
+      "bytes": 2829,
+      "mode": 436
+    },
+    "grade/dev.out": {
+      "source": "docs/experiments/agent-authoring/030-claude-dock-appointments/grade/dev.out",
+      "sha256": "9fd301be2b8c460d05cbd173f6d74985a3e7599cae2ee243aac3d7545e7fe6e3",
+      "bytes": 717,
+      "mode": 384
+    },
+    "grade/http.jsonl": {
+      "source": "docs/experiments/agent-authoring/030-claude-dock-appointments/grade/http.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "mode": 384
+    },
+    "grade/results.json": {
+      "source": "docs/experiments/agent-authoring/030-claude-dock-appointments/grade/results.json",
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+      "bytes": 3,
+      "mode": 384
+    },
+    "run.json": {
+      "source": "docs/experiments/agent-authoring/030-claude-dock-appointments/run.json",
+      "sha256": "740b8676859b33872935e3dff30956316c7b5d2c921cbf17bcfc8250bb5f6655",
+      "bytes": 966,
+      "mode": 384
+    },
+    "task.json": {
+      "source": "docs/experiments/agent-authoring/030-claude-dock-appointments/task.json",
+      "sha256": "fb49ca5de394814a2e1a54d1e6eba15e111fe2f1c9e3fcc8b8e33e92bf6aefa6",
+      "bytes": 458,
+      "mode": 384
+    }
+  },
+  "missing_tracked_inputs": [
+    "fixture/steps.json"
+  ],
+  "copied_original_inputs_unchanged": {
+    "checklist.json": true,
+    "fixture/SCENARIO.md": true,
+    "grade/dev.out": true,
+    "grade/http.jsonl": true,
+    "grade/results.json": true,
+    "run.json": true,
+    "task.json": true
+  },
+  "missing_worktree_and_contracts": true,
+  "stderr": "agent-pilot-grade: no grade block for 030-claude-dock-appointments in /home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/unused-lookups/cache/wamn-pilot/grading/030 or /home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/tracked/030-claude-dock-appointments/task.json\n"
+}

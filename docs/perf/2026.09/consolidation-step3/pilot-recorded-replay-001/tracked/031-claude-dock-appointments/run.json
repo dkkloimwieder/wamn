@@ -1,0 +1,46 @@
+{
+  "run": "031-claude-dock-appointments",
+  "commit": "dfc0d6d107b230d2445a7ba0fec74941c75bf04b",
+  "task": "dock-appointments",
+  "agent": "claude",
+  "standup": "dev-env",
+  "machine": {
+    "load_at_launch": "12.49 15.37 9.70",
+    "cores": 8
+  },
+  "build": {
+    "cached": false,
+    "seconds": 911,
+    "target": "/home/kaalin/.cache/wamn-pilot/target-20bbb298"
+  },
+  "up": {
+    "ok": true,
+    "baseline_stages": 0
+  },
+  "launch": {
+    "agent": "claude",
+    "binary": "claude",
+    "started": "2026-09-07T21:59:48Z",
+    "ended": "2026-09-07T22:34:10Z",
+    "exit": 0,
+    "reason": "completed",
+    "model_id": "claude-opus-5[1m]",
+    "session_id": "0dbc3387-c680-4e55-8915-a4e9cbe4c203",
+    "output_style": "simple-english:simple-english"
+  },
+  "verbs": {
+    "wamn_dev_runs": 6,
+    "wamn_dev_failed": 2,
+    "wamn_dev_hold_runs": 4,
+    "first_green_minutes": 22
+  },
+  "git": {
+    "commits": 1,
+    "files_changed": 107,
+    "outside_allowed_paths": []
+  },
+  "down": {
+    "ok": true,
+    "residue": []
+  }
+}

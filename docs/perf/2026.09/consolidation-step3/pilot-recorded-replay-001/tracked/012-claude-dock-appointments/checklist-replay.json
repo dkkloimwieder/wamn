@@ -1,0 +1,153 @@
+{
+  "checks": {
+    "claim-replay": "no step declares claim-replay",
+    "naming": "pass",
+    "row_version": "pass"
+  },
+  "contract": {
+    "deviations": 0,
+    "state": "not-checked"
+  },
+  "fences": {
+    "additive-migration": {
+      "source": "Migrate",
+      "verdict": "Migrate passed"
+    },
+    "capability-surface": {
+      "source": "Admit",
+      "verdict": "Admit passed"
+    },
+    "no-environment-data": {
+      "source": "Admit",
+      "verdict": "unfenced"
+    }
+  },
+  "human": {
+    "E1": null,
+    "E2": null,
+    "E3": null,
+    "E4": null,
+    "E5": null,
+    "E6": null,
+    "E7": null,
+    "H-1": null,
+    "H-2": null,
+    "H-3": null,
+    "H-4": null,
+    "H-5": null,
+    "H-6": null,
+    "Q10.activated": null,
+    "Q11": null,
+    "Q3": null,
+    "Q7": null,
+    "Q8": null,
+    "Q9": null,
+    "S-1": null,
+    "S-2": null,
+    "S-3": null
+  },
+  "loop": {
+    "base_url": "http://127.0.0.1:38899",
+    "pass": true,
+    "stages": 12
+  },
+  "outcome": "PASS",
+  "paths": {
+    "outside": [],
+    "pass": true,
+    "tracker": ""
+  },
+  "steps": [
+    {
+      "evidence": "status=200 present:carrier_id=15bed841-9e0e-43ba-ace5-ce439d554c22",
+      "id": "create-carrier",
+      "invariant": "DOCK-0",
+      "must": true,
+      "pass": true,
+      "proves": ""
+    },
+    {
+      "evidence": "status=200 present:dock_id=6f5531ed-857d-4fba-a827-7907362c96c8",
+      "id": "create-dock",
+      "invariant": "DOCK-0",
+      "must": true,
+      "pass": true,
+      "proves": ""
+    },
+    {
+      "evidence": "status=200 present:appointment_id=606ed30a-2751-48a1-9608-982b2f675ddd present:status=scheduled",
+      "id": "book-first",
+      "invariant": "DOCK-2",
+      "must": true,
+      "pass": true,
+      "proves": ""
+    },
+    {
+      "evidence": "status=200 appointment_id=606ed30a-2751-48a1-9608-982b2f675ddd vs 606ed30a-2751-48a1-9608-982b2f675ddd",
+      "id": "book-replay",
+      "invariant": "DOCK-2",
+      "must": true,
+      "pass": true,
+      "proves": ""
+    },
+    {
+      "evidence": "status=200 error_code=idempotency_conflict",
+      "id": "book-changed-body",
+      "invariant": "DOCK-3",
+      "must": true,
+      "pass": true,
+      "proves": ""
+    },
+    {
+      "evidence": "status=200 present:appointment_id=c02b4caf-5013-437b-ae62-48e07d821fff",
+      "id": "overlap-a",
+      "invariant": "DOCK-1",
+      "must": false,
+      "pass": true,
+      "proves": ""
+    },
+    {
+      "evidence": "status=200 no value item",
+      "id": "overlap-b",
+      "invariant": "DOCK-1",
+      "must": false,
+      "pass": false,
+      "proves": ""
+    },
+    {
+      "evidence": "concurrent refusals=1 expected=1 code=slot_unavailable",
+      "id": "overlap-refuses-exactly-one",
+      "invariant": "DOCK-1",
+      "must": true,
+      "pass": true,
+      "proves": ""
+    },
+    {
+      "evidence": "status=200 arrived_at=2026-10-01T09:07:00Z want=2026-10-01T09:07:00Z status=arrived want=arrived",
+      "id": "check-in",
+      "invariant": "DOCK-4",
+      "must": true,
+      "pass": true,
+      "proves": ""
+    },
+    {
+      "evidence": "status=200 error_code=not_found",
+      "id": "check-in-unknown",
+      "invariant": "DOCK-5",
+      "must": true,
+      "pass": true,
+      "proves": ""
+    },
+    {
+      "evidence": "status=200 sorted_by:appointments.slot_start=true",
+      "id": "list-one-dock-one-day",
+      "invariant": "DOCK-6",
+      "must": true,
+      "pass": true,
+      "proves": ""
+    }
+  ],
+  "teardown": {
+    "verification_database_removed": true
+  }
+}

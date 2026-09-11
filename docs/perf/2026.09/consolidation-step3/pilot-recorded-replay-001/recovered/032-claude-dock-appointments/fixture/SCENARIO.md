@@ -1,0 +1,95 @@
+# Dock appointments
+
+Carriers book dock appointments. A dock has slots; two appointments on one dock
+cannot overlap. Booking is a command with an idempotency key; a replay returns
+the same appointment id. An appointment moves scheduled to arrived to departed;
+check-in records the actual arrival time. Dispatch needs a list of one dock's
+appointments for a day, sortable by slot, filterable by status.
+
+## Invariants
+
+Each invariant carries an id. The exit gate names these ids, so the words below
+are the contract and the implementation is yours.
+
+- DOCK-0. Creating a carrier and creating a dock each return an identity the
+  later operations address them by.
+- DOCK-1. Two appointments on one dock never overlap in time. Whatever else
+  happens, the database does not hold an overlapping pair.
+- DOCK-2. Booking twice with the same idempotency key and the same request
+  returns the same appointment id, and the second call writes nothing new.
+- DOCK-3. Booking with an idempotency key already used, and a different
+  request, refuses with the typed error `idempotency_conflict`.
+- DOCK-4. Check-in moves an appointment from scheduled to arrived and records
+  the actual arrival time the caller supplies.
+- DOCK-5. Check-in against an appointment that does not exist refuses with the
+  typed error `not_found`.
+- DOCK-6. Dispatch lists one dock's appointments for one day, filtered by
+  status and sorted by slot start, and the order is the slot order.
+
+## Refusals the caller must see
+
+These codes are pinned because the exit gate names them. Any other refusal your
+package needs is yours to name.
+
+| code | when |
+|---|---|
+| `slot_unavailable` | the requested slot overlaps an appointment already on that dock |
+| `idempotency_conflict` | the idempotency key was used with a different request |
+| `not_found` | the named appointment does not exist |
+
+## Wire names
+
+The exit gate calls these operations by name, so they are pinned. Everything
+about how they work is yours.
+
+| operation | what it does |
+|---|---|
+| `carrier.create` | create a carrier |
+| `dock.create` | create a dock |
+| `appointment.book` | book a slot on a dock for a carrier; takes an idempotency key |
+| `appointment.check_in` | record an arrival against a booked appointment |
+| `appointment.query` | list one dock's appointments for one day, filtered and sorted |
+
+## The data contract
+
+An integrator is handed the field names and types, so they are pinned too.
+Everything about how you store and compute them is yours. The exit gate asserts
+this table against the contracts your package publishes. Every cell below is a
+list of `name` type pairs.
+
+| operation | input | result |
+|---|---|---|
+| `carrier.create` | `name` text | `carrier_id` uuid |
+| `dock.create` | `name` text | `dock_id` uuid |
+| `appointment.book` | `carrier_id` uuid, `dock_id` uuid, `slot_start` timestamp, `slot_end` timestamp | `appointment_id` uuid, `status` text |
+| `appointment.check_in` | `appointment_id` uuid, `arrived_at` timestamp | `status` text, `arrived_at` timestamp |
+| `appointment.query` | `dock_id` uuid, `day` date, `status` text | `appointments` list, `slot_start` timestamp |
+
+A timestamp arrives as any RFC 3339 value and is emitted as UTC RFC 3339 with
+exactly six fractional digits and a Z offset, as in
+`2026-10-01T09:00:00.000000Z`. The platform canonicalizes a representation on
+the way in and then hashes the canonical bytes, so a caller that re-spells a
+timestamp on retry sends the same command. A date is `2026-10-01`.
+
+Each canonical form has one name, and a command operation publishes the name in
+its input contract. The exit gate asserts these two rows the same way it asserts
+the table above.
+
+| scalar | canonical form |
+|---|---|
+| `timestamp` | `utc_rfc3339_six_fractional_digits` |
+| `uuid` | `lowercase_hyphenated` |
+
+The envelope is platform law rather than scenario content. Every command carries
+`request_id` and `idempotency_key`, and the caller supplies both.
+
+## What the words mean here
+
+- A dock is a physical door. It belongs to nothing above it in this scenario.
+- A slot is a start time and an end time. Two slots overlap when one starts
+  before the other ends and ends after the other starts.
+- An appointment joins one carrier to one dock for one slot.
+- Status is one of scheduled, arrived or departed. It only moves forward.
+
+There is no reference data. Create carriers and docks through your own
+operations before you book anything.

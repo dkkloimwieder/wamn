@@ -1,0 +1,189 @@
+{
+  "input_kind": "tracked",
+  "run": "011-claude-dock-appointments",
+  "argv": [
+    "/home/kaalin/dev/wamn/target/debug/wamn-gates",
+    "agent-pilot-grade",
+    "--replay",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/tracked/011-claude-dock-appointments"
+  ],
+  "cwd": "/home/kaalin/dev/wamn",
+  "environment": {
+    "removed_prefixes": [
+      "WAMN",
+      "PG",
+      "OTEL"
+    ],
+    "removed_names": [
+      "DATABASE_URL"
+    ],
+    "XDG_CACHE_HOME": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/unused-lookups/cache",
+    "XDG_STATE_HOME": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/unused-lookups/state"
+  },
+  "exit_code": 0,
+  "elapsed_seconds": 0.01618790626525879,
+  "original_outcome": "PASS",
+  "replay_outcome": "PASS",
+  "outcome_equal": true,
+  "original_step_count": 11,
+  "replay_step_count": 11,
+  "changed_step_verdicts": [],
+  "section_comparison": {
+    "loop": {
+      "original": {
+        "pass": true,
+        "stages": 12,
+        "base_url": "http://127.0.0.1:42267"
+      },
+      "replay": {
+        "base_url": "http://127.0.0.1:42267",
+        "pass": true,
+        "stages": 12
+      },
+      "equal": true
+    },
+    "paths": {
+      "original": {
+        "pass": true,
+        "outside": [],
+        "tracker": ""
+      },
+      "replay": {
+        "outside": [],
+        "pass": true,
+        "tracker": ""
+      },
+      "equal": true
+    },
+    "checks": {
+      "original": {
+        "claim-replay": "no replay step in the fixture",
+        "row_version": "pass",
+        "naming": "pass"
+      },
+      "replay": {
+        "claim-replay": "no step declares claim-replay",
+        "naming": "pass",
+        "row_version": "pass"
+      },
+      "equal": false
+    },
+    "fences": {
+      "original": {
+        "capability-surface": {
+          "source": "Admit",
+          "verdict": "Admit passed"
+        },
+        "additive-migration": {
+          "source": "Migrate",
+          "verdict": "Migrate passed"
+        },
+        "no-environment-data": {
+          "source": "Admit",
+          "verdict": "unfenced"
+        }
+      },
+      "replay": {
+        "additive-migration": {
+          "source": "Migrate",
+          "verdict": "Migrate passed"
+        },
+        "capability-surface": {
+          "source": "Admit",
+          "verdict": "Admit passed"
+        },
+        "no-environment-data": {
+          "source": "Admit",
+          "verdict": "unfenced"
+        }
+      },
+      "equal": true
+    },
+    "teardown": {
+      "original": {
+        "verification_database_removed": true
+      },
+      "replay": {
+        "verification_database_removed": true
+      },
+      "equal": true
+    }
+  },
+  "original_inputs": {
+    "checklist.json": {
+      "source": "docs/experiments/agent-authoring/011-claude-dock-appointments/checklist.json",
+      "sha256": "6b29ebb20ef5e0e7c88c8c18d5b5c533e565235137f4c7ece928fdfcae1cbc0a",
+      "bytes": 3233,
+      "mode": 384
+    },
+    "fixture/SCENARIO.md": {
+      "source": "docs/experiments/agent-authoring/011-claude-dock-appointments/fixture/SCENARIO.md",
+      "sha256": "7a48e948e5beb170501102fa72d15595ed08e984bd862d29d02a78bb23f8d899",
+      "bytes": 2829,
+      "mode": 436
+    },
+    "fixture/steps.json": {
+      "source": "docs/experiments/agent-authoring/011-claude-dock-appointments/fixture/steps.json",
+      "sha256": "ce44d9b205f78c0e2ce6910ab39e5b0a1db6eab3a02e740a548c6d841d91ac12",
+      "bytes": 5148,
+      "mode": 436
+    },
+    "grade/dev.out": {
+      "source": "docs/experiments/agent-authoring/011-claude-dock-appointments/grade/dev.out",
+      "sha256": "9d55f47e8f6a7ac7ba6f993d7de8bc1202927876372821634f5ac5640a0d630d",
+      "bytes": 14631,
+      "mode": 384
+    },
+    "grade/http.jsonl": {
+      "source": "docs/experiments/agent-authoring/011-claude-dock-appointments/grade/http.jsonl",
+      "sha256": "76a8b02dbae93a0e9992364974543c6ca0971b9743a9017a9869c65217333d25",
+      "bytes": 4025,
+      "mode": 384
+    },
+    "grade/overlap-refuses-exactly-one-overlap-a.out": {
+      "source": "docs/experiments/agent-authoring/011-claude-dock-appointments/grade/overlap-refuses-exactly-one-overlap-a.out",
+      "sha256": "9d4deb231a65c605e1e51d302a3ea987d8cfef88dc25c1bca59702e23e6d737c",
+      "bytes": 147,
+      "mode": 384
+    },
+    "grade/overlap-refuses-exactly-one-overlap-b.out": {
+      "source": "docs/experiments/agent-authoring/011-claude-dock-appointments/grade/overlap-refuses-exactly-one-overlap-b.out",
+      "sha256": "9851b09ddf9de29f036f9f8d9761d91d45f83d0b8db8f036e9260d53eae122d6",
+      "bytes": 169,
+      "mode": 384
+    },
+    "grade/results.json": {
+      "source": "docs/experiments/agent-authoring/011-claude-dock-appointments/grade/results.json",
+      "sha256": "36453df8ea4b66e591b88ad8ba0606c00e9960f10684d9526fec4efaf701e01c",
+      "bytes": 1258,
+      "mode": 384
+    },
+    "run.json": {
+      "source": "docs/experiments/agent-authoring/011-claude-dock-appointments/run.json",
+      "sha256": "e3015e5d249b7410522d4fdb35fff8bc09ca2abc9318c33a8bfcce287ca0c8f8",
+      "bytes": 962,
+      "mode": 384
+    },
+    "task.json": {
+      "source": "docs/experiments/agent-authoring/011-claude-dock-appointments/task.json",
+      "sha256": "8dc693d7743759c2f0867c0a6a06e06de44c97a2af4501e4573bec497d7fba44",
+      "bytes": 697,
+      "mode": 384
+    }
+  },
+  "missing_tracked_inputs": [],
+  "copied_original_inputs_unchanged": {
+    "checklist.json": true,
+    "fixture/SCENARIO.md": true,
+    "fixture/steps.json": true,
+    "grade/dev.out": true,
+    "grade/http.jsonl": true,
+    "grade/overlap-refuses-exactly-one-overlap-a.out": true,
+    "grade/overlap-refuses-exactly-one-overlap-b.out": true,
+    "grade/results.json": true,
+    "run.json": true,
+    "task.json": true
+  },
+  "missing_worktree_and_contracts": true,
+  "stderr": "[grade] PASS\n"
+}

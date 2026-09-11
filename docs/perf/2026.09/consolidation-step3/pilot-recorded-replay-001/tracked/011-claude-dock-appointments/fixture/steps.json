@@ -1,0 +1,244 @@
+[
+  {
+    "id": "create-carrier",
+    "must": true,
+    "invariant": "DOCK-0",
+    "route": {
+      "from": "attachments",
+      "operation": "carrier.create"
+    },
+    "body": {
+      "name": "Northbound Freight"
+    },
+    "expect": {
+      "status": 200,
+      "item": "value",
+      "present": [
+        "carrier_id"
+      ]
+    }
+  },
+  {
+    "id": "create-dock",
+    "must": true,
+    "invariant": "DOCK-0",
+    "route": {
+      "from": "attachments",
+      "operation": "dock.create"
+    },
+    "body": {
+      "name": "Door 7"
+    },
+    "expect": {
+      "status": 200,
+      "item": "value",
+      "present": [
+        "dock_id"
+      ]
+    }
+  },
+  {
+    "id": "book-first",
+    "must": true,
+    "invariant": "DOCK-2",
+    "route": {
+      "from": "attachments",
+      "operation": "appointment.book"
+    },
+    "body": {
+      "idempotency_key": "dock-gate-book-1",
+      "slot_start": "2026-10-01T09:00:00Z",
+      "slot_end": "2026-10-01T10:00:00Z"
+    },
+    "reuse": {
+      "carrier_id": "create-carrier.value.carrier_id",
+      "dock_id": "create-dock.value.dock_id"
+    },
+    "expect": {
+      "status": 200,
+      "item": "value",
+      "present": [
+        "appointment_id",
+        "status"
+      ]
+    }
+  },
+  {
+    "id": "book-replay",
+    "must": true,
+    "invariant": "DOCK-2",
+    "route": {
+      "from": "attachments",
+      "operation": "appointment.book"
+    },
+    "body": {
+      "idempotency_key": "dock-gate-book-1",
+      "slot_start": "2026-10-01T09:00:00Z",
+      "slot_end": "2026-10-01T10:00:00Z"
+    },
+    "reuse": {
+      "carrier_id": "create-carrier.value.carrier_id",
+      "dock_id": "create-dock.value.dock_id"
+    },
+    "expect": {
+      "status": 200,
+      "item": "value",
+      "equals": {
+        "appointment_id": "book-first.value.appointment_id"
+      }
+    }
+  },
+  {
+    "id": "book-changed-body",
+    "must": true,
+    "invariant": "DOCK-3",
+    "route": {
+      "from": "attachments",
+      "operation": "appointment.book"
+    },
+    "body": {
+      "idempotency_key": "dock-gate-book-1",
+      "slot_start": "2026-10-01T14:00:00Z",
+      "slot_end": "2026-10-01T15:00:00Z"
+    },
+    "reuse": {
+      "carrier_id": "create-carrier.value.carrier_id",
+      "dock_id": "create-dock.value.dock_id"
+    },
+    "expect": {
+      "status": 200,
+      "item": "error",
+      "error_code": "idempotency_conflict"
+    }
+  },
+  {
+    "id": "overlap-a",
+    "must": false,
+    "invariant": "DOCK-1",
+    "route": {
+      "from": "attachments",
+      "operation": "appointment.book"
+    },
+    "body": {
+      "idempotency_key": "dock-gate-overlap-a",
+      "slot_start": "2026-10-01T11:00:00Z",
+      "slot_end": "2026-10-01T12:00:00Z"
+    },
+    "reuse": {
+      "carrier_id": "create-carrier.value.carrier_id",
+      "dock_id": "create-dock.value.dock_id"
+    },
+    "expect": {
+      "status": 200,
+      "item": "value",
+      "present": [
+        "appointment_id"
+      ]
+    }
+  },
+  {
+    "id": "overlap-b",
+    "must": false,
+    "invariant": "DOCK-1",
+    "route": {
+      "from": "attachments",
+      "operation": "appointment.book"
+    },
+    "body": {
+      "idempotency_key": "dock-gate-overlap-b",
+      "slot_start": "2026-10-01T11:30:00Z",
+      "slot_end": "2026-10-01T12:30:00Z"
+    },
+    "reuse": {
+      "carrier_id": "create-carrier.value.carrier_id",
+      "dock_id": "create-dock.value.dock_id"
+    },
+    "expect": {
+      "status": 200,
+      "item": "value",
+      "present": [
+        "appointment_id"
+      ]
+    }
+  },
+  {
+    "id": "overlap-refuses-exactly-one",
+    "must": true,
+    "invariant": "DOCK-1",
+    "concurrent": [
+      "overlap-a",
+      "overlap-b"
+    ],
+    "expect": {
+      "exactly_one": {
+        "error_code": "slot_unavailable"
+      }
+    }
+  },
+  {
+    "id": "check-in",
+    "must": true,
+    "invariant": "DOCK-4",
+    "route": {
+      "from": "attachments",
+      "operation": "appointment.check_in"
+    },
+    "body": {
+      "arrived_at": "2026-10-01T09:07:00Z"
+    },
+    "reuse": {
+      "appointment_id": "book-first.value.appointment_id"
+    },
+    "expect": {
+      "status": 200,
+      "item": "value",
+      "value": {
+        "status": "arrived",
+        "arrived_at": "2026-10-01T09:07:00Z"
+      }
+    }
+  },
+  {
+    "id": "check-in-unknown",
+    "must": true,
+    "invariant": "DOCK-5",
+    "route": {
+      "from": "attachments",
+      "operation": "appointment.check_in"
+    },
+    "body": {
+      "appointment_id": "00000000-0000-0000-0000-000000000000",
+      "arrived_at": "2026-10-01T09:07:00Z"
+    },
+    "expect": {
+      "status": 200,
+      "item": "error",
+      "error_code": "not_found"
+    }
+  },
+  {
+    "id": "list-one-dock-one-day",
+    "must": true,
+    "invariant": "DOCK-6",
+    "route": {
+      "from": "attachments",
+      "operation": "appointment.query"
+    },
+    "body": {
+      "day": "2026-10-01",
+      "status": "scheduled"
+    },
+    "reuse": {
+      "dock_id": "create-dock.value.dock_id"
+    },
+    "expect": {
+      "status": 200,
+      "item": "value",
+      "sorted_by": {
+        "path": "appointments",
+        "field": "slot_start",
+        "direction": "asc"
+      }
+    }
+  }
+]

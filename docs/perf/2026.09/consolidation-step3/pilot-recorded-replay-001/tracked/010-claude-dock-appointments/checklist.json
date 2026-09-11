@@ -1,0 +1,138 @@
+{
+  "loop": {
+    "pass": true,
+    "stages": 12,
+    "base_url": "http://127.0.0.1:46123"
+  },
+  "paths": {
+    "pass": true,
+    "outside": [],
+    "tracker": ""
+  },
+  "steps": [
+    {
+      "id": "create-carrier",
+      "must": true,
+      "invariant": "DOCK-0",
+      "pass": true,
+      "evidence": "status=200 present:carrier_id=16d28506-cbdf-42ba-b05d-33ada5b3a48e"
+    },
+    {
+      "id": "create-dock",
+      "must": true,
+      "invariant": "DOCK-0",
+      "pass": true,
+      "evidence": "status=200 present:dock_id=ca90d012-9aba-4951-8b46-2e811600b303"
+    },
+    {
+      "id": "book-first",
+      "must": true,
+      "invariant": "DOCK-2",
+      "pass": true,
+      "evidence": "status=200 present:appointment_id=8c9c7176-e773-4dd8-9d46-99e1577becd4 present:status=scheduled"
+    },
+    {
+      "id": "book-replay",
+      "must": true,
+      "invariant": "DOCK-2",
+      "pass": true,
+      "evidence": "status=200 appointment_id=8c9c7176-e773-4dd8-9d46-99e1577becd4 vs 8c9c7176-e773-4dd8-9d46-99e1577becd4"
+    },
+    {
+      "id": "book-changed-body",
+      "must": true,
+      "invariant": "DOCK-3",
+      "pass": true,
+      "evidence": "status=200 error_code=idempotency_conflict"
+    },
+    {
+      "id": "overlap-a",
+      "must": false,
+      "invariant": "DOCK-1",
+      "pass": true,
+      "evidence": "status=200 present:appointment_id=9b1b121e-45c8-4ddb-afa9-487430311f2c"
+    },
+    {
+      "id": "overlap-b",
+      "must": false,
+      "invariant": "DOCK-1",
+      "pass": false,
+      "evidence": "status=200 no value item"
+    },
+    {
+      "id": "overlap-refuses-exactly-one",
+      "must": true,
+      "invariant": "DOCK-1",
+      "pass": true,
+      "evidence": "concurrent refusals=1 expected=1 code=slot_unavailable"
+    },
+    {
+      "id": "check-in",
+      "must": true,
+      "invariant": "DOCK-4",
+      "pass": true,
+      "evidence": "status=200 arrived_at=2026-10-01T09:07:00Z want=2026-10-01T09:07:00Z status=arrived want=arrived"
+    },
+    {
+      "id": "check-in-unknown",
+      "must": true,
+      "invariant": "DOCK-5",
+      "pass": true,
+      "evidence": "status=200 error_code=not_found"
+    },
+    {
+      "id": "list-one-dock-one-day",
+      "must": true,
+      "invariant": "DOCK-6",
+      "pass": true,
+      "evidence": "status=200 sorted_by:appointments.slot_start=true"
+    }
+  ],
+  "checks": {
+    "claim-replay": "no replay step in the fixture",
+    "row_version": "pass",
+    "naming": "pass"
+  },
+  "fences": {
+    "capability-surface": {
+      "source": "Admit",
+      "verdict": "Admit passed"
+    },
+    "additive-migration": {
+      "source": "Migrate",
+      "verdict": "Migrate passed"
+    },
+    "no-environment-data": {
+      "source": "Admit",
+      "verdict": "unfenced"
+    }
+  },
+  "teardown": {
+    "verification_database_removed": true
+  },
+  "human": {
+    "Q3": null,
+    "Q7": null,
+    "Q8": null,
+    "Q9": null,
+    "Q10.activated": null,
+    "Q11": null,
+    "E1": null,
+    "E2": null,
+    "E3": null,
+    "E4": null,
+    "E5": null,
+    "E6": null,
+    "E7": null,
+    "H-1": null,
+    "H-2": null,
+    "H-3": null,
+    "H-4": null,
+    "H-5": null,
+    "H-6": null,
+    "S-1": null,
+    "S-2": null,
+    "S-3": null
+  },
+  "outcome": "PASS"
+}

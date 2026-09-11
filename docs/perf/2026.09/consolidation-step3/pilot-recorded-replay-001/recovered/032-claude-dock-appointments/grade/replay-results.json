@@ -1,0 +1,75 @@
+[
+  {
+    "id": "create-carrier",
+    "value": {
+      "carrier_id": "ad4c19c3-c497-4a50-9a37-00a9d8b8a194"
+    }
+  },
+  {
+    "id": "create-dock",
+    "value": {
+      "dock_id": "736bc871-b8c1-44e5-bb62-c77ad2d64827"
+    }
+  },
+  {
+    "id": "book-first",
+    "value": {
+      "appointment_id": "923871f0-a9ea-4a0b-9aa7-ac6c04d2c3c3",
+      "status": "scheduled"
+    }
+  },
+  {
+    "id": "book-replay",
+    "value": {
+      "appointment_id": "923871f0-a9ea-4a0b-9aa7-ac6c04d2c3c3",
+      "status": "scheduled"
+    }
+  },
+  {
+    "id": "book-changed-body",
+    "value": {}
+  },
+  {
+    "id": "overlap-a",
+    "value": {
+      "appointment_id": "90d374a8-d7ec-4b0d-b82b-ebc60fbd66c5",
+      "status": "scheduled"
+    }
+  },
+  {
+    "id": "overlap-b",
+    "value": {}
+  },
+  {
+    "id": "overlap-refuses-exactly-one",
+    "value": {}
+  },
+  {
+    "id": "check-in",
+    "value": {
+      "appointment_id": "923871f0-a9ea-4a0b-9aa7-ac6c04d2c3c3",
+      "arrived_at": "2026-10-01T09:07:00.000000Z",
+      "check_in_id": "ab81fb30-2fb7-47f3-8783-c8e49e0f89b6",
+      "status": "arrived"
+    }
+  },
+  {
+    "id": "check-in-unknown",
+    "value": {}
+  },
+  {
+    "id": "list-one-dock-one-day",
+    "value": {
+      "appointments": [
+        {
+          "appointment_id": "90d374a8-d7ec-4b0d-b82b-ebc60fbd66c5",
+          "carrier_id": "ad4c19c3-c497-4a50-9a37-00a9d8b8a194",
+          "dock_id": "736bc871-b8c1-44e5-bb62-c77ad2d64827",
+          "slot_end": "2026-10-01T12:00:00.000000Z",
+          "slot_start": "2026-10-01T11:00:00.000000Z",
+          "status": "scheduled"
+        }
+      ]
+    }
+  }
+]

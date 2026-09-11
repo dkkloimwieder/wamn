@@ -1,0 +1,189 @@
+{
+  "input_kind": "tracked",
+  "run": "010-claude-dock-appointments",
+  "argv": [
+    "/home/kaalin/dev/wamn/target/debug/wamn-gates",
+    "agent-pilot-grade",
+    "--replay",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/tracked/010-claude-dock-appointments"
+  ],
+  "cwd": "/home/kaalin/dev/wamn",
+  "environment": {
+    "removed_prefixes": [
+      "WAMN",
+      "PG",
+      "OTEL"
+    ],
+    "removed_names": [
+      "DATABASE_URL"
+    ],
+    "XDG_CACHE_HOME": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/unused-lookups/cache",
+    "XDG_STATE_HOME": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/pilot-recorded-replay-001/unused-lookups/state"
+  },
+  "exit_code": 0,
+  "elapsed_seconds": 0.016091585159301758,
+  "original_outcome": "PASS",
+  "replay_outcome": "PASS",
+  "outcome_equal": true,
+  "original_step_count": 11,
+  "replay_step_count": 11,
+  "changed_step_verdicts": [],
+  "section_comparison": {
+    "loop": {
+      "original": {
+        "pass": true,
+        "stages": 12,
+        "base_url": "http://127.0.0.1:46123"
+      },
+      "replay": {
+        "base_url": "http://127.0.0.1:46123",
+        "pass": true,
+        "stages": 12
+      },
+      "equal": true
+    },
+    "paths": {
+      "original": {
+        "pass": true,
+        "outside": [],
+        "tracker": ""
+      },
+      "replay": {
+        "outside": [],
+        "pass": true,
+        "tracker": ""
+      },
+      "equal": true
+    },
+    "checks": {
+      "original": {
+        "claim-replay": "no replay step in the fixture",
+        "row_version": "pass",
+        "naming": "pass"
+      },
+      "replay": {
+        "claim-replay": "no step declares claim-replay",
+        "naming": "pass",
+        "row_version": "pass"
+      },
+      "equal": false
+    },
+    "fences": {
+      "original": {
+        "capability-surface": {
+          "source": "Admit",
+          "verdict": "Admit passed"
+        },
+        "additive-migration": {
+          "source": "Migrate",
+          "verdict": "Migrate passed"
+        },
+        "no-environment-data": {
+          "source": "Admit",
+          "verdict": "unfenced"
+        }
+      },
+      "replay": {
+        "additive-migration": {
+          "source": "Migrate",
+          "verdict": "Migrate passed"
+        },
+        "capability-surface": {
+          "source": "Admit",
+          "verdict": "Admit passed"
+        },
+        "no-environment-data": {
+          "source": "Admit",
+          "verdict": "unfenced"
+        }
+      },
+      "equal": true
+    },
+    "teardown": {
+      "original": {
+        "verification_database_removed": true
+      },
+      "replay": {
+        "verification_database_removed": true
+      },
+      "equal": true
+    }
+  },
+  "original_inputs": {
+    "checklist.json": {
+      "source": "docs/experiments/agent-authoring/010-claude-dock-appointments/checklist.json",
+      "sha256": "16ae0259949002c5e953d60ffed1a4c090c46ed00ee995853538e37806598c80",
+      "bytes": 3233,
+      "mode": 384
+    },
+    "fixture/SCENARIO.md": {
+      "source": "docs/experiments/agent-authoring/010-claude-dock-appointments/fixture/SCENARIO.md",
+      "sha256": "7a48e948e5beb170501102fa72d15595ed08e984bd862d29d02a78bb23f8d899",
+      "bytes": 2829,
+      "mode": 436
+    },
+    "fixture/steps.json": {
+      "source": "docs/experiments/agent-authoring/010-claude-dock-appointments/fixture/steps.json",
+      "sha256": "ce44d9b205f78c0e2ce6910ab39e5b0a1db6eab3a02e740a548c6d841d91ac12",
+      "bytes": 5148,
+      "mode": 436
+    },
+    "grade/dev.out": {
+      "source": "docs/experiments/agent-authoring/010-claude-dock-appointments/grade/dev.out",
+      "sha256": "5d357443dfa0864f7fd0877a3b2af96b31ef28912f0ebd960ee10fdbd859dba3",
+      "bytes": 14640,
+      "mode": 384
+    },
+    "grade/http.jsonl": {
+      "source": "docs/experiments/agent-authoring/010-claude-dock-appointments/grade/http.jsonl",
+      "sha256": "fc9233e2eb9b4c37c050ae88e0ba2d3457b7f864ad0cc62b33122862783161bc",
+      "bytes": 4556,
+      "mode": 384
+    },
+    "grade/overlap-refuses-exactly-one-overlap-a.out": {
+      "source": "docs/experiments/agent-authoring/010-claude-dock-appointments/grade/overlap-refuses-exactly-one-overlap-a.out",
+      "sha256": "10d22147436b2a8638495885d10a1767eaef5541ed09985a4d637090e24bd113",
+      "bytes": 334,
+      "mode": 384
+    },
+    "grade/overlap-refuses-exactly-one-overlap-b.out": {
+      "source": "docs/experiments/agent-authoring/010-claude-dock-appointments/grade/overlap-refuses-exactly-one-overlap-b.out",
+      "sha256": "58ddfffde62b2a23aedf7c26db2de63178d17d4ea19a89d4b16f8cda625b9189",
+      "bytes": 172,
+      "mode": 384
+    },
+    "grade/results.json": {
+      "source": "docs/experiments/agent-authoring/010-claude-dock-appointments/grade/results.json",
+      "sha256": "05003fc1bf75c996fda8972552d7b46bd1ed32d3516f2520fd1929f84b8e8d2e",
+      "bytes": 1744,
+      "mode": 384
+    },
+    "run.json": {
+      "source": "docs/experiments/agent-authoring/010-claude-dock-appointments/run.json",
+      "sha256": "aee65560c2783409ca7d95617ac4c295e33f63a9d4e3dd4b9407507137cd6452",
+      "bytes": 962,
+      "mode": 384
+    },
+    "task.json": {
+      "source": "docs/experiments/agent-authoring/010-claude-dock-appointments/task.json",
+      "sha256": "8dc693d7743759c2f0867c0a6a06e06de44c97a2af4501e4573bec497d7fba44",
+      "bytes": 697,
+      "mode": 384
+    }
+  },
+  "missing_tracked_inputs": [],
+  "copied_original_inputs_unchanged": {
+    "checklist.json": true,
+    "fixture/SCENARIO.md": true,
+    "fixture/steps.json": true,
+    "grade/dev.out": true,
+    "grade/http.jsonl": true,
+    "grade/overlap-refuses-exactly-one-overlap-a.out": true,
+    "grade/overlap-refuses-exactly-one-overlap-b.out": true,
+    "grade/results.json": true,
+    "run.json": true,
+    "task.json": true
+  },
+  "missing_worktree_and_contracts": true,
+  "stderr": "[grade] PASS\n"
+}
