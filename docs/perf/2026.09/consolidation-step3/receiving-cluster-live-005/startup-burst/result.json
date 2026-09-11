@@ -1,0 +1,44 @@
+{
+  "cleanup": [
+    {
+      "exit_code": null,
+      "pid": 938163,
+      "signal_sent": true,
+      "wait_exceeded_host_grace": false
+    },
+    {
+      "exit_code": null,
+      "pid": 938111,
+      "signal_sent": true,
+      "wait_exceeded_host_grace": false
+    }
+  ],
+  "deployment_resources": {
+    "limits": {
+      "cpu": "6",
+      "memory": "4Gi"
+    },
+    "requests": {
+      "cpu": "2",
+      "memory": "256Mi"
+    }
+  },
+  "failure": "IO error: invalid peer certificate: UnknownIssuer: invalid peer certificate: UnknownIssuer",
+  "host_binary_sha256": "13d546dfe3417563f49d59e79be38b5848dfeb209edb70a0524db4bebd8c78f6",
+  "input_sha256": {
+    "Cargo.lock": "e3a928cfc0d456a5033cd57aa81ccfac5ae3f651812ad6835167b038cf485c97",
+    "Cargo.toml": "9de063865c3770e4d497aa4070729f569301b7582bf13debbb3afd4e773045a3",
+    "host-deployment.json": "2230bb26500fe99024f7001dac5c1126537154c94e5226de362b0303ec1e9194",
+    "production-workload.json": "0af3f2d2af6407aec525275dc7e1d4a208fb4796eac038f3014798e2b7b2e4dd"
+  },
+  "local_process_resource_limit": "inherits runner cgroup; not the Kubernetes 6-CPU quota",
+  "profile": "release",
+  "source": "25bece68bfe93b3948bc2a72903ff1c3c2af806f",
+  "source_requirements": {
+    "guest_memory_mode": "count",
+    "meter_mode": "duration",
+    "start_limit": 4,
+    "wasmtime_parallel_compilation": "Cargo.toml workspace Wasmtime features, captured by source SHA"
+  },
+  "verdict": "fail"
+}

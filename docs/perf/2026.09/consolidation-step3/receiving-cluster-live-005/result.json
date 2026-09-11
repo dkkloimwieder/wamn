@@ -1,0 +1,6 @@
+{
+  "cluster": "wamn-receiving-494bbd044d0d4c508583cf69d733583c",
+  "failure": "IO error: invalid peer certificate: UnknownIssuer: invalid peer certificate: UnknownIssuer",
+  "passed": false,
+  "source": "25bece68bfe93b3948bc2a72903ff1c3c2af806f"
+}
