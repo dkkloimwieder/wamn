@@ -19,7 +19,7 @@
 //!
 //! This module owns artifact transfer alone. Document admission — canonicality,
 //! format version, the release pair — stays with
-//! [`ReleaseManifestWeld`](crate::release_manifest::ReleaseManifestWeld).
+//! [`LoadedRelease`](crate::release_manifest::LoadedRelease).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -161,7 +161,7 @@ impl std::error::Error for ReleaseManifestFetchError {}
 /// OCI source returning only canonical manifest bytes the named digest addresses.
 ///
 /// A process pulls its one release once, during construction, and holds the
-/// verified bytes in its weld — so this is deliberately not a shared, cloneable
+/// verified bytes in its loaded release — so this is deliberately not a shared, cloneable
 /// service and owns no cache, retry policy or refresh.
 pub struct ReleaseManifestSource {
     client: OciClient,

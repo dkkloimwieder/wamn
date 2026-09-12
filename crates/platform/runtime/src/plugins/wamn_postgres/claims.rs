@@ -116,7 +116,7 @@ pub struct WamnPostgres {
 
 /// The release a pod carries — the `(effective release id, manifest digest)` pair
 /// derived from the verified content of its mounted serving manifest
-/// ([`ReleaseManifestWeld`](crate::release_manifest::ReleaseManifestWeld)).
+/// ([`LoadedRelease`](crate::release_manifest::LoadedRelease)).
 ///
 /// Admission pins the effective release. The production claim verifies that
 /// pin and records the claiming pod's manifest digest. Both values are
@@ -892,7 +892,7 @@ impl WamnPostgres {
     /// claim verifies its effective release against every run it leases and
     /// records the manifest digest write-once. The bench harness and live tests
     /// call this directly; the host path feeds it from the loaded
-    /// [`ReleaseManifestWeld`](crate::release_manifest::ReleaseManifestWeld),
+    /// [`LoadedRelease`](crate::release_manifest::LoadedRelease),
     /// whose pair is derived from verified manifest content. Absent leaves the
     /// claim recording nothing.
     ///
@@ -901,7 +901,7 @@ impl WamnPostgres {
     ///
     /// # Why effect authority needs no equality check against this record
     ///
-    /// The pair comes from the same welded object every reader resolves against,
+    /// The pair comes from the same loaded object every reader resolves against,
     /// so the digest recorded on a run IS the digest of the manifest the recording
     /// pod loaded — structurally, not because anything compares them (owner ruling
     /// `wamn-0h0g.15.102`, after `wamn-0h0g.15.103` struck the asserted carrier).

@@ -47,7 +47,7 @@ use crate::plugins::effect_span::{
     EFFECT_OPERATION, EffectIdentity, JETSTREAM_DURATION_MS, effect_span, record_effect_ms,
 };
 use crate::plugins::wamn_postgres::{DEFAULT_PROJECT, PROJECT_CONFIG_KEY, TENANT_CONFIG_KEY};
-use crate::release_manifest::ReleaseManifestWeld;
+use crate::release_manifest::LoadedRelease;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -71,7 +71,7 @@ pub const ENVIRONMENT_CONFIG_KEY: &str = "wamn.environment";
 /// Tenant, project, and environment are intentionally absent:
 /// [`WamnJetstream::publish_derived`] resolves them from the claim bound to
 /// `component_id`. `package_id` is supplied only by the native host caller from
-/// its welded release/run/wiring identity; it is not a guest WIT operand.
+/// its loaded release/run/wiring identity; it is not a guest WIT operand.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DerivedPublishRequest {
     pub component_id: String,
@@ -531,9 +531,9 @@ pub struct WamnJetstream {
     /// publish or an ack belonged to.
     claims: std::sync::RwLock<HashMap<String, JetstreamClaim>>,
     /// The release this process serves, held BY REFERENCE — reader 3 of the
-    /// release-manifest weld. `None` ⇒ this process carries no release; see
+    /// loaded release manifest. `None` ⇒ this process carries no release; see
     /// [`WamnJetstream::with_release`].
-    release: Option<Arc<ReleaseManifestWeld>>,
+    release: Option<Arc<LoadedRelease>>,
 }
 
 /// One component's bind-time tenant/project claim.
@@ -762,8 +762,8 @@ impl WamnJetstream {
     }
 
     /// Attach the release this process serves — reader 3 of the release-manifest
-    /// weld, consulted by reference. This plugin never loads, parses or
-    /// digest-verifies a manifest, and keeps no copy of one: the weld already
+    /// loaded release, consulted by reference. This plugin never loads, parses or
+    /// digest-verifies a manifest, and keeps no copy of one: the loaded release already
     /// holds the digest-named document for the life of the process, and a
     /// digest-named object has no stale state to refresh or invalidate.
     ///
@@ -775,14 +775,14 @@ impl WamnJetstream {
     /// the identity back to the guest sweep this gate took it from.
     ///
     /// The retained scheduler `doorbell::ring` does not require a release.
-    pub fn with_release(mut self, release: Option<Arc<ReleaseManifestWeld>>) -> Self {
+    pub fn with_release(mut self, release: Option<Arc<LoadedRelease>>) -> Self {
         self.release = release;
         self
     }
 
     /// The serving release's manifest, or `None` on a release-less process.
     fn serving_manifest(&self) -> Option<&ServingManifest> {
-        self.release.as_deref().map(ReleaseManifestWeld::manifest)
+        self.release.as_deref().map(LoadedRelease::manifest)
     }
 
     /// Register a validated doorbell execution target for a component id.
@@ -1198,7 +1198,7 @@ fn map_get_stream_err(stream: &str, e: &GetStreamError) -> JsError {
 }
 
 // ---------------------------------------------------------------------------
-// The release gate (reader 3 of the weld)
+// The release gate (reader 3 of the loaded release)
 // ---------------------------------------------------------------------------
 
 /// The named refusal class for a consumer bind the serving release does not

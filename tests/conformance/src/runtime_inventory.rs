@@ -6,20 +6,20 @@ use std::path::{Path, PathBuf};
 use url::Url;
 
 const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
-/// The release-manifest weld construction call, deliberately truncated before the
+/// The release manifest load call, deliberately truncated before the
 /// `(` so it matches `load` and `load_from` alike — the guard counts
 /// *construction*, not one spelling of it.
 ///
 /// Counted as raw text, like every other marker here, so prose in a host file that
 /// wrote this marker out in full would read as a second construction site. Host
 /// doc comments name the type and the method separately for that reason.
-const RELEASE_WELD_CONSTRUCTION: &str = "ReleaseManifestWeld::load";
+const RELEASE_LOAD_CONSTRUCTION: &str = "LoadedRelease::load";
 
 /// The two host processes, and per process the two positions that must hold:
-/// `(file, the text that reaches the weld, the first bind-capable text it must
+/// `(file, the text that reaches the loaded release, the first bind-capable text it must
 /// precede)`.
 ///
-/// wamn-0h0g.15.101 rules one weld instance PER PROCESS: the wash host serves
+/// wamn-0h0g.15.101 rules one loaded release instance PER PROCESS: the wash host serves
 /// flow-http routing and jetstream delivery, the executor serves the durable
 /// queue. Separate processes cannot share one object, so each constructs exactly
 /// once — and must do so before anything binds a component, because under ruling
@@ -30,8 +30,8 @@ const RELEASE_WELD_CONSTRUCTION: &str = "ReleaseManifestWeld::load";
 /// The second process used to be the in-process run host, reached through
 /// `load_plan_release`; `18ba72b6` deleted host plan supply and that symbol with
 /// it, so this entry named a function that existed nowhere and the guard proved
-/// nothing (wamn-nguw). Both surviving processes call the weld directly.
-const HOST_WELD_SITES: [(&str, &str, &str); 2] = [
+/// nothing (wamn-nguw). Both surviving processes call the loaded release directly.
+const HOST_RELEASE_LOAD_SITES: [(&str, &str, &str); 2] = [
     (
         "services/host/src/host.rs",
         "let release = load_release(",
@@ -54,14 +54,14 @@ const HOST_WELD_SITES: [(&str, &str, &str); 2] = [
 /// source of the pair.
 ///
 /// So the invariant that survives is not the COUNT but the SOURCE: wherever
-/// production builds a `ReleaseIdentity`, both halves are read off the weld. A
+/// production builds a `ReleaseIdentity`, both halves are read off the loaded release. A
 /// site that invented either half from anywhere else would restore the
 /// dual-representation bug the ruling closed — two carriers with nothing
 /// reconciling them, so a pod could stamp one release onto a run while resolving
 /// plans against another.
 const RELEASE_IDENTITY_CONSTRUCTION: &str = "ReleaseIdentity {";
 
-/// The two production sites that build the pair, and the weld expression each
+/// The two production sites that build the pair, and the loaded release expression each
 /// one must read both halves off.
 ///
 /// The per-run site is shared by both host processes through `RouterDriver`; the
@@ -80,8 +80,8 @@ const RELEASE_IDENTITY_SOURCE_SITES: [(&str, &str); 2] = [
 /// `wamn.router.delivery.errors`, but the bridge's `new` defaults its meter to
 /// `None` so a test can own its own provider — which means the series exist and
 /// stay permanently silent until the construction site opts in. `host::run`
-/// needs NATS and a release weld, so there is no runtime proof to take; this
-/// pins the wiring as raw text, the way the weld sites above are pinned.
+/// needs NATS and a loaded release. This test reads the construction source
+/// directly, as the release-load tests above do.
 ///
 /// `with_metrics` exists on no other type in this file's reach, so counting the
 /// call alone is enough — the builder is `#[must_use]` and consumed straight
@@ -122,7 +122,7 @@ fn validate_one(source: &str, marker: &str, seam: &str) -> Result<(), String> {
 }
 
 /// Everything before a file's terminal `#[cfg(test)] mod tests {`, or the whole
-/// file when it has none. Both shapes are valid for the host weld sites.
+/// file when it has none. Both shapes are valid for the host loaded release sites.
 fn production_half<'a>(source: &'a str, seam: &str) -> Result<&'a str, String> {
     match source.matches(CFG_TEST_MODULE).count() {
         0 => Ok(source),
@@ -136,12 +136,12 @@ fn production_half<'a>(source: &'a str, seam: &str) -> Result<&'a str, String> {
     }
 }
 
-fn validate_one_weld_site(source: &str, seam: &str) -> Result<(), String> {
+fn validate_one_release_load_site(source: &str, seam: &str) -> Result<(), String> {
     let production = production_half(source, seam)?;
-    validate_one(production, RELEASE_WELD_CONSTRUCTION, seam)
+    validate_one(production, RELEASE_LOAD_CONSTRUCTION, seam)
 }
 
-fn validate_weld_precedes_bind(
+fn validate_release_load_precedes_bind(
     source: &str,
     entry: &str,
     bind: &str,
@@ -149,7 +149,7 @@ fn validate_weld_precedes_bind(
 ) -> Result<(), String> {
     let production = production_half(source, seam)?;
     let Some(entry_at) = production.find(entry) else {
-        return Err(format!("{seam} must reach its weld through `{entry}`"));
+        return Err(format!("{seam} must reach its loaded release through `{entry}`"));
     };
     let Some(bind_at) = production.find(bind) else {
         return Err(format!(
@@ -166,13 +166,13 @@ fn validate_weld_precedes_bind(
     }
 }
 
-/// Every half of a production `ReleaseIdentity` is read off the weld.
+/// Every half of a production `ReleaseIdentity` is read off the loaded release.
 ///
 /// The literal's body is taken as the text between `ReleaseIdentity {` and the
 /// next `}` — every production construction is a flat struct literal of two
 /// scalar fields, so no nesting can hide inside it — and both field
-/// initializers must name `weld`, the expression that reaches this file's weld.
-fn validate_release_identity_from_weld(source: &str, weld: &str, seam: &str) -> Result<(), String> {
+/// initializers must name `loaded_release`, the expression that reaches this file's loaded release.
+fn validate_release_identity_from_loaded_release(source: &str, loaded_release: &str, seam: &str) -> Result<(), String> {
     let production = production_half(source, seam)?;
     validate_one(production, RELEASE_IDENTITY_CONSTRUCTION, seam)?;
     let opened = production
@@ -189,10 +189,10 @@ fn validate_release_identity_from_weld(source: &str, weld: &str, seam: &str) -> 
         let initializer = body
             .lines()
             .find(|line| line.trim_start().starts_with(&format!("{field}:")));
-        if !initializer.is_some_and(|line| line.contains(weld) && line.contains(field)) {
+        if !initializer.is_some_and(|line| line.contains(loaded_release) && line.contains(field)) {
             return Err(format!(
-                "{seam} must initialize `{field}` from `{weld}.{field}`; a pair read from \
-                 anywhere but the weld is a second carrier of the release identity the \
+                "{seam} must initialize `{field}` from `{loaded_release}.{field}`. A pair read from \
+                 anywhere but the loaded release is a second carrier of the release identity the \
                  verified manifest was made sole owner of (wamn-0h0g.15.102)"
             ));
         }
@@ -568,15 +568,15 @@ fn database_url_names_and_values_outside_component_environment_are_allowed() {
         .expect("host environment and arbitrary Secret fields are outside this guard");
 }
 
-/// wamn-0h0g.15.101: one release-manifest weld per host process, constructed
+/// wamn-0h0g.15.101: one loaded release manifest per host process, constructed
 /// before that process can bind a component.
 #[test]
-fn one_release_manifest_weld_construction_site_per_host_process() {
+fn one_release_load_site_per_host_process() {
     let root = repository_root();
-    for (path, entry, bind) in HOST_WELD_SITES {
+    for (path, entry, bind) in HOST_RELEASE_LOAD_SITES {
         let source = host_source(&root, path);
-        validate_one_weld_site(&source, path).unwrap_or_else(|error| panic!("{error}"));
-        validate_weld_precedes_bind(&source, entry, bind, path)
+        validate_one_release_load_site(&source, path).unwrap_or_else(|error| panic!("{error}"));
+        validate_release_load_precedes_bind(&source, entry, bind, path)
             .unwrap_or_else(|error| panic!("{error}"));
     }
 }
@@ -592,11 +592,11 @@ fn the_host_router_delivery_bridge_is_metered() {
 }
 
 #[test]
-fn every_production_release_identity_is_read_off_the_weld() {
+fn every_production_release_identity_is_read_off_the_loaded_release() {
     let root = repository_root();
-    for (path, weld) in RELEASE_IDENTITY_SOURCE_SITES {
+    for (path, loaded_release) in RELEASE_IDENTITY_SOURCE_SITES {
         let source = host_source(&root, path);
-        validate_release_identity_from_weld(&source, weld, path)
+        validate_release_identity_from_loaded_release(&source, loaded_release, path)
             .unwrap_or_else(|error| panic!("{error}"));
     }
 }
@@ -612,7 +612,7 @@ fn the_struck_release_identity_config_keys_do_not_return() {
 
 /// The fixture the mutants below are cut from: one flat construction whose two
 /// halves both come off `release.release()`.
-fn welded_release_identity() -> String {
+fn loaded_release_identity() -> String {
     format!(
         "let release = load_release(base, digest)?;\n\
          let identity = {RELEASE_IDENTITY_CONSTRUCTION}\n\
@@ -623,16 +623,16 @@ fn welded_release_identity() -> String {
 }
 
 #[test]
-fn release_identity_inventory_accepts_the_welded_shape() {
-    validate_release_identity_from_weld(&welded_release_identity(), "release.release()", "seam")
-        .expect("both halves read off the weld must pass");
+fn release_identity_list_accepts_the_loaded_shape() {
+    validate_release_identity_from_loaded_release(&loaded_release_identity(), "release.release()", "seam")
+        .expect("both halves read off the loaded release must pass");
 }
 
 #[test]
-fn release_identity_inventory_rejects_a_removed_or_duplicated_construction() {
-    let duplicated = format!("{}{}", welded_release_identity(), welded_release_identity());
+fn release_identity_list_rejects_a_removed_or_duplicated_construction() {
+    let duplicated = format!("{}{}", loaded_release_identity(), loaded_release_identity());
     for source in [String::new(), duplicated] {
-        let error = validate_release_identity_from_weld(&source, "release.release()", "seam")
+        let error = validate_release_identity_from_loaded_release(&source, "release.release()", "seam")
             .expect_err("a missing or duplicated construction must be rejected");
         assert!(
             error.contains("exactly one"),
@@ -642,14 +642,14 @@ fn release_identity_inventory_rejects_a_removed_or_duplicated_construction() {
 }
 
 #[test]
-fn release_identity_inventory_rejects_a_half_read_from_elsewhere() {
+fn release_identity_list_rejects_a_half_read_from_elsewhere() {
     for stolen in ["effective_release_id", "manifest_digest"] {
-        let mutant = welded_release_identity().replace(
+        let mutant = loaded_release_identity().replace(
             &format!("{stolen}: release.release()."),
             &format!("{stolen}: config.get("),
         );
-        let error = validate_release_identity_from_weld(&mutant, "release.release()", "seam")
-            .expect_err("a half read from anywhere but the weld must be rejected");
+        let error = validate_release_identity_from_loaded_release(&mutant, "release.release()", "seam")
+            .expect_err("a half read from anywhere but the loaded release must be rejected");
         assert!(
             error.contains("second carrier"),
             "the refusal must name why a second source matters: {error}"
@@ -658,7 +658,7 @@ fn release_identity_inventory_rejects_a_half_read_from_elsewhere() {
 }
 
 #[test]
-fn release_identity_inventory_rejects_a_returning_config_key() {
+fn release_identity_list_rejects_a_returning_config_key() {
     for key in STRUCK_RELEASE_IDENTITY_KEYS {
         let source = format!("config.get(\"{key}\")");
         let error = validate_no_struck_key(&source, "seam")
@@ -671,90 +671,89 @@ fn release_identity_inventory_rejects_a_returning_config_key() {
 }
 
 #[test]
-fn weld_inventory_ignores_cfg_test_construction_sites() {
-    // The weld's own unit tests and the plan-supply tests construct welds from
-    // fixture directories; only production sites are the subject of the one-per-
-    // process rule.
+fn release_load_ignores_cfg_test_construction_sites() {
+    // Unit tests and plan-supply tests load releases from fixture directories.
+    // The one-instance rule applies only to production sites.
     let source = format!(
-        "{RELEASE_WELD_CONSTRUCTION}_from(root)\n\
+        "{RELEASE_LOAD_CONSTRUCTION}_from(root)\n\
          {CFG_TEST_MODULE}\n\
-             {RELEASE_WELD_CONSTRUCTION}_from(fixture)\n\
-             {RELEASE_WELD_CONSTRUCTION}()\n\
+             {RELEASE_LOAD_CONSTRUCTION}_from(fixture)\n\
+             {RELEASE_LOAD_CONSTRUCTION}()\n\
          }}\n"
     );
     assert_eq!(
-        source.matches(RELEASE_WELD_CONSTRUCTION).count(),
+        source.matches(RELEASE_LOAD_CONSTRUCTION).count(),
         3,
         "fixture must carry one production and two test-only construction sites"
     );
-    validate_one_weld_site(&source, "weld-mutant.rs")
-        .expect("cfg(test) construction must not widen the production inventory");
+    validate_one_release_load_site(&source, "release-load-mutant.rs")
+        .expect("cfg(test) construction must not widen the production list");
 }
 
 #[test]
-fn weld_inventory_rejects_removed_or_duplicated_construction_site() {
+fn release_load_rejects_removed_or_duplicated_construction_site() {
     let test_module =
-        format!("{CFG_TEST_MODULE}\n    {RELEASE_WELD_CONSTRUCTION}_from(fixture)\n}}\n");
+        format!("{CFG_TEST_MODULE}\n    {RELEASE_LOAD_CONSTRUCTION}_from(fixture)\n}}\n");
 
-    let removed = validate_one_weld_site(&test_module, "weld-mutant.rs")
-        .expect_err("removing the production weld construction must fail");
+    let removed = validate_one_release_load_site(&test_module, "release-load-mutant.rs")
+        .expect_err("removing the production release load must fail");
     assert!(
         removed.ends_with("found 0"),
-        "removed-weld failure must report the production count: {removed}"
+        "removed-release-load failure must report the production count: {removed}"
     );
 
     // Two production sites in one process is the exact drift this guard exists to
     // catch: two loaded manifests where the ruling allows one.
     let duplicated = format!(
-        "{RELEASE_WELD_CONSTRUCTION}_from(root)\n\
-         {RELEASE_WELD_CONSTRUCTION}()\n\
+        "{RELEASE_LOAD_CONSTRUCTION}_from(root)\n\
+         {RELEASE_LOAD_CONSTRUCTION}()\n\
          {test_module}"
     );
-    let duplicate = validate_one_weld_site(&duplicated, "weld-mutant.rs")
-        .expect_err("a second production weld construction must fail");
+    let duplicate = validate_one_release_load_site(&duplicated, "release-load-mutant.rs")
+        .expect_err("a second production release load must fail");
     assert!(
         duplicate.ends_with("found 2"),
-        "duplicate-weld failure must report the production count: {duplicate}"
+        "duplicate-release-load failure must report the production count: {duplicate}"
     );
 }
 
 #[test]
-fn weld_inventory_rejects_construction_after_the_first_bind() {
+fn release_load_rejects_construction_after_the_first_bind() {
     let ordered = "let release = load_release(root)?;\nClusterHostBuilder::default()\n";
-    validate_weld_precedes_bind(
+    validate_release_load_precedes_bind(
         ordered,
         "let release = load_release(",
         "ClusterHostBuilder::default()",
-        "weld-mutant.rs",
+        "release-load-mutant.rs",
     )
     .expect("construction ahead of the builder must pass");
 
     let inverted = "ClusterHostBuilder::default()\nlet release = load_release(root)?;\n";
-    let error = validate_weld_precedes_bind(
+    let error = validate_release_load_precedes_bind(
         inverted,
         "let release = load_release(",
         "ClusterHostBuilder::default()",
-        "weld-mutant.rs",
+        "release-load-mutant.rs",
     )
-    .expect_err("constructing the weld after the host builder must fail");
+    .expect_err("constructing the loaded release after the host builder must fail");
     assert!(
         error.contains("carries no release identity for its claim to record"),
         "ordering failure must name the consequence: {error}"
     );
 
     for (name, mutant) in [
-        ("weld-unreachable", "ClusterHostBuilder::default()\n"),
+        ("release-load-unreachable", "ClusterHostBuilder::default()\n"),
         ("bind-removed", "let release = load_release(root)?;\n"),
     ] {
-        let error = validate_weld_precedes_bind(
+        let error = validate_release_load_precedes_bind(
             mutant,
             "let release = load_release(",
             "ClusterHostBuilder::default()",
-            "weld-mutant.rs",
+            "release-load-mutant.rs",
         )
         .expect_err("a missing anchor must fail closed");
         assert!(
-            error.starts_with("weld-mutant.rs must "),
+            error.starts_with("release-load-mutant.rs must "),
             "{name} mutation failed for an unexpected reason: {error}"
         );
     }

@@ -24,7 +24,7 @@ use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
     ReleaseIdentity, SessionClaims, StaticCredentialProvider, WamnPostgres,
 };
-use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::dispatch::DispatchTarget;
@@ -438,7 +438,7 @@ impl Fixture {
             registrations: BTreeMap::new(),
         };
         let release = Arc::new(
-            ReleaseManifestWeld::load_canonical_bytes(
+            LoadedRelease::load_canonical_bytes(
                 &manifest.canonical_bytes(),
                 "native policy fixture",
             )

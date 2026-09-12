@@ -54,7 +54,7 @@ use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{ClassCredentials, WamnPostgres, WamnPostgresConfig};
-use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_schema_control::connections::ComponentConnectionRequirement;
 
 /// The one tenant every seeded row and every claim is scoped to.
@@ -104,10 +104,10 @@ pub struct RouteOptions {
 /// to address it.
 pub struct TrustedHttpRoute {
     pub driver: Arc<RouterDriver>,
-    /// The same welded release the driver authorizes. Callers that exercise a
-    /// release-owned ingress plugin must share this exact weld rather than mint
+    /// The same loaded release the driver authorizes. Callers that exercise a
+    /// release-owned ingress plugin must share this exact loaded release rather than mint
     /// a second view of the closure.
-    pub(crate) release: Arc<ReleaseManifestWeld>,
+    pub(crate) release: Arc<LoadedRelease>,
     /// The digest OCI serves the guest under and every seeded row keys on.
     pub component_digest: String,
     /// The wiring document's own canonical hash — `catalog.wirings.wiring_hash`,
@@ -168,14 +168,14 @@ async fn build_with_credentials(
     let document = wiring_document(&options.path_and_query);
     let wiring_hash = document.wiring_hash().as_str().to_owned();
     let release = Arc::new(
-        ReleaseManifestWeld::load_canonical_bytes(
+        LoadedRelease::load_canonical_bytes(
             &wamn_execution_contract::canonical_json_bytes(&release_manifest(
                 &admitted,
                 &wiring_hash,
             )),
             "trusted-http-route fixture",
         )
-        .context("weld the fixture serving manifest")?,
+        .context("load the fixture serving manifest")?,
     );
     let postgres_credentials =
         seed_catalog(options, &admitted, &document, &wiring_hash, &release, None)
@@ -284,7 +284,7 @@ fn wiring_document(path_and_query: &str) -> WiringDocument {
     }
 }
 
-/// The one manifest the weld carries. Both membership checks the released
+/// The one manifest the loaded release carries. Both membership checks the released
 /// closure makes — `manifest.components` in `invoke_node`, `manifest.wirings` in
 /// `validate_wiring_closure` and again in `authorize_release_closure` — read
 /// this document.
@@ -412,7 +412,7 @@ async fn seed_catalog(
     component: &AdmittedComponent,
     document: &WiringDocument,
     wiring_hash: &str,
-    release: &ReleaseManifestWeld,
+    release: &LoadedRelease,
     additional_wiring: Option<(&AdmittedComponent, &[WiringDocument])>,
 ) -> anyhow::Result<ClassCredentials> {
     let (client, connection) = tokio_postgres::connect(&options.database_url, NoTls)
@@ -440,7 +440,7 @@ async fn seed_with_client(
     component: &AdmittedComponent,
     document: &WiringDocument,
     wiring_hash: &str,
-    release: &ReleaseManifestWeld,
+    release: &LoadedRelease,
     additional_wiring: Option<(&AdmittedComponent, &[WiringDocument])>,
 ) -> anyhow::Result<ClassCredentials> {
     // The complete catalog bootstrap includes its own transaction and applies
@@ -909,7 +909,7 @@ mod tests {
     use wamn_runtime::plugins::wamn_postgres::{
         CANDIDATE_WIRING_SQL, CandidateBindingWorld, WamnPostgres, WamnPostgresConfig,
     };
-    use wamn_runtime::release_manifest::ReleaseManifestWeld;
+    use wamn_runtime::release_manifest::LoadedRelease;
     use wasm_encoder::reencode::{Reencode, ReencodeComponent};
 
     use super::{
@@ -1150,7 +1150,7 @@ mod tests {
         manifest["attachments"][ATTACHMENT_ID]["auth-policy"] =
             serde_json::json!({"modes": ["pat"]});
         let manifest: wamn_catalog::ServingManifest = serde_json::from_value(manifest)?;
-        let release = Arc::new(ReleaseManifestWeld::load_canonical_bytes(
+        let release = Arc::new(LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "nested HTTP authority fixture",
         )?);

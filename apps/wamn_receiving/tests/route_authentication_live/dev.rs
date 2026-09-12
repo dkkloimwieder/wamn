@@ -424,8 +424,8 @@ pub(super) async fn verify_dev_release_state(
         .await
         .context("pull the exact product-command release manifest")?;
     let origin = format!("{}@{manifest_hash}", inputs.release_artifact_base);
-    let release = ReleaseManifestWeld::load_canonical_bytes(&bytes, &origin)
-        .context("weld the product-command release manifest")?;
+    let release = LoadedRelease::load_canonical_bytes(&bytes, &origin)
+        .context("load the product-command release manifest")?;
     let expected_packages = JOURNEY_PACKAGES
         .iter()
         .map(|package| PackageCoordinate::new(package.id, package.version))

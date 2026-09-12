@@ -20,7 +20,7 @@ use wamn_runtime::plugins::flow_http_routing::{
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
-use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::session_verifier::SessionVerifier;
 
 use super::trace::TraceProof;
@@ -187,7 +187,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
             "definition": definition, "auth-policy": {"modes": ["session"]}, "registered-operation": ROOT}},
         "registrations": {}
     });
-    let release = Arc::new(ReleaseManifestWeld::load_canonical_bytes(
+    let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "native session route proof",
     )?);

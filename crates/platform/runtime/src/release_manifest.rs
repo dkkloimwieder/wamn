@@ -1,15 +1,14 @@
-//! The release-manifest weld — one load, one verification, three readers.
+//! A release manifest loaded once for the process.
 //!
 //! A pod carries exactly one release, delivered by one of two carriers: the
 //! digest-addressed OCI release artifact its pod template names, pulled by
 //! [`ReleaseManifestSource`](crate::release_manifest_source::ReleaseManifestSource),
 //! or an immutable digest-named ConfigMap projected at
 //! [`RELEASE_MANIFEST_MOUNT_PATH`]. Either way the bytes are the *sole* carrier
-//! of release identity. The weld reads them once and derives both halves of the
-//! `(effective release id, manifest digest)` pair from the verified content itself,
-//! then holds the parsed document for the life of the process.
+//! of release identity. Loading derives the `(effective release id, manifest digest)`
+//! pair from the verified content. The process keeps the parsed document for its lifetime.
 //!
-//! # This is a weld, not a cache
+//! # Process lifetime
 //!
 //! Do not add invalidation, a TTL, a refresh, an eviction policy, or a
 //! revalidation hook, and do not rename this a cache. The digest *is* the
@@ -30,12 +29,10 @@
 //! internal consistency against itself. A pod cannot second-guess its own birth
 //! certificate.
 //!
-//! The OCI carrier is the case where that check *does* mean something, and it is
-//! made before the bytes reach this weld rather than here: the digest travels in
-//! the pod template and the bytes come from a registry, so
+//! The pod template carries the OCI digest, and the registry supplies the bytes.
 //! [`ReleaseManifestSource`](crate::release_manifest_source::ReleaseManifestSource)
-//! refuses unless the two agree. This weld still derives identity from content
-//! alone and asserts nothing about where the content came from.
+//! refuses a digest mismatch before loading. The loaded release derives identity
+//! from content alone. It asserts nothing about the source of that content.
 //!
 //! What binds this pod to this release is the pod template, and that is not a gap
 //! — it is where the wasmCloud-v2 model assigns the fact. The template is
@@ -75,27 +72,26 @@ use wamn_catalog::{
     ManifestDigest, RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH, ServingManifest,
 };
 
-/// Stable classification for a refused weld construction.
+/// Stable classification for a refused release load.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WeldErrorKind {
+pub enum ReleaseLoadErrorKind {
     /// The manifest file is missing or unreadable.
     ManifestUnreadable,
-    /// The manifest bytes failed parse, validation or canonicality, or carry a
-    /// effective release id the run plane cannot record — every refusal
-    /// [`ServingManifest::from_canonical_bytes`] can raise, plus the one width
-    /// narrowing this weld performs.
+    /// The manifest bytes failed parsing, validation, or canonicality.
+    /// This also includes an effective release id that the run plane cannot record.
+    /// Loading preserves every refusal from [`ServingManifest::from_canonical_bytes`].
     ManifestRejected,
 }
 
-/// A fail-closed weld construction error.
+/// A fail-closed release load error.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WeldError {
-    kind: WeldErrorKind,
+pub struct ReleaseLoadError {
+    kind: ReleaseLoadErrorKind,
     detail: Box<str>,
 }
 
-impl WeldError {
-    fn new(kind: WeldErrorKind, detail: impl Into<Box<str>>) -> Self {
+impl ReleaseLoadError {
+    fn new(kind: ReleaseLoadErrorKind, detail: impl Into<Box<str>>) -> Self {
         Self {
             kind,
             detail: detail.into(),
@@ -103,18 +99,18 @@ impl WeldError {
     }
 
     /// The stable classification of this refusal.
-    pub fn kind(&self) -> WeldErrorKind {
+    pub fn kind(&self) -> ReleaseLoadErrorKind {
         self.kind
     }
 }
 
-impl std::fmt::Display for WeldError {
+impl std::fmt::Display for ReleaseLoadError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "{}", self.detail)
     }
 }
 
-impl std::error::Error for WeldError {}
+impl std::error::Error for ReleaseLoadError {}
 
 /// The release a pod carries, derived from its verified manifest content.
 ///
@@ -135,17 +131,17 @@ pub struct CarriedRelease {
 
 /// The one loaded, verified serving manifest a pod resolves against.
 #[derive(Debug)]
-pub struct ReleaseManifestWeld {
+pub struct LoadedRelease {
     release: CarriedRelease,
     manifest: ServingManifest,
 }
 
-impl ReleaseManifestWeld {
+impl LoadedRelease {
     /// Load and verify from the standard mount path.
     ///
     /// A pod whose manifest is absent, unreadable, unparseable or non-canonical
     /// must not serve, so every failure here is fatal to host construction.
-    pub fn load() -> Result<Self, WeldError> {
+    pub fn load() -> Result<Self, ReleaseLoadError> {
         Self::load_from(Path::new(RELEASE_MANIFEST_MOUNT_PATH))
     }
 
@@ -154,14 +150,14 @@ impl ReleaseManifestWeld {
     /// Reads are blocking `std::fs`: this runs exactly once during host
     /// construction, before the pod serves anything, and never on a request
     /// path.
-    pub fn load_from(manifest_root: &Path) -> Result<Self, WeldError> {
+    pub fn load_from(manifest_root: &Path) -> Result<Self, ReleaseLoadError> {
         // ConfigMap projections are byte-exact, and `from_canonical_bytes` admits
         // only the canonical encoding — so these bytes are used as read, with no
         // trimming. A trailing newline is a different document.
         let manifest_path = manifest_root.join(RELEASE_MANIFEST_FILE_NAME);
         let bytes = std::fs::read(&manifest_path).map_err(|error| {
-            WeldError::new(
-                WeldErrorKind::ManifestUnreadable,
+            ReleaseLoadError::new(
+                ReleaseLoadErrorKind::ManifestUnreadable,
                 format!("read serving manifest {}: {error}", manifest_path.display()),
             )
         })?;
@@ -175,19 +171,19 @@ impl ReleaseManifestWeld {
     /// [`ReleaseManifestSource`](crate::release_manifest_source::ReleaseManifestSource)
     /// proved the bytes against. It takes no part in verification: identity
     /// still comes only out of the bytes.
-    pub fn load_canonical_bytes(bytes: &[u8], origin: &str) -> Result<Self, WeldError> {
+    pub fn load_canonical_bytes(bytes: &[u8], origin: &str) -> Result<Self, ReleaseLoadError> {
         let (manifest, manifest_digest) =
             ServingManifest::from_canonical_bytes(bytes).map_err(|error| {
-                WeldError::new(
-                    WeldErrorKind::ManifestRejected,
+                ReleaseLoadError::new(
+                    ReleaseLoadErrorKind::ManifestRejected,
                     format!("serving manifest {origin} refused: {error}"),
                 )
             })?;
 
         let effective_release_id = i32::try_from(manifest.release.effective_release_id.get())
             .map_err(|error| {
-                WeldError::new(
-                    WeldErrorKind::ManifestRejected,
+                ReleaseLoadError::new(
+                    ReleaseLoadErrorKind::ManifestRejected,
                     format!(
                         "serving manifest {origin} names effective release {} which the run plane \
                          cannot record: {error}",
@@ -279,7 +275,7 @@ mod tests {
     impl Mounts {
         fn new(test: &str) -> Self {
             let root =
-                std::env::temp_dir().join(format!("wamn-weld-{}-{test}", std::process::id()));
+                std::env::temp_dir().join(format!("wamn-release-load-{}-{test}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(root.join("manifest")).expect("scratch manifest dir");
             Self { root }
@@ -295,8 +291,8 @@ mod tests {
             self
         }
 
-        fn load(&self) -> Result<ReleaseManifestWeld, WeldError> {
-            ReleaseManifestWeld::load_from(&self.manifest_dir())
+        fn load(&self) -> Result<LoadedRelease, ReleaseLoadError> {
+            LoadedRelease::load_from(&self.manifest_dir())
         }
     }
 
@@ -312,18 +308,18 @@ mod tests {
         let expected = fixture();
         mounts.write_manifest_bytes(&expected.canonical_bytes());
 
-        let weld = mounts.load().expect("well-formed mount loads");
+        let loaded_release = mounts.load().expect("well-formed mount loads");
 
-        assert_eq!(weld.manifest(), &expected);
+        assert_eq!(loaded_release.manifest(), &expected);
         assert_eq!(
-            weld.manifest().components,
+            loaded_release.manifest().components,
             expected.components,
-            "the weld retains the exact component closure"
+            "the loaded release retains the exact component closure"
         );
         assert_eq!(
-            weld.manifest().wirings,
+            loaded_release.manifest().wirings,
             expected.wirings,
-            "the weld retains the exact wiring closure"
+            "the loaded release retains the exact wiring closure"
         );
     }
 
@@ -333,17 +329,17 @@ mod tests {
         let expected = fixture();
         mounts.write_manifest_bytes(&expected.canonical_bytes());
 
-        let weld = mounts.load().expect("well-formed mount loads");
+        let loaded_release = mounts.load().expect("well-formed mount loads");
 
         // Neither half is asserted by a carrier. The version is a header field
         // inside the canonical preimage; the digest is over those same bytes. So
         // the pair recorded onto a run and the document resolved against are, by
         // construction, the same fact.
         assert_eq!(
-            weld.release().effective_release_id,
+            loaded_release.release().effective_release_id,
             i32::try_from(expected.release.effective_release_id.get()).expect("fixture id fits"),
         );
-        assert_eq!(weld.release().manifest_digest, expected.digest());
+        assert_eq!(loaded_release.release().manifest_digest, expected.digest());
     }
 
     #[test]
@@ -352,7 +348,7 @@ mod tests {
 
         assert_eq!(
             mounts.load().expect_err("absent manifest refuses").kind(),
-            WeldErrorKind::ManifestUnreadable
+            ReleaseLoadErrorKind::ManifestUnreadable
         );
     }
 
@@ -363,7 +359,7 @@ mod tests {
 
         assert_eq!(
             mounts.load().expect_err("garbage refuses").kind(),
-            WeldErrorKind::ManifestRejected
+            ReleaseLoadErrorKind::ManifestRejected
         );
     }
 
@@ -376,13 +372,13 @@ mod tests {
 
         let error = mounts
             .load()
-            .expect_err("unsupported format refuses at the weld");
-        assert_eq!(error.kind(), WeldErrorKind::ManifestRejected);
+            .expect_err("unsupported format refuses at the loaded release");
+        assert_eq!(error.kind(), ReleaseLoadErrorKind::ManifestRejected);
         assert!(
             error
                 .to_string()
                 .contains(UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL),
-            "the weld must preserve the typed format refusal: {error}"
+            "the loaded release must preserve the typed format refusal: {error}"
         );
     }
 
@@ -398,7 +394,7 @@ mod tests {
         // digest naming content nobody shipped.
         assert_eq!(
             mounts.load().expect_err("trailing newline refuses").kind(),
-            WeldErrorKind::ManifestRejected
+            ReleaseLoadErrorKind::ManifestRejected
         );
     }
 
@@ -414,7 +410,7 @@ mod tests {
         // digest it would not derive.
         assert_eq!(
             mounts.load().expect_err("non-canonical refuses").kind(),
-            WeldErrorKind::ManifestRejected
+            ReleaseLoadErrorKind::ManifestRejected
         );
     }
 }

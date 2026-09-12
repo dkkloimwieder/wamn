@@ -44,7 +44,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     ResolvedActiveWiring, SessionClaims, StatementField, StatementValueType, VerifiedStatement,
     VerifiedStatementSet, WamnPostgres,
 };
-use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::Engine;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
@@ -516,7 +516,7 @@ pub struct RouterDriver {
     credentials: Arc<WamnCredentials>,
     logging: Arc<WamnLogging>,
     allowed_hosts: Arc<[AllowedHost]>,
-    release: Arc<ReleaseManifestWeld>,
+    release: Arc<LoadedRelease>,
     source: ComponentArtifactSource,
     config: RouterDriverConfig,
     cache: Arc<WiringCache<CatalogFacts>>,
@@ -548,7 +548,7 @@ impl RouterDriver {
         credentials: Arc<WamnCredentials>,
         logging: Arc<WamnLogging>,
         allowed_hosts: Arc<[AllowedHost]>,
-        release: Arc<ReleaseManifestWeld>,
+        release: Arc<LoadedRelease>,
         source: ComponentArtifactSource,
         config: RouterDriverConfig,
     ) -> anyhow::Result<Self> {
@@ -1371,7 +1371,7 @@ impl RouterDriver {
 }
 
 fn validate_component_in_release(
-    release: &ReleaseManifestWeld,
+    release: &LoadedRelease,
     component: &AdmittedComponent,
 ) -> anyhow::Result<()> {
     let manifest = release.manifest();

@@ -317,9 +317,9 @@ impl WamnPostgres {
         // Release identity is deliberately NOT read here. Under ruling
         // `wamn-0h0g.15.102` the mounted manifest is the sole carrier of the
         // (release version, manifest digest) pair, so the serving process injects
-        // it from its loaded weld at instantiation — see
+        // it from its loaded release at instantiation — see
         // `ExecutionHost::instantiate`. A bind-time config read would be a second,
-        // *asserted* carrier that cannot correct the welded one, and the pair it
+        // *asserted* carrier that cannot correct the loaded one, and the pair it
         // asserted could disagree with the manifest the same pod resolves plans
         // against.
         Ok(())

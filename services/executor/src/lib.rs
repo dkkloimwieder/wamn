@@ -37,7 +37,7 @@ use wamn_runtime::plugins::wamn_postgres::{
     ProductionLeaseRenewal, ProductionReapResult, ProductionRouterAction, ReleaseIdentity,
     SessionClaims, WamnPostgres, production_router_action, production_router_result_action,
 };
-use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 
 const QUEUE_CLAIM_SCOPE: &str = "wamn-executor-queue";
@@ -165,7 +165,7 @@ pub struct ExecutorArgs {
     pub release_artifact_base: String,
 
     /// SHA-256 digest, `sha256:<hex>`, of the one serving manifest this
-    /// executor is welded to. Travels in the pod template; the registry's bytes
+    /// executor is bound to. Travels in the pod template; the registry's bytes
     /// are refused unless they hash to exactly this.
     #[arg(long, env = "WAMN_RELEASE_MANIFEST_DIGEST")]
     pub release_manifest_digest: String,
@@ -258,15 +258,15 @@ fn host_memory(args: &ExecutorArgs) -> anyhow::Result<HostMemoryBudgets> {
     .map_err(anyhow::Error::msg)
 }
 
-/// Pull, verify and weld this process's one release.
+/// Pull, verify and load this process's one release.
 ///
-/// This is the executor's weld construction site: the single place in this
+/// This is the executor's release load site: the single place in this
 /// process that turns registry bytes into the (release version, manifest
 /// digest) pair every consumer reads. Under ruling `wamn-0h0g.15.102` the
 /// manifest is that pair's sole carrier, so a second construction would be a
 /// second carrier with nothing reconciling them.
 ///
-/// Refusal is the only outcome besides a welded release: unlike the host, an
+/// Refusal is the only outcome besides a loaded release: unlike the host, an
 /// executor exists to serve a release, so "no release" is not a posture it has.
 async fn load_release(
     artifact_base: &str,
@@ -274,7 +274,7 @@ async fn load_release(
     insecure_registry: bool,
     registry_auth_file: &Path,
     ca_paths: &[PathBuf],
-) -> anyhow::Result<Arc<ReleaseManifestWeld>> {
+) -> anyhow::Result<Arc<LoadedRelease>> {
     let source = ReleaseManifestSource::new(artifact_base, insecure_registry, registry_auth_file)
         .context("configure the release-manifest registry")?
         .with_ca_paths(ca_paths)
@@ -284,8 +284,8 @@ async fn load_release(
         .await
         .context("pull the serving release manifest")?;
     let origin = format!("{artifact_base}@{manifest_digest}");
-    let weld =
-        ReleaseManifestWeld::load_canonical_bytes(&canonical_bytes, &origin).map_err(|error| {
+    let loaded_release =
+        LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin).map_err(|error| {
             anyhow::anyhow!(
                 "serving release manifest {origin} is unusable ({:?}): {error}",
                 error.kind()
@@ -294,7 +294,7 @@ async fn load_release(
     // Shared by reference-count: the driver and the session-claim scope both
     // outlive `run`'s stack frame, and one allocation stays the process's only
     // manifest.
-    Ok(Arc::new(weld))
+    Ok(Arc::new(loaded_release))
 }
 
 fn resolve_owner(arg: Option<String>) -> String {

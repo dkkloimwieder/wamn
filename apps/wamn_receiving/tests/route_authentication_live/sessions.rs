@@ -61,7 +61,7 @@ pub(super) async fn prepare_session_host_fixture(
         .context("read the completed PAT journey release")?;
     let publisher: String = previous.get(0);
     let previous_bytes: Vec<u8> = previous.get(1);
-    let previous_release = ReleaseManifestWeld::load_canonical_bytes(
+    let previous_release = LoadedRelease::load_canonical_bytes(
         &previous_bytes,
         "completed PAT journey release",
     )?;
@@ -337,7 +337,7 @@ pub(super) async fn assert_nested_session(
         &[&TENANT],
     ).await?;
     let publisher: String = previous.get(0);
-    let previous = ReleaseManifestWeld::load_canonical_bytes(
+    let previous = LoadedRelease::load_canonical_bytes(
         &previous.get::<_, Vec<u8>>(1),
         "original Receiving PAT release",
     )?;

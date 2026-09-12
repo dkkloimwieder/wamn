@@ -33,7 +33,7 @@ use crate::plugins::wamn_credentials::WamnCredentials;
 use crate::plugins::wamn_postgres::{
     CandidateConnectionBinding, ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres,
 };
-use crate::release_manifest::ReleaseManifestWeld;
+use crate::release_manifest::LoadedRelease;
 
 /// Plugin id, as the host registry knows it.
 pub const WAMN_BLOBSTORE_ID: &str = "wamn-blobstore";
@@ -49,7 +49,7 @@ pub struct WamnBlobstore {
     /// environment in the invocation; a RELEASED one does not, and this is the
     /// only thing that can supply them without guessing at the coordinates
     /// that decide which binding authorizes.
-    release: Option<Arc<ReleaseManifestWeld>>,
+    release: Option<Arc<LoadedRelease>>,
     /// Component-store owner id to the invocation currently using that pooled
     /// instance. The driver binds before `handler.run` and revokes before
     /// returning the instance to the pool.
@@ -162,7 +162,7 @@ impl WamnBlobstore {
         vault: Arc<WamnCredentials>,
         tenant: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
-        release: Option<Arc<ReleaseManifestWeld>>,
+        release: Option<Arc<LoadedRelease>>,
     ) -> Self {
         Self {
             postgres,
@@ -581,8 +581,8 @@ mod tests {
     }
 
     /// No mounted manifest means no released coordinates. This is the
-    /// fail-closed arm the capability had for EVERY release before the weld
-    /// was wired, and it stays correct when the weld is absent.
+    /// fail-closed arm the capability had for EVERY release before the loaded release
+    /// was wired, and it stays correct when the loaded release is absent.
     #[test]
     fn a_released_closure_without_a_manifest_refuses() {
         assert_eq!(

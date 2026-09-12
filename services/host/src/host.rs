@@ -44,7 +44,7 @@ use wamn_runtime::plugins::flow_http_routing::{
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::AuthorityClass;
 use wamn_runtime::plugins::{ClassCredentials, WamnJetstream, WamnLogging, WamnPostgres};
-use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 use wamn_runtime::session_verifier::SessionVerifier;
@@ -224,7 +224,7 @@ pub struct HostArgs {
     pub release_artifact_base: Option<String>,
 
     /// SHA-256 digest, `sha256:<hex>`, of the one serving manifest this host is
-    /// welded to. Travels in the pod template; the registry's bytes are refused
+    /// bound to. Travels in the pod template; the registry's bytes are refused
     /// unless they hash to exactly this.
     #[arg(
         long = "release-manifest-digest",
@@ -259,7 +259,7 @@ pub struct HostArgs {
 
     /// Organization owning this host's project.
     ///
-    /// Required only when the welded release carries a PAT-protected HTTP
+    /// Required only when the loaded release carries a PAT-protected HTTP
     /// route; it scopes both the route-caller subject and identity-reader URL.
     #[arg(long, env = "WAMN_ORG")]
     pub org: Option<String>,
@@ -326,7 +326,7 @@ impl Drop for SupervisedIdentityConnection {
 
 /// Pull and verify this process's release, or record that it carries none.
 ///
-/// This is the wash host's weld construction site: the one place in this process
+/// This is the wash host's release load site: the one place in this process
 /// that turns registry bytes into a manifest. flow-http routing
 /// (`wamn-0h0g.15.96`) and jetstream delivery gating (`wamn-0h0g.15.95`) take the
 /// loaded manifest from here by reference; nobody loads a second copy.
@@ -364,7 +364,7 @@ async fn load_release(
     insecure_registry: bool,
     registry_auth_file: Option<&Path>,
     ca_paths: &[PathBuf],
-) -> anyhow::Result<Option<Arc<ReleaseManifestWeld>>> {
+) -> anyhow::Result<Option<Arc<LoadedRelease>>> {
     let (Some(artifact_base), Some(manifest_digest)) = (artifact_base, manifest_digest) else {
         return Ok(None);
     };
@@ -379,8 +379,8 @@ async fn load_release(
         .await
         .context("pull the serving release manifest")?;
     let origin = format!("{artifact_base}@{manifest_digest}");
-    let weld =
-        ReleaseManifestWeld::load_canonical_bytes(&canonical_bytes, &origin).map_err(|error| {
+    let loaded_release =
+        LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin).map_err(|error| {
             anyhow::anyhow!(
                 "serving release manifest {origin} is unusable ({:?}): {error}",
                 error.kind()
@@ -389,7 +389,7 @@ async fn load_release(
     // Shared by reference-count rather than by borrow: every release-gated
     // plugin and the router driver are `Arc`-owned, so none can hold a lifetime
     // tied to `run`'s stack. One allocation remains the process's only manifest.
-    Ok(Some(Arc::new(weld)))
+    Ok(Some(Arc::new(loaded_release)))
 }
 
 /// Declare the platform binding through the native host configuration policy.
@@ -464,7 +464,7 @@ fn host_credentials(
     }
 }
 
-/// Name the callable-HTTP credential only when the welded release demands PAT
+/// Name the callable-HTTP credential only when the loaded release demands PAT
 /// authorization. Configuration is transport, not authority: a release-less or
 /// anonymous-only host must ignore an ambient URL rather than acquire its pool.
 fn demanded_http_admitter_url(pat_routes: bool, configured_url: Option<String>) -> Option<String> {
@@ -534,11 +534,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             .context("trust the configured OCI CA bundles")?;
     }
 
-    // THE WELD IS CONSTRUCTED FIRST, and the ordering is load-bearing rather than
+    // THE RELEASE LOADS FIRST, and the ordering is load-bearing rather than
     // tidy. Under ruling wamn-0h0g.15.102 the verified manifest is the SOLE carrier
     // of the (effective release id, manifest digest) pair, so every consumer takes the
     // pair from this object — including the claim-time recording that
-    // wamn-0h0g.15.103 repoints at it. A component that bound before the weld
+    // wamn-0h0g.15.103 repoints at it. A component that bound before the loaded release
     // existed would have no pair to record. Building it here, ahead of the NATS
     // connections, the engine and every plugin, makes that ordering impossible to
     // get wrong, and makes a host that cannot verify its release refuse before it
@@ -557,20 +557,20 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     .await?;
     let pat_routes = release
         .as_ref()
-        .is_some_and(|weld| requires_pat_route_authentication(weld.manifest()));
+        .is_some_and(|loaded_release| requires_pat_route_authentication(loaded_release.manifest()));
     let session_routes = release
         .as_ref()
-        .is_some_and(|weld| requires_session_route_authentication(weld.manifest()));
+        .is_some_and(|loaded_release| requires_session_route_authentication(loaded_release.manifest()));
     let http_admitter_url = std::env::var("WAMN_HTTP_ADMITTER_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
     let session_verifier = if session_routes {
-        let weld = release
+        let loaded_release = release
             .as_ref()
             .expect("a session route belongs to a loaded release");
         Some(session_verifier(
             &args,
-            &weld.manifest().release.environment,
+            &loaded_release.manifest().release.environment,
             http_admitter_url
                 .as_deref()
                 .context("a session route requires WAMN_HTTP_ADMITTER_PG_URL")?,
@@ -584,7 +584,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // project-database, or ingress sockets. A release-less or anonymous-only
     // host takes the absent arm and acquires no identity-reader connection.
     let (route_auth_scope, identity_reader, mut identity_connection) = if pat_routes {
-        let weld = release
+        let loaded_release = release
             .as_ref()
             .expect("a PAT route was found only inside a loaded release");
         let org = args
@@ -602,14 +602,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         http_admitter_url
             .as_deref()
             .context("a PAT-protected route requires WAMN_HTTP_ADMITTER_PG_URL")?;
-        let subject = route_caller_subject(org, project, &weld.manifest().release.environment)
+        let subject = route_caller_subject(org, project, &loaded_release.manifest().release.environment)
             .context("derive the scoped route-caller subject")?;
         parse_system_reader_url(
             SystemReader::Identity,
             &system_url,
             org,
             project,
-            &weld.manifest().release.environment,
+            &loaded_release.manifest().release.environment,
         )?;
         let (client, connection) = tokio_postgres::connect(&system_url, NoTls)
             .await
@@ -859,12 +859,12 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // Service-first materializer. Data-plane URL from WAMN_EVT_NATS_URL
         // (absent ⇒ links but returns connection-unavailable, the WAMN_PG_*
         // posture); the doorbell rings on the control-plane client above.
-        // wamn-0h0g.15.95: READER 4 of the weld. Delivery is gated on the serving
+        // wamn-0h0g.15.95: READER 4 of the loaded release. Delivery is gated on the serving
         // release's registration projection, so an event whose registration
         // identity is not in this release never reaches a component. The plugin
         // takes the loaded manifest — it does not load one.
         jetstream.clone(),
-        // wamn-0h0g.15.96: READER 3 of the weld. Route projection stays wholly
+        // wamn-0h0g.15.96: READER 3 of the loaded release. Route projection stays wholly
         // in-memory; a PAT-protected route additionally carries the scoped
         // identity reader and preloads exact grants from the existing
         // callable-HTTP project pool during authentication.
@@ -975,10 +975,10 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // holds the process's only loaded manifest for as long as `run` is on the
     // stack, which is the whole serving period.
     match release.as_ref() {
-        Some(weld) => tracing::info!(
-            effective_release_id = weld.release().effective_release_id,
-            manifest_digest = %weld.release().manifest_digest,
-            "wamn-host welded to its release"
+        Some(loaded_release) => tracing::info!(
+            effective_release_id = loaded_release.release().effective_release_id,
+            manifest_digest = %loaded_release.release().manifest_digest,
+            "wamn-host loaded its release"
         ),
         None => {
             tracing::info!("wamn-host carries no release; no release-gated interface is served")
@@ -1506,7 +1506,7 @@ mod tests {
     }
 
     /// The R2 posture's second half: a host told it serves a release and unable
-    /// to configure the pull must fail startup rather than serve unwelded.
+    /// to configure the pull must fail startup before the host serves a release.
     ///
     /// The credential is the first thing the source reads, so an absent one
     /// refuses before any network I/O — which is what keeps this proof hermetic.

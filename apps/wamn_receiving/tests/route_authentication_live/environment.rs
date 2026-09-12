@@ -490,7 +490,7 @@ pub(super) struct JourneyReleaseTarget<'a> {
 pub(super) async fn publish_journey_release(
     inputs: &JourneyDocument,
     target: JourneyReleaseTarget<'_>,
-) -> anyhow::Result<(String, Arc<ReleaseManifestWeld>)> {
+) -> anyhow::Result<(String, Arc<LoadedRelease>)> {
     let JourneyReleaseTarget {
         project_url,
         system_url,
@@ -595,14 +595,14 @@ pub(super) async fn publish_journey_release(
         .context("pull the exact released manifest")?;
     let origin = format!("{}@{digest}", inputs.release_artifact_base);
     let release = Arc::new(
-        ReleaseManifestWeld::load_canonical_bytes(&bytes, &origin)
-            .context("weld the pulled Receiving release")?,
+        LoadedRelease::load_canonical_bytes(&bytes, &origin)
+            .context("load the pulled Receiving release")?,
     );
     Ok((digest, release))
 }
 
 pub(super) fn released_component_digests(
-    release: &ReleaseManifestWeld,
+    release: &LoadedRelease,
     route_host: &str,
 ) -> anyhow::Result<HashMap<String, String>> {
     let expected_packages = JOURNEY_PACKAGES

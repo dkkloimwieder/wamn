@@ -21,7 +21,7 @@ pub use router_driver::{
 /// from an integration proof.
 #[cfg(feature = "test-util")]
 pub fn authorize_attachment_for_test(
-    release: &wamn_runtime::release_manifest::ReleaseManifestWeld,
+    release: &wamn_runtime::release_manifest::LoadedRelease,
     attachment_id: &str,
     caller: Option<&wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller>,
 ) -> Result<(), Box<str>> {

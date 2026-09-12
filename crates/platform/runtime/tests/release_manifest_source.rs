@@ -7,14 +7,14 @@
 //! those arms.
 //!
 //! The one leg that needs a *real* registry — a published artifact pulling back
-//! byte-exact and welding the release it names — is the ignored leg in the
+//! byte-exact and loading the release it names — is the ignored leg in the
 //! middle.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wamn_runtime::component_admission::component_digest;
-use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_MEDIA_TYPE, release_manifest_artifact_layout,
     verify_release_manifest_artifact_layout,
@@ -105,20 +105,20 @@ fn a_puller_verifies_the_publisher_layout_without_knowing_the_size() {
 }
 
 #[test]
-fn pulled_bytes_load_through_the_weld_naming_their_carrier() {
+fn pulled_bytes_load_the_release_naming_their_carrier() {
     let canonical = br#"{"attachments":{},"components":[],"format-version":1,"registrations":{},"release":{"effective-release-id":7,"environment":"prod","packages":[{"package-id":"cat","package-version":"1.0.0"}],"tenant-id":"t1"},"wirings":[]}"#;
 
-    let weld = ReleaseManifestWeld::load_canonical_bytes(canonical, ARTIFACT_BASE)
+    let loaded_release = LoadedRelease::load_canonical_bytes(canonical, ARTIFACT_BASE)
         .expect("verified canonical bytes load without a mount");
-    assert_eq!(weld.release().effective_release_id, 7);
+    assert_eq!(loaded_release.release().effective_release_id, 7);
     assert_eq!(
-        weld.release().manifest_digest.as_str(),
+        loaded_release.release().manifest_digest.as_str(),
         component_digest(canonical)
     );
 
     let mut trailing = canonical.to_vec();
     trailing.push(b'\n');
-    let error = ReleaseManifestWeld::load_canonical_bytes(&trailing, ARTIFACT_BASE)
+    let error = LoadedRelease::load_canonical_bytes(&trailing, ARTIFACT_BASE)
         .expect_err("a non-canonical body refuses");
     assert!(
         error.to_string().contains(ARTIFACT_BASE),
@@ -191,7 +191,7 @@ fn live_env(name: &str, expectation: &str) -> String {
 
 #[tokio::test]
 #[ignore = "requires a disposable authenticated registry holding a published release"]
-async fn a_published_release_pulls_back_byte_exact_and_welds_the_release_it_names() {
+async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_names() {
     let artifact_base = live_env(
         "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE",
         "the explicit <registry>/<repository> the release was pushed to",
@@ -220,7 +220,7 @@ async fn a_published_release_pulls_back_byte_exact_and_welds_the_release_it_name
     // that order and with that spelling. This proves the mechanism where it
     // lives; that each host process still *invokes* it, before it binds a
     // component, is pinned by the conformance guard
-    // `one_release_manifest_weld_construction_site_per_host_process`
+    // `one_release_load_site_per_host_process`
     // (wamn-0h0g.15.101, tests/conformance/src/runtime_inventory.rs).
     let source = ReleaseManifestSource::new(&artifact_base, true, Path::new(&registry_auth_file))
         .expect("the disposable registry configures")
@@ -234,24 +234,24 @@ async fn a_published_release_pulls_back_byte_exact_and_welds_the_release_it_name
     assert_eq!(component_digest(&canonical_bytes), manifest_digest);
 
     let origin = format!("{artifact_base}@{manifest_digest}");
-    let weld = ReleaseManifestWeld::load_canonical_bytes(&canonical_bytes, &origin)
-        .expect("the pulled bytes weld");
+    let loaded_release = LoadedRelease::load_canonical_bytes(&canonical_bytes, &origin)
+        .expect("the pulled bytes load the release");
 
     // Both identity halves come out of the transferred content, and they agree
     // with the name the pod template gave — the check the mount carrier cannot
     // make, made here against a third party that stored the bytes.
-    assert_eq!(weld.release().manifest_digest.as_str(), manifest_digest);
+    assert_eq!(loaded_release.release().manifest_digest.as_str(), manifest_digest);
     assert_eq!(
-        weld.release().effective_release_id,
+        loaded_release.release().effective_release_id,
         effective_release_id,
         "the carried effective release id must be the identity the mint froze"
     );
-    // Nothing was dropped on the way through the parse: the welded document
+    // Nothing was dropped on the way through the parse: the loaded document
     // re-encodes to the exact bytes the registry served.
     assert_eq!(
-        weld.manifest().canonical_bytes(),
+        loaded_release.manifest().canonical_bytes(),
         canonical_bytes,
-        "the welded document must re-encode to the pulled bytes"
+        "the loaded document must re-encode to the pulled bytes"
     );
 
     // A digest this repository does not hold is a refusal, never an empty
@@ -416,7 +416,7 @@ async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
     );
 }
 
-/// A body the named digest does not address never reaches the weld.
+/// A body the named digest does not address never reaches the loaded release.
 ///
 /// MEASURED, not assumed, and the measurement is what the refusal is built on:
 /// `oci-client` 0.17's `pull_blob` builds its digester from the layer descriptor

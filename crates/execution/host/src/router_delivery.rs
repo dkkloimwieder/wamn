@@ -14,7 +14,7 @@ pub use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 use wamn_runtime::plugins::wamn_jetstream::{
     DerivedPublishRequest, RouterTapPhase, RouterTapPreview, WamnJetstream,
 };
-use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -75,16 +75,16 @@ const EXECUTION_FAILED: &str = "execution-failed";
 /// The one bridge shared by attachment and registration ingress.
 pub struct RouterDeliveryBridge {
     driver: Arc<RouterDriver>,
-    release: Arc<ReleaseManifestWeld>,
+    release: Arc<LoadedRelease>,
     jetstream: Arc<WamnJetstream>,
     metrics: Option<DeliveryMetrics>,
 }
 
 impl RouterDeliveryBridge {
-    /// Bind the bridge to the process's existing driver and welded manifest.
+    /// Bind the bridge to the process's existing driver and loaded manifest.
     pub fn new(
         driver: Arc<RouterDriver>,
-        release: Arc<ReleaseManifestWeld>,
+        release: Arc<LoadedRelease>,
         jetstream: Arc<WamnJetstream>,
         project: &str,
     ) -> anyhow::Result<Self> {
@@ -461,7 +461,7 @@ struct ResolvedTarget {
     wiring_version: u32,
     caller_attached: bool,
     /// `Some` only for attachment ingress. A callerless attachment is legal
-    /// only when its welded auth policy explicitly names anonymous mode.
+    /// only when its loaded auth policy explicitly names anonymous mode.
     anonymous_caller_permitted: Option<bool>,
     registered_operation: Option<String>,
 }
@@ -532,7 +532,7 @@ fn resolve_authorized_target(
 /// Exercise the exact production attachment resolver and authorization gate.
 #[cfg(feature = "test-util")]
 pub(crate) fn authorize_attachment_for_test(
-    release: &wamn_runtime::release_manifest::ReleaseManifestWeld,
+    release: &wamn_runtime::release_manifest::LoadedRelease,
     attachment_id: &str,
     caller: Option<&AuthenticatedCaller>,
 ) -> Result<(), Box<str>> {
@@ -637,7 +637,7 @@ impl DeliveryMetrics {
     }
 }
 
-/// The dimensions `deliver` already holds. Every value is read off the welded
+/// The dimensions `deliver` already holds. Every value is read off the loaded
 /// serving manifest, which `resolve_target` refuses to look past, so the series
 /// count is fixed for the life of the process at one per manifest attachment
 /// and registration. `wamn.wiring.version` is unbounded across releases but
@@ -856,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn caller_handle_must_match_the_welded_attachment_identity() {
+    fn caller_handle_must_match_the_loaded_attachment_identity() {
         let anonymous = resolve_target(&manifest(), SourceRef::Attachment("orders-http"))
             .expect("the fixture names the anonymous attachment");
         assert!(caller_matches_source(
@@ -916,7 +916,7 @@ mod tests {
             .expect("the fixture attachment exists")
             .registered_operation = Some(operation.to_owned());
         let target = resolve_target(&registered, SourceRef::Attachment("orders-http"))
-            .expect("the registered attachment resolves from the weld");
+            .expect("the registered attachment resolves from the loaded release");
         let denial =
             authorize_registered_operation(None, target.registered_operation.as_deref(), false)
                 .expect_err("a callerless registered invocation is denied");

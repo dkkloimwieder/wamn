@@ -15,7 +15,7 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::OutgoingRequestConfig;
 
 use crate::plugins::flow_http_routing::expected_http_hostnames;
-use crate::release_manifest::ReleaseManifestWeld;
+use crate::release_manifest::LoadedRelease;
 
 /// A native router whose unbound release hostnames report temporary unavailability.
 pub struct ExpectedHostRouter {
@@ -33,7 +33,7 @@ impl std::fmt::Debug for ExpectedHostRouter {
 }
 
 /// Project explicit hostnames once from the host's verified release.
-pub fn expected_host_router(release: Option<&ReleaseManifestWeld>) -> ExpectedHostRouter {
+pub fn expected_host_router(release: Option<&LoadedRelease>) -> ExpectedHostRouter {
     ExpectedHostRouter {
         inner: DynamicRouter::default(),
         expected_hosts: release
@@ -118,7 +118,7 @@ mod tests {
 
     const HOST: &str = "api.example.test";
 
-    fn release() -> ReleaseManifestWeld {
+    fn release() -> LoadedRelease {
         let hash = wamn_catalog::DefinitionHash::parse(format!("sha256:{}", "a".repeat(64)))
             .expect("fixture definition hash");
         let manifest = wamn_catalog::ServingManifest::new(
@@ -153,7 +153,7 @@ mod tests {
             BTreeMap::new(),
         )
         .expect("fixture manifest");
-        ReleaseManifestWeld::load_canonical_bytes(
+        LoadedRelease::load_canonical_bytes(
             &manifest.canonical_bytes(),
             "expected-router-test",
         )
@@ -198,9 +198,9 @@ mod tests {
 
     #[tokio::test]
     async fn native_ingress_preserves_refusals_bind_transitions_and_application_404() {
-        let weld = release();
+        let loaded_release = release();
         let ingress = Ingress::new(
-            expected_host_router(Some(&weld)),
+            expected_host_router(Some(&loaded_release)),
             "127.0.0.1:0".parse().unwrap(),
         )
         .await
@@ -292,8 +292,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_missing_native_handle_still_returns_404() {
-        let weld = release();
-        let router = expected_host_router(Some(&weld));
+        let loaded_release = release();
+        let router = expected_host_router(Some(&loaded_release));
         router
             .on_service_http_resolved("missing-handle", &[HOST.into()])
             .await

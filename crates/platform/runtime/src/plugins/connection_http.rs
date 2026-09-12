@@ -31,7 +31,7 @@ use crate::plugins::effect_span::{
     EFFECT_OPERATION, EffectEvidence, EffectIdentity, EffectOutcomeGuard, EffectWiring,
     HTTP_EFFECT_DURATION_MS, effect_span, record_effect_ms, record_wiring,
 };
-use crate::release_manifest::ReleaseManifestWeld;
+use crate::release_manifest::LoadedRelease;
 
 use super::wamn_credentials::WamnCredentials;
 use super::wamn_postgres::{
@@ -135,16 +135,15 @@ pub struct ConnectionHttp {
     tenant: Box<str>,
     project: Box<str>,
     allowed_hosts: Arc<[AllowedHost]>,
-    /// Reader 2 of the four the weld enumerates (`wamn-0h0g.15.100`): the ONE
+    /// Reader 2 of the four the loaded release enumerates (`wamn-0h0g.15.100`): the ONE
     /// loaded, digest-verified serving manifest, held by reference and never
-    /// loaded, parsed or digest-verified here. It is a weld, not a cache — there
-    /// is no TTL, refresh or invalidation, because a digest-named object cannot go
-    /// stale.
+    /// loaded, parsed or digest-verified here. The bytes stay immutable for the
+    /// process lifetime. This field has no TTL, refresh, or invalidation.
     ///
     /// `None` in a process that was given no release (gates, benches, the pool's
     /// own fixtures). Such a process cannot attest a wiring/component closure,
     /// so it cannot authorize a connection.
-    release: Option<Arc<ReleaseManifestWeld>>,
+    release: Option<Arc<LoadedRelease>>,
     /// Component-store owner id to the invocation currently using that pooled
     /// instance. The production driver binds before `handler.run` and revokes
     /// before returning the instance to the pool.
@@ -159,7 +158,7 @@ impl ConnectionHttp {
         tenant: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         allowed_hosts: Arc<[AllowedHost]>,
-        release: Option<Arc<ReleaseManifestWeld>>,
+        release: Option<Arc<LoadedRelease>>,
     ) -> Self {
         Self {
             postgres,

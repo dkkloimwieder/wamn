@@ -1,9 +1,9 @@
 //! Host plugin for `wamn:flow-http-routing@0.1.0`.
 //!
-//! Reader 3 of the four the release-manifest weld enumerates
+//! Reader 3 of the four the loaded release manifest enumerates
 //! ([`crate::release_manifest`]): it answers `routes` out of
 //! [`ServingManifest::attachments`] with no database read. Authentication
-//! re-derives the selected attachment's policy from that same weld, verifies the
+//! re-derives the selected attachment's policy from that same loaded release, verifies the
 //! PAT through the system identity reader, and loads the role's exact permission
 //! set through the existing callable-HTTP project pool. The plugin never loads,
 //! parses, or digest-verifies a manifest of its own and adds no route table over
@@ -41,7 +41,7 @@ use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::Resource;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use crate::release_manifest::ReleaseManifestWeld;
+use crate::release_manifest::LoadedRelease;
 use crate::session_verifier::SessionVerifier;
 
 mod bindings {
@@ -275,7 +275,7 @@ struct InputSchemaValidators {
 }
 
 impl InputSchemaValidators {
-    fn new(release: Option<&ReleaseManifestWeld>) -> Self {
+    fn new(release: Option<&LoadedRelease>) -> Self {
         let Some(release) = release else {
             return Self {
                 attachment_hashes: HashMap::new(),
@@ -425,7 +425,7 @@ impl std::fmt::Debug for RouteAuthentication {
 impl RouteAuthentication {
     /// Bind the two read authorities to trusted package coordinates.
     ///
-    /// Environment and tenant remain single-sourced from the welded release.
+    /// Environment and tenant remain single-sourced from the loaded release.
     /// Async because it parses the identity statements on `identity_reader`
     /// here, once, instead of on every request. A reader that cannot parse them
     /// cannot authenticate anything, so this fails at startup rather than on the
@@ -501,7 +501,7 @@ pub struct FlowHttpRouting {
     /// root it cannot load refuses host construction outright — that decision is
     /// made where it is visible, at the construction site in
     /// `services/host/src/host.rs`, not here behind an `Option`.
-    release: Option<Arc<ReleaseManifestWeld>>,
+    release: Option<Arc<LoadedRelease>>,
     input_schemas: InputSchemaValidators,
     authentication: Option<Arc<RouteAuthentication>>,
     session_authentication: Option<Arc<SessionRouteAuthentication>>,
@@ -516,7 +516,7 @@ impl std::fmt::Debug for FlowHttpRouting {
             .debug_struct("FlowHttpRouting")
             .field(
                 "release",
-                &self.release.as_deref().map(|weld| weld.release()),
+                &self.release.as_deref().map(|loaded_release| loaded_release.release()),
             )
             .field(
                 "input_schema_count",
@@ -539,7 +539,7 @@ impl std::fmt::Debug for FlowHttpRouting {
 impl FlowHttpRouting {
     /// Bind this plugin to the release and per-route host ceiling.
     pub fn new(
-        release: Option<Arc<ReleaseManifestWeld>>,
+        release: Option<Arc<LoadedRelease>>,
         route_in_flight_limit: RouteInFlightLimit,
     ) -> Self {
         let input_schemas = InputSchemaValidators::new(release.as_deref());
@@ -571,7 +571,7 @@ impl FlowHttpRouting {
 
     /// Read the chart-carried route ceiling, defaulting only when it is absent.
     pub fn from_env(
-        release: Option<Arc<ReleaseManifestWeld>>,
+        release: Option<Arc<LoadedRelease>>,
     ) -> Result<Self, InvalidRouteInFlightLimit> {
         let limit = match std::env::var(HTTP_ROUTE_IN_FLIGHT_LIMIT_ENV) {
             Ok(value) => value.parse()?,
@@ -582,13 +582,13 @@ impl FlowHttpRouting {
     }
 
     fn routes(&self, method: &str, authority: &str) -> Result<Vec<RouteDefinition>, NoRelease> {
-        let weld = self.release.as_ref().ok_or(NoRelease)?;
-        Ok(route_definitions(weld.manifest(), method, authority))
+        let loaded_release = self.release.as_ref().ok_or(NoRelease)?;
+        Ok(route_definitions(loaded_release.manifest(), method, authority))
     }
 
     fn carries_route(&self, attachment_id: &str) -> Result<bool, NoRelease> {
-        let weld = self.release.as_ref().ok_or(NoRelease)?;
-        Ok(weld
+        let loaded_release = self.release.as_ref().ok_or(NoRelease)?;
+        Ok(loaded_release
             .manifest()
             .attachments
             .get(attachment_id)
@@ -604,11 +604,11 @@ impl FlowHttpRouting {
         attachment_id: &str,
         headers: &[Header],
     ) -> Result<Option<AuthenticatedCaller>, AuthRejection> {
-        let weld = self
+        let loaded_release = self
             .release
             .as_ref()
             .ok_or_else(authentication_unavailable)?;
-        let manifest = weld.manifest();
+        let manifest = loaded_release.manifest();
         let attachment = manifest
             .attachments
             .get(attachment_id)
@@ -762,7 +762,7 @@ impl FlowHttpRouting {
 
 /// Every candidate the adapter could select for this request.
 ///
-/// Free of `self` and of the weld so the projection can be proven against a
+/// Free of `self` and of the loaded release so the projection can be proven against a
 /// manifest fixture without a mount.
 fn route_definitions(
     manifest: &ServingManifest,
@@ -1221,9 +1221,8 @@ mod tests {
 
     /// A scratch manifest mount, named for its test so runs cannot collide.
     ///
-    /// The weld has exactly one constructor and it reads a file, so a test that
-    /// needs a weld writes the mount: there is no shortcut past the verification a
-    /// serving pod performs, not even here.
+    /// The test loads a release from its manifest file. It writes the mount
+    /// and uses the same verification as a serving pod.
     struct Mount {
         root: PathBuf,
     }
@@ -1244,8 +1243,8 @@ mod tests {
             Self { root }
         }
 
-        fn weld(&self) -> Arc<ReleaseManifestWeld> {
-            Arc::new(ReleaseManifestWeld::load_from(&self.root).expect("fixture mount loads"))
+        fn load_release(&self) -> Arc<LoadedRelease> {
+            Arc::new(LoadedRelease::load_from(&self.root).expect("fixture mount loads"))
         }
     }
 
@@ -1287,7 +1286,7 @@ mod tests {
     fn omitted_projection_fields_defer_to_their_real_authority() {
         let manifest = one_http_route();
         let mount = Mount::holding(&manifest, "unconstrained-input");
-        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
+        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
         let served = route_definitions(&manifest, "POST", "api.example.test");
 
@@ -1324,7 +1323,7 @@ mod tests {
             attachment(AttachmentKind::Http, definition),
         )]));
         let mount = Mount::holding(&manifest, "authored-input");
-        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
+        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
         let served = route_definitions(&manifest, "POST", "api.example.test");
 
@@ -1366,7 +1365,7 @@ mod tests {
             ("distinct".to_string(), with_schema("distinct", distinct)),
         ]));
         let mount = Mount::holding(&manifest, "schema-dedup");
-        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
+        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
         assert_eq!(
             plugin.input_schemas.attachment_hashes["first"],
@@ -1411,7 +1410,7 @@ mod tests {
             ),
         ]));
         let mount = Mount::holding(&manifest, "schema-invalid");
-        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
+        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
         let invalid_hash = &plugin.input_schemas.attachment_hashes["invalid"];
 
         assert!(matches!(
@@ -1662,15 +1661,15 @@ mod tests {
     }
 
     #[test]
-    fn the_welded_manifest_is_the_only_source_the_plugin_reads() {
-        let mount = Mount::holding(&one_http_route(), "welded");
-        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
+    fn the_loaded_manifest_is_the_only_source_the_plugin_reads() {
+        let mount = Mount::holding(&one_http_route(), "loaded");
+        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
         let served = plugin
             .routes("POST", "api.example.test")
-            .expect("a welded release serves its own routes");
+            .expect("a loaded release serves its own routes");
 
-        // The route came through the canonical round-trip the weld performs.
+        // The route came through the canonical round-trip the loaded release performs.
         assert_eq!(served_ids(&served), ["orders"]);
     }
 
@@ -1680,7 +1679,7 @@ mod tests {
         protected.auth_policy = json!({"modes": [PAT_AUTHENTICATION_MODE]});
         let manifest = release_manifest(BTreeMap::from([("orders".to_string(), protected)]));
         let mount = Mount::holding(&manifest, "pat-backend");
-        let plugin = FlowHttpRouting::new(Some(mount.weld()), RouteInFlightLimit::default());
+        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
 
         let rejection = plugin
             .authenticate("orders", &[])

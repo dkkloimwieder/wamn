@@ -17,7 +17,7 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::{
 };
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{PreparedStatementSet, WAMN_POSTGRES_ID, WamnPostgres};
-use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -39,7 +39,7 @@ pub(super) struct NativePolicyResources {
     pub(super) logging: Arc<WamnLogging>,
     pub(super) connection_http: Arc<ConnectionHttp>,
     pub(super) blobstore: Arc<WamnBlobstore>,
-    pub(super) release: Arc<ReleaseManifestWeld>,
+    pub(super) release: Arc<LoadedRelease>,
     pub(super) project: String,
 }
 

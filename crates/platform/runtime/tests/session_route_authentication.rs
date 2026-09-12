@@ -23,7 +23,7 @@ use wamn_runtime::plugins::flow_http_routing::{
 use wamn_runtime::plugins::wamn_postgres::{
     AuthorityClass, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig,
 };
-use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest::LoadedRelease;
 
 #[path = "support/session_fixture.rs"]
 #[expect(
@@ -149,7 +149,7 @@ fn permission_reader(url: &str) -> anyhow::Result<Arc<WamnPostgres>> {
     ))))
 }
 
-fn weld(modes: &[&str]) -> anyhow::Result<Arc<ReleaseManifestWeld>> {
+fn load_release(modes: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
     let definition = json!({"id": ATTACHMENT, "kind": "http", "route": {
         "host": "purchase.example.test", "path": "/purchase", "method": "POST"
     }});
@@ -168,7 +168,7 @@ fn weld(modes: &[&str]) -> anyhow::Result<Arc<ReleaseManifestWeld>> {
             "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": READ}},
         "registrations": {}
     });
-    Ok(Arc::new(ReleaseManifestWeld::load_canonical_bytes(
+    Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
         "session route proof",
     )?))
@@ -179,7 +179,7 @@ fn routing(
     modes: &[&str],
 ) -> anyhow::Result<FlowHttpRouting> {
     Ok(
-        FlowHttpRouting::new(Some(weld(modes)?), RouteInFlightLimit::default())
+        FlowHttpRouting::new(Some(load_release(modes)?), RouteInFlightLimit::default())
             .with_session_authentication(authentication),
     )
 }

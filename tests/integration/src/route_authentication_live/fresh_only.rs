@@ -18,7 +18,7 @@ use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
 use wamn_ctl::push_component::{self, PushComponentArgs};
 use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
 use wamn_platform_identity::{PrincipalKind, issue_pat, resolve_subject, revoke_pat};
-use wamn_runtime::release_manifest::ReleaseManifestWeld;
+use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::release_manifest_source::ReleaseManifestSource;
 use wamn_runtime::session_verifier::SessionVerifier;
 
@@ -79,7 +79,7 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
         snapshots.len() == 3,
         "prior-commit fixture requires releases 1 through 3"
     );
-    let previous = ReleaseManifestWeld::load_canonical_bytes(&snapshots[2].1, "release 3")?;
+    let previous = LoadedRelease::load_canonical_bytes(&snapshots[2].1, "release 3")?;
     let base = previous
         .manifest()
         .components
@@ -278,7 +278,7 @@ pub(super) async fn prove_prior_commit(proof: Proof<'_>) -> anyhow::Result<()> {
         &proof.inputs.registry_auth_file,
     )?;
     let released_bytes = source.pull_verified(&digest).await?;
-    let release = Arc::new(ReleaseManifestWeld::load_canonical_bytes(
+    let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &released_bytes,
         &format!("{}@{digest}", proof.inputs.release_artifact_base),
     )?);
