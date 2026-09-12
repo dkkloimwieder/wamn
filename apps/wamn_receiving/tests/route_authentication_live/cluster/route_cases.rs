@@ -81,7 +81,7 @@ async fn membership_job(cluster: &ReceivingCluster, project_url: &str) -> anyhow
         &secret,
         &serde_json::to_vec(&json!({
             "apiVersion":"v1","kind":"Secret","type":"Opaque",
-            "metadata":{"name":"membershipproof-fixture","namespace":resources.name},
+            "metadata":{"name":"membership-test-fixture","namespace":resources.name},
             "stringData":{"system-url":cluster.inputs.system_pg_url,"project-url":project_url},
         }))?,
     )?;
@@ -91,28 +91,28 @@ async fn membership_job(cluster: &ReceivingCluster, project_url: &str) -> anyhow
         .as_deref()
         .context("membership uses the built gates image")?;
     let job = json!({"apiVersion":"batch/v1","kind":"Job",
-    "metadata":{"name":"membershipproof","namespace":resources.name},
+    "metadata":{"name":"membership-test","namespace":resources.name},
     "spec":{"activeDeadlineSeconds":660,"backoffLimit":0,"template":{"spec":{
         "restartPolicy":"Never","automountServiceAccountToken":false,"containers":[{
-            "name":"membershipproof","image":image,"imagePullPolicy":"Never",
-            "command":["/usr/local/bin/wamn-gates","membershipproof"],
+            "name":"membership-test","image":image,"imagePullPolicy":"Never",
+            "command":["/usr/local/bin/wamn-gates","membership-test"],
             "args":["--endpoint-url",format!("http://flow-http.{}.svc.cluster.local",resources.name),
                 "--host",cluster.inputs.route_host,"--org",super::super::ORG,
                 "--project",super::super::PROJECT,"--env",super::super::ENVIRONMENT,"--tenant",super::super::TENANT],
-            "env":[{"name":"WAMN_SYSTEM_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membershipproof-fixture","key":"system-url"}}},
-                {"name":"WAMN_PROJECT_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membershipproof-fixture","key":"project-url"}}}],
+            "env":[{"name":"WAMN_SYSTEM_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membership-test-fixture","key":"system-url"}}},
+                {"name":"WAMN_PROJECT_ADMIN_URL","valueFrom":{"secretKeyRef":{"name":"membership-test-fixture","key":"project-url"}}}],
         }]
     }}}});
     let path = resources.work.join("membership-job.json");
     fs::write(&path, serde_json::to_vec_pretty(&job)?)?;
-    fs::copy(&path, resources.evidence.join("membershipproof-job.json"))?;
+    fs::copy(&path, resources.evidence.join("membership-test-job.json"))?;
     apply(resources, &path).await?;
     checked(kubectl(resources).args([
         "-n",
         &resources.name,
         "wait",
         "--for=condition=Complete",
-        "job/membershipproof",
+        "job/membership-test",
         "--timeout=720s",
     ]))
     .await?;
@@ -122,7 +122,7 @@ async fn membership_job(cluster: &ReceivingCluster, project_url: &str) -> anyhow
             &resources.name,
             "get",
             "job",
-            "membershipproof",
+            "membership-test",
             "-o",
             "json",
         ]))
@@ -135,18 +135,18 @@ async fn membership_job(cluster: &ReceivingCluster, project_url: &str) -> anyhow
             "get",
             "pods",
             "-l",
-            "job-name=membershipproof",
+            "job-name=membership-test",
             "-o",
             "json",
         ]))
         .await?,
     )?;
     fs::write(
-        resources.evidence.join("membershipproof-job.json"),
+        resources.evidence.join("membership-test-job.json"),
         serde_json::to_vec_pretty(&job)?,
     )?;
     fs::write(
-        resources.evidence.join("membershipproof-pod.json"),
+        resources.evidence.join("membership-test-pod.json"),
         serde_json::to_vec_pretty(&pods)?,
     )?;
     ensure!(
@@ -184,14 +184,14 @@ async fn membership_job(cluster: &ReceivingCluster, project_url: &str) -> anyhow
             && pod["spec"]["containers"]
                 .as_array()
                 .is_some_and(|containers| containers.len() == 1)
-            && pod["spec"]["containers"][0]["name"] == "membershipproof"
+            && pod["spec"]["containers"][0]["name"] == "membership-test"
             && pod["spec"]["containers"][0]["image"] == image
             && pod["spec"]["containers"][0]["command"]
-                == json!(["/usr/local/bin/wamn-gates", "membershipproof"])
+                == json!(["/usr/local/bin/wamn-gates", "membership-test"])
             && pod["status"]["containerStatuses"]
                 .as_array()
                 .is_some_and(|containers| containers.len() == 1)
-            && pod["status"]["containerStatuses"][0]["name"] == "membershipproof"
+            && pod["status"]["containerStatuses"][0]["name"] == "membership-test"
             && pod["status"]["containerStatuses"][0]["state"]["terminated"]["exitCode"] == 0
             && pod["status"]["containerStatuses"][0]["imageID"]
                 .as_str()
@@ -199,25 +199,25 @@ async fn membership_job(cluster: &ReceivingCluster, project_url: &str) -> anyhow
         "membership must use its owned Job, exact executable and loaded image"
     );
     let log =
-        checked(kubectl(resources).args(["-n", &resources.name, "logs", "job/membershipproof"]))
+        checked(kubectl(resources).args(["-n", &resources.name, "logs", "job/membership-test"]))
             .await?;
-    fs::write(resources.evidence.join("membershipproof.log"), &log)?;
+    fs::write(resources.evidence.join("membership-test.log"), &log)?;
     let log = String::from_utf8(log)?;
     let cases = log
         .lines()
-        .filter(|line| line.starts_with("MEMBERSHIP_PROOF "))
+        .filter(|line| line.starts_with("MEMBERSHIP_TEST "))
         .collect::<Vec<_>>();
     ensure!(
         cases
             == [
-                "MEMBERSHIP_PROOF case=absent_membership status=401 result=pass",
-                "MEMBERSHIP_PROOF case=granted status=200 result=pass",
-                "MEMBERSHIP_PROOF case=repeated_grant status=200 result=pass",
-                "MEMBERSHIP_PROOF case=role_removed status=403 result=pass",
-                "MEMBERSHIP_PROOF case=role_restored status=200 result=pass",
-                "MEMBERSHIP_PROOF case=revoked status=401 result=pass",
-                "MEMBERSHIP_PROOF case=repeated_revoke status=401 result=pass",
-                "MEMBERSHIP_PROOF result=pass cases=7 cleanup=pass",
+                "MEMBERSHIP_TEST case=absent_membership status=401 result=pass",
+                "MEMBERSHIP_TEST case=granted status=200 result=pass",
+                "MEMBERSHIP_TEST case=repeated_grant status=200 result=pass",
+                "MEMBERSHIP_TEST case=role_removed status=403 result=pass",
+                "MEMBERSHIP_TEST case=role_restored status=200 result=pass",
+                "MEMBERSHIP_TEST case=revoked status=401 result=pass",
+                "MEMBERSHIP_TEST case=repeated_revoke status=401 result=pass",
+                "MEMBERSHIP_TEST result=pass cases=7 cleanup=pass",
             ],
         "the deployed membership test must complete its seven exact cases and cleanup"
     );
@@ -226,7 +226,7 @@ async fn membership_job(cluster: &ReceivingCluster, project_url: &str) -> anyhow
         &resources.name,
         "delete",
         "secret",
-        "membershipproof-fixture",
+        "membership-test-fixture",
     ]))
     .await?;
     Ok(())

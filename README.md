@@ -167,7 +167,7 @@ subsystem — is in **`docs/operations/build-and-test.md`**.
 Example (S1, no backend):
 
 ```bash
-./target/release/wamn-gates --log-level warn socketguard \
+./target/release/wamn-gates --log-level warn socket-test \
   --component apps/target/wasm32-wasip2/release/sockprobe.wasm
 ```
 

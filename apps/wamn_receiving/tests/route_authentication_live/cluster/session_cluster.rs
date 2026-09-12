@@ -1586,7 +1586,7 @@ fn session_job(
                         name: "host-session",
                         image: image.to_owned(),
                         image_pull_policy: "Never",
-                        command: ["/usr/local/bin/wamn-gates", "host-session-proof"],
+                        command: ["/usr/local/bin/wamn-gates", "host-session-test"],
                         env,
                         volume_mounts: vec![
                             mount("ca", "/etc/host-session-ca"),
@@ -1891,7 +1891,7 @@ fn assert_job(
                         .is_some_and(|id| id.ends_with(&gates.0) || id == gates.1)),
         "the session Job exited zero in the exact loaded gates image"
     );
-    let final_line = format!("HOST_SESSION_PROOF result=pass hosts=2 jwks_available={available}");
+    let final_line = format!("HOST_SESSION_TEST result=pass hosts=2 jwks_available={available}");
     ensure!(
         log.lines().filter(|line| *line == final_line).count() == 1
             && log

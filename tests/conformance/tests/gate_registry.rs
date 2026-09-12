@@ -543,7 +543,7 @@ fn fixtures() -> (PathBuf, Registry, BTreeSet<String>) {
 #[test]
 fn canonical_registry_covers_every_live_gate_source() {
     let (root, registry, manifests) = fixtures();
-    // socketguard-job.yaml and traceproof-job.yaml. The literal is a tripwire
+    // socket-test-job.yaml and trace-test-job.yaml. The literal is a tripwire
     // on the list's size; `validate_registry` separately checks the
     // registry and the directory name the same Jobs.
     assert_eq!(manifests.len(), 2, "the retained Job inventory changed");

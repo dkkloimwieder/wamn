@@ -9,7 +9,7 @@
 
 // Each test implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
-use wamn_conformance_tests::socketguard;
+use wamn_conformance_tests::socket_test;
 use wamn_integration_tests::agent_pilot;
 use wamn_integration_tests::{
     dashboard_test, host_session_test, identity_keys_test, identity_session_test, membership_test,
@@ -38,20 +38,16 @@ enum Command {
     Rc(rc::RcArgs),
     AgentPilotRun(agent_pilot::RunArgs),
     AgentPilotGrade(agent_pilot::GradeArgs),
-    /// Prove session acceptance and removed-key refusal on two deployed hosts.
-    #[command(name = "host-session-proof")]
+    /// Test session acceptance and removed-key refusal on two deployed hosts.
     HostSessionTest(host_session_test::HostSessionTestArgs),
-    /// Prove public JWKS and cache evidence through deployed identity HTTPS.
-    #[command(name = "identity-jwks")]
+    /// Test public JWKS and cache evidence through deployed identity HTTPS.
     IdentityKeysTest(identity_keys_test::IdentityKeysTestArgs),
-    /// Prove fresh PAT exchange and signed environment claims through HTTPS.
-    #[command(name = "identity-session")]
+    /// Test fresh PAT exchange and signed environment claims through HTTPS.
     IdentitySessionTest(identity_session_test::IdentitySessionTestArgs),
     /// Mint private credentials only inside an explicitly armed disposable fixture.
     #[command(name = "identity-session-fixture")]
     IdentitySessionFixture(identity_session_test::IdentitySessionFixtureArgs),
-    /// Prove fresh human membership through a deployed Receiving HTTP route.
-    #[command(name = "membershipproof")]
+    /// Test fresh human membership through a deployed Receiving HTTP route.
     MembershipTest(membership_test::MembershipTestArgs),
     /// Prove the real prune-run-history verb removes only old TERMINAL runs, keeping recent and non-terminal history.
     Retention(retention::RetentionArgs),
@@ -60,12 +56,10 @@ enum Command {
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
     ServeEcho(trace_test::ServeEchoArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
-    Socketguard(socketguard::SocketGuardArgs),
-    /// Run the 9.2 trace-inject gate: prove the host stamps `traceparent` on both the P2 and P3 outbound surfaces, read back from serve-echo
-    #[command(name = "traceproof")]
+    SocketTest(socket_test::SocketTestArgs),
+    /// Run the 9.2 trace test: assert that the host stamps `traceparent` on both the P2 and P3 outbound surfaces, read back from serve-echo
     TraceTest(trace_test::TraceTestArgs),
     /// Run the 9.9 dashboards gate: assert a deployed Grafana's health, its datasources, and the static plus per-tenant folders and dashboards
-    #[command(name = "dashproof")]
     DashboardTest(dashboard_test::DashboardTestArgs),
 }
 
@@ -101,7 +95,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Retention(args) => retention::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
         Command::ServeEcho(args) => trace_test::serve_echo(args).await,
-        Command::Socketguard(args) => socketguard::run(args).await,
+        Command::SocketTest(args) => socket_test::run(args).await,
         Command::TraceTest(args) => trace_test::run(args).await,
         Command::DashboardTest(args) => dashboard_test::run(args).await,
     };

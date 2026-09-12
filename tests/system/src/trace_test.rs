@@ -1,4 +1,4 @@
-//! traceproof (9.2): check outbound `traceparent` injection is host-enforced on
+//! trace-test (9.2): check outbound `traceparent` injection is host-enforced on
 //! `wamn:connection/http`, the surface that carries production egress.
 //!
 //! Topology:
@@ -63,7 +63,7 @@ pub struct ServeEchoArgs {
 /// A tiny HTTP/1.1 server that answers
 /// every request 200 with `{"traceparent": <received|null>, "tracestate":
 /// <received|null>}`. It reflects exactly the trace headers it was sent, so
-/// traceproof can read what the effect surface injected.
+/// trace-test can read what the effect surface injected.
 pub async fn serve_echo(args: ServeEchoArgs) -> anyhow::Result<()> {
     let listener = TcpListener::bind(("0.0.0.0", args.port)).await?;
     println!(
@@ -138,7 +138,7 @@ fn header_of(headers: &[String], name: &str) -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
-// traceproof: the assertion driver
+// trace-test: the assertion driver
 // ---------------------------------------------------------------------------
 
 #[derive(Args, Debug)]
@@ -170,7 +170,7 @@ pub async fn run(args: TraceTestArgs) -> anyhow::Result<()> {
                 std::fs::write(
                     path,
                     serde_json::to_vec(&serde_json::json!({
-                        "test":"traceproof","passed":true,"surface":SURFACE,
+                        "test":"trace-test","passed":true,"surface":SURFACE,
                         "parent":sent_tp,"injected":captured,"reflected":reflected,
                     }))?,
                 )?;
@@ -179,14 +179,14 @@ pub async fn run(args: TraceTestArgs) -> anyhow::Result<()> {
                 "PASS [{SURFACE} trace id threads across process boundary without guest help]"
             );
             println!(
-                "traceproof: overall PASS (host-enforced effect-span inject on the production \
+                "trace-test: overall PASS (host-enforced effect-span inject on the production \
                  egress surface)"
             );
             Ok(())
         }
         Err(error) => {
             eprintln!("{error:#}");
-            bail!("traceproof: overall FAIL ({SURFACE})")
+            bail!("trace-test: overall FAIL ({SURFACE})")
         }
     }
 }
@@ -316,7 +316,7 @@ fn w3c_field(tp: &str, idx: usize) -> Option<String> {
 async fn http_get_with_headers(url: &str, extra: &[(String, String)]) -> anyhow::Result<String> {
     let uri: hyper::Uri = url.parse().with_context(|| format!("parse URL {url:?}"))?;
     if uri.scheme_str() != Some("http") {
-        bail!("traceproof supports only http:// upstreams, got {url:?}");
+        bail!("trace-test supports only http:// upstreams, got {url:?}");
     }
     let authority = uri
         .authority()
@@ -394,7 +394,7 @@ mod tests {
         );
         let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder().build();
         let subscriber = tracing_subscriber::registry()
-            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("traceproof-test")));
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("trace-test")));
         let guard = tracing::subscriber::set_default(subscriber);
         (provider, guard)
     }
@@ -433,7 +433,7 @@ mod tests {
         drop(guard);
         provider
             .shutdown()
-            .expect("traceproof test tracer must shut down");
+            .expect("trace-test test tracer must shut down");
     }
 
     #[tokio::test(flavor = "current_thread")]

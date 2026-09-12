@@ -7,7 +7,7 @@ usage() {
   printf '%s\n' \
     'usage: identity-jwks-journey-run [--apply] [--session-exchange] --evidence-dir DIR' \
     'Without --apply, print the plan without building or creating resources.' \
-    '--session-exchange adds the session proof after all five unconfigured JWKS stages.' \
+    '--session-exchange adds the session test after all five unconfigured JWKS stages.' \
     'DIR must be new and under docs/perf/ in this worktree or its shared checkout.' \
     'The run creates and removes its own named kind cluster and image tags.' \
     'No existing cluster, database, ingress, or production trust root is used.' >&2
@@ -66,10 +66,10 @@ if [[ "$apply" != true ]]; then
   printf 'images=%s,%s\nissuer=%s\n' "$identity_image" "$gates_image" "$issuer"
   printf 'evidence=%s\nshared_checkout=%s\n' "${evidence_dir:-not specified}" "$shared_root"
   printf '%s\n' 'order=canonical identity build; serial component-builder prewarm; canonical gates build; own kind+PG18; production credential CLI; actual identity chart; five key-set Jobs; named cleanup' \
-    'proof=public HTTPS JWKS and key evidence only; token_admission=not_proven expiry_outage=not_proven'
+    'test=public HTTPS JWKS and key evidence only; token_admission=not_tested expiry_outage=not_tested'
   if [[ "$session_exchange" == true ]]; then
     printf '%s\n' 'session_order=registry and app fixtures; protected PAT fixture; actual reader credential and membership CLI; configured identity chart; signed-claim and refusal Job; membership revoke; next-exchange refusal Job' \
-      'session_proof=exchange only; host_admission=not_proven'
+      'session_test=exchange only; host_admission=not_tested'
   fi
   exit 0
 fi
@@ -124,8 +124,8 @@ capture_cluster() {
   local job container
   while IFS= read -r job; do
     [[ "$job" =~ ^identity-(jwks|session)-[a-z0-9-]+$ ]] || return 1
-    container=identity-jwks
-    [[ "$job" != identity-session-* ]] || container=identity-session
+    container=identity-keys-test
+    [[ "$job" != identity-session-test-* ]] || container=identity-session-test
     run timeout 30s "${kube[@]}" -n "$namespace" logs "job/$job" -c "$container" \
       >"$evidence_dir/final-$job.log" 2>>"$evidence_dir/final-capture-errors.log" || true
   done < <(jq -r '.items[] | select(.kind == "Job") | .metadata.name' "$evidence_dir/final-resources.json")
@@ -159,8 +159,8 @@ cleanup() {
   jq -n --arg source "$head" --arg cluster "$cluster" --argjson exit "$status" \
     --argjson cleanup_failed "$cleanup_failed" --argjson completed "$completed" \
     --argjson session_exchange "$session_exchange" --argjson session_completed "$session_completed" \
-    '{gate:"IDENTITY-JWKS",source:$source,cluster:$cluster,completed:$completed,cleanup_failed:$cleanup_failed,exit_code:$exit,token_admission:"not_proven",expiry_outage:"not_proven"}
-      + (if $session_exchange then {session_exchange_completed:$session_completed,host_admission:"not_proven"} else {} end)' \
+    '{gate:"IDENTITY-JWKS",source:$source,cluster:$cluster,completed:$completed,cleanup_failed:$cleanup_failed,exit_code:$exit,token_admission:"not_tested",expiry_outage:"not_tested"}
+      + (if $session_exchange then {session_exchange_completed:$session_completed,host_admission:"not_tested"} else {} end)' \
     >"$evidence_dir/journey-verdict.json"
   printf 'IDENTITY-JWKS journey exit=%s cleanup_failed=%s evidence=%s\n' "$status" "$cleanup_failed" "$evidence_dir"
   exit "$status"
@@ -297,36 +297,36 @@ printf '#!/usr/bin/env bash\nexec %q --kubeconfig %q --context %q "$@"\n' \
 chmod 0700 "$work_dir/kubectl"
 gate() {
   local stage=$1 expected=$2 count name spec status=0
-  name=identity-jwks-$stage
-  [[ "$name" =~ ^identity-jwks-[a-z0-9-]+$ && ${#name} -le 63 ]] || fail 'invalid gate Job name'
+  name=identity-keys-test-$stage
+  [[ "$name" =~ ^identity-keys-test-[a-z0-9-]+$ && ${#name} -le 63 ]] || fail 'invalid gate Job name'
   count=$(jq -er 'if type == "array" and all(.[]; type == "string") and length == (unique | length) then length else error("invalid expected kids") end' <<<"$expected")
   jq -n --arg ns "$namespace" --arg name "$name" --arg image "$gates_image" --arg issuer "$issuer" --arg kids "$expected" \
-    '{apiVersion:"batch/v1",kind:"Job",metadata:{name:$name,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{metadata:{labels:{app:"identity-jwks"}},spec:{restartPolicy:"Never",automountServiceAccountToken:false,containers:[{name:"identity-jwks",image:$image,imagePullPolicy:"Never",args:["identity-jwks"],env:[{name:"WAMN_IDENTITY_ISSUER",value:$issuer},{name:"WAMN_IDENTITY_JWKS_URL",value:($issuer+"/.well-known/jwks.json")},{name:"WAMN_IDENTITY_CA_FILE",value:"/etc/wamn-identity-ca/ca.crt"},{name:"WAMN_IDENTITY_WRONG_CA_FILE",value:"/etc/wamn-identity-ca/wrong-ca.crt"},{name:"WAMN_IDENTITY_EXPECTED_KIDS",value:$kids}],volumeMounts:[{name:"public-ca",mountPath:"/etc/wamn-identity-ca",readOnly:true}]}],volumes:[{name:"public-ca",configMap:{name:"identity-jwks-public"}}]}}}}' \
+    '{apiVersion:"batch/v1",kind:"Job",metadata:{name:$name,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{metadata:{labels:{app:"identity-keys-test"}},spec:{restartPolicy:"Never",automountServiceAccountToken:false,containers:[{name:"identity-keys-test",image:$image,imagePullPolicy:"Never",args:["identity-keys-test"],env:[{name:"WAMN_IDENTITY_ISSUER",value:$issuer},{name:"WAMN_IDENTITY_JWKS_URL",value:($issuer+"/.well-known/jwks.json")},{name:"WAMN_IDENTITY_CA_FILE",value:"/etc/wamn-identity-ca/ca.crt"},{name:"WAMN_IDENTITY_WRONG_CA_FILE",value:"/etc/wamn-identity-ca/wrong-ca.crt"},{name:"WAMN_IDENTITY_EXPECTED_KIDS",value:$kids}],volumeMounts:[{name:"public-ca",mountPath:"/etc/wamn-identity-ca",readOnly:true}]}],volumes:[{name:"public-ca",configMap:{name:"identity-jwks-public"}}]}}}}' \
     >"$evidence_dir/$name.json"
-  spec=$(jq -nc --arg name "$name" --arg image "$gates_image" --arg result_line "IDENTITY_JWKS result=pass expected_keys=$count token_admission=not_proven expiry_outage=not_proven" \
-    '{name:$name,container:"identity-jwks",expectation:"positive",exit_code:0,image:$image,log_contains:$result_line}')
+  spec=$(jq -nc --arg name "$name" --arg image "$gates_image" --arg result_line "IDENTITY_JWKS result=pass expected_keys=$count token_admission=not_tested expiry_outage=not_tested" \
+    '{name:$name,container:"identity-keys-test",expectation:"positive",exit_code:0,image:$image,log_contains:$result_line}')
   run env KUBECTL="$work_dir/kubectl" "$repo_root/tools/kubernetes-gate-run" \
     --namespace "$namespace" --timeout-secs 180 --manifest "$evidence_dir/$name.json" \
     --verdict-record "$evidence_dir/$name-verdict.json" --job "$spec" \
     2>&1 | tee "$evidence_dir/$name-run.log" || status=$?
   run "${kube[@]}" -n "$namespace" get job "$name" -o json >"$evidence_dir/$name-state.json"
   run "${kube[@]}" -n "$namespace" get pods -l "job-name=$name" -o json >"$evidence_dir/$name-pods.json"
-  run "${kube[@]}" -n "$namespace" logs "job/$name" -c identity-jwks >"$evidence_dir/$name.log"
+  run "${kube[@]}" -n "$namespace" logs "job/$name" -c identity-keys-test >"$evidence_dir/$name.log"
   ((status == 0)) || return "$status"
   {
     printf 'IDENTITY_JWKS case=%s result=pass\n' configuration_https public_set issuer_binding
     if ((count > 0)); then printf 'IDENTITY_JWKS case=two_cache_evidence result=pass\n'; fi
     printf 'IDENTITY_JWKS case=%s result=pass\n' unknown_kid wrong_ca plaintext absent_authority_routes
-    printf 'IDENTITY_JWKS result=pass expected_keys=%s token_admission=not_proven expiry_outage=not_proven\n' "$count"
+    printf 'IDENTITY_JWKS result=pass expected_keys=%s token_admission=not_tested expiry_outage=not_tested\n' "$count"
   } >"$evidence_dir/$name-expected.txt"
-  sed -n '/^IDENTITY_JWKS/p' "$evidence_dir/$name.log" >"$evidence_dir/$name-receipts.txt"
-  cmp "$evidence_dir/$name-expected.txt" "$evidence_dir/$name-receipts.txt"
+  sed -n '/^IDENTITY_JWKS/p' "$evidence_dir/$name.log" >"$evidence_dir/$name-results.txt"
+  cmp "$evidence_dir/$name-expected.txt" "$evidence_dir/$name-results.txt"
 }
 session_gate() {
   local stage=$1 cases_file=$2 name secret count spec status=0
-  name=identity-session-$stage
+  name=identity-session-test-$stage
   secret=identity-session-cases-$stage
-  [[ "$name" =~ ^identity-session-[a-z0-9-]+$ && ${#name} -le 63 ]] || fail 'invalid session Job name'
+  [[ "$name" =~ ^identity-session-test-[a-z0-9-]+$ && ${#name} -le 63 ]] || fail 'invalid session Job name'
   [[ "$cases_file" == "$work_dir"/* && -f "$cases_file" ]] || fail 'session cases must stay in the private fixture directory'
   jq -e 'type == "array" and length > 0 and all(.[];
     (.name | type == "string" and test("^[a-z0-9_-]{1,64}$"))
@@ -338,24 +338,24 @@ session_gate() {
   jq 'map({name,audience,expected_status,subject,org,roles})' "$cases_file" >"$evidence_dir/$name-cases.json"
   run "${kube[@]}" -n "$namespace" create secret generic "$secret" --from-file="cases.json=$cases_file"
   jq -n --arg ns "$namespace" --arg name "$name" --arg image "$gates_image" --arg issuer "$issuer" --arg secret "$secret" \
-    '{apiVersion:"batch/v1",kind:"Job",metadata:{name:$name,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{metadata:{labels:{app:"identity-session"}},spec:{restartPolicy:"Never",automountServiceAccountToken:false,containers:[{name:"identity-session",image:$image,imagePullPolicy:"Never",args:["identity-session"],env:[{name:"WAMN_IDENTITY_ISSUER",value:$issuer},{name:"WAMN_IDENTITY_CA_FILE",value:"/etc/wamn-identity-ca/ca.crt"},{name:"WAMN_IDENTITY_SESSION_CASES_FILE",value:"/etc/wamn-identity-cases/cases.json"}],volumeMounts:[{name:"public-ca",mountPath:"/etc/wamn-identity-ca",readOnly:true},{name:"cases",mountPath:"/etc/wamn-identity-cases",readOnly:true}]}],volumes:[{name:"public-ca",configMap:{name:"identity-jwks-public",items:[{key:"ca.crt",path:"ca.crt"}]}},{name:"cases",secret:{secretName:$secret,defaultMode:256,items:[{key:"cases.json",path:"cases.json"}]}}]}}}}' \
+    '{apiVersion:"batch/v1",kind:"Job",metadata:{name:$name,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{metadata:{labels:{app:"identity-session-test"}},spec:{restartPolicy:"Never",automountServiceAccountToken:false,containers:[{name:"identity-session-test",image:$image,imagePullPolicy:"Never",args:["identity-session-test"],env:[{name:"WAMN_IDENTITY_ISSUER",value:$issuer},{name:"WAMN_IDENTITY_CA_FILE",value:"/etc/wamn-identity-ca/ca.crt"},{name:"WAMN_IDENTITY_SESSION_CASES_FILE",value:"/etc/wamn-identity-cases/cases.json"}],volumeMounts:[{name:"public-ca",mountPath:"/etc/wamn-identity-ca",readOnly:true},{name:"cases",mountPath:"/etc/wamn-identity-cases",readOnly:true}]}],volumes:[{name:"public-ca",configMap:{name:"identity-jwks-public",items:[{key:"ca.crt",path:"ca.crt"}]}},{name:"cases",secret:{secretName:$secret,defaultMode:256,items:[{key:"cases.json",path:"cases.json"}]}}]}}}}' \
     >"$evidence_dir/$name.json"
-  spec=$(jq -nc --arg name "$name" --arg image "$gates_image" --arg result_line "IDENTITY_SESSION result=pass cases=$count host_admission=not_proven" \
-    '{name:$name,container:"identity-session",expectation:"positive",exit_code:0,image:$image,log_contains:$result_line}')
+  spec=$(jq -nc --arg name "$name" --arg image "$gates_image" --arg result_line "IDENTITY_SESSION result=pass cases=$count host_admission=not_tested" \
+    '{name:$name,container:"identity-session-test",expectation:"positive",exit_code:0,image:$image,log_contains:$result_line}')
   run env KUBECTL="$work_dir/kubectl" "$repo_root/tools/kubernetes-gate-run" \
     --namespace "$namespace" --timeout-secs 180 --manifest "$evidence_dir/$name.json" \
     --verdict-record "$evidence_dir/$name-verdict.json" --job "$spec" \
     2>&1 | tee "$evidence_dir/$name-run.log" || status=$?
   run "${kube[@]}" -n "$namespace" get job "$name" -o json >"$evidence_dir/$name-state.json"
   run "${kube[@]}" -n "$namespace" get pods -l "job-name=$name" -o json >"$evidence_dir/$name-pods.json"
-  run "${kube[@]}" -n "$namespace" logs "job/$name" -c identity-session >"$evidence_dir/$name.log"
+  run "${kube[@]}" -n "$namespace" logs "job/$name" -c identity-session-test >"$evidence_dir/$name.log"
   ((status == 0)) || return "$status"
   {
     jq -r '.[] | "IDENTITY_SESSION case=\(.name) result=pass"' "$cases_file"
-    printf 'IDENTITY_SESSION result=pass cases=%s host_admission=not_proven\n' "$count"
+    printf 'IDENTITY_SESSION result=pass cases=%s host_admission=not_tested\n' "$count"
   } >"$evidence_dir/$name-expected.txt"
-  sed -n '/^IDENTITY_SESSION /p' "$evidence_dir/$name.log" >"$evidence_dir/$name-receipts.txt"
-  cmp "$evidence_dir/$name-expected.txt" "$evidence_dir/$name-receipts.txt"
+  sed -n '/^IDENTITY_SESSION /p' "$evidence_dir/$name.log" >"$evidence_dir/$name-results.txt"
+  cmp "$evidence_dir/$name-expected.txt" "$evidence_dir/$name-results.txt"
 }
 session_target() {
   local org=$1 environment=$2 instance=$3 tenant=$4 role=$5 database label pod admin_secret target_secret

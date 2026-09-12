@@ -793,7 +793,7 @@ impl opentelemetry::propagation::Injector for TraceContextHeaders<'_> {
 /// layer and a propagator but NO global tracer provider, so the global tracer
 /// silently answers with a no-op span.
 ///
-/// Public because the `traceproof` gate drives THIS function rather than a
+/// Public because the `trace-test` gate drives THIS function rather than a
 /// copy of it (`wamn-k9ea`): the gate's whole claim is that what crosses the
 /// process boundary is what production injects, so a reimplementation there
 /// would prove nothing about this one.

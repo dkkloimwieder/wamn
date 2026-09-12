@@ -1,6 +1,6 @@
 # [9.2] The in-cluster gate of record: prove host-enforced traceparent
 # propagation over real networking on wamn:connection/http, the surface that
-# carries production egress. traceproof runs the shipped injector without a
+# carries production egress. trace-test runs the shipped injector without a
 # guest, takes only the header that injector wrote, then uses that header for a
 # request to serve-echo; the reflected trace id must match. Runs the wamn-gates
 # image (SR1) — no external client to pull.
@@ -16,19 +16,19 @@
 #
 # Prereqs: serve-echo and the OTel collector rolled out.
 #
-#   kubectl -n wamn-system apply -f deploy/gates/traceproof-job.yaml
-#   kubectl -n wamn-system wait --for=condition=complete job/traceproof --timeout=180s
-#   kubectl -n wamn-system logs job/traceproof
+#   kubectl -n wamn-system apply -f deploy/gates/trace-test-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/trace-test --timeout=180s
+#   kubectl -n wamn-system logs job/trace-test
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: traceproof
+  name: trace-test
   namespace: wamn-system
 spec:
   backoffLimit: 0
   template:
     metadata:
-      labels: { app: traceproof }
+      labels: { app: trace-test }
     spec:
       restartPolicy: Never
       initContainers:
@@ -41,13 +41,13 @@ spec:
               until nc -z serve-echo 8091; do echo "waiting serve-echo:8091"; sleep 2; done
               until nc -z otel-collector 4317; do echo "waiting otel-collector:4317"; sleep 2; done
       containers:
-        - name: traceproof
+        - name: trace-test
           image: wamn-gates:dev
           imagePullPolicy: IfNotPresent
           args:
             - "--log-level"
             - "info"
-            - "traceproof"
+            - "trace-test"
             - "--upstream"
             - "http://serve-echo.wamn-system.svc.cluster.local:8091/"
           env:

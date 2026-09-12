@@ -123,7 +123,7 @@ pub(super) async fn run(
     let args = containers[0]["args"]
         .as_array_mut()
         .context("native test has direct arguments")?;
-    if name == "traceproof" {
+    if name == "trace-test" {
         let index = args
             .iter()
             .position(|arg| arg == "--upstream")
@@ -356,7 +356,7 @@ fn validate_completion(
         result["test"] == name && result["passed"] == true,
         "native test must report its own successful assertions"
     );
-    if name == "socketguard" {
+    if name == "socket-test" {
         ensure!(
             result["checks"]["P2"]["refused"] == true
                 && result["checks"]["P3"]["refused"] == true
@@ -378,10 +378,10 @@ fn validate_completion(
 mod tests {
     use super::*;
     fn completed() -> (Value, Value) {
-        let result = json!({"test":"socketguard","passed":true,"checks":{"P2":{"refused":true},"P3":{"refused":true},"standard":{"admitted":true}}});
+        let result = json!({"test":"socket-test","passed":true,"checks":{"P2":{"refused":true},"P3":{"refused":true},"standard":{"admitted":true}}});
         (
             json!({"metadata":{"uid":"new-job"},"status":{"conditions":[{"type":"Complete","status":"True"}]}}),
-            json!({"items":[{"metadata":{"uid":"new-pod","namespace":NAMESPACE,"ownerReferences":[{"uid":"new-job","kind":"Job","controller":true}]},"spec":{"containers":[{"name":"socketguard","image":"test:image"}]},"status":{"phase":"Succeeded","containerStatuses":[{"name":"socketguard","restartCount":0,"imageID":"test@sha256:abc","state":{"terminated":{"exitCode":0,"message":result.to_string()}}}]}}]}),
+            json!({"items":[{"metadata":{"uid":"new-pod","namespace":NAMESPACE,"ownerReferences":[{"uid":"new-job","kind":"Job","controller":true}]},"spec":{"containers":[{"name":"socket-test","image":"test:image"}]},"status":{"phase":"Succeeded","containerStatuses":[{"name":"socket-test","restartCount":0,"imageID":"test@sha256:abc","state":{"terminated":{"exitCode":0,"message":result.to_string()}}}]}}]}),
         )
     }
     #[test]
@@ -425,13 +425,13 @@ mod tests {
         assert_eq!(image_id, &image["status"]["id"]);
         let (job, mut pods) = completed();
         pods["items"][0]["status"]["containerStatuses"][0]["imageID"] = image_id.clone();
-        assert!(validate_completion("socketguard", "new-job", "test:image", &job, &pods).is_ok());
+        assert!(validate_completion("socket-test", "new-job", "test:image", &job, &pods).is_ok());
     }
 
     #[test]
     fn completion_requires_original_job_image_and_assertions() {
         let (job, pods) = completed();
-        assert!(validate_completion("socketguard", "new-job", "test:image", &job, &pods).is_ok());
+        assert!(validate_completion("socket-test", "new-job", "test:image", &job, &pods).is_ok());
         for (path, value) in [
             ("/items/0/metadata/ownerReferences/0/uid", json!("old-job")),
             ("/items/0/spec/containers/0/image", json!("other:image")),
@@ -449,7 +449,7 @@ mod tests {
             let mut changed = pods.clone();
             *changed.pointer_mut(path).unwrap() = value;
             assert!(
-                validate_completion("socketguard", "new-job", "test:image", &job, &changed)
+                validate_completion("socket-test", "new-job", "test:image", &job, &changed)
                     .is_err()
             );
         }

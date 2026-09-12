@@ -262,7 +262,7 @@
     },
     {
       "source_kind": "manifest",
-      "source": "deploy/gates/socketguard-job.yaml",
+      "source": "deploy/gates/socket-test-job.yaml",
       "classification": "required-gate",
       "decision_ids": [
         "D17",
@@ -285,7 +285,7 @@
     },
     {
       "source_kind": "manifest",
-      "source": "deploy/gates/traceproof-job.yaml",
+      "source": "deploy/gates/trace-test-job.yaml",
       "classification": "required-gate",
       "decision_ids": [
         "D13",

@@ -50,7 +50,7 @@ pub async fn run(args: RcArgs) -> anyhow::Result<()> {
                 "source":source,"cluster":CLUSTER,"context":"kind-wamn-rc",
                 "namespace":NAMESPACE,"build_profile":"debug",
                 "event_stream":declaration,
-                "order":["setup","bootstrap","M2","socketguard","traceproof","cleanup"],
+                "order":["setup","bootstrap","M2","socket-test","trace-test","cleanup"],
                 "deferred":["wamn-0h0g.15.153"],"deferred_disposition":"post-merge; not claimed",
             }))?
         );
@@ -97,9 +97,9 @@ pub async fn run(args: RcArgs) -> anyhow::Result<()> {
             "failure":result.as_ref().err().map(|error| format!("{error:#}")),
             "cleanup":cleanup.as_ref().err().map(|error| format!("{error:#}")),
             "source_changed":unchanged.as_ref().err().map(|error| format!("{error:#}")),
-            "selected_tests":["socketguard","traceproof"],
-            "socketguard_completed":resources.evidence.join("socketguard-verdict.json").is_file(),
-            "traceproof_completed":resources.evidence.join("traceproof-verdict.json").is_file(),
+            "selected_tests":["socket-test","trace-test"],
+            "socket_test_completed":resources.evidence.join("socket-test-verdict.json").is_file(),
+            "trace_test_completed":resources.evidence.join("trace-test-verdict.json").is_file(),
             "deferred":["wamn-0h0g.15.153"],"deferred_disposition":"post-merge; not claimed",
         }),
     );
@@ -220,13 +220,13 @@ async fn execute(
         &json!({"status":"not_run","reason":"da58814f removed the wakeproof Job and integration harness","deferred":"wamn-0h0g.15.26"}),
     )?;
     jobs::install_dependencies(resources).await?;
-    let socket = jobs::run(resources, "socketguard", Duration::from_secs(180)).await?;
-    let trace = jobs::run(resources, "traceproof", Duration::from_secs(240)).await?;
+    let socket = jobs::run(resources, "socket-test", Duration::from_secs(180)).await?;
+    let trace = jobs::run(resources, "trace-test", Duration::from_secs(240)).await?;
     save(
         resources,
         "m0-verdict.json",
         &json!({"schema_version":"0.1","source":resources.source,
-        "scope":{"executed":["socketguard","traceproof"],"deferred":["wamn-0h0g.15.153"],
+        "scope":{"executed":["socket-test","trace-test"],"deferred":["wamn-0h0g.15.153"],
         "deferred_disposition":"post-merge; not claimed"},"verdict":"pass","failure_classes":[],
         "jobs":[socket,trace]}),
     )?;

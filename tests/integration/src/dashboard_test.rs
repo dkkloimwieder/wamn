@@ -1,6 +1,6 @@
-//! `dashproof` ([9.9], wamn-b4e): the DEPLOYED test that the 9.9 dashboards
+//! `dashboard-test` ([9.9], wamn-b4e): the DEPLOYED test that the 9.9 dashboards
 //! layer stands up. There is no emission seam to drive (unlike `metricbench` →
-//! `:8889`), so this follows the `traceproof`/`apiproof` shape — assert against a
+//! `:8889`), so this follows the `trace-test`/`apiproof` shape — assert against a
 //! running Grafana's HTTP API, not scaffolding. It shows, each a NAMED failure:
 //!
 //!   1. `GET /api/health` -> `database: ok` (Grafana + its DB are up);
@@ -69,7 +69,7 @@ pub async fn run(args: DashboardTestArgs) -> anyhow::Result<()> {
     let base = args.grafana_url.trim_end_matches('/');
     let auth = (args.user.as_str(), args.password.as_str());
     println!(
-        "# wamn-gates [9.9] dashproof -> {base} (local={})",
+        "# wamn-gates [9.9] dashboard-test -> {base} (local={})",
         args.local
     );
 
@@ -208,9 +208,9 @@ pub async fn run(args: DashboardTestArgs) -> anyhow::Result<()> {
         }
     }
 
-    println!("\ndashproof complete — overall PASS: {pass}");
+    println!("\ndashboard-test complete — overall PASS: {pass}");
     if !pass {
-        bail!("dashproof gate failed");
+        bail!("dashboard-test gate failed");
     }
     Ok(())
 }
@@ -266,7 +266,7 @@ async fn http_json(
     Ok((status, body))
 }
 
-/// The org ids recorded in the T1 registry, so dashproof checks a folder for
+/// The org ids recorded in the T1 registry, so dashboard-test checks a folder for
 /// every provisioned org.
 async fn read_orgs(system_url: &str) -> anyhow::Result<Vec<String>> {
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)

@@ -1,7 +1,7 @@
-# [9.2] The reflecting upstream for the traceproof cross-pod proof: a plain
+# [9.2] The reflecting upstream for the trace-test cross-pod proof: a plain
 # HTTP server (NOT wash-served) that answers every request 200 with
 # {"traceparent": <received|null>, "tracestate": <received|null>}. The
-# traceproof gate invokes each public host surface, captures only the header
+# trace-test gate invokes each public host surface, captures only the header
 # that surface emits, and uses it for a raw call here. serve-echo reflects
 # exactly what it received so the gate can assert the host-injected trace
 # threaded the pod boundary. Runs the wamn-gates image (SR1).

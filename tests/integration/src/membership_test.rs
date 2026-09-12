@@ -87,7 +87,7 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     let subject = format!("membership-proof-{nonce}@example.test");
     let human = create_human(&system, &subject, "Disposable membership proof")
         .await
-        .context("create the proof human")?;
+        .context("create the test human")?;
     let role = format!("membership-proof-{nonce}");
     if let Some(path) = &args.throughput_pat_file {
         let result = tokio::time::timeout(TEST_TIMEOUT, async {
@@ -118,23 +118,23 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
         exercise(&args, &http, &system, &mut project, human.id(), &role),
     )
     .await
-    .map_err(|_| anyhow!("membership proof exceeded its five-minute deadline"))
+    .map_err(|_| anyhow!("membership test exceeded its five-minute deadline"))
     .and_then(|result| result);
     let cleaned = tokio::time::timeout(
         TEST_TIMEOUT,
         cleanup(&mut system, &mut project, &args.tenant, human.id(), &role),
     )
     .await
-    .map_err(|_| anyhow!("membership proof cleanup timed out"))
+    .map_err(|_| anyhow!("membership test cleanup timed out"))
     .and_then(|result| result);
     if let Err(error) = cleaned {
         return Err(error).context(match result {
-            Ok(()) => "HTTP cases passed, but proof cleanup failed",
-            Err(_) => "HTTP proof and its cleanup failed",
+            Ok(()) => "HTTP cases passed, but test cleanup failed",
+            Err(_) => "HTTP test and its cleanup failed",
         });
     }
     result?;
-    println!("MEMBERSHIP_PROOF result=pass cases=7 cleanup=pass");
+    println!("MEMBERSHIP_TEST result=pass cases=7 cleanup=pass");
     Ok(())
 }
 
@@ -181,7 +181,7 @@ async fn exercise(
         TEST_TIMEOUT,
     )
     .await
-    .context("issue the proof PAT through production identity")?;
+    .context("issue the test PAT through production identity")?;
     assign_project_role(system, principal, &args.org, &args.project, "route-caller")
         .await
         .context("assign the project role that must not imply membership")?;
@@ -212,7 +212,7 @@ async fn exercise(
         .context("remove this human's permission-bearing role")?;
     ensure!(
         removed == 1,
-        "proof role assignment was missing before removal"
+        "test role assignment was missing before removal"
     );
     request("role_removed", 403).await?;
     project
@@ -240,7 +240,7 @@ async fn seed_tenant_role(
     let tx = project
         .transaction()
         .await
-        .context("begin proof fixture seed")?;
+        .context("begin test fixture seed")?;
     tx.execute(
         "INSERT INTO app_system.users (tenant_id, id, email) \
          VALUES ($1, $2::text::uuid, $3)",
@@ -257,22 +257,22 @@ async fn seed_tenant_role(
         &[&args.tenant, &role],
     )
     .await
-    .context("seed the dedicated proof role")?;
+    .context("seed the dedicated test role")?;
     tx.execute(
         "INSERT INTO app_system.permissions (tenant_id, role_name, permission) \
          VALUES ($1, $2, $3)",
         &[&args.tenant, &role, &OPERATION_GRANT],
     )
     .await
-    .context("grant only the canonical purchase-order/get operation to the proof role")?;
+    .context("grant only the canonical purchase-order/get operation to the test role")?;
     tx.execute(
         "INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
          VALUES ($1, $2::text::uuid, $3)",
         &[&args.tenant, &principal.as_str(), &role],
     )
     .await
-    .context("link the proof human to its tenant role")?;
-    tx.commit().await.context("commit proof fixture seed")?;
+    .context("link the test human to its tenant role")?;
+    tx.commit().await.context("commit test fixture seed")?;
     Ok(())
 }
 
@@ -331,7 +331,7 @@ async fn post_case(
             .map_err(|_| anyhow!("membership case {case}: invalid JSON response"))?;
         check_record(&body, &request_id).with_context(|| format!("membership case {case}"))?;
     }
-    println!("MEMBERSHIP_PROOF case={case} status={status} result=pass");
+    println!("MEMBERSHIP_TEST case={case} status={status} result=pass");
     Ok(())
 }
 
@@ -397,8 +397,8 @@ async fn cleanup(
         Ok(())
     }
     .await;
-    project_result.context("remove proof tenant user and role")?;
-    system_result.context("remove proof identity and PAT")?;
+    project_result.context("remove test tenant user and role")?;
+    system_result.context("remove test identity and PAT")?;
     Ok(())
 }
 
@@ -444,7 +444,7 @@ mod tests {
     #[test]
     fn argument_diagnostics_do_not_disclose_database_credentials() {
         let command = TestCommand::try_parse_from([
-            "membershipproof",
+            "membership-test",
             "--system-database-url",
             "postgres://proof:system-secret@system/proof",
             "--project-database-url",
@@ -462,7 +462,7 @@ mod tests {
             "--tenant",
             "fixture",
         ])
-        .expect("parse every required proof argument");
+        .expect("parse every required test argument");
         let diagnostic = format!("{:?}", command.args);
         for secret in ["system-secret", "project-secret", "endpoint-secret"] {
             assert!(!diagnostic.contains(secret));

@@ -30,12 +30,12 @@ Local Cargo success never substitutes for a named in-cluster gate of record.
 
 The gate Job manifests are `deploy/gates/*-job.yaml`, applied per run and
 deleted after (`deploy/README.md`). The two live Job manifests are
-`socketguard-job.yaml` and `traceproof-job.yaml`; `serve-echo.yaml` is the
-support Deployment that `traceproof` reads back from.
+`socket-test-job.yaml` and `trace-test-job.yaml`; `serve-echo.yaml` is the
+support Deployment that `trace-test` reads back from.
 
 ```bash
-kubectl -n wamn-system apply -f deploy/gates/socketguard-job.yaml
-kubectl -n wamn-system logs -f job/socketguard
+kubectl -n wamn-system apply -f deploy/gates/socket-test-job.yaml
+kubectl -n wamn-system logs -f job/socket-test
 ```
 
 `tools/kubernetes-gate-run` is the runner that turns a manifest into a
@@ -1299,8 +1299,8 @@ JetStream `--nats-url`.
 `cdcbench` is a `pub mod` of `wamn-integration-tests`, which has a **lib target
 only** (`cargo metadata`), and the `wamn-gates` binary
 (`tests/orchestrator/src/main.rs`) exposes exactly six subcommands —
-`retention`, `readerbench`, `serve-echo`, `socketguard`, `traceproof`, and
-`dashproof` — and `cdcbench` is not among them. The same is true of
+`retention`, `readerbench`, `serve-echo`, `socket-test`, `trace-test`, and
+`dashboard-test` — and `cdcbench` is not among them. The same is true of
 `provisionbench`, `streambench`, `walbench`, `exposure_live`, and
 `trusted_http_route`. This is exactly the
 shape `wamn-0h0g.15.137` exists to inventory: a verification artifact with no
@@ -1604,7 +1604,7 @@ They create no users, roles, or tokens.
 ### `[MEMBERSHIP-HTTP]` — deployed human membership
 
 This gate sends real HTTP requests through the operator-managed Receiving host
-(`wamn-ctc8.19`). It uses the existing `wamn-gates membershipproof` command.
+(`wamn-ctc8.19`). It uses the existing `wamn-gates membership-test` command.
 The journey builds both standard Dockerfile stages, `host` and `gates`, and
 loads their unique tags into its disposable cluster.
 It never addresses the frozen `wamn` cluster.
@@ -2098,7 +2098,7 @@ The first Job checks signed development claims.
 It rejects missing production membership, missing other-organization membership, and a service PAT.
 After membership removal, the second Job checks refusal on the next exchange.
 The observer receives only its PAT cases and public certificate authority, without database or signing credentials.
-Its receipt ends with `IDENTITY_SESSION result=pass cases=<n> host_admission=not_proven` only after its checks pass.
+Its receipt ends with `IDENTITY_SESSION result=pass cases=<n> host_admission=not_tested` only after its checks pass.
 Evidence excludes raw PATs, signing keys, and database credentials.
 The runner removes only its own cluster, images, and temporary credentials.
 This gate does not prove host session admission, fresh-only operation enforcement, or the two-host proof in `wamn-ctc8.15.3`.

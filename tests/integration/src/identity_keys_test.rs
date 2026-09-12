@@ -193,7 +193,7 @@ async fn exercise(args: IdentityKeysTestArgs) -> anyhow::Result<()> {
     }
     pass("absent_authority_routes");
     println!(
-        "IDENTITY_JWKS result=pass expected_keys={} token_admission=not_proven expiry_outage=not_proven",
+        "IDENTITY_JWKS result=pass expected_keys={} token_admission=not_tested expiry_outage=not_tested",
         expected.len()
     );
     Ok(())

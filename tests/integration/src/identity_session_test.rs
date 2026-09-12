@@ -309,7 +309,7 @@ async fn observe(args: IdentitySessionTestArgs) -> anyhow::Result<()> {
         println!("IDENTITY_SESSION case={} result=pass", case.name);
     }
     println!(
-        "IDENTITY_SESSION result=pass cases={} host_admission=not_proven",
+        "IDENTITY_SESSION result=pass cases={} host_admission=not_tested",
         cases.len()
     );
     Ok(())

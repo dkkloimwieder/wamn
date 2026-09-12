@@ -1,4 +1,4 @@
-//! socketguard — the E13a publish-time egress-guard refusal gate.
+//! socket-test — the E13a publish-time egress-guard refusal gate.
 //!
 //! The runtime links `wasi:sockets` on every workload linker. Vanilla v2.8's
 //! centralized `SocketPolicy`, installed by WAMN with `EgressMode::Enforce`,
@@ -23,7 +23,7 @@ use wamn_component_policy::{EgressGuardError, PolicyProfile, analyze};
 use wamn_runtime::engine::build_engine;
 
 #[derive(Args, Debug)]
-pub struct SocketGuardArgs {
+pub struct SocketTestArgs {
     /// Write the completed assertions as JSON, including to a Kubernetes termination file.
     #[arg(long)]
     pub result_file: Option<std::path::PathBuf>,
@@ -87,10 +87,10 @@ fn screen(
     Ok(analyze(&imports, PolicyProfile::FirstParty, label).map(|_| ()))
 }
 
-pub async fn run(args: SocketGuardArgs) -> anyhow::Result<()> {
+pub async fn run(args: SocketTestArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
-    println!("# wamn-gates socketguard — E13a publish-time egress guard (hermetic)");
+    println!("# wamn-gates socket-test — E13a publish-time egress guard (hermetic)");
     println!("# claim: P2 and P3 components importing wasi:sockets are REFUSED at publish;");
     println!("#        a standard component still publishes. Fixtures synthesized in-process.");
 
@@ -137,17 +137,17 @@ pub async fn run(args: SocketGuardArgs) -> anyhow::Result<()> {
         }
     }
 
-    println!("\nsocketguard complete — overall PASS: {pass}");
+    println!("\nsocket-test complete — overall PASS: {pass}");
     if let Some(path) = args.result_file {
         std::fs::write(
             path,
             serde_json::to_vec(&serde_json::json!({
-                "test":"socketguard","passed":pass,"checks":checks,
+                "test":"socket-test","passed":pass,"checks":checks,
             }))?,
         )?;
     }
     if !pass {
-        bail!("E13a socketguard failed: the publish-time egress guard did not hold");
+        bail!("E13a socket-test failed: the publish-time egress guard did not hold");
     }
     Ok(())
 }

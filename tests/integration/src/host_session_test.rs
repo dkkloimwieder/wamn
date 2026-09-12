@@ -196,23 +196,23 @@ fn unit_item(value: &Value) -> anyhow::Result<&serde_json::Map<String, Value>> {
 async fn read_file(path: &Path, private: bool) -> anyhow::Result<Vec<u8>> {
     let file = tokio::fs::File::open(path)
         .await
-        .map_err(|_| anyhow!("read host proof input failed"))?;
+        .map_err(|_| anyhow!("read host test input failed"))?;
     let metadata = file
         .metadata()
         .await
-        .map_err(|_| anyhow!("read host proof input metadata failed"))?;
+        .map_err(|_| anyhow!("read host test input metadata failed"))?;
     ensure!(
         metadata.is_file() && (!private || metadata.permissions().mode() & 0o077 == 0),
-        "host proof credential input must be an owner-only regular file"
+        "host test credential input must be an owner-only regular file"
     );
     let mut body = Vec::new();
     file.take((MAX_BYTES + 1) as u64)
         .read_to_end(&mut body)
         .await
-        .map_err(|_| anyhow!("read host proof input failed"))?;
+        .map_err(|_| anyhow!("read host test input failed"))?;
     ensure!(
         body.len() <= MAX_BYTES,
-        "host proof input exceeds the size bound"
+        "host test input exceeds the size bound"
     );
     Ok(body)
 }
@@ -222,11 +222,11 @@ async fn read_body(mut response: reqwest::Response) -> anyhow::Result<Vec<u8>> {
     while let Some(chunk) = response
         .chunk()
         .await
-        .map_err(|_| anyhow!("read host proof HTTP body failed"))?
+        .map_err(|_| anyhow!("read host test HTTP body failed"))?
     {
         ensure!(
             chunk.len() <= MAX_BYTES - body.len(),
-            "host proof HTTP body exceeds the size bound"
+            "host test HTTP body exceeds the size bound"
         );
         body.extend_from_slice(&chunk);
     }
@@ -236,10 +236,10 @@ async fn read_body(mut response: reqwest::Response) -> anyhow::Result<Vec<u8>> {
 fn unix_seconds() -> anyhow::Result<i64> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| anyhow!("host proof clock refused"))?
+        .map_err(|_| anyhow!("host test clock refused"))?
         .as_secs()
         .try_into()
-        .map_err(|_| anyhow!("host proof clock refused"))
+        .map_err(|_| anyhow!("host test clock refused"))
 }
 
 async fn public_keys(
@@ -250,19 +250,19 @@ async fn public_keys(
         .get(endpoint.clone())
         .send()
         .await
-        .map_err(|_| anyhow!("host proof JWKS request failed"))?;
+        .map_err(|_| anyhow!("host test JWKS request failed"))?;
     ensure!(
         response.status() == reqwest::StatusCode::OK,
-        "host proof JWKS must return HTTP 200"
+        "host test JWKS must return HTTP 200"
     );
     let jwks: SessionJwks = serde_json::from_slice(&read_body(response).await?)
-        .map_err(|_| anyhow!("host proof JWKS document refused"))?;
+        .map_err(|_| anyhow!("host test JWKS document refused"))?;
     let mut keys = BTreeMap::new();
     for key in jwks.keys {
-        decode_public_key(&key).map_err(|_| anyhow!("host proof public key profile refused"))?;
+        decode_public_key(&key).map_err(|_| anyhow!("host test public key profile refused"))?;
         ensure!(
             keys.insert(key.kid.clone(), key).is_none(),
-            "host proof JWKS key IDs repeat"
+            "host test JWKS key IDs repeat"
         );
     }
     Ok(keys)
@@ -298,21 +298,21 @@ async fn host_request(
 pub async fn run(args: HostSessionTestArgs) -> anyhow::Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, observe(args))
         .await
-        .map_err(|_| anyhow!("host session proof exceeded 420 seconds"))?
+        .map_err(|_| anyhow!("host session test exceeded 420 seconds"))?
 }
 
 async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
     ensure!(
         args.issuer.len() <= MAX_BYTES,
-        "host proof issuer exceeds the size bound"
+        "host test issuer exceeds the size bound"
     );
     validate_identity_issuer(&args.issuer)
-        .map_err(|_| anyhow!("host proof HTTPS issuer refused"))?;
+        .map_err(|_| anyhow!("host test HTTPS issuer refused"))?;
     let fixture = fixture(&read_file(&args.fixture_file, true).await?)?;
     let endpoints = endpoints(&args.endpoints, &fixture.route_path)?;
     let roots = reqwest::Certificate::from_pem_bundle(&read_file(&args.ca_file, false).await?)
-        .map_err(|_| anyhow!("host proof CA bundle refused"))?;
-    ensure!(!roots.is_empty(), "host proof CA bundle is empty");
+        .map_err(|_| anyhow!("host test CA bundle refused"))?;
+    ensure!(!roots.is_empty(), "host test CA bundle is empty");
     let http = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
@@ -321,9 +321,9 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
         .tls_backend_rustls()
         .tls_certs_only(roots)
         .build()
-        .map_err(|_| anyhow!("construct host proof HTTP client failed"))?;
+        .map_err(|_| anyhow!("construct host test HTTP client failed"))?;
     let mut jwks_url =
-        reqwest::Url::parse(&args.issuer).map_err(|_| anyhow!("host proof issuer URL refused"))?;
+        reqwest::Url::parse(&args.issuer).map_err(|_| anyhow!("host test issuer URL refused"))?;
     jwks_url.set_path("/.well-known/jwks.json");
     let keys = public_keys(&http, &jwks_url).await?;
     let mut exchange_url = jwks_url.clone();
@@ -335,29 +335,29 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
         .json(&serde_json::json!({"aud": fixture.audience}))
         .send()
         .await
-        .map_err(|_| anyhow!("host proof session exchange failed"))?;
+        .map_err(|_| anyhow!("host test session exchange failed"))?;
     ensure!(
         response.status() == reqwest::StatusCode::OK,
-        "host proof session exchange must return HTTP 200"
+        "host test session exchange must return HTTP 200"
     );
     ensure!(
         response
             .headers()
             .get(reqwest::header::CACHE_CONTROL)
             .is_some_and(|value| value == "no-store"),
-        "host proof session exchange must prohibit storage"
+        "host test session exchange must prohibit storage"
     );
     let exchange: ExchangeResponse = serde_json::from_slice(&read_body(response).await?)
-        .map_err(|_| anyhow!("host proof session exchange document refused"))?;
+        .map_err(|_| anyhow!("host test session exchange document refused"))?;
     ensure!(
         exchange.token_type == "Bearer",
-        "host proof session token type refused"
+        "host test session token type refused"
     );
     let kid = session_key_id(&exchange.access_token)
-        .map_err(|_| anyhow!("host proof signed header refused"))?;
+        .map_err(|_| anyhow!("host test signed header refused"))?;
     let key = keys
         .get(&kid)
-        .ok_or_else(|| anyhow!("host proof signing key is absent from configured JWKS"))?;
+        .ok_or_else(|| anyhow!("host test signing key is absent from configured JWKS"))?;
     let scope = SessionScope {
         issuer: &args.issuer,
         org: &fixture.org,
@@ -365,7 +365,7 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
     };
     let received_at = unix_seconds()?;
     let claims = verify_session_token(&exchange.access_token, key, scope, received_at)
-        .map_err(|_| anyhow!("host proof session signature, scope, or age refused"))?;
+        .map_err(|_| anyhow!("host test session signature, scope, or age refused"))?;
     let expected_roles = fixture.roles.iter().collect::<BTreeSet<_>>();
     let actual_roles = claims.roles.iter().collect::<BTreeSet<_>>();
     ensure!(
@@ -375,17 +375,17 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
             && actual_roles == expected_roles
             && actual_roles.len() == claims.roles.len()
             && claims.exp == exchange.expires_at,
-        "host proof signed identity or expiry differs from its fixture"
+        "host test signed identity or expiry differs from its fixture"
     );
     let expiry_bound = started_at
         .checked_add(MAXIMUM_LIFETIME)
         .and_then(|value| value.checked_add(TOLERANCE))
-        .ok_or_else(|| anyhow!("host proof exchange age bound overflowed"))?;
+        .ok_or_else(|| anyhow!("host test exchange age bound overflowed"))?;
     ensure!(
         claims.exp <= expiry_bound
             && claims.iat >= started_at - TOLERANCE
             && claims.iat <= received_at + TOLERANCE,
-        "host proof exchange exceeds its observed evidence-age bound"
+        "host test exchange exceeds its observed evidence-age bound"
     );
     for endpoint in &endpoints {
         let (status, body) = host_request(
@@ -412,17 +412,17 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
         claims.exp
             > unix_seconds()?
                 .checked_add(KEY_MAX_AGE.as_secs() as i64)
-                .ok_or_else(|| anyhow!("host proof remaining lifetime overflowed"))?,
-        "host proof token cannot outlive the key-freshness observation"
+                .ok_or_else(|| anyhow!("host test remaining lifetime overflowed"))?,
+        "host test token cannot outlive the key-freshness observation"
     );
     println!("HOST_SESSION_WARM hosts=2");
     std::io::stdout()
         .flush()
-        .map_err(|_| anyhow!("flush host proof warm marker failed"))?;
+        .map_err(|_| anyhow!("flush host test warm marker failed"))?;
     tokio::time::sleep_until(warm_completed + KEY_MAX_AGE).await;
     ensure!(
         unix_seconds()? < claims.exp,
-        "host proof token expired before key-removal refusal"
+        "host test token expired before key-removal refusal"
     );
     for _ in 0..2 {
         for endpoint in &endpoints {
@@ -442,10 +442,10 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
     }
     ensure!(
         unix_seconds()? < claims.exp,
-        "host proof refusal cannot be attributed to token expiry"
+        "host test refusal cannot be attributed to token expiry"
     );
     verify_session_token(&exchange.access_token, key, scope, unix_seconds()?)
-        .map_err(|_| anyhow!("host proof token no longer satisfies its signed age profile"))?;
+        .map_err(|_| anyhow!("host test token no longer satisfies its signed age profile"))?;
     if args.jwks_available {
         ensure!(
             !public_keys(&http, &jwks_url).await?.contains_key(&kid),
@@ -462,12 +462,12 @@ async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
         }
     }
     println!(
-        "HOST_SESSION_PROOF result=pass hosts=2 jwks_available={}",
+        "HOST_SESSION_TEST result=pass hosts=2 jwks_available={}",
         args.jwks_available
     );
     std::io::stdout()
         .flush()
-        .map_err(|_| anyhow!("flush host proof result failed"))?;
+        .map_err(|_| anyhow!("flush host test result failed"))?;
     Ok(())
 }
 
@@ -531,7 +531,7 @@ mod tests {
         assert!(available.is_required_set());
         for value in ["true", "false"] {
             let parsed = Cli::try_parse_from([
-                "host-session-proof",
+                "host-session-test",
                 "--issuer",
                 "https://identity.example.test",
                 "--ca-file",
