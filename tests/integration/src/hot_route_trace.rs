@@ -18,9 +18,8 @@
 //! sends no trace at all, so "all under the incoming trace" is true of this leg
 //! and of no other.
 //!
-//! Registers no gate: a plain `cargo test`, no orchestrator subcommand, no
-//! `deploy/gates` job, no `architecture/gate-registry.json` entry, no decision
-//! id.
+//! Runs through `cargo test`, without an orchestrator subcommand or
+//! `deploy/gates` Job.
 
 #[cfg(test)]
 mod tests {

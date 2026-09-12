@@ -25,9 +25,6 @@ struct GovernedJsonSchema {
 
 const GOVERNED_JSON_SCHEMAS: &[GovernedJsonSchema] = &[
     GovernedJsonSchema {
-        path: "architecture/gate-registry.json",
-    },
-    GovernedJsonSchema {
         path: "architecture/protected-writes.json",
     },
     GovernedJsonSchema {
@@ -132,16 +129,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "tests/conformance/tests/gate_registry.rs",
-        exact: r#"if registry.schema_version != "0.1" {"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "tests/conformance/tests/gate_registry.rs",
-        exact: r#".contains("wamn-kubernetes-gate-verdict/v0.1")"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "tests/conformance/src/kubernetes_gate_verdict.rs",
         exact: r#"pub const PROTOCOL: &str = "wamn-kubernetes-gate-verdict/v0.1";"#,
         expected_count: 1,
@@ -159,11 +146,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     GovernedLiteral {
         path: "tests/conformance/tests/kubernetes_gate_runner.rs",
         exact: r#""wamn-kubernetes-gate-verdict/v0.1""#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "architecture/gate-registry.json",
-        exact: "wamn-kubernetes-gate-verdict/v0.1",
         expected_count: 1,
     },
 ];
