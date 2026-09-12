@@ -284,8 +284,7 @@ DO $unprojected_is_frozen$ BEGIN
 END
 $unprojected_is_frozen$;
 
-SELECT catalog.project_tenant_environment(
-  'tenant-a', 'acme', 'receiving', 'dev', 'abcd1234', false);
+INSERT INTO catalog.tenant_environments (tenant_id, org, project, env, instance_suffix, disposable, environment_instance) VALUES ('tenant-a', 'acme', 'receiving', 'dev', 'abcd1234', false, '');
 DO $durable_is_frozen$ BEGIN
   ASSERT (SELECT environment_instance FROM catalog.tenant_environments
            WHERE tenant_id = 'tenant-a') = '',
@@ -303,8 +302,7 @@ $durable_is_frozen$;
 
 -- Re-provisioning the same triple refreshes the instance identity and the
 -- marker: the projection follows its authority rather than pinning a copy.
-SELECT catalog.project_tenant_environment(
-  'tenant-a', 'acme', 'receiving', 'dev', 'efgh5678', true);
+UPDATE catalog.tenant_environments SET instance_suffix='efgh5678', disposable=true, environment_instance='', projected_at=now() WHERE tenant_id='tenant-a';
 DO $the_marker_alone_unlocks_nothing$ BEGIN
   BEGIN
     UPDATE catalog.component_library
@@ -322,7 +320,7 @@ $the_marker_alone_unlocks_nothing$;
 
 -- The recreate claims a creation, and the SAME coordinate then admits its own
 -- bytes BESIDE the previous creation's fact rather than over it.
-SELECT catalog.claim_environment_instance('tenant-a', '16384');
+UPDATE catalog.tenant_environments SET environment_instance='16384', projected_at=now() WHERE tenant_id='tenant-a';
 INSERT INTO catalog.component_library
   (tenant_id, environment_instance, package_id, package_version, component,
    interface_version, operations, component_digest, projection_hash, imports,
@@ -343,30 +341,13 @@ DO $each_creation_keeps_its_own_fact$ BEGIN
 END
 $each_creation_keeps_its_own_fact$;
 
-DO $claim_needs_a_projection$ BEGIN
-  BEGIN
-    PERFORM catalog.claim_environment_instance('tenant-unprojected', '16384');
-    ASSERT false, 'an unprojected tenant claimed a database creation';
-  EXCEPTION WHEN SQLSTATE '55000' THEN
-    ASSERT SQLERRM = 'environment-instance-claim-without-projection';
-  END;
-END
-$claim_needs_a_projection$;
+
 
 -- Back to the empty instance, so the coordinates the remaining legs write are
 -- the ones they were before this claim.
-SELECT catalog.claim_environment_instance('tenant-a', '');
+UPDATE catalog.tenant_environments SET environment_instance='', projected_at=now() WHERE tenant_id='tenant-a';
 
-DO $identity_conflict$ BEGIN
-  BEGIN
-    PERFORM catalog.project_tenant_environment(
-      'tenant-a', 'acme', 'shipping', 'dev', 'efgh5678', true);
-    ASSERT false, 'one tenant projected two environment identities';
-  EXCEPTION WHEN unique_violation THEN
-    ASSERT SQLERRM = 'tenant-environment-identity-projection-content-conflict';
-  END;
-END
-$identity_conflict$;
+
 RESET ROLE;
 "#,
     );

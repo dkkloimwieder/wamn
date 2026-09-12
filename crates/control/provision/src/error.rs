@@ -3,9 +3,17 @@
 
 use std::fmt;
 
+use wamn_control_registry::Triple;
+
 /// A project id could not be turned into safe database / role / Secret names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProvisionError {
+    /// One tenant already identifies a different environment.
+    TenantEnvironmentIdentityConflict {
+        tenant: String,
+        recorded: Triple,
+        presented: Triple,
+    },
     /// The project id is not a valid lowercase slug.
     InvalidProjectId {
         /// The offending id.
@@ -75,6 +83,14 @@ pub enum ProvisionError {
 impl fmt::Display for ProvisionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::TenantEnvironmentIdentityConflict {
+                tenant,
+                recorded,
+                presented,
+            } => write!(
+                f,
+                "tenant-environment-identity-projection-content-conflict: tenant={tenant} recorded={recorded} presented={presented}"
+            ),
             ProvisionError::InvalidProjectId { id, reason } => {
                 write!(f, "invalid project id {id:?}: {reason}")
             }
@@ -112,3 +128,49 @@ impl fmt::Display for ProvisionError {
 }
 
 impl std::error::Error for ProvisionError {}
+
+/// Refuse a second declared environment identity for an existing tenant.
+pub fn check_tenant_environment_identity(
+    tenant: &str,
+    recorded: &Triple,
+    presented: &Triple,
+) -> Result<(), ProvisionError> {
+    if recorded == presented {
+        Ok(())
+    } else {
+        Err(ProvisionError::TenantEnvironmentIdentityConflict {
+            tenant: tenant.to_owned(),
+            recorded: recorded.clone(),
+            presented: presented.clone(),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tenant_identity_compares_every_declared_coordinate() {
+        let recorded = Triple::new("acme", "receiving", "dev");
+        assert!(check_tenant_environment_identity("tenant-a", &recorded, &recorded).is_ok());
+        for presented in [
+            Triple::new("other", "receiving", "dev"),
+            Triple::new("acme", "shipping", "dev"),
+            Triple::new("acme", "receiving", "prod"),
+        ] {
+            let error =
+                check_tenant_environment_identity("tenant-a", &recorded, &presented).unwrap_err();
+            assert!(matches!(
+                error,
+                ProvisionError::TenantEnvironmentIdentityConflict { .. }
+            ));
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "tenant-environment-identity-projection-content-conflict: tenant=tenant-a recorded=acme/receiving/dev presented={presented}"
+                )
+            );
+        }
+    }
+}

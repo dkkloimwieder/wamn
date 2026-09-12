@@ -1736,7 +1736,7 @@ fn load_wirings(packages: &[PackageInput]) -> Result<Vec<WiringInput>, Productio
 /// a connection open across the whole loop for one UPDATE would outlive its
 /// purpose. The routine refuses a tenant that provisioning never projected —
 /// absence means durable, and a durable environment is never recreated.
-async fn claim_environment_instance(
+pub(crate) async fn claim_environment_instance(
     system_database_url: &str,
     tenant: &str,
     instance: &str,
@@ -1752,13 +1752,16 @@ async fn claim_environment_instance(
     let connection_task = tokio::spawn(connection);
     let claimed = client
         .execute(
-            "SELECT catalog.claim_environment_instance($1, $2)",
+            wamn_schema_control::claim_environment_instance_sql(),
             &[&tenant, &instance],
         )
         .await;
     drop(client);
     connection_task.abort();
-    claimed.map(|_| ()).map_err(|source| {
+    let affected_rows = claimed.map_err(|source| {
+        ProductionDevStageError::owner("claim the environment instance", source.into())
+    })?;
+    wamn_schema_control::check_environment_instance_claim(tenant, affected_rows).map_err(|source| {
         ProductionDevStageError::owner("claim the environment instance", source.into())
     })
 }

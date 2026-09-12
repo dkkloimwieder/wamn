@@ -1848,3 +1848,245 @@ fn stable_acl_role_members_are_only_scoped_generation_roles() {
         );
     }
 }
+
+#[tokio::test]
+async fn tenant_projection_and_instance_claim_hold_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_CTL_PG_URL") else {
+        eprintln!("skipping tenant projection test: WAMN_CTL_PG_URL is unset");
+        return;
+    };
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(std::env::temp_dir().join("wamn-ctl-live-database.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let connect = async || {
+        let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
+        tokio::spawn(async move {
+            connection.await.unwrap();
+        });
+        client
+    };
+    let mut first = connect().await;
+    first.batch_execute("DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS wamn_run CASCADE; DROP SCHEMA IF EXISTS wamn_authority CASCADE; DROP SCHEMA IF EXISTS registry CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; DROP SCHEMA IF EXISTS identity CASCADE; CREATE EXTENSION IF NOT EXISTS pgcrypto;
+DO $roles$ DECLARE role_name text; BEGIN FOREACH role_name IN ARRAY ARRAY['wamn_system','wamn_control_author','wamn_app','wamn_scenario_author'] LOOP
+IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname=role_name) THEN EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS',role_name); END IF; END LOOP;
+EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system',current_database()); END $roles$;
+SET ROLE wamn_system;").await.unwrap();
+    first
+        .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
+        .await
+        .unwrap();
+    first
+        .batch_execute(wamn_control_provision::CONTROL_PORTABLE_STORE_SQL)
+        .await
+        .unwrap();
+    first.batch_execute("INSERT INTO registry.orgs (id,placement_kind) VALUES ('acme','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18')").await.unwrap();
+    let triple = Triple::new("acme", "receiving", "dev");
+    let other = Triple::new("acme", "shipping", "dev");
+    let mut second = connect().await;
+    second.batch_execute("SET ROLE wamn_system").await.unwrap();
+    let (one, two) = tokio::join!(
+        project_tenant_environment(&mut first, &triple, Some("tenant-race"), "abcd1234", false),
+        project_tenant_environment(&mut second, &other, Some("tenant-race"), "efgh5678", true),
+    );
+    assert_ne!(
+        one.is_ok(),
+        two.is_ok(),
+        "only one first tenant identity wins"
+    );
+    let (winner, suffix, disposable, error) = match (one, two) {
+        (Ok(()), Err(error)) => (&triple, "abcd1234", false, error),
+        (Err(error), Ok(())) => (&other, "efgh5678", true, error),
+        results => panic!("unexpected tenant projection results: {results:?}"),
+    };
+    assert!(matches!(
+        error.downcast_ref::<wamn_control_provision::ProvisionError>(),
+        Some(wamn_control_provision::ProvisionError::TenantEnvironmentIdentityConflict { .. })
+    ));
+    assert!(
+        error
+            .to_string()
+            .starts_with("tenant-environment-identity-projection-content-conflict:")
+    );
+    first
+        .batch_execute("SET app.tenant='tenant-race'")
+        .await
+        .unwrap();
+    let row = first.query_one("SELECT org,project,env,instance_suffix,disposable,environment_instance FROM catalog.tenant_environments WHERE tenant_id='tenant-race'", &[]).await.unwrap();
+    assert_eq!(row.get::<_, String>(0), winner.org);
+    assert_eq!(row.get::<_, String>(1), winner.project);
+    assert_eq!(row.get::<_, String>(2), winner.env.as_str());
+    assert_eq!(row.get::<_, String>(3), suffix);
+    assert_eq!(row.get::<_, bool>(4), disposable);
+    assert_eq!(row.get::<_, String>(5), "");
+
+    {
+        // The losing first insert must compare the committed winner's full identity.
+        let mut held = connect().await;
+        let transaction = held.transaction().await.unwrap();
+        transaction
+            .execute(
+                sql::insert_tenant_environment_sql(),
+                &[
+                    &"tenant-held",
+                    &triple.org,
+                    &triple.project,
+                    &triple.env.as_str(),
+                    &"abcd1234",
+                    &false,
+                ],
+            )
+            .await
+            .unwrap();
+        let waiting =
+            project_tenant_environment(&mut second, &other, Some("tenant-held"), "efgh5678", true);
+        tokio::pin!(waiting);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), &mut waiting)
+                .await
+                .is_err()
+        );
+        transaction.commit().await.unwrap();
+        let error = waiting.await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("tenant-environment-identity-projection-content-conflict:")
+        );
+    }
+    do_record_project_env(
+        &mut first,
+        &triple,
+        Some("tenant-a"),
+        "db-first",
+        Some("system"),
+        "abcd1234",
+        false,
+    )
+    .await
+    .unwrap();
+    crate::dev::coordinator::claim_environment_instance(&url, "tenant-a", "16384")
+        .await
+        .unwrap();
+    first
+        .batch_execute("SET app.tenant='tenant-a'")
+        .await
+        .unwrap();
+    let before: chrono::DateTime<chrono::Utc> = first
+        .query_one(
+            "SELECT projected_at FROM catalog.tenant_environments WHERE tenant_id='tenant-a'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    let stored = do_record_project_env(
+        &mut first,
+        &triple,
+        Some("tenant-a"),
+        "db-second",
+        Some("system"),
+        "efgh5678",
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(stored, "abcd1234", "the registry keeps its original suffix");
+    let row = first.query_one("SELECT environment_instance,projected_at,instance_suffix,disposable FROM catalog.tenant_environments WHERE tenant_id='tenant-a'", &[]).await.unwrap();
+    assert_eq!(
+        row.get::<_, String>(0),
+        "",
+        "same-suffix projection clears the instance"
+    );
+    assert!(row.get::<_, chrono::DateTime<chrono::Utc>>(1) > before);
+    assert_eq!(row.get::<_, String>(2), "abcd1234");
+    assert!(row.get::<_, bool>(3));
+    let stable_at: chrono::DateTime<chrono::Utc> = row.get(1);
+    let error = do_record_project_env(
+        &mut first,
+        &other,
+        Some("tenant-a"),
+        "db-other",
+        Some("system"),
+        "efgh5678",
+        true,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .starts_with("tenant-environment-identity-projection-content-conflict:")
+    );
+    let row = first.query_one("SELECT project,projected_at FROM catalog.tenant_environments WHERE tenant_id='tenant-a'", &[]).await.unwrap();
+    assert_eq!(row.get::<_, String>(0), "receiving");
+    assert_eq!(row.get::<_, chrono::DateTime<chrono::Utc>>(1), stable_at);
+    assert_eq!(first.query_one("SELECT secret_name FROM registry.project_envs WHERE org='acme' AND project='shipping' AND env='dev'", &[]).await.unwrap().get::<_, String>(0), "db-other", "the earlier registry commit survives projection refusal");
+
+    crate::dev::coordinator::claim_environment_instance(&url, "tenant-a", "")
+        .await
+        .unwrap();
+    let absent =
+        crate::dev::coordinator::claim_environment_instance(&url, "tenant-unprojected", "16384")
+            .await
+            .unwrap_err();
+    assert!(
+        absent
+            .to_string()
+            .contains("environment-instance-claim-without-projection")
+    );
+    assert!(
+        absent
+            .to_string()
+            .contains("name the tenant when provisioning the project-env")
+    );
+    assert_eq!(first.query_one("SELECT count(*) FROM catalog.tenant_environments WHERE tenant_id='tenant-unprojected'", &[]).await.unwrap().get::<_, i64>(0), 0);
+    project_tenant_environment(&mut second, &other, Some("tenant-b"), "efgh5678", false)
+        .await
+        .unwrap();
+    assert_eq!(
+        first
+            .query_one(
+                "SELECT count(*) FROM catalog.tenant_environments WHERE tenant_id='tenant-b'",
+                &[]
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        0,
+        "the claimed tenant cannot read another tenant"
+    );
+    let foreign = first
+        .execute(
+            wamn_schema_control::claim_environment_instance_sql(),
+            &[&"tenant-b", &"foreign"],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        foreign, 0,
+        "the claimed tenant cannot change another tenant"
+    );
+
+    let lock = first.transaction().await.unwrap();
+    lock.query_one(sql::read_tenant_environment_sql(), &[&"tenant-a"])
+        .await
+        .unwrap();
+    let refresh =
+        project_tenant_environment(&mut second, &triple, Some("tenant-a"), "1234abcd", false);
+    tokio::pin!(refresh);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(150), &mut refresh)
+            .await
+            .is_err(),
+        "projection must wait for the tenant row lock"
+    );
+    lock.rollback().await.unwrap();
+    refresh.await.unwrap();
+    assert_eq!(first.query_one("SELECT instance_suffix FROM catalog.tenant_environments WHERE tenant_id='tenant-a'", &[]).await.unwrap().get::<_, String>(0), "1234abcd");
+    first.batch_execute("RESET ROLE; DROP SCHEMA catalog CASCADE; DROP SCHEMA wamn_run CASCADE; DROP SCHEMA wamn_authority CASCADE; DROP SCHEMA registry CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA identity CASCADE").await.unwrap();
+}

@@ -82,7 +82,7 @@ const INSERT_CONTROL_COMPONENT_SQL: &str = "INSERT INTO catalog.component_librar
 /// Read LOCALLY, inside the control transaction that is about to write the fact,
 /// from `catalog.tenant_environments` — provisioning's projection, which the
 /// development loop's recreate re-stamps through
-/// `catalog.claim_environment_instance`. No second database on the admit path.
+/// the development coordinator. No second database on the admit path.
 ///
 /// A tenant with no projected environment reads the EMPTY STRING, which is the
 /// key every control fact carried before this column existed. That is what makes
@@ -3085,29 +3085,20 @@ mod tests {
                 .get(0)
         };
         let project_environment = async |disposable: bool| {
-            control
+            let mut projection = connect(&control_config).await;
+            projection
                 .batch_execute("SET ROLE wamn_system")
                 .await
                 .expect("assume production control owner");
-            control
-                .query_one(
-                    "SELECT set_config('app.tenant', $1, false)",
-                    &[&projection_component().scope.tenant_id],
-                )
-                .await
-                .expect("claim the projected tenant");
-            control
-                .execute(
-                    "SELECT catalog.project_tenant_environment(\
-                         $1, 'acme', 'receiving', 'dev', 'abcd1234', $2)",
-                    &[&projection_component().scope.tenant_id, &disposable],
-                )
-                .await
-                .expect("project the environment");
-            control
-                .batch_execute("RESET ROLE")
-                .await
-                .expect("restore test administrator");
+            crate::provision_project_env::project_tenant_environment(
+                &mut projection,
+                &wamn_control_registry::Triple::new("acme", "receiving", "dev"),
+                Some(&projection_component().scope.tenant_id),
+                "abcd1234",
+                disposable,
+            )
+            .await
+            .expect("project the environment");
         };
         // What `wamn dev`'s recreate does: stamp the creation it just minted onto
         // the projected environment, so the facts written after it key to that
@@ -3118,12 +3109,24 @@ mod tests {
                 .await
                 .expect("assume production control owner");
             control
+                .query_one(
+                    "SELECT set_config('app.tenant', $1, false)",
+                    &[&projection_component().scope.tenant_id],
+                )
+                .await
+                .expect("claim the tenant on the instance connection");
+            let changed = control
                 .execute(
-                    "SELECT catalog.claim_environment_instance($1, $2)",
+                    wamn_schema_control::claim_environment_instance_sql(),
                     &[&projection_component().scope.tenant_id, &instance],
                 )
                 .await
                 .expect("claim the environment instance");
+            wamn_schema_control::check_environment_instance_claim(
+                &projection_component().scope.tenant_id,
+                changed,
+            )
+            .expect("the claimed environment was projected");
             control
                 .batch_execute("RESET ROLE")
                 .await

@@ -3005,10 +3005,6 @@ const CONTROL_PROJECTION_INSTALLED_SQL: &str =
 /// Claim the projected tenant for the transaction's RLS policy.
 const CLAIM_PROJECTED_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
-/// Write the projected copy of the row just recorded.
-const PROJECT_TENANT_ENVIRONMENT_SQL: &str =
-    "SELECT catalog.project_tenant_environment($1, $2, $3, $4, $5, $6)";
-
 /// Project the recorded project-env into the control store, beside the facts its
 /// `disposable` marker governs (wamn-10yt.38).
 ///
@@ -3022,7 +3018,7 @@ const PROJECT_TENANT_ENVIRONMENT_SQL: &str =
 /// it always did. Only a DISPOSABLE environment insists, because for it the
 /// missing projection would be the difference between an author's edit landing
 /// and an author's edit being refused.
-async fn project_tenant_environment(
+pub(crate) async fn project_tenant_environment(
     client: &mut tokio_postgres::Client,
     triple: &Triple,
     tenant: Option<&str>,
@@ -3061,7 +3057,7 @@ async fn project_tenant_environment(
         .context("claim the projected tenant")?;
     transaction
         .execute(
-            PROJECT_TENANT_ENVIRONMENT_SQL,
+            sql::insert_tenant_environment_sql(),
             &[
                 &tenant,
                 &triple.org,
@@ -3073,6 +3069,25 @@ async fn project_tenant_environment(
         )
         .await
         .context("project the project-env into the control store")?;
+    // A losing insert waits, then this read locks the committed winner.
+    let row = transaction
+        .query_one(sql::read_tenant_environment_sql(), &[&tenant])
+        .await
+        .context("read the projected environment identity")?;
+    let recorded = Triple::new(
+        row.try_get::<_, String>(0)?,
+        row.try_get::<_, String>(1)?,
+        row.try_get::<_, String>(2)?,
+    );
+    wamn_control_provision::check_tenant_environment_identity(tenant, &recorded, triple)?;
+    transaction
+        .execute(
+            sql::refresh_tenant_environment_sql(),
+            &[&tenant, &instance_suffix, &disposable],
+        )
+        .await
+        .context("refresh the projected environment")?;
+
     transaction
         .commit()
         .await

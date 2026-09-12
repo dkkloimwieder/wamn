@@ -101,7 +101,7 @@ pub use dump::{
     DEFAULT_BUCKET, DEFAULT_DUMP_SCHEDULE, dump_object_key, dump_resource_name, pg_dump_argv,
     render_project_env_dump_cronjob, render_project_env_dump_job, validate_dump_resource_name,
 };
-pub use error::ProvisionError;
+pub use error::{ProvisionError, check_tenant_environment_identity};
 pub use management_admitter::{
     ManagementAdmissionConnection, ManagementAdmissionUrlError, ManagementAdmissionUrlErrorKind,
     management_admitter_generation_role, management_admitter_scope_hash,

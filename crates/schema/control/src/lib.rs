@@ -7,6 +7,7 @@
 
 pub mod attestation;
 pub mod connections;
+mod environment;
 pub mod exposure;
 mod model;
 mod package_migrations;
@@ -14,6 +15,10 @@ mod replica_identity;
 mod run_plane;
 pub mod sql;
 
+pub use environment::{
+    ENVIRONMENT_INSTANCE_WITHOUT_PROJECTION, EnvironmentInstanceClaimError,
+    check_environment_instance_claim, claim_environment_instance_sql,
+};
 pub use exposure::{
     Attachment, AttachmentKind, Cardinality, ExposureError, ExposureRelease, FlowExposure,
     HttpRoute, InputMapping, MappingSource, ResolvedAttachment, Source, SourceKind,

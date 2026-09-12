@@ -58,6 +58,24 @@ use crate::workload_role::{
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
 
+/// Insert the declared tenant identity without replacing an existing row.
+pub fn insert_tenant_environment_sql() -> &'static str {
+    "INSERT INTO catalog.tenant_environments \
+     (tenant_id, org, project, env, instance_suffix, disposable, environment_instance) \
+     VALUES ($1, $2, $3, $4, $5, $6, '') ON CONFLICT (tenant_id) DO NOTHING"
+}
+
+/// Lock and read the winning identity after the insert attempt.
+pub fn read_tenant_environment_sql() -> &'static str {
+    "SELECT org, project, env FROM catalog.tenant_environments WHERE tenant_id = $1 FOR UPDATE"
+}
+
+/// Refresh the declared values and clear the old instance after Rust accepts the identity.
+pub fn refresh_tenant_environment_sql() -> &'static str {
+    "UPDATE catalog.tenant_environments SET instance_suffix = $2, disposable = $3, \
+     environment_instance = '', projected_at = now() WHERE tenant_id = $1"
+}
+
 /// Idempotently create or harden the shared, cluster-global [`APP_ROLE`] as a
 /// stable NOLOGIN ACL role.
 ///
