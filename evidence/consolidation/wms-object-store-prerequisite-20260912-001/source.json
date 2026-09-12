@@ -1,0 +1,6 @@
+{
+  "source_commit": "27929da2a0f92827fbe6e907738e095f38a1694d",
+  "source_patch_sha256": "ae90d84bcd4f07e1a5f3968fe8dad4a80afafe6b3aaf492fc57b141d34dddf7d",
+  "test_source_sha256": "f6a94a4f0304cd452cde5711b09a80ac82ec8fdb7a65eea29da8141a0b53bf00",
+  "execution_boundary": "Existing std-only Rust integration test compiled directly, with its owning CARGO_MANIFEST_DIR; Helm renders locally; no Cargo build or live cluster."
+}

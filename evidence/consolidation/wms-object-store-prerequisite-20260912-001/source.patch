@@ -1,0 +1,57 @@
+diff --git a/deploy/platform/values-host-wms-pat.yaml b/deploy/platform/values-host-wms-pat.yaml
+index 359653b73..549776e1c 100644
+--- a/deploy/platform/values-host-wms-pat.yaml
++++ b/deploy/platform/values-host-wms-pat.yaml
+@@ -23,6 +23,9 @@
+ # Human org-user membership remains owned by the identity epic and Slice v; it
+ # is not fabricated as deployment configuration here.
+ #
++# Supply the external labels-store credentials before applying this overlay.
++# Follow docs/operations/deployment.md#wms-object-store-credentials.
++#
+ # Replace the zero digest with `wamn-ctl print-release-env` output before
+ # applying. A nonexistent digest makes startup refuse rather than serving an
+ # unintended release.
+diff --git a/docs/operations/deployment.md b/docs/operations/deployment.md
+index 065daf202..8c360cadb 100644
+--- a/docs/operations/deployment.md
++++ b/docs/operations/deployment.md
+@@ -24,6 +24,14 @@ Keep registry, database, and broker credentials outside committed files.
+ Supply real values for example Secrets and release placeholders before applying them.
+ Certificate subjects must match the endpoint names that their clients verify.
+ 
++### WMS object-store credentials
++
++Before applying the WMS overlay, create `wamn-object-store-credentials-acme--wms--dev` in the host namespace.
++Store the host credential map under its `credentials.json` key.
++The map uses project `wms` and connection handle `labels-store`, with the object-store credential JSON encoded as that handle's string value.
++The [WMS cluster setup](../../apps/wamn_wms/tests/cluster/deployment.rs) creates this Secret for its tests.
++Production deployment supplies its own credentials through the same Secret contract.
++
+ ## Deployment ordering
+ 
+ Build and exercise the exact selected source and artifacts before publication.
+diff --git a/tests/system/tests/deployment_declarations.rs b/tests/system/tests/deployment_declarations.rs
+index 8d89dd83a..ce835da11 100644
+--- a/tests/system/tests/deployment_declarations.rs
++++ b/tests/system/tests/deployment_declarations.rs
+@@ -48,7 +48,7 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
+ /// Externally supplied Secrets and ConfigMaps with their provisioning owner.
+ /// Mounted names must be declared by a platform manifest or allowed here.
+ /// A Certificate declares its `spec.secretName` output, which cert-manager writes.
+-const EXTERNAL_PREREQUISITES: [(&str, &str); 5] = [
++const EXTERNAL_PREREQUISITES: [(&str, &str); 6] = [
+     (
+         IDENTITY_TLS_SECRET,
+         "operator-configured serving certificate from the existing issuer/CA",
+@@ -74,6 +74,10 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 5] = [
+         "wamn-materializer-nats",
+         "Receiving/WMS journey bootstrap: native materializer broker credential and binding",
+     ),
++    (
++        "wamn-object-store-credentials-acme--wms--dev",
++        "WMS deployment operator; cluster tests use install_application_secrets in apps/wamn_wms/tests/cluster/deployment.rs",
++    ),
+ ];
+ 
+ /// Per-project-environment Secret name PREFIXES the scenario worker mounts.

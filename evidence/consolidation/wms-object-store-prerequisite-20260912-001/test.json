@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "/home/kaalin/.cache/wamn-lanes/consolidation-historical-data-20260912/target/wms-secret-prerequisite/deployment_declarations",
+    "--exact",
+    "every_mounted_secret_is_declared_here_or_named_a_prerequisite",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-historical-data-20260912",
+  "environment": {
+    "CARGO_MANIFEST_DIR": "/home/kaalin/.cache/wamn-lanes/consolidation-historical-data-20260912/tests/system"
+  },
+  "exit_code": 0,
+  "duration_seconds": 0.1605476050172001
+}

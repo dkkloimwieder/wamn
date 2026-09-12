@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "rustc",
+    "--edition",
+    "2024",
+    "--test",
+    "--crate-name",
+    "deployment_declarations",
+    "tests/system/tests/deployment_declarations.rs",
+    "-o",
+    "/home/kaalin/.cache/wamn-lanes/consolidation-historical-data-20260912/target/wms-secret-prerequisite/deployment_declarations"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-historical-data-20260912",
+  "environment": {
+    "CARGO_MANIFEST_DIR": "/home/kaalin/.cache/wamn-lanes/consolidation-historical-data-20260912/tests/system"
+  },
+  "exit_code": 0,
+  "duration_seconds": 0.3288323620799929
+}

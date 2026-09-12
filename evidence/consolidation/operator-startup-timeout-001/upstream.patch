@@ -1,0 +1,93 @@
+From b1178689fd42e44453ba71ffeb9a5cae7474be62 Mon Sep 17 00:00:00 2001
+From: dkk <dkkloimwieder@gmail.com>
+Date: Sat, 12 Sep 2026 11:20:16 -0400
+Subject: [PATCH] fix(runtime-operator): retry initial network timeouts
+
+Recognize wrapped net.Error timeouts within the existing startup retry window. Preserve permanent error refusals and retry limits. Covers the TCP timeout recorded by wamn-10yt.76.
+---
+ runtime-operator/pkg/wasmbus/nats.go      |  4 ++-
+ runtime-operator/pkg/wasmbus/nats_test.go | 40 +++++++++++++++++++++++
+ 2 files changed, 43 insertions(+), 1 deletion(-)
+
+diff --git a/runtime-operator/pkg/wasmbus/nats.go b/runtime-operator/pkg/wasmbus/nats.go
+index 451bb636..d6926381 100644
+--- a/runtime-operator/pkg/wasmbus/nats.go
++++ b/runtime-operator/pkg/wasmbus/nats.go
+@@ -106,13 +106,15 @@ func NatsConnectContext(ctx context.Context, url string, options ...NatsOption)
+ // spending the window on it turns an immediate, accurate error into a minute of
+ // silence followed by that same error.
+ func worthRetrying(err error) bool {
++	var netErr net.Error
+ 	var dnsErr *net.DNSError
+ 	switch {
+ 	case errors.Is(err, nats.ErrNoServers),
+ 		errors.Is(err, nats.ErrTimeout),
+ 		errors.Is(err, syscall.ECONNREFUSED),
+ 		errors.Is(err, syscall.EHOSTUNREACH),
+-		errors.Is(err, syscall.ENETUNREACH):
++		errors.Is(err, syscall.ENETUNREACH),
++		errors.As(err, &netErr) && netErr.Timeout():
+ 		return true
+ 	case errors.As(err, &dnsErr):
+ 		// A Service's record does not exist until the Service does, which is
+diff --git a/runtime-operator/pkg/wasmbus/nats_test.go b/runtime-operator/pkg/wasmbus/nats_test.go
+index f16ee23b..312ed6e4 100644
+--- a/runtime-operator/pkg/wasmbus/nats_test.go
++++ b/runtime-operator/pkg/wasmbus/nats_test.go
+@@ -1,13 +1,53 @@
+ package wasmbus
+ 
+ import (
++	"context"
++	"crypto/x509"
++	"errors"
++	"fmt"
++	"net"
++	"syscall"
+ 	"testing"
+ 	"time"
+ 
++	"github.com/nats-io/nats.go"
+ 	"go.wasmcloud.dev/runtime-operator/v2/pkg/wasmbus/wasmbustest"
+ )
+ 
+ func TestNatsConnect(t *testing.T) {
++	t.Run("retry_classification", func(t *testing.T) {
++		// An expired dial deadline returns the TCP timeout seen during startup,
++		// without opening a socket or waiting for a network failure.
++		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
++		defer cancel()
++		_, dialErr := (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:4222")
++		var opErr *net.OpError
++		if !errors.As(dialErr, &opErr) || !opErr.Timeout() {
++			t.Fatalf("expected a TCP dial timeout, got %v", dialErr)
++		}
++		for _, tc := range []struct {
++			name  string
++			err   error
++			retry bool
++		}{
++			{"tcp_timeout", dialErr, true},
++			{"wrapped_tcp_timeout", fmt.Errorf("connect: %w", dialErr), true},
++			{"dns_timeout", &net.DNSError{IsTimeout: true}, true},
++			{"nats_timeout", nats.ErrTimeout, true},
++			{"connection_refused", syscall.ECONNREFUSED, true},
++			{"temporary_dns", &net.DNSError{IsTemporary: true}, true},
++			{"permanent_dns", &net.DNSError{Err: "invalid name"}, false},
++			{"authorization", nats.ErrAuthorization, false},
++			{"untrusted_certificate", x509.UnknownAuthorityError{}, false},
++			{"canceled", context.Canceled, false},
++		} {
++			t.Run(tc.name, func(t *testing.T) {
++				if got := worthRetrying(tc.err); got != tc.retry {
++					t.Errorf("worthRetrying(%v) = %t, want %t", tc.err, got, tc.retry)
++				}
++			})
++		}
++	})
+ 	t.Run("success", func(t *testing.T) {
+ 		defer wasmbustest.MustStartNats(t)()
+ 		nc, err := NatsConnect(NatsDefaultURL)
+-- 
+2.53.0
+

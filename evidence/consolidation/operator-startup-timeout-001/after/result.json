@@ -1,0 +1,28 @@
+{
+  "argv": [
+    "/snap/go/current/bin/go",
+    "test",
+    "-mod=readonly",
+    "-p",
+    "2",
+    "./pkg/wasmbus",
+    "-run",
+    "^TestNatsConnect$/^retry_classification$",
+    "-count=1",
+    "-v"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/upstream-operator-timeout-20260912/runtime-operator",
+  "source": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "source_sha256": "ff3a279d5421feb074bdc49aaa78d5973db97a6c65bec304ee1a82311f08630a",
+  "test_sha256": "60b3826f7773e0bed52933aaaadca7640d9e74e97ee0d090d4c3380e34f47268",
+  "started_at": "2026-09-12T15:19:41.782839+00:00",
+  "environment": {
+    "GOTOOLCHAIN": "local",
+    "GOWORK": "off",
+    "GOCACHE": "/home/kaalin/.cache/wamn-lanes/upstream-operator-timeout-go-cache-20260912",
+    "GOMAXPROCS": "2"
+  },
+  "status": 0,
+  "duration_seconds": 0.8670862639555708,
+  "finished_at": "2026-09-12T15:19:42.649948+00:00"
+}

@@ -1,0 +1,30 @@
+=== RUN   TestNatsConnect
+=== RUN   TestNatsConnect/retry_classification
+=== RUN   TestNatsConnect/retry_classification/tcp_timeout
+    nats_test.go:46: worthRetrying(dial tcp 127.0.0.1:4222: i/o timeout) = false, want true
+=== RUN   TestNatsConnect/retry_classification/wrapped_tcp_timeout
+    nats_test.go:46: worthRetrying(connect: dial tcp 127.0.0.1:4222: i/o timeout) = false, want true
+=== RUN   TestNatsConnect/retry_classification/dns_timeout
+    nats_test.go:46: worthRetrying(lookup : ) = false, want true
+=== RUN   TestNatsConnect/retry_classification/nats_timeout
+=== RUN   TestNatsConnect/retry_classification/connection_refused
+=== RUN   TestNatsConnect/retry_classification/temporary_dns
+=== RUN   TestNatsConnect/retry_classification/permanent_dns
+=== RUN   TestNatsConnect/retry_classification/authorization
+=== RUN   TestNatsConnect/retry_classification/untrusted_certificate
+=== RUN   TestNatsConnect/retry_classification/canceled
+--- FAIL: TestNatsConnect (0.00s)
+    --- FAIL: TestNatsConnect/retry_classification (0.00s)
+        --- FAIL: TestNatsConnect/retry_classification/tcp_timeout (0.00s)
+        --- FAIL: TestNatsConnect/retry_classification/wrapped_tcp_timeout (0.00s)
+        --- FAIL: TestNatsConnect/retry_classification/dns_timeout (0.00s)
+        --- PASS: TestNatsConnect/retry_classification/nats_timeout (0.00s)
+        --- PASS: TestNatsConnect/retry_classification/connection_refused (0.00s)
+        --- PASS: TestNatsConnect/retry_classification/temporary_dns (0.00s)
+        --- PASS: TestNatsConnect/retry_classification/permanent_dns (0.00s)
+        --- PASS: TestNatsConnect/retry_classification/authorization (0.00s)
+        --- PASS: TestNatsConnect/retry_classification/untrusted_certificate (0.00s)
+        --- PASS: TestNatsConnect/retry_classification/canceled (0.00s)
+FAIL
+FAIL	go.wasmcloud.dev/runtime-operator/v2/pkg/wasmbus	0.004s
+FAIL

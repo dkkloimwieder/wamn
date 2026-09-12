@@ -1,0 +1,33 @@
+{
+  "issue": "wamn-10yt.76",
+  "wamn_base": "27929da2a0f92827fbe6e907738e095f38a1694d",
+  "upstream_tag": "v2.9.0",
+  "upstream_base": "68ebece9c537f8bb4b5c9999f274ec68d60f35a9",
+  "upstream_main_observed": "1f82c28e638372fbf5a924c96214a4c3629e99f8",
+  "upstream_main_source_url": "https://raw.githubusercontent.com/wasmCloud/wasmCloud/1f82c28e638372fbf5a924c96214a4c3629e99f8/runtime-operator/pkg/wasmbus/nats.go",
+  "classifier_unchanged_on_main": true,
+  "latest_release_url": "https://api.github.com/repos/wasmCloud/wasmCloud/releases/latest",
+  "latest_release_tag_observed": "v2.9.0",
+  "release_published_at": "2026-09-08T21:09:01Z",
+  "local_upstream_commit": "b1178689fd42e44453ba71ffeb9a5cae7474be62",
+  "patch": "/tmp/wamn-operator-startup-timeout-20260912.patch",
+  "patch_sha256": "e2ec6a244b73077c1f6cdb311e1f38e4d0204ccff1615da54d5f673a1831e2c9",
+  "installed_go": "go1.26.7 linux/amd64",
+  "incident": [
+    "evidence/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-008/journey/operator-recovery/0308-operator-transition-4-previous-log.stdout",
+    "evidence/perf/2026.09/wasmcloud-2-9-cutover/live-receiving-008/journey/operator-recovery/operator-transition-4-state.json"
+  ],
+  "before_failed_cases": [
+    "tcp_timeout",
+    "wrapped_tcp_timeout",
+    "dns_timeout"
+  ],
+  "after_passed_cases": 10,
+  "limits": [
+    "Classifier regression only; no startup recovery or liveness-delay execution.",
+    "No WAMN dependency, image, manifest, or toolchain changed.",
+    "No cluster or external service started.",
+    "No upstream issue, PR, or message published."
+  ],
+  "checked_at": "2026-09-12T15:20:58.955727+00:00"
+}
