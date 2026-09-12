@@ -131,7 +131,7 @@ fn derived_hash(document: &serde_json::Value) -> String {
 /// The one candidate wiring `gate` is exercised against.
 ///
 /// The wiring hash is the WHOLE identity (wamn-0h0g.8.5.6): it is the key the
-/// accepted gate's report is stored under, the report id the receipt hands back,
+/// accepted gate's report is stored under, the report id the result returns,
 /// and what `get-report` resolves. There is no second identifier to derive,
 /// choose, or mismatch -- the column that used to carry one is gone.
 const CANDIDATE_PACKAGE: &str = "candidate_package";
@@ -670,7 +670,7 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
 
 /// How many wiring rows the project plane holds.
 ///
-/// The first-transition proof reads this: an EMPTY `catalog.wirings` must still
+/// The first-transition test reads this: an EMPTY `catalog.wirings` must still
 /// reach a green report, which is precisely what the deadlock made impossible.
 async fn stored_wiring_count(project: &Client) -> i64 {
     project
@@ -1003,7 +1003,7 @@ async fn authoring_durable_counts(admin: &Client) -> Vec<i64> {
 /// The stored report for one wiring hash, read straight out of the control
 /// store rather than through the query surface.
 ///
-/// The two proofs it separates: that the gate WROTE a row, and that `get-report`
+/// The two tests it separates: that the gate WROTE a row, and that `get-report`
 /// can RESOLVE it. A test that only read the query surface could not tell a
 /// write that never happened from a read path that cannot find it.
 async fn stored_gate_report(
@@ -1058,7 +1058,7 @@ async fn empty_case_store_requirement_needs_no_runtime_binding_world(
     assert_eq!(
         effectful_candidate_runtime_state(project).await,
         (true, false, false),
-        "the proof fixture gained a fabricated release or binding world"
+        "the test fixture gained a fabricated release or binding world"
     );
     let mut document = candidate_graph(EFFECTFUL_WIRING, EFFECTFUL_COMPONENT, EFFECTFUL_OPERATION);
     document["cases"] = serde_json::json!([]);
@@ -1102,7 +1102,7 @@ async fn nonempty_case_store_requirement_refuses_effect_posture(
     assert_eq!(
         effectful_candidate_runtime_state(project).await,
         (true, false, false),
-        "the proof fixture gained a fabricated release or binding world"
+        "the test fixture gained a fabricated release or binding world"
     );
     let document = candidate_graph(EFFECTFUL_WIRING, EFFECTFUL_COMPONENT, EFFECTFUL_OPERATION);
     let response = post(
@@ -1134,14 +1134,14 @@ async fn nonempty_case_store_requirement_refuses_effect_posture(
 }
 
 #[derive(Clone, Copy)]
-enum ConnectionGateProof {
+enum ConnectionGateCase {
     EmptyCases,
     NonemptyCases,
 }
 
-async fn run_connection_gate_proof(proof: ConnectionGateProof) {
+async fn run_connection_gate_case(case: ConnectionGateCase) {
     let Ok(url) = std::env::var("WAMN_PLATFORM_IDENTITY_PG_URL") else {
-        eprintln!("skipping live connection Gate proof (set WAMN_PLATFORM_IDENTITY_PG_URL to run)");
+        eprintln!("skipping live connection Gate test (set WAMN_PLATFORM_IDENTITY_PG_URL to run)");
         return;
     };
     let _serial = LIVE_GATE_SERIAL.lock().await;
@@ -1162,8 +1162,8 @@ async fn run_connection_gate_proof(proof: ConnectionGateProof) {
     .expect("admit the connection Gate principal");
     let surface = start_management_surface(&url).await;
 
-    match proof {
-        ConnectionGateProof::EmptyCases => {
+    match case {
+        ConnectionGateCase::EmptyCases => {
             empty_case_store_requirement_needs_no_runtime_binding_world(
                 &admin,
                 &project,
@@ -1171,7 +1171,7 @@ async fn run_connection_gate_proof(proof: ConnectionGateProof) {
             )
             .await;
         }
-        ConnectionGateProof::NonemptyCases => {
+        ConnectionGateCase::NonemptyCases => {
             nonempty_case_store_requirement_refuses_effect_posture(
                 &admin,
                 &project,
@@ -1188,12 +1188,12 @@ async fn run_connection_gate_proof(proof: ConnectionGateProof) {
 
 #[tokio::test]
 async fn empty_case_connection_component_without_release_or_binding_reports_zero_cases() {
-    run_connection_gate_proof(ConnectionGateProof::EmptyCases).await;
+    run_connection_gate_case(ConnectionGateCase::EmptyCases).await;
 }
 
 #[tokio::test]
 async fn nonempty_case_connection_component_without_release_or_binding_refuses_effect_posture() {
-    run_connection_gate_proof(ConnectionGateProof::NonemptyCases).await;
+    run_connection_gate_case(ConnectionGateCase::NonemptyCases).await;
 }
 
 /// The external Gate retains one deployment-pinned endpoint while `wamn dev`
@@ -1219,7 +1219,7 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
         .expect("provision the first verification database");
     let principal = admitted_human(&admin, "reconnect@example.com", PROJECT, "project-author")
         .await
-        .expect("admit the reconnect proof principal");
+        .expect("admit the reconnect test principal");
     let surface = start_management_surface(&url).await;
 
     let before = post(
@@ -1689,7 +1689,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a wiring row existed, so this proves the steady state and not the first transition"
     );
 
-    // The receipt names the report identity the judgment DERIVED from the
+    // The result names the report identity the judgment DERIVED from the
     // submitted bytes, not one the caller chose -- the command carries no hash
     // at all now. Report id and validated-draft id are the SAME string, which is
     // the whole of wamn-0h0g.8.5.6 visible on the wire.
@@ -1705,7 +1705,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
                 },
             },
         }),
-        "the test-set receipt drifted: {}",
+        "the test-set result drifted: {}",
         accepted.body
     );
 
@@ -1752,7 +1752,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // accepted judgment is not free of consequence: the control store gains one
     // immutable report keyed by the candidate's wiring hash.
     //
-    // Asserted at the STORE first, so a receipt that merely echoes a hash back
+    // Asserted at the STORE first, so a result that merely echoes a hash back
     // cannot pass for a persisted report.
     let stored = stored_gate_report(&admin, &candidate_hash)
         .await
@@ -1811,7 +1811,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
 
     // ---- an exact retry converges on the same judgment ---------------------
-    // The same command id replays the stored receipt.
+    // The same command id replays the stored result.
     let replay = post(
         "/authoring",
         Some(alice.token()),
@@ -1895,7 +1895,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
     assert_eq!(project_queue_count(&project).await, 0);
 
-    // Zero cases remove only execution proof. The Gate still validates the
+    // Zero cases remove only execution testing. The Gate still validates the
     // document against the exact package's admitted component facts; a missing
     // operation cannot disappear through the posture queries' joins and mint a
     // green report.
@@ -1948,7 +1948,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // reaches a component whose admitted effects projection is non-empty is
     // refused TYPED and executes nothing.
     //
-    // This is the behavioural proof, not a source scan. The SAME unreleased
+    // This is the behavior test, not a source scan. The SAME unreleased
     // connection-bearing component accepted above now carries cases, so its
     // admitted effect posture becomes the exact refusing predicate.
     let runs_before_effectful = project_case_runs(&project).await;
@@ -2161,7 +2161,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         Some(("0123456789abcdef".to_owned(), None, false))
     );
 
-    // An exact retry replays its stored receipt and converges on the one row.
+    // An exact retry replays its stored result and converges on the one row.
     let publish_ledger_count = ledger_rows(&admin).await.len();
     let replayed_publish = post(
         "/authoring",

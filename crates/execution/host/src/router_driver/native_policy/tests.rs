@@ -1,5 +1,5 @@
-//! Native mechanism proofs use the real node ABI and a test-only observation import.
-//! Authenticated nested cases use the explicitly armed local PostgreSQL proof below.
+//! Native mechanism tests use the real node ABI and a test-only observation import.
+//! Authenticated nested cases use the explicitly armed local PostgreSQL test below.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::process::Command;
@@ -654,7 +654,7 @@ impl Fixture {
     }
 }
 
-async fn prove(case: Case) {
+async fn run_case(case: Case) {
     let fixture = Fixture::new(case).await;
     let target = fixture.target().await;
     assert!(
@@ -755,17 +755,17 @@ async fn prove(case: Case) {
 }
 
 fn isolated(name: &str, case: Case) {
-    isolated_proof(name, prove(case));
+    run_isolated_test(name, run_case(case));
 }
 
-fn isolated_proof(name: &str, proof: impl std::future::Future<Output = ()>) {
+fn run_isolated_test(name: &str, test: impl std::future::Future<Output = ()>) {
     let full_name = format!("router_driver::native_policy::tests::{name}");
     if std::env::var(CHILD_MARKER).as_deref() != Ok(name) {
         let output = Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", &full_name, "--nocapture"])
             .env(CHILD_MARKER, name)
             .output()
-            .expect("start isolated native policy proof");
+            .expect("start isolated native policy test");
         assert!(
             output.status.success(),
             "{full_name}: {}\n{}\n{}",
@@ -775,14 +775,14 @@ fn isolated_proof(name: &str, proof: impl std::future::Future<Output = ()>) {
         );
         assert!(
             String::from_utf8_lossy(&output.stdout).contains("1 passed"),
-            "subprocess must execute the named proof"
+            "subprocess must execute the named test"
         );
         return;
     }
     let (done, finished) = mpsc::channel();
     let watchdog = std::thread::spawn(move || {
         if finished.recv_timeout(Duration::from_secs(60)) == Err(mpsc::RecvTimeoutError::Timeout) {
-            eprintln!("native policy proof exceeded its process watchdog");
+            eprintln!("native policy test exceeded its process watchdog");
             std::process::exit(124);
         }
     });
@@ -791,7 +791,7 @@ fn isolated_proof(name: &str, proof: impl std::future::Future<Output = ()>) {
         .enable_all()
         .build()
         .expect("isolated native runtime");
-    runtime.block_on(proof);
+    runtime.block_on(test);
     drop(runtime);
     done.send(()).expect("finish watchdog");
     watchdog.join().expect("join watchdog");
@@ -850,7 +850,7 @@ async fn native_application_cancelled_resolution_clears_partial_bindings() {
         .lock()
         .expect("pause policy lock")
         .clone()
-        .expect("binding policy receipt");
+        .expect("binding policy result");
     assert!(!policy.bindings.read().expect("bindings lock").is_empty());
     assert!(
         policy.traces.is_empty(),
@@ -975,7 +975,7 @@ async fn prove_call_owner() {
 
 #[test]
 fn native_application_call_retains_owner_until_guest_cancellation() {
-    isolated_proof(
+    run_isolated_test(
         "native_application_call_retains_owner_until_guest_cancellation",
         prove_call_owner(),
     );

@@ -1,6 +1,6 @@
 //! One router-invoked `wamn:node` guest performing a real trusted HTTP effect.
 //!
-//! Shared proof support: it seeds exactly the facts
+//! Shared test support: it seeds exactly the facts
 //! `ConnectionHttp::send` reads — a component-grain
 //! `catalog.connection_requirements` row, an `active`/`valid`
 //! `catalog.connection_bindings` row over an `enabled`
@@ -100,7 +100,7 @@ pub struct RouteOptions {
     pub path_and_query: String,
 }
 
-/// One live driver over the seeded closure, plus the identities a proof needs
+/// One live driver over the seeded closure, plus the identities a test needs
 /// to address it.
 pub struct TrustedHttpRoute {
     pub driver: Arc<RouterDriver>,
@@ -1221,7 +1221,7 @@ mod tests {
         let config: tokio_postgres::Config = system_url.parse()?;
         anyhow::ensure!(
             config.get_dbname() == Some("wamnsystem"),
-            "nested proof needs separate /wamnsystem"
+            "nested test needs separate /wamnsystem"
         );
         let (system, task) = tokio_postgres::connect(system_url, NoTls).await?;
         let task = tokio::spawn(task);
@@ -1231,7 +1231,7 @@ mod tests {
             .get(0);
         anyhow::ensure!(
             version.parse::<u32>()? / 10_000 == 18,
-            "nested identity proof requires PostgreSQL 18"
+            "nested identity test requires PostgreSQL 18"
         );
         wamn_ctl::dev::environment::reset_control_store(&system).await?;
         system.execute("INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ($1, 'pooled', 'http-reuse-proof')", &[&TENANT]).await?;
@@ -1571,12 +1571,12 @@ mod tests {
             std::env::var("WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET").as_deref() == Ok("1"),
             "set WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET=1 for the disposable database"
         );
-        tokio::time::timeout(Duration::from_secs(180), pooling_proof())
+        tokio::time::timeout(Duration::from_secs(180), test_connection_reuse())
             .await
-            .context("real HTTP guest pooling proof exceeded 180 seconds")?
+            .context("real HTTP guest connection reuse test exceeded 180 seconds")?
     }
 
-    async fn pooling_proof() -> anyhow::Result<()> {
+    async fn test_connection_reuse() -> anyhow::Result<()> {
         let database_url = std::env::var("WAMN_HTTP_REUSE_PG_URL")
             .context("set WAMN_HTTP_REUSE_PG_URL to fresh disposable PostgreSQL 18")?;
         let artifact_base = std::env::var("WAMN_HTTP_REUSE_ARTIFACT_BASE")
@@ -1591,7 +1591,7 @@ mod tests {
             .get(0);
         anyhow::ensure!(
             version.parse::<u32>()? / 10_000 == 18,
-            "proof requires PostgreSQL 18"
+            "test requires PostgreSQL 18"
         );
         let mut origin = origin().await?;
         let credentials = WamnCredentials::from_projects(HashMap::from([(
@@ -1788,12 +1788,12 @@ mod tests {
             std::env::var("WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET").as_deref() == Ok("1"),
             "set WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET=1 for both disposable databases"
         );
-        tokio::time::timeout(Duration::from_secs(180), nested_authority_proof())
+        tokio::time::timeout(Duration::from_secs(180), test_nested_authority())
             .await
-            .context("real nested HTTP authority proof exceeded 180 seconds")?
+            .context("real nested HTTP authority test exceeded 180 seconds")?
     }
 
-    async fn nested_authority_proof() -> anyhow::Result<()> {
+    async fn test_nested_authority() -> anyhow::Result<()> {
         let database_url = std::env::var("WAMN_HTTP_REUSE_PG_URL")
             .context("set WAMN_HTTP_REUSE_PG_URL to fresh disposable PostgreSQL 18")?;
         let system_url = std::env::var("WAMN_HTTP_REUSE_SYSTEM_PG_URL")
@@ -1803,7 +1803,7 @@ mod tests {
             project_config
                 .get_dbname()
                 .is_some_and(|name| name != "wamnsystem"),
-            "project proof must not install tenant schemas into wamnsystem"
+            "project test must not install tenant schemas into wamnsystem"
         );
         let (admin, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
         let connection = tokio::spawn(connection);
@@ -1813,7 +1813,7 @@ mod tests {
             .get(0);
         anyhow::ensure!(
             version.parse::<u32>()? / 10_000 == 18,
-            "nested proof requires PostgreSQL 18"
+            "nested test requires PostgreSQL 18"
         );
         let exporter = InMemorySpanExporterBuilder::new().build();
         let provider = SdkTracerProvider::builder()
@@ -1851,7 +1851,7 @@ mod tests {
             .context("release lacks its exact nested wiring")?;
         assert_ne!(
             parent.package_id, wiring.package_id,
-            "proof must distinguish the wiring owner from its root component package"
+            "test must distinguish the wiring owner from its root component package"
         );
         let caller = originating_caller(&system_url, &route, postgres).await?;
         let mut connection_id = None;
