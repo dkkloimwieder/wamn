@@ -1,6 +1,6 @@
 //! Saved-edit acceptance through the existing Receiving developer command.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -358,11 +358,38 @@ impl Served {
     }
 }
 
+#[tokio::test]
+async fn watch_reports_startup_failure_after_stdout_closes() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let scratch = ScratchRoot::create()?;
+    let binary = scratch.path().join("failed-watch");
+    fs::write(
+        &binary,
+        "#!/bin/sh\nexec 1>&-\nsleep 0.05\nprintf 'watch startup diagnostic\\n' >&2\nexit 23\n",
+    )?;
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))?;
+    let mut watch = Watch::start(&binary, scratch.path(), &scratch.path().join("config"))?;
+    let error = watch
+        .served()
+        .await
+        .err()
+        .context("the child must refuse")?;
+    ensure!(
+        error.to_string().contains("watch startup diagnostic"),
+        "the startup error lost its child diagnostic: {error:#}"
+    );
+    Ok(())
+}
+
 struct Watch {
     child: Child,
     process_group: Option<u32>,
     stdout: Lines<BufReader<ChildStdout>>,
     stderr: Lines<BufReader<ChildStderr>>,
+    stdout_open: bool,
+    stderr_open: bool,
+    diagnostics: VecDeque<String>,
 }
 
 impl Watch {
@@ -384,13 +411,44 @@ impl Watch {
             stdout: BufReader::new(child.stdout.take().context("watch stdout")?).lines(),
             stderr: BufReader::new(child.stderr.take().context("watch stderr")?).lines(),
             child,
+            stdout_open: true,
+            stderr_open: true,
+            diagnostics: VecDeque::new(),
         })
     }
 
     async fn line(&mut self) -> anyhow::Result<(bool, String)> {
-        tokio::select! {
-            line = self.stdout.next_line() => Ok((false, line?.context("the dev watch closed stdout before its result")?)),
-            line = self.stderr.next_line() => Ok((true, line?.context("the dev watch closed stderr before its result")?)),
+        loop {
+            ensure!(
+                self.stdout_open || self.stderr_open,
+                "the dev watch closed its output before its result (status {:?}): {}",
+                self.child.try_wait()?,
+                self.diagnostics
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            );
+            let (stderr, line) = tokio::select! {
+                line = self.stdout.next_line(), if self.stdout_open => (false, line?),
+                line = self.stderr.next_line(), if self.stderr_open => (true, line?),
+            };
+            let Some(line) = line else {
+                if stderr {
+                    self.stderr_open = false;
+                } else {
+                    self.stdout_open = false;
+                }
+                continue;
+            };
+            if stderr {
+                // Keep startup failures available without retaining an unbounded build log.
+                if self.diagnostics.len() == 32 {
+                    self.diagnostics.pop_front();
+                }
+                self.diagnostics.push_back(line.clone());
+            }
+            return Ok((stderr, line));
         }
     }
 
