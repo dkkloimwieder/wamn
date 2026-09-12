@@ -3,7 +3,7 @@
     reason = "wit-bindgen 0.44 emits Vec::from_raw_parts with equal length and capacity"
 )]
 
-//! Standard-library guest proving build-time WASI virtualization behavior.
+//! Standard-library guest that tests build-time WASI virtualization behavior.
 
 use exports::wamn::node::handler::{Emission, Guest, NodeContext, NodeError};
 use wamn::connection::http::Request;

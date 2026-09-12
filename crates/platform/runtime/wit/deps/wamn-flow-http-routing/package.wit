@@ -2,7 +2,7 @@ package wamn:flow-http-routing@0.1.0;
 
 /// Authoritative HTTP definition lookup and selected-policy authentication.
 ///
-/// The provider projects routes from the process's welded serving manifest.
+/// The provider projects routes from the process's loaded serving manifest.
 interface routing {
   record header {
     name: string,
@@ -44,7 +44,7 @@ interface routing {
     code: string,
   }
 
-  /// Opaque host-owned proof of one authenticated originating caller.
+  /// Opaque host-owned handle for one authenticated originating caller.
   resource authenticated-caller {}
 
   /// One admitted per-route slot. Dropping it releases the slot.
@@ -54,7 +54,7 @@ interface routing {
   routes: func(method: string, authority: string) -> result<list<route-definition>, string>;
 
   /// Authenticate after route selection. The host re-derives policy from the
-  /// welded attachment; none is an explicitly anonymous policy.
+  /// loaded attachment; none is an explicitly anonymous policy.
   authenticate: func(attachment-id: string, headers: list<header>) -> result<option<authenticated-caller>, auth-rejection>;
 
   /// Validate the adapter's mapped JSON against the selected attachment's

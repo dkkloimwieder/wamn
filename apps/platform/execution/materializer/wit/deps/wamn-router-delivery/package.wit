@@ -24,7 +24,7 @@ interface delivery {
   }
 
   /// One delivery. Wiring coordinates are deliberately absent: the host
-  /// re-derives them from the welded release and `source`.
+  /// re-derives them from the loaded release and `source`.
   record delivery-request {
     source: source,
     delivery-id: string,
