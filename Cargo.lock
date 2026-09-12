@@ -5653,6 +5653,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-conformance-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "chrono",
+ "clap",
+ "hex",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "ring",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "sqlx",
+ "syn 2.0.119",
+ "tokio",
+ "url",
+ "uuid",
+ "wamn-catalog",
+ "wamn-component-policy",
+ "wamn-execution-contract",
+ "wamn-execution-host",
+ "wamn-gate-harness",
+ "wamn-run-state",
+ "wamn-runtime",
+ "wash-runtime",
+ "wasi-virt",
+ "wasm-encoder 0.251.0",
+ "wasmtime-wasi",
+ "wat",
+]
+
+[[package]]
 name = "wamn-control-provision"
 version = "0.1.0"
 dependencies = [
@@ -5859,8 +5895,8 @@ dependencies = [
  "tracing",
  "wamn-conformance-tests",
  "wamn-integration-tests",
- "wamn-system-tests",
  "wamn-runtime",
+ "wamn-system-tests",
  "wash-runtime",
 ]
 
@@ -5955,68 +5991,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-pg-core"
-version = "0.1.0"
-
-[[package]]
-name = "wamn-platform-identity"
-version = "0.1.0"
-dependencies = [
- "base64",
- "hex",
- "ring",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "subtle",
- "tokio",
- "tokio-postgres",
-]
-
-[[package]]
-name = "wamn-project-state"
-version = "0.1.0"
-dependencies = [
- "wamn-control-provision",
-]
-
-[[package]]
-name = "wamn-conformance-tests"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "bytes",
- "chrono",
- "clap",
- "hex",
- "http-body-util",
- "hyper",
- "hyper-util",
- "ring",
- "rust_decimal",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "sqlx",
- "syn 2.0.119",
- "tokio",
- "url",
- "uuid",
- "wamn-catalog",
- "wamn-component-policy",
- "wamn-execution-contract",
- "wamn-execution-host",
- "wamn-gate-harness",
- "wamn-run-state",
- "wamn-runtime",
- "wash-runtime",
- "wasi-virt",
- "wasm-encoder 0.251.0",
- "wasmtime-wasi",
- "wat",
-]
-
-[[package]]
 name = "wamn-integration-tests"
 version = "0.1.0"
 dependencies = [
@@ -6077,23 +6051,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-system-tests"
+name = "wamn-pg-core"
+version = "0.1.0"
+
+[[package]]
+name = "wamn-platform-identity"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "clap",
- "hyper",
- "opentelemetry",
- "opentelemetry_sdk",
- "reqwest",
+ "base64",
+ "hex",
+ "ring",
+ "serde",
  "serde_json",
+ "sha2 0.11.0",
+ "subtle",
  "tokio",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "wamn-run-state",
- "wamn-runtime",
- "wash-runtime",
+ "tokio-postgres",
+]
+
+[[package]]
+name = "wamn-project-state"
+version = "0.1.0"
+dependencies = [
+ "wamn-control-provision",
 ]
 
 [[package]]
@@ -6139,8 +6119,8 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-execution-host",
  "wamn-gate-harness",
- "wamn-platform-identity",
  "wamn-integration-tests",
+ "wamn-platform-identity",
  "wamn-receiving-tui",
  "wamn-run-state",
  "wamn-runtime",
@@ -6354,6 +6334,26 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-execution-contract",
+]
+
+[[package]]
+name = "wamn-system-tests"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hyper",
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "wamn-run-state",
+ "wamn-runtime",
+ "wash-runtime",
 ]
 
 [[package]]
