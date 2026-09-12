@@ -23,7 +23,7 @@ Choose the observation that matches the rule:
 A confirmed refusal before commit leaves the named business state unchanged.
 List permitted claim or audit changes separately.
 Unknown completion is not a refusal.
-For critical invariants, retain success, refusal or failure, and [deliberate-defect evidence](mutation.md).
+For critical invariants, test success, refusal or failure, and [detection of a deliberate defect](mutation.md).
 
 ## Scope
 

@@ -52,7 +52,7 @@ Reuse must include the actual inputs to each check, including changed grants or 
 
 The selected CI service will invoke the same repository commands that an authorized operator can run directly.
 Source hosting, CI execution, artifact storage, and deployment targets remain independent choices.
-Provider configuration will supply triggers, credentials, job order, and retention.
+Provider configuration will supply triggers, credentials, and job order.
 It will contain no second implementation of WAMN validation or new CI abstraction layer.
 
 Change checks precede integration.
@@ -87,7 +87,8 @@ A cached local pass does not replace the selected revision's required qualificat
 Uploading an inactive artifact for deployment tests does not qualify it or activate a shared environment.
 
 Automation will record source revision, executed commands, release identity, manifest digest, and deployed release.
-It will retain relevant test logs, failure inputs, and referenced artifacts.
+It will report pass, fail, or skip with the relevant failure cause and reproduction inputs.
+It will not require a permanent test-log archive.
 The runtime does not require a CI run identifier.
 Publication credentials must stay out of artifacts, logs, and jobs that execute untrusted changes.
 A content digest identifies bytes but grants no deployment authority.

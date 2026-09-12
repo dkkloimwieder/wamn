@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Agent-authoring pilot secret scrubber.
 #
-# Evidence leaves the cache and enters the repository. A run transcript records
+# An optional grading export can contain private values. A run transcript records
 # every command the agent ran, and some of those commands carry the credentials
 # the runner minted for the disposable environment. Those credentials are dead
 # once `down` destroys the environment, and dead is not a reason to track them:

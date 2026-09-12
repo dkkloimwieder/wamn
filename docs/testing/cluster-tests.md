@@ -23,5 +23,5 @@ Use the case's declared finite step, retry, and timeout limits.
 Inspect the runner's cleanup result after success, failure, or handled interruption.
 Record unresolved owned resources as incomplete cleanup.
 Keep application assertion failures distinct from setup and cleanup failures.
-Apply the [evidence rules](evidence.md) to missing prerequisites, partial execution, and failure logs.
+Report missing prerequisites, partial execution, and failures through the [test result](evidence.md).
 A ready Pod alone does not establish application correctness.

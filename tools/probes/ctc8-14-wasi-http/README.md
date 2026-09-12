@@ -3,7 +3,6 @@
 This standalone workspace tests upstream wasmCloud 2.9.0 at
 `68ebece9c537f8bb4b5c9999f274ec68d60f35a9`.
 The cutover source base is WAMN commit `dfa1c3187fe8cd671688a442b23106046e502cb6`.
-Earlier evidence retains its original source and runtime identities.
 The probe changes no production imports, admission policy, runtime adapter, or WIT.
 Its Wasmtime, WASI, and WASI HTTP host crates match the root lockfile at 47.0.4.
 
@@ -47,6 +46,8 @@ These cases do not test a protobuf service or its RPC schema.
 The two-component case uses separate stores with the same workload identity;
 it does not impersonate the production nested invocation driver.
 
-Raw commands, exit codes, observations, and retained gaps belong in
-`evidence/perf/2026.09/ctc8-14-wasi-http/`. Pooling, rotation, aggregate quotas, and
-the blobstore path belong to `wamn-ctc8.13`; P3 guest adoption remains separate.
+Report pass, fail, or skip with the command, source, and observed gaps.
+If diagnostic files are needed, choose a new output directory under `evidence/`.
+The files do not require a permanent archive.
+Pooling, rotation, aggregate quotas, and the blobstore path belong to `wamn-ctc8.13`.
+P3 guest adoption remains separate.

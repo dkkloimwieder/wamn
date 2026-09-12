@@ -28,5 +28,5 @@ An infrastructure error must not replace the business counterexample.
 Retain the minimized regression with a stable test name.
 
 The Receiving history tests exercise both failure-preservation cases explicitly.
-Keep the reproduction inputs described in [evidence](evidence.md).
+Report the relevant reproduction inputs with the [test result](evidence.md).
 For controlled execution, see [deterministic tests](deterministic.md).

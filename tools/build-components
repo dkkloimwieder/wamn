@@ -337,7 +337,7 @@ wamn_build() {
     # component-builder stage has always used --release; only this path did not.
     #
     # It does NOT change instantiate: 350 us release against 345 us debug,
-    # inside the run-to-run spread (evidence/perf/2026.09/4-instantiate/).
+    # inside the run-to-run spread recorded in commit cc4b407f6b.
     arguments=(
       build --locked --offline --release --target wasm32-wasip2
       --manifest-path "$WAMN_REPOSITORY_ROOT/$manifest"

@@ -141,8 +141,7 @@
 #
 # Reinspect the exact source:
 #   git -C "$WASMCLOUD_CHECKOUT" grep -n 'with \.volumes\|with \.volumeMounts' 68ebece9c537f8bb4b5c9999f274ec68d60f35a9 -- charts/runtime-operator/templates/runtime/deployment.yaml
-# Distributed render and image metadata evidence:
-#   evidence/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/
+# Distributed render and image identity requirements: wamn-0h0g.15.54.
 # Live stage 4 tests remain separate and unexecuted by this source inspection.
 
 # Deprecated HTTP gateway off, and never adopted: HTTP exposure rides

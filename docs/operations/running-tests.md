@@ -49,28 +49,22 @@ It does not claim that every test constructor rejects an interactive database UR
 
 ## Capture a run
 
-Create an isolated worktree and one result directory for the run:
+Ordinary tests need no result directory.
+Report the command, source revision, and pass, fail, or skip outcome.
+Some cluster tests and tools write diagnostic files and require a new directory.
+For those commands, choose an unused path under the main checkout's `evidence/` directory:
 
 ```bash
 WAMN_MAIN="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
-WAMN_RUN="$(date -u +%Y%m%dT%H%M%SZ)-$$"
-WAMN_TREE="$HOME/.cache/wamn-lanes/test-$WAMN_RUN"
-WAMN_RESULTS="$WAMN_MAIN/evidence/consolidation/$WAMN_RUN"
-mkdir -p "$HOME/.cache/wamn-lanes" "$WAMN_MAIN/evidence/consolidation"
+WAMN_RESULTS="$WAMN_MAIN/evidence/local-tests"
+mkdir -p "$WAMN_MAIN/evidence"
 mkdir "$WAMN_RESULTS"
-git worktree add --detach "$WAMN_TREE" HEAD
-cd "$WAMN_TREE"
-export CARGO_TARGET_DIR="$WAMN_TREE/target"
-export RUSTC_WRAPPER=''
-export CARGO_BUILD_JOBS=2
-git rev-parse HEAD > "$WAMN_RESULTS/source.txt"
-git status --porcelain=v1
 ```
 
-Keep source unchanged during the captured run.
-Record the command, working directory, source, duration, exit status, and complete output in that result directory.
-Keep credentials in private files, and exclude them from published output.
-Retain failed output before another attempt or cleanup.
+Keep source unchanged while a command runs.
+Use diagnostic output to understand failures and the actual execution boundary.
+Keep credentials in private files and out of shared output.
+No permanent archive or result-only commit is required.
 [Result interpretation](../testing/evidence.md) defines passes, failures, and unexecuted cases.
 
 ## The full sweep
@@ -106,7 +100,7 @@ The guest test belongs to another workspace, so the root sweep cannot reach it.
 `tools/contract-diff dry-run` only prints the commands.
 
 Report failures, ignored cases, explicit skips, filtered cases, and executed passes separately.
-Retain each failure's package, target, full test name, and actual cause.
+Report each failure's package, target, full test name, and actual cause.
 A changed test name does not establish a new failure or remove an earlier failure.
 
 ## Live prerequisites and troubleshooting
@@ -209,6 +203,6 @@ For manual fixtures, remove only the exact container, cluster, image, volume, an
 Use explicit cluster names, kubeconfig paths, and contexts for Kubernetes and Helm commands.
 Never use `docker prune`, broad image removal, or name-substring cleanup.
 
-Keep failed output and unresolved owned resources until their cause is understood.
-Before removing a worktree, preserve its branch, raw captures, and required artifacts outside its cache.
+Report unresolved cleanup failures and keep only output needed for current work or specifically requested by the user.
+Before removing a worktree, preserve its source changes and branch.
 Remove only that worktree and its owned target after no process uses them.

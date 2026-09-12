@@ -26,6 +26,6 @@ When another real constraint still protects the invariant, record the surviving 
 Do not weaken that constraint to demand unsafe application behavior.
 For Receiving, this matters when removing one lock still leaves line locks and quantity constraints active.
 
-Retain the failed property and reproduction inputs under the [evidence rules](evidence.md).
+Report the failed property and relevant reproduction inputs with the [test result](evidence.md).
 Restore the exact original source and fixture after the controlled change.
 Do not count deliberate source changes as application fixes or merge them into the application.

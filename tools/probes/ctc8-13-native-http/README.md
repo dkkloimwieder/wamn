@@ -5,7 +5,6 @@ It does not replace a production transport or execute guest WIT.
 The cutover source base is `dfa1c3187fe8cd671688a442b23106046e502cb6`.
 The probe pins the Wasmtime family to `47.0.4`.
 The root requirement and both lockfiles use that version.
-Earlier evidence retains its original source and runtime identities.
 
 The probe owns recording servers on ephemeral loopback ports.
 Its TLS certificates and credential markers are synthetic.
@@ -40,7 +39,7 @@ When the slot is granted, run these commands from the worktree root:
 RUSTC_WRAPPER=sccache cargo build --manifest-path tools/probes/ctc8-13-native-http/Cargo.toml --locked --offline
 ```
 
-Keep the probe lockfile with its evidence.
+Use the committed probe lockfile.
 Do not regenerate it from manifest ranges.
 The initial fresh resolution selected newer transport dependencies than the source-base lockfile.
 The corrected lock starts with the source-base lockfile and adds only the fixture dependencies.
@@ -54,14 +53,16 @@ awk -f tools/probes/ctc8-13-native-http/audit-locks.awk \
 Run the wrapper with the built executable and a new evidence directory:
 
 ```bash
+mkdir -p evidence/native-http
 bash tools/probes/ctc8-13-native-http/run \
   tools/probes/ctc8-13-native-http/target/debug/ctc8-13-native-http \
-  evidence/perf/2026.09/ctc8-13-native-http/run-local-001
+  evidence/native-http/local-run
 ```
 
-The wrapper retains stdout, stderr, the exit code, and the source and binary hashes.
+The wrapper writes stdout, stderr, the exit code, and the source and binary hashes to the selected directory.
 It rejects missing or repeated experiment receipts.
-Keep failed runs as well as successful runs.
+Report pass, fail, or skip with the command, source, and observed gaps.
+The diagnostic files do not require a permanent archive.
 The executable emits one JSON object per line and limits the whole fixture to ninety seconds.
 
 The probe does not exercise the private `ConnectionHttp::send` replacement, frozen candidate bindings, blobstore authorization, or nested caller propagation.

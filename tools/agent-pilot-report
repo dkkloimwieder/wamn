@@ -6,9 +6,9 @@
 # $RUN/human.json; a null there is a refusal, not a blank, because a rubric
 # score nobody gave is not a score.
 #
-# This is also where evidence LEAVES the cache. The run directory is working
-# state any tool may delete; the report and its raw directory land in the
-# repository, minus the environment and the worktree.
+# This optional exporter copies a requested grading report and its inputs into
+# the repository, excluding the environment and worktree. Ordinary test results
+# do not require this export.
 #
 #   agent-pilot-report --run <nnn>
 #

@@ -2,7 +2,7 @@
 
 These commands exercise deployed application behavior.
 [Cluster test limits](../testing/cluster-tests.md) explains the boundary they establish.
-Use the [run capture](running-tests.md#capture-a-run) and [cleanup](running-tests.md#cleanup) procedures.
+Choose an [output directory](running-tests.md#capture-a-run) and follow the [cleanup](running-tests.md#cleanup) procedure.
 Follow [test-database isolation](running-tests.md#test-database-isolation).
 
 Install Docker, kind, kubectl, Helm, OpenSSL, and the tools required by the selected app test.

@@ -48,7 +48,7 @@ Keep one Cargo process per target directory.
 Use a worktree and target under `$HOME/.cache/wamn-lanes` for independent work.
 Reuse that worktree's own target, and let Cargo decide which artifacts need rebuilding.
 Keep large build targets off temporary memory filesystems.
-[Running tests](running-tests.md#capture-a-run) gives the worktree and result-directory commands.
+[Running tests](running-tests.md#capture-a-run) explains result reporting and optional output directories.
 
 ## Guest artifact comparisons
 
@@ -65,7 +65,8 @@ WAMN_DIGEST_REPRO_B="$GUEST_REPRO_SECOND_ARTIFACTS" \
   -- --include-ignored --exact --nocapture
 ```
 
-To compare app and full selections, build the same commit into separate targets:
+To compare app and full selections, build the same commit into separate targets.
+Set `WAMN_TREE` to the chosen worktree and `WAMN_RESULTS` to an [output directory](running-tests.md#capture-a-run):
 
 ```bash
 CARGO_TARGET_DIR="$WAMN_TREE/app-target" RUSTC_WRAPPER='' \
@@ -79,5 +80,5 @@ WAMN_DIGEST_PROFILE_ALL_PLAN="$WAMN_RESULTS/all-plan.json" \
   -- --include-ignored --exact --nocapture
 ```
 
-Retain the plans and comparison output before changing digest pins.
+Inspect the plans and comparison output before changing digest pins.
 Use these comparisons when guest dependencies, selected features, workspace membership, or build flags change.

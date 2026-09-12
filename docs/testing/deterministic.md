@@ -37,7 +37,7 @@ Unmatched requests and unused required fixture entries must fail.
 Fix guest clocks and randomness when they affect assertions.
 Fixture changes require explicit recording and review.
 
-Retain [reproduction inputs](evidence.md) for the controlled execution.
+Identify the relevant [reproduction inputs](evidence.md) when reporting a failure.
 Simulation can replace a redundant sequential scenario only when it covers that scenario's actual guarantee.
 It does not automatically retire process-kill, connection-loss, or contention tests.
 

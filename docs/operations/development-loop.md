@@ -84,17 +84,20 @@ Preparation removes grading inputs and this marked section from the measured wor
 The measured agent cannot push or use `bd` through its supplied environment.
 
 Run data initially lives under `${XDG_CACHE_HOME:-$HOME/.cache}/wamn-pilot/runs`.
-Export the run before reclaiming that cache:
+Report the command, source, outcome, and whether the agent or only the stub ran.
+Stop the owned environment when the run ends:
 
 ```bash
-tools/agent-pilot-report --run 001
 tools/agent-pilot-run down --run 001
 ```
 
-The exporter requires completed human inputs and refuses credentials that survive its scrubber.
-It writes retained output under `evidence/experiments/agent-authoring/`.
-Cleanup preserves unexported run data and targets still used by another run.
 Repeated `down` is safe.
+The existing cleanup guard preserves unexported run data and targets still used by another run.
+It does not require publishing ordinary test logs.
+
+Use `tools/agent-pilot-report --run 001` only for an explicitly requested grading export.
+That exporter requires completed human inputs and refuses credentials that survive its scrubber.
+It writes output under `evidence/experiments/agent-authoring/`.
 
 For a recorded run, `tools/agent-pilot-grade --replay RUN_DIRECTORY` preserves its original grading files.
 `--placement` and `--contract` also take an explicit recorded run directory.

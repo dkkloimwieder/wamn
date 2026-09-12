@@ -8,5 +8,5 @@ Testing combines ordinary examples, generated inputs, real database execution, a
 - [Application tests](application-tests.md): test commands, overlays, events, and operator outcomes.
 - [Deterministic tests](deterministic.md): distinguish controlled execution from live scheduling.
 - [Cluster tests](cluster-tests.md): exercise packaged applications and process boundaries.
-- [Evidence](evidence.md): retain actual execution, failure inputs, and limitations.
+- [Test results](evidence.md): report pass, fail, skip, and execution limits.
 - [Mutation tests](mutation.md): establish that assertions detect the intended defect.

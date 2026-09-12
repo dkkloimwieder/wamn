@@ -130,7 +130,7 @@ def main():
     parser.add_argument("--host-binary", type=Path, required=True)
     parser.add_argument("--executor-binary", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True,
-                        help="New evidence directory under evidence/perf/2026.09/native-a-descriptor")
+                        help="New caller-selected directory for diagnostic output")
     args = parser.parse_args()
     parent_before = resource.getrlimit(resource.RLIMIT_NOFILE)
     if parent_before[1] != resource.RLIM_INFINITY and parent_before[1] < 4096:

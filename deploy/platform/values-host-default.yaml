@@ -273,9 +273,8 @@ runtime:
           memory: "4Gi"
           # WHY 6 AND NOT 2. instantiate_async for one component is 313 us on
           # bare metal and 1.30 ms under the old 2-core cap -- 4.2x, on an
-          # 8-core box, for the identical call. Every absolute millisecond in
-          # evidence/perf/2026.09 carried that factor. Six leaves two cores for the
-          # kind nodes and the databases sharing the machine.
+          # 8-core box, for the identical call (wamn-0h0g.17.23).
+          # Six leaves two cores for the kind nodes and shared databases.
           #
           # THIS IS THE JOURNEY'S DEVELOPMENT OVERLAY, NOT A PRODUCTION LIMIT.
           # A real deployment sets its own in its own values file; nothing here
