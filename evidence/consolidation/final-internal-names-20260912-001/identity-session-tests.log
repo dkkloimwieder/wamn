@@ -1,0 +1,8 @@
+
+running 3 tests
+test identity_session_test::tests::headers_refuse_missing_wrong_and_duplicate_values ... ok
+test identity_session_test::tests::success_response_accepts_only_the_exact_three_field_shape ... ok
+test identity_session_test::tests::observer_cases_require_exact_fields_unique_safe_names_and_explicit_status ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 93 filtered out; finished in 0.00s
+

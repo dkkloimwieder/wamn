@@ -1,0 +1,35 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-runtime",
+    "--features",
+    "wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats",
+    "--test",
+    "native_dispatch_deadline",
+    "--",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 15.309197934984695,
+  "ended_utc": "2026-09-12T03:58:16.475276+00:00",
+  "exit_code": 0,
+  "name": "native-deadline",
+  "source": "ae645332f0ca9cc296280b440e66e16440c1f694",
+  "started_utc": "2026-09-12T03:58:01.166086+00:00",
+  "stderr": {
+    "bytes": 5609,
+    "mode": "0o664",
+    "path": "native-deadline.stderr",
+    "sha256": "750874fa2e1e9a2056eeada529648f9b0e9bee34cc39c2ae429809273bbd28e5"
+  },
+  "stdout": {
+    "bytes": 400,
+    "mode": "0o664",
+    "path": "native-deadline.stdout",
+    "sha256": "3242fd6dcccaa676b9a01407a0c6d5d263247825728d985df73f6893b738cedc"
+  }
+}

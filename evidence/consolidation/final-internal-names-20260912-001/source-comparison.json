@@ -1,0 +1,52 @@
+{
+  "base": "a2451f069443a45f996a8724b1180006daab2dd1",
+  "files": [
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/sessions.rs",
+      "code_unchanged_except_names": true,
+      "unchanged_string_literals": 220,
+      "string_literals_sha256": "46f5836187b2817344efcfc48bd87735b99b5df7e60d1890794526138cc29ed1",
+      "format_capture_changes": []
+    },
+    {
+      "path": "tests/integration/src/identity_session_test.rs",
+      "code_unchanged_except_names": true,
+      "unchanged_string_literals": 134,
+      "string_literals_sha256": "00a3ede6a02ee67306a17cf32ab8cd4eff58d13a93468d2212e8c52f69ba0cfe",
+      "format_capture_changes": []
+    },
+    {
+      "path": "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs",
+      "code_unchanged_except_names": true,
+      "unchanged_string_literals": 155,
+      "string_literals_sha256": "a26f1259498e6979f154496d48475265a3a6f861d86607141eba2aa6bdbe2097",
+      "format_capture_changes": [
+        {
+          "before": "\"{receipt}\"",
+          "after": "\"{result_line}\"",
+          "rendered_value": "the same stdout line"
+        }
+      ]
+    },
+    {
+      "path": "tools/probes/ctc8-14-wasi-http/host/src/main.rs",
+      "code_unchanged_except_names": true,
+      "unchanged_string_literals": 206,
+      "string_literals_sha256": "1eddb2560c3cc2cfbd622f8e1cbdd7c08f7b1c463e21fa93045a448dc617ffd1",
+      "format_capture_changes": []
+    },
+    {
+      "path": "tools/kind-gate-image-remove",
+      "exact_bytes_except_declared_variable_names": true
+    },
+    {
+      "path": "tools/identity-jwks-journey-run",
+      "exact_bytes_except_declared_variable_names": true
+    },
+    {
+      "path": "apps/wamn_receiving/tests/operator_pty.py",
+      "exact_bytes_except_function_name": true
+    }
+  ],
+  "guest_and_manifests_changed": false
+}

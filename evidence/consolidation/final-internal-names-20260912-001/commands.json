@@ -1,0 +1,132 @@
+[
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "tools/kind-gate-image-remove"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T03:46:44.284993+00:00",
+    "elapsed_seconds": 0.0016969749704003334,
+    "exit": 0,
+    "log": "kind-shell-syntax.log",
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "tools/identity-jwks-journey-run"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T03:46:44.286813+00:00",
+    "elapsed_seconds": 0.0022910270490683615,
+    "exit": 0,
+    "log": "identity-shell-syntax.log",
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "python3",
+      "-c",
+      "from pathlib import Path; p=Path(\"apps/wamn_receiving/tests/operator_pty.py\"); compile(p.read_text(), str(p), \"exec\")"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T03:46:44.289240+00:00",
+    "elapsed_seconds": 0.023355362005531788,
+    "exit": 0,
+    "log": "python-syntax.log",
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "rustfmt",
+      "+1.98.0",
+      "--edition",
+      "2024",
+      "--emit",
+      "stdout",
+      "tools/probes/ctc8-14-wasi-http/host/src/main.rs"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T03:46:44.312809+00:00",
+    "elapsed_seconds": 0.020643440017011017,
+    "exit": 0,
+    "log": "native-probe-parse.log",
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-receiving-tests",
+      "-p",
+      "wamn-integration-tests",
+      "-p",
+      "wamn-execution-host",
+      "-p",
+      "wamn-conformance-tests",
+      "--lib",
+      "--test",
+      "kind_gate_image_remove",
+      "--no-run",
+      "--message-format=json-render-diagnostics"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T03:46:44.333665+00:00",
+    "elapsed_seconds": 123.16234615701251,
+    "exit": 0,
+    "log": "caller-build.log",
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_integration_tests-3c7f29103794463e",
+      "identity_session_test::tests::",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T03:48:47.503820+00:00",
+    "elapsed_seconds": 0.007958328002132475,
+    "exit": 0,
+    "log": "identity-session-tests.log",
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/kind_gate_image_remove-d123915f78aceac2",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T03:48:47.511993+00:00",
+    "elapsed_seconds": 0.5168074920075014,
+    "exit": 0,
+    "log": "kind-image-tests.log",
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  }
+]

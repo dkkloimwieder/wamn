@@ -1,0 +1,37 @@
+[
+  {
+    "name": "wamn_execution_host",
+    "kind": [
+      "lib"
+    ],
+    "path": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_execution_host-39e6af134a42d9c0"
+  },
+  {
+    "name": "kind_gate_image_remove",
+    "kind": [
+      "test"
+    ],
+    "path": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/kind_gate_image_remove-d123915f78aceac2"
+  },
+  {
+    "name": "wamn_conformance_tests",
+    "kind": [
+      "lib"
+    ],
+    "path": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_conformance_tests-2efbe4661efacd14"
+  },
+  {
+    "name": "wamn_receiving_tests",
+    "kind": [
+      "lib"
+    ],
+    "path": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_receiving_tests-177742da9d639aa2"
+  },
+  {
+    "name": "wamn_integration_tests",
+    "kind": [
+      "lib"
+    ],
+    "path": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_integration_tests-3c7f29103794463e"
+  }
+]

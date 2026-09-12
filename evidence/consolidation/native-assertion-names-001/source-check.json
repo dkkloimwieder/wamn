@@ -1,0 +1,196 @@
+{
+  "parent": "c99055b483e32ac13436122356777f8b6b2074d5",
+  "files": [
+    {
+      "path": "services/host/tests/native_lifecycle_live.rs",
+      "before_sha256": "c6daa30a438c9d402bd1925cf27f41e603393a059cdcb06d31b2621eca3c47a5",
+      "after_sha256": "d0cbebcb53cc2b0337806fb9c8a58740d9078de70fb754ae461d7282ea5096d0",
+      "literal_count": 166,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": true
+    },
+    {
+      "path": "services/ctl/tests/apply_package_live.rs",
+      "before_sha256": "ed1c17d3a70b7f144724ea80d0ebddd9c907ee32decdb05e86164f2a6409850b",
+      "after_sha256": "3aea55c8f056de034ee3fc718025a9384592649db8fb2acf022f6221eadf43d2",
+      "literal_count": 416,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": true
+    },
+    {
+      "path": "services/ctl/tests/publish_release_live.rs",
+      "before_sha256": "8d8c7b19df181fb67693dd9516cdada5c31dad82bd08b98722fd78d3af3caf41",
+      "after_sha256": "e61000103a55eefd088b31f702dcec0c59c4b273b4c339170f76717c0fb4b19d",
+      "literal_count": 84,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": true
+    },
+    {
+      "path": "services/ctl/src/dev/verification_world.rs",
+      "before_sha256": "175619337e38a332e7876a913aa2cb27b025637d2e6298266d2e3d84a42a51b2",
+      "after_sha256": "274cbb71c51bf481b579f07cc2b09af3f110c0446046516a5ce4e23b66d5faa3",
+      "literal_count": 189,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": false
+    },
+    {
+      "path": "crates/execution/host/src/router_driver/native_policy/tests.rs",
+      "before_sha256": "e2721bb399d453801a59673affb79114619fbd9cebf999c4a8456913212e231b",
+      "after_sha256": "059660a313f5a9d859b6e7f8c0a4660ad9e646a219d25307815f0f8f349ab89d",
+      "literal_count": 150,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": false
+    },
+    {
+      "path": "crates/execution/host/src/router_driver/native_call/tests.rs",
+      "before_sha256": "a037f6f2d72f1b5283b814fcc5c2284d6ce57b02848c6a133c6e49a60991d110",
+      "after_sha256": "408be0a846aaa95174f9389b73f201d71efc5db170577160075d97553b1a9eb6",
+      "literal_count": 47,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": false
+    },
+    {
+      "path": "crates/platform/runtime/tests/native_dispatch_deadline.rs",
+      "before_sha256": "bba0c4b3fa70392b86cb29d8bad5e6db8db31761760f8b45995106cfe7995a76",
+      "after_sha256": "cf7494b17512ee1e00a104eccd4ccaef901fafa3cabe45abd6e7716e0170cea7",
+      "literal_count": 72,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": true
+    },
+    {
+      "path": "tests/system/src/trace_test.rs",
+      "before_sha256": "552e7fb32db81d594383ae4244a8cd561d73e0e06c5679b011fd3917bb81fa6c",
+      "after_sha256": "1cedbe50865c661548b57e3b772ab73dae0ab5372892849456723392be9e3554",
+      "literal_count": 106,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": true
+    },
+    {
+      "path": "tests/integration/src/route_authentication_live.rs",
+      "before_sha256": "cc34376b4de52cd4d301ef84d8a3a0191a307206566c5ccac2cb72f1f9188443",
+      "after_sha256": "a1793251ad9b3d259225c82afe33a9df8345e688375a0a440a00e58031db8094",
+      "literal_count": 308,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": false
+    },
+    {
+      "path": "tests/integration/src/route_authentication_live/p3_shell.rs",
+      "before_sha256": "3ee2f646783faa6d0e27dda71cd9850617f811dae5e039004450225337ce5383",
+      "after_sha256": "dbfc8a4555c08321f8971ae9e1c983547a590e247eb0a31d36be90b0d5595252",
+      "literal_count": 40,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": false
+    },
+    {
+      "path": "tests/integration/src/route_authentication_live/session_client.rs",
+      "before_sha256": "91dc12a265ee440aaa3bf63c1f09c358cfced63b14801453f869040c2879859b",
+      "after_sha256": "fa0222c86b01cd53d7ff17d1f8152318c80e150192c7dccde1cb2a4db26623e5",
+      "literal_count": 44,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": false
+    },
+    {
+      "path": "apps/wamn_receiving/tests/receiving_data_access.rs",
+      "before_sha256": "c8892a70064f2bacd596e125839fc19b0cb63a7951775a8d4a938d49cb667b27",
+      "after_sha256": "78c324bb919ea127225a3a6c19e68f41e96404ec6debd16b0fb9e35748f07dd9",
+      "literal_count": 338,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": true
+    },
+    {
+      "path": "apps/wamn_receiving/tests/postcommit.rs",
+      "before_sha256": "b596742566304a12f611115fb744975a5113919340848dbb95558ac7171c85e0",
+      "after_sha256": "f4724f07e54107ac004a8a892a135176af5eb5b8acc73a830a5d7ba5020be30f",
+      "literal_count": 267,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": false
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/routes.rs",
+      "before_sha256": "a5ed7655b7eaa71bec15103541b47a4e980ab3a11cb0e12d39979b6cf7f35f4d",
+      "after_sha256": "3b46f88f20a4abb5d4db4d67d4f95238deb4b4f04fd50a8bc8366f544f484399",
+      "literal_count": 231,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": true
+    },
+    {
+      "path": "services/ctl/src/publish_release.rs",
+      "before_sha256": "944cb6d9cfd5c5ceaae3e23474485e5da7bac13612dd6bfd22a724267b53a0e1",
+      "after_sha256": "6a330e0fb02cf21db18d6ec4ea61448ad956c54dc8cbfc2ec3c0210ace3f11fc",
+      "literal_count": 622,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": false,
+      "mode": "0o664",
+      "comments_changed": true
+    },
+    {
+      "path": "services/ctl/src/publish_release/effective_release_live.rs",
+      "before_sha256": "160fb7fcd6a69c53b85af218079c806505ebcc51e7c4847e55a2f23f540f2336",
+      "after_sha256": "83b53da0ec5fa841d21b17f1ae5c20b67caddfa81eb8377df8321fdf91041a41",
+      "literal_count": 113,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": true
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/sessions.rs",
+      "before_sha256": "62a3790c2523e61c79ff0b31f0902b388f195a921f03695d3c142694154bfd85",
+      "after_sha256": "53c2db602da6d1efe0abfa9a689f92e28f27fb7930744126e1b37bf9e6251a6f",
+      "literal_count": 199,
+      "mapped_executable_tokens_equal": true,
+      "literal_bytes_equal": true,
+      "mode": "0o664",
+      "comments_changed": false
+    },
+    {
+      "path": "services/ctl/tests/generated_operator_live.py",
+      "before_sha256": "ba55b6e27d5f34af723d94831d49c12ee1abf21bd9459bc75019fa98b2ef323c",
+      "after_sha256": "c8094d1a3308b0de574e51de48f4e736e0fa39515e40a6fb435e0f2f0a51d7bf",
+      "mapped_tokens_equal": true,
+      "compiled_without_execution": true,
+      "mode": "0o664"
+    }
+  ],
+  "file_count": 18,
+  "rust_literal_count": 3392,
+  "literal_exception": {
+    "path": "services/ctl/src/publish_release.rs",
+    "old": "\"an effectful dependency was proven pure: {proven:?}\"",
+    "new": "\"an effectful dependency was proven pure: {dependencies:?}\"",
+    "reason": "Captured binding renamed with unchanged rendered diagnostic."
+  },
+  "test_name_changes": {
+    "a_dependency_admitted_with_no_effects_is_proven_pure_and_keeps_the_effect_free_case_path": "a_dependency_admitted_with_no_effects_keeps_the_effect_free_case_path",
+    "a_dependency_admitted_with_one_effect_is_not_proven_pure_and_loses_that_path": "a_dependency_admitted_with_one_effect_loses_the_effect_free_case_path"
+  },
+  "module_package_target_changes": []
+}

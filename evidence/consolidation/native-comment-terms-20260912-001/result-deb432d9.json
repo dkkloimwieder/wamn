@@ -1,0 +1,1253 @@
+{
+  "base_commit": "a2451f069443a45f996a8724b1180006daab2dd1",
+  "source_commit": "deb432d99d916fed8371c240355eb596a0e13f7c",
+  "comparison_started_utc": "2026-09-12T03:56:26.230931+00:00",
+  "comparison_ended_utc": "2026-09-12T03:56:41.536965+00:00",
+  "comparison_command": "runpy.run_path(compare.py) with stdout captured",
+  "comparison_exit": 0,
+  "file_count": 117,
+  "changed_comment_lines": 369,
+  "test_name_replacements": 6,
+  "all_other_code_and_literals_identical": true,
+  "line_counts_unchanged": true,
+  "quoted_comment_text_unchanged": true,
+  "git_modes_unchanged": true,
+  "cargo_executed": false,
+  "tests_executed": false,
+  "rustfmt": {
+    "command": [
+      "rustfmt",
+      "+1.98.0",
+      "--edition",
+      "2024",
+      "--check",
+      "--config",
+      "skip_children=true",
+      "<changed-paths>"
+    ],
+    "parse_passed": true,
+    "stderr": "",
+    "check_exit": 1,
+    "parent_format_not_measured": true,
+    "format_difference_files": [
+      "apps/client_acme_receiving/tests/overlay_compatibility.rs",
+      "apps/wamn_receiving/tests/route_authentication_live/environment.rs",
+      "crates/platform/runtime/src/component_admission.rs",
+      "crates/platform/runtime/src/plugins/flow_http_routing.rs",
+      "crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+      "crates/platform/runtime/tests/release_manifest_source.rs",
+      "crates/schema/control/src/run_plane/tests.rs",
+      "services/ctl/src/push_component.rs",
+      "services/host/src/host.rs",
+      "tests/integration/src/lib.rs",
+      "tests/integration/src/membership_test.rs",
+      "tests/orchestrator/src/main.rs"
+    ]
+  },
+  "paths": [
+    {
+      "path": "apps/client_acme_receiving/tests/acme_overlay_publication.rs",
+      "before_sha256": "f60a54f3e5dbd2b801de1a8fe2027f894dc9283a56d3ade4fbdceb47f0f4429f",
+      "after_sha256": "a8a04dd267caa0ff20cbda45695ff1317427177406dca3758c679559991a2e74",
+      "unchanged_code_and_literals_sha256": "ec36af0f464e7a132135c4508e858ec951a39d4a9a72d5661353492f5ae88c1b",
+      "line_count": 263,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "apps/client_acme_receiving/tests/overlay_compatibility.rs",
+      "before_sha256": "c40eca8628548a8771b641f17f2389782ca4eda4e6b2505148cb693019d1af64",
+      "after_sha256": "5a4b4e72739bcbdfe8eebe10124aabfb5d3ba4c89cf006a9b39075a602313aa7",
+      "unchanged_code_and_literals_sha256": "84aa4f47f9844998ed57a770694f4977bd473ff7d47a5d5c28702eae485bf126",
+      "line_count": 668,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/environment.rs",
+      "before_sha256": "2c6248c408efa590a0fd2b870796863a2301e7725a29ee15739f572cf4e916e1",
+      "after_sha256": "af75c30f9c38fde7fd98763ab61a7024cf2ae3500ddc675845c2cafd84789a6d",
+      "unchanged_code_and_literals_sha256": "a055726fd10126b86758f3bb909967eb548e5902465003aa536d89aeb91667ff",
+      "line_count": 793,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "apps/wamn_wms/tests/wms_publication.rs",
+      "before_sha256": "b7b2da0cb91551f0323717dd9aed029f236d9641244726b65e6f013c8365b650",
+      "after_sha256": "6be8724242e313159507b9b82fed0e42bf6d8aeb1f31dfc6990d696494f92acf",
+      "unchanged_code_and_literals_sha256": "d31ce5d4d67071e73b9860b1831c78b135d932da671fe601d2b944f1733a673b",
+      "line_count": 239,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/authoring/model/tests/contract.rs",
+      "before_sha256": "88787115f753986540b2920086ed3e0f9573ff79861bc81dc855130c5e3af88e",
+      "after_sha256": "80d41e3ff56d9eec98a80814b0d1dcfbbf0ca0cd7b22a662949d2cfa0e881e10",
+      "unchanged_code_and_literals_sha256": "c5de4c8da5b88967a420fdc03381e37f6aeffafa3131bd22987d090131a9055e",
+      "line_count": 579,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/catalog/model/src/component_library.rs",
+      "before_sha256": "6f1f3390881a6ca6d7856f27ca615db215a3d68babd1ac7a04610f2dc96ace4c",
+      "after_sha256": "2040491d948310ec3162addd428f2d3a168d3df43275434027126ae19bcea94c",
+      "unchanged_code_and_literals_sha256": "8a8f5ac81f55ccf13cbfaa0777c883af65acd252fd79e40722a9ef702b89d155",
+      "line_count": 2082,
+      "changed_comment_lines": 17,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/catalog/model/tests/serving_manifest_digest.rs",
+      "before_sha256": "9f24858f6af1cb7ee342ed734fabdd2df0e530387ba219ca3f8d390797789ee9",
+      "after_sha256": "115a02e3cd74bbead2cd2ffe84a7b26d386e763208c950b01a3fe01e93319199",
+      "unchanged_code_and_literals_sha256": "090e3fa9ff70b1523b5ef3d3632d576f86f1ba64dd45a4c2641a9d05d84be2f2",
+      "line_count": 637,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/client/tui/tests/submission.rs",
+      "before_sha256": "4a1926b083c26201c5b1375db036f424d3675c7afa6f16ed317777b13d05a1f0",
+      "after_sha256": "3ade43ff31705984561023e540f498a7dac6c323ddc2981af87721ed414a3637",
+      "unchanged_code_and_literals_sha256": "a8b1a646cd59fc1da5916ccb6690e1e3ff6b655fc116e2a0cfb3114a2e116df6",
+      "line_count": 1006,
+      "changed_comment_lines": 0,
+      "test_names": [
+        {
+          "before": "exact_ingress_refusals_prove_no_dispatch_even_for_composed_routes",
+          "after": "exact_ingress_refusals_report_no_dispatch_even_for_composed_routes"
+        }
+      ],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/src/name.rs",
+      "before_sha256": "04b27a552d4879e7bead9ac2d20dc0a14f951cacf9cd45afb25f92d2f1aaab99",
+      "after_sha256": "67d9c343498b92cfab247c069b9e8b1ebb03ad204a73244bb329829f0b8924cf",
+      "unchanged_code_and_literals_sha256": "7ca6e172b736d92f12850258efde77285b481e34d5dc44067a735910d48fdf97",
+      "line_count": 1117,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/src/sql.rs",
+      "before_sha256": "0a7484c212214e188321daaa6a2e8ad286f1becae65385411fc79f1fa0611aea",
+      "after_sha256": "c0dc43fb0f1317384b084006aba8f3b8482cd1daf01e31ed7926bb2313d09960",
+      "unchanged_code_and_literals_sha256": "9f38755c0c603eadc4c6d6879e00ed4c9eeb30796a2dd9161ed95022fd3bfb43",
+      "line_count": 2947,
+      "changed_comment_lines": 6,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/src/tenant_key.rs",
+      "before_sha256": "6e90273011b1f14e764ffa37825f6f940865c91ac5e47516b2c9245d7a94d793",
+      "after_sha256": "be83312bd3241943d03df50b1cfef904083d3d95587d30c23b2e80159026d3b4",
+      "unchanged_code_and_literals_sha256": "2e79b751a8787219b104fbda4ab5904d0e51538518fcbc7c0e02c71c82adba07",
+      "line_count": 446,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/cdc.rs",
+      "before_sha256": "52182fca072275354850b6485116bba2efc2baff1988c61c194a0733aef97746",
+      "after_sha256": "8e7cd0ae55b431db42e1e41d4c5b5c560bec5268f38d223783cd72aac180ede3",
+      "unchanged_code_and_literals_sha256": "349859073398230ff4858fa6d2302df57b3f9af1ce01029d06d73dd8f6a957d8",
+      "line_count": 283,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/control_portable_store.rs",
+      "before_sha256": "2c6b74a2f18da3264e39bc56f412da8bdbd741f337cc4df2f5bf44f3d1fe29e8",
+      "after_sha256": "132be03629c1e4186cacc6b829ace1f60c350af79024371fc0b78dce0632afcc",
+      "unchanged_code_and_literals_sha256": "404950e0005baf3ee2678cd3e6701f42fdaa2ff733e913f4dd3f77f5eee777c3",
+      "line_count": 772,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/database_owner.rs",
+      "before_sha256": "31ebd87bb7579204c0ebabbc152c20bfc2ce76189ccd3124589eae0c99e8549a",
+      "after_sha256": "ed4ae6e00f31264b63da2c1f2ca31b6368d92383b159ffb43e11a373a425a3e3",
+      "unchanged_code_and_literals_sha256": "741454e69c84c2575e03176ac0530d57284e2541c1cbf55adafff1d71ef5ca4c",
+      "line_count": 251,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/deploy_sql_authority.rs",
+      "before_sha256": "e151019ff6b0061efc3b3e82bd3a8c9ca5165eb1cb9a79789642c29d23060d90",
+      "after_sha256": "bf73eaf8369bbd62d24b28313e8a269975910c2b3c10694f3536f0251cb11a49",
+      "unchanged_code_and_literals_sha256": "9647f33909a3f9f357e1e265e05b3907ea139cb8232cc23506bbd1ea76d2526d",
+      "line_count": 909,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/dump.rs",
+      "before_sha256": "6e5c55ec85ab31167212dc1cfcba529e68e3ce70d2d30ed8321da0dccc6e6ade",
+      "after_sha256": "98f6bf869a8757dc7ead79f01b0830c06e95a6664d0fb60c9eefeed94b8c4768",
+      "unchanged_code_and_literals_sha256": "9630d77447300caadb1a7f567d83fbabaf5df4202efb9d545711b9f22794e7e7",
+      "line_count": 159,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/family_surface_grants.rs",
+      "before_sha256": "6cfcdffdacb012025f589a3c2f7f35fa6c62d0be76128c8f5b3ee7849d9c9dc1",
+      "after_sha256": "b88bbd2bd213712db4ce21ae459731d4a713e9642e29c57967c97e85607bbdab",
+      "unchanged_code_and_literals_sha256": "014e395281ac7a89e8ead07a81a5f07989bdae62674748124275913a0f0f8488",
+      "line_count": 992,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/operation_grants.rs",
+      "before_sha256": "e8c8e3c91890067ad39e9f72dc1527c5ce23b1f81284d93cd4494ffb859546ea",
+      "after_sha256": "a7b86f264cfd1b7eae5fbce5f08b369234a283bad646476cd11be0cbc7684fc6",
+      "unchanged_code_and_literals_sha256": "750c3660856c37cf35c4b68f9ef72f3fb6eb5df0a9c75cd630ccb8226464c7f3",
+      "line_count": 217,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/ops_storage.rs",
+      "before_sha256": "186b6fe9a0c5ca7b0231f2ad452e27dc7c4b97a138609bb496fc9699ac378cb6",
+      "after_sha256": "5b2c782a91fc77389950cd3f616d4c3b1567e17a9fde2f8d7dcdb63e376b2a1a",
+      "unchanged_code_and_literals_sha256": "82afe87752aa95d8d1ce3ab65b6afdc7e9669cffa3432ab439644b2858dd9781",
+      "line_count": 263,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/session_role_reader_live.rs",
+      "before_sha256": "2752636ffb0ee2f4de8e73e083f157f571dbbaf28267e7ea119087125b265834",
+      "after_sha256": "e5978e1895187c9de869368172a252bbc11d6f2ad3f0329dd160a99161326fe8",
+      "unchanged_code_and_literals_sha256": "3e39e1de287583ef72e0d11cb5ab59319663fb67e1f259de36ee07bf20c1714e",
+      "line_count": 363,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/session_target.rs",
+      "before_sha256": "b1e35b1428dac6e5cda1ccfda836b7442d234d00e71bc25e3d456b55eb1430cb",
+      "after_sha256": "eb3ce3f340b122b2e3b6709f51748a148ef1a63d2f0a27a4e68f5f9387f93113",
+      "unchanged_code_and_literals_sha256": "e7f37b1dcdf2950486f824c1ad069cca4ec87c8efebec8109983fdcd5a7daed0",
+      "line_count": 331,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/system_reader_grants.rs",
+      "before_sha256": "e95100272c0b9daf772ba316a2b099a7f64c5fb6d96d5301ce61ed009aac71ca",
+      "after_sha256": "be212f733c586f026b1abfd92dab9670a8afc5e146dcc36ab25253566ef66b1d",
+      "unchanged_code_and_literals_sha256": "1dc1a103075f044521a07a1bbc2d1e7254981692b0691591d2d758efd8481214",
+      "line_count": 609,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/control/provision/tests/tenant_key_live.rs",
+      "before_sha256": "1c31fb6f3284246885489ae71de74f7f90247d288f5610fb0a100353b9618c8a",
+      "after_sha256": "19757a977b1c0415c0e132c46ac87de2ff833e4e0948cd0b852bab81fb0d2a30",
+      "unchanged_code_and_literals_sha256": "05576ea7c3ce1894881b6e13f67bd3bbac3ec8752b72f8fcc1c636ead7fbd1dc",
+      "line_count": 619,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/execution/host/src/lib.rs",
+      "before_sha256": "e9d544f79d5a214d4ff7fc168489d6509c7f18b9917a3682f65e69833b42f0bf",
+      "after_sha256": "11370de24bd8dfbe8c98a8c704be5d9973e9a78227e1f0084716fed866e4cacf",
+      "unchanged_code_and_literals_sha256": "6f4466b2972e31888591afe284d0991a98452cd994aa0ce5eb579f1ca1876bae",
+      "line_count": 29,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/execution/host/src/router_driver/native_call.rs",
+      "before_sha256": "b0edb05b7ae9d104954ded4fb656ca260b81d4073983eed2e52a73dc6a9d8aea",
+      "after_sha256": "31059e341b254eda811e0c634fce0cf7066e6856128974cc814846c5c70f497e",
+      "unchanged_code_and_literals_sha256": "a8511456ac5d7432ce886f28b7cd9070a5e4a02ef41434c6c8ead9d3aa7a1b2e",
+      "line_count": 245,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/execution/host/src/router_driver/native_workload.rs",
+      "before_sha256": "457663b48e8917e22b52f3c8f17c2ac0dc3d5684bb44e9f06e4f626ed14677c0",
+      "after_sha256": "c9ec3147047cc224e1e4b0736c8302cb92dcdb73f75a94fbdd41dc011ba3c740",
+      "unchanged_code_and_literals_sha256": "9f945ef993cbba07577118b58148cc6964ba6595d3b220ed9af9637d9141cc2d",
+      "line_count": 226,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/execution/host/src/router_driver/native_workload/tests.rs",
+      "before_sha256": "f9d143fb0ade60b517aecabe540a6cb3884eb70642432b7708a86cf39b4ab9bb",
+      "after_sha256": "4b476ac5ff684cbd912100f70c8609205c437cdf5cf78715f30e610204b230ac",
+      "unchanged_code_and_literals_sha256": "1ac27b1f3db4a48276dce60ab41d069b98ff0a7b8045bbf02c6ea62f25826786",
+      "line_count": 167,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/execution/host/src/router_response_tests.rs",
+      "before_sha256": "22b09300184bddbfa5743d66b0e15fa54202a38f8958f515c6cbc9a45679173d",
+      "after_sha256": "7b8c9e0f41a4953412a5ed129a4344dc8a2fd0c5c2d63fd0ebaf7a0a628efb2c",
+      "unchanged_code_and_literals_sha256": "31d0ee9b6880e4594c3bb025b9e6aef20dc5166a2e3f634c69397eb4fc6546eb",
+      "line_count": 500,
+      "changed_comment_lines": 0,
+      "test_names": [
+        {
+          "before": "malformed_error_and_mixed_envelopes_cannot_prove_commitment",
+          "after": "malformed_error_and_mixed_envelopes_cannot_report_commitment"
+        }
+      ],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/execution/run-state/src/queue/claim.rs",
+      "before_sha256": "f7a8f7300a78f21f793d31c1bb388babb5dccd349debb4cd195cbae018676bcf",
+      "after_sha256": "04b2fd28d9770645477c0232bd833b3eb8f5ec9c7e4315a893395493bb2e1879",
+      "unchanged_code_and_literals_sha256": "9f5044d0c62dd610c1b9c8f8f009158269c800a15411b3e913d4b5fdb53cd1cf",
+      "line_count": 197,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/execution/run-state/src/queue/model.rs",
+      "before_sha256": "77b129845adbf2af1912539861e814e0e1da561e72f1f1de6e58e552dbfef0e7",
+      "after_sha256": "c106e9712fe9eb670fb2f3577a2b9f99a5d8cd009118078d1aabde78990a7dbb",
+      "unchanged_code_and_literals_sha256": "38e3fe5ce568f0ab4ef86299a17cad4879e12a0f8f4c271293d8b5f0a2cd0fb8",
+      "line_count": 93,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/execution/run-state/src/schema_drift.rs",
+      "before_sha256": "bb182e2b8e4197b6a80cd705cfbdc4b6ee86e7e69671d69ba5d158749dd337c7",
+      "after_sha256": "45a2ec29b13f57f62a76ec738fe3ed520a5290731bcb95bf10dd5ce3ab488fc7",
+      "unchanged_code_and_literals_sha256": "561201a5a19b99d8cea5dbe318d5676eb4ad6d0890d90abd4ff8d325c7d7edc5",
+      "line_count": 293,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/execution/run-state/tests/admission_live.rs",
+      "before_sha256": "6464c7e67c1b4356c4d3cd733a7ee951298aa2722e089ef4d38c36690bc367a8",
+      "after_sha256": "0308eb81655c4c7b1e62126d06a1250b9858ababb79dd7ab1ad8bb37a2c3fa09",
+      "unchanged_code_and_literals_sha256": "1ade7667f19c30ec36a1d3cc6de905b7933c218f8c55b181c0d77058f6bbcc8a",
+      "line_count": 697,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/execution/run-state/tests/queue.rs",
+      "before_sha256": "9dc455f761a20cab03082f06efb6d5258933c61af553f6d003b307c62e1c0e3f",
+      "after_sha256": "04014d481efda233342bdb8040f04418f105bc1eaab69866abe6efaf9eda9eaa",
+      "unchanged_code_and_literals_sha256": "ecc5f4a4f934657b66311eed5525e33fd8e9caead8f1561279043cb9c6d3415a",
+      "line_count": 435,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/execution/run-state/tests/run_state_live.rs",
+      "before_sha256": "9cbf99ea138beeb9d8de40be482f5a807648c5cfc46928e9abba2e0143f4e03e",
+      "after_sha256": "dd46ff27495f53a70117c93e2ef4c0fdfeb7ccc86d479f410fe2fb7a6409dd70",
+      "unchanged_code_and_literals_sha256": "4b57a94c8b6822517262fd34fca9a4b86457ac44634bfc521bb45d6d2570bde0",
+      "line_count": 1113,
+      "changed_comment_lines": 8,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/identity/platform/tests/identity_live.rs",
+      "before_sha256": "e02258f18602a9d10f523ccbca734e74b8feb1c1a2836a0a97aae7d2ebe31005",
+      "after_sha256": "41ca8db0b451acdb125610b869d83097a022ca0897f2b0c2abab003d60c4d41f",
+      "unchanged_code_and_literals_sha256": "049b3d3ef4a16ce6ad80a5dffe6d0aadfbad01c2e477b44c1b923b137dc8cffb",
+      "line_count": 377,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/identity/platform/tests/pat_live.rs",
+      "before_sha256": "0a4ac79ccdd2f85519b1e88608f8c63d9b9b8351312ebca6a7c638089132e101",
+      "after_sha256": "0021b5214daadc51d6c3ef0164d4566e7de6f672d11dafbe7edf482ad5e37ef0",
+      "unchanged_code_and_literals_sha256": "edaa6279de7e6cec4adae0a46376663f16d5d031a893aefbfdd630a475b0c773",
+      "line_count": 249,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/identity/platform/tests/session_keys_live.rs",
+      "before_sha256": "94872da7a64b87101b8a5dff3374034106f246f050b022a7c32597180eb18591",
+      "after_sha256": "8ec8b039a8dd810eae9866377d84dde98502e6b8f1f55538cfe6e1da64064cdb",
+      "unchanged_code_and_literals_sha256": "9ecb82014f6f59009a955fa52d7777aec9d0b623bc281eb2b2b3def77c04dcbf",
+      "line_count": 605,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/identity/platform/tests/session_token.rs",
+      "before_sha256": "d3623b98702cc076b0cd32638003ff5f6cc96fef0352705348aa0d4c58728d0b",
+      "after_sha256": "c9764d60c9b2fa26a0043a4d00089b20941385dc053eb149cfada6503f9e0a5d",
+      "unchanged_code_and_literals_sha256": "155e170a7dbd89433094d39e9418041828ea69a830bc6486e7f6321da5c610c6",
+      "line_count": 324,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/identity/project-state/tests/schema.rs",
+      "before_sha256": "2939a295b370c6daf78749aa2c6d949f7f7416b13d1404b7f1abe2d4a23a7a4b",
+      "after_sha256": "586e90c8b3449910bab7777234616c75f1f564017555e049fe2cb5f9431c4b11",
+      "unchanged_code_and_literals_sha256": "50858a16738acb36f418a9a6314625bd2b67508598ebd338b74f049f72c5ceb0",
+      "line_count": 389,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/component-policy/src/lib.rs",
+      "before_sha256": "5ee0163489f92480fb90a24d99324ed5887b3f54c38ae1ffdf61f71c72e79478",
+      "after_sha256": "bbea6400b43fbeb06c5ff7e4974dd4361d7dc4d0b5bc4b744aad6285bd74a7ef",
+      "unchanged_code_and_literals_sha256": "27590ac7d7b61785d2138c3f93c1f02a3f88dfa0e7840b3edcc53423317fe6f4",
+      "line_count": 642,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/src/component_admission.rs",
+      "before_sha256": "5df63db690556cfe369e26ae6409a32647175f0477747de6981b4916c6e0e772",
+      "after_sha256": "65effe7de948b6988cea371e207c77a836b092ab79dfa985505e0e2be8cb489d",
+      "unchanged_code_and_literals_sha256": "d638d98da26f8205d68f8f55e03bf471e657bb6b74895ca8cf03e392252c001f",
+      "line_count": 1005,
+      "changed_comment_lines": 10,
+      "test_names": [
+        {
+          "before": "multi_export_admission_proves_global_union_and_preserves_attachment",
+          "after": "multi_export_admission_checks_global_union_and_preserves_attachment"
+        }
+      ],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/src/component_artifact.rs",
+      "before_sha256": "7e06cb434c09ad8473fef6caa88f355252ebf007ec1718a28f6cc0edd23b73c2",
+      "after_sha256": "d5f366ee3a4c5e197dd69dcc0a034dcd6ac4f3a0cdd3da04d3ea2da57eb28771",
+      "unchanged_code_and_literals_sha256": "26b33daaddf231bdc3df62e706a8ce576ab3270143f5d41215beeae42681c572",
+      "line_count": 424,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/src/engine.rs",
+      "before_sha256": "4f7f94b278646d1efbf0d0d784ad16872f0cc35b21f9125f0dc2fbc1d4342d13",
+      "after_sha256": "d3a8b1e41d3c1e973cb66d2a3e229a4256f03fe9dfcc41192f61949441b66670",
+      "unchanged_code_and_literals_sha256": "46c218fc3d1a7bc0b2f89ddb1503fe9eed2fddc557e6825deb08ce0648de6f24",
+      "line_count": 737,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/effect_span.rs",
+      "before_sha256": "b676031e4075390edb0736472dade6c3fa89edb2c8b76e1f6119290d92cb435e",
+      "after_sha256": "c26584caf28ad7d407f4196c687adefacb2533721eb3033259007b6398de4736",
+      "unchanged_code_and_literals_sha256": "5136e6ed1d9a4f216cd292e623f217b474d6aa3d570eadba13b8c314d70925a6",
+      "line_count": 717,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/flow_http_routing.rs",
+      "before_sha256": "a99325210b42d39ec176f10c03dd6b8e385f49c2e0341ef799807c98a18781e0",
+      "after_sha256": "df36ca0bbdebf19a502d217d9dc9c6cb34f3c7b088a460813a2efb827933bccd",
+      "unchanged_code_and_literals_sha256": "992c2b2d765721ce762b5916302d97e0f8be4c496bc52ac03dae89ef889611a4",
+      "line_count": 1786,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs",
+      "before_sha256": "18bd35e9bc1ef03ee4928367d12adfe63c1923addf8d73232fe3a37f73830949",
+      "after_sha256": "2806e0ed6a2b630ceae0e0ea565f94082d890cab4df3136ebfd506f6a676ae8f",
+      "unchanged_code_and_literals_sha256": "708a80fbbd8f8bf66848cb5a45ce823a8a6afc6dbf2db4b89cb380ab21960912",
+      "line_count": 1499,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs",
+      "before_sha256": "176f48df5724e383cb009d7fdb55499794ac04c4dc95ed0b7a162136f49f9814",
+      "after_sha256": "13937731c9b828248b2941c153d39b845b5c7d7713df1410338f1da5700e9f97",
+      "unchanged_code_and_literals_sha256": "7cdf835d37a833461b6b46d2a9a59ceafb63ab39a3aa8fc379f72e6a946ef42d",
+      "line_count": 2181,
+      "changed_comment_lines": 11,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_postgres/credential_exactness.rs",
+      "before_sha256": "413909efbf54f2939dd5f2394c6f4c73d7adbc2d43d3d76faf11e0c56b949910",
+      "after_sha256": "bb57d87101d50be63a685c5a367f84de77791056147182d06266277b9eda2fc4",
+      "unchanged_code_and_literals_sha256": "c43827e8d3379cdbb6954ac5ddbd4336055155a2f637dc8419a9a24c3452ba56",
+      "line_count": 831,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/tests/common/mod.rs",
+      "before_sha256": "d39b9b6d3ef6173fe19970a6adac9464d4e75a4fba93a30f28fd460ed5096867",
+      "after_sha256": "c33a0c1a48ea4d92453fb8a231fa17ecb8f01528707aa2801785e553bf35cd52",
+      "unchanged_code_and_literals_sha256": "758cd1c730e219d445682ea31bf8535b4254a5f5b936f503fe7684524837c3ef",
+      "line_count": 713,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/tests/executor_platform_surface_live.rs",
+      "before_sha256": "eb3efc6ae7b08e7c22357abb5d79daf5d9cbe6384cae9bf55e4b78b55f9fa2f8",
+      "after_sha256": "c28e2fe55662f39388572d57065278a823e46e3e0e84a6022b0314c8ccf06e6a",
+      "unchanged_code_and_literals_sha256": "3957ded7bef71d2cf3de9cb1bae32e8e7521a2426adc71ce8fc4676cb3299d3c",
+      "line_count": 705,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/tests/executor_plugin_no_trap_live.rs",
+      "before_sha256": "66d078f8742c9a7deb94f2627793b28a6ad01c2412961be608cabc9fffd8d085",
+      "after_sha256": "1f560d6e6ce4f3bc2ffe7fc030e5b70e46682db17e992d4d1bcb76d2c2803916",
+      "unchanged_code_and_literals_sha256": "8d1dfa9433550f9d02d1c7919995bb9c539b4d7e2e3708fe21849089b204952a",
+      "line_count": 620,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/tests/production_claim_durable_live.rs",
+      "before_sha256": "dcc0ba0c180f20e6953d7766b5acfe2c70f9a197a428a40675442c179091df6d",
+      "after_sha256": "c27256b3a37e144a167dee318899a6748a20c561fbf28f47460a737d5496aebb",
+      "unchanged_code_and_literals_sha256": "42cf6ba240881b09970a10752cbc3ccf33c471a7f3fd38cf36dcf3d7c8558d16",
+      "line_count": 290,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/tests/production_claim_live.rs",
+      "before_sha256": "4391fe47d30a0f376ceb63209c276e536f5f0f2b65c5b1787b770b292cfa8446",
+      "after_sha256": "11d61b5c9ef160407fe26a062318673f026c02e969a49bf22f758fe68efed2e8",
+      "unchanged_code_and_literals_sha256": "a451fa9f6c70f6ba03ed54820fb47d6de335f8284540bbf2316f96edebad47ee",
+      "line_count": 666,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/tests/release_manifest_source.rs",
+      "before_sha256": "0693a8687b2a387a0434a20cba3ed6c5f1ce4c060b6d2830fe87c9c7162076b0",
+      "after_sha256": "7e07f5addbf70688e584a8dd5a550ad9799f3b4e4bf3875985a058c4f17bf435",
+      "unchanged_code_and_literals_sha256": "3cf97f7c87b1c0ac7714acf94b4017bbcc1d11859eb5aed7b6a750141c5fe710",
+      "line_count": 464,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/tests/session_route_authentication.rs",
+      "before_sha256": "6d8a90cbd9c1eff96a8115bce930b7faca41d847b63f4954ca07d9b0447aadac",
+      "after_sha256": "091ae602235677e211c1a777502afb7091ac7d4fe5d4c34742599d51a07b61cf",
+      "unchanged_code_and_literals_sha256": "5cdcbb76b2b802a84338ee851765cd7d8da5c7959c0c184a65861b01e7a92abc",
+      "line_count": 485,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/platform/runtime/tests/support/session_fixture.rs",
+      "before_sha256": "d25ba15e29a86cfdba3a5477d4781879093d568d20ce0f579a737cee5c684595",
+      "after_sha256": "4e73123fa3a3d212138e719eeb49dc4138283886f06d784e5e4524ee72f38f5d",
+      "unchanged_code_and_literals_sha256": "7a4fddfb5cfe658db5c57cdb76ca2e525df2d3db2bd30b2a1ce15b7a679e1e28",
+      "line_count": 209,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/schema/control/src/run_plane.rs",
+      "before_sha256": "f53995b1e99aeb038dcbe4e8b505e1eb1f44a7faf64695f94513ab2474235b6f",
+      "after_sha256": "6fd56a8c64056fd831a941f7a7c6d39f3e101a1aac8313b0d8a677ec507e048d",
+      "unchanged_code_and_literals_sha256": "9661d40c0874df37fc621ef8dabbbb85b042e6b95221edf56e9b5f0b681aff42",
+      "line_count": 4876,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/schema/control/src/run_plane/tests.rs",
+      "before_sha256": "aaeaa04b30c9897a14b0595a3038afdcf599d90f5a94b58df802e402343fe742",
+      "after_sha256": "8057708cded3e2418a6d13be02ab15940763f4015caa8510bf0906f63f191224",
+      "unchanged_code_and_literals_sha256": "379107b7db2f9051a73598f7f02d46e230c6b0c0e92378fa4e752b98841e399d",
+      "line_count": 3415,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/schema/generator/src/client_ir.rs",
+      "before_sha256": "d74fa184dfdb443cc991b394ac626f1f2aa9ce31fd9b24b865eb757362a135db",
+      "after_sha256": "0f1477f8dff475e465430e375e4dfa0378cd4a76225278b9b9662a81ce8e421c",
+      "unchanged_code_and_literals_sha256": "5bf04a314ba31e097cbcea875a2c28d5381c96ee983d4f18e93df295d2acdbdd",
+      "line_count": 1931,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/schema/generator/src/generate.rs",
+      "before_sha256": "c092de3ff48d0275920d942a17d44c84b0e44ae1806654146647bd181346bcf6",
+      "after_sha256": "b49c63c2d3b4b83c33651a005fb54dcdc8587878d55287105d3f92afc9dee48e",
+      "unchanged_code_and_literals_sha256": "1728889e606334ddcf344f14c6af8aff430e5ac2bcf4c29b7ca59afddd368403",
+      "line_count": 833,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/schema/generator/tests/generation.rs",
+      "before_sha256": "be885fdf1045e713bed6923cbbe0244ec04d0bfcea4e0ea70236ad1215dc27ed",
+      "after_sha256": "5b5fb8b29454c73a2144db1ad45475e0097a45e5922402630289add982f7127b",
+      "unchanged_code_and_literals_sha256": "8040adffcd9ce09d7f51629dfd5bfe2a6999a1cecebe5ac946c6750937d461cb",
+      "line_count": 1717,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "crates/schema/introspection/tests/postgres_live.rs",
+      "before_sha256": "dd89441a1dc5bc2c57dd469fc61b35ba7b9a73af23067c6ae6d074022af11e61",
+      "after_sha256": "00ad3cb66d0b3377be7b8e6b80762ba4fa6a053c89ec970437f7cc880d841ec3",
+      "unchanged_code_and_literals_sha256": "7b6dec3bd3b00726bae8767b463b279522a1f444532fc16b6a7fe31fe05e17dd",
+      "line_count": 1598,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/cdc-reader/src/lib.rs",
+      "before_sha256": "8835168b9cd86411b9f300bdea6bed9d9aac5b375d14552471fbd3198e92e9a8",
+      "after_sha256": "a9b2b59de740c60ab7697f48a00177082404364473022671db0f667bee1681c8",
+      "unchanged_code_and_literals_sha256": "cdd523e1cfb6d2cf7089fb9e42131a5bb261b4ed7a76e398a72cee919ba62705",
+      "line_count": 2449,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/cdc-reader/tests/event_reader_live.rs",
+      "before_sha256": "afed97de9ff6031f3ae01ff22ca7f5bc79c0080534defd5e51cd05205736d641",
+      "after_sha256": "be4b90f7d2aec9a8c2da8abc4b56c91ab038d409d58113cd7e4d8b298645cdf5",
+      "unchanged_code_and_literals_sha256": "da3779ff38a0871c6838acbcaa38f07a808731b9a9ee41e56148c9fa24ba0186",
+      "line_count": 1036,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/author_wiring.rs",
+      "before_sha256": "3cb385e82d12a512d1397e96d795894ca1bd1415f468d56006866e8eeb6bd1ab",
+      "after_sha256": "fc76bdfea090a081a440341c7e962d7faeec478eac95d94122e1e762ca35a418",
+      "unchanged_code_and_literals_sha256": "6dc697660bc3a917d515ac8995f6cf41768771ce226924af71fe0c0a5369a735",
+      "line_count": 740,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/bind_connection.rs",
+      "before_sha256": "ed8fffc93764db6d282e913b15795baa9797c6cfde4bd763c0d64f02b4936506",
+      "after_sha256": "e457ded7e2139269917a2d5124d2476e6774ff678506a76f91c8c838fcbf68e3",
+      "unchanged_code_and_literals_sha256": "38b8c54f6f26fad37b15117175f967075205270433890b7bceff3d6af89e8601",
+      "line_count": 446,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/dev/config.rs",
+      "before_sha256": "6bfbdbd6eedade881b81bab3d5c82c9f3685117e1b6c1b9449d42fa48b77a7ee",
+      "after_sha256": "b0f1c5ea49b41a7d2fdbf9f88c5328b074abd38a8eb3c1da7cbe87848d3a451e",
+      "unchanged_code_and_literals_sha256": "b232e4f8f495018c48c308177f8bcf36ddecc3d49ac89f8fc7f77056e05da06e",
+      "line_count": 2551,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/dev/environment.rs",
+      "before_sha256": "f7bc31e06bbdbda66a740cb901d80ff1472b37d4c0aa7444a69d1c794fede8d0",
+      "after_sha256": "088164942b7d6343486885c40226b9bc526f435442cd8d377cdf6e3e91ca0af7",
+      "unchanged_code_and_literals_sha256": "ab1467b3893447016e81b03bc70afa6541674ee8236be51cd335d21c3df25e96",
+      "line_count": 1049,
+      "changed_comment_lines": 6,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/dev/up.rs",
+      "before_sha256": "662f7377013c8570b1e88e708e4622848bd321d020168b6f55ca193ec69a72bb",
+      "after_sha256": "6cf7bb672389458b24759fdaccc0463fcbbba61fd6d2611288fc5a6ffa1b9bdb",
+      "unchanged_code_and_literals_sha256": "0ebe59959506ad60ead734711c716fe906bef64dd68f151ecee4716c0ce9f01c",
+      "line_count": 245,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/dev/verification_database.rs",
+      "before_sha256": "963e8f882cf5cfe4f8491bc3ef40d5fae4127e206c1b7c306afc5defd827bf27",
+      "after_sha256": "9cfa8c3993f60b37a898555c670b94e7c2187c9fadaaf7a991e7d30ea23748ac",
+      "unchanged_code_and_literals_sha256": "f8e81d8bb97b21f97e546330979955ae0fef2b9baf5a99a4c9665d5a55cb13a2",
+      "line_count": 1038,
+      "changed_comment_lines": 0,
+      "test_names": [
+        {
+          "before": "disposable_postgres_proves_freshness_cleanup_and_confinement",
+          "after": "disposable_postgres_checks_freshness_cleanup_and_confinement"
+        }
+      ],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/print_release_env.rs",
+      "before_sha256": "85bc5ac5cc9ec9e4d86e1f5e473cf49995d57fe36ea7b444cb08bf79bb22147c",
+      "after_sha256": "0467817a81ff5f6c6c0441f271322f6ae1ac5c4e4f8d5a807ed0521545bb681b",
+      "unchanged_code_and_literals_sha256": "2ba8c4d7f7b54ccf0b74a60f7f381c5f8a5adc335cac05bc8d65cdae42f13f0a",
+      "line_count": 248,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/push_component.rs",
+      "before_sha256": "112782bf3346b5c132ecfffbbc5c4e2073d9267b6d3d9888356882c7e2a8a018",
+      "after_sha256": "d287d740bb22c219607d95e8abb7db059e0d9cb4df6212efae117c58b0ce325b",
+      "unchanged_code_and_literals_sha256": "e68951e8a68716775c7cdc9b4d2c2470af16b39592c1ca708033762b832a2519",
+      "line_count": 3394,
+      "changed_comment_lines": 8,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/author_wiring_gate_report_live.rs",
+      "before_sha256": "d7f3816b1d69dfdd2eecce197745e6e3cbb2443496e5cb34816a088d0d9833ec",
+      "after_sha256": "3b712bca2c7635c2d1507b6fcfa40ddcff06a671f7581dc5bab43bca9b3cd631",
+      "unchanged_code_and_literals_sha256": "81725d7ce82007927646ee82d6dffe52935d2440f7561a13e3d977f4d0e8431e",
+      "line_count": 395,
+      "changed_comment_lines": 8,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/bind_connection_live.rs",
+      "before_sha256": "e4d17a02a3b4bb40ba8f5aede9446a75aa4ca28a68e565783b46460e3aa0cfb0",
+      "after_sha256": "076233f89688ddb3f549b7057a43f1c650204db545847a46e65611de2bf76dbd",
+      "unchanged_code_and_literals_sha256": "9c45fd6f864cca1b2c0a0a1baf68fb89f74777bbb4783f3bcb8257b194b1e62a",
+      "line_count": 700,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/dispatch_reader_provisioning_live.rs",
+      "before_sha256": "e48d97e8d6f4424b4f1d08e911aafde643360940d4da28a21ae59326fa853b01",
+      "after_sha256": "17e92633bc1327d2a880e5f0fd103a50b5c5af3d3853c0008b3c16a9a79b29d8",
+      "unchanged_code_and_literals_sha256": "547c2198c593f43298edf3c68a9896454675b89eb24f040c2cda1287d5b5749f",
+      "line_count": 640,
+      "changed_comment_lines": 6,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/effect_writer_generation_live.rs",
+      "before_sha256": "c76195663f64cb2016168aaa5a00c9e24953ff7348ce1f1c464261b56fca1b9a",
+      "after_sha256": "ecdb44fe4016f377e656cb786a2589f2e79ffd5b99df8d5d598f19ce0c5caf96",
+      "unchanged_code_and_literals_sha256": "8504770bbe7a2f87af1c11f60547362f35cb76f5d357bd28c55369efb17c2a28",
+      "line_count": 772,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/guest_generation_live.rs",
+      "before_sha256": "dbc364af10278e3279e646fd5bfb32e08612eaf0e3be6916597d82fda1a2e9db",
+      "after_sha256": "70e0295868b753d07c57a6868e203bbae5035cb4c2e19e4df9c918f71ebf2e40",
+      "unchanged_code_and_literals_sha256": "15365db5f14e23ccaa688e6ff0af3c5dc346cda4982e0707536283ef6a9178bd",
+      "line_count": 392,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/management_admitter_generation_live.rs",
+      "before_sha256": "66f6c8c38c72e28141b001a7bd348c22608a6bcda56d0ef73a967a33bb87bfc3",
+      "after_sha256": "65b6d4e0c2317d0c680b5e417192077daf279107355747e7767e9e18bb39795e",
+      "unchanged_code_and_literals_sha256": "b15ff9db638fd50ac46fabcddd5b2ba3a81374f6c508b8479318b6e1f8aca12f",
+      "line_count": 742,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/package_data_access_live.rs",
+      "before_sha256": "cdc78f5fb700a6bf423d79d5634528937e167c646af636f75485bd1d87cd54f7",
+      "after_sha256": "be92c37525be9c096713d59c834d2984464f14c8a80ca80f80ae229a29de7374",
+      "unchanged_code_and_literals_sha256": "d74bacdfc817e8dd181ee1da6321a88d59b1a8c1f16942e726ae60021b78e1bf",
+      "line_count": 691,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/pat_bootstrap_live.rs",
+      "before_sha256": "bbeeb257aaef4a53923c709cf50b7d0e8ee330be3b2ec3f49c94388895ba8dce",
+      "after_sha256": "86ee4c6a4c3f7b55083c9abae42b1c3dfcb46853c36bdbdfb53a31d01a5c6630",
+      "unchanged_code_and_literals_sha256": "783872fa70002614a465ba479f965cc936c9c9f2ba90789ae3a8646a39cb0039",
+      "line_count": 159,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/protected_relations_live.rs",
+      "before_sha256": "2e1caf45935e5f4a0c47ff43348384268405ad7d1ba3a802d3a1eea7038267bd",
+      "after_sha256": "884daaef5e2ff55e446cbe7b40014bf3db852af39476719327a58addc0f0643b",
+      "unchanged_code_and_literals_sha256": "2fcac545d0bbd8f8b767a47c065db88ffb5202a4cf181618118f472c9b1692f8",
+      "line_count": 1140,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/provisioning_order_live.rs",
+      "before_sha256": "5b35e57510d03295352aed4316ae721ca1c6ce5c049744e999bde61b581780ff",
+      "after_sha256": "75b8b5549343650ca84b256f68196ae667818e337b2fb73b2039e46b2d171961",
+      "unchanged_code_and_literals_sha256": "ae69fadbe4ba221f664aec1546d9a4852736ac59b31bbd9eebaea32d8edc0fbb",
+      "line_count": 442,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/replica_identity_live.rs",
+      "before_sha256": "51e926957b4c3f16c222189f9ba192857385c1efc97312ead4a48d67b49007ea",
+      "after_sha256": "e8bb522357c0d74d0223aaaabde485fa14c5e9a9c036e3c7f5ec0305ca1fb797",
+      "unchanged_code_and_literals_sha256": "129d77de85f73a60c57a3e745f2614df9284339777fbea55aeb9f84188eb3c7f",
+      "line_count": 165,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/run_plane_live.rs",
+      "before_sha256": "784105d77d4d6c99409cc11a2b976a441ab45500d96e0e3f9b0ecd9d8a7cb3ac",
+      "after_sha256": "10c513b0fa1284a14868bd037871cc6883fb1227cf1e50bf15e591127ce67ba6",
+      "unchanged_code_and_literals_sha256": "bedb68899b9fd6450b6c9b3b0ed48fa03eeb59ebd6af25fc15bf68aa12516388",
+      "line_count": 5872,
+      "changed_comment_lines": 17,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/terminalize_effect_uncertain_live.rs",
+      "before_sha256": "fdeb6486820314e87cc38e87d5bb8f24a49085cf4a7e8bf1923080d9f85d4e84",
+      "after_sha256": "9ec9aafc0d42577d53341e54e24c1d8aef3104c0b9a2dd12b3d35a5ac6f3a47e",
+      "unchanged_code_and_literals_sha256": "a0185cc81ecd7a0d2b55d0a87e942de2e349d232cb870a8908bc2f4466e8a176",
+      "line_count": 509,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/ctl/tests/verb_surface.rs",
+      "before_sha256": "8aec57a758b68b1a2d282d0117b2325e496f874239a2970b32af8e0aab5caf32",
+      "after_sha256": "52626d76c9536a3623f3f4fc86e8a128afe5dd51aef0f07475fe2948d2ee28a4",
+      "unchanged_code_and_literals_sha256": "0dc293eb4408a7b0a934492fc2a56a5256f8c8dd2654cd3e1da82389f38dcbe3",
+      "line_count": 282,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/dispatcher/tests/read_authority.rs",
+      "before_sha256": "4f5e89ad0cf73806811b4f997d51d2e6cda0bc85bf207f64fe295bbfaa2f7d88",
+      "after_sha256": "3b7e4707cd72f6202c8558da2800557516178c6fbd363ac6aa461d5c829d6555",
+      "unchanged_code_and_literals_sha256": "34a704eae49323009d333a4ae7886ba842a792172b898923120e9f49bd1f05e6",
+      "line_count": 698,
+      "changed_comment_lines": 11,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/host/src/host.rs",
+      "before_sha256": "f429570bd85329e3d7acc6314391323385328fcebc43d01a884555072d676514",
+      "after_sha256": "0a55b9ae2b7bcf8174f64bc7ba81a4893fab63e932106d4e64072c8243658f4e",
+      "unchanged_code_and_literals_sha256": "ad553ad581102db8d049556a3c225d5a0a7f81e9fa49260f04bc07783d90108d",
+      "line_count": 1635,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/host/src/main.rs",
+      "before_sha256": "84ff6e27a5b3b37d2af865c26968444e83e7eee1f33519e87e507bd3b2e13359",
+      "after_sha256": "e1049dd6a60dc6e75c9919413de98930ec6679619dad6a0598c7b967578a1504",
+      "unchanged_code_and_literals_sha256": "5e9826c6199bea3d2209fcee28f7248c9852fd73ab95f96d9bba57a793596414",
+      "line_count": 63,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/scenario-worker/src/management.rs",
+      "before_sha256": "8bf321fdf422b09b82d2d4a44612a6ca77563ac2da69a45fc0d40e042001116c",
+      "after_sha256": "cd2a307923135c2336dfa79dde3f3f88c801a0f97e2f1a119fb19390a637b564",
+      "unchanged_code_and_literals_sha256": "f8dc49cdd4965c7a00a48b2cc39c06a7a27513ec29c628ecd0c6bb0618cc15e7",
+      "line_count": 1867,
+      "changed_comment_lines": 6,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "services/scenario-worker/src/store/admission.rs",
+      "before_sha256": "d543b0f0089c978dd40ea188f379edd6447b9d45566edf70cbb56493ae4795be",
+      "after_sha256": "cf03d7d93e65dd689e8ea51196b05c87df497f872e10f5e301f13b208dadf29b",
+      "unchanged_code_and_literals_sha256": "2ce790398ce0dd9042658767bfb64aed2422eed120eee229c7fd14876517b22a",
+      "line_count": 1248,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "test-support/harness/src/lib.rs",
+      "before_sha256": "18ea3f41132ed715fa95440364d20a6c45518bca1d8e8f581e61826be68b672d",
+      "after_sha256": "52489ca555be75445a731eee311f01e2dfdefb987b869d9f40b3e2ec7e73fe46",
+      "unchanged_code_and_literals_sha256": "9badc73ea0a368b15b39da404ef59e7a8429ff7e763030c25a87ea30435a701e",
+      "line_count": 176,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "test-support/infrastructure/ctl_process.rs",
+      "before_sha256": "2451102a9278fe491a3b2f3e0d2fdca2f64ff94bc269c48836f58b25bbeb7a5b",
+      "after_sha256": "e0ffba972951d0f3151421855466bb206debefd434954c253c380e5096537c3d",
+      "unchanged_code_and_literals_sha256": "e2f79d2128493abd7c2f70db5d660ade99b555b6c97462943a7ba328ffb3f5c3",
+      "line_count": 163,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "test-support/infrastructure/lib.rs",
+      "before_sha256": "34b8d017237650cd4c6a91bbfb7759eaaf42b7ebb6f5d30729bc5b1ec0ed35c5",
+      "after_sha256": "1f9d43f01083e9a3e318c4e202ad5dec24ef7e5939e3b7d013a3f0f6870f33b7",
+      "unchanged_code_and_literals_sha256": "226f63c5c93e7d10788cc3a3bcd2d4ee27c6009b3a1c334b9fd76f786a6fb532",
+      "line_count": 16,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "test-support/simulator/src/emit.rs",
+      "before_sha256": "515307be275337e2d53307a790dd27ad7f59616c9a6c62b9f6b09a6e395034bd",
+      "after_sha256": "14cae329b652a86f0b2968f4b7d956a2a1c3b58c63e96ecbe0fe9c16c2b8ef2a",
+      "unchanged_code_and_literals_sha256": "88a133e197f5f8a2972411b9434156c0c85e5cfeae5630d5634e33a5be23aac2",
+      "line_count": 141,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/conformance/src/ip_name_lookup.rs",
+      "before_sha256": "be3e3159f044eb42bcd4ddc983a484f208aa34c26612e87fd13633bfe0d12c3c",
+      "after_sha256": "bb160b17bdd5bcbab63e01a68a12911ead9efcdbc4a1cc6304d050152dddba8f",
+      "unchanged_code_and_literals_sha256": "79446b52b7359cf163259ce21a55f22f8b25dd3dd5f89906cc7e29b783999df2",
+      "line_count": 246,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/conformance/src/lib.rs",
+      "before_sha256": "30d9336a0de0f6a487985fd3f67bfa0ebd91828f75f7a44ded66f91fa5782392",
+      "after_sha256": "e1b63f060ed67f5db8270878e9601fc29e2f5bf25bad777e41c727adab20f54c",
+      "unchanged_code_and_literals_sha256": "cc807d626a8fccb7712cad3e470fc3d8697fe7d08da6025278dfc1c742d3118c",
+      "line_count": 26,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/conformance/src/schema_drift.rs",
+      "before_sha256": "c30694c5d4a61f3e5fdae88745bd2cb57dc491f344c46e8e02ccbea0e392c94c",
+      "after_sha256": "1c499681f5ca83483d1b5fd3cec24809bb170565bc66509df8990e672f9afa96",
+      "unchanged_code_and_literals_sha256": "61712fcdad4e23148def407393213a79225b85c516147951c9b7d7ac9d5e6f98",
+      "line_count": 147,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/conformance/src/version_identity.rs",
+      "before_sha256": "f1f10cfce9095957b4f0ea37314949eb3c7a329fa22d64f6abd740946da8b38d",
+      "after_sha256": "9435d7199c1377bf0f69443c2ece7c8aafdb5682661438a7ae77e5d04ae98f80",
+      "unchanged_code_and_literals_sha256": "3d7bce629eb5d7df46634caee5153be2249a7c7e69023979429a597b5cf45445",
+      "line_count": 539,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/conformance/tests/component_export_index.rs",
+      "before_sha256": "2cf707d934d0380ed51a01029b5e19957cab29449de187d6cd0ed908cf2fc475",
+      "after_sha256": "c88eec9a572fd51ac159041f4ec2667664ef407acccf11ddf9c1714599f6592f",
+      "unchanged_code_and_literals_sha256": "4efc60b58f9afbfc50979b6abd931208dedab3ce2fe6f2c56ab94a4629ef6e90",
+      "line_count": 53,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/conformance/tests/contract_diff.rs",
+      "before_sha256": "524d416ac06b3a4740099a71c9b14763a10c57b3d4a61da874d47a6b39b0847a",
+      "after_sha256": "e85b6fd2985016cd27468689d195fbb93aade970ebdec4194076c51cd6e60add",
+      "unchanged_code_and_literals_sha256": "d9b9f6bdf05fd50acd4c70f5ef4cf190ddb2ae93326f87ae14005234899accae",
+      "line_count": 259,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/conformance/tests/effect_spans.rs",
+      "before_sha256": "b7812d8cd24e55f609e1c9e8faf405b244b08e8a22292ae3acb09c7af9e6bbe6",
+      "after_sha256": "ff81a27b4438af9f87310fe066ed524f661de79d6242326baf372678770d1820",
+      "unchanged_code_and_literals_sha256": "723d3e49e9e27cc54037f32089bd63c2a4ffed1e7e8f0564b37dd8b066c4bf19",
+      "line_count": 590,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/conformance/tests/gate_registry.rs",
+      "before_sha256": "a161d7aae1849c3b37dc814ca0ce509d7de09ae3202dd0068cfa843136019457",
+      "after_sha256": "4d4d20d0969148e82d7e0c4cf54d096aedf1b7e651b1de643a20cb21dc9938c5",
+      "unchanged_code_and_literals_sha256": "259e3a3b2fba52fef9a944b4375db1ac0920cee07fc14a631da587eb793e569d",
+      "line_count": 781,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/conformance/tests/state_ownership.rs",
+      "before_sha256": "d9eeb02598ce392ba0b7e8916b2f46a820122735abf00cebd45ecd04d9d82f5b",
+      "after_sha256": "00c08641797b71a46d1be87273e1f782f8a62beac89bfa0aa77d6a0140188f34",
+      "unchanged_code_and_literals_sha256": "32d1986d4d4dedbe2a51ff03f5d947b229f8ecc9317c528585d7bd40bbd735a4",
+      "line_count": 2475,
+      "changed_comment_lines": 6,
+      "test_names": [
+        {
+          "before": "trigger_event_declarations_are_not_inventoried_as_writes",
+          "after": "trigger_event_declarations_are_not_listed_as_writes"
+        },
+        {
+          "before": "interpolated_set_clause_still_inventories_the_update",
+          "after": "interpolated_set_clause_still_lists_the_update"
+        }
+      ],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/integration/src/cdc_reader_process.rs",
+      "before_sha256": "0bf7357f2d77f9b4747ce91bcff6b4d876d944b880cac67688cd09f9eefc4dd0",
+      "after_sha256": "2dc171a221f11660d83e76c42a4798f41e04295102da43fd9e8bda6ee156dd5c",
+      "unchanged_code_and_literals_sha256": "fa8f6c9168c37e185dd7477c9c857c9c38afe7df7858ceeb7828ed4be37e73ec",
+      "line_count": 210,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/integration/src/cdcbench.rs",
+      "before_sha256": "4bf922b5670543ffabff5217bd4777d4017114c5aa6224381d5ab321fdbaef97",
+      "after_sha256": "3795cb4b9de703acf4afdcbd8b4116a88bf1a4890934ef9bd6838a6d707bc535",
+      "unchanged_code_and_literals_sha256": "c6a5cfb3b12fed4140bb7314727f4c58f918382c24b6885cc31ba2a3bf2567b5",
+      "line_count": 1738,
+      "changed_comment_lines": 3,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/integration/src/dashboard_test.rs",
+      "before_sha256": "c29ae4154f24bc5ed6f783cbfdece96070758f07257193e07d6f82c6818d2381",
+      "after_sha256": "faa5fee2117f86b5d1b81868ef94588e88e9bec197424b2323ba309b27249159",
+      "unchanged_code_and_literals_sha256": "de1d5e44ebb0a7f833dd6612e793faa2bed152d6daedb0c987ea083260e754b9",
+      "line_count": 296,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/integration/src/hot_route_trace.rs",
+      "before_sha256": "1269efe173da251d2fc9b6cae5ee197494dc49cf2da595fe9a2f53abc4d88972",
+      "after_sha256": "b593b2f5c965198622e3f2127def474b59eea699ba27fa2f545c55b6558cdfeb",
+      "unchanged_code_and_literals_sha256": "e8db16cf536bee0e33afb7a2b1bfd08c868ab60bb614f8ac70caa8eb9cdcf2f2",
+      "line_count": 273,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/integration/src/identity_keys_test.rs",
+      "before_sha256": "ec01617e0dc4609fc3c8993735f28095bd8881d14924b5a6d2ae90317a191627",
+      "after_sha256": "7397a44733e2fbb9bb8c85060c0b5ac5f73ea442219aa9037340fb76c1f82a63",
+      "unchanged_code_and_literals_sha256": "3ec49a6e08b3492132e8500da0ee83aae19a2cebce55b25b55d584dd5710d82c",
+      "line_count": 267,
+      "changed_comment_lines": 4,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/integration/src/lib.rs",
+      "before_sha256": "2c43bfaf276c0d10a115074af29aa6b0266363c0e4b128f1ce4678416494a926",
+      "after_sha256": "8d51e9e1b2f66a8562d70b63ae51c1bf1ef94640903450ade4ae321758e54e16",
+      "unchanged_code_and_literals_sha256": "f6c6c38510b1d9b82e4fb2ac72cb9a29071f2241a071591ea1225c7f4fefc54c",
+      "line_count": 35,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/integration/src/membership_test.rs",
+      "before_sha256": "02a04e251cd23d99ad6919b5ab4ae886d273284c0eabf6933e7f5870e2b3d47c",
+      "after_sha256": "dbecb353ae84ffba11387017aaa74ab38800783148aa307f92a3d3f2ab707052",
+      "unchanged_code_and_literals_sha256": "09850248f425b1e6221d9958bb01718be21888a5c22994a51895036ee83e63b1",
+      "line_count": 489,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/integration/src/provisionbench.rs",
+      "before_sha256": "0004ca1518a11f37006ffdbecb0e5cf32da788c258be20c12f9f4b8b6e82b89c",
+      "after_sha256": "a479fa91508c82e0df70cc6430923b4ac29d49c09878223bd627f5be702719c0",
+      "unchanged_code_and_literals_sha256": "dd96ea7df9cd8208ade9c6d2fd6a2d96ba5c7214725b0ed0e72ad7d7582306c2",
+      "line_count": 1215,
+      "changed_comment_lines": 8,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/integration/src/router_tap_live.rs",
+      "before_sha256": "c28e0e6485527a7ab8fa87ed6efd9c677020c79af3562617ee7338694b913c70",
+      "after_sha256": "da0709b25fc33a748fb3c825a50a46afa85391731f7a83f2aa13a2cecd43dcc9",
+      "unchanged_code_and_literals_sha256": "3348599f73e71a3b380daf68aa54e7b0f1e48b1287f43450a43b874d90a3a19a",
+      "line_count": 447,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/integration/src/streambench.rs",
+      "before_sha256": "034e5ab7ed2d06eaa76c9f8e2f7d4a9e4d26ce1083d770944299b59f94b4b2b0",
+      "after_sha256": "9433d54690cf7b47335c60a26b1ef5af41cfcd103dab8940db5e818f674f7598",
+      "unchanged_code_and_literals_sha256": "e8eae94a99bc016b73ec352ec87d56b17b9545b299d67f27679ce1d9f70f333d",
+      "line_count": 730,
+      "changed_comment_lines": 7,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/integration/src/virtualized_std_guest.rs",
+      "before_sha256": "523d87a4196c0cf78e009b22516e3f3fac32f0ebb6a6a9229876c47ce7233684",
+      "after_sha256": "12df2ce44d00e77d0aaf0304e6f351cf26b1a97902e2e607016ac3d028c5896c",
+      "unchanged_code_and_literals_sha256": "c8ac2c63c9e7e15bf63b6f87c8c0db1ab0da37f50d189f6c5b6e5ca60e0e9452",
+      "line_count": 558,
+      "changed_comment_lines": 1,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/orchestrator/src/main.rs",
+      "before_sha256": "c696cd6cec185c3345292d71bd8938e4351d59c219e96e307d4b9722f3f836f4",
+      "after_sha256": "09d888e097bc1586dd3fa8486a4929d6113f9b69575c89b0fb61be0683a0d85b",
+      "unchanged_code_and_literals_sha256": "cd2426c7cf75df9a28e8b332e6a58f5a4a94d9e8235ebd5504b1945f45a571a6",
+      "line_count": 114,
+      "changed_comment_lines": 5,
+      "test_names": [],
+      "git_mode": "100644"
+    },
+    {
+      "path": "tests/system/src/lib.rs",
+      "before_sha256": "cca70bcfa8400bf59f872d05e33be8011b9176fa7ad744f6561870fa7700d896",
+      "after_sha256": "a44fde913cd782dc7de467aadd93bd0c0901fa59a9c8a1e33a1f333ce63d1d05",
+      "unchanged_code_and_literals_sha256": "452a4dfa67947dde9dce22fec2a0db438652e3a24d218804c0a812c6f2e18e6a",
+      "line_count": 6,
+      "changed_comment_lines": 2,
+      "test_names": [],
+      "git_mode": "100644"
+    }
+  ],
+  "source_branch": "work/consolidation-native-comments-20260912",
+  "source_worktree_clean": true,
+  "source_after_hashes_match_committed_tree": true,
+  "comparison_phase": "Before source commit",
+  "format_limit": "Rust parsing passed. Formatting check returned differences in twelve files. Parent formatting was not measured."
+}

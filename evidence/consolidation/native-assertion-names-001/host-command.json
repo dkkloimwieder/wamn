@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-host",
+    "--test",
+    "native_lifecycle_live",
+    "--",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912",
+  "source": "ae645332f0ca9cc296280b440e66e16440c1f694"
+}

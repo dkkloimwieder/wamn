@@ -1,0 +1,212 @@
+[
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-execution-host",
+      "--lib",
+      "--",
+      "--nocapture",
+      "router_driver::native_call::tests::",
+      "router_driver::native_policy::tests::native_application_call_retains_owner_until_guest_cancellation"
+    ],
+    "elapsed_seconds": 70.01821913395543,
+    "ended_utc": "2026-09-12T03:58:01.165626+00:00",
+    "exit_code": 0,
+    "name": "native-call",
+    "source": "ae645332f0ca9cc296280b440e66e16440c1f694",
+    "started_utc": "2026-09-12T03:56:51.147411+00:00",
+    "stderr": {
+      "bytes": 6133,
+      "mode": "0o664",
+      "path": "native-call.stderr",
+      "sha256": "54df0aea264e3b365ff4ccb606c387340a14d51d5ef3639ff4d0547208604db3"
+    },
+    "stdout": {
+      "bytes": 530,
+      "mode": "0o664",
+      "path": "native-call.stdout",
+      "sha256": "376d52639f5c03b2b7780fd96dd07c0c3b964d70c51a2cc01fde5af5e00f9253"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-runtime",
+      "--features",
+      "wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats",
+      "--test",
+      "native_dispatch_deadline",
+      "--",
+      "--nocapture"
+    ],
+    "elapsed_seconds": 15.309197934984695,
+    "ended_utc": "2026-09-12T03:58:16.475276+00:00",
+    "exit_code": 0,
+    "name": "native-deadline",
+    "source": "ae645332f0ca9cc296280b440e66e16440c1f694",
+    "started_utc": "2026-09-12T03:58:01.166086+00:00",
+    "stderr": {
+      "bytes": 5609,
+      "mode": "0o664",
+      "path": "native-deadline.stderr",
+      "sha256": "750874fa2e1e9a2056eeada529648f9b0e9bee34cc39c2ae429809273bbd28e5"
+    },
+    "stdout": {
+      "bytes": 400,
+      "mode": "0o664",
+      "path": "native-deadline.stdout",
+      "sha256": "3242fd6dcccaa676b9a01407a0c6d5d263247825728d985df73f6893b738cedc"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-system-tests",
+      "--lib",
+      "trace_test::",
+      "--",
+      "--nocapture"
+    ],
+    "elapsed_seconds": 4.156803969992325,
+    "ended_utc": "2026-09-12T03:58:20.632510+00:00",
+    "exit_code": 0,
+    "name": "trace",
+    "source": "ae645332f0ca9cc296280b440e66e16440c1f694",
+    "started_utc": "2026-09-12T03:58:16.475718+00:00",
+    "stderr": {
+      "bytes": 5711,
+      "mode": "0o664",
+      "path": "trace.stderr",
+      "sha256": "d468f2c55b61b347b6895cccd62d7c25aa0516fbb6aad88a957701424adfa3f7"
+    },
+    "stdout": {
+      "bytes": 418,
+      "mode": "0o664",
+      "path": "trace.stdout",
+      "sha256": "202741a8992546ea9fe5cc0f5c30c1d15e1f58334294d3a6f253ccee0f56537f"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-ctl",
+      "--lib",
+      "--test",
+      "apply_package_live",
+      "--test",
+      "publish_release_live",
+      "--",
+      "--nocapture",
+      "dev::verification_world::tests::",
+      "exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix",
+      "package_seal_and_attestation_winner_are_server_enforced",
+      "publish_release::tests::a_dependency_admitted_with_no_effects_keeps_the_effect_free_case_path",
+      "publish_release::tests::a_dependency_admitted_with_one_effect_loses_the_effect_free_case_path",
+      "publish_release::effective_release_live::"
+    ],
+    "elapsed_seconds": 142.04111677099718,
+    "ended_utc": "2026-09-12T04:00:42.674138+00:00",
+    "exit_code": 0,
+    "name": "ctl",
+    "source": "ae645332f0ca9cc296280b440e66e16440c1f694",
+    "started_utc": "2026-09-12T03:58:20.633048+00:00",
+    "stderr": {
+      "bytes": 8573,
+      "mode": "0o664",
+      "path": "ctl.stderr",
+      "sha256": "daa0f4b020fbbd403510c2fe94195de482de071e07d94f13c7c35b1cea3bb3ba"
+    },
+    "stdout": {
+      "bytes": 1105,
+      "mode": "0o664",
+      "path": "ctl.stdout",
+      "sha256": "a68e89d17d5e02b9da55fff91a36f9d5b9a645cea7d71b616f8f850d3c8ccedf"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-host",
+      "--test",
+      "native_lifecycle_live",
+      "--",
+      "--nocapture"
+    ],
+    "elapsed_seconds": 26.28683097101748,
+    "ended_utc": "2026-09-12T04:01:08.961670+00:00",
+    "exit_code": 0,
+    "name": "host",
+    "source": "ae645332f0ca9cc296280b440e66e16440c1f694",
+    "started_utc": "2026-09-12T04:00:42.674846+00:00",
+    "stderr": {
+      "bytes": 6271,
+      "mode": "0o664",
+      "path": "host.stderr",
+      "sha256": "91ad2256691ef4420b24216c521dba97fa20678b9ae1f1fc9ac954aa2c56398b"
+    },
+    "stdout": {
+      "bytes": 263,
+      "mode": "0o664",
+      "path": "host.stdout",
+      "sha256": "90dbed7367b2823a9e460883bf3b459b57d972646d3b3a50ba319a9afc9acfe9"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-integration-tests",
+      "-p",
+      "wamn-receiving-tests",
+      "--lib",
+      "--no-run"
+    ],
+    "elapsed_seconds": 68.1467664289521,
+    "ended_utc": "2026-09-12T04:02:17.108994+00:00",
+    "exit_code": 0,
+    "name": "application-callers",
+    "source": "ae645332f0ca9cc296280b440e66e16440c1f694",
+    "started_utc": "2026-09-12T04:01:08.962236+00:00",
+    "stderr": {
+      "bytes": 10983,
+      "mode": "0o664",
+      "path": "application-callers.stderr",
+      "sha256": "9f8deb17b67c8218952d3d666d6f31f4c9a689832b2c47666c2f3f7b1eb257a5"
+    },
+    "stdout": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "application-callers.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  }
+]

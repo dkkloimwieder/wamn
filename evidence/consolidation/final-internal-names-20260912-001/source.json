@@ -1,0 +1,33 @@
+{
+  "head": "a2451f069443a45f996a8724b1180006daab2dd1",
+  "files": {
+    "apps/wamn_receiving/tests/route_authentication_live/sessions.rs": {
+      "sha256": "62a3790c2523e61c79ff0b31f0902b388f195a921f03695d3c142694154bfd85",
+      "mode": "0o664"
+    },
+    "tests/integration/src/identity_session_test.rs": {
+      "sha256": "2f38e08f3d08b7e6684b590670a1bae5d251d8000190dc024e633f3aeffc0a42",
+      "mode": "0o664"
+    },
+    "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs": {
+      "sha256": "3b2296e93ce55231b9d247530a01c7413542a91ba33685496c056c38494877ce",
+      "mode": "0o664"
+    },
+    "tools/probes/ctc8-14-wasi-http/host/src/main.rs": {
+      "sha256": "3bf587a9a1b2c7ffd61546a50457159bb16763ab76b7f7b530439dbc39f2b1aa",
+      "mode": "0o664"
+    },
+    "tools/kind-gate-image-remove": {
+      "sha256": "fd8da69af9a91b65caebd37c5faa90a0afb03c8f5796920386d24bc1c8f21e53",
+      "mode": "0o775"
+    },
+    "tools/identity-jwks-journey-run": {
+      "sha256": "c4d9738b5681b4ef6066ef3efa033d2b128c091a5fb10f1aede3c9cd13f61750",
+      "mode": "0o775"
+    },
+    "apps/wamn_receiving/tests/operator_pty.py": {
+      "sha256": "5e861486745d76dd6709ed29ac8d1b31180ff46346b2bb90b351b1c53580b075",
+      "mode": "0o775"
+    }
+  }
+}
