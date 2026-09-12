@@ -75,8 +75,8 @@ pub struct QueueDepth {
     /// reading this dispatcher actually TOOK, under the same attributes as the
     /// gauge it certifies.
     ///
-    /// LIVENESS IS PROVEN BY A SIGNAL THE SUSPECT CANNOT FAKE. The gauge alone
-    /// proves nothing: it is an OBSERVABLE instrument over a last-write-wins
+    /// A separate signal shows whether the dispatcher still runs. The gauge alone
+    /// does not show this: it is an OBSERVABLE instrument over a last-write-wins
     /// map, and the exporter invokes its callback on ITS OWN clock whether or
     /// not a sweep refreshed the map — so a project whose queue is genuinely
     /// empty and one whose dispatcher died an hour ago emit BYTE-IDENTICAL
@@ -1027,7 +1027,7 @@ mod tests {
         pairs
     }
 
-    /// A DEPTH GAUGE ALONE CANNOT PROVE ITS OWN OBSERVER IS ALIVE.
+    /// A depth gauge alone cannot show whether its observer still runs.
     ///
     /// Three exporter ticks over one project whose run queue is genuinely EMPTY.
     /// The gauge reads 0 on all three, because the exporter re-observes the last

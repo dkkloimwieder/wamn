@@ -1,6 +1,6 @@
 //! The live write-authority gate for `deploy/sql/app-schema.sql` (R11).
 //!
-//! `tests/schema.rs` pins the GRANT lines as TEXT. This suite proves PostgreSQL
+//! `tests/schema.rs` pins the GRANT lines as TEXT. This suite tests that PostgreSQL
 //! actually enforces them: every revoke lands with its positive assertion — this
 //! principal, on this relation, denied — rather than as a paper narrowing.
 //!
@@ -147,7 +147,7 @@ fn run(url: &str, script: &str) {
 /// Each denied statement is RLS-LEGAL for the probe tenant — same generation,
 /// FKs satisfied, no key collision — so `42501` here is the revoked privilege and
 /// not a `WITH CHECK` rejection, which shares the SQLSTATE. That the tenant floor
-/// does admit such a row under the App generation is what the other two tests prove.
+/// does admit such a row under the App generation is what the other two tests show.
 #[test]
 fn author_sql_cannot_write_the_relations_that_authorize_it() {
     let Some(url) = live_url("author_sql_cannot_write_the_relations_that_authorize_it") else {
@@ -223,7 +223,7 @@ ROLLBACK;
 /// grant is the entire mechanism — there is no trigger — so this is where the
 /// header's append-only claim is actually cashed.
 ///
-/// The successful append also proves the tenant floor admits a well-formed
+/// The successful append also shows that the tenant floor admits a well-formed
 /// same-tenant row under the App generation, which is what lets the sibling test read a
 /// `42501` as "privilege revoked" rather than "policy rejected".
 #[test]

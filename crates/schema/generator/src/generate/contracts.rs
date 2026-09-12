@@ -573,7 +573,7 @@ fn state_contract_test(
 ///
 /// The identity in this command's result was minted by the BASE command's
 /// claim. This command adds no claim of its own, because a second claim over
-/// one identity is the defect the law names. What it must prove is that its
+/// one identity is the defect the law names. This test must show that its
 /// replay hands back the base's original result and not a fresh one.
 ///
 /// The base is named here, digest included, so a reader sees which command's

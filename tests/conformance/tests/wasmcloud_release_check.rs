@@ -1,4 +1,4 @@
-//! Proves upstream release identity, gate execution, and isolated Git settings.
+//! Tests upstream release identity, gate execution, and isolated Git settings.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;

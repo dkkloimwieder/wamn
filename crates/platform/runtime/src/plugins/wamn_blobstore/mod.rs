@@ -11,8 +11,8 @@
 //!
 //! * [`confinement`] turns the descriptor's environment-owned bucket and
 //!   prefix into refusals — an author may name an object, never a container.
-//! * [`intake`] bounds a body and refuses to commit one it cannot prove
-//!   complete, so a truncated stream cannot overwrite a good object under a
+//! * [`intake`] bounds a body and requires its complete contents before a commit,
+//!   so a truncated stream cannot overwrite a good object under a
 //!   deterministic key.
 //!
 //! # Two object-store semantics decided here, not inherited

@@ -7,7 +7,7 @@
 //! `prune-run-history` verb through the `wamn-ctl-ops` process — the same
 //! `wamn_run_state::sql::prune_terminal_runs_sql` builder production uses.
 //!
-//! It proves four things, and the last three are the ones `wamn-0h0g.12.69`
+//! It tests four things, and the last three are the ones `wamn-0h0g.12.69`
 //! exists for:
 //!
 //! 1. **POSITIVE.** Only OLD TERMINAL runs of the credential's own tenant are
@@ -17,7 +17,7 @@
 //!    not minted for, the verb REFUSES. It does not print
 //!    `pruned 0 terminal run(s)` and exit 0, and the other tenant's rows are
 //!    still there afterwards — the POST-STATE is read back, because an assertion
-//!    that cannot tell REFUSED from MATCHED-NOTHING proves nothing here.
+//!    that cannot tell REFUSED from MATCHED-NOTHING establishes nothing here.
 //! 3. **NOT THE SHARED LOGIN.** The same verb pointed at `wamn_app` refuses too,
 //!    so the cutover cannot be silently reverted by editing a Secret.
 //! 4. **THE PLATFORM ARM BUYS IT ALMOST NOTHING.** `wamn_run_retention` is a
@@ -30,7 +30,7 @@
 //!
 //! Extracted from the retired `capturebench` harness (wamn-x1gy). Retention is a
 //! live ops verb and this is its only watcher, so the phase survives its harness
-//! — under a name that says what it proves.
+//! — under a name that says what it tests.
 
 use anyhow::{Context as _, bail};
 use clap::Args;
@@ -246,7 +246,7 @@ async fn mint_retention_credential(
 }
 
 /// A superuser fixture masks RLS. Every arm below runs as this generation, so
-/// the gate first proves the role it measures is neither superuser nor
+/// the gate first checks that the role it measures is neither superuser nor
 /// bypassing — and that it inherits, since the whole floor chain is per-edge.
 async fn assert_not_super_or_bypassing(admin_url: &str, role: &str) -> anyhow::Result<()> {
     let clean: bool = admin_scalar(

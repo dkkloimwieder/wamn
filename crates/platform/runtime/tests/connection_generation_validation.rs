@@ -364,5 +364,5 @@ async fn both_snapshotted_outer_policy_ceiling_denials_are_typed() {
 }
 
 // wamn-hopk R5: a test grepping this crate's own source for the words "current
-// DNS", "redirect", "proxy" and "outer-policy" is deleted. Dispatch-time
-// enforcement is proven by the behavioural arms above, which call the validator.
+// DNS", "redirect", "proxy" and "outer-policy" is deleted.
+// The cases above test dispatch-time enforcement by calling the validator.

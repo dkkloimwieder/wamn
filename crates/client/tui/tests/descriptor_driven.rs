@@ -3,7 +3,7 @@
 //! Every unit test in this crate hand-writes a descriptor to exercise one
 //! behaviour. This one projects the Receiving package's real contracts and
 //! renders the result, so "driven by IR descriptors rather than hand-written
-//! field lists" is proven against the corpus rather than against a fixture
+//! field lists" is tested against the corpus rather than against a fixture
 //! shaped to agree — and a field added to a contract shows up here without
 //! anyone editing this file.
 //!

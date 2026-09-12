@@ -12,7 +12,7 @@
 //!
 //! The law is `command-identity-from-claim`. The claim row is keyed by the
 //! idempotency key and pre-generates every id the command hands out. The
-//! runner proves the law by construction: it binds the id the claim statement
+//! runner tests the law by construction: it binds the id the claim statement
 //! returned into the rest of the first call, then asserts a replay returns
 //! that same id without writing.
 
@@ -114,7 +114,7 @@ pub struct Case {
 pub struct ClaimContract {
     /// The operation the cases belong to.
     pub operation: String,
-    /// The law the cases prove.
+    /// The law the cases test.
     pub law: String,
     /// The emitted cases, in file order.
     pub cases: Vec<Case>,
@@ -129,7 +129,7 @@ pub struct CaseReport {
     /// The id the claim statement generated on the first call.
     pub claim_identity: BTreeMap<String, Cell>,
     /// The transaction id the first call was given. The first call writes, so
-    /// this is always present, and it proves the write detector works.
+    /// this is always present, and it shows that the write detector works.
     pub first_call_transaction_id: String,
     /// The refusal the second call produced, when the case declares one.
     pub refusal: Option<String>,

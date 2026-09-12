@@ -1,6 +1,6 @@
 //! Real-PostgreSQL gate for the authenticated management authoring surface.
 //!
-//! Proves the whole bridge end to end over HTTP: a valid personal access token
+//! Tests the whole bridge end to end over HTTP: a valid personal access token
 //! reaches a landed authoring command with trusted principal and role context;
 //! absent, forged, expired, revoked, cross-project, and client-injected identity
 //! all refuse before the command runs and leave no side effect; and two
@@ -21,16 +21,16 @@
 //! The sequential per-ordinal composition — reserve, admit, poll, evaluate,
 //! finalize — and the three control-plane relations it wrote to are DELETED. A
 //! gate is a judgment about a document, not an execution of it, so what remains
-//! to prove is that the verb judges, refuses typed, attributes exactly once, and
+//! to test is that the verb judges, refuses typed, attributes exactly once, and
 //! **executes nothing**: no run, no queue row, no stored report. The run and
-//! queue reads below are kept precisely to prove that emptiness, so a
+//! queue reads below check that emptiness, so a
 //! resurrection of the composition would fail here rather than pass silently.
 //!
-//! It NO LONGER owns `wamn-ftfc.2`'s S1 write path. That half proved a checkout
+//! It NO LONGER owns `wamn-ftfc.2`'s S1 write path. That half tested a checkout
 //! client's submitted definition reached a server-side draft store, its exact
 //! stored revision read back, and a stale working copy refusing — every one of
 //! which is a claim about `catalog.flow_drafts`, deleted by wamn-0h0g.8.5.5. A
-//! draft is a CLIENT-SIDE FILE now, so the platform has nothing to prove about
+//! draft is a CLIENT-SIDE FILE now, so the platform has nothing to test about
 //! storing one. The authentication, attribution and append-only-ledger
 //! properties those sections carried survive on the mounted gate below, which
 //! reaches the ledger under two distinct principals.
@@ -146,7 +146,7 @@ const CANDIDATE_IMPORTS_FINGERPRINT: &str =
     "sha256:3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e3e";
 /// An admitted package that deliberately belongs to no effective release.
 /// Its component carries a real HTTP connection requirement, so the same
-/// document can prove both sides of the case-scoped effect judgment without a
+/// document can test both sides of the case-scoped effect judgment without a
 /// fabricated release or binding world (`wamn-10yt.10.14`).
 const EFFECTFUL_PACKAGE: &str = "effectful_package";
 const EFFECTFUL_MANIFEST_SHA256: &str =
@@ -162,8 +162,8 @@ const EFFECTFUL_STORE_ALIAS: &str = "receipts";
 const HTTP_IMPORT: &str = "wamn:connection/http@0.1.0";
 /// The blobstore capability's first consumer, refused by the same clause.
 ///
-/// The HTTP candidate proves the clause fires for one registered effect. This
-/// proves it fires for `wasmcloud:blobstore` — the capability 2b added — so the
+/// The HTTP candidate tests that the clause fires for one registered effect. This
+/// tests that it fires for `wasmcloud:blobstore` — the capability 2b added — so the
 /// gate's effect law is shown to key on POSTURE rather than on one known
 /// package. If the registry ever classified a new capability as ambient by
 /// accident, this is where it would surface.
@@ -452,7 +452,7 @@ async fn start_management_surface(admin_url: &str) -> tokio::task::JoinHandle<an
 /// Bring up the project-environment plane this gate admits runs into.
 ///
 /// A SEPARATE DATABASE, not a schema: residency is what distinguishes the two
-/// stores, and a gate that put them in one database would prove nothing about a
+/// stores, and a gate that puts them in one database does not test a
 /// composition whose whole difficulty is that it cannot be one transaction.
 async fn provision_project(
     admin: &Client,
@@ -897,7 +897,7 @@ async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
     // that `identity.*` exists (`wamn-0h0g.12.67`). The surface authenticates as
     // this generation, never as the superuser this gate provisions with: `serve`
     // settles that input purely and refuses the wide credential before it opens
-    // a socket. Applying the stable surface on its own first proves the
+    // a socket. Applying the stable surface on its own first shows that the
     // convergent step is a no-op on replay rather than a one-shot —
     // `prepare_workload_generation_sql` runs the very same text again.
     admin
@@ -1091,7 +1091,7 @@ async fn empty_case_store_requirement_needs_no_runtime_binding_world(
 
 /// Nonempty cases stop at the admitted effect posture before runtime bindings.
 ///
-/// This is partial coverage only for wamn-61d0: it proves the common normalized
+/// This is partial coverage only for wamn-61d0: it tests that the common normalized
 /// connection posture participates in Gate. Blobstore normalization and
 /// blob-put behavior remain owned by that bead.
 async fn nonempty_case_store_requirement_refuses_effect_posture(
@@ -1303,7 +1303,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .await
         .expect("provision the gate");
     // The SECOND plane. It is a different database on the same server: the
-    // composition under test spans both, and could not be proved against one.
+    // composition under test spans both and needs two databases for the test.
     let (project, project_task) = provision_project(&admin, &url)
         .await
         .expect("provision the project plane");
@@ -1459,7 +1459,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // to finalize, and the `pending` projection between them are all deleted --
     // a relation whose only writer and only reader die with the same change does
     // not survive it (owner ruling, 2026-08-25). So `report-not-found` is the
-    // one truthful answer for every report id, and the query is still proved to
+    // one truthful answer for every report id, and the tests still show the query to
     // be non-mutating and non-ledgered, which is what it always owned here.
     let before_reads = authoring_durable_counts(&admin).await;
     for (query_id, principal, report_id) in [
@@ -1969,7 +1969,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "a typed gate refusal was not attributed"
     );
     // THE SAME CLAUSE, AGAINST THE BLOBSTORE CAPABILITY (wamn-61d0). `ledger`
-    // above proves it fires for another registered effect. This proves it fires
+    // above tests that it fires for another registered effect. This tests that it fires
     // for `wasmcloud:blobstore`, the capability 2b added — so the effect law
     // keys on POSTURE, not on one known package, and the registry's first new
     // consumer is refused by it like any other effect.

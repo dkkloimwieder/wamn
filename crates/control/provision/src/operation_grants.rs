@@ -228,7 +228,7 @@ fn manifest_operation_grants(
 
 /// Emit one exact, transactional route-caller grant reconciliation.
 ///
-/// After [`operation_grant_floor_check_sql`] proves the existing `app_system`
+/// After [`operation_grant_floor_check_sql`] checks that the existing `app_system`
 /// grant floor is present, this single data-modifying CTE:
 ///
 /// 1. creates the fixed `route-caller` role, or hardens it as system-owned;

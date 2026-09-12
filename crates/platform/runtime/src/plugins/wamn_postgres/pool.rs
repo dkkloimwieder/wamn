@@ -376,7 +376,7 @@ impl CredentialProvider for StaticCredentialProvider {
     /// FOR GUEST SQL THE TENANT BINDING IS VERIFIED, NOT CONFIGURED. The
     /// credential's login role carries the tenant key as its scope digest, and
     /// the same key is what every governed predicate computes — so the binding
-    /// is proven from the credential itself rather than declared beside it,
+    /// is checked from the credential itself rather than declared beside it,
     /// and a credential minted for another tenant is REFUSED instead of
     /// silently borrowed. Selection happens FIRST and the check runs on the
     /// selected credential, so it fires on exactly the credential that would be
@@ -1132,9 +1132,9 @@ mod tests {
 
     /// The ambient credential source is gone.
     ///
-    /// Proven in a CHILD PROCESS that actually has `WAMN_PG_URL` set, because
+    /// Tested in a CHILD PROCESS that actually has `WAMN_PG_URL` set, because
     /// asserting `is_none()` in a parent where the variable happens to be unset
-    /// proves nothing, and `std::env::set_var` is `unsafe` in Rust 2024
+    /// establishes nothing, and `std::env::set_var` is `unsafe` in Rust 2024
     /// precisely because it races every concurrent reader. A re-exec gives a
     /// real positive condition with no data race.
     #[test]

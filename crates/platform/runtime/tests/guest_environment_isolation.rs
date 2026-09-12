@@ -14,13 +14,13 @@
 //! Tenant admission separately DENIES `wasi:cli/environment` to tenant code —
 //! the closed allowlist in `crates/platform/component-policy`, reached from
 //! `services/ctl/src/push_component.rs` through `validate_component_admission`.
-//! That is the first door. This test proves the guarantee that holds for a guest
+//! That is the first door. This test checks the guarantee that holds for a guest
 //! which imports the interface ANYWAY: defence in depth, measured rather than
 //! asserted.
 //!
 //! # Why a behavioural test and not a source scan
 //!
-//! `wamn-mrfr` proved this property by reading the pinned fork checkout as text
+//! `wamn-mrfr` checked this property by reading the pinned fork checkout as text
 //! and grepping for `inherit_env` plus two pinned `WasiCtxBuilder` literals.
 //! `wamn-hopk` R5 retired that whole technique: a scan cannot tell a reference
 //! from a mention, and it passes vacuously the moment upstream spells the same
@@ -130,7 +130,7 @@ fn envprobe_wat() -> String {
 /// `Ctx::builder(..).build()` with no `with_wasi_ctx` is the runtime's FALLBACK
 /// path — the one `wamn-mrfr` pinned as text and the one every executor guest
 /// takes, because the executor's context builder never calls `with_wasi_ctx`.
-/// Building a `WasiCtx` here instead would prove something about this test's
+/// Building a `WasiCtx` here instead tests this test's
 /// builder and nothing about the runtime.
 async fn observed_environment_entries(wasi: Option<WasiCtx>) -> u32 {
     let engine = build_engine(&[]).expect("isolation engine builds");
@@ -196,7 +196,7 @@ async fn observed_environment_entries(wasi: Option<WasiCtx>) -> u32 {
 /// never pass by accident. The sentinel is supplied EXPLICITLY rather than by
 /// mutating the test process's own environment: `std::env::set_var` is `unsafe`
 /// in Rust 2024 precisely because it races every concurrent reader, and a
-/// guarantee about isolation should not be proven with a data race.
+/// test for isolation must not use a data race.
 #[tokio::test]
 async fn a_guest_reads_the_environment_its_context_carries() {
     let mut wasi = WasiCtxBuilder::new();

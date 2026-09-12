@@ -243,7 +243,7 @@ impl SystemReaderConnection {
 /// domain separator is inside the digest, so the identity reader's login cannot
 /// satisfy the registry reader's check or the reverse.
 ///
-/// What a pure check cannot prove is that the named database *is* the control
+/// A pure check cannot establish that the named database *is* the control
 /// database, and that half is enforced by the ACL: only the control database
 /// grants these roles `CONNECT`, and each role's grant set is confined to its
 /// own schema there.

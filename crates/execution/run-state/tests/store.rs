@@ -244,7 +244,7 @@ fn run_state_sql_matches_the_model() {
     assert!(sql.contains(
         "IF OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.manifest_digest IS NULL THEN"
     ));
-    // The erasure arm cannot name its caller, so it proves nothing references
+    // The erasure arm cannot name its caller, so it checks that nothing references
     // the digest being erased: still runnable and no effect attempt.
     assert!(sql.contains("IF NEW.status NOT IN ('dispatched', 'running')"));
     assert!(sql.contains("OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect"));

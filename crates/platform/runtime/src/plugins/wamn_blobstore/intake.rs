@@ -23,8 +23,8 @@
 //! COMMIT: buffer the body, and issue the store write only once the stream has
 //! signalled clean end-of-stream. A stream that errors, or is dropped, or
 //! exceeds the ceiling, never reaches the store at all — so a truncated body
-//! cannot overwrite a complete one. **A put that cannot prove it received the
-//! whole body does not commit.**
+//! cannot overwrite a complete one. The put operation commits only after
+//! it receives the whole body.
 
 /// Ceiling on a single object body, in bytes.
 ///

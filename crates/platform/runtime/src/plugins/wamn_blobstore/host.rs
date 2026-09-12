@@ -144,7 +144,7 @@ impl<T: 'static + Send> HostContainerWithStore<T> for SharedCtx {
         data: wash_runtime::wasmtime::component::StreamReader<u8>,
     ) -> wash_runtime::wasmtime::Result<Result<(), WitError>> {
         let container = container_of(accessor, &handle)?;
-        // The body is proven complete BEFORE the store is touched. A truncated
+        // The host checks that the body is complete before it touches the store. A truncated
         // stream never reaches `put`, so it cannot overwrite a good object
         // under the caller's deterministic key.
         let body = match drain_body(accessor, data, MAX_OBJECT_BYTES).await? {

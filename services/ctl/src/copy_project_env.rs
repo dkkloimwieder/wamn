@@ -19,7 +19,7 @@
 //!
 //! Quiesce = `ALTER DATABASE … SET default_transaction_read_only = on` +
 //! terminating existing backends (pooled connections re-dial under the new
-//! default), proven by a write probe that must fail `read_only_sql_transaction`.
+//! default), checked by a write probe that must fail `read_only_sql_transaction`.
 //! Reads stay live through the copy window. After a successful cutover the src
 //! stays quiesced (it is retired); on failure the un-quiesce statement is
 //! printed for the operator.
@@ -283,7 +283,7 @@ struct ExecCtx<'a> {
 }
 
 /// Quiesce the src database: read-only default for new sessions + terminate
-/// existing backends, then PROVE it — a probe write must fail
+/// existing backends, then check that a probe write fails with
 /// `read_only_sql_transaction` (25006).
 async fn exec_quiesce(ctx: &mut ExecCtx<'_>) -> anyhow::Result<()> {
     let (client, task) = connect(ctx.src_admin).await?;
@@ -301,7 +301,7 @@ async fn exec_quiesce(ctx: &mut ExecCtx<'_>) -> anyhow::Result<()> {
     let _ = task.await;
 
     // The probe: a fresh session must see the read-only default and a write
-    // must fail 25006 — quiesce is *proven*, not assumed.
+    // must fail 25006. This tests that the source is read-only.
     let src_url = swap_db(ctx.src_admin, ctx.src_db);
     let (probe, task) = connect(&src_url).await?;
     let mode: String = probe

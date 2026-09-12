@@ -344,9 +344,9 @@ mod tests {
         }
     }
 
-    /// A moved `$n` would anchor the attestation's foreign key to a coordinate
-    /// nothing minted, which no live gate keyed on the same wrong values could
-    /// see. Pinned here, where the string is built.
+    /// A moved `$n` binds the attestation's foreign key to a coordinate nothing minted.
+    /// A live gate keyed on the same wrong values cannot detect this error.
+    /// This test checks the string where it is built.
     #[test]
     fn the_projection_binding_places_every_part_at_its_own_position() {
         let statement = project_effective_release_identity(&identity());

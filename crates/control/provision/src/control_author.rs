@@ -175,8 +175,7 @@ impl ControlAuthoringConnection {
 /// Refuse an absent or out-of-scope control authoring connection input, purely.
 ///
 /// This is the fail-closed gate the management surface runs **before any
-/// network, database, or filesystem I/O**. It proves everything a pure function
-/// can prove about scope:
+/// network, database, or filesystem I/O**. It checks these scope facts without I/O:
 ///
 /// * the input exists, parses, names a host, and carries no query or fragment;
 /// * its path names exactly one database;
@@ -187,7 +186,7 @@ impl ControlAuthoringConnection {
 /// The last predicate is what makes a project-database URL fail here rather
 /// than at connect time: the database name is inside the scope digest, so a URL
 /// pointing at `wamn-db-acme--receiving--dev` cannot present a role named for
-/// the control database. What a pure check cannot prove is that the named
+/// the control database. A pure check cannot establish that the named
 /// database *is* the control database — no offline input distinguishes two
 /// reachable databases — and that half is enforced by the ACL: only the control
 /// database grants this role `CONNECT`, and only the control database carries

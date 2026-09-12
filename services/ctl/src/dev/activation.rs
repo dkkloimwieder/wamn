@@ -706,7 +706,7 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
 /// This is the SINGLE SOURCE for the claim set. It exists because the set was
 /// previously written out by hand in two places -- here and in the cluster
 /// journey's workload renderer -- and the second copy had four of the five.
-/// `wamn.catalog` was left at the template's placeholder, with no anchor, no
+/// `wamn.catalog` was left at the template's placeholder, with no identity check, no
 /// substitution and no assertion, so a second application would have deployed
 /// under the first one's catalog and route resolution would have looked in
 /// the wrong one. An enumeration maintained by hand on both sides misses

@@ -105,7 +105,7 @@ pub fn cluster_backup_plugin(object_store: &str) -> Value {
     })
 }
 
-/// Render the `ScheduledBackup` CR that anchors a cluster's recovery window — a
+/// Render the `ScheduledBackup` CR that sets a cluster's recovery window with a
 /// periodic **base backup** taken through the plugin (`spec.method: plugin`,
 /// `pluginConfiguration.name` = [`BACKUP_PLUGIN_NAME`]) at the env policy's
 /// `backup_cadence` (a 6-field CNPG cron; D18 — sized by the owner env's policy).

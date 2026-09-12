@@ -716,7 +716,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     // the demo/app/dev project-env provisioned above: upsert twice (the second
     // refreshes slot/enabled — ON CONFLICT DO UPDATE), read it back via the real
     // select, reject a registration for an UNPROVISIONED env (the project-env
-    // FK — enable-cdc is an overlay on an already-provisioned env), and prove
+    // FK — enable-cdc is an overlay on an already-provisioned env), and check that
     // the whole-org cascade drops the registration.
     script.push_str(&format!(
         "PREPARE uper (text,text,text,text,text,text,text,text,boolean) AS {upsert};\n\

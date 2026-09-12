@@ -15,7 +15,7 @@
 //! against itself (see [`crate::release_manifest`]). A registry is a third
 //! party: the digest travels in the pod template, the bytes come from the
 //! registry, and this module refuses unless they agree. Nothing about the
-//! release's identity is derived here, only proven.
+//! release's identity is derived here. This module only checks it.
 //!
 //! This module owns artifact transfer alone. Document admission — canonicality,
 //! format version, the release pair — stays with
@@ -360,7 +360,7 @@ fn verify_transferred_body(
     }
     // `component_digest` is a plain `sha256:<hex>` over bytes; a serving
     // manifest's identity is that same function over its canonical encoding, so
-    // this proves the transferred body against the pod template's name rather
+    // this checks the transferred body against the pod template's name rather
     // than against the registry's own bookkeeping.
     if component_digest(canonical_bytes) != expected_digest {
         return Err(ReleaseManifestFetchError::mismatched(

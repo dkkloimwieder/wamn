@@ -662,7 +662,7 @@ mod tests {
     }
 
     /// A manifest that carries the released fixture's component and wiring, so
-    /// the released arm can be proven to ADMIT as well as to refuse.
+    /// the tests cover both admission and refusal in the released case.
     fn carrying_manifest(snapshot: &ConnectionEffectSnapshot) -> ServingManifest {
         let invocation = released();
         let mut manifest = manifest("tenant-a", "package_a");

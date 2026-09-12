@@ -34,7 +34,7 @@ fn provisioning_builders_apply_on_postgres() {
     // Clean slate (a prior failed run may have left the database).
     script.push_str(&sql::drop_database_sql(project));
     script.push_str(";\n");
-    // Seed the retired shared-login posture so this proves convergence, not
+    // Seed the retired shared-login posture so this tests convergence, not
     // only the fresh-create arm. The candidate is test-owned and deliberately
     // unrelated to any historical production password.
     script.push_str(

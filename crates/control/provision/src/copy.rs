@@ -47,7 +47,7 @@ pub struct CopyRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CopyStep {
     /// Make the src database read-only (`default_transaction_read_only = on` +
-    /// terminate existing backends) and prove it with a write probe. Cutover
+    /// terminate existing backends) and check it with a write probe. Cutover
     /// plans only.
     Quiesce { src: Triple },
     /// `pg_dump -Fd` the src database (the q3n.10 artifact; recorded in

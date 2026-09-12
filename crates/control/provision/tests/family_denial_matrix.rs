@@ -96,7 +96,7 @@ const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
 /// A test-only login inheriting [`SCENARIO_AUTHOR_ROLE`].
 ///
 /// Production deliberately mints no such credential. This probe exists only to
-/// carry the role's effective authority through a real connection and prove
+/// carry the role's effective authority through a real connection and check that
 /// both residue reads receive SQLSTATE 42501.
 const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 
@@ -563,7 +563,7 @@ fn build(admin: String) -> Fixture {
         mint(&db_url, reach.family);
     }
     // The control principal: SAME table grant as the effect writer, member of
-    // nothing. It exists to prove that a row count of zero is what a lockout
+    // nothing. It shows that a row count of zero is what a lockout
     // looks like, so a writer arm reading rows is a real result.
     apply(
         &db_url,
@@ -1225,7 +1225,7 @@ fn the_guest_family_reads_its_own_tenant_and_only_its_own() {
          second row is a CROSS-TENANT READ and zero rows is a silent lockout"
     );
     // A settable claim must not move it. The floor keys on `current_user`, and
-    // this is what proves the retired `app.tenant` path is inert for the guest.
+    // this shows that the retired `app.tenant` path is inert for the guest.
     assert_eq!(
         query(
             &as_guest,
@@ -1502,7 +1502,7 @@ fn the_platform_group_members_are_exactly_the_derived_families() {
 }
 
 /// The reserved scenario-author role has neither a platform-policy edge nor a
-/// table read. The synthetic inheriting login proves this as a real SQL refusal,
+/// table read. The synthetic inheriting login tests this as a real SQL refusal,
 /// not merely as an ACL catalog observation.
 #[test]
 fn the_scenario_author_has_no_platform_membership_or_project_reads() {

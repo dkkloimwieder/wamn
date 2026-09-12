@@ -1,6 +1,6 @@
 //! Promote one immutable format-1 release without applying package migrations.
 //!
-//! `apply-package` is the sole applier. Promotion proves every source package
+//! `apply-package` is the sole applier. Promotion checks that every source package
 //! coordinate, raw manifest hash, and complete ordered migration ledger already
 //! exists byte-exactly in the target before copying portable facts.
 

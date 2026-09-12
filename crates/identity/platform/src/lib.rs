@@ -212,7 +212,7 @@ impl fmt::Display for PrincipalStatus {
 }
 
 /// Opaque platform principal identity minted by the system database.
-/// Parsing checks UUID spelling; it does not prove existence or authentication.
+/// Parsing checks UUID spelling. It does not establish existence or authentication.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PrincipalId(Box<str>);
 

@@ -1005,7 +1005,7 @@ fn the_platform_tier_carries_no_retired_artifact() {
     }
 
     // Scanned off the manifests, not read back out of the table above: an
-    // assertion over the table would only re-prove the table, and a mutant that
+    // assertion over the table only tests the table, and a mutant that
     // put the gates image into a real manifest would sail past it.
     for (file, _, _) in BILL_OF_MATERIALS {
         for image in images(&read(&root, file)) {

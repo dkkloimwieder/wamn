@@ -34,8 +34,8 @@ fn a_well_formed_registration_validates() {
 
 #[test]
 fn entity_is_resolved_by_id_not_table_name() {
-    // The id `sales_orders` resolves; the TABLE name `orders` does NOT — proof
-    // the check keys on the rename-proof entity id.
+    // The id `sales_orders` resolves. The table name `orders` does not.
+    // The check uses the entity id, which stays fixed when the table name changes.
     let mut r = reg();
     r.entity = "orders".into();
     let issues = validate(&r, "shop", "shop", &model_keys()).unwrap_err();

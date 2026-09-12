@@ -51,7 +51,7 @@ pub(super) struct OperatorError {
 }
 
 impl OperatorError {
-    /// Whether a successful wait proves that the failed process is reaped.
+    /// Whether a successful wait means that the failed process is reaped.
     pub const fn process_stopped(&self) -> bool {
         self.process_stopped
     }

@@ -31,7 +31,7 @@ pub const fn recovery_message(contract: &ResponseContract) -> &'static str {
     }
 }
 
-/// One declared error case. Its origins determine whether it proves refusal.
+/// One declared error case. Its origins determine whether it shows refusal.
 #[derive(Debug, Clone, Copy)]
 pub struct ErrorCase {
     pub literal: &'static str,
@@ -445,7 +445,7 @@ fn unknown(reason: &str) -> Evidence {
     Evidence::Uncertain(reason.to_owned())
 }
 
-// A reported literal is diagnostic even when its envelope proves no outcome.
+// A reported literal is diagnostic even when its envelope shows no outcome.
 fn unknown_with_literal(reason: &str, document: &Value) -> Evidence {
     let outcome = document
         .as_array()

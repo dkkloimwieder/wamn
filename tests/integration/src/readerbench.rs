@@ -3,7 +3,7 @@
 //!
 //! The in-cluster gate script provisions CDC, runs the REAL `wamn-host
 //! event-reader` process against wamn-pg + evt-nats, drives psql writes and
-//! the kill/sever drills — then calls this mode to prove what LANDED: exactly
+//! the kill/sever drills — then calls this mode to check what LANDED: exactly
 //! the expected insert ids, in commit order, one message each (`Nats-Msg-Id`
 //! dedupe held across restarts/redelivery), every envelope well-formed per
 //! the wamn-event-wire draft. The local drills live in
@@ -119,7 +119,7 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
     // Wait for the full program to land (the reader may still be catching up
     // after a drill), then insist the count is EXACT — no strays. In filtered
     // mode the stream count is not the program count; the drain deadline below
-    // does the waiting and a final empty fetch proves no strays in-filter.
+    // does the waiting and a final empty fetch shows no strays in-filter.
     let deadline = Instant::now() + Duration::from_secs(args.wait_secs);
     if filter_subject.is_none() {
         loop {

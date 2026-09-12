@@ -11,7 +11,7 @@
 //!   containment refusal inside a catch-all a guest cannot branch on.
 //! * **Over the ceiling** is `quota-exceeded`: a storage limit was exceeded,
 //!   which is what the variant says.
-//! * **A body that cannot be proven complete** is `other`, carrying the
+//! * A body with no established end is `other`, carrying the
 //!   reason. No named case means "I will not commit what I cannot verify",
 //!   and inventing a closer-sounding one would misreport it.
 //! * **A refused verb** is `other`, naming the verb and why. It is NOT
@@ -19,7 +19,7 @@
 //!   does not implement the verb in that shape for anyone.
 //! * **A lost response body** is `other`, saying the object was found and
 //!   telling the guest to re-read. It is NOT `no-such-object`, which says the
-//!   object is gone when the store just proved it is there, and it is NOT
+//!   object is gone when the store just found it, and it is NOT
 //!   `timeout`, which names a deadline that never elapsed (`wamn-b2m6.3`).
 
 use super::bindings::wasmcloud::blobstore::types::Error as WitError;
@@ -150,7 +150,7 @@ mod tests {
         );
     }
 
-    /// The store proved the object is there and then stopped sending it. The
+    /// The store found the object and then stopped sending it. The
     /// guest must be told to read again, and must not be told the object is
     /// missing.
     #[test]

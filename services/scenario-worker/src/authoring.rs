@@ -2,7 +2,7 @@
 //!
 //! There is intentionally no CLI or public transport in this module. Item 5
 //! owns retained client identity and client-facing authorization; this adapter
-//! proves the shared typed command/query boundary first.
+//! tests the shared typed command/query boundary first.
 //!
 //! It persists no authored document (wamn-0h0g.8.5.5). A draft is a client-side
 //! file and the wiring document's content hash is its identity, so the only

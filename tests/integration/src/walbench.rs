@@ -409,7 +409,7 @@ pub async fn run(args: WalBenchArgs) -> anyhow::Result<()> {
 // pre-CDC provenance: the run's denominator claim, made checkable
 // ---------------------------------------------------------------------------
 
-/// Record the WAL level + prove the DB is genuinely pre-CDC: no publication, no
+/// Record the WAL level and check that the database is pre-CDC: no publication, no
 /// replication slot, every measured table at DEFAULT replica identity (`d`).
 /// This is what makes "the pre-CDC denominator" a checkable property rather
 /// than an assumption — a stray leftover slot on the fixture pod would fail it.

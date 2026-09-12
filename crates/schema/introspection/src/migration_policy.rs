@@ -11,7 +11,7 @@
 //! column, or one named client check constraint. PostgreSQL remains responsible
 //! for parsing definitions, while post-apply catalog introspection validates
 //! their resulting objects. This layer refuses statement operations that the
-//! final catalog state cannot prove.
+//! final catalog state cannot establish.
 
 use std::ffi::OsStr;
 use std::fmt;

@@ -1,4 +1,4 @@
-//! Live PostgreSQL proof for package-coordinate registration reconciliation.
+//! Live PostgreSQL test for package-coordinate registration reconciliation.
 //!
 //! `WAMN_EVENT_REGISTRATION_PG_URL` must name a fresh disposable database: the
 //! test drops and recreates the `catalog` schema.

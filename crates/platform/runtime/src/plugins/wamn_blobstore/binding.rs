@@ -1,7 +1,7 @@
 //! Turning an authorized connection snapshot into a confined binding.
 //!
 //! This is the decision half of binding resolution, kept apart from the
-//! database call so it can be proven against fabricated snapshots the way
+//! database call so it can be tested against fabricated snapshots the way
 //! `connection_http`'s authorization tests are.
 //!
 //! Two properties matter more than the parsing:
@@ -232,7 +232,7 @@ mod tests {
 
     /// The snapshot's type and contract must be blobstore's. An HTTP binding
     /// must not resolve as a blobstore one — this is the same discrimination
-    /// the parameterized authorizer proves, exercised from the other side.
+    /// the parameterized authorizer checks, exercised from the other side.
     #[test]
     fn an_http_binding_does_not_resolve_as_blobstore() {
         let http = ConnectionTypeDescriptor::http_v1();

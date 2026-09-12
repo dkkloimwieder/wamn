@@ -796,7 +796,7 @@ impl opentelemetry::propagation::Injector for TraceContextHeaders<'_> {
 /// Public because the `trace-test` gate drives THIS function rather than a
 /// copy of it (`wamn-k9ea`): the gate's whole claim is that what crosses the
 /// process boundary is what production injects, so a reimplementation there
-/// would prove nothing about this one.
+/// does not test this one.
 pub fn inject_trace_context(headers: &mut reqwest::header::HeaderMap) {
     use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 
@@ -960,7 +960,7 @@ fn http_span(plugin: &ConnectionHttp, component_id: &str) -> tracing::Span {
 /// * the authority read and unavailable client capacity, which dispatched
 ///   nothing, so both are refused before dispatch,
 /// * the response body the host never finished reading, which is
-///   [`EffectOutcome::ResponseLost`], because the status line proves the far
+///   [`EffectOutcome::ResponseLost`], because the status line shows that the far
 ///   side acted and the guest still got nothing.
 ///
 /// The fourth is a rendered transport error from a request that failed in
@@ -1711,7 +1711,7 @@ mod tests {
     /// THE TEST THAT WOULD HAVE CAUGHT THE MAPPING THE OWNER OVERTURNED
     /// SECOND. A body lost after the status line arrived was recorded as
     /// effect-uncertain, which claims an unknown. The far side acted and the
-    /// answer proves it. The guest received nothing, so it is not responded
+    /// answer shows it. The guest received nothing, so it is not responded
     /// either. The remedy is to re-read, not to resend.
     #[test]
     fn a_lost_response_never_reads_as_effect_uncertain() {

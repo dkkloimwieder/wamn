@@ -22,7 +22,7 @@
 //! [`crate::backup::MINIO_ENDPOINT`], credentials from
 //! [`crate::backup::OBJECT_STORE_SECRET`]). The upload stays **guarded** on the S3
 //! endpoint env, so no store configured is not a runtime failure (the `pg_dump`
-//! init step still runs). The `.10` round-trip gate proves the artifact valid +
+//! init step still runs). The `.10` round-trip gate checks that the artifact is valid +
 //! restorable substrate-agnostically (`pg_dump -Fd` → `pg_restore` into a scratch
 //! DB) — that path uses the pure [`pg_dump_argv`] builder, unaffected by the pod
 //! topology.

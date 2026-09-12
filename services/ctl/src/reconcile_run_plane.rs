@@ -175,7 +175,7 @@ pub struct ReconcileRunPlaneArgs {
 pub enum ReconcileTargetErrorKind {
     /// The trusted triple could not resolve to one recorded registry target.
     RegistryTarget,
-    /// The connected database did not prove the registry-derived target identity.
+    /// The connected database did not match the registry-derived target identity.
     DatabaseTarget,
 }
 

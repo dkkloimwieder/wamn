@@ -35,9 +35,8 @@ pub use route::{RouteError, RouteMetadata};
 
 /// One HTTP exchange, as this client needs it.
 ///
-/// A seam, so the envelope and error semantics above can be proven BELOW the
-/// terminal layer without a live server — which is what the slice's exit gate
-/// requires.
+/// Tests use this boundary to check envelope and error behavior below the
+/// terminal layer without a live server, as the acceptance criteria require.
 #[async_trait::async_trait]
 pub trait Transport: Send + Sync + core::fmt::Debug {
     /// Send one request and return its status and body.

@@ -23,7 +23,7 @@
 //! A shared Cargo invocation previously changed guest bytes when the selected
 //! packages changed (`wamn-10yt.61`). Each guest now uses its own invocation.
 //! The cross-profile arm compares declared application guests with all workspace
-//! guests to prove that the selection does not change their bytes.
+//! guests to check that the selection does not change their bytes.
 
 use std::collections::BTreeMap;
 use std::fs;

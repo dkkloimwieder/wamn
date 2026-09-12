@@ -9,8 +9,8 @@
 //! builds the production `RouterDriver` over them.
 //!
 //! Two beads need this same closure. `wamn-0h0g.11.8` drives it to witness
-//! trace propagation at the wire; `wamn-0h0g.11.3` needs it to prove HTTP
-//! connection confinement refusals. The test module also proves native socket
+//! trace propagation at the wire; `wamn-0h0g.11.3` needs it to test HTTP
+//! connection confinement refusals. The test module also tests native socket
 //! reuse across real guest stores, with live lifecycle and generation changes.
 //!
 //! It needs three throwaway resources, all named by the caller: a superuser

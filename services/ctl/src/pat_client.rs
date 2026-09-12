@@ -15,7 +15,7 @@ use wamn_platform_identity::{PAT_TOKEN_PREFIX, PrincipalId};
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 /// A PAT response contains five small fields. Larger bodies are refused.
 const MAX_RESPONSE_BYTES: usize = 4096;
-/// A lost response does not prove that the service refused to create the PAT.
+/// A lost response does not mean that the service refused to create the PAT.
 const UNCERTAIN_ISSUANCE: &str =
     "A PAT can exist without a returned token. The request was not retried.";
 

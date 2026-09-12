@@ -3,7 +3,7 @@
 //! This module owns only artifact transfer. Callers provide a complete admitted
 //! component fact and explicit registry configuration; the source derives the
 //! immutable reference, verifies the manifest and both blobs, and returns only
-//! component bytes proven against that fact. It owns no catalog read, cache,
+//! component bytes checked against that fact. It owns no catalog read, cache,
 //! instance pool, router behavior, or retry policy.
 
 use std::fmt;
@@ -71,7 +71,7 @@ impl ComponentArtifactSourceConfig {
     /// surface, `oci::{pull_component, push_component}`, is fixed to
     /// `WASM_LAYER_MEDIA_TYPE` + `WasmConfig` and cannot carry this artifact's
     /// platform-owned layer and config blob — the config blob being the very
-    /// admission fact [`ComponentArtifactSource::pull_verified`] re-proves. See
+    /// admission fact [`ComponentArtifactSource::pull_verified`] checks again. See
     /// standing trigger 5 in `docs/architecture/native-alignment-ledger.md`
     /// (`wamn-kdhw`) for the exit condition; do not "fix" this by routing the
     /// pull through `pull_component`.

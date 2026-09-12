@@ -7,14 +7,14 @@
 //! raw DB-bypass surface out of published worlds.
 //! `wamn_component_policy` is that build/publish-side enforcement.
 //!
-//! This gate proves that enforcement HERMETICALLY — it synthesizes its fixtures
+//! This gate tests that enforcement HERMETICALLY — it synthesizes its fixtures
 //! in-process (no external guest build, no OCI registry, so the local mode is
 //! the whole gate): P2 and P3 NEGATIVE cases (worlds importing `wasi:sockets`
 //! must be refused at publish) and a POSITIVE control (a standard world —
 //! clocks/io — must still publish).
 //!
 //! Unlike `egressbench` — which walks the REAL shipped components and asserts
-//! they carry no socket surface — this gate proves the guard *rejects* an
+//! they carry no socket surface — this gate tests that the guard *rejects* an
 //! adversarial component, the property the shipped-component sweep cannot show.
 
 use anyhow::bail;

@@ -924,7 +924,7 @@ impl ProductionDevStageRunner {
             ));
         }
         // CARRY THE OBSERVATION; do not restate the refusal (wamn-10yt.49).
-        // The refusal above proves cleanliness only for a DURABLE target. A
+        // The refusal above checks cleanliness only for a DURABLE target. A
         // disposable target reaches this line with a dirty worktree by design,
         // and a literal `false` would put a statement the run had just seen to
         // be untrue into the attestation that

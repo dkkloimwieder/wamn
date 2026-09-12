@@ -183,8 +183,7 @@ impl ManagementAdmissionConnection {
 /// Refuse an absent or out-of-scope management admission connection input, purely.
 ///
 /// This is the fail-closed gate the management surface runs **before any
-/// network, database, or filesystem I/O**. It proves everything a pure function
-/// can prove about scope:
+/// network, database, or filesystem I/O**. It checks these scope facts without I/O:
 ///
 /// * the input exists, parses, names a host, and carries no query or fragment;
 /// * its path names exactly one database;
@@ -195,7 +194,7 @@ impl ManagementAdmissionConnection {
 /// The last predicate is what makes the control-database URL fail here rather
 /// than at admission time: the database name is inside the scope digest, so a URL
 /// pointing at `wamn-system` cannot present a role named for the project-env
-/// database. What a pure check cannot prove is that the named database *is* that
+/// database. A pure check cannot establish that the named database *is* that
 /// project's environment database — no offline input distinguishes two reachable
 /// databases — and that half is enforced by the ACL: only the project-env
 /// database grants this role `CONNECT`.

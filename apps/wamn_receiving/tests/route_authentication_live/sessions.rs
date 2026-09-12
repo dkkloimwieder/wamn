@@ -212,7 +212,7 @@ pub(super) async fn prepare_session_host_fixture(
 }
 
 /// The native driver uses a pinned loopback HTTPS port-forward, not cluster DNS.
-/// Separate deployed host Jobs prove cluster transport and key-removal bounds.
+/// Separate deployed host Jobs test cluster transport and key-removal bounds.
 #[tokio::test]
 #[ignore = "requires the completed Receiving session fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT"]
 async fn production_nested_session_call_preserves_original_caller() -> anyhow::Result<()> {

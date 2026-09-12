@@ -21,7 +21,7 @@ use super::intake::IntakeError;
 pub enum StoreError {
     /// The guest-supplied key broke a containment rule.
     Confinement(KeyRefusal),
-    /// The body was over the ceiling, or could not be proven complete.
+    /// The body exceeded the ceiling, or the drain did not establish that it was complete.
     Intake(IntakeError),
     /// The object does not exist.
     NoSuchObject,
@@ -29,8 +29,8 @@ pub enum StoreError {
     Backend(object_store::Error),
     /// The store answered and its body did not arrive.
     ///
-    /// Distinct from [`StoreError::Backend`] because the store already proved
-    /// it acted: the object was found and the read began. The remedy is to
+    /// Distinct from [`StoreError::Backend`] because the store found the object
+    /// and began the read. The remedy is to
     /// re-read, never to write again (`wamn-b2m6.3`).
     ResponseLost(object_store::Error),
     /// The verb is refused by WAMN and will not be implemented in this shape.
@@ -144,8 +144,8 @@ impl BoundContainer {
     ///
     /// # Errors
     ///
-    /// Confinement or backend failure. The body has already been proven
-    /// complete by the drain before it reaches here.
+    /// Confinement or backend failure. The drain checks that the body is
+    /// complete before it reaches here.
     pub async fn put(&self, author_key: &str, body: Vec<u8>) -> Result<(), StoreError> {
         let path = self.path(author_key)?;
         self.store

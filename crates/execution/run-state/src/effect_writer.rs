@@ -689,7 +689,7 @@ fn effect_run_is_runnable() -> Sql {
 /// A newly inserted row returns its server-minted attempt id and timestamps. An
 /// existing coordinate returns the same server values with `identical-retry`
 /// only when the complete proposed row is equal; `divergent` is a refusal for
-/// the eventual private adapter. No live database behavior is proven here.
+/// the eventual private adapter. This builder does not exercise a live database.
 pub(crate) fn begin_effect_attempt() -> Sql {
     Sql::new(
         r#"INSERT INTO effect_attempts

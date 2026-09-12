@@ -81,7 +81,7 @@ pub struct GenerationValidationSnapshot<'a, N> {
     pub cluster_network_policy: ClusterNetworkPolicySnapshot<'a, N>,
 }
 
-/// Input identities and canonical authorities proven by intrinsic validation.
+/// Input identities and canonical authorities checked by intrinsic validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidatedConnectionGeneration {
     pub definition_hash: Box<str>,

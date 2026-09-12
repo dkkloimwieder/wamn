@@ -1,7 +1,7 @@
 //! The exit gate's assertions, driven through the whole client.
 //!
 //! BELOW THE TERMINAL LAYER, as the slice requires: a fake transport stands in
-//! for the network, so envelope, error and paging semantics are proven without
+//! for the network, so the tests check envelope, error and paging behavior without
 //! a live server and without a rendered frame.
 
 use std::collections::BTreeMap;

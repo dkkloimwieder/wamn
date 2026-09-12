@@ -125,7 +125,7 @@ impl std::error::Error for ReleaseManifestPublishError {
     }
 }
 
-/// Whether this invocation created the artifact or proved an exact retry.
+/// Whether this invocation created the artifact or matched an exact retry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReleaseManifestPublishDisposition {
     Pushed,
@@ -297,7 +297,7 @@ pub(crate) async fn select_snapshot(
     })
 }
 
-/// Publish canonical format-1 bytes or prove their exact artifact already exists.
+/// Publish canonical format-1 bytes or check that their exact artifact already exists.
 pub async fn publish_release_manifest(
     canonical_bytes: &[u8],
     artifact_base: &str,
