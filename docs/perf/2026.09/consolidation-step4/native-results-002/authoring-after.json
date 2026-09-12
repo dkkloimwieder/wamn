@@ -1,0 +1,997 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "AuthoringCommand": {
+      "description": "Complete two-command authoring inventory.\n\n`gate` is spelled `gate` on the wire (wamn-0h0g.7.11). The variant name and the wire literal are the one honest name the owner ratified — one verb produces reports, and that judgment is gating — so the kebab-case rule alone renders it and no `rename` apologises for a second spelling.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/definitions/Gate"
+            },
+            "kind": {
+              "enum": [
+                "gate"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/definitions/PublishValidatedDraft"
+            },
+            "kind": {
+              "enum": [
+                "publish"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AuthoringOutcome": {
+      "description": "A successful command result or operation-specific refusal.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "completed"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/definitions/AuthoringSuccess"
+            }
+          },
+          "required": [
+            "status",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "refused"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/definitions/CommandRefusal"
+            }
+          },
+          "required": [
+            "status",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AuthoringQuery": {
+      "description": "Complete one-query authoring inventory.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/definitions/GetReport"
+            },
+            "kind": {
+              "enum": [
+                "get-report"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AuthoringQueryOutcome": {
+      "description": "A successful query result or operation-specific refusal.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "completed"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/definitions/AuthoringQuerySuccess"
+            }
+          },
+          "required": [
+            "status",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "refused"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/definitions/QueryRefusal"
+            }
+          },
+          "required": [
+            "status",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AuthoringQueryRequest": {
+      "additionalProperties": false,
+      "description": "One correlation-only, non-ledgered query.",
+      "properties": {
+        "query": {
+          "$ref": "#/definitions/AuthoringQuery"
+        },
+        "query-id": {
+          "$ref": "#/definitions/QueryId"
+        },
+        "schema-version": {
+          "enum": [
+            "0.1"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "query",
+        "query-id",
+        "schema-version"
+      ],
+      "type": "object"
+    },
+    "AuthoringQueryResponse": {
+      "additionalProperties": false,
+      "description": "Result or typed refusal for one correlation-only query.",
+      "properties": {
+        "outcome": {
+          "$ref": "#/definitions/AuthoringQueryOutcome"
+        },
+        "query-id": {
+          "$ref": "#/definitions/QueryId"
+        },
+        "schema-version": {
+          "enum": [
+            "0.1"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "query-id",
+        "schema-version"
+      ],
+      "type": "object"
+    },
+    "AuthoringQuerySuccess": {
+      "description": "Successful result paired with each query.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "query": {
+              "enum": [
+                "get-report"
+              ],
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/definitions/ReportProjection"
+            }
+          },
+          "required": [
+            "query",
+            "result"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AuthoringRequest": {
+      "additionalProperties": false,
+      "description": "One idempotent ledgered command.",
+      "properties": {
+        "command": {
+          "$ref": "#/definitions/AuthoringCommand"
+        },
+        "command-id": {
+          "type": "string"
+        },
+        "schema-version": {
+          "enum": [
+            "0.1"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "command-id",
+        "schema-version"
+      ],
+      "type": "object"
+    },
+    "AuthoringRequestEnvelope": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/AuthoringRequest"
+        },
+        {
+          "$ref": "#/definitions/AuthoringQueryRequest"
+        }
+      ],
+      "description": "The structurally disjoint command or query request body."
+    },
+    "AuthoringResponse": {
+      "additionalProperties": false,
+      "description": "Result or typed refusal for one command identity.",
+      "properties": {
+        "command-id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/definitions/AuthoringOutcome"
+        },
+        "schema-version": {
+          "enum": [
+            "0.1"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "command-id",
+        "outcome",
+        "schema-version"
+      ],
+      "type": "object"
+    },
+    "AuthoringResponseEnvelope": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/AuthoringResponse"
+        },
+        {
+          "$ref": "#/definitions/AuthoringQueryResponse"
+        }
+      ],
+      "description": "The structurally disjoint command or query response body."
+    },
+    "AuthoringScope": {
+      "additionalProperties": false,
+      "description": "Project and environment selected by a client.",
+      "properties": {
+        "environment": {
+          "type": "string"
+        },
+        "project-id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "environment",
+        "project-id"
+      ],
+      "type": "object"
+    },
+    "AuthoringSuccess": {
+      "description": "Successful result paired with each command.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "enum": [
+                "gate"
+              ],
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/definitions/GateReceipt"
+            }
+          },
+          "required": [
+            "command",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "enum": [
+                "publish"
+              ],
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/definitions/PublishedWiringIdentity"
+            }
+          },
+          "required": [
+            "command",
+            "result"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CommandRefusal": {
+      "description": "An operation-specific command refusal.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "enum": [
+                "gate"
+              ],
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/definitions/GateRefusal"
+            }
+          },
+          "required": [
+            "command",
+            "reason"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "enum": [
+                "publish"
+              ],
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/definitions/PublishRefusal"
+            }
+          },
+          "required": [
+            "command",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "CommitProvenance": {
+      "additionalProperties": false,
+      "description": "Optional, untrusted source attribution supplied by a checkout client.",
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "dirty": {
+          "type": "boolean"
+        },
+        "ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "commit",
+        "dirty"
+      ],
+      "type": "object"
+    },
+    "Gate": {
+      "additionalProperties": false,
+      "description": "Judge one wiring document against its own bounded `cases` array.\n\n# This carries the DOCUMENT, and that is the whole of wamn-0h0g.8.28\n\nIt used to carry a reference the server resolved out of `catalog.wirings`. That was leftover coupling from the retired reservation protocol, and EXECUTION refuted it: authorship refuses to insert a wiring without a green report for its own hash, and the only producer of that report resolved its candidate from the very row that could not exist yet. Nothing could ever be gated a first time. The deadlock is PER-DOCUMENT, not per-catalog, so no bootstrap step would have sufficed.\n\nThe ratified stateless-gate model already said the answer in its own sentence: the report is REPRODUCIBLE FROM THE DOCUMENT. So the document IS the input, the judgment is a total function of it, and the gate reads `catalog.wirings` not at all.\n\n`package_id` and `package_version` ride with it for the same reason `publish` carries them (wamn-0h0g.7.10): compatibility and admitted effect posture are facts of one exact package coordinate, and neither value rides the document. They came off the stored row before; now they are stated.",
+      "properties": {
+        "document": {
+          "description": "The wiring document itself — the same bytes `publish` carries."
+        },
+        "package-id": {
+          "description": "Package identity whose admitted component facts judge this document.",
+          "type": "string"
+        },
+        "package-version": {
+          "description": "Exact package version those facts are read at.",
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/definitions/AuthoringScope"
+        }
+      },
+      "required": [
+        "document",
+        "package-id",
+        "package-version",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "GateReceipt": {
+      "additionalProperties": false,
+      "description": "Receipt for one accepted gate.",
+      "properties": {
+        "report-id": {
+          "type": "string"
+        },
+        "validated-draft": {
+          "$ref": "#/definitions/ValidatedDraftRef"
+        }
+      },
+      "required": [
+        "report-id",
+        "validated-draft"
+      ],
+      "type": "object"
+    },
+    "GateRefusal": {
+      "description": "Refusals owned by `gate`.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "authorization-denied"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "unsupported-contract-version"
+              ],
+              "type": "string"
+            },
+            "requested": {
+              "type": "string"
+            },
+            "supported": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "supported"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The submitted bytes are not a wiring document valid in the named package scope.\n\nThis REPLACES the two retired lookup refusals (wamn-0h0g.8.28). Both described a search of `catalog.wirings` that the gate no longer performs: a document cannot be missing when the command carries it, and it cannot diverge from a stored row it is never compared to. What CAN go wrong is that the bytes do not parse, do not validate, or do not resolve against the package's admitted component facts, which is this.\n\nTheir exact spellings are pinned as retired in this crate's contract test, so they are named there and deliberately not repeated here — a doc comment becomes a schema description, and would resurrect the literal it retires.",
+          "properties": {
+            "detail": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "invalid-document"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "detail",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "detail": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "invalid-test-set"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "detail",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The candidate reaches a component whose admitted effects projection is non-empty.\n\nA gate is a JUDGMENT ABOUT A DOCUMENT, not an execution of it: effects belong to admitted runs under run identity, and a report must be reproducible from the document alone or its hash-keyed identity is a lie. The refusal names the exact components that carry effects rather than a free-text detail, so a client can act on it.",
+          "properties": {
+            "components": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "effectful-component-reached"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "components",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "command-id-reuse"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "GetReport": {
+      "additionalProperties": false,
+      "description": "Read one immutable report projection.",
+      "properties": {
+        "report-id": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/definitions/AuthoringScope"
+        }
+      },
+      "required": [
+        "report-id",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "GetReportRefusal": {
+      "description": "Refusals owned by `get-report`.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "authorization-denied"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "unsupported-contract-version"
+              ],
+              "type": "string"
+            },
+            "requested": {
+              "type": "string"
+            },
+            "supported": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "supported"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "report-not-found"
+              ],
+              "type": "string"
+            },
+            "report-id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "report-id"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PublishRefusal": {
+      "description": "Refusals owned by `publish`.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "authorization-denied"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "unsupported-contract-version"
+              ],
+              "type": "string"
+            },
+            "requested": {
+              "type": "string"
+            },
+            "supported": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "supported"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The submitted bytes are not a wiring document.\n\nSame replacement, same reason as [`GateRefusal::InvalidDocument`]: `publish` carries the document (wamn-0h0g.7.10), so it cannot be missing.",
+          "properties": {
+            "detail": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "invalid-document"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "detail",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "report-not-found"
+              ],
+              "type": "string"
+            },
+            "report-id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "report-id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "report-not-successful"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "publish-executable-drift"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "publish-blocked-by-nonterminal-runs"
+              ],
+              "type": "string"
+            },
+            "run-ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "run-ids"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "command-id-reuse"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PublishValidatedDraft": {
+      "additionalProperties": false,
+      "description": "Publish one gated wiring document into a named package version.\n\n# What this carries, and why each field is here (wamn-0h0g.7.10)\n\n`catalog.wirings` needs seven values. `tenant_id` is the authenticated scope's, `wiring_id` and `version` ride the document, and `graph_json` IS the document — but `package_id` and `package_version` ride NEITHER the document nor its hash, which is why `ctl author-wiring` takes both as separate argv. So the command carries them too, and the row is writable from this input alone.\n\n`wiring_hash` is DERIVED SERVER-SIDE and is deliberately absent here. The wamn-0h0g.7.8 close ruling rejected a carried proof value as forgeable and replayable and made the verb compute the identity from the bytes; a literal wire hash field the server trusted would reopen it. A client that wants to state its expectation states it out of band, not as the value written.\n\n`successful_report_id` is GONE. wamn-0h0g.8.5.6 collapsed the report id into `wiring_hash`, and the green-report guard reads the report BY that hash — so the field named an identity the document already determines and had no remaining reader.\n\nThe document rides as its own JSON rather than a typed carrier: these are the exact bytes `catalog.wirings.graph_json` stores, and [`wamn_catalog::WiringDocument::parse`] is the ONE validating reader for them. Typing the field here would put a second structural dialect in front of that one, and — measured — would need `schemars::JsonSchema` derives across `wamn-catalog` and the FROZEN `wamn-event-wire`, which `WiringEventOperation` aliases into. The server parses, validates and hashes; this is the carrier.",
+      "properties": {
+        "document": {
+          "description": "The wiring document itself — `catalog.wirings.graph_json`."
+        },
+        "package-id": {
+          "description": "Package identity the wiring is published into.",
+          "type": "string"
+        },
+        "package-version": {
+          "description": "Exact package version whose component facts gate this document.",
+          "type": "string"
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CommitProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional source attribution written only to the authenticated command audit."
+        },
+        "scope": {
+          "$ref": "#/definitions/AuthoringScope"
+        }
+      },
+      "required": [
+        "document",
+        "package-id",
+        "package-version",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "PublishedWiringIdentity": {
+      "additionalProperties": false,
+      "description": "Immutable identity produced by publishing the tested draft.",
+      "properties": {
+        "artifact-hash": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "wiring-id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact-hash",
+        "version",
+        "wiring-id"
+      ],
+      "type": "object"
+    },
+    "QueryId": {
+      "minLength": 1,
+      "type": "string",
+      "x-max-utf8-bytes": 64
+    },
+    "QueryRefusal": {
+      "description": "An operation-specific query refusal.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "query": {
+              "enum": [
+                "get-report"
+              ],
+              "type": "string"
+            },
+            "reason": {
+              "$ref": "#/definitions/GetReportRefusal"
+            }
+          },
+          "required": [
+            "query",
+            "reason"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ReportProjection": {
+      "description": "One immutable finalized gate report.\n\n`Pending` is DELETED (wamn-0h0g.8.5.5). There is no pending state in a stateless gate: the variant was reachable only while the reservation protocol stood, and the owner ruling of 2026-08-25 struck the whole run-plane report lineage — reservation included. A report either exists for its key or it does not, and `report-not-found` is the truthful answer for the second case.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "passed": {
+              "type": "boolean"
+            },
+            "report-id": {
+              "type": "string"
+            },
+            "state": {
+              "enum": [
+                "finalized"
+              ],
+              "type": "string"
+            },
+            "summary": true,
+            "validated-draft": {
+              "$ref": "#/definitions/ValidatedDraftRef"
+            }
+          },
+          "required": [
+            "passed",
+            "report-id",
+            "state",
+            "summary",
+            "validated-draft"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ValidatedDraftRef": {
+      "additionalProperties": false,
+      "description": "An opaque reference to the exact validated executable.",
+      "properties": {
+        "validated-draft-id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "validated-draft-id"
+      ],
+      "type": "object"
+    }
+  },
+  "description": "A complete request or response document on the authoring contract.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "$ref": "#/definitions/AuthoringRequestEnvelope"
+        },
+        "document": {
+          "enum": [
+            "request"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "document"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "$ref": "#/definitions/AuthoringResponseEnvelope"
+        },
+        "document": {
+          "enum": [
+            "response"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "document"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "AuthoringDocument"
+}

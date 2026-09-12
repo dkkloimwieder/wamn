@@ -1,0 +1,40 @@
+{
+  "commands": [
+    {
+      "label": "renamed",
+      "argv": [
+        "cargo",
+        "+1.98.0",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-authoring-model",
+        "--lib",
+        "--message-format=json-render-diagnostics"
+      ],
+      "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+      "started": "2026-09-12T02:21:42.650272+00:00",
+      "elapsed_seconds": 0.24926595902070403,
+      "exit": 0,
+      "source_sha256": "b2e5e6ceccd5d5542406089dee18533da42bbfbec66551099bfcd3a9f34e95d4",
+      "probe_argv": [
+        "rustc",
+        "+1.98.0",
+        "--edition=2024",
+        "/tmp/consolidation-native-serde-renamed.rs",
+        "-o",
+        "/tmp/consolidation-native-serde-renamed",
+        "-L",
+        "dependency=/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps",
+        "--extern",
+        "serde_json=/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/libserde_json-dd341aca59e6689a.rlib",
+        "--extern",
+        "wamn_authoring_model=/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/libwamn_authoring_model.rlib"
+      ],
+      "probe_exit": 0
+    }
+  ],
+  "source_restored": true,
+  "equal": false
+}

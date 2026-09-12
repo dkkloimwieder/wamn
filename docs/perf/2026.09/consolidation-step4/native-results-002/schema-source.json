@@ -1,0 +1,21 @@
+{
+  "head": "2adc1f6ff9d29f7a1cd7a79840bc1fadf08605a0",
+  "files": {
+    "services/ctl/schema/wamn-dev.schema.json": {
+      "sha256": "1c294f261da1ee6b807527243bc90f53c4b6e0ef6cc7cd73624be5f78e706183",
+      "bytes": 3826
+    },
+    "tests/integration/schema/wamn-journey.example.json": {
+      "sha256": "2ffa692d90f8429d6f21761ded5ce28f5069cdf9cf161dfba2b3a5dd5b72ae9b",
+      "bytes": 1027
+    },
+    "tests/integration/schema/wamn-journey.schema.json": {
+      "sha256": "8e3737180655fe9d6bcfd6e5cebf21e5a29e95ff4d07b5b9203d8c9b876396fc",
+      "bytes": 6906
+    },
+    "tests/integration/schema/wamn-throughput.schema.json": {
+      "sha256": "e26c79f9c01455f9d8e550d71c54c5844d8bf8140c5f4576693e317aaa74d1b2",
+      "bytes": 3379
+    }
+  }
+}

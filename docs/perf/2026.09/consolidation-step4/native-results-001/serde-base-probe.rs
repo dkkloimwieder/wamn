@@ -1,0 +1,1 @@
+fn main() { let mut rows = Vec::new(); for input in ["null", "false", "0", "\"bad\"", "[]"] { let error = serde_json::from_str::<wamn_authoring_model::GateReceipt>(input).unwrap_err().to_string(); rows.push(serde_json::json!({"input": input, "error": error})); } println!("{}", serde_json::to_string_pretty(&rows).unwrap()); }
