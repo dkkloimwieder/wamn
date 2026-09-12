@@ -55,7 +55,7 @@ pub enum Mode {
     /// Verify the stream survived a node deletion (the second half of the
     /// runbook): stream + all messages present, R3 config intact, drainable.
     Heal,
-    /// publish + consume + dedupe + a self-contained R3 leader-stepdown proof.
+    /// publish + consume + dedupe + a self-contained R3 leader-stepdown test.
     All,
 }
 
@@ -86,7 +86,7 @@ pub struct StreamBenchArgs {
     pub messages: usize,
 
     /// Stream replication factor. 3 = R3 (in-cluster / a 3-node local cluster);
-    /// 1 = single-node local iteration (the R3 stepdown proof is skipped).
+    /// 1 = single-node local iteration (the R3 stepdown test is skipped).
     #[arg(long, default_value_t = 3)]
     pub replicas: usize,
 

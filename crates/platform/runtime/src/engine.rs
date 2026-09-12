@@ -501,7 +501,7 @@ mod tests {
         let bytes = wat::parse_str("(module (memory (export \"memory\") 1))")
             .expect("encode the memory fixture");
         let module = Module::new(engine.inner(), bytes).expect("compile the memory fixture");
-        let ctx = SharedCtx::new(Ctx::builder("memory-proof", "memory-proof").build())
+        let ctx = SharedCtx::new(Ctx::builder("memory-test", "memory-test").build())
             .with_guest_memory(engine.guest_memory());
         let mut store = Store::new(engine.inner(), ctx);
         install_memory_limiter(&mut store);
@@ -588,7 +588,7 @@ mod tests {
                 Box::new(std::future::pending::<()>())
             })
             .expect("link the pending host call");
-        let ctx = SharedCtx::new(Ctx::builder("memory-proof", "memory-proof").build())
+        let ctx = SharedCtx::new(Ctx::builder("memory-test", "memory-test").build())
             .with_guest_memory(engine.guest_memory());
         let mut store = Store::new(engine.inner(), ctx);
         install_memory_limiter(&mut store);
@@ -624,7 +624,7 @@ mod tests {
         )
         .expect("encode a memory-bearing guest that spins");
         let module = Module::new(engine.inner(), bytes).expect("compile the spinning guest");
-        let ctx = SharedCtx::new(Ctx::builder("memory-proof", "memory-proof").build())
+        let ctx = SharedCtx::new(Ctx::builder("memory-test", "memory-test").build())
             .with_guest_memory(engine.guest_memory());
         let mut store = Store::new(engine.inner(), ctx);
         install_memory_limiter(&mut store);
@@ -673,7 +673,7 @@ mod tests {
         let bytes = wat::parse_str("(module (memory 1) (func $start unreachable) (start $start))")
             .expect("encode a guest that traps after allocating memory");
         let module = Module::new(engine.inner(), bytes).expect("compile the trapping guest");
-        let ctx = SharedCtx::new(Ctx::builder("memory-proof", "memory-proof").build())
+        let ctx = SharedCtx::new(Ctx::builder("memory-test", "memory-test").build())
             .with_guest_memory(engine.guest_memory());
         let mut store = Store::new(engine.inner(), ctx);
         install_memory_limiter(&mut store);

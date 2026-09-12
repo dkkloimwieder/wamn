@@ -37,11 +37,11 @@ const URL_ENV: &str = "WAMN_SESSION_ROUTE_PG18_URL";
 const PROJECT: &str = "project";
 const TENANT: &str = "tenant-a";
 const ATTACHMENT: &str = "purchase-http";
-const READ: &str = "session-proof:purchase/read@1.0.0";
-const WRITE: &str = "session-proof:purchase/write@1.0.0";
-const OTHER_TENANT: &str = "session-proof:secret/read@1.0.0";
+const READ: &str = "session-test:purchase/read@1.0.0";
+const WRITE: &str = "session-test:purchase/write@1.0.0";
+const OTHER_TENANT: &str = "session-test:secret/read@1.0.0";
 const SECOND_PRINCIPAL: &str = "34f2085c-19d8-474f-b87a-2a29a5357b9b";
-const PASSWORD: &str = "session-route-proof-only";
+const PASSWORD: &str = "session-route-test-only";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
     let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
@@ -57,7 +57,7 @@ async fn install(admin: &Client, database: &str, generation: &str) -> anyhow::Re
         .parse()?;
     anyhow::ensure!(
         version >= 180_000,
-        "the proof requires PostgreSQL 18 or newer"
+        "the test requires PostgreSQL 18 or newer"
     );
     let occupied: bool = admin.query_one(
         "SELECT EXISTS (SELECT FROM pg_namespace WHERE nspname IN ('app_system', 'catalog', 'identity', 'wamn_run')) \
@@ -66,7 +66,7 @@ async fn install(admin: &Client, database: &str, generation: &str) -> anyhow::Re
     ).await?.get(0);
     anyhow::ensure!(
         !occupied,
-        "refuse a populated server: arm only this proof's fresh disposable PostgreSQL server"
+        "refuse a populated server: arm only this test's fresh disposable PostgreSQL server"
     );
     admin
         .batch_execute(
@@ -156,21 +156,21 @@ fn load_release(modes: &[&str]) -> anyhow::Result<Arc<LoadedRelease>> {
     let manifest = json!({
         "format-version": SERVING_MANIFEST_FORMAT_VERSION,
         "release": {"tenant-id": TENANT, "effective-release-id": 1, "environment": "dev",
-            "packages": [{"package-id": "session_proof", "package-version": "1.0.0"}]},
-        "components": [{"package-id": "session_proof", "component": "purchase", "interface-version": "0.1.0",
+            "packages": [{"package-id": "session_test", "package-version": "1.0.0"}]},
+        "components": [{"package-id": "session_test", "component": "purchase", "interface-version": "0.1.0",
             "digest": format!("sha256:{}", "a".repeat(64)), "operations": {
                 READ: {"registered-operation": READ}, WRITE: {"registered-operation": WRITE}
             }}],
-        "wirings": [{"package-id": "session_proof", "wiring-id": "purchase", "wiring-version": 1,
+        "wirings": [{"package-id": "session_test", "wiring-id": "purchase", "wiring-version": 1,
             "graph-hash": format!("sha256:{}", "b".repeat(64))}],
-        "attachments": {ATTACHMENT: {"kind": "http", "package-id": "session_proof", "wiring-id": "purchase",
+        "attachments": {ATTACHMENT: {"kind": "http", "package-id": "session_test", "wiring-id": "purchase",
             "wiring-version": 1, "definition-hash": wamn_execution_contract::canonical_json_sha256(&definition),
             "definition": definition, "auth-policy": {"modes": modes}, "registered-operation": READ}},
         "registrations": {}
     });
     Ok(Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
-        "session route proof",
+        "session route test",
     )?))
 }
 
@@ -245,7 +245,7 @@ fn assert_permission_reads(
 async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_identity()
 -> anyhow::Result<()> {
     let admin_url = std::env::var(URL_ENV)
-        .context("set WAMN_SESSION_ROUTE_PG18_URL to this proof's fresh disposable PG18 server")?;
+        .context("set WAMN_SESSION_ROUTE_PG18_URL to this test's fresh disposable PG18 server")?;
     let admin = connect(&admin_url).await?;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])

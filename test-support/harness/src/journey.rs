@@ -37,12 +37,12 @@ pub struct JourneyDocument {
     pub host_secret_directory: PathBuf,
     pub host_secret_namespace: String,
     pub route_caller_secret_output: PathBuf,
-    /// Copied package sources for the dedicated fresh-only proof.
+    /// Copied package sources for the dedicated fresh-only test.
     /// The initial phase creates this directory before any package admission.
     pub fresh_only_packages: Option<PathBuf>,
-    /// Fresh-install proof with unchanged overlay artifacts.
+    /// Fresh-install test with unchanged overlay artifacts.
     pub overlay_compatibility: Option<CompatibilityPhase>,
-    /// Released materializer replay and retry proof.
+    /// Released materializer replay and retry test.
     pub postcommit: Option<PostcommitPhase>,
     /// Known only after the route phase has provisioned the project
     /// environment and the materializer trigger has produced a receipt. The

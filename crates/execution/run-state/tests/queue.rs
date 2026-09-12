@@ -125,7 +125,7 @@ fn reclaim_classifier_has_exact_three_actions() {
 fn the_default_class_takes_plain_lock_then_lease() {
     // wamn-0h0g.20.2 (a): the eligibility predicate's effect-evidence disjunct
     // opens ONLY for the premium class. A budget-spent expired lease is the
-    // janitor's on the default tier no matter what the effect ledger holds.
+    // janitor's on the default tier no matter what the effect table holds.
     let exhausted = QueueEntry {
         lease_expires_at: Some(90),
         attempts: 2,

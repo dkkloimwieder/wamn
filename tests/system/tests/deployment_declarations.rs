@@ -141,7 +141,7 @@ fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .expect("the system proof package must live at tests/system")
+        .expect("the system test package must live at tests/system")
         .to_path_buf()
 }
 

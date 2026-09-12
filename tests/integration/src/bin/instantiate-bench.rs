@@ -2,7 +2,7 @@
 //! artifact size?
 //!
 //! `wamn.component.instantiate` measures 1.3 ms in the request path. The
-//! fresh-store rule (native-alignment ledger row 4) says every invocation gets a
+//! fresh-store rule (native-alignment entry 4) says every invocation gets a
 //! new instance, so that millisecond is either the price of the rule or the
 //! price of a 20 MB debug artifact -- and those have opposite remedies. This
 //! walks the built guests from 1.2 MB to 20.5 MB against the PRODUCTION engine

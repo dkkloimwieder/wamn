@@ -4,7 +4,7 @@
 //! digest before invoking a pooled component. The guest names only a store
 //! alias; the database must resolve that alias at the component grain and the
 //! mounted format-1 manifest must contain both the exact wiring version/hash and
-//! component tuple. No run, plan, frame or effect-ledger fact participates.
+//! component tuple. No run, plan, frame or effect record participates.
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;

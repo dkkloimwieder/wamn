@@ -270,7 +270,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
              DO $$ BEGIN \
                ASSERT (SELECT rolbypassrls AND rolcanlogin FROM pg_roles \
                         WHERE rolname = '{DISPATCH_READER_ROLE}'), \
-                 'the drift seed must really take, or the re-harden proof is vacuous'; \
+                 'the drift seed must really take, or the re-harden test is vacuous'; \
              END $$;\n"
         ),
     );
@@ -386,7 +386,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
                ('{TENANT}','run-a1'), ('{OTHER_TENANT}','run-b1');\n"
         ),
     );
-    // One effect-ledger row per tenant. `effect_attempts` is the GOVERNED half of
+    // One effect table row per tenant. `effect_attempts` is the GOVERNED half of
     // the dispatch reader's surface, so a cross-tenant discrimination there needs
     // two tenants present exactly as the queue seed above does.
     run_ok(
@@ -559,12 +559,12 @@ END $$;
     // field — so the permissive arm admits every tenant in the database. What
     // narrows a dispatcher statement is the predicate the statement itself carries,
     // exactly as `run_queue` above is narrowed by RLS on a claim the HOST injects.
-    let ledger = run_ok(
+    let attempt_count = run_ok(
         &reader_url,
         &format!("{} SELECT count(*) FROM effect_attempts;\n", session()),
     );
     assert_eq!(
-        ledger, "2",
+        attempt_count, "2",
         "the dispatch reader must reach the governed half of its own read surface"
     );
 
@@ -594,7 +594,7 @@ END $$;
     // denial probe runs inside its `DO` block (reads use `PERFORM`, whose result
     // has somewhere to go), and the plain-SQL form the non-vacuity arm replays as
     // a login generation of the role that owns the grant. `None` means no replay
-    // is possible — see the ledger case.
+    // is possible — see the effect table case.
     let insert_queue =
         format!("INSERT INTO run_queue (tenant_id, run_id) VALUES ('{TENANT}','run-a2')");
     let update_queue =
@@ -609,11 +609,11 @@ END $$;
     let lock_queue_sql = format!("SELECT 1 FROM run_queue WHERE tenant_id = '{TENANT}' FOR UPDATE");
     let read_runs_plpgsql = format!("PERFORM 1 FROM runs WHERE tenant_id = '{TENANT}'");
     let read_runs_sql = format!("SELECT 1 FROM runs WHERE tenant_id = '{TENANT}'");
-    // No replay arm: no in-tree principal holds INSERT on the ledger, so there is
+    // No replay arm: no in-tree principal holds INSERT on the effect table, so there is
     // none to show the statement legal with. It stays because privilege is
     // checked BEFORE column constraints — a 42501 here can only be the missing
     // grant — and the RLS discrimination in `assert_denied` still applies.
-    let insert_ledger =
+    let insert_attempt =
         format!("INSERT INTO effect_attempts (tenant_id, run_id) VALUES ('{TENANT}','run-a1')");
 
     // The management admitter is the ONE principal the schema of record grants a
@@ -680,7 +680,7 @@ END $$;
             read_runs_plpgsql.as_str(),
             Some((app_url.as_str(), read_runs_sql.as_str())),
         ),
-        ("INSERT into effect_attempts", insert_ledger.as_str(), None),
+        ("INSERT into effect_attempts", insert_attempt.as_str(), None),
     ] {
         assert_denied(&reader_url, label, plpgsql);
         if let Some((replay_url, replay)) = replay {

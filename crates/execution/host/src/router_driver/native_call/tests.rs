@@ -19,8 +19,8 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 use super::prepare_native;
 
-const OBSERVE: &str = "proof:readiness/observe@1.0.0";
-const HANDLER: &str = "proof:readiness/handler@1.0.0";
+const OBSERVE: &str = "test:readiness/observe@1.0.0";
+const HANDLER: &str = "test:readiness/handler@1.0.0";
 const CHILD_MARKER: &str = "WAMN_NATIVE_READINESS_CHILD";
 const PAGE: usize = 65_536;
 const DEADLINE: Duration = Duration::from_millis(200);
@@ -77,7 +77,7 @@ struct Observer {
 #[async_trait::async_trait]
 impl HostPlugin for Observer {
     fn id(&self) -> &'static str {
-        "native-readiness-proof"
+        "native-readiness-test"
     }
 
     fn world(&self) -> WitWorld {
@@ -131,10 +131,10 @@ async fn load_fixture(case: Case) -> Fixture {
     });
     let unresolved = engine
         .initialize_workload(
-            "native-readiness-proof",
+            "native-readiness-test",
             Workload {
-                namespace: "proof".into(),
-                name: "native-readiness-proof".into(),
+                namespace: "test".into(),
+                name: "native-readiness-test".into(),
                 annotations: HashMap::new(),
                 service: None,
                 components: vec![Component {
@@ -236,7 +236,7 @@ async fn assert_readiness(case: Case) {
         .workload
         .unbind_all_plugins()
         .await
-        .expect("unbind readiness proof workload");
+        .expect("unbind readiness test workload");
 }
 
 fn isolated(name: &str, case: Case) {
@@ -246,7 +246,7 @@ fn isolated(name: &str, case: Case) {
             .args(["--exact", &full_name, "--nocapture"])
             .env(CHILD_MARKER, name)
             .output()
-            .expect("start isolated readiness proof");
+            .expect("start isolated readiness test");
         assert!(
             output.status.success(),
             "{full_name}: {}\n{}\n{}",
@@ -260,7 +260,7 @@ fn isolated(name: &str, case: Case) {
     let (done, finished) = mpsc::channel();
     let watchdog = std::thread::spawn(move || {
         if finished.recv_timeout(Duration::from_secs(60)) == Err(mpsc::RecvTimeoutError::Timeout) {
-            eprintln!("native readiness proof exceeded its process watchdog");
+            eprintln!("native readiness test exceeded its process watchdog");
             std::process::exit(124);
         }
     });

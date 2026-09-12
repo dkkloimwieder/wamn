@@ -1,6 +1,6 @@
 [package]
 name = "wamn-test-infrastructure"
-description = "Repository-only temporary infrastructure and proof adapters."
+description = "Repository-only temporary infrastructure and test adapters."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

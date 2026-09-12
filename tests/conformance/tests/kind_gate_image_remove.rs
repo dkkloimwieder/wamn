@@ -327,7 +327,7 @@ fn kubernetes_workload_reference_is_a_hard_blocker() {
     let workloads = json!({
         "items": [{
             "kind": "Job",
-            "metadata": { "namespace": "wamn-system", "name": "retained-proof" },
+            "metadata": { "namespace": "wamn-system", "name": "retained-test" },
             "spec": {
                 "template": {
                     "spec": { "containers": [{ "image": SELECTED }] }

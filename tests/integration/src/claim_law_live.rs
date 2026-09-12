@@ -7,7 +7,7 @@
 //!
 //! The first consumer is `wamn-wms:inventory/move@1.0.0`. It is create-shaped:
 //! the claim row mints `movement_id`, and every later caller depends on that
-//! id being the same one after a replay. The claim ledger table carries no
+//! id being the same one after a replay. The claim table carries no
 //! foreign key to the pallet, so the two cases need the migration and nothing
 //! else.
 //!

@@ -65,7 +65,7 @@ pub struct ReaderBenchArgs {
     pub filter_entity: Option<String>,
 
     /// If set, assert EVERY delivered envelope carries a causation stamp whose
-    /// `run` equals this value (wamn-l5i9.12) — the in-cluster proof that a
+    /// `run` equals this value (wamn-l5i9.12) — the in-cluster test that a
     /// transactional `wamn.causation` message stitched through to the stream.
     #[arg(long)]
     pub expect_causation_run: Option<String>,

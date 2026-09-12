@@ -19,7 +19,7 @@ use crate::{RunStatus, sql as run_sql};
 /// The effect-attempt disjunct is CLASS-GATED (wamn-0h0g.20.2): it fires only
 /// for a `durable` run. On the default `standard` class the crash budget is the
 /// whole eligibility story, so a budget-spent expired lease is left for the
-/// janitor exactly as it would be with no effect ledger at all. The predicate is
+/// janitor exactly as it would be with no effect table at all. The predicate is
 /// correlated to `selected_run`, the row this statement already joins and locks,
 /// so the gate costs no extra relation and no extra lookup.
 ///
@@ -117,7 +117,7 @@ pub fn serialize_effect_intent_sql() -> String {
 /// Replace the abandoned attempt's run-level state. `$1` is the selected run id.
 ///
 /// `state_json` and the claim-time manifest record are the only run columns
-/// changed; immutable ledgers and the already-materialized resolution map are
+/// changed; immutable tables and the already-materialized resolution map are
 /// preserved. The manifest digest is projection of the DEAD attempt, so it
 /// joins that replacement set (wamn-0h0g.15.55): this clears it in the same
 /// transaction that re-opens the run, and the grant below records the

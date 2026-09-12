@@ -11,7 +11,7 @@ impl ScratchRoot {
     pub fn create() -> anyhow::Result<Self> {
         let path = scratch_root();
         let _ = std::fs::remove_dir_all(&path);
-        std::fs::create_dir_all(&path).context("create route-auth proof directory")?;
+        std::fs::create_dir_all(&path).context("create route-auth test directory")?;
         Ok(Self(path))
     }
 

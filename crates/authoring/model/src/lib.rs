@@ -136,7 +136,7 @@ pub enum AuthoringResponseEnvelope {
     Query(AuthoringQueryResponse),
 }
 
-/// One idempotent ledgered command.
+/// One idempotent command recorded in the command audit table.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AuthoringRequest {
@@ -156,7 +156,7 @@ pub struct AuthoringResponse {
     pub outcome: AuthoringOutcome,
 }
 
-/// One correlation-only, non-ledgered query.
+/// One correlation-only query without a command audit record.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AuthoringQueryRequest {
@@ -194,7 +194,7 @@ pub enum AuthoringCommand {
     Publish(PublishValidatedDraft),
 }
 
-/// Stable command names used by response and ledger vocabulary.
+/// Stable command names used by response and command table vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthoringCommandKind {
@@ -366,7 +366,7 @@ pub struct Gate {
 /// this input alone.
 ///
 /// `wiring_hash` is DERIVED SERVER-SIDE and is deliberately absent here. The
-/// wamn-0h0g.7.8 close ruling rejected a carried proof value as forgeable and
+/// wamn-0h0g.7.8 close ruling rejected a client-supplied hash as forgeable and
 /// replayable and made the verb compute the identity from the bytes; a literal
 /// wire hash field the server trusted would reopen it. A client that wants to
 /// state its expectation states it out of band, not as the value written.

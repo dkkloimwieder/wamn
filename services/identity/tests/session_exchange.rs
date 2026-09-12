@@ -38,7 +38,7 @@ use wamn_platform_identity::{
     issue_pat, revoke_pat, revoke_project_env_membership,
 };
 
-const ISSUER: &str = "https://identity.session-proof.internal";
+const ISSUER: &str = "https://identity.session-test.internal";
 const PASSWORD: &str = "session-exchange-disposable-fixture-password";
 const TENANT: &str = "session-tenant-a";
 const OTHER_TENANT: &str = "session-tenant-b";
@@ -145,18 +145,18 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     let alice_pat = issue_pat(
         system,
         alice.id(),
-        "session proof",
+        "session test",
         Duration::from_secs(3600),
     )
     .await
     .expect_redacted("human PAT");
-    let bob_pat = issue_pat(system, bob.id(), "session proof", Duration::from_secs(3600))
+    let bob_pat = issue_pat(system, bob.id(), "session test", Duration::from_secs(3600))
         .await
         .expect_redacted("other PAT");
     let service_pat = issue_pat(
         system,
         service.id(),
-        "session proof",
+        "session test",
         Duration::from_secs(3600),
     )
     .await
@@ -981,7 +981,7 @@ async fn retire_reader_cli(admin: &str, target: &SessionTarget) -> std::process:
         .expect_redacted("this worktree's default-target ctl binary");
     assert!(
         binary == expected,
-        "retirement proof must use this worktree's compiled ctl"
+        "retirement test must use this worktree's compiled ctl"
     );
     let mut project = url::Url::parse(admin).expect_redacted("administrator URL shape");
     project.set_path(&format!("/{}", target.connection().database()));
@@ -1084,7 +1084,7 @@ async fn setup() -> Fixture {
     let system = connect(&raw).await;
     let safe: bool = system.client.query_one("SELECT current_database()='wamn_system' AND current_setting('server_version_num')::int BETWEEN 180000 AND 189999 AND rolsuper FROM pg_roles WHERE rolname=current_user", &[])
         .await.expect_redacted("disposable PG18 preflight").get(0);
-    assert!(safe, "proof needs dedicated PostgreSQL 18 superuser setup");
+    assert!(safe, "test needs dedicated PostgreSQL 18 superuser setup");
     let issuer_role = identity_issuer_generation_role(ISSUER, CredentialGeneration::A)
         .expect_redacted("issuer role");
     let mut roles = vec![

@@ -1204,7 +1204,7 @@ mod tests {
         assert_ne!(
             project_env_database_name(org_id, project, env, &replay),
             project_env_database_name(org_id, project, env, offered),
-            "the proof must distinguish the stored and offered physical names"
+            "the test must distinguish the stored and offered physical names"
         );
         drop(admin);
         let _ = task.await;

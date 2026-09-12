@@ -18,13 +18,13 @@ fn main() {
     let manifest = fs::read_to_string("Cargo.toml").expect("system Cargo.toml reads");
     assert!(
         !manifest.contains("services/"),
-        "system proofs must not depend on service package paths"
+        "system tests must not depend on service package paths"
     );
     for forbidden in FORBIDDEN_CRATES {
         let package = forbidden.replace('_', "-");
         assert!(
             !manifest.contains(&package),
-            "system proofs must not declare forbidden service package `{}`",
+            "system tests must not declare forbidden service package `{}`",
             package
         );
     }

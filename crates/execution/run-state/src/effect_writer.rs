@@ -1,4 +1,4 @@
-//! Private native effect-ledger statements.
+//! Private native effect table statements.
 //!
 //! This module deliberately exports no SQL or general writer interface. The
 //! non-default native feature keeps private statements beside their opaque
@@ -37,7 +37,7 @@ pub struct EffectWriterScope<'a> {
 /// running. That binding is the host's, and it must stay strictly UPSTREAM of
 /// [`EffectWriterClient::begin_attempt`]: owner ruling `wamn-0h0g.15.66` restored
 /// it as a pre-check so no attempt row can ever exist carrying a plan hash outside
-/// the run's release closure, which is what keeps the ledger audit-clean. An
+/// the run's release closure, which is what keeps effect records attributable. An
 /// attempt inserted before that check would defeat it, because the row is
 /// immutable and cannot be withdrawn.
 ///
@@ -149,7 +149,7 @@ impl std::error::Error for EffectWriterError {
     }
 }
 
-/// Opaque connection-backed writer for the three typed ledger operations.
+/// Opaque connection-backed writer for the three typed effect operations.
 ///
 /// The constructor accepts only the strict fixed-Secret document plus the
 /// host-held expected scope. It exposes neither a URL nor its private pool.
@@ -266,7 +266,7 @@ impl EffectWriterClient {
             .start()
             .await
             .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin ledger transaction")
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin effect transaction")
                     .with_source(source)
             })?;
         transaction
@@ -276,7 +276,7 @@ impl EffectWriterClient {
             )
             .await
             .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "bind ledger authority")
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "bind effect authority")
                     .with_source(source)
             })?;
         let membership = transaction
@@ -452,7 +452,7 @@ impl EffectWriterClient {
             .start()
             .await
             .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin ledger transaction")
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin effect transaction")
                     .with_source(source)
             })?;
         transaction
@@ -462,7 +462,7 @@ impl EffectWriterClient {
             )
             .await
             .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "bind ledger authority")
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "bind effect authority")
                     .with_source(source)
             })?;
         let row = transaction
@@ -533,7 +533,7 @@ impl EffectWriterClient {
             .start()
             .await
             .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin ledger transaction")
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin effect transaction")
                     .with_source(source)
             })?;
         transaction
@@ -543,7 +543,7 @@ impl EffectWriterClient {
             )
             .await
             .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "bind ledger authority")
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "bind effect authority")
                     .with_source(source)
             })?;
         let params: [&(dyn tokio_postgres::types::ToSql + Sync); 3] = [

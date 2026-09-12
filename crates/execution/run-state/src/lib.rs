@@ -42,8 +42,8 @@ pub mod effect_writer_credential;
 /// The framed scope digest and the guest-SQL tenant key.
 #[cfg(feature = "tenant-key")]
 pub mod tenant_scope;
-// Host-only effect-ledger statements stay out of the default guest-safe graph.
-// The attempt-ledger adapter remains unmounted in production. See the module doc.
+// Host-only effect table statements stay out of the default guest-safe graph.
+// The attempt table adapter remains unmounted in production. See the module doc.
 #[cfg(feature = "native")]
 mod effect_writer;
 /// RUN-* as plain `fn check(state)` functions, for the pure decision tests to

@@ -16,7 +16,7 @@ use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_BODY_BYTES: usize = 65_536;
-const UNKNOWN_KID: &str = "identity-jwks-proof-unknown-key";
+const UNKNOWN_KID: &str = "identity-jwks-test-unknown-key";
 
 /// Public inputs only: exact issuer, endpoint, certificate roots, and expected IDs.
 #[derive(Debug, Args)]
@@ -38,7 +38,7 @@ pub struct IdentityKeysTestArgs {
 pub async fn run(args: IdentityKeysTestArgs) -> anyhow::Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, exercise(args))
         .await
-        .map_err(|_| anyhow!("IDENTITY-JWKS proof exceeded ninety seconds"))?
+        .map_err(|_| anyhow!("IDENTITY-JWKS test exceeded ninety seconds"))?
 }
 
 async fn exercise(args: IdentityKeysTestArgs) -> anyhow::Result<()> {

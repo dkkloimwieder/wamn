@@ -1,4 +1,4 @@
-//! Strict shared credential document for the private effect-ledger writer.
+//! Strict shared credential document for the private effect table writer.
 
 use std::fmt;
 use std::time::SystemTime;
@@ -16,7 +16,7 @@ pub const EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION: &str = "0.2";
 pub const EFFECT_WRITER_CREDENTIAL_KEY: &str = "credential.json";
 /// Stable absolute path read by the executor's private loader.
 pub const EFFECT_WRITER_CREDENTIAL_PATH: &str = "/etc/wamn/effect-writer/credential.json";
-/// Stable NOLOGIN role carrying ledger authority and narrow fenced-run reads.
+/// Stable NOLOGIN role carrying effect authority and narrow fenced-run reads.
 pub const EFFECT_WRITER_ROLE: &str = "wamn_effect_writer";
 /// Legacy role name accepted only while preserving existing generation memberships.
 pub const RUN_PROJECTION_WRITER_ROLE: &str = "wamn_run_projection_writer";

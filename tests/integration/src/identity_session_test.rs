@@ -112,15 +112,15 @@ fn cases(bytes: &[u8]) -> anyhow::Result<Vec<Case>> {
 async fn read_file(path: &Path) -> anyhow::Result<Vec<u8>> {
     let file = tokio::fs::File::open(path)
         .await
-        .map_err(|_| anyhow!("read identity proof input failed"))?;
+        .map_err(|_| anyhow!("read identity test input failed"))?;
     let mut body = Vec::new();
     file.take((MAX_BYTES + 1) as u64)
         .read_to_end(&mut body)
         .await
-        .map_err(|_| anyhow!("read identity proof input failed"))?;
+        .map_err(|_| anyhow!("read identity test input failed"))?;
     ensure!(
         body.len() <= MAX_BYTES,
-        "identity proof input exceeds the size bound"
+        "identity test input exceeds the size bound"
     );
     Ok(body)
 }
@@ -153,17 +153,17 @@ fn exact_header(
 fn unix_seconds() -> anyhow::Result<i64> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| anyhow!("identity proof clock refused"))?
+        .map_err(|_| anyhow!("identity test clock refused"))?
         .as_secs()
         .try_into()
-        .map_err(|_| anyhow!("identity proof clock refused"))
+        .map_err(|_| anyhow!("identity test clock refused"))
 }
 
 /// Observe every protected case over the actual configured HTTPS service.
 pub async fn run(args: IdentitySessionTestArgs) -> anyhow::Result<()> {
     tokio::time::timeout(TEST_TIMEOUT, observe(args))
         .await
-        .map_err(|_| anyhow!("identity session proof exceeded ninety seconds"))?
+        .map_err(|_| anyhow!("identity session test exceeded ninety seconds"))?
 }
 
 async fn observe(args: IdentitySessionTestArgs) -> anyhow::Result<()> {
@@ -385,13 +385,13 @@ async fn create_fixture(url: &str) -> anyhow::Result<Vec<u8>> {
             .map_err(|_| anyhow!("identity session fixture clock refused"))?.as_nanos();
         let transaction = client.transaction().await
             .map_err(|_| anyhow!("begin identity session fixture transaction failed"))?;
-        let human = create_human(&transaction, &format!("session-fixture-human-{suffix}-{}", std::process::id()), "Disposable session proof human").await
+        let human = create_human(&transaction, &format!("session-fixture-human-{suffix}-{}", std::process::id()), "Disposable session test human").await
             .map_err(|_| anyhow!("create identity session fixture human failed"))?;
-        let service = create_service(&transaction, &format!("session-fixture-service-{suffix}-{}", std::process::id()), "Disposable session proof service").await
+        let service = create_service(&transaction, &format!("session-fixture-service-{suffix}-{}", std::process::id()), "Disposable session test service").await
             .map_err(|_| anyhow!("create identity session fixture service failed"))?;
-        let human_pat = issue_pat(&transaction, human.id(), "Disposable session proof", Duration::from_secs(3600)).await
+        let human_pat = issue_pat(&transaction, human.id(), "Disposable session test", Duration::from_secs(3600)).await
             .map_err(|_| anyhow!("issue identity session fixture human PAT failed"))?;
-        let service_pat = issue_pat(&transaction, service.id(), "Disposable session proof", Duration::from_secs(3600)).await
+        let service_pat = issue_pat(&transaction, service.id(), "Disposable session test", Duration::from_secs(3600)).await
             .map_err(|_| anyhow!("issue identity session fixture service PAT failed"))?;
         let bytes = serde_json::to_vec(&FixtureDocument {
             human_id: human.id().as_str(), human_pat: human_pat.token(),

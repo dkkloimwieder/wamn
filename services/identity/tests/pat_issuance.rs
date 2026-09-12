@@ -33,7 +33,7 @@ use wamn_platform_identity::{
     PrincipalId, authenticate_pat, create_human, create_service, disable_principal, revoke_pat,
 };
 
-const ISSUER: &str = "https://identity.pat-proof.internal";
+const ISSUER: &str = "https://identity.pat-test.internal";
 const PASSWORD: &str = "operator-pat-disposable-fixture-password";
 const SYSTEM_SCHEMA: &str = include_str!("../../../deploy/sql/system-schema.sql");
 const FORBIDDEN: &str = "{\"error\":\"operator certificate required\"}";
@@ -134,7 +134,7 @@ async fn operator_pat_issuance_over_https() {
     });
     let safe: bool = system.query_one("SELECT current_database()='wamn_system' AND current_setting('server_version_num')::int BETWEEN 180000 AND 189999 AND rolsuper FROM pg_roles WHERE rolname=current_user", &[])
         .await.expect_redacted("disposable PG18 preflight").get(0);
-    assert!(safe, "proof needs dedicated PostgreSQL 18 superuser setup");
+    assert!(safe, "test needs dedicated PostgreSQL 18 superuser setup");
     let role = identity_issuer_generation_role(ISSUER, CredentialGeneration::A)
         .expect_redacted("issuer role");
     let exists: bool = system
@@ -353,7 +353,7 @@ async fn operator_pat_issuance_over_https() {
     assert!(
         authenticate_pat(&system, &forged)
             .await
-            .expect_redacted("full secret proof")
+            .expect_redacted("full secret test")
             .is_none(),
         "known prefix alone is insufficient"
     );
@@ -364,7 +364,7 @@ async fn operator_pat_issuance_over_https() {
     assert!(
         authenticate_pat(&system, token)
             .await
-            .expect_redacted("revocation proof")
+            .expect_redacted("revocation test")
             .is_none()
     );
     let machine_token = machine_pat["token"].as_str().expect("machine PAT string");
@@ -374,7 +374,7 @@ async fn operator_pat_issuance_over_https() {
     assert!(
         authenticate_pat(&system, machine_token)
             .await
-            .expect_redacted("principal disable proof")
+            .expect_redacted("principal disable test")
             .is_none()
     );
     let expired_pat = success(
@@ -393,7 +393,7 @@ async fn operator_pat_issuance_over_https() {
             expired_pat["token"].as_str().expect("expiry token")
         )
         .await
-        .expect_redacted("expiry proof")
+        .expect_redacted("expiry test")
         .is_none()
     );
 
@@ -716,15 +716,15 @@ async fn snapshots(system: &Client, exclude_pats: bool) -> Vec<Vec<String>> {
 fn unused_target(admin: &url::Url) -> SessionTarget {
     let triple = Triple {
         org: "acme".into(),
-        project: "patproof".into(),
+        project: "pattest".into(),
         env: "dev".into(),
     };
-    let database = project_env_database_name("acme", "patproof", "dev", "patproof");
+    let database = project_env_database_name("acme", "pattest", "dev", "pattest");
     let role = workload_generation_role(
         WorkloadRoleFamily::SessionRoleReader,
         WorkloadRoleScope::ProjectEnvironment {
             org: "acme",
-            project: "patproof",
+            project: "pattest",
             environment: "dev",
             database: &database,
         },
@@ -739,7 +739,7 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
     url.set_path(&database);
     url.set_query(None);
     url.set_fragment(None);
-    SessionTarget::new(&triple, "patproof", "pat-tenant", url.as_str())
+    SessionTarget::new(&triple, "pattest", "pat-tenant", url.as_str())
         .expect_redacted("unused configured audience")
 }
 

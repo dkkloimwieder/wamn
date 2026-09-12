@@ -10,8 +10,8 @@ mod tests {
 
     fn artifact() -> ArtifactIdentity {
         ArtifactIdentity::new(
-            ArtifactId::new("tenant-a", "catalog-proof", 1).expect("proof artifact id"),
-            ArtifactHash::parse(format!("sha256:{}", "1".repeat(64))).expect("proof artifact hash"),
+            ArtifactId::new("tenant-a", "catalog-test", 1).expect("test artifact id"),
+            ArtifactHash::parse(format!("sha256:{}", "1".repeat(64))).expect("test artifact hash"),
         )
     }
 

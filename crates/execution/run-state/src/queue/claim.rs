@@ -84,7 +84,7 @@ pub fn claim_state(entry: &QueueEntry, now: Millis) -> ClaimState {
 /// THE CLASS GATE (wamn-0h0g.20.2). The effect-evidence disjunct is the crash
 /// floor's entry point into the claim path, and it opens only for
 /// [`DurabilityClass::Durable`]. On the default `standard` class this reduces to
-/// [`claim_state`] no matter what the ledger holds — plain lock-then-lease, the
+/// [`claim_state`] no matter what the effect table holds — plain lock-then-lease, the
 /// crash budget deciding alone. The gate lives in
 /// [`DurabilityClass::admits_effect_evidence`] so this predicate, the classifier
 /// below, and the SQL in `queue/sql.rs` all answer to one decision.

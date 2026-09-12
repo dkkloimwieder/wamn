@@ -147,14 +147,14 @@ fn run_state_live() {
         WorkloadRoleFamily::App,
         &database,
         &app_login,
-        "transitions-app-proof-password",
+        "transitions-app-test-password",
         "2099-01-01T00:00:00Z",
     );
     let executor_generation = provision_sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::ExecutorPlatform,
         &database,
         EXECUTOR_LOGIN,
-        "transitions-proof-password",
+        "transitions-test-password",
         "2099-01-01T00:00:00Z",
     );
     success(
@@ -713,7 +713,7 @@ fn run_state_live() {
     // record freely even while carrying an attributed effect. If this leg ever
     // reds, `park_sql` — which carries the same class predicate on the same
     // `EXISTS` — aborts on this guard for every standard run that ever reached
-    // the effect ledger, and the run plane loses the arm that reopens
+    // the effect table, and the run plane loses the arm that reopens
     // claimability (wamn-0h0g.15.82).
     success(
         &url,

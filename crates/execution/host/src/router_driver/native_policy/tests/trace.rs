@@ -37,7 +37,7 @@ impl TraceCapture {
             .with_simple_exporter(exporter.clone())
             .build();
         let subscriber = tracing_subscriber::registry()
-            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("native-call-proof")));
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("native-call-test")));
         let dispatcher = tracing::Dispatch::new(subscriber);
         let incoming = SpanContext::new(
             TraceId::from_bytes([0x41; 16]),
@@ -84,7 +84,7 @@ impl TraceCapture {
             .filter(|span| {
                 matches!(
                     span.name.as_ref(),
-                    "wamn.component.invoke" | "proof.host.observe"
+                    "wamn.component.invoke" | "test.host.observe"
                 )
             })
             .take(8)
@@ -131,7 +131,7 @@ impl TraceCapture {
         }
         let effects: Vec<_> = spans
             .iter()
-            .filter(|span| span.name == "proof.host.observe")
+            .filter(|span| span.name == "test.host.observe")
             .collect();
         assert_eq!(
             effects.len(),

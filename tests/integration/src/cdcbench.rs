@@ -543,7 +543,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
     ))
     .await
     .context("grants")?;
-    println!("provisioned {DB} from deploy/sql + the real builders (drift-proof)");
+    println!("provisioned {DB} from deploy/sql + the real builders (with drift checks)");
     Ok((admin, db))
 }
 

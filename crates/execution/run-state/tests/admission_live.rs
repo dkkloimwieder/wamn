@@ -72,14 +72,14 @@ fn surviving_authority_matrix_live() {
         WorkloadRoleFamily::ExecutorPlatform,
         &database,
         EXECUTOR_LOGIN,
-        "executor-proof-password",
+        "executor-test-password",
         "2099-01-01T00:00:00Z",
     );
     let management_provision = sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::ManagementAdmitter,
         &database,
         MANAGEMENT_LOGIN,
-        "management-proof-password",
+        "management-test-password",
         "2099-01-01T00:00:00Z",
     );
     let management_surface = sql::grant_management_admitter_surface_sql("wamn_run");

@@ -1234,7 +1234,7 @@ mod tests {
             "nested identity test requires PostgreSQL 18"
         );
         wamn_ctl::dev::environment::reset_control_store(&system).await?;
-        system.execute("INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ($1, 'pooled', 'http-reuse-proof')", &[&TENANT]).await?;
+        system.execute("INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ($1, 'pooled', 'http-reuse-test')", &[&TENANT]).await?;
         system
             .execute(
                 "INSERT INTO registry.projects (org, id) VALUES ($1, $2)",
@@ -1247,7 +1247,7 @@ mod tests {
         let pat = issue_pat(
             &system,
             principal.id(),
-            "nested proof",
+            "nested test",
             Duration::from_secs(600),
         )
         .await?;

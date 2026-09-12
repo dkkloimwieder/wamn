@@ -64,7 +64,7 @@ mod tests {
         std::env::var(key)
             .ok()
             .filter(|value| !value.is_empty())
-            .with_context(|| format!("set {key} for the virtualized std guest proof"))
+            .with_context(|| format!("set {key} for the virtualized std guest test"))
     }
 
     fn import_packages(
@@ -233,10 +233,10 @@ mod tests {
     async fn connection_origin() -> anyhow::Result<(String, tokio::task::JoinHandle<Vec<u8>>)> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
-            .context("bind the connection-proof origin")?;
+            .context("bind the connection-test origin")?;
         let address = listener
             .local_addr()
-            .context("read the connection-proof origin address")?;
+            .context("read the connection-test origin address")?;
         let served = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("the probe connects");
             let mut head = Vec::new();
@@ -379,7 +379,7 @@ mod tests {
             .uri(format!("http://{ROUTE_AUTHORITY}{ROUTE_PATH}"))
             .header("content-type", "application/json")
             .body(body)
-            .context("build the proof request")?;
+            .context("build the test request")?;
         let (request, request_io) = wasmtime_wasi_http::p3::Request::from_http(request);
         // Keep the fresh store driving P3 streams until the response body is collected.
         let response = store
@@ -458,7 +458,7 @@ mod tests {
             artifact_base,
             component_wasm,
             upstream_base_url,
-            path_and_query: "/connection-proof".to_owned(),
+            path_and_query: "/connection-test".to_owned(),
         })
         .await
         .context("build the released virtualized probe route")?;
@@ -471,7 +471,7 @@ mod tests {
                 environment: ENVIRONMENT.to_owned(),
                 wiring_id: WIRING_ID.to_owned(),
                 wiring_version: WIRING_VERSION,
-                delivery_id: "virtualized-environment-proof".to_owned(),
+                delivery_id: "virtualized-environment-test".to_owned(),
                 payload: serde_json::json!({"proof": "environment"}),
                 caller_attached: true,
                 caller: None,
@@ -482,7 +482,7 @@ mod tests {
             .context("run the virtualized probe through RouterDriver")?;
         ensure!(
             delivery.outcome.result["sentinel-key"] == SENTINEL_KEY,
-            "the guest and native proof disagree on the sentinel identity"
+            "the guest and native test disagree on the sentinel identity"
         );
         ensure!(
             delivery.outcome.result["sentinel-visible"] == false,
@@ -497,7 +497,7 @@ mod tests {
                 environment: ENVIRONMENT.to_owned(),
                 wiring_id: WIRING_ID.to_owned(),
                 wiring_version: WIRING_VERSION,
-                delivery_id: "virtualized-connection-proof".to_owned(),
+                delivery_id: "virtualized-connection-test".to_owned(),
                 payload: serde_json::json!({"proof": "connection"}),
                 caller_attached: true,
                 caller: None,
@@ -515,8 +515,8 @@ mod tests {
             .context("the virtualized probe did not reach its loopback origin")?
             .context("the loopback origin task failed")?;
         ensure!(
-            request_head.starts_with(b"POST /connection-proof HTTP/1.1\r\n"),
-            "the connection proof reached the wrong operation: {}",
+            request_head.starts_with(b"POST /connection-test HTTP/1.1\r\n"),
+            "the connection test reached the wrong operation: {}",
             String::from_utf8_lossy(&request_head)
         );
 

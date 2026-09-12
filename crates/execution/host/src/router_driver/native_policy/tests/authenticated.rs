@@ -36,12 +36,12 @@ mod session_fixture;
 use session_fixture::{ORG, Server, claims, header, signed};
 
 const URL_ENV: &str = "WAMN_NATIVE_B_AUTH_PG_URL";
-const PROJECT: &str = "proof";
+const PROJECT: &str = "test";
 const TENANT: &str = "tenant-a";
-const ENVIRONMENT: &str = "proof";
-const AUDIENCE: &str = "urn:wamn:project-env:org-a:proof:proof:native-b";
-const ATTACHMENT: &str = "native-proof-http";
-const PASSWORD: &str = "native-b-disposable-proof-only";
+const ENVIRONMENT: &str = "test";
+const AUDIENCE: &str = "urn:wamn:project-env:org-a:test:test:native-b";
+const ATTACHMENT: &str = "native-test-http";
+const PASSWORD: &str = "native-b-disposable-test-only";
 const TEST_NAME: &str = "native_authenticated_nested_authority_and_lifecycle";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
@@ -59,7 +59,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
         .parse()?;
     anyhow::ensure!(
         version >= 180_000,
-        "native authenticated proof requires PostgreSQL 18"
+        "native authenticated test requires PostgreSQL 18"
     );
     let occupied: bool = admin.query_one(
         "SELECT EXISTS (SELECT FROM pg_namespace WHERE nspname IN ('app_system', 'catalog', 'identity', 'wamn_run')) \
@@ -68,7 +68,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     ).await?.get(0);
     anyhow::ensure!(
         !occupied,
-        "refuse populated PostgreSQL: arm only this proof's fresh disposable server"
+        "refuse populated PostgreSQL: arm only this test's fresh disposable server"
     );
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
@@ -189,7 +189,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     });
     let release = Arc::new(LoadedRelease::load_canonical_bytes(
         &wamn_execution_contract::canonical_json_bytes(&manifest),
-        "native session route proof",
+        "native session route test",
     )?);
     let route = FlowHttpRouting::new(Some(release), RouteInFlightLimit::default())
         .with_session_authentication(authentication);
@@ -486,7 +486,7 @@ async fn assert_case(scenario: Scenario, caller: &AuthenticatedCaller) {
 
 async fn assert_authenticated() -> anyhow::Result<()> {
     let admin_url = std::env::var(URL_ENV).with_context(|| {
-        format!("set {URL_ENV} to this proof's fresh disposable PostgreSQL 18 server")
+        format!("set {URL_ENV} to this test's fresh disposable PostgreSQL 18 server")
     })?;
     let (mut server, route) = authentication_fixture(&admin_url).await?;
     let parent_only = authenticated(&route, false).await;
@@ -507,7 +507,7 @@ async fn assert_authenticated() -> anyhow::Result<()> {
 }
 
 #[test]
-#[ignore = "requires WAMN_NATIVE_B_AUTH_PG_URL naming this proof's fresh disposable PostgreSQL 18 server"]
+#[ignore = "requires WAMN_NATIVE_B_AUTH_PG_URL naming this test's fresh disposable PostgreSQL 18 server"]
 fn native_authenticated_nested_authority_and_lifecycle() {
     let full_name = format!("router_driver::native_policy::tests::authenticated::{TEST_NAME}");
     if std::env::var(CHILD_MARKER).as_deref() != Ok(TEST_NAME) {
@@ -515,7 +515,7 @@ fn native_authenticated_nested_authority_and_lifecycle() {
             .args(["--exact", &full_name, "--include-ignored", "--nocapture"])
             .env(CHILD_MARKER, TEST_NAME)
             .output()
-            .expect("start isolated authenticated native proof");
+            .expect("start isolated authenticated native test");
         assert!(
             output.status.success(),
             "{full_name}: {}\n{}\n{}",
@@ -526,7 +526,7 @@ fn native_authenticated_nested_authority_and_lifecycle() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(
             stdout.contains("1 passed"),
-            "subprocess executed the named proof"
+            "subprocess executed the named test"
         );
         assert_eq!(
             stdout.matches("authenticated-native-case=").count(),
@@ -557,7 +557,7 @@ fn native_authenticated_nested_authority_and_lifecycle() {
     let (done, finished) = mpsc::channel();
     let watchdog = std::thread::spawn(move || {
         if finished.recv_timeout(Duration::from_secs(60)) == Err(mpsc::RecvTimeoutError::Timeout) {
-            eprintln!("authenticated native proof exceeded its process watchdog");
+            eprintln!("authenticated native test exceeded its process watchdog");
             std::process::exit(124);
         }
     });
@@ -568,7 +568,7 @@ fn native_authenticated_nested_authority_and_lifecycle() {
         .expect("isolated native runtime");
     runtime
         .block_on(assert_authenticated())
-        .expect("real authenticated native proof");
+        .expect("real authenticated native test");
     drop(runtime);
     done.send(()).expect("finish watchdog");
     watchdog.join().expect("join watchdog");

@@ -1,6 +1,6 @@
 [package]
 name = "wamn-integration-tests"
-description = "Repository integration and measurement proofs over real adapters"
+description = "Repository integration and measurement tests over real adapters"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

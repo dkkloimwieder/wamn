@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// How exact environment generations are represented in the attempt ledger.
+/// How exact environment generations are represented in the attempt table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GenerationFactKind {

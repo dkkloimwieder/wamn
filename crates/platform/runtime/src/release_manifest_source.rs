@@ -212,7 +212,7 @@ impl ReleaseManifestSource {
     /// validation lives there, and it refuses an unusable bundle before the
     /// process starts. Empty `paths` leave this source on the compiled-in roots.
     ///
-    /// The duplication is measured and ledgered, not an oversight: vanilla
+    /// The duplication is measured and recorded, not an oversight: vanilla
     /// wash-runtime keeps the matching reader `oci::extra_ca_certificates()`
     /// private, and its only public transfer surface pushes and pulls wasm
     /// components — not this artifact's

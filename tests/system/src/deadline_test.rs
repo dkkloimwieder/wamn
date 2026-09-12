@@ -20,7 +20,7 @@ mod tests {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()
-            .expect("build the deadline proof runtime");
+            .expect("build the deadline test runtime");
         runtime.block_on(async {
             let engine = Engine::builder().build().expect("build the vanilla engine");
             let module = Module::new(engine.inner(), SPIN_MODULE).expect("compile the spin module");

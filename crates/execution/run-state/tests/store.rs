@@ -363,7 +363,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         WorkloadRoleFamily::App,
         &database,
         &app_role,
-        "run-state-store-proof-password",
+        "run-state-store-test-password",
         "2099-01-01T00:00:00Z",
     );
     let ensure_effect_writer = provision_sql::ensure_effect_writer_acl_role_sql();

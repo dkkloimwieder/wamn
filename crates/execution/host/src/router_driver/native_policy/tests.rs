@@ -48,7 +48,7 @@ mod trace;
 
 const ROOT: &str = "root:entry/run@1.0.0";
 const CHILD: &str = "child:entry/run@1.0.0";
-const OBSERVE: &str = "proof:authority/observe@1.0.0";
+const OBSERVE: &str = "test:authority/observe@1.0.0";
 const CHILD_MARKER: &str = "WAMN_NATIVE_POLICY_CHILD";
 const BUDGET: Duration = Duration::from_millis(200);
 const CLEANUP: Duration = Duration::from_secs(2);
@@ -250,7 +250,7 @@ impl HostPlugin for Observe {
                         .as_ref()
                         .filter(|_| phase == 1)
                         .map(|invocation| {
-                            tracing::info_span!("proof.host.observe",
+                            tracing::info_span!("test.host.observe",
                                 wamn.operation = %invocation.operation,
                                 wamn.component_digest = %invocation.component_digest,
                             )
@@ -399,7 +399,7 @@ impl Fixture {
             release: ServingRelease {
                 tenant_id: "tenant-a".into(),
                 effective_release_id: EffectiveReleaseId::new(1).expect("nonzero release"),
-                environment: "proof".into(),
+                environment: "test".into(),
                 packages: facts
                     .iter()
                     .map(|fact| {
@@ -456,7 +456,7 @@ impl Fixture {
                     Arc::new(HttpTransport::new().expect("HTTP transport")),
                     Arc::clone(&vault),
                     "tenant-a",
-                    "proof",
+                    "test",
                     Arc::from(Vec::new()),
                     Some(Arc::clone(&release)),
                 )),
@@ -464,7 +464,7 @@ impl Fixture {
                     Arc::clone(&postgres),
                     vault,
                     "tenant-a",
-                    "proof",
+                    "test",
                     Some(Arc::clone(&release)),
                 )),
                 postgres,
@@ -472,7 +472,7 @@ impl Fixture {
                     WamnLogging::new(WamnLoggingConfig::default()).expect("logging plugin"),
                 ),
                 release,
-                project: "proof".into(),
+                project: "test".into(),
             },
         )
         .expect("prepare immutable component policy");
@@ -492,9 +492,9 @@ impl Fixture {
         let application = load_native_application(
             Arc::clone(&engine),
             NativeWorkloadSpec {
-                id: "native-policy-proof".into(),
-                namespace: "proof".into(),
-                name: "native-policy-proof".into(),
+                id: "native-policy-test".into(),
+                namespace: "test".into(),
+                name: "native-policy-test".into(),
                 components: native,
                 local_resources: LocalResources::default(),
                 host_interfaces: vec![
@@ -559,7 +559,7 @@ impl Fixture {
             acquisition: NodeAcquisition {
                 claims: SessionClaims {
                     tenant: "tenant-a".into(),
-                    project: Some("proof".into()),
+                    project: Some("test".into()),
                     release: Some(ReleaseIdentity {
                         effective_release_id: 1,
                         manifest_digest: self.policy.resources.release.manifest().digest(),

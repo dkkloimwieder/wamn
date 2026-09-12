@@ -310,13 +310,13 @@ async fn stop_child(child: &mut Child) -> Result<Value> {
     }
     if let Ok(status) = timeout(HOST_SHUTDOWN_TIMEOUT, child.wait()).await {
         let status = status?;
-        ensure!(status.success(), "proof host exited unsuccessfully");
+        ensure!(status.success(), "test host exited unsuccessfully");
         Ok(json!({"pid":pid,"exit_code":status.code(),"forced":false,
             "seconds":began.elapsed().as_secs_f64()}))
     } else {
         child.start_kill()?;
         timeout(CONTROL_BUDGET, child.wait()).await??;
-        anyhow::bail!("proof host exceeded the existing host shutdown budget")
+        anyhow::bail!("test host exceeded the existing host shutdown budget")
     }
 }
 
@@ -358,13 +358,13 @@ pub(crate) async fn assert_startup(
     );
     ensure!(
         inputs.scheduler_nats_url != inputs.nats_url,
-        "the startup proof requires separate scheduler and event brokers"
+        "the startup test requires separate scheduler and event brokers"
     );
     let mut result = json!({"source":inputs.source,"proof_id":inputs.test_id,
         "native_start_limit":inputs.max_concurrent_starts,"profile":"release",
         "manifest_digest":inputs.manifest_digest,"verdict":"fail",
         "cache_scope":"Fresh host/empty private caches; native HTTP digest is first loaded by cold herd; replicas share native compile deduplication.",
-        "control_scope":"Native washlet RPC on the owned chart scheduler Service, with a unique proof host/group and exact host heartbeat filtering; event NATS is separate.",
+        "control_scope":"Native washlet RPC on the owned chart scheduler Service, with a unique test host/group and exact host heartbeat filtering; event NATS is separate.",
         "phase_attribution":"Whole native starts and observed progress only. Retired private Wasm/non-Wasm phase attribution unavailable.",
         "cache_precondition":"Both private OCI and Wasmtime cache directories were created empty. Release preload may compile release callables before readiness; the HTTP shell is not one of those callables.",
         "cold":{"starts":[],"observations":[]},"warm":{"starts":[],"observations":[]}});
@@ -392,7 +392,7 @@ pub(crate) async fn assert_startup(
     ensure!(
         std::fs::read_dir(&cache)?.next().is_none()
             && std::fs::read_dir(&oci_cache)?.next().is_none(),
-        "new proof caches are not empty"
+        "new test caches are not empty"
     );
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let probe_address = listener.local_addr()?;

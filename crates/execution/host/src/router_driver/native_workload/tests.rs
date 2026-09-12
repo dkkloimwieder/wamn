@@ -72,9 +72,9 @@ async fn load(components: Vec<NativeComponent>) -> anyhow::Result<NativeWorkload
     load_native_workload(
         Arc::new(wamn_runtime::build_engine(&[]).expect("production engine")),
         NativeWorkloadSpec {
-            id: "native-import-admission-proof".into(),
-            namespace: "proof".into(),
-            name: "native-import-admission-proof".into(),
+            id: "native-import-admission-test".into(),
+            namespace: "test".into(),
+            name: "native-import-admission-test".into(),
             components,
             local_resources: LocalResources::default(),
             // Host policy implements nested calls. Declaring an interface here

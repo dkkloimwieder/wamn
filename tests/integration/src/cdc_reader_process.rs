@@ -167,9 +167,9 @@ mod tests {
             stream_replicas: 3,
         };
 
-        let command = reader_command(OsStr::new("/proof/wamn-cdc-reader"), &args);
+        let command = reader_command(OsStr::new("/test/wamn-cdc-reader"), &args);
         let command = command.as_std();
-        assert_eq!(command.get_program(), "/proof/wamn-cdc-reader");
+        assert_eq!(command.get_program(), "/test/wamn-cdc-reader");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             [

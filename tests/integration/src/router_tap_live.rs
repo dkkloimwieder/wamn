@@ -49,7 +49,7 @@ mod tests {
         std::env::var(key)
             .ok()
             .filter(|value| !value.is_empty())
-            .with_context(|| format!("set {key} for the disposable router-tap proof"))
+            .with_context(|| format!("set {key} for the disposable router-tap test"))
     }
 
     async fn upstream_origin() -> anyhow::Result<(u16, tokio::task::JoinHandle<Vec<u8>>)> {

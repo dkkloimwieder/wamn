@@ -287,7 +287,7 @@ async fn signer_backend_loss_before_commit_does_not_issue_token() {
         tasks.shutdown().await;
         admin.batch_execute("DROP SCHEMA identity CASCADE; DROP SCHEMA provisioning CASCADE; DROP SCHEMA registry CASCADE;")
             .await.expect("remove owned platform test schemas");
-    }).await.expect("signer backend-loss proof exceeded its bounded deadline");
+    }).await.expect("signer backend-loss test exceeded its bounded deadline");
 }
 
 async fn connect_with_held_commit(
@@ -297,15 +297,15 @@ async fn connect_with_held_commit(
     let mut config: tokio_postgres::Config = url.parse().expect("parse disposable PostgreSQL URL");
     config.ssl_mode(SslMode::Disable);
     let [Host::Tcp(host)] = config.get_hosts() else {
-        panic!("wire proof requires one TCP PostgreSQL host");
+        panic!("wire test requires one TCP PostgreSQL host");
     };
     assert!(
         config.get_hostaddrs().is_empty(),
-        "wire proof requires host, not hostaddr"
+        "wire test requires host, not hostaddr"
     );
     assert!(
         config.get_ports().len() <= 1,
-        "wire proof requires one PostgreSQL port"
+        "wire test requires one PostgreSQL port"
     );
     let port = config.get_ports().first().copied().unwrap_or(5432);
     let upstream = TcpStream::connect((host.as_str(), port))

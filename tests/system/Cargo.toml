@@ -1,6 +1,6 @@
 [package]
 name = "wamn-system-tests"
-description = "Black-box repository system proofs over deployed and public surfaces"
+description = "Black-box repository system tests over deployed and public surfaces"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

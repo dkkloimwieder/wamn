@@ -1265,7 +1265,7 @@ mod tests {
 
     /// A component with no effect-bearing import records the POSITIVE fact that
     /// it is pure, rather than an absent one — this is what a caller reads to
-    /// decide an occurrence writes no effect-ledger row.
+    /// decide an occurrence writes no effect table row.
     #[test]
     fn a_component_importing_no_authority_admits_as_pure() {
         let facts = normalize_component_fact(

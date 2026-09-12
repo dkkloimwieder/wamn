@@ -122,11 +122,11 @@ mod tests {
     #[test]
     fn command_preserves_the_public_cli_boundary() {
         let command = ctl_command(
-            OsStr::new("/proof/wamn-ctl"),
+            OsStr::new("/test/wamn-ctl"),
             ["apply-package", "--tenant", "tenant-a"],
         );
         let command = command.as_std();
-        assert_eq!(command.get_program(), "/proof/wamn-ctl");
+        assert_eq!(command.get_program(), "/test/wamn-ctl");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             [
@@ -143,11 +143,11 @@ mod tests {
     #[test]
     fn command_preserves_the_ops_cli_boundary() {
         let command = ctl_command(
-            OsStr::new("/proof/wamn-ctl-ops"),
+            OsStr::new("/test/wamn-ctl-ops"),
             ["prune-run-history", "--tenant", "tenant-a"],
         );
         let command = command.as_std();
-        assert_eq!(command.get_program(), "/proof/wamn-ctl-ops");
+        assert_eq!(command.get_program(), "/test/wamn-ctl-ops");
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
             [

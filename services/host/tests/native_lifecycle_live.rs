@@ -236,9 +236,9 @@ fn host_command(
         "--host-name",
         name,
         "--host-group",
-        "lifecycle-proof",
+        "lifecycle-test",
         "--environment",
-        "lifecycle-proof",
+        "lifecycle-test",
         "--scheduler-nats-url",
         &format!("nats://{nats_address}"),
         "--http-addr",
@@ -328,7 +328,7 @@ async fn assert_host_lifecycle(
     if host.try_wait()?.is_none() {
         timeout(REAP_BUDGET, host.kill())
             .await
-            .context("kill and reap failed proof host")??;
+            .context("kill and reap failed test host")??;
     }
     result
 }
@@ -366,7 +366,7 @@ async fn assert_blocked_flush(nats_address: SocketAddr, evidence: &Path) -> anyh
     let result = async {
         await_ready(&mut host, probe_address).await?;
         // Native ingress instruments this path before its no-workload refusal.
-        let (status, _) = probe(ingress_address, "/flush-proof").await?;
+        let (status, _) = probe(ingress_address, "/flush-test").await?;
         ensure!(status == 404, "release-less native ingress did not complete its expected refusal");
         let (mut connection, _) = timeout(Duration::from_secs(10), trace_peer.accept())
             .await.context("the real trace exporter made no connection")??;
@@ -396,7 +396,7 @@ async fn assert_blocked_flush(nats_address: SocketAddr, evidence: &Path) -> anyh
     if host.try_wait()?.is_none() {
         timeout(REAP_BUDGET, host.kill())
             .await
-            .context("kill and reap blocked-flush proof host")??;
+            .context("kill and reap blocked-flush test host")??;
     }
     result
 }
@@ -415,10 +415,10 @@ async fn assert_missing_first_beat(nats_address: SocketAddr, evidence: &Path) ->
         async_nats::connect(nats_address.to_string()),
     )
     .await
-    .context("connect the first-beat proof client within its budget")??;
+    .context("connect the first-beat test client within its budget")??;
     timeout(REQUEST_BUDGET, client.flush())
         .await
-        .context("flush the connected first-beat proof client")??;
+        .context("flush the connected first-beat test client")??;
     timeout(REQUEST_BUDGET, client.drain())
         .await
         .context("request the owned client drain")??;
@@ -443,7 +443,7 @@ async fn assert_missing_first_beat(nats_address: SocketAddr, evidence: &Path) ->
     // A short public heartbeat interval keeps this test bounded without a
     // zero silence budget or synthetic beat. The deployment default is 15s.
     let builder = ClusterHostBuilder::default()
-        .with_host_group("lifecycle-proof")
+        .with_host_group("lifecycle-test")
         .with_nats_client(Arc::new(client))
         .with_heartbeat_interval(Duration::from_millis(100));
     let silence_budget = liveness_silence(builder.heartbeat_interval());
@@ -453,7 +453,7 @@ async fn assert_missing_first_beat(nats_address: SocketAddr, evidence: &Path) ->
     let native = builder.with_liveness(Arc::clone(&liveness)).build()?;
     let (host, cleanup) = timeout(REQUEST_BUDGET, native.start())
         .await
-        .context("native start did not return before its first-beat proof budget")??;
+        .context("native start did not return before its first-beat test budget")??;
     let started = Instant::now();
     let observed = timeout(
         silence_budget + REQUEST_BUDGET,

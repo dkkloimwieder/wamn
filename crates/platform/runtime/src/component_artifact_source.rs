@@ -64,7 +64,7 @@ impl ComponentArtifactSourceConfig {
     /// compiles in, and an in-cluster registry behind a private CA is
     /// unreachable short of dropping verification altogether.
     ///
-    /// This duplication is measured and ledgered, not an oversight: vanilla
+    /// This duplication is measured and recorded, not an oversight: vanilla
     /// wash-runtime keeps the matching reader `oci::extra_ca_certificates()`
     /// private and re-exports no `oci_client` symbol, so installed trust cannot
     /// be read back into a foreign `ClientConfig`. Its only public transfer

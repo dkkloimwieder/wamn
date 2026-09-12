@@ -30,7 +30,7 @@ pub fn janitor_verdict(entry: &QueueEntry, now: Millis, grace: Millis) -> Janito
     janitor_verdict_with_attempt(entry, false, now, grace)
 }
 
-/// Classify a queue row with its separate immutable-ledger evidence.
+/// Classify a queue row with its separate immutable effect records.
 pub fn janitor_verdict_with_attempt(
     entry: &QueueEntry,
     has_effect_attempt: bool,

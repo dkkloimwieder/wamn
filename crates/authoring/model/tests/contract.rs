@@ -145,7 +145,7 @@ fn the_collapsed_draft_operations_no_longer_decode() {
 }
 
 /// There are exactly two command kinds, in both the tagged enum and the
-/// standalone kind vocabulary the ledger shares.
+/// standalone kind vocabulary the command table shares.
 #[test]
 fn command_kinds_and_operation_pairing_are_exact() {
     let schema = wamn_authoring_model::json_schema();
@@ -287,7 +287,7 @@ fn the_effect_free_clause_has_a_typed_refusal_on_the_wire() {
                     "command": "gate",
                     "reason": {
                         "kind": "effectful-component-reached",
-                        "components": ["acme:ledger", "acme:mailer"]
+                        "components": ["acme:accounting", "acme:mailer"]
                     }
                 }
             }
@@ -350,7 +350,7 @@ fn operation_specific_refusal_pairing_rejects_cross_operation_reason() {
                     "command": "publish",
                     "reason": {
                         "kind": "effectful-component-reached",
-                        "components": ["acme:ledger"]
+                        "components": ["acme:accounting"]
                     }
                 }
             }
@@ -485,10 +485,10 @@ fn query_request_is_exactly_the_three_ratified_fields() {
         json!({"scope": scope(), "report-id": "report-1"}),
         "query-1",
     );
-    request["body"]["command-id"] = json!("forged-ledger-identity");
+    request["body"]["command-id"] = json!("forged-command-identity");
     assert!(
         decode_document(&serde_json::to_string(&request).expect("serializes")).is_err(),
-        "query envelope admitted a command-ledger field"
+        "query envelope admitted a command audit field"
     );
 }
 

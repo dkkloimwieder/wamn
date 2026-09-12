@@ -273,7 +273,7 @@ async fn native_effect_writer_live() {
             &[],
         )
         .await
-        .expect("inspect canonical independent ledger")
+        .expect("inspect canonical independent effect records")
         .get(0);
     assert!(attempt_has_no_run_fk);
 
@@ -394,7 +394,7 @@ async fn native_effect_writer_live() {
             &[],
         )
         .await
-        .expect("inspect ordinary App-generation ledger ACL");
+        .expect("inspect ordinary App-generation effect table ACL");
     assert_eq!(app_identity.get::<_, String>(0), app_generation_role);
     assert!(app_identity.get::<_, bool>(1));
     assert!(!app_identity.get::<_, bool>(2));
@@ -406,7 +406,7 @@ async fn native_effect_writer_live() {
             &[],
         )
         .await
-        .expect_err("ordinary non-writer append is denied by ledger ACL");
+        .expect_err("ordinary non-writer append is denied by effect table ACL");
     assert_eq!(
         ordinary_insert
             .as_db_error()

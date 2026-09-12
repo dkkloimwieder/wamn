@@ -3,11 +3,11 @@
 //! This is the boundary `authoring.rs` deferred until item 5 owned retained
 //! client identity. It verifies a personal-access-token presenter against the T1
 //! system database and derives trusted principal and project-role context.
-//! Control-resident command facts commit with their ledger outcome. `publish`
+//! Control-resident command facts commit with their stored outcome. `publish`
 //! necessarily spans the control and project databases instead: it holds the
 //! control retry lock across the immutable project append and audit write, so a
 //! crash gap converges through the exact-row check. The adapter itself stays
-//! principal-free; only the ledger retains the verified attribution.
+//! principal-free; only the command table retains the verified attribution.
 //!
 //! Trusted context never comes from the request. [`AuthorizedAuthor`] has no
 //! public constructor and implements no deserialization trait, exactly like the
@@ -50,10 +50,10 @@ use wamn_control_provision::{
 
 use crate::authoring::{ControlAuthoringScope, GetReportResult, InternalAuthoringBackend};
 
-/// The append-only ledger row every authorized management command writes.
+/// The append-only command record every authorized management command writes.
 ///
 /// The principal columns are denormalized text, not a foreign key: principals
-/// live in the T1 system database while this ledger lives in the project
+/// live in the T1 system database while this command table lives in the project
 /// database, so a row has to stand on its own.
 /// `wamn_run.operator_run_actions` carries the same shape for the same
 /// reason.
@@ -101,7 +101,7 @@ const BEARER_SCHEME: &str = "Bearer ";
 ///
 /// Identity storage keeps role slugs opaque on purpose; attaching permission
 /// meaning is the management boundary's job, so the vocabulary lives here and in
-/// the ledger's `effective_role` CHECK.
+/// the table's `effective_role` CHECK.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ManagementRole {
     /// May run the authoring commands for one project.
@@ -111,7 +111,7 @@ pub enum ManagementRole {
 }
 
 impl ManagementRole {
-    /// Return the stable role slug shared by identity storage and the ledger.
+    /// Return the stable role slug shared by identity storage and the command table.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ProjectAuthor => "project-author",
@@ -134,7 +134,7 @@ impl fmt::Display for ManagementRole {
     }
 }
 
-/// Every command the ledger can attribute.
+/// Every command that the audit table can attribute.
 ///
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuditedCommand {
@@ -143,7 +143,7 @@ pub enum AuditedCommand {
 }
 
 impl AuditedCommand {
-    /// Return the stable ledger literal. The contract kinds keep exactly the
+    /// Return the stable command literal. The contract kinds keep exactly the
     /// spelling the wire contract uses; a unit test pins them to `serde`.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -179,7 +179,7 @@ pub struct AuthorizedAuthor {
 }
 
 impl AuthorizedAuthor {
-    /// Return the opaque T1 principal ID recorded on every ledger row.
+    /// Return the opaque T1 principal ID recorded on every command record.
     pub fn principal_id(&self) -> &str {
         &self.principal_id
     }
@@ -265,7 +265,7 @@ fn classify_retry(existing: Option<&StoredCommandOutcome>, request_hash: &str) -
 }
 
 impl CommandAudit {
-    /// Return the tenant whose ledger this row belongs to.
+    /// Return the tenant whose command table this row belongs to.
     pub fn tenant_id(&self) -> &str {
         &self.scope.tenant_id
     }
@@ -351,7 +351,7 @@ pub(crate) async fn insert_gate_report(
     Ok(())
 }
 
-/// Write one attributed ledger row on an already-scoped author credential.
+/// Write one attributed command record on an already-scoped author credential.
 pub(crate) async fn insert_command_audit(
     client: &(impl GenericClient + Sync),
     audit: &CommandAudit,
@@ -468,7 +468,7 @@ pub struct ManagementServeArgs {
     ///
     /// It is a SECOND, separate connection, never a fallback for the authoring
     /// one and never reachable from it: admission writes project run state,
-    /// authoring writes the control ledger, and a transaction cannot span two
+    /// authoring writes the control command table, and a transaction cannot span two
     /// databases. Flipping the production admission path off the shared
     /// `wamn_app` role and onto this credential is wamn-0h0g.22.10's traffic
     /// change; this argument is the plumbing that change needs to already exist.
@@ -786,7 +786,7 @@ async fn authoring_command(
     }
 }
 
-/// Non-ledgered query adapter.
+/// Query adapter without command records.
 ///
 /// `get-report` reads only the fixed control-store scope, and it is now the
 /// whole query list: `read-draft` collapsed with the draft concept
@@ -973,7 +973,7 @@ async fn publish(
     // this command identity's CONTROL-side lock across the green-report read,
     // project append, and audit insert: releasing it around the append would let
     // two different payloads reuse one command id and both write before one
-    // ledger row won. A crash after the project append still converges because
+    // command record won. A crash after the project append still converges because
     // the immutable append verifies an exact existing row on retry.
     let (_, transaction) = backend.begin_command_transaction(audit.tenant_id()).await?;
     lock_retry_identity(&transaction, &audit).await?;
@@ -1068,10 +1068,10 @@ async fn gate_route(
 /// wamn-0h0g.8.5.5: a gate is a judgment about a document, not an execution of
 /// it, so [`run_gate`](crate::store::admission::run_gate) reads the PROJECT
 /// database and mutates nothing there. Its two durable consequences are written
-/// here, in the CONTROL database, in ONE transaction: the attribution ledger
+/// here, in the CONTROL database, in ONE transaction: the command audit table
 /// row, and — for an ACCEPTED judgment only — the report row keyed by the
 /// candidate's wiring hash (wamn-0h0g.8.5.6). A refusal is not a report, so a
-/// refused command writes only the ledger row.
+/// refused command writes only the command record.
 ///
 /// Both are written LAST, after an outcome exists. Splitting them would leave
 /// either an attributed judgment whose report no query can resolve — precisely
@@ -1080,7 +1080,7 @@ async fn gate_route(
 /// An exact retry therefore converges trivially: a pass interrupted before the
 /// commit leaves neither row, so the retry classifies as `Execute` and
 /// re-derives the same judgment from the same immutable candidate. Once the
-/// ledger row exists the command is finished, and the retry replays the stored
+/// command record exists the command is finished, and the retry replays the stored
 /// result.
 async fn gate(
     backend: &mut InternalAuthoringBackend,
@@ -1091,7 +1091,7 @@ async fn gate(
     input: &wamn_authoring_model::Gate,
 ) -> anyhow::Result<Vec<u8>> {
     let request_hash = canonical_request_hash(command)?;
-    // Parsed ONCE, here, because two callers need what it yields: the ledger
+    // Parsed ONCE, here, because two callers need what it yields: the command table
     // needs a target and the judgment needs the candidate. This is the one
     // validating reader for wiring bytes (wamn-0h0g.8.28).
     let parsed = wamn_catalog::WiringDocument::parse(&input.document);
@@ -1101,7 +1101,7 @@ async fn gate(
         command: AuditedCommand::Gate,
         author: author.clone(),
         // The DERIVED wiring hash, never a caller-stated one. A document that
-        // does not parse names no wiring identity at all, so the ledger records
+        // does not parse names no wiring identity at all, so the command table records
         // the exact bytes that were judged instead — `target_ref` is NOT NULL
         // and non-empty, and a refusal is attributed like any other outcome.
         target_ref: match &parsed {
@@ -1114,7 +1114,7 @@ async fn gate(
             .into(),
         },
         // The gate command carries no source claim, and nothing on this path
-        // reads one. The ledger's provenance columns stay writable for a command
+        // reads one. The command table's provenance columns stay writable for a command
         // that does; every surviving command writes them NULL.
         provenance: None,
     };
@@ -1232,9 +1232,9 @@ async fn read_retry_outcome(
 
 /// Answer a retry that is already settled, or `None` to run the command.
 ///
-/// This runs BEFORE a composition that cannot be part of the ledger
+/// This runs BEFORE a composition that cannot be part of the command
 /// transaction, so it commits and releases the lock. It is an optimization and
-/// not the authority: the ledger insert re-reads under the lock, and the durable
+/// not the authority: the command insert re-reads under the lock, and the durable
 /// idempotency keys inside the composition are what make a racing duplicate
 /// converge.
 async fn settle_retry(
@@ -1646,7 +1646,7 @@ mod tests {
     }
 
     #[test]
-    fn ledger_command_literals_match_the_wire_contract_spelling() {
+    fn stored_command_literals_match_the_wire_contract_spelling() {
         for (kind, audited) in [
             (AuthoringCommandKind::Gate, AuditedCommand::Gate),
             (AuthoringCommandKind::Publish, AuditedCommand::Publish),
@@ -1655,7 +1655,7 @@ mod tests {
             assert_eq!(
                 format!("\"{}\"", audited.as_str()),
                 wire,
-                "ledger literal drifted from the contract for {kind:?}"
+                "stored command literal drifted from the contract for {kind:?}"
             );
         }
     }

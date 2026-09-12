@@ -322,7 +322,7 @@ fn operation_provider_manifest(export: &str, version: &str) -> ServingManifest {
         ServingRelease {
             tenant_id: "provider-tenant".into(),
             effective_release_id: EffectiveReleaseId::new(1).expect("nonzero release"),
-            environment: "proof".into(),
+            environment: "test".into(),
             packages: BTreeSet::from([
                 PackageCoordinate::new(package, version).unwrap(),
                 PackageCoordinate::new("consumer", "1.0.0").unwrap(),

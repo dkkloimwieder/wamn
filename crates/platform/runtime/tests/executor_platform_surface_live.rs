@@ -49,7 +49,7 @@ use wamn_runtime::plugins::wamn_postgres::{
 /// and an A/B suffix are appended, so a login that reads like a real generation
 /// has to start here.
 const GENERATION: &str = "wamn_exec_platform_surface_live_a";
-const GENERATION_PASSWORD: &str = "executor-surface-proof-password";
+const GENERATION_PASSWORD: &str = "executor-surface-test-password";
 
 /// The second database the wrong-`current_database` arm connects to.
 const ELSEWHERE: &str = "w68_execplat_elsewhere";

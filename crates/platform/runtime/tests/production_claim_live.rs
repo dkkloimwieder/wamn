@@ -9,7 +9,7 @@
 //! That is the point: this file is the green signal that the crash floor
 //! wamn-0h0g.20.2 shelved carried none of the queue with it.
 //!
-//! THE EFFECT LEDGER IS NOT ABSENT, ONLY UNPOPULATED BY THE RUNS UNDER TEST.
+//! THE EFFECT TABLE IS NOT ABSENT, ONLY UNPOPULATED BY THE RUNS UNDER TEST.
 //! `select_production_claim_sql` names `FROM effect_attempts AS effect`
 //! unconditionally — the class gate is a conjunct INSIDE that `EXISTS`, not a
 //! removal of the relation — so a fixture without the table would fail at PLAN
@@ -148,7 +148,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // `status` and the claim-time release record are excluded from the snapshot
     // because the retry CLAIM writes them; they are asserted separately below.
     //
-    // This leg is both-tier: a pre-effect reclaim needs no effect ledger.
+    // This leg is both-tier: a pre-effect reclaim needs no effect table.
     admin
         .execute(
             &format!(
@@ -420,7 +420,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_terminal_status_dequeued(admin, "grant-refused", "infrastructure-failure").await?;
 
-    // ---- the default class ignores a POPULATED effect ledger (wamn-0h0g.20.2,
+    // ---- the default class ignores a POPULATED effect table (wamn-0h0g.20.2,
     // shown live by wamn-0h0g.20.4) ----------------------------------------
     //
     // This is the one leg that seeds an effect attempt on this tier, and it
@@ -441,9 +441,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // legs together are the class gate, live.
     //
     // Nothing else in this file is downstream of the row: it is dequeued by the
-    // reap, and the ledger row it leaves behind is correlated by `run_id` in
+    // reap, and the effect row it leaves behind is correlated by `run_id` in
     // every statement that reads one.
-    seed_exhausted_run(admin, "standard-ledger", 66).await?;
+    seed_exhausted_run(admin, "standard-effect", 66).await?;
     admin
         .execute(
             &format!(
@@ -451,7 +451,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
                    (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
                     local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
                     generation_fact_kind,attempt_deadline_at,attempt_input_ref) \
-                 VALUES ($1,'standard-ledger',$2,$2,0,'ledger-node',$2,'manager',0,1, \
+                 VALUES ($1,'standard-effect',$2,$2,0,'effect-node',$2,'manager',0,1, \
                          'not-required','2099-01-01T00:00:00Z','sha256:claim-live-effect-input')"
             ),
             &[&TENANT, &EMPTY_HASH],
@@ -464,7 +464,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
             &format!(
                 "UPDATE {SCHEMA}.runs \
                     SET manifest_digest=$2 \
-                  WHERE tenant_id=$1 AND run_id='standard-ledger'"
+                  WHERE tenant_id=$1 AND run_id='standard-effect'"
             ),
             &[&TENANT, &POD_MANIFEST_DIGEST],
         )
@@ -475,7 +475,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
                 &format!(
                     "UPDATE {SCHEMA}.runs \
                         SET manifest_digest=NULL \
-                      WHERE tenant_id=$1 AND run_id='standard-ledger'"
+                      WHERE tenant_id=$1 AND run_id='standard-effect'"
                 ),
                 &[&TENANT],
             )
@@ -488,18 +488,18 @@ async fn production_claim_live() -> anyhow::Result<()> {
             .claim_next_production(COMPONENT, &release_package_ids, ENVIRONMENT, 30_000)
             .await?,
         ProductionClaimResult::Empty,
-        "the default class was let into the shelved crash floor by its ledger"
+        "the default class was let into the shelved crash floor by its effect record"
     );
     assert_eq!(
         plugin
             .reap_one_exhausted_production(COMPONENT, &release_package_ids, ENVIRONMENT, 0)
             .await?,
         ProductionReapResult::Reaped {
-            run_id: "standard-ledger".into()
+            run_id: "standard-effect".into()
         },
         "the janitor deferred to effect evidence the default class may not act on"
     );
-    assert_terminal_status_dequeued(admin, "standard-ledger", "infrastructure-failure").await?;
+    assert_terminal_status_dequeued(admin, "standard-effect", "infrastructure-failure").await?;
 
     // ---- the claim-time manifest record (wamn-0h0g.15.11, carrying the two
     // surviving test legs of the superseded wamn-0h0g.4.14) -----------------

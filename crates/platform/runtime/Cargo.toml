@@ -73,7 +73,7 @@ base64 = { workspace = true }
 ring = { workspace = true }
 rcgen = { workspace = true }
 wamn-run-state = { workspace = true, features = ["native", "test-util"] }
-# M-TEST-UTIL: the release-manifest weld's test fixtures build manifests from
+# M-TEST-UTIL: the release-manifest reader's test fixtures build manifests from
 # parts, which wamn-catalog gates behind `test-util`. A DEV-dependency feature
 # does not reach the production graph, so this crate's own build still cannot
 # assemble a manifest no canonical bytes ever carried.
@@ -85,12 +85,12 @@ wamn-catalog = { workspace = true, features = ["test-util"] }
 # wamn-0h0g.15.53: the executor plugins' host functions live behind each
 # plugin's private `mod bindings`, so the only way to reach them from outside
 # this crate is a real guest. Encoded from WAT in-process, which keeps the
-# no-trap proof hermetic — no wasm32-wasip2 build, no fixture artifact. Same
+# no-trap test hermetic — no wasm32-wasip2 build, no fixture artifact. Same
 # exact pin the one existing precedent uses (crates/execution/host).
 wat = "=1.252.0"
 wit-component = { version = "=0.252.0", features = ["dummy-module"] }
 wit-parser = "=0.252.0"
-# wamn-0h0g.12.6: the outbound-injection proof needs a real span context, which
+# wamn-0h0g.12.6: the outbound-injection test needs a real span context, which
 # only a `tracing-opentelemetry` layer over an SDK tracer provider produces.
 opentelemetry_sdk = { workspace = true, features = ["logs", "testing"] }
 tracing-subscriber = { workspace = true }

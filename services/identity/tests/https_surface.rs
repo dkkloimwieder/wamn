@@ -77,7 +77,7 @@ async fn identity_https_has_only_public_jwks_and_health() {
     assert_eq!(
         std::env::var("WAMN_IDENTITY_SERVICE_ALLOW_SCHEMA_RESET").as_deref(),
         Ok("1"),
-        "arm only an owned disposable cluster: this proof replaces platform schemas"
+        "arm only an owned disposable cluster: this test replaces platform schemas"
     );
     let admin_url = std::env::var("WAMN_IDENTITY_SERVICE_PG_URL")
         .expect("provide the disposable wamn_system URL");

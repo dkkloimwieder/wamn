@@ -294,7 +294,7 @@ pub struct ConnectionEffectSnapshot {
 
 /// Resolve the original wiring node and the executing component's connection.
 ///
-/// No run, plan, frame, or effect-ledger row participates. The selected wiring
+/// No run, plan, frame, or effect row participates. The selected wiring
 /// version is immutable and stays valid for the lifetime of the delivery even
 /// if the environment's hot pointer flips concurrently. The mounted release is
 /// checked separately by `ConnectionHttp`, because its canonical bytes are not

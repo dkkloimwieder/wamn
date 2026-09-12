@@ -470,7 +470,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .expect("schema");
     sys.batch_execute(
         "CREATE TABLE app.receipts (id bigint PRIMARY KEY, val text, big text, note text); \
-         CREATE TABLE app.command_ledger (id bigint PRIMARY KEY, command_bytes bytea NOT NULL); \
+         CREATE TABLE app.command_record (id bigint PRIMARY KEY, command_bytes bytea NOT NULL); \
          ALTER TABLE app.receipts ALTER COLUMN big SET STORAGE EXTERNAL",
     )
     .await
@@ -497,10 +497,10 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .expect("receipt entity mapping");
     sys.execute(
         &sql::upsert_cdc_exclusion_map_sql("app"),
-        &[&"receiving", &"record_receipt_command", &"command_ledger"],
+        &[&"receiving", &"record_receipt_command", &"command_record"],
     )
     .await
-    .expect("command-ledger CDC exclusion");
+    .expect("command record CDC exclusion");
     sys.batch_execute(&sql::grant_replication_access_sql(DB, &cdc_name, "app"))
         .await
         .expect("grants");
@@ -636,11 +636,11 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
 
     // --- phase A: commit order + envelope shape + dedupe --------------------
     let mut expected: Vec<(Op, String)> = Vec::new();
-    // A mixed transaction shows the internal command ledger is counted but
+    // A mixed transaction shows the internal command table is counted but
     // never published while its sibling domain row reaches the stream.
     sys.batch_execute(
         "BEGIN; \
-         INSERT INTO app.command_ledger VALUES (1, decode('deadbeef', 'hex')); \
+         INSERT INTO app.command_record VALUES (1, decode('deadbeef', 'hex')); \
          INSERT INTO app.receipts (id, val) VALUES (1, 'v1'); \
          COMMIT",
     )

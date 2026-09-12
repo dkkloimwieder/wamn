@@ -64,7 +64,7 @@ struct OperationPlugin {
 #[async_trait::async_trait]
 impl HostPlugin for OperationPlugin {
     fn id(&self) -> &'static str {
-        "native-operation-binding-proof"
+        "native-operation-binding-test"
     }
 
     fn world(&self) -> WitWorld {
@@ -165,10 +165,10 @@ async fn resolve(
     let engine = wamn_runtime::build_engine(&[]).expect("production engine");
     let workload = engine
         .initialize_workload(
-            "native-binding-proof",
+            "native-binding-test",
             Workload {
-                namespace: "proof".to_owned(),
-                name: "native-binding-proof".to_owned(),
+                namespace: "test".to_owned(),
+                name: "native-binding-test".to_owned(),
                 annotations: HashMap::new(),
                 service: None,
                 components,
@@ -201,7 +201,7 @@ async fn target(workload: &ResolvedWorkload, name: &str) -> DispatchTarget {
         .id()
         .to_owned();
     workload
-        .dispatch_target(&id, "native-operation-binding-proof")
+        .dispatch_target(&id, "native-operation-binding-test")
         .await
         .expect("native dispatch target")
 }
@@ -232,7 +232,7 @@ async fn host_export_binding_keeps_the_nested_policy_shim() {
     workload
         .unbind_all_plugins()
         .await
-        .expect("unbind proof workload");
+        .expect("unbind test workload");
 }
 
 fn exact_child_manifest() -> ServingManifest {
@@ -286,9 +286,9 @@ fn exact_child_manifest() -> ServingManifest {
     components.insert(root);
     ServingManifest::new(
         ServingRelease {
-            tenant_id: "native-binding-proof".into(),
+            tenant_id: "native-binding-test".into(),
             effective_release_id: EffectiveReleaseId::new(1).expect("nonzero release"),
-            environment: "proof".into(),
+            environment: "test".into(),
             packages: BTreeSet::from([
                 PackageCoordinate::new("root", "1.0.0").expect("root package"),
                 PackageCoordinate::new("child", "1.0.0").expect("child package"),

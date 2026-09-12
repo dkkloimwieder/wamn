@@ -494,7 +494,7 @@ mod tests {
             (REFUSAL_REQUEST_TIMEOUT, IO_TIMEOUT),
             (TEST_TIMEOUT, required),
         ] {
-            assert!(outer > inner, "outer proof budget must exceed inner work");
+            assert!(outer > inner, "outer test budget must exceed inner work");
         }
     }
 

@@ -161,7 +161,7 @@ impl RouteTransport {
 impl Transport for RouteTransport {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, ClientError> {
         let url = reqwest::Url::parse(&request.url).map_err(|_| transport_failure())?;
-        if url.origin().ascii_serialization() != "http://client-proof.test"
+        if url.origin().ascii_serialization() != "http://client-test.test"
             || request.method != "POST"
             || url.query().is_some()
             || url.fragment().is_some()
@@ -204,7 +204,7 @@ pub(super) fn client(
     host: &str,
 ) -> WamnClient {
     WamnClient::new(
-        "http://client-proof.test",
+        "http://client-test.test",
         Some(host.to_owned()),
         credentials,
         transport,

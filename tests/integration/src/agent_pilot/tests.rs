@@ -58,7 +58,7 @@ fn package(root: &Path) -> PathBuf {
 fn placement_input(root: &Path) {
     fs::create_dir_all(root.join("grade")).unwrap();
     fs::create_dir_all(package(root).join("generated/contracts")).unwrap();
-    write_json(&root.join("task.json"), &json!({"task":"placement","identity":{"route_host":"proof.localhost"},"overlay_root":"packages/dock","grade":{"steps":"steps.json","checks":[],"fence_reports":[]}})).unwrap();
+    write_json(&root.join("task.json"), &json!({"task":"placement","identity":{"route_host":"test.localhost"},"overlay_root":"packages/dock","grade":{"steps":"steps.json","checks":[],"fence_reports":[]}})).unwrap();
     write_json(
         &root.join("run.json"),
         &json!({"commit":"0000000000000000000000000000000000000000"}),
@@ -80,7 +80,7 @@ fn create_step(root: &Path) {
 
 fn recorded_input(root: &Path) {
     placement_input(root);
-    write_json(&root.join("task.json"), &json!({"task":"proof","identity":{"route_host":"proof.localhost"},"overlay_root":"packages/dock","grade":{"steps":"steps.json","checks":["claim-replay"],"fence_reports":[]}})).unwrap();
+    write_json(&root.join("task.json"), &json!({"task":"test","identity":{"route_host":"test.localhost"},"overlay_root":"packages/dock","grade":{"steps":"steps.json","checks":["claim-replay"],"fence_reports":[]}})).unwrap();
     write_json(&root.join("run.json"), &json!({"commit":"0000000000000000000000000000000000000000","git":{"outside_allowed_paths":[]}})).unwrap();
     write_json(&root.join("steps.json"), &json!([
         {"id":"create","must":true,"route":{"operation":"dock.create"},"expect":{"status":200,"item":"value","present":["dock_id"]}},
@@ -90,7 +90,7 @@ fn recorded_input(root: &Path) {
         {"id":"exactly-one","must":true,"concurrent":["book","refused"],"expect":{"exactly_one":{"error_code":"slot_unavailable"}}},
         {"id":"count-rows","must":true,"sql":"select 1","expect":{"rows":"2"}}
     ])).unwrap();
-    fs::write(root.join("grade/dev.out"), "run completed: Migrate,Introspect,Generate,Build,Virtualize,Apply,Acl,Admit,Gate,Publish,Release,Activate\nrun served: http://127.0.0.1:18080 host=proof.localhost\nrun holding\n").unwrap();
+    fs::write(root.join("grade/dev.out"), "run completed: Migrate,Introspect,Generate,Build,Virtualize,Apply,Acl,Admit,Gate,Publish,Release,Activate\nrun served: http://127.0.0.1:18080 host=test.localhost\nrun holding\n").unwrap();
     let mut records = Vec::new();
     for (id, path, item) in [
         (
@@ -569,7 +569,7 @@ fn run_markers_change_only_marked_values_and_keep_explicit_keys() {
 }
 
 fn brief(root: &Path, row: &str, second_table: &str) {
-    fs::write(root.join("SCENARIO.md"),format!("# Proof scenario\n\n## The data contract\n\n| operation | input | result |\n|---|---|---|\n{row}\n{second_table}\n\n## What the words mean here\n\nA dock is a physical door.\n")).unwrap();
+    fs::write(root.join("SCENARIO.md"),format!("# Test scenario\n\n## The data contract\n\n| operation | input | result |\n|---|---|---|\n{row}\n{second_table}\n\n## What the words mean here\n\nA dock is a physical door.\n")).unwrap();
 }
 
 async fn contract_code(root: &Path) -> u8 {

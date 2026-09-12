@@ -78,7 +78,7 @@ fn building_a_pool_requires_a_probeable_credential() {
 #[tokio::test]
 async fn a_platform_checkout_refuses_the_guest_authority() {
     let postgres = WamnPostgres::from_env(Some(ClassCredentials::every_class(
-        "postgres://wamn_app_refusal_a@localhost/refusal-proof",
+        "postgres://wamn_app_refusal_a@localhost/refusal-test",
     )))
     .expect("compose");
     let refused = postgres
@@ -242,8 +242,8 @@ fn guest_and_platform_pool_caches_remain_distinct_under_interleaving() {
         // credential identity and is now refused, so this fixture names one
         // rather than relying on a libpq-style implicit OS user.
         credentials: Some(ClassCredentials::every_class(format!(
-            "postgres://wamn_app_{}_a@localhost/pool-lifecycle-proof",
-            wamn_run_state::app_scope_hash("acme", "pool-lifecycle-proof")
+            "postgres://wamn_app_{}_a@localhost/pool-lifecycle-test",
+            wamn_run_state::app_scope_hash("acme", "pool-lifecycle-test")
         ))),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,

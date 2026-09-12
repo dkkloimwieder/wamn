@@ -43,7 +43,7 @@ use wamn_schema_control::BareSchemaName;
 ///
 /// Params: `$1` run schema. wamn-0h0g.8.5.5 deleted the whole reservation-era
 /// gate-report lineage and wamn-0h0g.8.5.6 put the surviving report row back, so
-/// this credential may APPEND to exactly two relations — the command ledger and
+/// this credential may APPEND to exactly two relations — the command audit table and
 /// `wamn_run.gate_reports` — and may rewrite neither. The run schema is still a
 /// name the schema-level and blanket-exclusion legs resolve against, and now
 /// also holds a relation those legs must find granted rather than excess.
@@ -541,7 +541,7 @@ mod tests {
         }
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("$1"));
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("run_mutation"));
-        // The command ledger is the ONE mutation this credential retains.
+        // The command audit table is the ONE mutation this credential retains.
         assert!(
             AUTHORING_ROLE_PROBE_SQL
                 .contains("VALUES ('catalog', 'authoring_command_audit', 'INSERT')")

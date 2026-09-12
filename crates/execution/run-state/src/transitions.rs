@@ -478,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn effect_ledger_and_cdc_lineage_remain_immutable() {
+    fn effect_records_and_cdc_lineage_remain_immutable() {
         let ddl = include_str!("../../../../deploy/sql/run-state.sql");
         for trigger in [
             "CREATE TRIGGER effect_attempts_update_immutable",
@@ -488,7 +488,7 @@ mod tests {
             "CREATE TRIGGER effect_attempt_outcomes_update_immutable",
             "CREATE TRIGGER effect_attempt_outcomes_delete_immutable",
         ] {
-            assert!(ddl.contains(trigger), "effect ledger lacks {trigger}");
+            assert!(ddl.contains(trigger), "effect table lacks {trigger}");
         }
         assert!(ddl.contains("event_source_run_id IS NOT NULL AND event_source_run_id <> ''"));
         assert!(ddl.contains("event_root_run_id IS NOT NULL AND event_root_run_id <> ''"));

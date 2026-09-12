@@ -58,7 +58,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     // The fence is class-gated (wamn-0h0g.20.2), so the run is admitted
     // `durable`.
     //
-    // THE MIRROR OF THIS ROW IS `standard-ledger` IN `production_claim_live.rs`:
+    // THE MIRROR OF THIS ROW IS `standard-effect` IN `production_claim_live.rs`:
     // same shape — crash budget spent, lease expired, one attributed attempt —
     // and both results flip on the default class, where the claim never reaches
     // the row (`Empty`) and the reaper never defers (`Reaped`).

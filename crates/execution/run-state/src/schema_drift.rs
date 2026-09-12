@@ -218,7 +218,7 @@ pub fn assert_stand_in(gate: &str, standin: &str, spec: &[(&str, Need)]) {
 }
 
 /// The same guard for `deploy/sql/run-state.sql` — the `runs` half of
-/// the run plane, plus the invocation and effect ledgers.
+/// the run plane, plus the invocation and effect tables.
 ///
 /// When `runs` is Required, every `RunStatus` literal must appear, for the same
 /// reason all persisted status literals must remain visible to stand-ins.

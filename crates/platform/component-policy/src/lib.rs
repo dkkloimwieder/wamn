@@ -1,6 +1,6 @@
 //! Pure import admission for platform and tenant components.
 //!
-//! MVP outcome: egress confinement (import allowlist, mutation-proofed).
+//! MVP outcome: egress confinement (import allowlist, tested with mutations).
 //!
 //! This admission rule rejects every P2 or P3 `wasi:sockets` interface before
 //! publication. It is stronger than, and independent of, the pinned vanilla
@@ -103,7 +103,7 @@ pub struct CapabilityRow {
 ///   lifecycle machinery parked on `.7`.
 /// * **Code, not catalog.** Posture is a security classification that must be
 ///   byte-identical on every host and must move only through code review plus
-///   a ledger row. A database row would let an operator reclassify an effect
+///   a stored row. A database row would let an operator reclassify an effect
 ///   as ambient.
 ///
 /// The registry governs the TENANT path ([`analyze_tenant`]) only. `wash push`

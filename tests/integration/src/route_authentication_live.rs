@@ -327,7 +327,7 @@ async fn assert_human_environment_membership(
     let token = issue_pat(
         admin,
         human.id(),
-        "membership proof",
+        "membership test",
         Duration::from_secs(3600),
     )
     .await?;
@@ -568,7 +568,7 @@ async fn assert_human_environment_membership(
 async fn production_route_caller_authentication_and_operation_authorization() {
     let admin_url = std::env::var(URL_ENV)
         .expect("WAMN_ROUTE_AUTH_PG18_URL must name a fresh disposable PostgreSQL 18 server");
-    let scratch = ScratchRoot::create().expect("create route-auth proof directory");
+    let scratch = ScratchRoot::create().expect("create route-auth test directory");
     let root = scratch.path();
 
     let (admin, admin_task) = connect(&admin_url).await.expect("connect admin");
@@ -787,7 +787,7 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     admin.execute(
         "UPDATE identity.principals SET status = 'active', disabled_at = NULL WHERE id = $1::text::uuid",
         &[&principal.id().as_str()],
-    ).await.expect("restore the service principal for permission proofs");
+    ).await.expect("restore the service principal for permission tests");
     project
         .execute(
             "DELETE FROM app_system.permissions \

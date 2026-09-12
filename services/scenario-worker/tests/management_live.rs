@@ -5,7 +5,7 @@
 //! absent, forged, expired, revoked, cross-project, and client-injected identity
 //! all refuse before the command runs and leave no side effect; and two
 //! principals running the same command stay distinguishable in the append-only
-//! ledger.
+//! command table.
 //!
 //! Both surviving commands are mounted. An untrusted presenter naming either
 //! receives the same refusal document, so the surface is no route-existence
@@ -31,9 +31,9 @@
 //! stored revision read back, and a stale working copy refusing — every one of
 //! which is a claim about `catalog.flow_drafts`, deleted by wamn-0h0g.8.5.5. A
 //! draft is a CLIENT-SIDE FILE now, so the platform has nothing to test about
-//! storing one. The authentication, attribution and append-only-ledger
+//! storing one. The authentication, attribution and append-only command table
 //! properties those sections carried survive on the mounted gate below, which
-//! reaches the ledger under two distinct principals.
+//! reaches the command table under two distinct principals.
 //!
 //! The recipe in `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting` supplies one disposable database.
 
@@ -952,7 +952,7 @@ async fn admitted_human(
         .map_err(Into::into)
 }
 
-async fn ledger_rows(admin: &Client) -> Vec<(String, String, String, String)> {
+async fn command_rows(admin: &Client) -> Vec<(String, String, String, String)> {
     admin
         .query(
             "SELECT principal_subject, principal_id, command_kind, effective_role \
@@ -960,7 +960,7 @@ async fn ledger_rows(admin: &Client) -> Vec<(String, String, String, String)> {
             &[],
         )
         .await
-        .expect("read the command ledger")
+        .expect("read the command audit table")
         .iter()
         .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
         .collect()
@@ -984,7 +984,7 @@ async fn command_provenance(
 
 /// Every durable authoring row the control store still holds.
 ///
-/// TWO relations: the command ledger, and the gate report keyed by wiring hash
+/// TWO relations: the command audit table, and the gate report keyed by wiring hash
 /// that wamn-0h0g.8.5.6 built. The three reservation-era relations this used to
 /// count are deleted, so naming them here would query relations that do not
 /// exist.
@@ -1419,7 +1419,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "retired get-run wrote durable authoring state"
     );
     assert!(
-        ledger_rows(&admin).await.is_empty(),
+        command_rows(&admin).await.is_empty(),
         "a pre-dispatch refusal was audited"
     );
 
@@ -1460,7 +1460,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // a relation whose only writer and only reader die with the same change does
     // not survive it (owner ruling, 2026-08-25). So `report-not-found` is the
     // one truthful answer for every report id, and the tests still show the query to
-    // be non-mutating and non-ledgered, which is what it always owned here.
+    // be non-mutating and without a command record, which is what it always owned here.
     let before_reads = authoring_durable_counts(&admin).await;
     for (query_id, principal, report_id) in [
         ("foreign-report", alice.token(), "report-foreign"),
@@ -1496,8 +1496,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "get-report mutated control authoring state"
     );
     assert!(
-        ledger_rows(&admin).await.is_empty(),
-        "a non-ledgered query appended a command audit row"
+        command_rows(&admin).await.is_empty(),
+        "a query appended a command audit row"
     );
 
     // ---- a smuggled principal is refused by the contract before dispatch ---
@@ -1508,7 +1508,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // `catalog.flow_drafts`, or used the one command that wrote it as its
     // vehicle. The relation is deleted, so the claims about it are deleted too;
     // the claims about IDENTITY that used it as a vehicle move to the mounted
-    // gate below, which reaches the ledger under two distinct principals.
+    // gate below, which reaches the command table under two distinct principals.
     //
     // What survives here is the pair that never reaches a handler at all, so
     // neither needs a mounted command to be meaningful: a body that asserts a
@@ -1516,7 +1516,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // refused at DECODE, which is why they can be asserted before the
     // composition runs without disturbing the "nothing has reached a command
     // yet" invariant above.
-    let before = ledger_rows(&admin).await.len();
+    let before = command_rows(&admin).await.len();
     let injected_body = post(
         "/authoring",
         Some(alice.token()),
@@ -1538,7 +1538,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     .await;
     assert_eq!(injected_body.status, 400, "{}", injected_body.body);
     assert_eq!(
-        ledger_rows(&admin).await.len(),
+        command_rows(&admin).await.len(),
         before,
         "a smuggled principal reached a command"
     );
@@ -1559,12 +1559,12 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         document["body"]["schema-version"] = serde_json::json!("0.2");
     });
     for (name, document) in [("unversioned", &unversioned), ("unsupported", &unsupported)] {
-        let ledger_before = ledger_rows(&admin).await.len();
+        let command_count_before = command_rows(&admin).await.len();
         let refused = post("/authoring", Some(alice.token()), &[], document).await;
         assert_eq!(refused.status, 400, "{name}: {}", refused.body);
         assert_eq!(
-            ledger_rows(&admin).await.len(),
-            ledger_before,
+            command_rows(&admin).await.len(),
+            command_count_before,
             "{name} was audited"
         );
     }
@@ -1597,10 +1597,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     .await
     .expect("resolve bob")
     .expect("bob exists");
-    // Nothing above reached a handler, so the ledger is still empty and the
+    // Nothing above reached a handler, so the command table is still empty and the
     // composition below starts from a clean attribution slate.
     assert!(
-        ledger_rows(&admin).await.is_empty(),
+        command_rows(&admin).await.is_empty(),
         "a pre-dispatch refusal was audited"
     );
 
@@ -1627,7 +1627,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
     assert_eq!(stored_wiring_count(&project).await, 0);
     assert_eq!(
-        ledger_rows(&admin)
+        command_rows(&admin)
             .await
             .iter()
             .map(|row| row.2.as_str())
@@ -1638,7 +1638,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // ---- gate IS mounted, and judges a real candidate ----------------------
     // An untrusted presenter learns nothing from the mount: both command kinds
     // already returned the same frozen refusal above.
-    let ledger_before_composition = ledger_rows(&admin).await.len();
+    let command_count_before_composition = command_rows(&admin).await.len();
     for (name, token) in &refusals {
         let response = post(
             "/authoring",
@@ -1654,8 +1654,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         );
     }
     assert_eq!(
-        ledger_rows(&admin).await.len(),
-        ledger_before_composition,
+        command_rows(&admin).await.len(),
+        command_count_before_composition,
         "an untrusted gate probe was attributed"
     );
 
@@ -1709,13 +1709,13 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         accepted.body
     );
 
-    // The header-asserted principal reached nothing: the one new ledger row is
+    // The header-asserted principal reached nothing: the one new command record is
     // attributed to the TOKEN principal, under the role that principal actually
     // holds rather than the one the header asked for.
-    let attributed = ledger_rows(&admin).await;
+    let attributed = command_rows(&admin).await;
     assert_eq!(
         attributed.len(),
-        ledger_before_composition + 1,
+        command_count_before_composition + 1,
         "the gate was not attributed exactly once: {attributed:?}"
     );
     let alice_row = attributed
@@ -1802,7 +1802,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         projected.body
     );
     assert_eq!(
-        ledger_rows(&admin).await[ledger_before_composition..]
+        command_rows(&admin).await[command_count_before_composition..]
             .iter()
             .map(|(_, _, kind, _)| kind.clone())
             .collect::<Vec<_>>(),
@@ -1842,12 +1842,12 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
     assert_eq!(project_queue_count(&project).await, 0);
     // Two principals ran the same command against the same candidate. Both are
-    // attributed, and they stay distinguishable in the append-only ledger --
+    // attributed, and they stay distinguishable in the append-only command table --
     // each under the role it actually holds.
-    let rows = ledger_rows(&admin).await;
+    let rows = command_rows(&admin).await;
     assert_eq!(
         rows.len(),
-        ledger_before_composition + 2,
+        command_count_before_composition + 2,
         "the second command id was not attributed exactly once"
     );
     let bob_row = rows
@@ -1874,7 +1874,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(by_service.status, 200, "{}", by_service.body);
     assert_eq!(outcome(&by_service.body), outcome(&accepted.body));
     assert!(
-        ledger_rows(&admin)
+        command_rows(&admin)
             .await
             .iter()
             .any(|row| row.0 == "ci-runner"),
@@ -1952,7 +1952,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // connection-bearing component accepted above now carries cases, so its
     // admitted effect posture becomes the exact refusing predicate.
     let runs_before_effectful = project_case_runs(&project).await;
-    let ledger_before_effectful = ledger_rows(&admin).await.len();
+    let command_count_before_effectful = command_rows(&admin).await.len();
     nonempty_case_store_requirement_refuses_effect_posture(&admin, &project, alice.token()).await;
     // Nothing executed. The refusal precedes everything the verb could do with
     // the candidate, so there is no run and no queue row.
@@ -1964,11 +1964,11 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(project_queue_count(&project).await, 0);
     // A refusal is still an authorized command, so it IS attributed.
     assert_eq!(
-        ledger_rows(&admin).await.len(),
-        ledger_before_effectful + 1,
+        command_rows(&admin).await.len(),
+        command_count_before_effectful + 1,
         "a typed gate refusal was not attributed"
     );
-    // THE SAME CLAUSE, AGAINST THE BLOBSTORE CAPABILITY (wamn-61d0). `ledger`
+    // THE SAME CLAUSE, AGAINST THE BLOBSTORE CAPABILITY (wamn-61d0). The case
     // above tests that it fires for another registered effect. This tests that it fires
     // for `wasmcloud:blobstore`, the capability 2b added — so the effect law
     // keys on POSTURE, not on one known package, and the registry's first new
@@ -2162,7 +2162,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
 
     // An exact retry replays its stored result and converges on the one row.
-    let publish_ledger_count = ledger_rows(&admin).await.len();
+    let publish_command_count = command_rows(&admin).await.len();
     let replayed_publish = post(
         "/authoring",
         Some(alice.token()),
@@ -2172,11 +2172,11 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     .await;
     assert_eq!(replayed_publish.body, published.body);
     assert_eq!(stored_wiring_count(&project).await, 1);
-    assert_eq!(ledger_rows(&admin).await.len(), publish_ledger_count);
+    assert_eq!(command_rows(&admin).await.len(), publish_command_count);
 
     // A second compatible, green document reusing that command id is refused
     // before its project append. This is the side-effecting retry invariant:
-    // the control lock chooses one payload, not merely one ledger answer after
+    // the control lock chooses one payload, not merely one stored command outcome after
     // two project writes have escaped.
     let divergent_document = candidate_graph("orders-create-copy", "entity", "create");
     let divergent_gate = post(
@@ -2232,18 +2232,18 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     );
     assert_eq!(stored_wiring_count(&project).await, 1);
 
-    // ---- the ledger is append-only -----------------------------------------
+    // ---- the command table is append-only -----------------------------------------
     let rewrite = admin
         .execute(
             "UPDATE catalog.authoring_command_audit SET principal_subject = 'rewritten'",
             &[],
         )
         .await;
-    assert!(rewrite.is_err(), "the ledger accepted a rewrite");
+    assert!(rewrite.is_err(), "the command table accepted a rewrite");
     let erase = admin
         .execute("DELETE FROM catalog.authoring_command_audit", &[])
         .await;
-    assert!(erase.is_err(), "the ledger accepted a delete");
+    assert!(erase.is_err(), "the command table accepted a delete");
 
     surface.abort();
     project_task.abort();

@@ -41,7 +41,7 @@ fn isolated(name: &str, case: Case) {
             .args(["--exact", name, "--nocapture"])
             .env(CHILD_MARKER, name)
             .output()
-            .expect("start isolated deadline proof");
+            .expect("start isolated deadline test");
         if matches!(case, Case::NativeDeadlineOnly) {
             assert_eq!(output.status.code(), Some(124), "{output:?}");
             assert!(
@@ -63,7 +63,7 @@ fn isolated(name: &str, case: Case) {
     let (done, finished) = mpsc::channel();
     let watchdog = std::thread::spawn(move || {
         if finished.recv_timeout(Duration::from_secs(60)) == Err(mpsc::RecvTimeoutError::Timeout) {
-            eprintln!("native dispatch proof exceeded its process watchdog");
+            eprintln!("native dispatch test exceeded its process watchdog");
             std::process::exit(124);
         }
     });
@@ -199,10 +199,10 @@ const LINKED_CALLER: &str = r#"(component
 async fn target(engine: &Engine, components: Vec<Component>) -> DispatchTarget {
     let unresolved = engine
         .initialize_workload(
-            "deadline-proof",
+            "deadline-test",
             Workload {
-                name: "deadline-proof".to_owned(),
-                namespace: "deadline-proof".to_owned(),
+                name: "deadline-test".to_owned(),
+                namespace: "deadline-test".to_owned(),
                 annotations: HashMap::new(),
                 service: None,
                 components,
@@ -229,7 +229,7 @@ async fn target(engine: &Engine, components: Vec<Component>) -> DispatchTarget {
         .map(|(id, _)| Arc::clone(id))
         .expect("the workload contains root");
     workload
-        .dispatch_target(&root_id, "deadline-proof")
+        .dispatch_target(&root_id, "deadline-test")
         .await
         .expect("resolve a public native dispatch target")
 }

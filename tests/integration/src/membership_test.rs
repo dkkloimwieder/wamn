@@ -57,7 +57,7 @@ pub struct MembershipTestArgs {
 impl fmt::Debug for MembershipTestArgs {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("MembershipProofArgs")
+            .debug_struct("MembershipTestArgs")
             .finish_non_exhaustive()
     }
 }
@@ -65,14 +65,14 @@ impl fmt::Debug for MembershipTestArgs {
 /// Run every real HTTP case and remove this run's identity and permission facts.
 pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     wamn_control_provision::validate_project_env(&args.org, &args.project, &args.env)
-        .context("invalid membership proof scope")?;
-    ensure!(!args.tenant.is_empty(), "membership proof needs a tenant");
+        .context("invalid membership test scope")?;
+    ensure!(!args.tenant.is_empty(), "membership test needs a tenant");
     let http = reqwest::Client::builder()
         .timeout(OPERATION_TIMEOUT)
         .redirect(reqwest::redirect::Policy::none())
         .retry(reqwest::retry::never())
         .build()
-        .map_err(|_| anyhow!("build membership proof HTTP client"))?;
+        .map_err(|_| anyhow!("build membership test HTTP client"))?;
     let mut system = connect(&args.system_database_url, "system").await?;
     let mut project = connect(&args.project_database_url, "project").await?;
     system
@@ -82,13 +82,13 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     let nonce: String = system
         .query_one("SELECT gen_random_uuid()::text", &[])
         .await
-        .context("allocate a unique proof identity")?
+        .context("allocate a unique test identity")?
         .get(0);
-    let subject = format!("membership-proof-{nonce}@example.test");
-    let human = create_human(&system, &subject, "Disposable membership proof")
+    let subject = format!("membership-test-{nonce}@example.test");
+    let human = create_human(&system, &subject, "Disposable membership test")
         .await
         .context("create the test human")?;
-    let role = format!("membership-proof-{nonce}");
+    let role = format!("membership-test-{nonce}");
     if let Some(path) = &args.throughput_pat_file {
         let result = tokio::time::timeout(TEST_TIMEOUT, async {
             seed_tenant_role(&args, &mut project, human.id(), &role).await?;
@@ -177,7 +177,7 @@ async fn exercise(
     let token = issue_pat(
         system,
         principal,
-        "Disposable membership proof",
+        "Disposable membership test",
         TEST_TIMEOUT,
     )
     .await
@@ -446,9 +446,9 @@ mod tests {
         let command = TestCommand::try_parse_from([
             "membership-test",
             "--system-database-url",
-            "postgres://proof:system-secret@system/proof",
+            "postgres://test:system-secret@system/test",
             "--project-database-url",
-            "postgres://proof:project-secret@project/proof",
+            "postgres://test:project-secret@project/test",
             "--endpoint-url",
             "http://endpoint-secret",
             "--host",
@@ -471,19 +471,19 @@ mod tests {
 
     #[test]
     fn success_requires_the_correlated_seeded_record() {
-        let good = json!([{"request_id": "proof", "value": {
+        let good = json!([{"request_id": "test", "value": {
             "id": PURCHASE_ORDER_ID, "purchase_order_number": "PO-301"
         }}]);
-        check_record(&good, "proof").expect("the expected record passes");
+        check_record(&good, "test").expect("the expected record passes");
         assert!(check_record(&good, "another-request").is_err());
         for bad in [
             json!([]),
             json!([good[0], good[0]]),
-            json!([{"request_id": "proof", "error": "permission-denied", "value": good[0]["value"]}]),
-            json!([{"request_id": "proof", "value": {"id": "another-order", "purchase_order_number": "PO-301"}}]),
-            json!([{"request_id": "proof", "value": {"id": PURCHASE_ORDER_ID, "purchase_order_number": "PO-302"}}]),
+            json!([{"request_id": "test", "error": "permission-denied", "value": good[0]["value"]}]),
+            json!([{"request_id": "test", "value": {"id": "another-order", "purchase_order_number": "PO-301"}}]),
+            json!([{"request_id": "test", "value": {"id": PURCHASE_ORDER_ID, "purchase_order_number": "PO-302"}}]),
         ] {
-            assert!(check_record(&bad, "proof").is_err());
+            assert!(check_record(&bad, "test").is_err());
         }
     }
 }
