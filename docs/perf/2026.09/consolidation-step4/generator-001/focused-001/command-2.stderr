@@ -1,0 +1,21 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/crates/schema/generator)
+warning: unused import: `json`
+  --> crates/schema/generator/src/generate/validation.rs:10:41
+   |
+10 |     custom_operation_constraint_origin, json, operation_constraints, operation_exclusions,
+   |                                         ^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-schema-generator` (lib test) generated 1 warning (run `cargo fix --lib -p wamn-schema-generator --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.02s
+     Running unittests src/lib.rs (target/debug/deps/wamn_schema_generator-69e5792abdd6217d)

@@ -1,0 +1,98 @@
+[
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--test",
+      "generation",
+      "--test",
+      "parity",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "source_head": "510e4fbf22d8ab321ef3cff1eabc69cf487a3cce",
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null
+    },
+    "exit_code": 0,
+    "seconds": 3.8631472819834016
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--lib",
+      "materialize::tests::",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "source_head": "510e4fbf22d8ab321ef3cff1eabc69cf487a3cce",
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null
+    },
+    "exit_code": 0,
+    "seconds": 7.11534867901355
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-receiving-tests",
+      "--test",
+      "generation",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "source_head": "510e4fbf22d8ab321ef3cff1eabc69cf487a3cce",
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null
+    },
+    "exit_code": 0,
+    "seconds": 400.77235763001954
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "build",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "source_head": "510e4fbf22d8ab321ef3cff1eabc69cf487a3cce",
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null
+    },
+    "exit_code": 0,
+    "seconds": 0.9216726630111225
+  }
+]

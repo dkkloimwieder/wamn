@@ -1,0 +1,121 @@
+[
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt"
+    ],
+    "exit_code": 0,
+    "name": "version",
+    "seconds": 0.12415436399169266,
+    "stdin": "version.sql"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt"
+    ],
+    "exit_code": 0,
+    "name": "schemas",
+    "seconds": 0.06476678798208013,
+    "stdin": "schemas.sql"
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/apps/wamn_receiving/migrations/0001_initial.sql"
+    ],
+    "exit_code": 0,
+    "name": "wamn_receiving-0001_initial",
+    "seconds": 0.06457025097915903,
+    "stdin": null
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/target/debug/examples/materialize_package",
+      "check",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/apps/wamn_receiving"
+    ],
+    "exit_code": 0,
+    "name": "wamn_receiving-check",
+    "seconds": 0.4150294319842942,
+    "stdin": null
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/apps/client_acme_receiving/migrations/0001_add_inspection_required.sql"
+    ],
+    "exit_code": 0,
+    "name": "client_acme_receiving-0001_add_inspection_required",
+    "seconds": 0.0645202140440233,
+    "stdin": null
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/apps/client_acme_receiving/migrations/0002_quality_inspection.sql"
+    ],
+    "exit_code": 0,
+    "name": "client_acme_receiving-0002_quality_inspection",
+    "seconds": 0.06453787902137265,
+    "stdin": null
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/target/debug/examples/materialize_package",
+      "check",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/apps/client_acme_receiving"
+    ],
+    "exit_code": 0,
+    "name": "client_acme_receiving-check",
+    "seconds": 0.3151981030241586,
+    "stdin": null
+  },
+  {
+    "argv": [
+      "psql",
+      "-X",
+      "-v",
+      "ON_ERROR_STOP=1",
+      "-qAt",
+      "-f",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/apps/wamn_wms/migrations/0001_initial.sql"
+    ],
+    "exit_code": 0,
+    "name": "wamn_wms-0001_initial",
+    "seconds": 0.06440449797082692,
+    "stdin": null
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/target/debug/examples/materialize_package",
+      "check",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/apps/wamn_wms"
+    ],
+    "exit_code": 0,
+    "name": "wamn_wms-check",
+    "seconds": 0.4656705089728348,
+    "stdin": null
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "pg_virtualenv",
+    "-v",
+    "18",
+    "-t",
+    "python3",
+    "-B",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step4/generator-001/tools/check-app-output.py",
+    "--tree",
+    "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "--evidence",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step4/generator-001/before-apps-001"
+  ],
+  "owned_postgres": "pg_virtualenv creates and removes its own temporary cluster"
+}

@@ -1,0 +1,32 @@
+{
+  "binary_sha256": "a80acc9129547d94b4587cd757689ed353887f1cd776dca7918bd493aa43b60e",
+  "generated_files": 248,
+  "generated_unchanged": true,
+  "generator": "wamn-schema-generator/0.1.0",
+  "packages": {
+    "client_acme_receiving": {
+      "migrations": {
+        "apps/client_acme_receiving/migrations/0001_add_inspection_required.sql": "059c9eb628bcb5abd1e2d2c7045771fc481fcebb23336719cff5d3ed6f285508",
+        "apps/client_acme_receiving/migrations/0002_quality_inspection.sql": "b908a316dd43bc5b5ea429ffec795d4e98e486fbacb6c667bf2dd56437809c02"
+      },
+      "passed": true
+    },
+    "wamn_receiving": {
+      "migrations": {
+        "apps/wamn_receiving/migrations/0001_initial.sql": "46f703e4e9bc83001bbd6293cd3aea6b01dad4feb3a5458d88ef1308ac37d16a"
+      },
+      "passed": true
+    },
+    "wamn_wms": {
+      "migrations": {
+        "apps/wamn_wms/migrations/0001_initial.sql": "8a41695e7515503af0fcd994dad51201a5a5e8f93b6232c64ea2eeaca031cc18"
+      },
+      "passed": true
+    }
+  },
+  "passed": true,
+  "seconds": 1.6722751859924756,
+  "server_version_num": 180006,
+  "source_head": "510e4fbf22d8ab321ef3cff1eabc69cf487a3cce",
+  "toolchain": "rust-1.98.0"
+}

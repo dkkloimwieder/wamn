@@ -1,0 +1,4 @@
+ M crates/schema/generator/src/generate.rs
+?? crates/schema/generator/src/generate/contracts.rs
+?? crates/schema/generator/src/generate/rust.rs
+?? crates/schema/generator/src/generate/validation.rs

@@ -1,0 +1,4033 @@
+diff --git a/crates/schema/generator/src/generate.rs b/crates/schema/generator/src/generate.rs
+index 0ea95b9f..65cfe3e6 100644
+--- a/crates/schema/generator/src/generate.rs
++++ b/crates/schema/generator/src/generate.rs
+@@ -1,5 +1,13 @@
++mod contracts;
++mod rust;
++mod validation;
++
++use contracts::{
++    emit_cursor_contract, emit_custom_operation, emit_model, required_schema_contract,
++};
++use validation::{authored_sql_map, validate};
++
+ use std::collections::{BTreeMap, BTreeSet};
+-use std::fmt::Write as _;
+ 
+ use serde::{Deserialize, Serialize};
+ use serde_json::{Value, json};
+@@ -445,2912 +453,159 @@ pub fn corpus_sha256<'a>(entries: impl IntoIterator<Item = (&'a str, &'a [u8])>)
+     format!("sha256:{}", hex::encode(hasher.finalize()))
+ }
+ 
+-fn validate(input: &GenerationInput<'_>, manifest: &PackageManifest) -> Result<(), GenerateError> {
+-    validate_operation_vocabulary(manifest)?;
+-    validate_identifier(
+-        &manifest.required_platform_policy_contract.id,
+-        "platform policy contract",
+-    )?;
+-    for value in [input.provenance.generator, input.provenance.toolchain] {
+-        if value.is_empty() {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidIdentity,
+-                "generation provenance values must not be empty",
+-            ));
+-        }
+-    }
+-    if manifest.models.is_empty() {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidManifest,
+-            "manifest must declare at least one model",
+-        ));
+-    }
+-
+-    for (model_name, model) in &manifest.models {
+-        validate_model(input.catalog, manifest, model_name, model)?;
+-    }
+-    for (relation_name, relation) in &manifest.internal_relations {
+-        if !input
+-            .catalog
+-            .tables()
++/// The `from` literal for the constraint a custom operation maps, whether the
++/// database enforces it as a [`Constraint`] or as an exclusion constraint.
++fn custom_operation_constraint_origin(
++    catalog: &CatalogIr,
++    operation: &CustomOperationDeclaration,
++    name: &str,
++) -> Option<&'static str> {
++    for relation in &operation.relations {
++        if !relation
++            .constraints
+             .iter()
+-            .any(|table| table.schema() == relation.schema && table.name() == relation.table)
++            .any(|constraint| constraint == name)
+         {
+-            return Err(GenerateError::for_object(
+-                GenerateErrorKind::UnknownRelation,
+-                format!(
+-                    "CDC-excluded relation {relation_name} references unknown {}.{}",
+-                    relation.schema, relation.table
+-                ),
+-                format!("{}.{}", relation.schema, relation.table),
+-            ));
++            continue;
+         }
+-    }
+-    validate_connections(manifest)?;
+-    validate_authored_sources(manifest, input.authored_sql)?;
+-    for (operation_name, operation) in &manifest.custom_operations {
+-        validate_custom_operation_sql(
+-            input.catalog,
+-            input.authored_sql,
+-            operation_name,
+-            operation,
+-        )?;
+-        validate_custom_claim(input.catalog, manifest, operation_name, operation)?;
+-    }
+-    Ok(())
+-}
+-
+-fn validate_model(
+-    catalog: &CatalogIr,
+-    manifest: &PackageManifest,
+-    model_name: &str,
+-    model: &ModelDeclaration,
+-) -> Result<(), GenerateError> {
+-    validate_identifier(model_name, "model")?;
+-    validate_identifier(&model.schema, "schema")?;
+-    validate_identifier(&model.table, "table")?;
+-    validate_identifier(&model.owner, "owner")?;
+-    let table = relation(catalog, model).ok_or_else(|| {
+-        GenerateError::for_object(
+-            GenerateErrorKind::UnknownRelation,
+-            format!(
+-                "{model_name} references unknown {}.{}",
+-                model.schema, model.table
+-            ),
+-            format!("{}.{}", model.schema, model.table),
+-        )
+-    })?;
+-    if let Some(column) = table
+-        .columns()
+-        .iter()
+-        .find(|column| rust_identifier(column.name()).is_none())
+-    {
+-        return Err(GenerateError::for_object(
+-            GenerateErrorKind::InvalidIdentity,
+-            "model column has no lossless Rust 2024 identifier spelling",
+-            format!("{}.{}.{}", model.schema, model.table, column.name()),
+-        ));
+-    }
+-    let admitted_owners = std::iter::once(manifest.package.id.as_str())
+-        .chain(
+-            manifest
+-                .base_dependencies
+-                .values()
+-                .map(|dependency| dependency.package.as_str()),
+-        )
+-        .collect::<BTreeSet<_>>();
+-    validate_definition_owner(model_name, "relation", &model.owner, &admitted_owners)?;
+-    if model.client_field_extensible && model.owner != manifest.package.id {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidModel,
+-            format!(
+-                "{model_name} may declare client field extensibility only for its own relation"
+-            ),
+-        ));
+-    }
+-    for (field, owner) in &model.field_owners {
+-        validate_field(table, model_name, field)?;
+-        validate_definition_owner(model_name, field, owner, &admitted_owners)?;
+-    }
+-    for (constraint, owner) in &model.constraint_owners {
+-        if !table
++        let table = catalog
++            .tables()
++            .iter()
++            .find(|table| table.schema() == relation.schema && table.name() == relation.table)?;
++        if let Some(constraint) = table
+             .constraints()
+             .iter()
+-            .any(|candidate| candidate.name() == constraint)
+-            && !table
+-                .exclusions()
+-                .iter()
+-                .any(|candidate| candidate.name() == constraint)
++            .find(|constraint| constraint.name() == name)
+         {
+-            return Err(GenerateError::for_object(
+-                GenerateErrorKind::InvalidModel,
+-                format!("{model_name} owns unknown constraint {constraint}"),
+-                format!("{}.{}.{}", model.schema, model.table, constraint),
+-            ));
+-        }
+-        validate_definition_owner(model_name, constraint, owner, &admitted_owners)?;
+-    }
+-    let mut seen = BTreeSet::new();
+-    for field in &model.server_owned_fields {
+-        validate_field(table, model_name, field)?;
+-        if !seen.insert(field) {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidModel,
+-                format!("{model_name} repeats server-owned field {field}"),
+-            ));
+-        }
+-    }
+-    for (field, values) in &model.enum_fields {
+-        let column = validate_field(table, model_name, field)?;
+-        if column.column_type() != ColumnType::Text || values.is_empty() {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidModel,
+-                format!("{model_name}.{field} enum must be nonempty text"),
+-            ));
++            return Some(constraint_error(constraint.kind()));
+         }
+-        let unique = values.iter().collect::<BTreeSet<_>>();
+-        if unique.len() != values.len() || values.iter().any(String::is_empty) {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidModel,
+-                format!("{model_name}.{field} enum values must be unique and nonempty"),
+-            ));
++        if table
++            .exclusions()
++            .iter()
++            .any(|exclusion| exclusion.name() == name)
++        {
++            return Some("exclusion_violation");
+         }
+     }
+-
+-    for (action, operation) in &model.operations {
+-        validate_operation(
+-            catalog, manifest, model_name, model, table, *action, operation,
+-        )?;
+-    }
+-    Ok(())
++    None
+ }
+ 
+-fn validate_definition_owner(
+-    model: &str,
+-    definition: &str,
+-    owner: &str,
+-    admitted: &BTreeSet<&str>,
+-) -> Result<(), GenerateError> {
+-    validate_identifier(owner, "definition owner")?;
+-    if admitted.contains(owner) {
+-        Ok(())
+-    } else {
+-        Err(GenerateError::new(
+-            GenerateErrorKind::InvalidModel,
+-            format!("{model}.{definition} owner {owner} is not the package or a declared base"),
+-        ))
++fn query_variants(operation: &OperationDeclaration) -> Vec<(&str, CursorDirection)> {
++    if let Some(authored) = &operation.authored_sql {
++        return authored
++            .variants
++            .iter()
++            .map(|variant| (variant.field.as_str(), variant.direction))
++            .collect();
+     }
++    operation.sort.as_ref().map_or_else(
++        || {
++            let pagination = operation
++                .pagination
++                .as_ref()
++                .expect("query validation requires pagination");
++            vec![(
++                pagination.default_sort.field.as_str(),
++                pagination.default_sort.direction,
++            )]
++        },
++        |sort| {
++            sort.fields
++                .iter()
++                .flat_map(|field| {
++                    sort.directions
++                        .iter()
++                        .map(move |direction| (field.as_str(), *direction))
++                })
++                .collect()
++        },
++    )
+ }
+ 
+-fn validate_operation(
+-    catalog: &CatalogIr,
+-    manifest: &PackageManifest,
+-    model_name: &str,
+-    model: &ModelDeclaration,
+-    table: &Table,
+-    action: CrudAction,
+-    operation: &OperationDeclaration,
+-) -> Result<(), GenerateError> {
+-    let context = format!("{model_name}.{}", action.as_str());
+-    validate_field(table, model_name, "id")?;
+-    if operation.claim.is_some() && action != CrudAction::Create {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} declares a command claim, which only a create carries"),
+-        ));
+-    }
+-
+-    let server_owned = model.server_owned_fields.iter().collect::<BTreeSet<_>>();
+-    let mut writable = BTreeSet::new();
+-    for field in &operation.writable_fields {
+-        let column = validate_field(table, model_name, field)?;
+-        if !writable.insert(field) {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{context} repeats writable field {field}"),
+-            ));
+-        }
+-        if server_owned.contains(field) || column.generation().is_some() {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{context} exposes server-owned field {field}"),
+-            ));
+-        }
+-    }
+-
+-    if let Some(revision_field) = &operation.revision_field {
+-        let column = validate_field(table, model_name, revision_field)?;
+-        if column.column_type() != ColumnType::Int64 || column.nullable() {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{context} revision field must be non-null int64"),
+-            ));
+-        }
+-        if writable.contains(revision_field) {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{context} revision field cannot be writable"),
+-            ));
+-        }
+-    }
+-
+-    match action {
+-        CrudAction::Get => {
+-            require_result(
+-                &context,
+-                operation.result,
+-                &[ResultClass::One, ResultClass::OptionalOne],
+-            )?;
+-            require_read_shape(&context, operation, false)?;
+-        }
+-        CrudAction::Query => {
+-            require_result(&context, operation.result, &[ResultClass::Page])?;
+-            if !operation.writable_fields.is_empty() || operation.revision_field.is_some() {
+-                return Err(GenerateError::new(
+-                    GenerateErrorKind::InvalidOperation,
+-                    format!("{context} query cannot declare mutation fields"),
+-                ));
+-            }
+-            validate_query(model_name, table, operation)?;
+-        }
+-        CrudAction::Create => {
+-            require_result(&context, operation.result, &[ResultClass::One])?;
+-            require_mutation_shape(&context, operation, false)?;
+-            validate_claim(catalog, manifest, &context, model, table, operation)?;
+-        }
+-        CrudAction::Update => {
+-            require_result(&context, operation.result, &[ResultClass::One])?;
+-            require_mutation_shape(&context, operation, true)?;
+-        }
+-        CrudAction::Delete => {
+-            require_result(&context, operation.result, &[ResultClass::One])?;
+-            if !operation.writable_fields.is_empty() {
+-                return Err(GenerateError::new(
+-                    GenerateErrorKind::InvalidOperation,
+-                    format!("{context} delete cannot declare writable fields"),
+-                ));
+-            }
+-            require_mutation_shape(&context, operation, true)?;
++fn constraint_error_code(kind: &ConstraintKind) -> AccessOperationErrorLiteral {
++    match kind {
++        ConstraintKind::PrimaryKey { .. } | ConstraintKind::Unique { .. } => {
++            AccessOperationErrorLiteral::UniqueViolation
+         }
++        ConstraintKind::ForeignKey { .. } => AccessOperationErrorLiteral::ForeignKeyViolation,
++        ConstraintKind::Check { .. } => AccessOperationErrorLiteral::CheckViolation,
+     }
+-    validate_constraint_error_details(&context, table, action, operation)?;
+-    Ok(())
+ }
+ 
+-fn validate_constraint_error_details(
+-    context: &str,
+-    table: &Table,
++fn operation_constraints<'a>(
++    table: &'a Table,
+     action: CrudAction,
+     operation: &OperationDeclaration,
+-) -> Result<(), GenerateError> {
+-    use AccessOperationErrorLiteral as Code;
+-
+-    let mut expected = operation_constraints(table, action, operation)
+-        .into_iter()
+-        .map(|constraint| constraint_error_code(constraint.kind()))
+-        .collect::<BTreeSet<_>>();
+-    if !operation_exclusions(table, action, operation).is_empty() {
+-        expected.insert(Code::ExclusionViolation);
++) -> Vec<&'a Constraint> {
++    if !matches!(
++        action,
++        CrudAction::Create | CrudAction::Update | CrudAction::Delete
++    ) {
++        return Vec::new();
+     }
+-    let declared = operation
+-        .error_details
+-        .keys()
+-        .copied()
+-        .filter(|code| {
+-            matches!(
+-                code,
+-                Code::UniqueViolation
+-                    | Code::ForeignKeyViolation
+-                    | Code::CheckViolation
+-                    | Code::ExclusionViolation
+-            )
++    table
++        .constraints()
++        .iter()
++        .filter(|constraint| {
++            action != CrudAction::Update
++                || update_can_violate(constraint.kind(), &operation.writable_fields)
+         })
+-        .collect::<BTreeSet<_>>();
+-    if declared == expected {
+-        Ok(())
+-    } else {
+-        Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} must declare error details for its exact constraint kinds"),
+-        ))
+-    }
+-}
+-
+-fn require_result(
+-    context: &str,
+-    actual: ResultClass,
+-    expected: &[ResultClass],
+-) -> Result<(), GenerateError> {
+-    if expected.contains(&actual) {
+-        Ok(())
+-    } else {
+-        Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} has an incompatible result class"),
+-        ))
+-    }
+-}
+-
+-fn require_read_shape(
+-    context: &str,
+-    operation: &OperationDeclaration,
+-    allow_query_fields: bool,
+-) -> Result<(), GenerateError> {
+-    if !operation.writable_fields.is_empty()
+-        || operation.revision_field.is_some()
+-        || (!allow_query_fields
+-            && (!operation.filters.is_empty()
+-                || operation.sort.is_some()
+-                || operation.pagination.is_some()
+-                || operation.limit.is_some()))
+-        || operation.authored_sql.is_some()
+-    {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} carries fields outside its operation shape"),
+-        ));
+-    }
+-    Ok(())
++        .collect()
+ }
+ 
+-fn require_mutation_shape(
+-    context: &str,
++/// Exclusions the operation can violate.
++///
++/// An INSERT can always collide with a row already stored. An UPDATE can only
++/// collide when it writes a column the constraint depends on -- including a
++/// column an expression key reads, which PostgreSQL records as a dependency and
++/// [`Exclusion::columns`] carries. A DELETE never can: removing a row cannot
++/// create an overlap.
++fn operation_exclusions<'a>(
++    table: &'a Table,
++    action: CrudAction,
+     operation: &OperationDeclaration,
+-    revision_required: bool,
+-) -> Result<(), GenerateError> {
+-    if operation.authored_sql.is_some()
+-        || !operation.filters.is_empty()
+-        || operation.sort.is_some()
+-        || operation.pagination.is_some()
+-        || operation.limit.is_some()
+-        || revision_required != operation.revision_field.is_some()
+-        || (!revision_required && operation.writable_fields.is_empty())
+-        || (revision_required
+-            && context.ends_with(".update")
+-            && operation.writable_fields.is_empty())
+-    {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} carries fields outside its mutation shape"),
+-        ));
++) -> Vec<&'a Exclusion> {
++    if !matches!(action, CrudAction::Create | CrudAction::Update) {
++        return Vec::new();
+     }
+-    Ok(())
+-}
+-
+-fn validate_claim(
+-    catalog: &CatalogIr,
+-    manifest: &PackageManifest,
+-    context: &str,
+-    model: &ModelDeclaration,
+-    table: &Table,
+-    operation: &OperationDeclaration,
+-) -> Result<(), GenerateError> {
+-    resolve_claim(catalog, manifest, context, model, table, operation).map(|_| ())
+-}
+-
+-/// The identities one generated create would otherwise let PostgreSQL mint.
+-///
+-/// Exactly these must come from the claim. A column PostgreSQL defaults is
+-/// minted fresh on every attempt, so a replay that re-ran the insert would hand
+-/// out a SECOND identity for the same command.
+-fn minted_identities<'a>(table: &'a Table, operation: &OperationDeclaration) -> Vec<&'a Column> {
+     table
+-        .columns()
++        .exclusions()
+         .iter()
+-        .filter(|column| {
+-            column.column_type() == ColumnType::Uuid
+-                && !column.nullable()
+-                && column.default() == Some(&ColumnDefault::GenRandomUuid)
+-                && column.generation().is_none()
+-                && !operation
+-                    .writable_fields
+-                    .iter()
+-                    .any(|field| field == column.name())
++        .filter(|exclusion| {
++            action != CrudAction::Update
++                || exclusion.columns().iter().any(|column| {
++                    operation
++                        .writable_fields
++                        .iter()
++                        .any(|field| field.as_str() == column.as_ref())
++                })
+         })
+         .collect()
+ }
+ 
+-/// Resolve and verify one create's claim against the catalog.
+-///
+-/// The claim is checked structurally, never by convention: the key column under
+-/// a primary key, and every minted identity under its own `UNIQUE` column that
+-/// PostgreSQL defaulted once. That is why a replay returns the same value BY
+-/// CONSTRUCTION rather than because some caller took an early return.
+-fn resolve_claim<'a>(
+-    catalog: &'a CatalogIr,
+-    manifest: &PackageManifest,
+-    context: &str,
+-    model: &ModelDeclaration,
+-    table: &'a Table,
+-    operation: &'a OperationDeclaration,
+-) -> Result<sql::Claim<'a>, GenerateError> {
+-    let declaration = operation.claim.as_ref().ok_or_else(|| {
+-        GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} must declare the command claim its identity comes from"),
+-        )
+-    })?;
+-    let (claim, primary_key) = require_claim_relation(
+-        catalog,
+-        manifest,
+-        context,
+-        &model.schema,
+-        &declaration.table,
+-    )?;
+-    // The emitted claim INSERT writes the key and the canonical command and
+-    // nothing else, so every other column must have a value without one.
+-    for column in claim.columns() {
+-        if column.name() != CLAIM_KEY_COLUMN
+-            && column.name() != CLAIM_COMMAND_COLUMN
+-            && !column.nullable()
+-            && column.default().is_none()
+-            && column.generation().is_none()
+-        {
+-            return Err(GenerateError::for_object(
+-                GenerateErrorKind::InvalidOperation,
+-                format!(
+-                    "{context} claim column {} has no value the claim can supply",
+-                    column.name()
+-                ),
+-                format!("{}.{}.{}", model.schema, declaration.table, column.name()),
+-            ));
+-        }
+-    }
+-
+-    let minted = minted_identities(table, operation)
+-        .into_iter()
+-        .map(Column::name)
+-        .collect::<BTreeSet<_>>();
+-    let declared = declaration
+-        .identities
+-        .keys()
+-        .map(String::as_str)
+-        .collect::<BTreeSet<_>>();
+-    if minted != declared || !declared.contains("id") {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} claim must pre-generate exactly the identities the create mints"),
+-        ));
+-    }
+-    let mut claim_columns = BTreeSet::new();
+-    let mut identities = Vec::with_capacity(declaration.identities.len());
+-    for (field, claim_column) in &declaration.identities {
+-        if !claim_columns.insert(claim_column.as_str()) {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{context} claim reuses column {claim_column} for two identities"),
+-            ));
++fn update_can_violate(kind: &ConstraintKind, writable_fields: &[String]) -> bool {
++    match kind {
++        // Opaque CHECK expressions expose no structural field set to intersect.
++        ConstraintKind::Check { .. } => false,
++        ConstraintKind::PrimaryKey { columns } | ConstraintKind::Unique { columns } => {
++            columns.iter().any(|column| {
++                writable_fields
++                    .iter()
++                    .any(|field| field.as_str() == column.as_ref())
++            })
+         }
+-        require_pre_generated_identity(context, claim, claim_column)?;
+-        identities.push((field.as_str(), claim_column.as_str()));
++        ConstraintKind::ForeignKey { columns, .. } => columns.iter().any(|column| {
++            writable_fields
++                .iter()
++                .any(|field| field.as_str() == column.column())
++        }),
+     }
+-    Ok(sql::Claim {
+-        table: claim,
+-        primary_key,
+-        identities,
+-    })
+ }
+ 
+-/// Find one claim relation and check the shape the law needs from it.
+-///
+-/// A generated create and an authored command share this check, because the law
+-/// is one law. The relation is CDC-excluded, it keys the idempotency key under a
+-/// primary key alone, and it stores the canonical command beside that key. The
+-/// primary key is what makes a second call with the same key mint nothing.
+-fn require_claim_relation<'a>(
+-    catalog: &'a CatalogIr,
+-    manifest: &PackageManifest,
+-    context: &str,
+-    schema: &str,
+-    table: &str,
+-) -> Result<(&'a Table, &'a str), GenerateError> {
+-    validate_identifier(table, "claim table")?;
+-    let claim = catalog
+-        .tables()
+-        .iter()
+-        .find(|candidate| candidate.schema() == schema && candidate.name() == table)
+-        .ok_or_else(|| {
+-            GenerateError::for_object(
+-                GenerateErrorKind::UnknownRelation,
+-                format!("{context} references unknown claim relation"),
+-                format!("{schema}.{table}"),
+-            )
+-        })?;
+-    if !manifest
+-        .internal_relations
+-        .values()
+-        .any(|relation| relation.schema == schema && relation.table == table)
+-    {
+-        return Err(GenerateError::for_object(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} claim must be a CDC-excluded internal relation"),
+-            format!("{schema}.{table}"),
+-        ));
+-    }
+-    let primary_key = claim_primary_key(claim).ok_or_else(|| {
+-        GenerateError::for_object(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} claim must key {CLAIM_KEY_COLUMN} under a primary key alone"),
+-            format!("{schema}.{table}"),
+-        )
+-    })?;
+-    require_claim_column(context, claim, CLAIM_KEY_COLUMN, ColumnType::Text)?;
+-    require_claim_column(context, claim, CLAIM_COMMAND_COLUMN, ColumnType::Bytes)?;
+-    Ok((claim, primary_key))
+-}
+-
+-/// Refuse a claim column PostgreSQL can mint a second time.
+-///
+-/// The column defaults `gen_random_uuid()` once, under its own `UNIQUE`
+-/// constraint, so the claim row holds one value for the life of the key. That
+-/// is why a replay returns the same identity BY CONSTRUCTION rather than
+-/// because some caller took an early return.
+-fn require_pre_generated_identity(
+-    context: &str,
+-    claim: &Table,
+-    claim_column: &str,
+-) -> Result<(), GenerateError> {
+-    let object = format!("{}.{}.{claim_column}", claim.schema(), claim.name());
+-    let column = column(claim, claim_column).ok_or_else(|| {
+-        GenerateError::for_object(
+-            GenerateErrorKind::UnknownColumn,
+-            format!("{context} claim has no column {claim_column}"),
+-            object.clone(),
+-        )
+-    })?;
+-    let pre_generated = column.column_type() == ColumnType::Uuid
+-        && !column.nullable()
+-        && column.default() == Some(&ColumnDefault::GenRandomUuid)
+-        && claim.constraints().iter().any(|constraint| {
+-            matches!(
+-                constraint.kind(),
+-                ConstraintKind::Unique { columns }
+-                    if columns.len() == 1 && columns[0].as_ref() == claim_column
+-            )
+-        });
+-    if pre_generated {
+-        Ok(())
+-    } else {
+-        Err(GenerateError::for_object(
+-            GenerateErrorKind::InvalidOperation,
+-            format!(
+-                "{context} claim column {claim_column} must be a unique non-null uuid defaulting to gen_random_uuid()"
+-            ),
+-            object,
+-        ))
+-    }
+-}
+-
+-fn claim_primary_key(claim: &Table) -> Option<&str> {
+-    claim.constraints().iter().find_map(|constraint| {
+-        matches!(
+-            constraint.kind(),
+-            ConstraintKind::PrimaryKey { columns }
+-                if columns.len() == 1 && columns[0].as_ref() == CLAIM_KEY_COLUMN
+-        )
+-        .then(|| constraint.name())
+-    })
+-}
+-
+-fn require_claim_column(
+-    context: &str,
+-    claim: &Table,
+-    name: &str,
+-    ty: ColumnType,
+-) -> Result<(), GenerateError> {
+-    let valid =
+-        column(claim, name).is_some_and(|column| column.column_type() == ty && !column.nullable());
+-    if valid {
+-        Ok(())
+-    } else {
+-        Err(GenerateError::for_object(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} claim must carry non-null {name} {}", ty.as_str()),
+-            format!("{}.{}.{name}", claim.schema(), claim.name()),
+-        ))
+-    }
+-}
+-
+-fn validate_query(
+-    model_name: &str,
+-    table: &Table,
+-    operation: &OperationDeclaration,
+-) -> Result<(), GenerateError> {
+-    let context = format!("{model_name}.query");
+-    let mut filter_fields = BTreeSet::new();
+-    for filter in &operation.filters {
+-        validate_field(table, model_name, &filter.field)?;
+-        if !filter_fields.insert(filter.field.as_str()) {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{context} repeats filter field {}", filter.field),
+-            ));
+-        }
+-    }
+-    if let Some(sort) = &operation.sort {
+-        if sort.fields.is_empty()
+-            || sort.directions.is_empty()
+-            || sort.max_fields != 1
+-            || sort.fields.iter().collect::<BTreeSet<_>>().len() != sort.fields.len()
+-            || sort.directions.iter().collect::<BTreeSet<_>>().len() != sort.directions.len()
+-        {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{context} sort must be a nonempty finite product with max_fields 1"),
+-            ));
+-        }
+-        for field in &sort.fields {
+-            validate_sort_field(table, model_name, &context, field)?;
+-        }
+-    }
+-    let limit = operation.limit.as_ref().ok_or_else(|| {
+-        GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} requires an explicit limit contract"),
+-        )
+-    })?;
+-    if limit.default != QUERY_LIMIT || limit.minimum != 1 || limit.maximum != QUERY_LIMIT {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} limit must default to 100 and accept exactly 1..=100"),
+-        ));
+-    }
+-    let pagination = operation.pagination.as_ref().ok_or_else(|| {
+-        GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} requires keyset pagination"),
+-        )
+-    })?;
+-    if pagination.cursor.version != CURSOR_VERSION
+-        || !pagination.cursor.opaque
+-        || pagination.default_sort.field != "created_at"
+-        || pagination.default_sort.direction != CursorDirection::Ascending
+-        || pagination.tie_breaker.field != "id"
+-        || operation.sort.as_ref().is_some_and(|sort| {
+-            !sort.fields.iter().any(|field| field == "created_at")
+-                || !sort.directions.contains(&CursorDirection::Ascending)
+-        })
+-    {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} requires opaque v1 cursor, created_at ASC, id tie-breaker"),
+-        ));
+-    }
+-    let created_at = validate_field(table, model_name, "created_at")?;
+-    let id = validate_field(table, model_name, "id")?;
+-    if created_at.column_type() != ColumnType::Timestamptz
+-        || created_at.nullable()
+-        || id.column_type() != ColumnType::Uuid
+-        || id.nullable()
+-    {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} keyset fields must be non-null timestamptz and uuid"),
+-        ));
+-    }
+-    if let Some(authored) = &operation.authored_sql {
+-        let sort = operation.sort.as_ref().ok_or_else(|| {
+-            GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{context} authored variants require an explicit sort declaration"),
+-            )
+-        })?;
+-        validate_authored_variants(&context, sort, authored)?;
+-    }
+-    Ok(())
+-}
+-
+-/// Check one authored command's claim against the catalog it runs on.
+-///
+-/// The law is the same law a generated create carries. The relation shape and
+-/// the pre-generated identity columns go through the same helpers. What differs
+-/// is where the ids are named. A generated create mints them in the model
+-/// table, and an authored command hands them out in its own result. The
+-/// identity map is therefore read against the result fields and against the row
+-/// the claim statement returns.
+-///
+-/// The three statements are named because the emitted contract tests name them.
+-/// The claim statement returns exactly the pre-generated columns, and the
+-/// replay statement returns the canonical command beside every one of them.
+-/// A command missing either cannot return the immutable original on a replay.
+-fn validate_custom_claim(
+-    catalog: &CatalogIr,
+-    manifest: &PackageManifest,
+-    operation_name: &str,
+-    operation: &CustomOperationDeclaration,
+-) -> Result<(), GenerateError> {
+-    let Some(declaration) = &operation.claim else {
+-        return Ok(());
+-    };
+-    // The claim relation is one the operation already declares, so the schema
+-    // comes from that declaration and the command holds the access it needs.
+-    let relation = operation
+-        .relations
+-        .iter()
+-        .find(|relation| relation.table == declaration.table)
+-        .ok_or_else(|| {
+-            GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!(
+-                    "{operation_name} claim {} must be one of the operation's declared relations",
+-                    declaration.table
+-                ),
+-            )
+-        })?;
+-    let (claim, _) = require_claim_relation(
+-        catalog,
+-        manifest,
+-        operation_name,
+-        &relation.schema,
+-        &declaration.table,
+-    )?;
+-    let result = operation.result.as_ref().ok_or_else(|| {
+-        GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{operation_name} claim needs a declared result to hand identities out in"),
+-        )
+-    })?;
+-    if declaration.identities.is_empty() {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{operation_name} claim must pre-generate at least one identity"),
+-        ));
+-    }
+-    let mut claim_columns = BTreeSet::new();
+-    for (field, claim_column) in &declaration.identities {
+-        if !claim_columns.insert(claim_column.as_str()) {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{operation_name} claim reuses column {claim_column} for two identities"),
+-            ));
+-        }
+-        if !result
+-            .fields
+-            .iter()
+-            .any(|candidate| candidate.path == *field)
+-        {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{operation_name} claim identity {field} is not a result field"),
+-            ));
+-        }
+-        require_pre_generated_identity(operation_name, claim, claim_column)?;
+-    }
+-    let minted = claim_statement_row(operation_name, operation, &declaration.claim, "claim")?;
+-    if minted != claim_columns {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!(
+-                "{operation_name} statement {} must return exactly the pre-generated identities",
+-                declaration.claim
+-            ),
+-        ));
+-    }
+-    let replayed = claim_statement_row(operation_name, operation, &declaration.replay, "replay")?;
+-    if !replayed.contains(CLAIM_COMMAND_COLUMN) || !claim_columns.is_subset(&replayed) {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!(
+-                "{operation_name} statement {} must return {CLAIM_COMMAND_COLUMN} and every pre-generated identity",
+-                declaration.replay
+-            ),
+-        ));
+-    }
+-    claim_statement_row(operation_name, operation, &declaration.finalize, "finalize")?;
+-    if operation.statements[&declaration.finalize].fetch != StaticSqlFetch::One {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!(
+-                "{operation_name} claim finalization must return exactly one row; set {} fetch to one",
+-                declaration.finalize
+-            ),
+-        ));
+-    }
+-    Ok(())
+-}
+-
+-/// The row one named claim statement returns, refusing an undeclared name.
+-fn claim_statement_row<'a>(
+-    operation_name: &str,
+-    operation: &'a CustomOperationDeclaration,
+-    statement: &str,
+-    role: &str,
+-) -> Result<BTreeSet<&'a str>, GenerateError> {
+-    let declaration = operation.statements.get(statement).ok_or_else(|| {
+-        GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{operation_name} claim names unknown {role} statement {statement}"),
+-        )
+-    })?;
+-    Ok(declaration
+-        .row
+-        .iter()
+-        .map(|value| value.name.as_str())
+-        .collect())
+-}
+-
+-fn validate_custom_operation_sql(
+-    catalog: &CatalogIr,
+-    authored_sql: &[AuthoredSql<'_>],
+-    operation: &str,
+-    declaration: &CustomOperationDeclaration,
+-) -> Result<(), GenerateError> {
+-    for relation in &declaration.relations {
+-        let table = catalog
+-            .tables()
+-            .iter()
+-            .find(|table| table.schema() == relation.schema && table.name() == relation.table)
+-            .ok_or_else(|| {
+-                GenerateError::for_object(
+-                    GenerateErrorKind::UnknownRelation,
+-                    format!("{operation} references an unknown relation"),
+-                    format!("{}.{}", relation.schema, relation.table),
+-                )
+-            })?;
+-        for fields in [
+-            &relation.select_fields,
+-            &relation.insert_fields,
+-            &relation.update_fields,
+-        ] {
+-            validate_static_sql_relation_fields(operation, relation, table, fields)?;
+-        }
+-        for name in &relation.constraints {
+-            if !table
+-                .constraints()
+-                .iter()
+-                .any(|constraint| constraint.name() == name)
+-            {
+-                return Err(GenerateError::for_object(
+-                    GenerateErrorKind::InvalidOperation,
+-                    format!("{operation} requires named constraint {name}"),
+-                    format!("{}.{}", relation.schema, relation.table),
+-                ));
+-            }
+-        }
+-    }
+-    validate_constraint_error_mappings(catalog, operation, declaration)?;
+-    validate_static_sql_relation_access(catalog, authored_sql, operation, declaration)
+-}
+-
+-fn validate_static_sql_relation_fields(
+-    operation: &str,
+-    relation: &crate::manifest::StaticSqlRelationDeclaration,
+-    table: &Table,
+-    fields: &[String],
+-) -> Result<(), GenerateError> {
+-    if let Some(field) = fields
+-        .iter()
+-        .find(|field| !table.columns().iter().any(|column| column.name() == *field))
+-    {
+-        return Err(GenerateError::for_object(
+-            GenerateErrorKind::UnknownColumn,
+-            format!("{operation} privilege declaration names an unknown column"),
+-            format!("{}.{}.{}", relation.schema, relation.table, field),
+-        ));
+-    }
+-    Ok(())
+-}
+-
+-fn validate_constraint_error_mappings(
+-    catalog: &CatalogIr,
+-    operation: &str,
+-    declaration: &CustomOperationDeclaration,
+-) -> Result<(), GenerateError> {
+-    for (name, _) in &declaration.constraint_errors {
+-        custom_operation_constraint_origin(catalog, declaration, name).ok_or_else(|| {
+-            GenerateError::for_object(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{operation} maps undeclared constraint {name}"),
+-                name.clone(),
+-            )
+-        })?;
+-    }
+-    Ok(())
+-}
+-
+-fn validate_static_sql_relation_access(
+-    catalog: &CatalogIr,
+-    authored_sql: &[AuthoredSql<'_>],
+-    operation: &str,
+-    declaration: &CustomOperationDeclaration,
+-) -> Result<(), GenerateError> {
+-    let schemas = declaration
+-        .relations
+-        .iter()
+-        .map(|relation| relation.schema.as_str())
+-        .collect::<BTreeSet<_>>();
+-    let relation_fields = catalog
+-        .tables()
+-        .iter()
+-        .filter(|table| schemas.contains(table.schema()))
+-        .map(|table| {
+-            (
+-                table.name().to_owned(),
+-                table
+-                    .columns()
+-                    .iter()
+-                    .map(|column| column.name().to_owned())
+-                    .collect::<BTreeSet<_>>(),
+-            )
+-        })
+-        .collect::<BTreeMap<_, _>>();
+-    let mut actual = BTreeMap::<String, crate::sql_lex::RelationAccess>::new();
+-    for statement in declaration.statements.values() {
+-        let source = authored_sql
+-            .iter()
+-            .find(|source| source.path == statement.path)
+-            .expect("authored-source validation supplied every custom-operation statement");
+-        let statement_access = crate::sql_lex::relation_access(source.bytes, &relation_fields)
+-            .map_err(|detail| {
+-                GenerateError::for_path(
+-                    GenerateErrorKind::InvalidOperation,
+-                    format!(
+-                        "{} cannot derive exact relation access: {detail}",
+-                        statement.path
+-                    ),
+-                    statement.path.as_str(),
+-                )
+-            })?;
+-        for (table, observed) in statement_access {
+-            let aggregate = actual.entry(table).or_default();
+-            aggregate.select_fields.extend(observed.select_fields);
+-            aggregate.insert_fields.extend(observed.insert_fields);
+-            aggregate.update_fields.extend(observed.update_fields);
+-            aggregate.lock |= observed.lock;
+-        }
+-    }
+-    for relation in &declaration.relations {
+-        let observed = actual.remove(&relation.table).unwrap_or_default();
+-        let declared = crate::sql_lex::RelationAccess {
+-            select_fields: relation.select_fields.iter().cloned().collect(),
+-            insert_fields: relation.insert_fields.iter().cloned().collect(),
+-            update_fields: relation.update_fields.iter().cloned().collect(),
+-            lock: relation.lock,
+-        };
+-        if observed != declared {
+-            return Err(GenerateError::for_object(
+-                GenerateErrorKind::InvalidOperation,
+-                format!(
+-                    "{operation} {}.{} privilege declaration does not match verified SQL reads, writes, and row locks.\n\
+-                     Verified SQL: {}\n\
+-                     Declared: {}\n\
+-                     RETURNING columns require select_fields. Row-lock clauses such as FOR UPDATE require lock=true.",
+-                    relation.schema,
+-                    relation.table,
+-                    serde_json::json!({
+-                        "select_fields": observed.select_fields,
+-                        "insert_fields": observed.insert_fields,
+-                        "update_fields": observed.update_fields,
+-                        "lock": observed.lock,
+-                    }),
+-                    serde_json::json!({
+-                        "select_fields": declared.select_fields,
+-                        "insert_fields": declared.insert_fields,
+-                        "update_fields": declared.update_fields,
+-                        "lock": declared.lock,
+-                    }),
+-                ),
+-                format!("{}.{}", relation.schema, relation.table),
+-            ));
+-        }
+-    }
+-    if let Some(table) = actual.keys().next() {
+-        return Err(GenerateError::for_object(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{operation} SQL reaches undeclared relation {table}"),
+-            table.clone(),
+-        ));
+-    }
+-    Ok(())
+-}
+-
+-fn validate_sort_field(
+-    table: &Table,
+-    model_name: &str,
+-    context: &str,
+-    field: &str,
+-) -> Result<(), GenerateError> {
+-    let column = validate_field(table, model_name, field)?;
+-    if column.nullable()
+-        || matches!(
+-            column.column_type(),
+-            ColumnType::Float64 | ColumnType::Bytes | ColumnType::Json
+-        )
+-    {
+-        Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} cannot keyset-sort nullable or unsupported field {field}"),
+-        ))
+-    } else {
+-        Ok(())
+-    }
+-}
+-
+-fn validate_authored_variants(
+-    context: &str,
+-    sort: &SortDeclaration,
+-    authored: &AuthoredSqlDeclaration,
+-) -> Result<(), GenerateError> {
+-    let variant_count = sort.fields.len() * sort.directions.len();
+-    if !safe_sql_path(&authored.default) || authored.variants.len() != variant_count {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!(
+-                "{context} authored SQL must provide {variant_count} safe package-relative variants"
+-            ),
+-        ));
+-    }
+-    let expected = sort.fields.iter().flat_map(|field| {
+-        sort.directions
+-            .iter()
+-            .map(move |direction| (field.as_str(), *direction))
+-    });
+-    let mut paths = BTreeSet::new();
+-    for ((expected_field, expected_direction), variant) in expected.zip(&authored.variants) {
+-        if variant.field != expected_field
+-            || variant.direction != expected_direction
+-            || !safe_sql_path(&variant.path)
+-            || !paths.insert(variant.path.as_str())
+-        {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidOperation,
+-                format!("{context} authored variants must follow declared field/direction order"),
+-            ));
+-        }
+-    }
+-    let default_variant = authored.variants.iter().find(|variant| {
+-        variant.field == "created_at" && variant.direction == CursorDirection::Ascending
+-    });
+-    if default_variant.map(|variant| variant.path.as_str()) != Some(authored.default.as_str()) {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidOperation,
+-            format!("{context} default SQL must be the created_at ascending variant"),
+-        ));
+-    }
+-    Ok(())
+-}
+-
+-fn validate_connections(manifest: &PackageManifest) -> Result<(), GenerateError> {
+-    if manifest.connections.is_empty() {
+-        return Err(GenerateError::new(
+-            GenerateErrorKind::InvalidConnection,
+-            "manifest declares no database connection",
+-        ));
+-    }
+-    for (name, connection) in &manifest.connections {
+-        validate_identifier(name, "connection")?;
+-        if connection.interface != POSTGRES_INTERFACE {
+-            return Err(GenerateError::new(
+-                GenerateErrorKind::InvalidConnection,
+-                format!("{name} must import {POSTGRES_INTERFACE}"),
+-            ));
+-        }
+-    }
+-    Ok(())
+-}
+-
+-fn validate_authored_sources(
+-    manifest: &PackageManifest,
+-    authored_sql: &[AuthoredSql<'_>],
+-) -> Result<(), GenerateError> {
+-    let expected = authored_paths(manifest);
+-    let mut supplied = BTreeSet::new();
+-    for source in authored_sql {
+-        if !safe_sql_path(source.path) || !supplied.insert(source.path) {
+-            return Err(GenerateError::for_path(
+-                GenerateErrorKind::DuplicatePath,
+-                "authored SQL path is unsafe or repeated",
+-                source.path,
+-            ));
+-        }
+-    }
+-    if let Some(path) = expected.difference(&supplied).next() {
+-        return Err(GenerateError::for_path(
+-            GenerateErrorKind::MissingAuthoredSql,
+-            "manifest-authored SQL path was not supplied",
+-            *path,
+-        ));
+-    }
+-    if let Some(path) = supplied.difference(&expected).next() {
+-        return Err(GenerateError::for_path(
+-            GenerateErrorKind::UnexpectedAuthoredSql,
+-            "supplied SQL path is not referenced by the manifest",
+-            *path,
+-        ));
+-    }
+-    let schemas = manifest
+-        .models
+-        .values()
+-        .map(|model| model.schema.as_str())
+-        .chain(manifest.custom_operations.values().flat_map(|operation| {
+-            operation
+-                .relations
+-                .iter()
+-                .map(|relation| relation.schema.as_str())
+-        }))
+-        .collect::<BTreeSet<_>>();
+-    for source in authored_sql {
+-        for schema in &schemas {
+-            if contains_schema_qualified_reference(source.bytes, schema) {
+-                return Err(GenerateError::for_path(
+-                    GenerateErrorKind::SchemaQualifiedSql,
+-                    format!(
+-                        "{} selects schema `{schema}`; the corpus must inherit the host search path",
+-                        source.path
+-                    ),
+-                    source.path,
+-                ));
+-            }
+-        }
+-    }
+-    Ok(())
+-}
+-
+-fn authored_paths(manifest: &PackageManifest) -> BTreeSet<&str> {
+-    let mut paths = manifest
+-        .models
+-        .values()
+-        .flat_map(|model| model.operations.values())
+-        .filter_map(|operation| operation.authored_sql.as_ref())
+-        .flat_map(|authored| {
+-            authored
+-                .variants
+-                .iter()
+-                .map(|variant| variant.path.as_str())
+-        })
+-        .collect::<BTreeSet<_>>();
+-    paths.extend(
+-        manifest
+-            .custom_operations
+-            .values()
+-            .flat_map(|operation| operation.statements.values())
+-            .map(|statement| statement.path.as_str()),
+-    );
+-    paths
+-}
+-
+-fn authored_sql_map(
+-    sources: &[AuthoredSql<'_>],
+-) -> Result<BTreeMap<String, Vec<u8>>, GenerateError> {
+-    let mut map = BTreeMap::new();
+-    for source in sources {
+-        if map
+-            .insert(source.path.to_owned(), source.bytes.to_vec())
+-            .is_some()
+-        {
+-            return Err(GenerateError::for_path(
+-                GenerateErrorKind::DuplicatePath,
+-                "authored SQL path is repeated",
+-                source.path,
+-            ));
+-        }
+-    }
+-    Ok(map)
+-}
+-
+-#[expect(
+-    clippy::too_many_arguments,
+-    reason = "model emission owns the complete validated model and catalog context"
+-)]
+-fn emit_model(
+-    files: &mut BTreeMap<String, Vec<u8>>,
+-    sql_corpus: &mut BTreeMap<String, Vec<u8>>,
+-    transactional: &StatementTransactionality,
+-    catalog: &CatalogIr,
+-    manifest: &PackageManifest,
+-    model_name: &str,
+-    model: &ModelDeclaration,
+-    table: &Table,
+-) -> Result<(), GenerateError> {
+-    emit_model_contract(files, model_name, model, table)?;
+-
+-    let claim = model.operations.get(&CrudAction::Create).map(|operation| {
+-        resolve_claim(
+-            catalog,
+-            manifest,
+-            &format!("{model_name}.create"),
+-            model,
+-            table,
+-            operation,
+-        )
+-        .expect("create validation resolved the command claim")
+-    });
+-
+-    let mut operation_sql = BTreeMap::<String, Vec<String>>::new();
+-    for (action, operation) in &model.operations {
+-        let paths = emit_operation_sql(
+-            files,
+-            sql_corpus,
+-            model_name,
+-            table,
+-            claim.as_ref(),
+-            *action,
+-            operation,
+-        )?;
+-        operation_sql.insert(action.as_str().to_owned(), paths);
+-    }
+-
+-    let native_operation_rows =
+-        operation_result_rows(model_name, model, table, claim.as_ref(), Projection::Native);
+-    let wamn_api = wamn_api(model_name, model, table, claim.as_ref(), &operation_sql);
+-    for (action, operation) in &model.operations {
+-        emit_operation_contracts(
+-            files,
+-            sql_corpus,
+-            transactional,
+-            manifest,
+-            model_name,
+-            model,
+-            table,
+-            claim.as_ref(),
+-            *action,
+-            operation,
+-            &wamn_api,
+-        )?;
+-    }
+-    let native_bind_fixtures = native_bind_fixtures(&wamn_api);
+-    emit_parity(files, model_name, table, &wamn_api)?;
+-    emit_projection(
+-        files,
+-        sql_corpus,
+-        model_name,
+-        table,
+-        &operation_sql,
+-        ProjectionContents::Native {
+-            operation_rows: &native_operation_rows,
+-            bind_fixtures: &native_bind_fixtures,
+-        },
+-    )?;
+-    emit_projection(
+-        files,
+-        sql_corpus,
+-        model_name,
+-        table,
+-        &operation_sql,
+-        ProjectionContents::Wamn(&wamn_api),
+-    )?;
+-    insert_json(
+-        files,
+-        &format!("generated/source-map/{model_name}.json"),
+-        &json!({
+-            "model": model_name,
+-            "relation": format!("catalog-ir://{}.{}", model.schema, model.table),
+-            "manifest": format!("wamn.json#/models/{model_name}"),
+-            "operations": operation_sql,
+-            "native_operation_rows": native_operation_rows,
+-            "native_bind_fixtures": native_bind_fixtures,
+-            "wamn_api": wamn_api,
+-        }),
+-    )
+-}
+-
+-fn emit_custom_operation(
+-    files: &mut BTreeMap<String, Vec<u8>>,
+-    sql_corpus: &BTreeMap<String, Vec<u8>>,
+-    transactional: &StatementTransactionality,
+-    catalog: &CatalogIr,
+-    manifest: &PackageManifest,
+-    operation_name: &str,
+-    operation: &CustomOperationDeclaration,
+-) -> Result<(), GenerateError> {
+-    emit_custom_operation_contracts(
+-        files,
+-        sql_corpus,
+-        transactional,
+-        catalog,
+-        manifest,
+-        operation_name,
+-        operation,
+-    )?;
+-    if operation.statements.is_empty() {
+-        let (alias, dependency) = manifest
+-            .base_dependencies
+-            .iter()
+-            .find(|(_, dependency)| {
+-                dependency
+-                    .operations
+-                    .iter()
+-                    .any(|candidate| candidate == operation_name)
+-            })
+-            .expect("validated composition-only command has one exact dependency");
+-        return insert_json(
+-            files,
+-            &format!(
+-                "generated/source-map/{}.json",
+-                custom_artifact_stem(operation_name)
+-            ),
+-            &json!({
+-                "operation": operation_name,
+-                "kind": operation.kind(),
+-                "manifest": format!("wamn.json#/custom_operations/{operation_name}"),
+-                "composition": {
+-                    "alias": alias,
+-                    "package": dependency.package,
+-                    "version": dependency.version,
+-                    "digest": dependency.digest,
+-                    "operation": operation_name,
+-                },
+-            }),
+-        );
+-    }
+-
+-    let module_name = custom_artifact_stem(operation_name);
+-    let native_rows = static_sql_rows(operation, Projection::Native);
+-    let wamn_rows = static_sql_rows(operation, Projection::Wamn);
+-    let accessors = static_sql_accessors(operation);
+-    let bind_fixtures = static_sql_native_bind_fixtures(&accessors);
+-
+-    emit_static_sql_parity(files, &module_name, operation, &accessors)?;
+-    emit_static_sql_projection(
+-        files,
+-        sql_corpus,
+-        &module_name,
+-        operation,
+-        &native_rows,
+-        &bind_fixtures,
+-        Projection::Native,
+-    )?;
+-    emit_static_sql_projection(
+-        files,
+-        sql_corpus,
+-        &module_name,
+-        operation,
+-        &wamn_rows,
+-        &[],
+-        Projection::Wamn,
+-    )?;
+-    let mut source_map = serde_json::Map::from_iter([
+-        (
+-            "manifest".to_owned(),
+-            json!(format!("wamn.json#/custom_operations/{operation_name}")),
+-        ),
+-        ("relations".to_owned(), json!(operation.relations)),
+-        ("statements".to_owned(), json!(operation.statements)),
+-        ("native_rows".to_owned(), json!(native_rows)),
+-        ("native_bind_fixtures".to_owned(), json!(bind_fixtures)),
+-        ("wamn_rows".to_owned(), json!(wamn_rows)),
+-        ("wamn_accessors".to_owned(), json!(accessors)),
+-    ]);
+-    if let Some((alias, dependency)) = operation_dependency(manifest, operation_name) {
+-        source_map.insert(
+-            "composition".to_owned(),
+-            json!({
+-                "alias": alias,
+-                "package": dependency.package,
+-                "version": dependency.version,
+-                "digest": dependency.digest,
+-                "operation": operation_name,
+-            }),
+-        );
+-    }
+-    match operation.kind {
+-        CustomOperationKind::Command => {
+-            source_map.insert("command".to_owned(), json!(operation_name));
+-        }
+-        CustomOperationKind::Projection | CustomOperationKind::EventHandler => {
+-            source_map.insert("operation".to_owned(), json!(operation_name));
+-            source_map.insert("kind".to_owned(), json!(operation.kind()));
+-            if let Some(registration) = &operation.registration {
+-                source_map.insert("registration".to_owned(), json!(registration));
+-            }
+-        }
+-    }
+-    insert_json(
+-        files,
+-        &format!("generated/source-map/{module_name}.json"),
+-        &Value::Object(source_map),
+-    )
+-}
+-
+-fn emit_custom_operation_contracts(
+-    files: &mut BTreeMap<String, Vec<u8>>,
+-    sql_corpus: &BTreeMap<String, Vec<u8>>,
+-    transactional: &StatementTransactionality,
+-    catalog: &CatalogIr,
+-    manifest: &PackageManifest,
+-    operation_name: &str,
+-    operation: &CustomOperationDeclaration,
+-) -> Result<(), GenerateError> {
+-    let (module, local_name) = operation_name
+-        .split_once('.')
+-        .expect("custom-operation validation requires module.operation");
+-    let root = format!("generated/contracts/{module}/{local_name}");
+-    let operation_id = canonical_operation_identity(&manifest.package, operation_name)?;
+-    let grant = (operation.visibility == crate::manifest::OperationVisibility::Public)
+-        .then(|| operation_id.clone());
+-    let statements =
+-        operation
+-            .statements
+-            .iter()
+-            .map(|(name, statement)| {
+-                statement_contract(
+-                    name,
+-                    &statement.path,
+-                    sql_corpus,
+-                    transactional,
+-                    statement.parameters.iter().map(|value| {
+-                        statement_value_contract(&value.name, value.ty, value.nullable)
+-                    }),
+-                    statement.row.iter().map(|value| {
+-                        statement_value_contract(&value.name, value.ty, value.nullable)
+-                    }),
+-                )
+-            })
+-            .collect::<Vec<_>>();
+-    let mut operation_contract = serde_json::Map::from_iter([
+-        ("operation".to_owned(), json!(operation_id)),
+-        ("kind".to_owned(), json!(operation.kind())),
+-        ("visibility".to_owned(), json!(operation.visibility)),
+-        ("permission_token".to_owned(), json!(operation.permission)),
+-        ("grant".to_owned(), json!(grant)),
+-        ("statements".to_owned(), json!(statements)),
+-    ]);
+-    if operation.fresh_only {
+-        operation_contract.insert("fresh_only".to_owned(), json!(true));
+-    }
+-    if let Some((alias, dependency)) = operation_dependency(manifest, operation_name) {
+-        operation_contract.insert(
+-            "dependency".to_owned(),
+-            json!({
+-                "alias": alias,
+-                "package": dependency.package,
+-                "version": dependency.version,
+-                "digest": dependency.digest,
+-                "operation": operation_name,
+-            }),
+-        );
+-    }
+-    if let Some(connection) = &operation.connection {
+-        operation_contract.insert("connection".to_owned(), json!(connection));
+-    }
+-    if let Some(result) = &operation.result {
+-        operation_contract.insert("result".to_owned(), json!(result.class));
+-    }
+-    if let Some(transaction) = operation.transaction {
+-        operation_contract.insert("transaction".to_owned(), json!(transaction));
+-    }
+-    if let Some(automatic_retry) = operation.automatic_retry {
+-        operation_contract.insert("automatic_retry".to_owned(), json!(automatic_retry));
+-    }
+-    if let Some(registration) = &operation.registration {
+-        operation_contract.insert("registration".to_owned(), json!(registration));
+-    }
+-    if let Some(idempotent_by) = &operation.idempotent_by {
+-        operation_contract.insert("idempotent_by".to_owned(), json!(idempotent_by));
+-    }
+-    if let Some(claim) = &operation.claim {
+-        operation_contract.insert("claim".to_owned(), json!(claim));
+-    }
+-    if !operation.relations.is_empty() {
+-        operation_contract.insert("relations".to_owned(), json!(operation.relations));
+-    }
+-    insert_json_line(
+-        files,
+-        &format!("{root}.operation.json"),
+-        &Value::Object(operation_contract),
+-    )?;
+-    let mut input_contract = serde_json::Map::new();
+-    if let Some(raw_body_maximum) = operation.input.raw_body_maximum {
+-        input_contract.insert(
+-            "raw_body_bytes".to_owned(),
+-            json!({
+-                "maximum": raw_body_maximum,
+-                "owner": "ingress_pre_parse",
+-                "refusal": "http_413",
+-            }),
+-        );
+-    }
+-    if let Some(envelope) = &operation.input.envelope {
+-        input_contract.insert("envelope".to_owned(), json!(envelope));
+-    }
+-    if let Some(item_semantics) = operation.input.item_semantics {
+-        input_contract.insert("item_semantics".to_owned(), json!(item_semantics));
+-    }
+-    if let Some(line) = &operation.input.line {
+-        input_contract.insert("line".to_owned(), json!(line));
+-    }
+-    input_contract.insert("fields".to_owned(), json!(operation.input.fields));
+-    if let Some(canonicalization) = &operation.canonicalization {
+-        input_contract.insert("canonicalization".to_owned(), json!(canonicalization));
+-    }
+-    insert_json(
+-        files,
+-        &format!("{root}.input.json"),
+-        &Value::Object(input_contract),
+-    )?;
+-    if let Some(result) = &operation.result {
+-        insert_json(files, &format!("{root}.result.json"), result)?;
+-    }
+-    insert_json(
+-        files,
+-        &format!("{root}.errors.json"),
+-        &custom_operation_error_contract(catalog, operation),
+-    )?;
+-    // One artifact per declared shape, named for the shape it holds. A runner
+-    // reads the shape off the file name and never guesses which cases apply.
+-    match &operation.idempotent_by {
+-        Some(CommandIdempotence::Claim) => {
+-            let claim = operation
+-                .claim
+-                .as_ref()
+-                .expect("idempotent_by claim was validated to carry a claim");
+-            insert_json(
+-                files,
+-                &format!("{root}.claim-tests.json"),
+-                &claim_contract_tests(&operation_id, &claim.claim, &claim.finalize, &claim.replay),
+-            )?;
+-        }
+-        Some(CommandIdempotence::State(state)) => {
+-            insert_json(
+-                files,
+-                &format!("{root}.state-tests.json"),
+-                &state_contract_test(&operation_id, operation, state),
+-            )?;
+-        }
+-        Some(CommandIdempotence::Inherited(inherited)) => {
+-            insert_json(
+-                files,
+-                &format!("{root}.inherited-tests.json"),
+-                &inherited_contract_test(manifest, &operation_id, inherited),
+-            )?;
+-        }
+-        None => {}
+-    }
+-    Ok(())
+-}
+-
+-fn statement_contract(
+-    name: &str,
+-    path: &str,
+-    sql_corpus: &BTreeMap<String, Vec<u8>>,
+-    transactional: &StatementTransactionality,
+-    binds: impl IntoIterator<Item = StatementValueContract>,
+-    columns: impl IntoIterator<Item = StatementValueContract>,
+-) -> StatementContract {
+-    let bytes = sql_corpus
+-        .get(path)
+-        .expect("statement path was emitted or supplied by the validated corpus");
+-    StatementContract {
+-        name: name.to_owned(),
+-        path: path.to_owned(),
+-        digest: sha256(bytes),
+-        binds: binds.into_iter().collect(),
+-        columns: columns.into_iter().collect(),
+-        transactional: transactional.needs_transaction(path),
+-    }
+-}
+-
+-fn operation_row_columns(wamn_api: &WamnApi, row: &str) -> Vec<StatementValueContract> {
+-    wamn_api
+-        .operation_rows
+-        .iter()
+-        .find(|candidate| candidate.name == row)
+-        .expect("operation accessor row was emitted from the same operation")
+-        .fields
+-        .iter()
+-        .map(|field| statement_value_contract(&field.name, field.statement_type, field.nullable))
+-        .collect()
+-}
+-
+-/// What a consumer must know to replay one generated create.
+-///
+-/// The `identities` map is the law made checkable downstream: it names the
+-/// claim column that pre-generated each model identity, so a reader can verify
+-/// that a replay returns the same ids WITHOUT reading the orchestration.
+-fn idempotency_contract(claim: &sql::Claim<'_>) -> Value {
+-    json!({
+-        "key": CLAIM_KEY_COLUMN,
+-        "canonical_command": CLAIM_COMMAND_COLUMN,
+-        "claim": {
+-            "schema": claim.table.schema(),
+-            "table": claim.table.name(),
+-            "constraint": claim.primary_key,
+-            "identities": claim
+-                .identities
+-                .iter()
+-                .map(|(field, claim_column)| ((*field).to_owned(), *claim_column))
+-                .collect::<BTreeMap<_, _>>(),
+-        },
+-        "statements": {
+-            "claim": CREATE_CLAIM_STATEMENT,
+-            "replay": CREATE_REPLAY_STATEMENT,
+-            "insert": CREATE_STATEMENT,
+-        },
+-        "replay": {"writes": "none", "identity_source": "claim"},
+-        "conflict": {
+-            "on": "changed_canonical_command",
+-            "refusal": AccessOperationErrorLiteral::IdempotencyConflict,
+-        },
+-        "atomicity": "claim_and_insert_commit_together",
+-    })
+-}
+-
+-/// The two contract tests every claim-bearing command carries.
+-///
+-/// The claim law is a property of the emitted statements, so its tests belong
+-/// to the command rather than to whoever writes the package. A generated create
+-/// and an authored command each get both by construction, and a package author
+-/// writes neither.
+-///
+-/// Each case names the statements in the order a caller runs them. The first
+-/// call mints the claim and finishes it. The second call re-runs the claim
+-/// statement, which returns no row under the claim's primary key. The caller
+-/// then reads the durable original through the replay statement. Case one
+-/// asserts that the original comes back unchanged with no write. Case two
+-/// asserts the typed refusal when that original was minted for another request.
+-///
+-/// Binds are not repeated here. The input contract states the request shape and
+-/// the operation contract states each statement's binds and columns.
+-///
+-/// EXECUTING these cases needs a live database. That runner is `wamn-f89v`,
+-/// and it opens on its first consumer. What this emits is the case list.
+-fn claim_contract_tests(operation_id: &str, claim: &str, finalize: &str, replay: &str) -> Value {
+-    json!({
+-        "operation": operation_id,
+-        "law": "command-identity-from-claim",
+-        "cases": [
+-            {
+-                "id": "replay_returns_the_immutable_original",
+-                "given": "the same idempotency_key with the same canonical_command",
+-                "first_call": [claim, finalize],
+-                "second_call": [claim, replay],
+-                "expect": {
+-                    "claim": "no_row",
+-                    "canonical_command": "equal",
+-                    "result": "identical_to_the_first_call",
+-                    "writes": "none",
+-                    "identity_source": "claim",
+-                },
+-            },
+-            {
+-                "id": "changed_request_under_a_live_key_refuses",
+-                "given": "the same idempotency_key with a changed canonical_command",
+-                "first_call": [claim, finalize],
+-                "second_call": [claim, replay],
+-                "expect": {
+-                    "claim": "no_row",
+-                    "canonical_command": "differs",
+-                    "writes": "none",
+-                    "refusal": AccessOperationErrorLiteral::IdempotencyConflict,
+-                },
+-            },
+-        ],
+-    })
+-}
+-
+-/// The one contract test every state-idempotent command carries.
+-///
+-/// This command mints nothing, so there is no id to return twice. What a repeat
+-/// must never do is write a second time in silence. A repeat after the first
+-/// call succeeded sees a moved version and gets `concurrency_conflict`. A repeat
+-/// that still matches the version finds the work already done and writes
+-/// nothing.
+-///
+-/// Both outcomes are admitted, and a second write is admitted under neither.
+-/// That is what makes the command idempotent by state rather than by a claim.
+-///
+-/// `guards` names each protected relation, schema qualified, beside the input
+-/// field carrying its expected version. A reader sees WHICH row the guard
+-/// protects, which a command guarding two rows would otherwise leave open.
+-///
+-/// EXECUTING this case needs a live database. That runner is `wamn-f89v`,
+-/// and it opens on its first consumer. What this emits is the case list.
+-fn state_contract_test(
+-    operation_id: &str,
+-    operation: &CustomOperationDeclaration,
+-    state: &StateGuardDeclaration,
+-) -> Value {
+-    let guards = state
+-        .guards
+-        .iter()
+-        .map(|(table, field)| {
+-            let relation = operation
+-                .relations
+-                .iter()
+-                .find(|candidate| candidate.table == *table)
+-                .expect("state guard was validated against a declared relation");
+-            json!({
+-                "relation": format!("{}.{}", relation.schema, relation.table),
+-                "expected_version": field,
+-            })
+-        })
+-        .collect::<Vec<_>>();
+-    json!({
+-        "operation": operation_id,
+-        "law": "command-idempotence-from-state",
+-        "guards": guards,
+-        "cases": [
+-            {
+-                "id": "a_repeat_is_a_no_op_or_a_typed_conflict",
+-                "given": "the same request sent again after the first call succeeded",
+-                "expect": {
+-                    "writes": "none",
+-                    "outcome": "unchanged_original_or_refusal",
+-                    "refusal": AccessOperationErrorLiteral::ConcurrencyConflict,
+-                    "second_write": "never",
+-                    "identity_minted": "none",
+-                },
+-            },
+-        ],
+-    })
+-}
+-
+-/// The one contract test every command riding a base claim carries.
+-///
+-/// The identity in this command's result was minted by the BASE command's
+-/// claim. This command adds no claim of its own, because a second claim over
+-/// one identity is the defect the law names. What it must prove is that its
+-/// replay hands back the base's original result and not a fresh one.
+-///
+-/// The base is named here, digest included, so a reader sees which command's
+-/// claim this one rides without opening the base package.
+-///
+-/// EXECUTING this case needs a live database. That runner is `wamn-f89v`,
+-/// and it opens on its first consumer. What this emits is the case list.
+-fn inherited_contract_test(
+-    manifest: &PackageManifest,
+-    operation_id: &str,
+-    inherited: &InheritedClaimDeclaration,
+-) -> Value {
+-    let dependency = manifest
+-        .base_dependencies
+-        .get(&inherited.base)
+-        .expect("inherited idempotence was validated against a declared base dependency");
+-    json!({
+-        "operation": operation_id,
+-        "law": "command-identity-from-claim",
+-        "inherits": {
+-            "alias": inherited.base,
+-            "package": dependency.package,
+-            "version": dependency.version,
+-            "digest": dependency.digest,
+-            "operation": inherited.operation,
+-        },
+-        "cases": [
+-            {
+-                "id": "replay_returns_the_base_original",
+-                "given": "the same idempotency_key with the same canonical_command",
+-                "expect": {
+-                    "identity_source": "base_claim",
+-                    "base_result": "identical_to_the_base_first_call",
+-                    "result": "the_base_original_under_this_command_decoration",
+-                    "writes": "none",
+-                    "claim": "none_of_its_own",
+-                },
+-            },
+-        ],
+-    })
+-}
+-
+-fn statement_value_contract(name: &str, ty: ColumnType, nullable: bool) -> StatementValueContract {
+-    StatementValueContract {
+-        name: name.to_owned(),
+-        ty,
+-        nullable,
+-    }
+-}
+-
+-fn operation_dependency<'a>(
+-    manifest: &'a PackageManifest,
+-    operation_name: &str,
+-) -> Option<(&'a str, &'a crate::manifest::BaseDependencyRequirement)> {
+-    manifest
+-        .base_dependencies
+-        .iter()
+-        .find_map(|(alias, dependency)| {
+-            dependency
+-                .operations
+-                .iter()
+-                .any(|candidate| candidate == operation_name)
+-                .then_some((alias.as_str(), dependency))
+-        })
+-}
+-
+-fn custom_operation_error_contract(
+-    catalog: &CatalogIr,
+-    operation: &CustomOperationDeclaration,
+-) -> Value {
+-    let cases = operation
+-        .errors
+-        .iter()
+-        .map(|literal| {
+-            let constraint = operation
+-                .constraint_errors
+-                .iter()
+-                .find_map(|(constraint, mapped)| (mapped == literal).then_some(constraint));
+-            let mut case = if let Some(constraint) = constraint {
+-                let origin = custom_operation_constraint_origin(catalog, operation, constraint)
+-                    .expect("custom constraint mapping was validated");
+-                json!({
+-                    "literal": literal,
+-                    "from": origin,
+-                    "constraint": constraint,
+-                })
+-            } else {
+-                custom_operation_error_origin(operation, literal)
+-            };
+-            case.as_object_mut()
+-                .expect("error contract case is an object")
+-                .insert(
+-                    "detail".to_owned(),
+-                    error_detail_contract(
+-                        operation
+-                            .error_details
+-                            .get(literal)
+-                            .expect("manifest validation closed custom-operation error details"),
+-                    ),
+-                );
+-            case
+-        })
+-        .collect::<Vec<_>>();
+-    json!({"closed": true, "cases": cases})
+-}
+-
+-/// The `from` literal for the constraint a custom operation maps, whether the
+-/// database enforces it as a [`Constraint`] or as an exclusion constraint.
+-fn custom_operation_constraint_origin(
+-    catalog: &CatalogIr,
+-    operation: &CustomOperationDeclaration,
+-    name: &str,
+-) -> Option<&'static str> {
+-    for relation in &operation.relations {
+-        if !relation
+-            .constraints
+-            .iter()
+-            .any(|constraint| constraint == name)
+-        {
+-            continue;
+-        }
+-        let table = catalog
+-            .tables()
+-            .iter()
+-            .find(|table| table.schema() == relation.schema && table.name() == relation.table)?;
+-        if let Some(constraint) = table
+-            .constraints()
+-            .iter()
+-            .find(|constraint| constraint.name() == name)
+-        {
+-            return Some(constraint_error(constraint.kind()));
+-        }
+-        if table
+-            .exclusions()
+-            .iter()
+-            .any(|exclusion| exclusion.name() == name)
+-        {
+-            return Some("exclusion_violation");
+-        }
+-    }
+-    None
+-}
+-
+-fn custom_operation_error_origin(operation: &CustomOperationDeclaration, literal: &str) -> Value {
+-    match literal {
+-        "invalid_input" => {
+-            let mut sources = vec!["malformed_input"];
+-            if operation.input.envelope.is_some() {
+-                sources.push("envelope_count");
+-            }
+-            if operation.input.line.is_some() {
+-                sources.push("line_count");
+-            }
+-            // Only a command WITH lines can refuse a duplicate one.
+-            if operation
+-                .canonicalization
+-                .as_ref()
+-                .is_some_and(|canonical| canonical.duplicate_line.is_some())
+-            {
+-                sources.push("duplicate_line");
+-            }
+-            if operation.input.line.is_some() && operation.canonicalization.is_some() {
+-                sources.push("nonpositive_quantity");
+-            }
+-            json!({"literal": literal, "from": sources})
+-        }
+-        "retry" => json!({
+-            "literal": literal,
+-            "from": ["serialization_failure", "connection_unavailable"],
+-            "automatic": operation.automatic_retry.unwrap_or(false),
+-        }),
+-        "timeout" => json!({
+-            "literal": literal,
+-            "from": "statement_timeout",
+-        }),
+-        "permission_denied" => json!({
+-            "literal": literal,
+-            "from": "permission_denied",
+-        }),
+-        "internal_error" => json!({
+-            "literal": literal,
+-            "from": ["query_error", "row_limit_exceeded", "undeclared_constraint"],
+-        }),
+-        "idempotency_conflict" if operation.canonicalization.is_some() => json!({
+-            "literal": literal,
+-            "from": "same_key_different_canonical_command",
+-        }),
+-        _ => json!({
+-        "literal": literal,
+-        "from": "transaction_invariant",
+-        }),
+-    }
+-}
+-
+-fn error_detail_contract(detail: &OperationErrorDetailDeclaration) -> Value {
+-    let mut contract = serde_json::Map::new();
+-    if !detail.required.is_empty() {
+-        contract.insert("required".to_owned(), json!(detail.required));
+-    }
+-    if !detail.optional.is_empty() {
+-        contract.insert("optional".to_owned(), json!(detail.optional));
+-    }
+-    Value::Object(contract)
+-}
+-
+-fn static_sql_rows(operation: &CustomOperationDeclaration, projection: Projection) -> Vec<RustRow> {
+-    // SQLx 0.9 cannot infer non-null for PostgreSQL expressions, so a statement's
+-    // nullable carrier may be tool-imposed while its public operation remains non-null.
+-    operation
+-        .statements
+-        .iter()
+-        .map(|(name, statement)| RustRow {
+-            name: format!("{}Row", rust_type_identifier(name)),
+-            visibility: RustVisibility::Crate,
+-            fields: statement
+-                .row
+-                .iter()
+-                .map(|field| RustMember {
+-                    name: rust_identifier(&field.name)
+-                        .expect("static SQL value names were validated for Rust"),
+-                    rust_type: projected_rust_type(field.ty, projection, field.nullable),
+-                    statement_type: field.ty,
+-                    nullable: field.nullable,
+-                })
+-                .collect(),
+-        })
+-        .collect()
+-}
+-
+-fn static_sql_accessors(operation: &CustomOperationDeclaration) -> Vec<StaticSqlAccessor> {
+-    operation
+-        .statements
+-        .iter()
+-        .map(|(name, statement)| StaticSqlAccessor {
+-            name: name.clone(),
+-            statement_digest_constant: format!("{}_DIGEST", name.to_ascii_uppercase()),
+-            row: format!("{}Row", rust_type_identifier(name)),
+-            fetch: statement.fetch,
+-            binds: statement
+-                .parameters
+-                .iter()
+-                .map(|parameter| accessor_bind(&parameter.name, parameter.ty, parameter.nullable))
+-                .collect(),
+-        })
+-        .collect()
+-}
+-
+-fn static_sql_native_bind_fixtures(accessors: &[StaticSqlAccessor]) -> Vec<NativeBindFixture> {
+-    accessors
+-        .iter()
+-        .flat_map(|accessor| {
+-            accessor.binds.iter().map(|bind| NativeBindFixture {
+-                accessor: accessor.name.clone(),
+-                parameter: bind.parameter.clone(),
+-                function: format!("{}_{}_bind_fixture", accessor.name, bind.parameter),
+-                visibility: RustVisibility::Crate,
+-                rust_type: bind.native_rust.clone(),
+-                value: native_inert_value(bind),
+-            })
+-        })
+-        .collect()
+-}
+-
+-fn emit_static_sql_parity(
+-    files: &mut BTreeMap<String, Vec<u8>>,
+-    module_name: &str,
+-    operation: &CustomOperationDeclaration,
+-    accessors: &[StaticSqlAccessor],
+-) -> Result<(), GenerateError> {
+-    let fields = operation
+-        .statements
+-        .iter()
+-        .flat_map(|(statement, declaration)| {
+-            declaration.row.iter().map(move |field| {
+-                json!({
+-                    "field": format!("{statement}.{}", field.name),
+-                    "postgres": sql::postgres_type(field.ty),
+-                    "wamn_sql_value": field.ty.as_str(),
+-                    "native_rust": projected_rust_type(field.ty, Projection::Native, field.nullable),
+-                    "wamn_rust": projected_rust_type(field.ty, Projection::Wamn, field.nullable),
+-                    "nullable": field.nullable,
+-                })
+-            })
+-        })
+-        .collect::<Vec<_>>();
+-    let accessor_binds = accessors
+-        .iter()
+-        .flat_map(|accessor| {
+-            accessor.binds.iter().map(|bind| {
+-                json!({
+-                    "accessor": accessor.name,
+-                    "parameter": bind.parameter,
+-                    "postgres": bind.postgres,
+-                    "nullable": bind.nullable,
+-                    "native_rust": bind.native_rust,
+-                    "wamn_rust": bind.wamn_rust,
+-                })
+-            })
+-        })
+-        .collect::<Vec<_>>();
+-    insert_json(
+-        files,
+-        &format!("generated/parity/{module_name}.json"),
+-        &json!({
+-            "model": module_name,
+-            "rule": "same_sql_file_two_projection_structs",
+-            "fields": fields,
+-            "accessor_binds": accessor_binds,
+-        }),
+-    )
+-}
+-
+-fn emit_static_sql_projection(
+-    files: &mut BTreeMap<String, Vec<u8>>,
+-    sql_corpus: &BTreeMap<String, Vec<u8>>,
+-    module_name: &str,
+-    operation: &CustomOperationDeclaration,
+-    rows: &[RustRow],
+-    bind_fixtures: &[NativeBindFixture],
+-    projection: Projection,
+-) -> Result<(), GenerateError> {
+-    let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
+-    if matches!(projection, Projection::Wamn) && operation.claim.is_none() {
+-        source.push_str("use wamn_postgres_statements::Transaction;\n\n");
+-    }
+-    for row in rows {
+-        emit_rust_row(&mut source, row, projection);
+-    }
+-    for (name, statement) in &operation.statements {
+-        match projection {
+-            Projection::Native => {
+-                writeln!(
+-                    &mut source,
+-                    "pub(crate) const {}_SQL: &str = include_str!(\"../../{}\");",
+-                    name.to_ascii_uppercase(),
+-                    statement.path,
+-                )
+-                .expect("writing to a String cannot fail");
+-            }
+-            Projection::Wamn => {
+-                let digest = sha256(
+-                    sql_corpus
+-                        .get(&statement.path)
+-                        .expect("validated statement is present in the SQL corpus"),
+-                );
+-                writeln!(
+-                    &mut source,
+-                    "pub(crate) const {}_DIGEST: &str = {digest:?};",
+-                    name.to_ascii_uppercase(),
+-                )
+-                .expect("writing to a String cannot fail");
+-            }
+-        }
+-    }
+-    source.push('\n');
+-    for fixture in bind_fixtures {
+-        emit_native_bind_fixture(&mut source, fixture);
+-    }
+-    if !bind_fixtures.is_empty() {
+-        source.push('\n');
+-    }
+-    if matches!(projection, Projection::Wamn) {
+-        let accessors = static_sql_accessors(operation);
+-        if let Some(claim) = &operation.claim {
+-            let finalizer = accessors
+-                .iter()
+-                .find(|accessor| accessor.name == claim.finalize)
+-                .expect("claim validation resolved the finalizer");
+-            emit_claim_transaction(&mut source, &finalizer.row);
+-        }
+-        for accessor in accessors {
+-            let row = rows
+-                .iter()
+-                .find(|row| row.name == accessor.row)
+-                .expect("static accessor row was generated from the same statement");
+-            emit_static_sql_wamn_accessor(
+-                &mut source,
+-                &accessor,
+-                row,
+-                operation
+-                    .claim
+-                    .as_ref()
+-                    .map(|claim| claim.finalize.as_str()),
+-            );
+-        }
+-    }
+-    while source.ends_with("\n\n") {
+-        source.pop();
+-    }
+-    let directory = match projection {
+-        Projection::Native => "native-verifier",
+-        Projection::Wamn => "wamn",
+-    };
+-    insert_bytes(
+-        files,
+-        &format!("generated/{directory}/{module_name}.rs"),
+-        source.into_bytes(),
+-    )
+-}
+-
+-/// Keep the transaction private until the declared finalizer succeeds.
+-fn emit_claim_transaction(source: &mut String, finalized_row: &str) {
+-    writeln!(
+-        source,
+-        r#"/// One claim and its work, with no commit before finalization.
+-#[derive(Debug)]
+-pub(crate) struct PendingClaim {{
+-    transaction: wamn_postgres_statements::Transaction,
+-}}
+-
+-/// Transfer the open transaction into this command's claim scope.
+-pub(crate) fn begin_claim(transaction: wamn_postgres_statements::Transaction) -> PendingClaim {{
+-    PendingClaim {{ transaction }}
+-}}
+-
+-/// A finalized claim whose transaction can now commit.
+-#[derive(Debug)]
+-pub(crate) struct FinalizedClaim {{
+-    transaction: wamn_postgres_statements::Transaction,
+-    pub row: {finalized_row},
+-}}
+-
+-impl FinalizedClaim {{
+-    /// Commit the claim and its work together.
+-    pub(crate) async fn commit(self) -> Result<(), wamn_postgres_statements::StatementError> {{
+-        self.transaction.commit().await
+-    }}
+-}}
+-"#
+-    )
+-    .expect("writing to a String cannot fail");
+-}
+-
+-fn emit_static_sql_wamn_accessor(
+-    source: &mut String,
+-    accessor: &StaticSqlAccessor,
+-    row: &RustRow,
+-    claim_finalize: Option<&str>,
+-) {
+-    let finalizes_claim = claim_finalize == Some(accessor.name.as_str());
+-    let function = rust_identifier(&accessor.name)
+-        .expect("static SQL statement names were validated for Rust");
+-    writeln!(source, "pub(crate) async fn {function}(").expect("writing to a String cannot fail");
+-    if finalizes_claim {
+-        source.push_str("    mut claim: PendingClaim,\n");
+-    } else if claim_finalize.is_some() {
+-        source.push_str("    claim: &mut PendingClaim,\n");
+-    } else {
+-        source.push_str("    transaction: &mut Transaction,\n");
+-    }
+-    for bind in &accessor.binds {
+-        let parameter = rust_identifier(&bind.parameter)
+-            .expect("static SQL parameter names were validated for Rust");
+-        writeln!(source, "    {parameter}: {},", bind.wamn_rust)
+-            .expect("writing to a String cannot fail");
+-    }
+-    writeln!(
+-        source,
+-        ") -> Result<{}, wamn_postgres_statements::StatementError> {{",
+-        if finalizes_claim {
+-            "FinalizedClaim".to_owned()
+-        } else {
+-            static_sql_accessor_result_type(accessor)
+-        },
+-    )
+-    .expect("writing to a String cannot fail");
+-    writeln!(
+-        source,
+-        "    let rows = {}.run({}, vec![",
+-        if claim_finalize.is_some() {
+-            "claim.transaction"
+-        } else {
+-            "transaction"
+-        },
+-        accessor.statement_digest_constant,
+-    )
+-    .expect("writing to a String cannot fail");
+-    for bind in &accessor.binds {
+-        let parameter = rust_identifier(&bind.parameter)
+-            .expect("static SQL parameter names were validated for Rust");
+-        writeln!(
+-            source,
+-            "        wamn_postgres_statements::into_sql_value({parameter}),"
+-        )
+-        .expect("writing to a String cannot fail");
+-    }
+-    source.push_str("    ]).await?;\n");
+-    let decode_function = match accessor.fetch {
+-        StaticSqlFetch::OptionalOne => "decode_optional",
+-        StaticSqlFetch::BoundedList => "decode_all",
+-        StaticSqlFetch::One => "decode_one",
+-    };
+-    emit_decode_result(
+-        source,
+-        row,
+-        decode_function,
+-        &accessor.statement_digest_constant,
+-        finalizes_claim,
+-    );
+-}
+-
+-fn static_sql_accessor_result_type(accessor: &StaticSqlAccessor) -> String {
+-    match accessor.fetch {
+-        StaticSqlFetch::OptionalOne => format!("Option<{}>", accessor.row),
+-        StaticSqlFetch::BoundedList => format!("Vec<{}>", accessor.row),
+-        StaticSqlFetch::One => accessor.row.clone(),
+-    }
+-}
+-
+-fn emit_cursor_contract(files: &mut BTreeMap<String, Vec<u8>>) -> Result<(), GenerateError> {
+-    insert_json(
+-        files,
+-        "generated/contracts/cursor-v1.json",
+-        &json!({
+-            "version": CURSOR_VERSION,
+-            "payload": "canonical_compact_json",
+-            "member_order": ["direction", "field", "id", "key", "v"],
+-            "key": "bare_value_typed_by_manifest_ir",
+-            "timestamptz": "utc_rfc3339_six_fractional_digits",
+-            "numeric": "postgresql_lexical_scale_preserved",
+-            "encoding": "base64url_unpadded",
+-            "invalid": [
+-                "decode_failure",
+-                "unknown_version",
+-                "field_mismatch",
+-                "direction_mismatch",
+-                "key_parse_failure",
+-                "noncanonical_payload",
+-            ],
+-            "refusal": "invalid_input",
+-            "fallback_to_first_page": false,
+-        }),
+-    )
+-}
+-
+-fn emit_model_contract(
+-    files: &mut BTreeMap<String, Vec<u8>>,
+-    model_name: &str,
+-    model: &ModelDeclaration,
+-    table: &Table,
+-) -> Result<(), GenerateError> {
+-    let server_owned = model.server_owned_fields.iter().collect::<BTreeSet<_>>();
+-    let fields = table
+-        .columns()
+-        .iter()
+-        .map(|column| {
+-            json!({
+-                "name": column.name(),
+-                "type": column.column_type().as_str(),
+-                "nullable": column.nullable(),
+-                "server_owned": server_owned.contains(&column.name().to_owned()),
+-                "enum_values": model.enum_fields.get(column.name()),
+-            })
+-        })
+-        .collect::<Vec<_>>();
+-    insert_json(
+-        files,
+-        &format!("generated/models/{model_name}.json"),
+-        &json!({
+-            "model": model_name,
+-            "schema": model.schema,
+-            "table": model.table,
+-            "owner": model.owner,
+-            "fields": fields,
+-        }),
+-    )
+-}
+-
+-fn emit_parity(
+-    files: &mut BTreeMap<String, Vec<u8>>,
+-    model_name: &str,
+-    table: &Table,
+-    wamn_api: &WamnApi,
+-) -> Result<(), GenerateError> {
+-    let fields = table
+-        .columns()
+-        .iter()
+-        .map(|column| {
+-            json!({
+-                "field": column.name(),
+-                "postgres": sql::postgres_type(column.column_type()),
+-                "wamn_sql_value": column.column_type().as_str(),
+-                "native_rust": rust_type(column, Projection::Native),
+-                "wamn_rust": rust_type(column, Projection::Wamn),
+-                "nullable": column.nullable(),
+-            })
+-        })
+-        .collect::<Vec<_>>();
+-    let accessor_binds = wamn_api
+-        .accessors
+-        .iter()
+-        .flat_map(|accessor| {
+-            accessor.binds.iter().map(|bind| {
+-                json!({
+-                    "accessor": accessor.name,
+-                    "parameter": bind.parameter,
+-                    "postgres": bind.postgres,
+-                    "nullable": bind.nullable,
+-                    "native_rust": bind.native_rust,
+-                    "wamn_rust": bind.wamn_rust,
+-                })
+-            })
+-        })
+-        .collect::<Vec<_>>();
+-    insert_json(
+-        files,
+-        &format!("generated/parity/{model_name}.json"),
+-        &json!({
+-            "model": model_name,
+-            "rule": "same_sql_file_two_projection_structs",
+-            "fields": fields,
+-            "accessor_binds": accessor_binds,
+-        }),
+-    )
+-}
+-
+-fn emit_operation_sql(
+-    files: &mut BTreeMap<String, Vec<u8>>,
+-    sql_corpus: &mut BTreeMap<String, Vec<u8>>,
+-    model_name: &str,
+-    table: &Table,
+-    claim: Option<&sql::Claim<'_>>,
+-    action: CrudAction,
+-    operation: &OperationDeclaration,
+-) -> Result<Vec<String>, GenerateError> {
+-    if action == CrudAction::Create {
+-        let claim = claim.expect("create validation resolved the command claim");
+-        let mut paths = Vec::with_capacity(CREATE_STATEMENTS.len());
+-        for (name, sql) in [
+-            (CREATE_CLAIM_STATEMENT, sql::create_claim(claim)),
+-            (CREATE_REPLAY_STATEMENT, sql::create_replay(table, claim)),
+-            (CREATE_STATEMENT, sql::create(table, claim, operation)),
+-        ] {
+-            let path = format!("generated/sql/{model_name}/{name}.sql");
+-            let bytes = sql.into_bytes();
+-            insert_bytes(files, &path, bytes.clone())?;
+-            if sql_corpus.insert(path.clone(), bytes).is_some() {
+-                return Err(GenerateError::for_path(
+-                    GenerateErrorKind::DuplicatePath,
+-                    "generated SQL collides with the corpus",
+-                    path,
+-                ));
+-            }
+-            paths.push(path);
+-        }
+-        return Ok(paths);
+-    }
+-    if action == CrudAction::Query {
+-        if let Some(authored) = &operation.authored_sql {
+-            return Ok(authored
+-                .variants
+-                .iter()
+-                .map(|variant| variant.path.clone())
+-                .collect());
+-        }
+-        let variants = query_variants(operation);
+-        let mut paths = Vec::with_capacity(variants.len());
+-        for (field, direction) in variants {
+-            let path = format!(
+-                "generated/sql/{model_name}/query_{field}_{}.sql",
+-                sql::direction_name(direction)
+-            );
+-            let bytes = sql::query(table, operation, field, direction).into_bytes();
+-            insert_bytes(files, &path, bytes.clone())?;
+-            if sql_corpus.insert(path.clone(), bytes).is_some() {
+-                return Err(GenerateError::for_path(
+-                    GenerateErrorKind::DuplicatePath,
+-                    "generated SQL collides with the corpus",
+-                    path,
+-                ));
+-            }
+-            paths.push(path);
+-        }
+-        return Ok(paths);
+-    }
+-
+-    let sql = match action {
+-        CrudAction::Get => sql::get(table),
+-        CrudAction::Update => sql::update(table, operation),
+-        CrudAction::Delete => sql::delete(table, operation),
+-        CrudAction::Create | CrudAction::Query => {
+-            unreachable!("create and query returned above")
+-        }
+-    };
+-    let path = format!("generated/sql/{model_name}/{}.sql", action.as_str());
+-    let bytes = sql.into_bytes();
+-    insert_bytes(files, &path, bytes.clone())?;
+-    if sql_corpus.insert(path.clone(), bytes).is_some() {
+-        return Err(GenerateError::for_path(
+-            GenerateErrorKind::DuplicatePath,
+-            "generated SQL collides with the corpus",
+-            path,
+-        ));
+-    }
+-    Ok(vec![path])
+-}
+-
+-fn query_variants(operation: &OperationDeclaration) -> Vec<(&str, CursorDirection)> {
+-    if let Some(authored) = &operation.authored_sql {
+-        return authored
+-            .variants
+-            .iter()
+-            .map(|variant| (variant.field.as_str(), variant.direction))
+-            .collect();
+-    }
+-    operation.sort.as_ref().map_or_else(
+-        || {
+-            let pagination = operation
+-                .pagination
+-                .as_ref()
+-                .expect("query validation requires pagination");
+-            vec![(
+-                pagination.default_sort.field.as_str(),
+-                pagination.default_sort.direction,
+-            )]
+-        },
+-        |sort| {
+-            sort.fields
+-                .iter()
+-                .flat_map(|field| {
+-                    sort.directions
+-                        .iter()
+-                        .map(move |direction| (field.as_str(), *direction))
+-                })
+-                .collect()
+-        },
+-    )
+-}
+-
+-#[expect(
+-    clippy::too_many_arguments,
+-    reason = "operation contract generation owns this complete validated context"
+-)]
+-fn emit_operation_contracts(
+-    files: &mut BTreeMap<String, Vec<u8>>,
+-    sql_corpus: &BTreeMap<String, Vec<u8>>,
+-    transactional: &StatementTransactionality,
+-    manifest: &PackageManifest,
+-    model_name: &str,
+-    model: &ModelDeclaration,
+-    table: &Table,
+-    claim: Option<&sql::Claim<'_>>,
+-    action: CrudAction,
+-    operation: &OperationDeclaration,
+-    wamn_api: &WamnApi,
+-) -> Result<(), GenerateError> {
+-    let operation_id = canonical_operation_identity(
+-        &manifest.package,
+-        &format!("{model_name}.{}", action.as_str()),
+-    )?;
+-    let root = format!("generated/contracts/{model_name}/{}", action.as_str());
+-    let accessors = wamn_api
+-        .accessors
+-        .iter()
+-        .filter(|accessor| accessor.operation == action)
+-        .collect::<Vec<_>>();
+-    let model_columns = table
+-        .columns()
+-        .iter()
+-        .map(|column| {
+-            statement_value_contract(column.name(), column.column_type(), column.nullable())
+-        })
+-        .collect::<Vec<_>>();
+-    // A public create or update succeeds with the model row. The update
+-    // statement's outcome and observed revision remain SQL accessor columns.
+-    let columns = if action == CrudAction::Delete {
+-        accessors.first().map_or_else(Vec::new, |accessor| {
+-            operation_row_columns(wamn_api, &accessor.row)
+-        })
+-    } else {
+-        model_columns.clone()
+-    };
+-    let statements = accessors
+-        .iter()
+-        .map(|accessor| {
+-            let statement_columns =
+-                if accessor.row == format!("{}Row", rust_type_identifier(model_name)) {
+-                    model_columns.clone()
+-                } else {
+-                    operation_row_columns(wamn_api, &accessor.row)
+-                };
+-            statement_contract(
+-                &accessor.name,
+-                &accessor.sql_path,
+-                sql_corpus,
+-                transactional,
+-                accessor.binds.iter().map(|bind| {
+-                    statement_value_contract(&bind.parameter, bind.statement_type, bind.nullable)
+-                }),
+-                statement_columns,
+-            )
+-        })
+-        .collect::<Vec<_>>();
+-    let mut record = serde_json::Map::from_iter([
+-        (
+-            "relation".to_owned(),
+-            json!(format!("{}.{}", model.schema, model.table)),
+-        ),
+-        ("key_field".to_owned(), json!("id")),
+-    ]);
+-    if matches!(
+-        action,
+-        CrudAction::Get | CrudAction::Update | CrudAction::Delete
+-    ) {
+-        record.insert("key_input".to_owned(), json!("id"));
+-    }
+-    if matches!(action, CrudAction::Update | CrudAction::Delete) {
+-        let revision = operation
+-            .revision_field
+-            .as_deref()
+-            .expect("mutation validation requires a revision field");
+-        record.insert("revision_field".to_owned(), json!(revision));
+-        record.insert(
+-            "revision_input".to_owned(),
+-            json!(format!("expected_{revision}")),
+-        );
+-    }
+-    let mut operation_contract = serde_json::Map::from_iter([
+-        ("operation".to_owned(), json!(operation_id)),
+-        ("kind".to_owned(), json!(action.as_str())),
+-        ("record".to_owned(), Value::Object(record)),
+-        ("permission_token".to_owned(), json!(operation.permission)),
+-        ("grant".to_owned(), json!(operation_id)),
+-        ("result".to_owned(), json!(operation.result)),
+-        ("statements".to_owned(), json!(statements)),
+-        (
+-            "transaction".to_owned(),
+-            json!(if action == CrudAction::Create {
+-                "explicit_per_input"
+-            } else {
+-                "implicit"
+-            }),
+-        ),
+-        ("automatic_retry".to_owned(), json!(false)),
+-    ]);
+-    if operation.fresh_only {
+-        operation_contract.insert("fresh_only".to_owned(), json!(true));
+-    }
+-    if let Some(claim) = claim.filter(|_| action == CrudAction::Create) {
+-        operation_contract.insert("idempotent_by".to_owned(), json!("claim"));
+-        operation_contract.insert("idempotency".to_owned(), idempotency_contract(claim));
+-    }
+-    insert_json_line(
+-        files,
+-        &format!("{root}.operation.json"),
+-        &Value::Object(operation_contract),
+-    )?;
+-    insert_json(
+-        files,
+-        &format!("{root}.input.json"),
+-        &input_contract(model, table, action, operation),
+-    )?;
+-    insert_json(
+-        files,
+-        &format!("{root}.result.json"),
+-        &crud_result_contract(model, operation.result, &columns),
+-    )?;
+-    insert_json(
+-        files,
+-        &format!("{root}.errors.json"),
+-        &error_contract(table, action, operation),
+-    )?;
+-    if claim.is_some() && action == CrudAction::Create {
+-        insert_json(
+-            files,
+-            &format!("{root}.claim-tests.json"),
+-            &claim_contract_tests(
+-                &operation_id,
+-                CREATE_CLAIM_STATEMENT,
+-                CREATE_STATEMENT,
+-                CREATE_REPLAY_STATEMENT,
+-            ),
+-        )?;
+-    }
+-    Ok(())
+-}
+-
+-/// The generated CRUD result contract, in the shape a custom operation
+-/// declares.
+-///
+-/// A result CLASS in the operation contract says how many rows come back, not
+-/// what is in them. Without this the only surviving description of a generated
+-/// operation's result is its statement columns — name, type, nullable and
+-/// nothing else — so a closed value domain the model declares never reaches a
+-/// client, and a control renders a free-text box where a choice belongs.
+-///
+-/// `enum_fields` is the ONLY declared domain source, so a result member that is
+-/// not a model field — a mutation's `outcome`, its `observed_<revision>` —
+-/// carries no domain rather than an invented one.
+-fn crud_result_contract(
+-    model: &ModelDeclaration,
+-    class: ResultClass,
+-    columns: &[StatementValueContract],
+-) -> CustomOperationResultDeclaration {
+-    CustomOperationResultDeclaration {
+-        class,
+-        fields: columns
+-            .iter()
+-            .map(|column| ContractFieldDeclaration {
+-                path: column.name.clone(),
+-                ty: column.ty,
+-                nullable: column.nullable,
+-                values: model
+-                    .enum_fields
+-                    .get(&column.name)
+-                    .cloned()
+-                    .unwrap_or_default(),
+-            })
+-            .collect(),
+-    }
+-}
+-
+-fn input_contract(
+-    model: &ModelDeclaration,
+-    table: &Table,
+-    action: CrudAction,
+-    operation: &OperationDeclaration,
+-) -> Value {
+-    let writable = operation
+-        .writable_fields
+-        .iter()
+-        .map(|field| {
+-            let column = column(table, field).expect("validation resolved writable fields");
+-            json!({
+-                "field": field,
+-                "path": if action == CrudAction::Update { format!("change.{field}") } else { field.clone() },
+-                "type": column.column_type().as_str(),
+-                "omitted": if action == CrudAction::Update { "unchanged" } else { "postgres_default" },
+-                "explicit_null": if column.nullable() { "accepted" } else { "invalid_input" },
+-            })
+-        })
+-        .collect::<Vec<_>>();
+-    let common = json!({
+-        "request_id": {"type": "string", "required": true},
+-        "server_owned_fields": {
+-            "fields": model.server_owned_fields,
+-            "if_supplied": "invalid_input",
+-        },
+-        "writable_fields": writable,
+-    });
+-    match action {
+-        CrudAction::Get => merge_json(common, &json!({"id": {"type": "uuid", "required": true}})),
+-        CrudAction::Query => merge_json(
+-            common,
+-            &json!({
+-                "filters": operation.filters.iter().map(|filter| {
+-                    let column = column(table, &filter.field).expect("validated filter column");
+-                    json!({
+-                        "field": filter.field,
+-                        "binding": filter.binding,
+-                        "type": column.column_type().as_str(),
+-                    })
+-                }).collect::<Vec<_>>(),
+-                "sort": operation.sort,
+-                "pagination": operation.pagination,
+-                "limit": operation.limit,
+-                "validation_order": ["cursor", "limit", "sql"],
+-                "invalid_cursor": "invalid_input",
+-                "invalid_limit": "invalid_input",
+-            }),
+-        ),
+-        CrudAction::Create => merge_json(
+-            common,
+-            &json!({
+-                CLAIM_KEY_COLUMN: {"type": "text", "required": true},
+-                CLAIM_COMMAND_COLUMN: {
+-                    "over": "writable_fields",
+-                    "payload": "canonical_compact_json",
+-                    "changed": "idempotency_conflict",
+-                },
+-            }),
+-        ),
+-        CrudAction::Update | CrudAction::Delete => {
+-            let revision = operation
+-                .revision_field
+-                .as_deref()
+-                .expect("mutation validation requires a revision field");
+-            let mut mutation = json!({
+-                "id": {"type": "uuid", "required": true},
+-            });
+-            mutation
+-                .as_object_mut()
+-                .expect("mutation input contract is an object")
+-                .insert(
+-                    format!("expected_{revision}"),
+-                    json!({
+-                        "field": revision,
+-                        "type": "int64",
+-                        "required": true,
+-                    }),
+-                );
+-            merge_json(common, &mutation)
+-        }
+-    }
+-}
+-
+-fn error_contract(table: &Table, action: CrudAction, operation: &OperationDeclaration) -> Value {
+-    use AccessOperationErrorLiteral as Code;
+-
+-    let mut cases = vec![
+-        (Code::InvalidInput, json!({"literal": "invalid_input"})),
+-        (
+-            Code::PermissionDenied,
+-            json!({"literal": "permission_denied", "from": "permission_denied"}),
+-        ),
+-        (
+-            Code::Retry,
+-            json!({
+-                "literal": "retry",
+-                "from": ["serialization_failure", "connection_unavailable"],
+-                "automatic": false,
+-            }),
+-        ),
+-        (
+-            Code::Timeout,
+-            json!({"literal": "timeout", "from": "statement_timeout"}),
+-        ),
+-        (
+-            Code::InternalError,
+-            json!({
+-                "literal": "internal_error",
+-                "from": ["query_error", "row_limit_exceeded"],
+-            }),
+-        ),
+-    ];
+-    if matches!(
+-        action,
+-        CrudAction::Get | CrudAction::Update | CrudAction::Delete
+-    ) {
+-        cases.push((Code::NotFound, json!({"literal": "not_found"})));
+-    }
+-    if matches!(action, CrudAction::Update | CrudAction::Delete) {
+-        cases.push((
+-            Code::ConcurrencyConflict,
+-            json!({"literal": "concurrency_conflict"}),
+-        ));
+-    }
+-    if action == CrudAction::Create {
+-        cases.push((
+-            Code::IdempotencyConflict,
+-            json!({
+-                "literal": "idempotency_conflict",
+-                "from": "changed_canonical_command",
+-            }),
+-        ));
+-    }
+-    for constraint in operation_constraints(table, action, operation) {
+-        let code = constraint_error_code(constraint.kind());
+-        cases.push((
+-            code,
+-            json!({
+-                "literal": constraint_error(constraint.kind()),
+-                "from": constraint_error(constraint.kind()),
+-                "constraint": constraint.name(),
+-            }),
+-        ));
+-    }
+-    for exclusion in operation_exclusions(table, action, operation) {
+-        cases.push((
+-            Code::ExclusionViolation,
+-            json!({
+-                "literal": "exclusion_violation",
+-                "from": "exclusion_violation",
+-                "constraint": exclusion.name(),
+-            }),
+-        ));
+-    }
+-    let cases = cases
+-        .into_iter()
+-        .map(|(code, mut case)| {
+-            case.as_object_mut()
+-                .expect("error contract case is an object")
+-                .insert(
+-                    "detail".to_owned(),
+-                    error_detail_contract(
+-                        operation
+-                            .error_details
+-                            .get(&code)
+-                            .expect("manifest validation closed access error details"),
+-                    ),
+-                );
+-            case
+-        })
+-        .collect::<Vec<_>>();
+-    json!({"closed": true, "cases": cases})
+-}
+-
+-fn constraint_error_code(kind: &ConstraintKind) -> AccessOperationErrorLiteral {
+-    match kind {
+-        ConstraintKind::PrimaryKey { .. } | ConstraintKind::Unique { .. } => {
+-            AccessOperationErrorLiteral::UniqueViolation
+-        }
+-        ConstraintKind::ForeignKey { .. } => AccessOperationErrorLiteral::ForeignKeyViolation,
+-        ConstraintKind::Check { .. } => AccessOperationErrorLiteral::CheckViolation,
+-    }
+-}
+-
+-fn operation_constraints<'a>(
+-    table: &'a Table,
+-    action: CrudAction,
+-    operation: &OperationDeclaration,
+-) -> Vec<&'a Constraint> {
+-    if !matches!(
+-        action,
+-        CrudAction::Create | CrudAction::Update | CrudAction::Delete
+-    ) {
+-        return Vec::new();
+-    }
+-    table
+-        .constraints()
+-        .iter()
+-        .filter(|constraint| {
+-            action != CrudAction::Update
+-                || update_can_violate(constraint.kind(), &operation.writable_fields)
+-        })
+-        .collect()
+-}
+-
+-/// Exclusions the operation can violate.
+-///
+-/// An INSERT can always collide with a row already stored. An UPDATE can only
+-/// collide when it writes a column the constraint depends on -- including a
+-/// column an expression key reads, which PostgreSQL records as a dependency and
+-/// [`Exclusion::columns`] carries. A DELETE never can: removing a row cannot
+-/// create an overlap.
+-fn operation_exclusions<'a>(
+-    table: &'a Table,
+-    action: CrudAction,
+-    operation: &OperationDeclaration,
+-) -> Vec<&'a Exclusion> {
+-    if !matches!(action, CrudAction::Create | CrudAction::Update) {
+-        return Vec::new();
+-    }
+-    table
+-        .exclusions()
+-        .iter()
+-        .filter(|exclusion| {
+-            action != CrudAction::Update
+-                || exclusion.columns().iter().any(|column| {
+-                    operation
+-                        .writable_fields
+-                        .iter()
+-                        .any(|field| field.as_str() == column.as_ref())
+-                })
+-        })
+-        .collect()
+-}
+-
+-fn update_can_violate(kind: &ConstraintKind, writable_fields: &[String]) -> bool {
+-    match kind {
+-        // Opaque CHECK expressions expose no structural field set to intersect.
+-        ConstraintKind::Check { .. } => false,
+-        ConstraintKind::PrimaryKey { columns } | ConstraintKind::Unique { columns } => {
+-            columns.iter().any(|column| {
+-                writable_fields
+-                    .iter()
+-                    .any(|field| field.as_str() == column.as_ref())
+-            })
+-        }
+-        ConstraintKind::ForeignKey { columns, .. } => columns.iter().any(|column| {
+-            writable_fields
+-                .iter()
+-                .any(|field| field.as_str() == column.column())
+-        }),
+-    }
+-}
+-
+-#[derive(Debug, Clone, Copy)]
+-enum Projection {
+-    Native,
+-    Wamn,
++#[derive(Debug, Clone, Copy)]
++enum Projection {
++    Native,
++    Wamn,
+ }
+ 
+ #[derive(Debug, Clone, Copy)]
+@@ -3495,894 +750,6 @@ impl RustVisibility {
+     }
+ }
+ 
+-fn wamn_api(
+-    model_name: &str,
+-    model: &ModelDeclaration,
+-    table: &Table,
+-    claim: Option<&sql::Claim<'_>>,
+-    operation_sql: &BTreeMap<String, Vec<String>>,
+-) -> WamnApi {
+-    let model_row = format!("{}Row", rust_type_identifier(model_name));
+-    let mut mutation_constraints = Vec::new();
+-    let mut operation_rows = Vec::new();
+-    let mut accessors = Vec::new();
+-
+-    for (action, operation) in &model.operations {
+-        let paths = operation_sql
+-            .get(action.as_str())
+-            .expect("operation SQL was emitted from the same manifest");
+-        if matches!(
+-            action,
+-            CrudAction::Create | CrudAction::Update | CrudAction::Delete
+-        ) {
+-            mutation_constraints.push(mutation_constraint_names(table, *action, operation));
+-        }
+-        match action {
+-            CrudAction::Get => accessors.push(WamnAccessor {
+-                name: "get".to_owned(),
+-                visibility: RustVisibility::Crate,
+-                operation: *action,
+-                statement_digest_constant: statement_digest_constant_name(
+-                    action.as_str(),
+-                    0,
+-                    paths.len(),
+-                ),
+-                sql_path: paths[0].clone(),
+-                row: model_row.clone(),
+-                fetch: AccessorFetch::Optional,
+-                binds: vec![bind_for_column(table, "id", "id", false)],
+-            }),
+-            CrudAction::Query => {
+-                for (index, (field, direction)) in query_variants(operation).into_iter().enumerate()
+-                {
+-                    let mut binds = operation
+-                        .filters
+-                        .iter()
+-                        .map(|filter| {
+-                            accessor_bind(
+-                                &format!("{}_filter", filter.field),
+-                                ColumnType::Json,
+-                                true,
+-                            )
+-                        })
+-                        .collect::<Vec<_>>();
+-                    binds.push(bind_for_column(table, field, "cursor_key", true));
+-                    let tie_breaker = &operation
+-                        .pagination
+-                        .as_ref()
+-                        .expect("query validation requires pagination")
+-                        .tie_breaker
+-                        .field;
+-                    binds.push(bind_for_column(table, tie_breaker, "cursor_id", true));
+-                    binds.push(accessor_bind("limit", ColumnType::Int64, false));
+-                    accessors.push(WamnAccessor {
+-                        name: format!("query_{field}_{}", sql::direction_name(direction)),
+-                        visibility: RustVisibility::Crate,
+-                        operation: *action,
+-                        statement_digest_constant: statement_digest_constant_name(
+-                            action.as_str(),
+-                            index,
+-                            paths.len(),
+-                        ),
+-                        sql_path: paths[index].clone(),
+-                        row: model_row.clone(),
+-                        fetch: AccessorFetch::All,
+-                        binds,
+-                    });
+-                }
+-            }
+-            CrudAction::Create => {
+-                let claim = claim.expect("create validation resolved the command claim");
+-                let rows = create_rows(model_name, table, claim, Projection::Wamn);
+-                let key_bind = accessor_bind(CLAIM_KEY_COLUMN, ColumnType::Text, false);
+-                let mut binds = claim
+-                    .identities
+-                    .iter()
+-                    .map(|(field, _)| {
+-                        bind_for_column(
+-                            table,
+-                            field,
+-                            &rust_identifier(field)
+-                                .expect("model field names were validated for Rust"),
+-                            false,
+-                        )
+-                    })
+-                    .collect::<Vec<_>>();
+-                binds.extend(operation.writable_fields.iter().map(|field| {
+-                    bind_for_column(
+-                        table,
+-                        field,
+-                        &rust_identifier(field).expect("model field names were validated for Rust"),
+-                        false,
+-                    )
+-                }));
+-                for (index, (name, row, fetch, accessor_binds)) in [
+-                    (
+-                        CREATE_CLAIM_STATEMENT,
+-                        rows[0].name.clone(),
+-                        AccessorFetch::Optional,
+-                        vec![
+-                            key_bind.clone(),
+-                            accessor_bind(CLAIM_COMMAND_COLUMN, ColumnType::Bytes, false),
+-                        ],
+-                    ),
+-                    (
+-                        CREATE_REPLAY_STATEMENT,
+-                        rows[1].name.clone(),
+-                        AccessorFetch::Optional,
+-                        vec![key_bind],
+-                    ),
+-                    (
+-                        CREATE_STATEMENT,
+-                        model_row.clone(),
+-                        AccessorFetch::One,
+-                        binds,
+-                    ),
+-                ]
+-                .into_iter()
+-                .enumerate()
+-                {
+-                    accessors.push(WamnAccessor {
+-                        name: name.to_owned(),
+-                        visibility: RustVisibility::Crate,
+-                        operation: *action,
+-                        statement_digest_constant: statement_digest_constant_name(
+-                            action.as_str(),
+-                            index,
+-                            paths.len(),
+-                        ),
+-                        sql_path: paths[index].clone(),
+-                        row,
+-                        fetch,
+-                        binds: accessor_binds,
+-                    });
+-                }
+-                operation_rows.extend(rows);
+-            }
+-            CrudAction::Update => {
+-                let result_row =
+-                    operation_result_row(model_name, table, *action, operation, Projection::Wamn);
+-                let mut binds = vec![bind_for_column(table, "id", "id", false)];
+-                let revision = operation
+-                    .revision_field
+-                    .as_deref()
+-                    .expect("update validation requires a revision field");
+-                binds.push(bind_for_column(
+-                    table,
+-                    revision,
+-                    &format!("expected_{revision}"),
+-                    false,
+-                ));
+-                for field in &operation.writable_fields {
+-                    binds.push(accessor_bind(
+-                        &format!("{field}_present"),
+-                        ColumnType::Boolean,
+-                        false,
+-                    ));
+-                    binds.push(bind_for_column(
+-                        table,
+-                        field,
+-                        &format!("{field}_value"),
+-                        true,
+-                    ));
+-                }
+-                accessors.push(WamnAccessor {
+-                    name: "update".to_owned(),
+-                    visibility: RustVisibility::Crate,
+-                    operation: *action,
+-                    statement_digest_constant: statement_digest_constant_name(
+-                        action.as_str(),
+-                        0,
+-                        paths.len(),
+-                    ),
+-                    sql_path: paths[0].clone(),
+-                    row: result_row.name.clone(),
+-                    fetch: AccessorFetch::One,
+-                    binds,
+-                });
+-                operation_rows.push(result_row);
+-            }
+-            CrudAction::Delete => {
+-                let result_row =
+-                    operation_result_row(model_name, table, *action, operation, Projection::Wamn);
+-                let revision = operation
+-                    .revision_field
+-                    .as_deref()
+-                    .expect("delete validation requires a revision field");
+-                accessors.push(WamnAccessor {
+-                    name: "delete".to_owned(),
+-                    visibility: RustVisibility::Crate,
+-                    operation: *action,
+-                    statement_digest_constant: statement_digest_constant_name(
+-                        action.as_str(),
+-                        0,
+-                        paths.len(),
+-                    ),
+-                    sql_path: paths[0].clone(),
+-                    row: result_row.name.clone(),
+-                    fetch: AccessorFetch::One,
+-                    binds: vec![
+-                        bind_for_column(table, "id", "id", false),
+-                        bind_for_column(table, revision, &format!("expected_{revision}"), false),
+-                    ],
+-                });
+-                operation_rows.push(result_row);
+-            }
+-        }
+-    }
+-
+-    WamnApi {
+-        statement_digest_visibility: RustVisibility::Crate,
+-        mutation_constraints,
+-        operation_rows,
+-        accessors,
+-    }
+-}
+-
+-fn mutation_constraint_names(
+-    table: &Table,
+-    action: CrudAction,
+-    operation: &OperationDeclaration,
+-) -> MutationConstraintNames {
+-    let mut unique = Vec::new();
+-    let mut foreign_key = Vec::new();
+-    let mut check = Vec::new();
+-    for constraint in operation_constraints(table, action, operation) {
+-        match constraint.kind() {
+-            ConstraintKind::PrimaryKey { .. } | ConstraintKind::Unique { .. } => {
+-                unique.push(constraint.name().to_owned());
+-            }
+-            ConstraintKind::ForeignKey { .. } => {
+-                foreign_key.push(constraint.name().to_owned());
+-            }
+-            ConstraintKind::Check { .. } => {
+-                check.push(constraint.name().to_owned());
+-            }
+-        }
+-    }
+-    let exclusion = operation_exclusions(table, action, operation)
+-        .into_iter()
+-        .map(|exclusion| exclusion.name().to_owned())
+-        .collect();
+-    MutationConstraintNames {
+-        operation: action,
+-        unique: constraint_name_slice(action, "unique", unique),
+-        foreign_key: constraint_name_slice(action, "foreign_key", foreign_key),
+-        check: constraint_name_slice(action, "check", check),
+-        exclusion: constraint_name_slice(action, "exclusion", exclusion),
+-    }
+-}
+-
+-fn constraint_name_slice(
+-    action: CrudAction,
+-    category: &str,
+-    names: Vec<String>,
+-) -> ConstraintNameSlice {
+-    ConstraintNameSlice {
+-        constant: format!(
+-            "{}_{}_CONSTRAINTS",
+-            action.as_str().to_ascii_uppercase(),
+-            category.to_ascii_uppercase()
+-        ),
+-        visibility: RustVisibility::Crate,
+-        names,
+-    }
+-}
+-
+-fn native_bind_fixtures(api: &WamnApi) -> Vec<NativeBindFixture> {
+-    api.accessors
+-        .iter()
+-        .flat_map(|accessor| {
+-            accessor.binds.iter().map(|bind| NativeBindFixture {
+-                accessor: accessor.name.clone(),
+-                parameter: bind.parameter.clone(),
+-                function: format!("{}_{}_bind_fixture", accessor.name, bind.parameter),
+-                visibility: RustVisibility::Crate,
+-                rust_type: bind.native_rust.clone(),
+-                value: native_inert_value(bind),
+-            })
+-        })
+-        .collect()
+-}
+-
+-fn native_inert_value(bind: &AccessorBind) -> String {
+-    if bind.nullable {
+-        return "None".to_owned();
+-    }
+-    match bind.postgres.as_str() {
+-        "boolean" => "false".to_owned(),
+-        "int4" => "0_i32".to_owned(),
+-        "int8" => "0_i64".to_owned(),
+-        "float8" => "0.0_f64".to_owned(),
+-        "text" => "String::new()".to_owned(),
+-        "bytea" => "Vec::new()".to_owned(),
+-        "numeric" => "rust_decimal::Decimal::ZERO".to_owned(),
+-        "timestamptz" => "chrono::DateTime::<chrono::Utc>::UNIX_EPOCH".to_owned(),
+-        "jsonb" => "serde_json::Value::Null".to_owned(),
+-        "uuid" => "uuid::Uuid::nil()".to_owned(),
+-        _ => unreachable!("accessor binds use the closed PostgreSQL vocabulary"),
+-    }
+-}
+-
+-fn operation_result_rows(
+-    model_name: &str,
+-    model: &ModelDeclaration,
+-    table: &Table,
+-    claim: Option<&sql::Claim<'_>>,
+-    projection: Projection,
+-) -> Vec<RustRow> {
+-    model
+-        .operations
+-        .iter()
+-        .flat_map(|(action, operation)| match action {
+-            CrudAction::Create => create_rows(
+-                model_name,
+-                table,
+-                claim.expect("create validation resolved the command claim"),
+-                projection,
+-            )
+-            .to_vec(),
+-            CrudAction::Update | CrudAction::Delete => vec![operation_result_row(
+-                model_name, table, *action, operation, projection,
+-            )],
+-            CrudAction::Get | CrudAction::Query => Vec::new(),
+-        })
+-        .collect()
+-}
+-
+-/// The two rows a generated create needs beyond the model row: what the claim
+-/// minted, and what a replay reads back.
+-///
+-/// The replay row carries the canonical command beside the row so the caller
+-/// can refuse a key rebound to a different request without a second read.
+-fn create_rows(
+-    model_name: &str,
+-    table: &Table,
+-    claim: &sql::Claim<'_>,
+-    projection: Projection,
+-) -> [RustRow; 2] {
+-    let model_type = rust_type_identifier(model_name);
+-    let claim_fields = claim
+-        .identities
+-        .iter()
+-        .map(|(_, claim_column)| {
+-            let column = column(claim.table, claim_column)
+-                .expect("claim validation resolved every identity column");
+-            RustMember {
+-                name: rust_identifier(claim_column)
+-                    .expect("claim column names were validated for Rust"),
+-                rust_type: rust_type(column, projection),
+-                statement_type: column.column_type(),
+-                nullable: column.nullable(),
+-            }
+-        })
+-        .collect::<Vec<_>>();
+-    let mut replay_fields = vec![RustMember {
+-        name: CLAIM_COMMAND_COLUMN.to_owned(),
+-        rust_type: projected_rust_type(ColumnType::Bytes, projection, false),
+-        statement_type: ColumnType::Bytes,
+-        nullable: false,
+-    }];
+-    replay_fields.extend(table.columns().iter().map(|column| RustMember {
+-        name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
+-        rust_type: rust_type(column, projection),
+-        statement_type: column.column_type(),
+-        nullable: column.nullable(),
+-    }));
+-    [
+-        RustRow {
+-            name: format!("{model_type}CreateClaimRow"),
+-            visibility: RustVisibility::Public,
+-            fields: claim_fields,
+-        },
+-        RustRow {
+-            name: format!("{model_type}CreateReplayRow"),
+-            visibility: RustVisibility::Public,
+-            fields: replay_fields,
+-        },
+-    ]
+-}
+-
+-fn operation_result_row(
+-    model_name: &str,
+-    table: &Table,
+-    action: CrudAction,
+-    operation: &OperationDeclaration,
+-    projection: Projection,
+-) -> RustRow {
+-    let mut fields = vec![RustMember {
+-        name: "outcome".to_owned(),
+-        rust_type: "Option<String>".to_owned(),
+-        statement_type: ColumnType::Text,
+-        nullable: true,
+-    }];
+-    if action == CrudAction::Update {
+-        let revision = operation
+-            .revision_field
+-            .as_deref()
+-            .expect("update validation requires a revision field");
+-        fields.push(RustMember {
+-            name: format!(
+-                "observed_{}",
+-                rust_identifier(revision).expect("model field names were validated for Rust")
+-            ),
+-            rust_type: "Option<i64>".to_owned(),
+-            statement_type: ColumnType::Int64,
+-            nullable: true,
+-        });
+-        fields.extend(table.columns().iter().map(|column| RustMember {
+-            name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
+-            rust_type: optional_rust_type(column, projection),
+-            statement_type: column.column_type(),
+-            nullable: true,
+-        }));
+-    }
+-    RustRow {
+-        name: format!(
+-            "{}{}Row",
+-            rust_type_identifier(model_name),
+-            rust_type_identifier(action.as_str())
+-        ),
+-        visibility: RustVisibility::Public,
+-        fields,
+-    }
+-}
+-
+-fn bind_for_column(
+-    table: &Table,
+-    column_name: &str,
+-    parameter_name: &str,
+-    optional: bool,
+-) -> AccessorBind {
+-    let column = column(table, column_name).expect("operation validation resolved the column");
+-    accessor_bind(
+-        parameter_name,
+-        column.column_type(),
+-        optional || column.nullable(),
+-    )
+-}
+-
+-fn accessor_bind(parameter: &str, ty: ColumnType, nullable: bool) -> AccessorBind {
+-    AccessorBind {
+-        parameter: parameter.to_owned(),
+-        postgres: sql::postgres_type(ty).to_owned(),
+-        nullable,
+-        native_rust: projected_rust_type(ty, Projection::Native, nullable),
+-        wamn_rust: projected_rust_type(ty, Projection::Wamn, nullable),
+-        statement_type: ty,
+-    }
+-}
+-
+-fn emit_projection(
+-    files: &mut BTreeMap<String, Vec<u8>>,
+-    sql_corpus: &BTreeMap<String, Vec<u8>>,
+-    model_name: &str,
+-    table: &Table,
+-    operation_sql: &BTreeMap<String, Vec<String>>,
+-    contents: ProjectionContents<'_>,
+-) -> Result<(), GenerateError> {
+-    let (projection, operation_rows, native_bind_fixtures, wamn_api) = match contents {
+-        ProjectionContents::Native {
+-            operation_rows,
+-            bind_fixtures,
+-        } => (Projection::Native, operation_rows, bind_fixtures, None),
+-        ProjectionContents::Wamn(api) => (
+-            Projection::Wamn,
+-            api.operation_rows.as_slice(),
+-            &[][..],
+-            Some(api),
+-        ),
+-    };
+-    let mut source = String::from("// @generated from migration IR; do not edit.\n\n");
+-    if matches!(projection, Projection::Wamn) {
+-        source.push_str("use wamn_postgres_statements::Connection;\n\n");
+-    }
+-    let model_row = RustRow {
+-        name: format!("{}Row", rust_type_identifier(model_name)),
+-        visibility: RustVisibility::Public,
+-        fields: table
+-            .columns()
+-            .iter()
+-            .map(|column| RustMember {
+-                name: rust_identifier(column.name()).expect("model fields were validated for Rust"),
+-                rust_type: rust_type(column, projection),
+-                statement_type: column.column_type(),
+-                nullable: column.nullable(),
+-            })
+-            .collect(),
+-    };
+-    emit_rust_row(&mut source, &model_row, projection);
+-    for row in operation_rows {
+-        emit_rust_row(&mut source, row, projection);
+-    }
+-
+-    for (action, paths) in operation_sql {
+-        for (index, path) in paths.iter().enumerate() {
+-            match projection {
+-                Projection::Native => {
+-                    let include_path = if path.starts_with("generated/") {
+-                        path.strip_prefix("generated/")
+-                            .map(|path| format!("../{path}"))
+-                            .expect("prefix checked")
+-                    } else {
+-                        format!("../../{path}")
+-                    };
+-                    writeln!(
+-                        &mut source,
+-                        "{} const {}: &str = include_str!(\"{}\");",
+-                        RustVisibility::Crate.source(),
+-                        sql_constant_name(action, index, paths.len()),
+-                        include_path
+-                    )
+-                    .expect("writing to a String cannot fail");
+-                }
+-                Projection::Wamn => {
+-                    let digest = sha256(
+-                        sql_corpus
+-                            .get(path)
+-                            .expect("generated statement is present in the SQL corpus"),
+-                    );
+-                    writeln!(
+-                        &mut source,
+-                        "{} const {}: &str = {digest:?};",
+-                        wamn_api
+-                            .expect("Wamn projection carries its accessor API")
+-                            .statement_digest_visibility
+-                            .source(),
+-                        statement_digest_constant_name(action, index, paths.len()),
+-                    )
+-                    .expect("writing to a String cannot fail");
+-                }
+-            }
+-        }
+-    }
+-    source.push('\n');
+-    for fixture in native_bind_fixtures {
+-        emit_native_bind_fixture(&mut source, fixture);
+-    }
+-    if !native_bind_fixtures.is_empty() {
+-        source.push('\n');
+-    }
+-    if let Some(api) = wamn_api {
+-        if api
+-            .accessors
+-            .iter()
+-            .any(|accessor| accessor.operation == CrudAction::Create)
+-        {
+-            emit_claim_transaction(&mut source, &model_row.name);
+-        }
+-        for constraints in &api.mutation_constraints {
+-            emit_constraint_name_slice(&mut source, &constraints.unique);
+-            emit_constraint_name_slice(&mut source, &constraints.foreign_key);
+-            emit_constraint_name_slice(&mut source, &constraints.check);
+-            emit_constraint_name_slice(&mut source, &constraints.exclusion);
+-        }
+-        if !api.mutation_constraints.is_empty() {
+-            source.push('\n');
+-        }
+-        for accessor in &api.accessors {
+-            let row = if accessor.row == model_row.name {
+-                &model_row
+-            } else {
+-                operation_rows
+-                    .iter()
+-                    .find(|row| row.name == accessor.row)
+-                    .expect("operation accessor row was generated from the same operation")
+-            };
+-            emit_wamn_accessor(&mut source, accessor, row);
+-        }
+-    }
+-    while source.ends_with("\n\n") {
+-        source.pop();
+-    }
+-    let directory = match projection {
+-        Projection::Native => "native-verifier",
+-        Projection::Wamn => "wamn",
+-    };
+-    insert_bytes(
+-        files,
+-        &format!("generated/{directory}/{model_name}.rs"),
+-        source.into_bytes(),
+-    )
+-}
+-
+-fn emit_native_bind_fixture(source: &mut String, fixture: &NativeBindFixture) {
+-    writeln!(
+-        source,
+-        "{} fn {}() -> {} {{\n    {}\n}}",
+-        fixture.visibility.source(),
+-        fixture.function,
+-        fixture.rust_type,
+-        fixture.value
+-    )
+-    .expect("writing to a String cannot fail");
+-}
+-
+-fn emit_constraint_name_slice(source: &mut String, constraints: &ConstraintNameSlice) {
+-    let names = constraints
+-        .names
+-        .iter()
+-        .map(|name| format!("{name:?}"))
+-        .collect::<Vec<_>>()
+-        .join(", ");
+-    writeln!(
+-        source,
+-        "{} const {}: &[&str] = &[{}];",
+-        constraints.visibility.source(),
+-        constraints.constant,
+-        names
+-    )
+-    .expect("writing to a String cannot fail");
+-}
+-
+-fn emit_rust_row(source: &mut String, row: &RustRow, projection: Projection) {
+-    match projection {
+-        Projection::Native => source.push_str("#[derive(Debug, sqlx::FromRow)]\n"),
+-        Projection::Wamn => source.push_str("#[derive(Debug)]\n"),
+-    }
+-    writeln!(source, "{} struct {} {{", row.visibility.source(), row.name)
+-        .expect("writing to a String cannot fail");
+-    for field in &row.fields {
+-        writeln!(source, "    pub {}: {},", field.name, field.rust_type)
+-            .expect("writing to a String cannot fail");
+-    }
+-    source.push_str("}\n\n");
+-}
+-
+-fn emit_wamn_accessor(source: &mut String, accessor: &WamnAccessor, row: &RustRow) {
+-    let owns_claim = accessor.operation == CrudAction::Create;
+-    let finalizes_claim = owns_claim && accessor.name == CREATE_STATEMENT;
+-    writeln!(
+-        source,
+-        "{} async fn {}(",
+-        accessor.visibility.source(),
+-        accessor.name
+-    )
+-    .expect("writing to a String cannot fail");
+-    if finalizes_claim {
+-        source.push_str("    mut claim: PendingClaim,\n");
+-    } else if owns_claim {
+-        source.push_str("    claim: &mut PendingClaim,\n");
+-    } else {
+-        source.push_str("    connection: &mut Connection,\n");
+-    }
+-    for bind in &accessor.binds {
+-        writeln!(source, "    {}: {},", bind.parameter, bind.wamn_rust)
+-            .expect("writing to a String cannot fail");
+-    }
+-    writeln!(
+-        source,
+-        ") -> Result<{}, wamn_postgres_statements::StatementError> {{",
+-        if finalizes_claim {
+-            "FinalizedClaim".to_owned()
+-        } else {
+-            accessor_result_type(accessor)
+-        }
+-    )
+-    .expect("writing to a String cannot fail");
+-    writeln!(
+-        source,
+-        "    let rows = {}.run({}, vec![",
+-        if owns_claim {
+-            "claim.transaction"
+-        } else {
+-            "connection"
+-        },
+-        accessor.statement_digest_constant
+-    )
+-    .expect("writing to a String cannot fail");
+-    for bind in &accessor.binds {
+-        writeln!(
+-            source,
+-            "        wamn_postgres_statements::into_sql_value({}),",
+-            bind.parameter
+-        )
+-        .expect("writing to a String cannot fail");
+-    }
+-    source.push_str("    ]).await?;\n");
+-    let decode_function = match accessor.fetch {
+-        AccessorFetch::Optional => "decode_optional",
+-        AccessorFetch::All => "decode_all",
+-        AccessorFetch::One => "decode_one",
+-    };
+-    emit_decode_result(
+-        source,
+-        row,
+-        decode_function,
+-        &accessor.statement_digest_constant,
+-        finalizes_claim,
+-    );
+-}
+-
+-fn accessor_result_type(accessor: &WamnAccessor) -> String {
+-    match accessor.fetch {
+-        AccessorFetch::Optional => format!("Option<{}>", accessor.row),
+-        AccessorFetch::All => format!("Vec<{}>", accessor.row),
+-        AccessorFetch::One => accessor.row.clone(),
+-    }
+-}
+-
+-fn emit_decode_result(
+-    source: &mut String,
+-    row: &RustRow,
+-    decode_function: &str,
+-    statement_digest_constant: &str,
+-    finalizes_claim: bool,
+-) {
+-    source.push_str(if finalizes_claim {
+-        "    let row = "
+-    } else {
+-        "    "
+-    });
+-    writeln!(
+-        source,
+-        "wamn_postgres_statements::{decode_function}({statement_digest_constant}, rows, |row| {{"
+-    )
+-    .expect("writing to a String cannot fail");
+-    writeln!(source, "        Ok({} {{", row.name).expect("writing to a String cannot fail");
+-    for field in &row.fields {
+-        writeln!(
+-            source,
+-            "            {}: row.decode({:?})?,",
+-            field.name, field.name
+-        )
+-        .expect("writing to a String cannot fail");
+-    }
+-    source.push_str("        })\n    })");
+-    if finalizes_claim {
+-        source.push_str("?;\n    Ok(FinalizedClaim { transaction: claim.transaction, row })");
+-    }
+-    source.push_str("\n}\n\n");
+-}
+-
+-fn sql_constant_name(action: &str, index: usize, path_count: usize) -> String {
+-    let suffix = if path_count == 1 {
+-        String::new()
+-    } else {
+-        format!("_{index}")
+-    };
+-    format!("{}{}_SQL", action.to_ascii_uppercase(), suffix)
+-}
+-
+-fn statement_digest_constant_name(action: &str, index: usize, path_count: usize) -> String {
+-    let suffix = if path_count == 1 {
+-        String::new()
+-    } else {
+-        format!("_{index}")
+-    };
+-    format!("{}{}_DIGEST", action.to_ascii_uppercase(), suffix)
+-}
+-
+-fn required_schema_contract(
+-    catalog: &CatalogIr,
+-    manifest: &PackageManifest,
+-) -> RequiredSchemaContract {
+-    let mut consumed =
+-        BTreeMap::<(String, String), (&Table, BTreeSet<String>, BTreeSet<String>)>::new();
+-    for model in manifest.models.values() {
+-        let table = relation(catalog, model).expect("validation resolved relation");
+-        let entry = consumed
+-            .entry((model.schema.clone(), model.table.clone()))
+-            .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
+-        entry.1.extend(
+-            table
+-                .columns()
+-                .iter()
+-                .map(|column| column.name().to_owned()),
+-        );
+-        entry.2.extend(
+-            table
+-                .constraints()
+-                .iter()
+-                .map(|constraint| constraint.name().to_owned()),
+-        );
+-    }
+-    // A create's generated SQL names the claim's primary-key constraint and
+-    // reads back the columns that minted its identity, so the required-schema
+-    // contract has to pin them. The internal-relation pass below registers the
+-    // claim relation with no fields at all.
+-    for model in manifest.models.values() {
+-        let Some(claim) = model
+-            .operations
+-            .get(&CrudAction::Create)
+-            .and_then(|operation| operation.claim.as_ref())
+-        else {
+-            continue;
+-        };
+-        let table = catalog
+-            .tables()
+-            .iter()
+-            .find(|table| table.schema() == model.schema && table.name() == claim.table)
+-            .expect("create validation resolved the claim relation");
+-        let entry = consumed
+-            .entry((model.schema.clone(), claim.table.clone()))
+-            .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
+-        entry.1.insert(CLAIM_KEY_COLUMN.to_owned());
+-        entry.1.insert(CLAIM_COMMAND_COLUMN.to_owned());
+-        entry.1.extend(claim.identities.values().cloned());
+-        entry.2.extend(
+-            table
+-                .constraints()
+-                .iter()
+-                .filter(|constraint| match constraint.kind() {
+-                    ConstraintKind::PrimaryKey { columns } => columns
+-                        .iter()
+-                        .any(|column| column.as_ref() == CLAIM_KEY_COLUMN),
+-                    ConstraintKind::Unique { columns } => columns.iter().any(|column| {
+-                        claim
+-                            .identities
+-                            .values()
+-                            .any(|value| value == column.as_ref())
+-                    }),
+-                    ConstraintKind::ForeignKey { .. } | ConstraintKind::Check { .. } => false,
+-                })
+-                .map(|constraint| constraint.name().to_owned()),
+-        );
+-    }
+-    for relation in manifest.internal_relations.values() {
+-        let table = catalog
+-            .tables()
+-            .iter()
+-            .find(|table| table.schema() == relation.schema && table.name() == relation.table)
+-            .expect("internal-relation validation resolved relation");
+-        consumed
+-            .entry((relation.schema.clone(), relation.table.clone()))
+-            .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
+-    }
+-    for operation in manifest.custom_operations.values() {
+-        for relation in &operation.relations {
+-            let table = catalog
+-                .tables()
+-                .iter()
+-                .find(|table| table.schema() == relation.schema && table.name() == relation.table)
+-                .expect("custom-operation validation resolved relation");
+-            let entry = consumed
+-                .entry((relation.schema.clone(), relation.table.clone()))
+-                .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
+-            entry.1.extend(
+-                relation
+-                    .select_fields
+-                    .iter()
+-                    .chain(&relation.insert_fields)
+-                    .chain(&relation.update_fields)
+-                    .cloned(),
+-            );
+-            entry.2.extend(relation.constraints.iter().cloned());
+-        }
+-    }
+-    let tables = consumed
+-        .into_values()
+-        .map(|(table, fields, constraints)| RequiredTable {
+-            schema: table.schema().into(),
+-            table: table.name().into(),
+-            fields: table
+-                .columns()
+-                .iter()
+-                .filter(|column| fields.contains(column.name()))
+-                .map(|column| RequiredField {
+-                    name: column.name().into(),
+-                    ty: column.column_type().as_str().into(),
+-                    nullable: column.nullable(),
+-                })
+-                .collect::<Vec<_>>()
+-                .into_boxed_slice(),
+-            constraints: table
+-                .constraints()
+-                .iter()
+-                .filter(|constraint| constraints.contains(constraint.name()))
+-                .map(|constraint| RequiredConstraint {
+-                    name: constraint.name().into(),
+-                    definition: serde_json::to_value(constraint.kind())
+-                        .expect("constraint IR always serializes"),
+-                })
+-                .collect::<Vec<_>>()
+-                .into_boxed_slice(),
+-        })
+-        .collect::<Vec<_>>()
+-        .into_boxed_slice();
+-    RequiredSchemaContract { tables }
+-}
+-
+ fn relation<'a>(catalog: &'a CatalogIr, model: &ModelDeclaration) -> Option<&'a Table> {
+     catalog
+         .tables()
+@@ -4394,32 +761,6 @@ fn column<'a>(table: &'a Table, name: &str) -> Option<&'a Column> {
+     table.columns().iter().find(|column| column.name() == name)
+ }
+ 
+-fn validate_field<'a>(
+-    table: &'a Table,
+-    model_name: &str,
+-    field: &str,
+-) -> Result<&'a Column, GenerateError> {
+-    column(table, field).ok_or_else(|| {
+-        GenerateError::for_object(
+-            GenerateErrorKind::UnknownColumn,
+-            format!("{model_name} references unknown field {field}"),
+-            field,
+-        )
+-    })
+-}
+-
+-fn safe_sql_path(path: &str) -> bool {
+-    !path.is_empty()
+-        && !path.starts_with('/')
+-        && path
+-            .rsplit_once('.')
+-            .is_some_and(|(_, extension)| extension == "sql")
+-        && !path.contains('\\')
+-        && path
+-            .split('/')
+-            .all(|component| !component.is_empty() && component != "." && component != "..")
+-}
+-
+ fn insert_json(
+     files: &mut BTreeMap<String, Vec<u8>>,
+     path: &str,
+@@ -4476,19 +817,6 @@ fn sha256(bytes: &[u8]) -> String {
+     format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+ }
+ 
+-fn merge_json(mut left: Value, right: &Value) -> Value {
+-    let left = left
+-        .as_object_mut()
+-        .expect("input contracts are JSON objects");
+-    left.extend(
+-        right
+-            .as_object()
+-            .expect("input contract additions are JSON objects")
+-            .clone(),
+-    );
+-    Value::Object(left.clone())
+-}
+-
+ fn constraint_error(kind: &ConstraintKind) -> &'static str {
+     match kind {
+         ConstraintKind::PrimaryKey { .. } | ConstraintKind::Unique { .. } => "unique_violation",
+@@ -4496,35 +824,3 @@ fn constraint_error(kind: &ConstraintKind) -> &'static str {
+         ConstraintKind::Check { .. } => "check_violation",
+     }
+ }
+-
+-fn rust_type(column: &Column, projection: Projection) -> String {
+-    projected_rust_type(column.column_type(), projection, column.nullable())
+-}
+-
+-fn optional_rust_type(column: &Column, projection: Projection) -> String {
+-    projected_rust_type(column.column_type(), projection, true)
+-}
+-
+-fn projected_rust_type(ty: ColumnType, projection: Projection, optional: bool) -> String {
+-    let base = match (projection, ty) {
+-        (_, ColumnType::Boolean) => "bool",
+-        (_, ColumnType::Int32) => "i32",
+-        (_, ColumnType::Int64) => "i64",
+-        (_, ColumnType::Float64) => "f64",
+-        (_, ColumnType::Text) => "String",
+-        (_, ColumnType::Bytes) => "Vec<u8>",
+-        (Projection::Native, ColumnType::Numeric) => "rust_decimal::Decimal",
+-        (Projection::Native, ColumnType::Timestamptz) => "chrono::DateTime<chrono::Utc>",
+-        (Projection::Native, ColumnType::Json) => "serde_json::Value",
+-        (Projection::Native, ColumnType::Uuid) => "uuid::Uuid",
+-        (Projection::Wamn, ColumnType::Numeric) => "wamn_postgres_statements::Numeric",
+-        (Projection::Wamn, ColumnType::Timestamptz) => "wamn_postgres_statements::TimestampTz",
+-        (Projection::Wamn, ColumnType::Json) => "wamn_postgres_statements::Json",
+-        (Projection::Wamn, ColumnType::Uuid) => "wamn_postgres_statements::Uuid",
+-    };
+-    if optional {
+-        format!("Option<{base}>")
+-    } else {
+-        base.to_owned()
+-    }
+-}
