@@ -1,6 +1,6 @@
 //! Live round-trip gate for the per-project-env RESTORE path (wamn-q3n.11).
 //!
-//! The restore counterpart of `tests/dump.rs`. Two proofs, both driving the REAL
+//! The restore counterpart of `tests/dump.rs`. Two tests, both driving the REAL
 //! [`wamn_control_provision::pg_restore_argv`] builder against a `pg_dump -Fd` artifact
 //! produced by the REAL [`wamn_control_provision::pg_dump_argv`]:
 //!
@@ -54,7 +54,7 @@ fn restore_round_trips_and_clean_replaces_in_place() {
     }
 
     // Seed the source with an exact-decimal column (the no-float rule) so the
-    // round-trip proves value fidelity, not just row count.
+    // round-trip checks exact values and row count.
     run_psql(
         &src,
         "CREATE TABLE widgets (id int PRIMARY KEY, name text, qty numeric(6,2)); \
@@ -74,7 +74,7 @@ fn restore_round_trips_and_clean_replaces_in_place() {
         "pg_dump -Fd must produce a directory"
     );
 
-    // --- Proof 1: scratch restore (clean = false) into a fresh empty database. ---
+    // --- Test 1: scratch restore (clean = false) into a fresh empty database. ---
     let restore = pg_restore_argv(&scratch, &out, false);
     assert_eq!(restore[0], "pg_restore");
     let status = Proc::new(&restore[0])
@@ -92,7 +92,7 @@ fn restore_round_trips_and_clean_replaces_in_place() {
         "exact-decimal value restored without loss"
     );
 
-    // --- Proof 2: in-place clean restore (clean = true) over a stale database. ---
+    // --- Test 2: in-place clean restore (clean = true) over a stale database. ---
     // Seed the in-place target with a STALE table carrying a row (id=99) that the
     // dump does not have. A `--clean` restore must DROP the table first, so id=99 is
     // gone and only the dump's rows remain. Without --clean the stale row survives

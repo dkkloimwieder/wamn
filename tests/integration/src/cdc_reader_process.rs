@@ -156,7 +156,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reader_command_preserves_the_proof_runtime_contract() {
+    fn reader_command_preserves_the_test_runtime_contract() {
         let args = ReaderArgs {
             org: "org".into(),
             project: "project".into(),

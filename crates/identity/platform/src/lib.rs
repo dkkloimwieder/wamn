@@ -251,8 +251,8 @@ impl std::str::FromStr for PrincipalId {
     }
 }
 
-/// A stored first-party principal. This value is identity data, not proof that
-/// the current caller authenticated as that principal.
+/// A stored first-party principal. This identity record does not authenticate
+/// the current caller as that principal.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Principal {
     id: PrincipalId,
@@ -289,7 +289,7 @@ impl Principal {
     }
 }
 
-/// Proof-bearing principal produced only by an admitted presenter.
+/// An authenticated principal produced only by an admitted presenter.
 ///
 /// It has no public constructor and deliberately implements no deserialization
 /// trait. Transport adapters therefore cannot turn a request field directly

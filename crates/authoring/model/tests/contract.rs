@@ -147,7 +147,7 @@ fn the_collapsed_draft_operations_no_longer_decode() {
 /// The command inventory is exactly two, in both the tagged enum and the
 /// standalone kind vocabulary the ledger shares.
 #[test]
-fn command_inventory_and_operation_pairing_are_exact() {
+fn command_kinds_and_operation_pairing_are_exact() {
     let schema = wamn_authoring_model::json_schema();
     for (definition, field) in [
         ("AuthoringCommand", "kind"),
@@ -442,7 +442,7 @@ fn retired_and_forbidden_vocabulary_is_absent() {
 }
 
 #[test]
-fn query_inventory_and_operation_pairing_are_exact() {
+fn query_kinds_and_operation_pairing_are_exact() {
     let schema = wamn_authoring_model::json_schema();
     assert_eq!(
         schema_discriminators(&schema, "AuthoringQuery", "kind"),
