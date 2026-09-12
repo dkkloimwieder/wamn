@@ -13,7 +13,7 @@ carry the change. The rulings are recorded on `wamn-7tva.1` and `wamn-7tva.2`.
 
 Structure follows the application-brief skeleton in
 `docs/operations/agent-pilot.md` section 4.5 (`:162-195`). Scope
-is fixed by `docs/poc/poc-application-portfolio.md` row 2 (`:13`) and its
+is fixed by `docs/history/poc-application-portfolio.md` row 2 (`:13`) and its
 build-order entry 2 (`:27-28`). This document does not widen that scope. Shape
 follows `docs/poc/wamn_wms_application_poc_scenario.md`.
 
@@ -25,19 +25,19 @@ design choice, and it says so.**
 These are decided. This document does not re-decide them.
 
 1. Production counts is machine data as production values against dispatched
-   work orders (`wamn-7tva`, `docs/poc/poc-application-portfolio.md:13`).
+   work orders (`wamn-7tva`, `docs/history/poc-application-portfolio.md:13`).
 2. The ingress is a JetStream pull consumer, with ack after process, and a
-   dead-letter queue (`wamn-7tva`, `docs/poc/poc-application-portfolio.md:13`).
+   dead-letter queue (`wamn-7tva`, `docs/history/poc-application-portfolio.md:13`).
    [amended 2026-09-07: the PLATFORM owns that consumer. The application guest
    exports an `event_handler` and is delivered to. See section 5.]
 3. The new seam is MQTT ingress. It is the second execution of
-   `docs/poc/seam-template.md` (`docs/poc/poc-application-portfolio.md:13`).
+   `docs/poc/seam-template.md` (`docs/history/poc-application-portfolio.md:13`).
    [amended 2026-09-07: withdrawn. NATS captures MQTT natively, so the seam
    template runs no steps here and keeps blobstore as its only proven
    execution. The trigger for a second execution is named in section 5.]
 4. The exit gate is the MQTT simulator at 500 messages per second with 5
    percent duplicates, yielding byte-exact rollups, with the dead-letter queue
-   receiving only poison (`docs/poc/poc-application-portfolio.md:27-28`).
+   receiving only poison (`docs/history/poc-application-portfolio.md:27-28`).
 
 **Dead-letter queue (DLQ).** A durable place for a message that a consumer
 refused permanently. The rest of this document says DLQ.
@@ -50,7 +50,7 @@ application accepts each count exactly once. It then rolls counts up by hour
 and by shift.
 
 It is the portfolio's only streaming-ingress application
-(`docs/poc/poc-application-portfolio.md:13`). Everything before it arrives over
+(`docs/history/poc-application-portfolio.md:13`). Everything before it arrives over
 a call.
 
 | actor | what it does |
@@ -60,12 +60,12 @@ a call.
 | platform operator | binds connections and reads the DLQ. Not an application actor. |
 
 Nothing here is scoped per user. Per-user row scope arrives in app 4
-(`docs/poc/poc-application-portfolio.md:15`).
+(`docs/history/poc-application-portfolio.md:15`).
 
 ## 2. Domain nouns
 
 App 2 owns its own tables and its own migrations
-(`docs/poc/poc-application-portfolio.md:52-53`). It owns its `product` and
+(`docs/history/poc-application-portfolio.md:52-53`). It owns its `product` and
 `production_line` reference tables. Cross-package table sharing is app 3's
 deliberate introduction (`docs/poc/wamn_wms_application_poc_scenario.md:82-87`).
 
@@ -84,7 +84,7 @@ keeps that true (`docs/poc/wamn_wms_application_poc_scenario.md:196-207`).
 `SKU-00000` (`test-support/simulator/src/profiles.rs:37-46`). App 2 needs two
 new shapes. Proposal: `WO-000000` and `LINE-00`. **This is a design choice. No
 ruling exists.** Shapes are shared across apps. Tables are not
-(`docs/poc/poc-application-portfolio.md:45-49`).
+(`docs/history/poc-application-portfolio.md:45-49`).
 
 Columns, types and indexes stay open to the author
 (`docs/operations/agent-pilot.md:174`).
@@ -169,7 +169,7 @@ rollups as app 2's problem
 a projection here is a design choice. No ruling exists.**
 
 The portfolio names time-series projection SQL with window functions as app 2's
-corpus entry (`docs/poc/poc-application-portfolio.md:13`). `count.rollup` is
+corpus entry (`docs/history/poc-application-portfolio.md:13`). `count.rollup` is
 that entry.
 
 Keyset shape and projections stay open to the author
@@ -187,7 +187,7 @@ simulator drives it with the landed HTTP target
 
 **This is how the dispatch fixture is built.** The simulator drives a real
 route. It never seeds the database
-(`docs/poc/poc-application-portfolio.md:57`,
+(`docs/history/poc-application-portfolio.md:57`,
 `test-support/simulator/src/lib.rs:5-6`). WMS built its fixture the same way,
 through `inventory.adjust`
 (`docs/poc/wamn_wms_application_poc_scenario.md:246-248`).
@@ -343,7 +343,7 @@ Binding names stay open to the author
 | production supervisor | yes | no | yes | yes | yes |
 
 Nothing is per user. Per-user row scope arrives in app 4
-(`docs/poc/poc-application-portfolio.md:15`).
+(`docs/history/poc-application-portfolio.md:15`).
 
 Tokens stay open to the author
 (`docs/operations/agent-pilot.md:179`). A driver mints a personal
@@ -374,7 +374,7 @@ operator_screen
 
 ## 10. Exit gate
 
-Exactly the portfolio's (`docs/poc/poc-application-portfolio.md:27-28`),
+Exactly the portfolio's (`docs/history/poc-application-portfolio.md:27-28`),
 restated as measurements. Item 4 comes from the epic's own wording
 (`wamn-7tva`).
 

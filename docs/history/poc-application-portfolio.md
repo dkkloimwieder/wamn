@@ -3,7 +3,7 @@
 Status: DRAFT 2026-09-01 · follows the Receiving POC (wamn-10yt) ·
 each application is one platform base package (+ optional overlay) and
 exists to prove named capabilities. Build in coverage order; stop when
-the capability list in `../history/poc-architecture-review.md` §5 is proven.
+the capability list in `poc-architecture-review.md` §5 is proven.
 
 ## Coverage matrix
 

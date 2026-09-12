@@ -33,7 +33,7 @@ interface in A6; they live in the protocol (`docs/operations/agent-pilot.md`).
 | F17 | Beads hooks are guarded by `command -v bd`. `AGENTS.md` is a symlink to `CLAUDE.md`. `CLAUDE.md:107` names the global `rust-guidelines` skill; `:130` names `.agents/skills/beads`. No `.claude/skills` in the repo. | `.claude/settings.json`, `.beads/hooks/post-checkout:4`, `CLAUDE.md` |
 | F18 | Test-set execution against a candidate wiring is being built on the management side; no handler yet. | beads `wamn-0h0g.8.5` (in_progress), `.8.5.4` (open) |
 | F19 | The loop's read seam and activated-endpoint publish exist; the loop console is the view-only client. | beads `wamn-10yt.10.26`, `.10.27` (closed), `wamn-dggp` |
-| F20 | Portfolio rule: simulators drive real routes; never seed the database. | `docs/poc/poc-application-portfolio.md:49` |
+| F20 | Portfolio rule: simulators drive real routes; never seed the database. | `docs/history/poc-application-portfolio.md:49` |
 | F21 | Authored SQL is verified by a hand-written per-package conformance test (native sibling + `cargo sqlx prepare --check`); there is no generic statement verifier in the generator or the loop. A new package's statements are first proven at runtime. | `apps/wamn_receiving/tests/receiving_sqlx_verifier.rs`, `docs/operations/build-and-test.md:236-249`, `docs/sqlx-data-access-spec.md:26-31`; no `prepare` under `crates/schema/*`, `services/ctl/src/dev` |
 | F22 | Component unit tests run natively: `cargo test --manifest-path components/Cargo.toml -p <crate> --all-targets`; wasip2 via `cargo check --target wasm32-wasip2`. | `docs/operations/build-and-test.md:239-242` |
 
@@ -520,7 +520,7 @@ exist, without replay.
 
 The run-state harness will supersede the one-off kill gate: crash points become
 scheduler events, and the at-least-once proof falls out of the seed. That
-harness is D2 in `docs/poc/deterministic-testing-spec.md`, Phase 2, gated on
+harness is D2 in `docs/history/deterministic-testing-spec.md`, Phase 2, gated on
 the `$now` bead (D2b). Until D2 lands, the kill gate stays in this spec and
 the pilot runs with it: one gate per ingress path, executor killed between
 node invocations, redelivery to completion, the idempotent write absorbing
@@ -538,7 +538,7 @@ Targets are pure and cheap; order by policy weight:
 4. Node-error taxonomy mapping in the driver.
 
 `proptest` on the stable pin now; libFuzzer on nightly only on its Phase 3
-trigger (`deterministic-testing-spec.md` §0). Corpora committed; a crash is a
+trigger (`../history/deterministic-testing-spec.md` §0). Corpora committed; a crash is a
 bead.
 
 ### V3. Test-set usefulness — machine checks

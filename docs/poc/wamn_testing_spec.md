@@ -128,7 +128,7 @@ The owner accepted this specification and authorized Increment 1 on 2026-09-09. 
 
 ## Basis
 
-[1] `docs/poc/deterministic-testing-spec.md`, §0 and Parts A–E: D1–D8, replay, invariants. The accepted decisions above defer Kani without an automatic trigger and govern retirement of crash tests.
+[1] `docs/history/deterministic-testing-spec.md`, §0 and Parts A–E: D1–D8, replay, invariants. The accepted decisions above defer Kani without an automatic trigger and govern retirement of crash tests.
 
 [2] `wamn_architecture_proposal.md`, §§1.1–2; base-application POC, §§5, 7–8: Rust-only initial delivery, application SQLx corpus, transactions, authority.
 

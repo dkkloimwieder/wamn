@@ -3,7 +3,7 @@
 Status: DRAFT 2026-09-06, for owner review. Written under `wamn-7tva.1` as the
 first deliverable inside the production-counts charter.
 
-`docs/poc/poc-application-portfolio.md:55-56` states the rule that every new
+`docs/history/poc-application-portfolio.md:55-56` states the rule that every new
 seam follows a seam template. It describes that template as WIT plus host
 plugin plus admission facts. No template document existed. This is that
 document.
@@ -46,7 +46,7 @@ admission had already passed (`wamn-362o.41`,
 `crates/platform/runtime/src/component_admission.rs:259-260`).
 
 Blobstore is execution one, and it is still the only one. MQTT ingress for
-application 2 WAS execution two (`docs/poc/poc-application-portfolio.md:13`).
+application 2 WAS execution two (`docs/history/poc-application-portfolio.md:13`).
 The owner withdrew that on 2026-09-07: NATS captures MQTT natively, so app 2
 runs no step of this template (`wamn-7tva.1`).
 
@@ -329,7 +329,7 @@ Then prove the capability in a released deployment, not only in a test
 **If you skip this step:** nothing measures the seam end to end. The
 portfolio's rule then has nothing to check. That rule says an application
 without a measurable gate is not built
-(`docs/poc/poc-application-portfolio.md:58`).
+(`docs/history/poc-application-portfolio.md:58`).
 
 ## 3. The checklist
 

@@ -2,7 +2,7 @@
 
 ## Owner amendment (2026-09-09)
 
-The owner accepted [WAMN platform and application testing](wamn_testing_spec.md) and authorized Receiving Increment 1 under `wamn-10yt.77`.
+The owner accepted [WAMN platform and application testing](../poc/wamn_testing_spec.md) and authorized Receiving Increment 1 under `wamn-10yt.77`.
 That specification governs the changes below. Beads and executed evidence own implementation status.
 
 Application tests proceed through real commands, guests, capabilities, and authenticated routes without waiting for the complete deterministic simulation framework.
@@ -527,7 +527,7 @@ each on its trigger.
 | D2 | `wamn-0h0g.11` (proof floor), `.19` (ingress) | supersedes the tooling spec's kill gate when it lands; the kill gate stays until then (tooling spec §V1) |
 | D3, D4 | `virtualized_std_guest` (`tests/integration/src/virtualized_std_guest.rs`) | same in-process shape; test-support only |
 | D2b | `wamn-0h0g.19` (ingress); `run-state/src/lib.rs:5-8` | aligns the statements with the crate's declared design; own bead; gates D2 |
-| D5 | `native-alignment-ledger.md` | probe result recorded there; no upstream ask |
+| D5 | `../architecture/native-alignment-ledger.md` | probe result recorded there; no upstream ask |
 | D6 | `wamn-0h0g.22` (data access) | `sql_lex.rs` is that epic's policy parser |
 | D7 | `wamn-10yt.19` | proof shape for that bead |
 | D8a | tooling spec V4 | invariant functions used by the simulators |

@@ -4,7 +4,7 @@ Status: **RULED AND APPROVED TO BUILD, 2026-09-03.** All five §10 questions
 answered; the answers are folded in below and §10 is kept as the record of what
 was asked and decided. Structure
 follows `wamn_receiving_layered_application_poc_scenario.md`. Scope is fixed by
-`poc-application-portfolio.md` row 1 and its build-order exit gate; this
+`../history/poc-application-portfolio.md` row 1 and its build-order exit gate; this
 document does not widen it.
 
 ## 0. Why this app, and what it is for
