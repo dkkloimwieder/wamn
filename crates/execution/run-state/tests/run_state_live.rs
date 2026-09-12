@@ -316,49 +316,46 @@ fn run_state_live() {
          VALUES ('t1', 'release-1', 'worker-a', now() + interval '1 minute', 1);",
     );
     let release_script = format!(
-        "{} PREPARE release_stmt \
-           (text,text,text,bigint,text,text,int,text,text) AS {}; \
-         CREATE TEMP TABLE released AS \
-           EXECUTE release_stmt('release-1','release-1','worker-a',1, \
-                                'responded','{{\"ok\":true}}',200,'respond','sha256:one'); \
-         DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM released) = 'released', 'caller released'; \
+        "{} DO $test$ DECLARE released record; BEGIN \
+           EXECUTE $statement${}$statement$ INTO STRICT released \
+             USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
+                   'responded'::text,'{{\"ok\":true}}'::text,200::int, \
+                   'respond'::text,'sha256:one'::text; \
+           ASSERT released.result_code = 'released', 'caller released'; \
            ASSERT (SELECT caller_outcome_kind FROM runs WHERE run_id='release-1') = 'responded', \
                   'caller outcome persisted'; \
-         END $$; COMMIT;",
+         END $test$; COMMIT;",
         executor_preamble(),
         release
     );
     success(&url, &release_script);
 
     let replay_script = format!(
-        "{} PREPARE release_stmt \
-           (text,text,text,bigint,text,text,int,text,text) AS {}; \
-         CREATE TEMP TABLE replayed AS \
-           EXECUTE release_stmt('release-1','release-1','worker-a',1, \
-                                'responded','{{\"ok\":true}}',200,'respond','sha256:one'); \
-         DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM replayed) = 'already-released', 'duplicate is replay'; \
-           ASSERT (SELECT outcome_kind FROM replayed) = 'responded', 'stored kind returned'; \
-         END $$; COMMIT;",
+        "{} DO $test$ DECLARE replayed record; BEGIN \
+           EXECUTE $statement${}$statement$ INTO STRICT replayed \
+             USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
+                   'responded'::text,'{{\"ok\":true}}'::text,200::int, \
+                   'respond'::text,'sha256:one'::text; \
+           ASSERT replayed.result_code = 'already-released', 'duplicate is replay'; \
+           ASSERT replayed.outcome_kind = 'responded', 'stored kind returned'; \
+         END $test$; COMMIT;",
         executor_preamble(),
         release
     );
     success(&url, &replay_script);
 
     let terminal_script = format!(
-        "{} PREPARE terminal_stmt \
-           (text,text,text,bigint,text,text,text,text) AS {}; \
-         CREATE TEMP TABLE terminal AS \
-           EXECUTE terminal_stmt('release-1','release-1','worker-a',1, \
-                                 'completed','frontier-exhausted','{{\"done\":true}}',NULL); \
-         DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM terminal) = 'terminalized', 'run terminalized'; \
+        "{} DO $test$ DECLARE terminal record; BEGIN \
+           EXECUTE $statement${}$statement$ INTO STRICT terminal \
+             USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
+                   'completed'::text,'frontier-exhausted'::text, \
+                   '{{\"done\":true}}'::text,NULL::text; \
+           ASSERT terminal.result_code = 'terminalized', 'run terminalized'; \
            ASSERT (SELECT status FROM runs WHERE run_id='release-1') = 'completed', \
                   'terminal status persisted'; \
            ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='release-1'), \
                   'queue row removed atomically'; \
-         END $$; COMMIT;",
+         END $test$; COMMIT;",
         executor_preamble(),
         terminalize
     );
@@ -394,34 +391,36 @@ fn run_state_live() {
            ('t1','terminal-http-released','worker-source',now()+interval '1 minute',1);",
     );
     let source_terminal_script = format!(
-        "{} PREPARE terminal_stmt \
-           (text,text,text,bigint,text,text,text,text) AS {}; \
-         CREATE TEMP TABLE cron_terminal AS \
-           EXECUTE terminal_stmt('terminal-cron','terminal-cron','worker-source',1, \
-                                 'completed','frontier-exhausted','{{}}',NULL); \
-         CREATE TEMP TABLE event_terminal AS \
-           EXECUTE terminal_stmt('terminal-event','terminal-event','worker-source',1, \
-                                 'completed','frontier-exhausted','{{}}',NULL); \
-         CREATE TEMP TABLE http_open_terminal AS \
-           EXECUTE terminal_stmt('terminal-http-open','terminal-http-open','worker-source',1, \
-                                 'completed','frontier-exhausted','{{}}',NULL); \
-         CREATE TEMP TABLE http_released_terminal AS \
-           EXECUTE terminal_stmt('terminal-http-released','terminal-http-released', \
-                                 'worker-source',1,'completed','frontier-exhausted','{{}}',NULL); \
-         DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM cron_terminal) = 'terminalized', \
+        "{} DO $test$ DECLARE \
+           terminal_stmt text := $statement${}$statement$; \
+           cron_terminal record; event_terminal record; \
+           http_open_terminal record; http_released_terminal record; \
+         BEGIN \
+           EXECUTE terminal_stmt INTO STRICT cron_terminal \
+             USING 'terminal-cron'::text,'terminal-cron'::text,'worker-source'::text,1::bigint, \
+                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text; \
+           EXECUTE terminal_stmt INTO STRICT event_terminal \
+             USING 'terminal-event'::text,'terminal-event'::text,'worker-source'::text,1::bigint, \
+                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text; \
+           EXECUTE terminal_stmt INTO STRICT http_open_terminal \
+             USING 'terminal-http-open'::text,'terminal-http-open'::text,'worker-source'::text,1::bigint, \
+                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text; \
+           EXECUTE terminal_stmt INTO STRICT http_released_terminal \
+             USING 'terminal-http-released'::text,'terminal-http-released'::text,'worker-source'::text,1::bigint, \
+                   'completed'::text,'frontier-exhausted'::text,'{{}}'::text,NULL::text; \
+           ASSERT cron_terminal.result_code = 'terminalized', \
                   'attached cron has no caller to release'; \
-           ASSERT (SELECT result_code FROM event_terminal) = 'terminalized', \
+           ASSERT event_terminal.result_code = 'terminalized', \
                   'attached event has no caller to release'; \
-           ASSERT (SELECT result_code FROM http_open_terminal) = 'caller-unreleased', \
+           ASSERT http_open_terminal.result_code = 'caller-unreleased', \
                   'HTTP request must release its caller'; \
            ASSERT (SELECT status FROM runs WHERE run_id='terminal-http-open') = 'running', \
                   'caller refusal leaves the request running'; \
            ASSERT EXISTS (SELECT FROM run_queue WHERE run_id='terminal-http-open'), \
                   'caller refusal leaves the request queued'; \
-           ASSERT (SELECT result_code FROM http_released_terminal) = 'terminalized', \
+           ASSERT http_released_terminal.result_code = 'terminalized', \
                   'released HTTP request terminalizes'; \
-         END $$; COMMIT;",
+         END $test$; COMMIT;",
         executor_preamble(),
         terminalize
     );
@@ -434,15 +433,14 @@ fn run_state_live() {
     // src/transitions.rs. The bare `run-terminal` code is what a terminal run with
     // no caller to release returns, and no leg here observes it.
     let post_terminal_script = format!(
-        "{} PREPARE release_stmt \
-           (text,text,text,bigint,text,text,int,text,text) AS {}; \
-         CREATE TEMP TABLE refused AS \
-           EXECUTE release_stmt('release-1','release-1','worker-a',1, \
-                                'failed','{{\"error\":{{}}}}',500,NULL,'sha256:two'); \
-         DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM refused) = 'already-released', \
+        "{} DO $test$ DECLARE refused record; BEGIN \
+           EXECUTE $statement${}$statement$ INTO STRICT refused \
+             USING 'release-1'::text,'release-1'::text,'worker-a'::text,1::bigint, \
+                   'failed'::text,'{{\"error\":{{}}}}'::text,500::int, \
+                   NULL::text,'sha256:two'::text; \
+           ASSERT refused.result_code = 'already-released', \
                   'post-terminal transition is typed'; \
-         END $$; COMMIT;",
+         END $test$; COMMIT;",
         executor_preamble(),
         release
     );
@@ -478,18 +476,17 @@ fn run_state_live() {
     });
     thread::sleep(Duration::from_millis(200));
     let stale_script = format!(
-        "{} PREPARE release_stmt \
-           (text,text,text,bigint,text,text,int,text,text) AS {}; \
-         CREATE TEMP TABLE stale AS \
-           EXECUTE release_stmt('race-1','race-1','stale-worker',7, \
-                                'responded','{{\"bad\":true}}',200,'respond','sha256:stale'); \
-         DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM stale) = 'fence-lost', 'stale generation loses'; \
+        "{} DO $test$ DECLARE stale record; BEGIN \
+           EXECUTE $statement${}$statement$ INTO STRICT stale \
+             USING 'race-1'::text,'race-1'::text,'stale-worker'::text,7::bigint, \
+                   'responded'::text,'{{\"bad\":true}}'::text,200::int, \
+                   'respond'::text,'sha256:stale'::text; \
+           ASSERT stale.result_code = 'fence-lost', 'stale generation loses'; \
            ASSERT (SELECT caller_released_at FROM runs WHERE run_id='race-1') IS NULL, \
                   'FenceLost writes no caller state'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='race-1') = 'winner', \
                   'FenceLost writes no queue state'; \
-         END $$; COMMIT;",
+         END $test$; COMMIT;",
         executor_preamble(),
         release
     );
@@ -829,12 +826,8 @@ fn run_state_live() {
     // exactly `grant_executor_platform_surface_sql` — so a missing column grant
     // fails here with the statement NAMED, not as a silent zero-row read.
     //
-    // THREE OF THE FIVE RUN THROUGH `EXECUTE ... USING` rather than this file's
-    // PREPARE / `CREATE TEMP TABLE AS EXECUTE` shape. That shape refuses them:
-    // `CREATE TABLE AS EXECUTE` accepts only a prepared SELECT/TABLE/VALUES
-    // ("prepared statement is not a SELECT", measured), and those three are
-    // top-level `UPDATE ... RETURNING`. The production string is still executed
-    // VERBATIM with bound parameters, which is what the host does with it.
+    // These calls execute the production SQL unchanged through `EXECUTE ... USING`.
+    // Local records retain returned fields without creating temporary tables.
     //
     // EVERY REFUSAL ARM IS PAIRED WITH THE SAME STATEMENT SUCCEEDING IN THE
     // SAME SESSION. Under FORCE RLS a principal matching no policy reads zero
@@ -1039,26 +1032,35 @@ fn run_state_live() {
     let select_exhausted = select_exhausted_production_sql();
     let terminalize_exhausted = terminalize_exhausted_production_sql();
     let reap_script = format!(
-        "{} PREPARE reap_select (bigint,text[],text) AS {}; \
-         PREPARE reap_terminal (text,text,text) AS {}; \
-         CREATE TEMP TABLE reap_candidate AS EXECUTE reap_select(0,'{{cat}}','prod'); \
-         CREATE TEMP TABLE reap_other_scope AS EXECUTE reap_select(0,'{{cat}}','dev'); \
-         CREATE TEMP TABLE reaped AS EXECUTE reap_terminal('reap-exhausted', \
-           '{{\"error\":{{\"code\":\"infrastructure-failure\"}}}}','sha256:reaped'); \
-         DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM reap_candidate) = 1, \
+        "{} DO $test$ DECLARE \
+           reap_select text := $statement${}$statement$; \
+           candidate record; reap_candidate record; reaped record; \
+           candidate_count bigint := 0; other_scope_count bigint := 0; \
+         BEGIN \
+           FOR candidate IN EXECUTE reap_select USING 0::bigint,'{{cat}}'::text[],'prod'::text LOOP \
+             reap_candidate := candidate; \
+             candidate_count := candidate_count + 1; \
+           END LOOP; \
+           FOR candidate IN EXECUTE reap_select USING 0::bigint,'{{cat}}'::text[],'dev'::text LOOP \
+             other_scope_count := other_scope_count + 1; \
+           END LOOP; \
+           EXECUTE $statement${}$statement$ INTO STRICT reaped \
+             USING 'reap-exhausted'::text, \
+                   '{{\"error\":{{\"code\":\"infrastructure-failure\"}}}}'::text, \
+                   'sha256:reaped'::text; \
+           ASSERT candidate_count = 1, \
                   'the janitor locked no crash-budget-exhausted candidate'; \
-           ASSERT (SELECT run_id FROM reap_candidate) = 'reap-exhausted', \
+           ASSERT reap_candidate.run_id = 'reap-exhausted', \
                   'the janitor locked the wrong candidate'; \
-           ASSERT (SELECT status FROM reap_candidate) = 'running', \
+           ASSERT reap_candidate.status = 'running', \
                   'the janitor projection lost the run status'; \
-           ASSERT (SELECT durability_class FROM reap_candidate) = 'standard', \
+           ASSERT reap_candidate.durability_class = 'standard', \
                   'the janitor projection lost the durability class'; \
-           ASSERT (SELECT wiring_id FROM reap_candidate) = 'fixture-wiring', \
+           ASSERT reap_candidate.wiring_id = 'fixture-wiring', \
                   'the janitor projection lost the frozen wiring identity'; \
-           ASSERT (SELECT count(*) FROM reap_other_scope) = 0, \
+           ASSERT other_scope_count = 0, \
                   'the janitor left its catalog and environment scope'; \
-           ASSERT (SELECT status FROM reaped) = 'infrastructure-failure', \
+           ASSERT reaped.status = 'infrastructure-failure', \
                   'the reap returned no terminal status'; \
            ASSERT (SELECT status FROM runs WHERE run_id='reap-exhausted') \
                   = 'infrastructure-failure', 'the reap did not persist terminal status'; \
@@ -1074,7 +1076,7 @@ fn run_state_live() {
                   IS NOT NULL, 'the reap released no caller'; \
            ASSERT (SELECT result_json FROM runs WHERE run_id='reap-exhausted') IS NULL, \
                   'a flow-grain run stored a manufactured result'; \
-         END $$; COMMIT;",
+         END $test$; COMMIT;",
         executor_preamble(),
         select_exhausted,
         terminalize_exhausted,
