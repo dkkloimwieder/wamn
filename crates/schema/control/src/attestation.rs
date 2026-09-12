@@ -1,52 +1,30 @@
-//! The control-plane deployment-attestation write (wamn-0h0g.8.21).
+//! Deployment content and release identity decisions for the control store.
 //!
-//! `catalog.register_deployment_attestation` records that one effective release
-//! really reached one `(org, project, environment)` placement. It is CONTROL-plane
-//! only (`deploy/sql/control-portable-store.sql`); the `catalog.effective_releases` its
-//! foreign key targets is the control copy, not the project one.
-//!
-//! The routine's own DDL already names the single refusal this write can raise,
-//! so nothing here mints a second dialect for it: [`CONTENT_CONFLICT`] IS the
-//! server's message.
-//!
-//! Pure, like the rest of the crate (SR3): [`register_attestation`] binds the
-//! statement, the driver executes it, and [`translate_failure`] is the ONE place
-//! the resulting failure becomes a typed error. What the pure tests here cannot
-//! observe is whether PostgreSQL accepts the binding at all — that is
-//! `deployment_attestation_rust_binding_holds_on_postgres` in
-//! `crates/control/provision/tests/control_portable_store.rs` (SR12b).
+//! PostgreSQL keeps immutable rows, unique coordinates, foreign keys, and tenant isolation.
+//! Rust compares stored content after each insert attempt in the caller's transaction.
 
 use std::fmt;
 
 use crate::model::{SqlStatement, Value};
 use crate::sql;
 
-/// The refusal `catalog.register_deployment_attestation` raises when a coordinate
-/// is re-attested with different deployed content or source provenance.
-///
-/// One condition, one literal: this is the DDL's own `MESSAGE`, not a Rust
-/// synonym for it.
+/// A deployment coordinate already records different content or source provenance.
 pub const CONTENT_CONFLICT: &str = "deployment-attestation-content-conflict";
 
-/// The refusal `catalog.project_effective_release_identity` raises when a
-/// release identity is re-projected carrying different facts.
-///
-/// One condition, one literal: this is that routine's own `MESSAGE`.
+/// A release identity already records a different environment.
 pub const PROJECTION_CONTENT_CONFLICT: &str =
     "effective-release-identity-projection-content-conflict";
 
-/// The `ERRCODE` the routine raises [`CONTENT_CONFLICT`] under (`unique_violation`).
-const UNIQUE_VIOLATION: &str = "23505";
-
-/// Project one release identity into the CONTROL plane, where the attestation's
-/// foreign key resolves it (wamn-0h0g.8.27).
-///
-/// Statement text and typed binding sit together here rather than with the
-/// builders in [`crate::sql`] because the projection exists only to make
-/// [`register_attestation`] below satisfiable: the two are one cross-plane write
-/// path, and the coordinate they must agree on is this module's subject.
+/// Insert one release identity without replacing an existing row.
 pub fn project_effective_release_identity_sql() -> &'static str {
-    "SELECT catalog.project_effective_release_identity($1, $2, $3)"
+    "INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) \
+     VALUES ($1, $2, $3) ON CONFLICT (tenant_id, effective_release_id) DO NOTHING"
+}
+
+/// Read the winning identity after the insert finishes.
+pub fn read_effective_release_identity_sql() -> &'static str {
+    "SELECT environment FROM catalog.effective_releases \
+     WHERE tenant_id = $1 AND effective_release_id = $2"
 }
 
 /// One effective release identity as the CONTROL plane records it.
@@ -59,8 +37,7 @@ pub struct EffectiveReleaseIdentity<'a> {
 
 /// Bind one release-identity projection for the driver to execute.
 ///
-/// The parameter order is the routine's argument order; a part bound at the wrong
-/// position would anchor the attestation's key to a coordinate nothing minted.
+/// Each parameter keeps its declared coordinate position.
 pub fn project_effective_release_identity(identity: &EffectiveReleaseIdentity<'_>) -> SqlStatement {
     SqlStatement {
         summary: format!(
@@ -76,43 +53,46 @@ pub fn project_effective_release_identity(identity: &EffectiveReleaseIdentity<'_
     }
 }
 
-/// Translate the driver's failure on a projection into [`AttestationError`],
-/// exactly once, here — the sibling of [`translate_failure`] below.
+/// Accept an exact identity retry and refuse different stored content.
+pub fn check_projected_identity(
+    identity: &EffectiveReleaseIdentity<'_>,
+    recorded_environment: &str,
+) -> Result<(), AttestationError> {
+    if identity.environment == recorded_environment {
+        Ok(())
+    } else {
+        Err(AttestationError {
+            kind: AttestationErrorKind::IdentityProjectionConflict,
+            coordinate: identity_coordinate(identity),
+            driver: String::new(),
+        })
+    }
+}
+
+/// Preserve the actual database failure at the identity boundary.
 pub fn translate_projection_failure(
     identity: &EffectiveReleaseIdentity<'_>,
-    sqlstate: Option<&str>,
     reported: &str,
 ) -> AttestationError {
-    // Both halves are required, for the same reason the attestation classifier
-    // requires both: a bare `unique_violation` can come from anywhere else in the
-    // caller's transaction.
-    let kind =
-        if sqlstate == Some(UNIQUE_VIOLATION) && reported.contains(PROJECTION_CONTENT_CONFLICT) {
-            AttestationErrorKind::IdentityProjectionConflict
-        } else {
-            AttestationErrorKind::Storage
-        };
     AttestationError {
-        kind,
-        coordinate: format!(
-            "{}/{} in {:?}",
-            identity.tenant_id, identity.effective_release_id, identity.environment
-        ),
+        kind: AttestationErrorKind::Storage,
+        coordinate: identity_coordinate(identity),
         driver: reported.to_owned(),
     }
 }
 
-/// One deployment attestation: the five-part coordinate it is keyed by, and the
-/// content it attests.
-///
-/// The coordinate is exactly `(tenant_id, effective_release_id, org_id,
-/// project_id, environment)` — the relation's `deployment_attestations_coordinate`
-/// UNIQUE constraint. `deployed_manifest_hash` and `source_commit` are the
-/// conflict-bearing content; the server preserves the first writer's
-/// `attested_at` on an exact retry.
+fn identity_coordinate(identity: &EffectiveReleaseIdentity<'_>) -> String {
+    format!(
+        "{}/{} in {:?}",
+        identity.tenant_id, identity.effective_release_id, identity.environment
+    )
+}
+
+/// A deployment's six-part coordinate, content, source, and proposed timestamp.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Attestation<'a> {
     pub tenant_id: &'a str,
+    pub environment_instance: &'a str,
     pub effective_release_id: i32,
     pub org_id: &'a str,
     pub project_id: &'a str,
@@ -131,9 +111,7 @@ pub struct Attestation<'a> {
 
 /// Bind one attestation write for the driver to execute.
 ///
-/// The parameter order is the routine's argument order, which is also the
-/// coordinate's own order — a part bound at the wrong position would key the
-/// attestation under a placement nothing deployed to.
+/// Each parameter keeps its declared coordinate position.
 pub fn register_attestation(attestation: &Attestation<'_>) -> SqlStatement {
     SqlStatement {
         summary: format!(
@@ -143,6 +121,7 @@ pub fn register_attestation(attestation: &Attestation<'_>) -> SqlStatement {
         sql: sql::register_deployment_attestation_sql().to_owned(),
         params: vec![
             Value::Text(attestation.tenant_id.to_owned()),
+            Value::Text(attestation.environment_instance.to_owned()),
             Value::Int(attestation.effective_release_id),
             Value::Text(attestation.org_id.to_owned()),
             Value::Text(attestation.project_id.to_owned()),
@@ -154,26 +133,41 @@ pub fn register_attestation(attestation: &Attestation<'_>) -> SqlStatement {
     }
 }
 
-/// Translate the driver's failure into [`AttestationError`], exactly once, here.
-///
-/// `sqlstate` is the five-character SQLSTATE the driver reported (`None` when the
-/// failure never reached the server) and `reported` is the driver's own rendering
-/// of it, kept verbatim as the translated error's cause.
-pub fn translate_failure(
+/// Read the tenant's current environment instance in the caller's transaction.
+pub fn read_environment_instance_sql() -> &'static str {
+    "SELECT environment_instance FROM catalog.tenant_environments WHERE tenant_id = $1"
+}
+
+/// Read the winning row using all six parts of the resolved coordinate.
+pub fn read_attestation_sql() -> &'static str {
+    "SELECT deployed_manifest_hash, source_commit, attested_at FROM catalog.deployment_attestations \
+     WHERE tenant_id = $1 AND environment_instance = $2 AND effective_release_id = $3 \
+     AND org_id = $4 AND project_id = $5 AND environment = $6"
+}
+
+/// Compare content and optional source provenance without changing the winning row.
+pub fn check_attestation(
     attestation: &Attestation<'_>,
-    sqlstate: Option<&str>,
-    reported: &str,
-) -> AttestationError {
-    // Both halves are required. A bare `unique_violation` can come from anywhere
-    // else in the caller's transaction, and the message alone does not establish
-    // that the routine's own RAISE is what produced it.
-    let kind = if sqlstate == Some(UNIQUE_VIOLATION) && reported.contains(CONTENT_CONFLICT) {
-        AttestationErrorKind::ContentConflict
+    recorded_hash: &str,
+    recorded_source: Option<&str>,
+) -> Result<(), AttestationError> {
+    if attestation.deployed_manifest_hash == recorded_hash
+        && attestation.source_commit == recorded_source
+    {
+        Ok(())
     } else {
-        AttestationErrorKind::Storage
-    };
+        Err(AttestationError {
+            kind: AttestationErrorKind::ContentConflict,
+            coordinate: coordinate(attestation),
+            driver: String::new(),
+        })
+    }
+}
+
+/// Preserve the actual database failure at the deployment boundary.
+pub fn translate_failure(attestation: &Attestation<'_>, reported: &str) -> AttestationError {
     AttestationError {
-        kind,
+        kind: AttestationErrorKind::Storage,
         coordinate: coordinate(attestation),
         driver: reported.to_owned(),
     }
@@ -218,12 +212,12 @@ impl AttestationError {
         self.kind
     }
 
-    /// The five-part coordinate the write was refused at.
+    /// The six-part coordinate the write was refused at.
     pub fn coordinate(&self) -> &str {
         &self.coordinate
     }
 
-    /// The driver's own rendering of the failure this was translated from.
+    /// Database error text, or an empty string when Rust refused conflicting content.
     pub fn driver(&self) -> &str {
         &self.driver
     }
@@ -231,23 +225,22 @@ impl AttestationError {
 
 impl fmt::Display for AttestationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}: {}: {}",
-            self.kind.as_str(),
-            self.coordinate,
-            self.driver
-        )
+        write!(f, "{}: {}", self.kind.as_str(), self.coordinate)?;
+        if !self.driver.is_empty() {
+            write!(f, ": {}", self.driver)?;
+        }
+        Ok(())
     }
 }
 
 impl std::error::Error for AttestationError {}
 
-/// The five-part coordinate, rendered as a refusal's context.
+/// The six-part coordinate, rendered as a refusal's context.
 fn coordinate(attestation: &Attestation<'_>) -> String {
     format!(
-        "{}/{} -> {}/{}/{}",
+        "{}/{}/{} -> {}/{}/{}",
         attestation.tenant_id,
+        attestation.environment_instance,
         attestation.effective_release_id,
         attestation.org_id,
         attestation.project_id,
@@ -263,6 +256,7 @@ mod tests {
     fn attestation() -> Attestation<'static> {
         Attestation {
             tenant_id: "tenant-a",
+            environment_instance: "instance-a",
             effective_release_id: 7,
             org_id: "acme",
             project_id: "billing",
@@ -281,6 +275,7 @@ mod tests {
             statement.params,
             vec![
                 Value::Text("tenant-a".to_owned()),
+                Value::Text("instance-a".to_owned()),
                 Value::Int(7),
                 Value::Text("acme".to_owned()),
                 Value::Text("billing".to_owned()),
@@ -297,14 +292,14 @@ mod tests {
 
     #[test]
     fn a_conflicting_re_attestation_translates_to_the_routines_own_refusal() {
-        let error = translate_failure(
-            &attestation(),
-            Some("23505"),
-            "db error: ERROR: deployment-attestation-content-conflict",
-        );
+        let error = check_attestation(&attestation(), "different hash", Some("0123456789abcdef"))
+            .unwrap_err();
         assert_eq!(error.kind(), AttestationErrorKind::ContentConflict);
-        assert_eq!(error.coordinate(), "tenant-a/7 -> acme/billing/prod");
-        // The DDL's literal, surfaced verbatim and first — no Rust synonym.
+        assert_eq!(
+            error.coordinate(),
+            "tenant-a/instance-a/7 -> acme/billing/prod"
+        );
+        // The existing refusal literal remains first.
         assert!(
             error
                 .to_string()
@@ -317,7 +312,6 @@ mod tests {
         // A foreign-key violation: the release coordinate was never published.
         let error = translate_failure(
             &attestation(),
-            Some("23503"),
             "db error: ERROR: insert or update violates foreign key constraint",
         );
         assert_eq!(error.kind(), AttestationErrorKind::Storage);
@@ -327,11 +321,9 @@ mod tests {
 
     #[test]
     fn a_unique_violation_from_elsewhere_is_not_the_content_conflict() {
-        // The coordinate is `ON CONFLICT DO NOTHING`, so a 23505 that does not
-        // carry the routine's own message came from somewhere else entirely.
+        // Database errors remain storage failures.
         let error = translate_failure(
             &attestation(),
-            Some("23505"),
             "db error: ERROR: duplicate key value violates unique constraint \"packages_pkey\"",
         );
         assert_eq!(error.kind(), AttestationErrorKind::Storage);
@@ -339,7 +331,7 @@ mod tests {
 
     #[test]
     fn a_failure_that_never_reached_the_server_is_storage() {
-        let error = translate_failure(&attestation(), None, "connection closed");
+        let error = translate_failure(&attestation(), "connection closed");
         assert_eq!(error.kind(), AttestationErrorKind::Storage);
     }
 
@@ -358,10 +350,7 @@ mod tests {
     #[test]
     fn the_projection_binding_places_every_part_at_its_own_position() {
         let statement = project_effective_release_identity(&identity());
-        assert_eq!(
-            statement.sql,
-            "SELECT catalog.project_effective_release_identity($1, $2, $3)"
-        );
+        assert_eq!(statement.sql, project_effective_release_identity_sql());
         assert_eq!(
             statement.params,
             vec![
@@ -374,11 +363,7 @@ mod tests {
 
     #[test]
     fn a_conflicting_re_projection_translates_to_the_routines_own_refusal() {
-        let error = translate_projection_failure(
-            &identity(),
-            Some("23505"),
-            "db error: ERROR: effective-release-identity-projection-content-conflict",
-        );
+        let error = check_projected_identity(&identity(), "dev").unwrap_err();
         assert_eq!(
             error.kind(),
             AttestationErrorKind::IdentityProjectionConflict
@@ -391,14 +376,10 @@ mod tests {
         );
     }
 
-    /// The two cross-plane writes raise the SAME sqlstate under DIFFERENT
-    /// messages, so a classifier that dropped the message half would report one
-    /// condition under the other's name.
     #[test]
     fn the_attestations_own_conflict_is_not_a_projection_conflict() {
         let error = translate_projection_failure(
             &identity(),
-            Some("23505"),
             "db error: ERROR: deployment-attestation-content-conflict",
         );
         assert_eq!(error.kind(), AttestationErrorKind::Storage);
@@ -406,7 +387,24 @@ mod tests {
 
     #[test]
     fn a_projection_failure_that_never_reached_the_server_is_storage() {
-        let error = translate_projection_failure(&identity(), None, "connection closed");
+        let error = translate_projection_failure(&identity(), "connection closed");
         assert_eq!(error.kind(), AttestationErrorKind::Storage);
+    }
+    #[test]
+    fn exact_retries_preserve_optional_source_provenance() {
+        let first = attestation();
+        assert!(
+            check_attestation(&first, first.deployed_manifest_hash, first.source_commit).is_ok()
+        );
+        assert!(check_attestation(&first, first.deployed_manifest_hash, None).is_err());
+        let without_source = Attestation {
+            source_commit: None,
+            ..first
+        };
+        assert!(check_attestation(&without_source, first.deployed_manifest_hash, None).is_ok());
+        assert!(
+            check_attestation(&without_source, first.deployed_manifest_hash, Some("")).is_err()
+        );
+        assert!(check_projected_identity(&identity(), "prod").is_ok());
     }
 }

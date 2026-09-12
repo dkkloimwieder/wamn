@@ -244,8 +244,8 @@ DO $immutable$ BEGIN
 END
 $immutable$;
 
-SELECT catalog.project_effective_release_identity('tenant-a', 1, 'dev');
-SELECT catalog.project_effective_release_identity('tenant-a', 1, 'dev');
+INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) VALUES ('tenant-a', 1, 'dev') ON CONFLICT (tenant_id, effective_release_id) DO NOTHING;
+INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) VALUES ('tenant-a', 1, 'dev') ON CONFLICT (tenant_id, effective_release_id) DO NOTHING;
 INSERT INTO catalog.effective_release_packages
   (tenant_id, effective_release_id, package_id, package_version)
 VALUES ('tenant-a', 1, 'receiving', '1.0.0');
@@ -253,15 +253,7 @@ INSERT INTO catalog.effective_release_heads
   (tenant_id, environment, effective_release_id)
 VALUES ('tenant-a', 'dev', 1);
 
-DO $projection_conflict$ BEGIN
-  BEGIN
-    PERFORM catalog.project_effective_release_identity('tenant-a', 1, 'prod');
-    ASSERT false, 'the same effective release id accepted another environment';
-  EXCEPTION WHEN unique_violation THEN
-    ASSERT SQLERRM = 'effective-release-identity-projection-content-conflict';
-  END;
-END
-$projection_conflict$;
+
 
 -- wamn-10yt.52. The admitted component fact is frozen for EVERY environment,
 -- and a RECREATED environment writes its own row under its own creation rather
@@ -440,7 +432,7 @@ DO $seed$ DECLARE tenant text; package text; release int; BEGIN
     INSERT INTO catalog.packages
       (tenant_id, package_id, package_version, manifest_sha256, predecessor_version)
     VALUES (tenant, package, '1.0.0', 'sha256:' || repeat('a', 64), NULL);
-    PERFORM catalog.project_effective_release_identity(tenant, release, 'dev');
+    INSERT INTO catalog.effective_releases (tenant_id, effective_release_id, environment) VALUES (tenant, release, 'dev');
     INSERT INTO catalog.effective_release_packages
       (tenant_id, effective_release_id, package_id, package_version)
     VALUES (tenant, release, package, '1.0.0');
@@ -581,16 +573,13 @@ $second$;
 fn deployment_attestation_rust_binding_holds_on_postgres() {
     let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
         eprintln!(
-            "skipping deployment_attestation_rust_binding_holds_on_postgres \
-             (set WAMN_CONTROL_PORTABLE_PG_URL)"
+            "skipping deployment_attestation_rust_binding_holds_on_postgres (set WAMN_CONTROL_PORTABLE_PG_URL)"
         );
         return;
     };
     let _serialized = STORE.lock().unwrap_or_else(|poison| poison.into_inner());
     reset_and_apply(&url, "");
-
     let hash = format!("sha256:{}", "a".repeat(64));
-    let other_hash = format!("sha256:{}", "b".repeat(64));
     let identity = wamn_schema_control::attestation::EffectiveReleaseIdentity {
         tenant_id: "tenant-a",
         effective_release_id: 7,
@@ -598,6 +587,7 @@ fn deployment_attestation_rust_binding_holds_on_postgres() {
     };
     let attestation = wamn_schema_control::attestation::Attestation {
         tenant_id: "tenant-a",
+        environment_instance: "",
         effective_release_id: 7,
         org_id: "acme",
         project_id: "billing",
@@ -606,22 +596,11 @@ fn deployment_attestation_rust_binding_holds_on_postgres() {
         source_commit: Some("0123456789abcdef"),
         attested_at: "2026-08-15T12:00:00Z",
     };
-    let conflicting = wamn_schema_control::attestation::Attestation {
-        deployed_manifest_hash: &other_hash,
-        ..attestation
-    };
-    let conflicting_source = wamn_schema_control::attestation::Attestation {
-        source_commit: Some("fedcba9876543210"),
-        ..attestation
-    };
     let project = wamn_schema_control::attestation::project_effective_release_identity(&identity);
     let write = wamn_schema_control::attestation::register_attestation(&attestation);
-    let conflicting_write = wamn_schema_control::attestation::register_attestation(&conflicting);
-    let conflicting_source_write =
-        wamn_schema_control::attestation::register_attestation(&conflicting_source);
-
-    let output = psql(
+    psql_ok(
         &url,
+        "deployment attestation binding",
         &format!(
             r#"
 SET ROLE wamn_system;
@@ -631,142 +610,34 @@ PREPARE wamn_rust_attestation AS {prepared};
 DO $types$ DECLARE found text[]; BEGIN
   SELECT parameter_types::text[] INTO found
     FROM pg_prepared_statements WHERE name = 'wamn_rust_attestation';
-  ASSERT found = ARRAY['text','integer','text','text','text','text','text','text']::text[],
+  ASSERT found = ARRAY['text','text','integer','text','text','text','text','text','text']::text[],
     format('PostgreSQL types the Rust binding as %s', found);
-END
-$types$;
+END $types$;
 DEALLOCATE wamn_rust_attestation;
-
-DO $binding$ DECLARE first_at timestamptz; BEGIN
-  first_at := ({write});
-  ASSERT first_at = ({write});
+{write};
+{write};
+DO $binding$ BEGIN
   ASSERT (SELECT count(*) FROM catalog.deployment_attestations) = 1;
   ASSERT EXISTS (
     SELECT 1 FROM catalog.deployment_attestations
-     WHERE tenant_id = 'tenant-a'
-       AND effective_release_id = 7
-       AND org_id = 'acme'
-       AND project_id = 'billing'
-       AND environment = 'prod'
-       AND deployed_manifest_hash = '{hash}'
+     WHERE tenant_id = 'tenant-a' AND environment_instance = ''
+       AND effective_release_id = 7 AND org_id = 'acme' AND project_id = 'billing'
+       AND environment = 'prod' AND deployed_manifest_hash = '{hash}'
        AND source_commit = '0123456789abcdef'
-       AND attested_at = first_at
+       AND attested_at = '2026-08-15T12:00:00Z'::timestamptz
   ), 'the Rust binding placed a value in the wrong column';
-END
-$binding$;
-
-DO $refusal$ BEGIN
   BEGIN
-    PERFORM ({conflicting});
-    ASSERT false, 'a differing attestation was accepted';
-  EXCEPTION WHEN unique_violation THEN
-    RAISE NOTICE 'WAMN-RUST-ATTESTATION-REFUSAL % %', SQLSTATE, SQLERRM;
+    UPDATE catalog.deployment_attestations SET source_commit = 'different';
+    ASSERT false, 'an attestation row was mutable';
+  EXCEPTION WHEN SQLSTATE '55000' THEN
+    ASSERT SQLERRM = 'catalog.deployment_attestations is immutable';
   END;
-END
-$refusal$;
-
-DO $source_refusal$ BEGIN
-  BEGIN
-    PERFORM ({conflicting_source});
-    ASSERT false, 'different source provenance was accepted';
-  EXCEPTION WHEN unique_violation THEN
-    RAISE NOTICE 'WAMN-RUST-SOURCE-ATTESTATION-REFUSAL % %', SQLSTATE, SQLERRM;
-  END;
-END
-$source_refusal$;
-
--- wamn-10yt.52. A recreated environment attests what it deployed THIS run, and
--- it does so under its OWN creation. Its effective release id never moves, so
--- keyed by name alone a second dev run would collide with a row whose database
--- is gone; keyed by the creation it is a different coordinate. The marker alone
--- unlocks nothing — this replaces the wamn-10yt.51 overwrite.
-SELECT catalog.project_tenant_environment(
-  'tenant-a', 'acme', 'billing', 'prod', 'abcd1234', true);
-DO $the_marker_alone_unlocks_nothing$ BEGIN
-  BEGIN
-    PERFORM ({conflicting});
-    ASSERT false, 'the disposable marker alone still overwrote an attestation';
-  EXCEPTION WHEN unique_violation THEN
-    ASSERT SQLERRM = 'deployment-attestation-content-conflict';
-  END;
-  ASSERT (SELECT deployed_manifest_hash FROM catalog.deployment_attestations
-           WHERE tenant_id = 'tenant-a') = '{hash}',
-    'the frozen attestation moved without a new creation';
-END
-$the_marker_alone_unlocks_nothing$;
-
--- The recreate claims a creation, and the second run's manifest lands beside
--- the first run's rather than over it.
-SELECT catalog.claim_environment_instance('tenant-a', '16384');
-DO $each_creation_keeps_its_own_attestation$ BEGIN
-  PERFORM ({conflicting});
-  ASSERT (SELECT count(*) FROM catalog.deployment_attestations) = 2,
-    'the recreated environment did not record its own attestation';
-  ASSERT (SELECT deployed_manifest_hash FROM catalog.deployment_attestations
-           WHERE tenant_id = 'tenant-a' AND environment_instance = '16384')
-         = '{other_hash}',
-    'the new creation did not carry the manifest it deployed';
-  ASSERT (SELECT deployed_manifest_hash FROM catalog.deployment_attestations
-           WHERE tenant_id = 'tenant-a' AND environment_instance = '')
-         = '{hash}',
-    'the previous creation stopped resolving to the run that owns it';
-END
-$each_creation_keeps_its_own_attestation$;
-
--- And within that creation the attestation is frozen again, so the instance
--- buys exactly one attestation per creation and no more.
-DO $one_attestation_per_creation$ BEGIN
-  BEGIN
-    PERFORM ({write});
-    ASSERT false, 'a second manifest landed inside one creation';
-  EXCEPTION WHEN unique_violation THEN
-    RAISE NOTICE 'WAMN-RUST-DURABLE-REFREEZE % %', SQLSTATE, SQLERRM;
-  END;
-END
-$one_attestation_per_creation$;
+END $binding$;
 RESET ROLE;
 "#,
             project = render(&project),
             prepared = write.sql,
-            write = render(&write),
-            conflicting = render(&conflicting_write),
-            conflicting_source = render(&conflicting_source_write),
-            other_hash = other_hash,
+            write = render(&write)
         ),
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        output.status.success(),
-        "deployment-attestation Rust binding proof failed:\n{stderr}"
-    );
-    let reported = stderr
-        .lines()
-        .find_map(|line| line.split_once("WAMN-RUST-ATTESTATION-REFUSAL "))
-        .map(|(_, refusal)| refusal.trim().to_owned())
-        .expect("the server reported the conflicting Rust-bound write");
-    let (sqlstate, message) = reported
-        .split_once(' ')
-        .expect("the refusal carries SQLSTATE and message");
-    assert_eq!(message, wamn_schema_control::attestation::CONTENT_CONFLICT);
-    let error =
-        wamn_schema_control::attestation::translate_failure(&conflicting, Some(sqlstate), message);
-    assert_eq!(
-        error.kind(),
-        wamn_schema_control::attestation::AttestationErrorKind::ContentConflict
-    );
-    assert_eq!(error.coordinate(), "tenant-a/7 -> acme/billing/prod");
-    assert!(
-        stderr.contains(&format!(
-            "WAMN-RUST-SOURCE-ATTESTATION-REFUSAL 23505 {}",
-            wamn_schema_control::attestation::CONTENT_CONFLICT
-        )),
-        "the server accepted conflicting source provenance:\n{stderr}"
-    );
-    assert!(
-        stderr.contains(&format!(
-            "WAMN-RUST-DURABLE-REFREEZE 23505 {}",
-            wamn_schema_control::attestation::CONTENT_CONFLICT
-        )),
-        "the store stayed replaceable after the marker said durable:\n{stderr}"
     );
 }

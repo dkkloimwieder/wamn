@@ -743,20 +743,6 @@ fn render_driver_failure(error: &tokio_postgres::Error) -> String {
     }
 }
 
-async fn execute_claimed(
-    control: &mut Client,
-    tenant_id: &str,
-    statement: &wamn_schema_control::SqlStatement,
-) -> Result<(), tokio_postgres::Error> {
-    let transaction = control.transaction().await?;
-    transaction
-        .query_one(CLAIM_TENANT_SQL, &[&tenant_id])
-        .await?;
-    let params = crate::sql_params::as_postgres(&statement.params);
-    transaction.execute(statement.sql.as_str(), &params).await?;
-    transaction.commit().await
-}
-
 pub async fn project_release_identity(
     control_database_url: &str,
     coordinate: &DeploymentCoordinate,
@@ -770,17 +756,37 @@ pub async fn project_release_identity(
     };
     let statement = wamn_schema_control::attestation::project_effective_release_identity(&identity);
     on_control_plane(control_database_url, async |control| {
-        execute_claimed(control, identity.tenant_id, &statement)
+        let storage = |error: tokio_postgres::Error| {
+            anyhow::Error::new(
+                wamn_schema_control::attestation::translate_projection_failure(
+                    &identity,
+                    &render_driver_failure(&error),
+                ),
+            )
+        };
+        let transaction = control.transaction().await.map_err(storage)?;
+        transaction
+            .query_one(CLAIM_TENANT_SQL, &[&identity.tenant_id])
             .await
-            .map_err(|error| {
-                anyhow::Error::new(
-                    wamn_schema_control::attestation::translate_projection_failure(
-                        &identity,
-                        error.code().map(tokio_postgres::error::SqlState::code),
-                        &render_driver_failure(&error),
-                    ),
-                )
-            })
+            .map_err(storage)?;
+        let params = crate::sql_params::as_postgres(&statement.params);
+        transaction
+            .execute(statement.sql.as_str(), &params)
+            .await
+            .map_err(storage)?;
+        // The separate read sees the winner after a concurrent insert finishes.
+        let winner = transaction
+            .query_one(
+                wamn_schema_control::attestation::read_effective_release_identity_sql(),
+                &[&identity.tenant_id, &identity.effective_release_id],
+            )
+            .await
+            .map_err(storage)?;
+        wamn_schema_control::attestation::check_projected_identity(
+            &identity,
+            winner.try_get(0).map_err(storage)?,
+        )?;
+        transaction.commit().await.map_err(storage)
     })
     .await
 }
@@ -799,8 +805,9 @@ pub async fn attest_deployment(
             .await
             .context("read the proposed control database attestation instant")?
             .get(0);
-        let attestation = wamn_schema_control::attestation::Attestation {
+        let unresolved = wamn_schema_control::attestation::Attestation {
             tenant_id: &coordinate.tenant_id,
+            environment_instance: "",
             effective_release_id,
             org_id: &coordinate.triple.org,
             project_id: &coordinate.triple.project,
@@ -809,28 +816,64 @@ pub async fn attest_deployment(
             source_commit,
             attested_at: &proposed_attested_at,
         };
-        let statement = wamn_schema_control::attestation::register_attestation(&attestation);
-        let recorded: Result<chrono::DateTime<chrono::Utc>, tokio_postgres::Error> = async {
-            let transaction = control.transaction().await?;
-            transaction
-                .query_one(CLAIM_TENANT_SQL, &[&attestation.tenant_id])
-                .await?;
-            let params = crate::sql_params::as_postgres(&statement.params);
-            let winner = transaction
-                .query_one(statement.sql.as_str(), &params)
-                .await?;
-            let winner = winner.try_get(0)?;
-            transaction.commit().await?;
-            Ok(winner)
-        }
-        .await;
-        let winner = recorded.map_err(|error| {
+        let storage = |error: tokio_postgres::Error| {
             anyhow::Error::new(wamn_schema_control::attestation::translate_failure(
-                &attestation,
-                error.code().map(tokio_postgres::error::SqlState::code),
+                &unresolved,
                 &render_driver_failure(&error),
             ))
-        })?;
+        };
+        let transaction = control.transaction().await.map_err(storage)?;
+        transaction
+            .query_one(CLAIM_TENANT_SQL, &[&unresolved.tenant_id])
+            .await
+            .map_err(storage)?;
+        let projected = transaction
+            .query_opt(
+                wamn_schema_control::attestation::read_environment_instance_sql(),
+                &[&unresolved.tenant_id],
+            )
+            .await
+            .map_err(storage)?;
+        let environment_instance: String = match projected {
+            Some(row) => row.try_get(0).map_err(storage)?,
+            None => String::new(),
+        };
+        let attestation = wamn_schema_control::attestation::Attestation {
+            environment_instance: &environment_instance,
+            ..unresolved
+        };
+        let storage = |error: tokio_postgres::Error| {
+            anyhow::Error::new(wamn_schema_control::attestation::translate_failure(
+                &attestation,
+                &render_driver_failure(&error),
+            ))
+        };
+        let statement = wamn_schema_control::attestation::register_attestation(&attestation);
+        let params = crate::sql_params::as_postgres(&statement.params);
+        let inserted = transaction
+            .query_opt(statement.sql.as_str(), &params)
+            .await
+            .map_err(storage)?;
+        let winner: chrono::DateTime<chrono::Utc> = match inserted {
+            Some(row) => row.try_get(0).map_err(storage)?,
+            None => {
+                // Read after INSERT waits, so a concurrent winner is visible.
+                let row = transaction
+                    .query_one(
+                        wamn_schema_control::attestation::read_attestation_sql(),
+                        &params[..6],
+                    )
+                    .await
+                    .map_err(storage)?;
+                wamn_schema_control::attestation::check_attestation(
+                    &attestation,
+                    row.try_get(0).map_err(storage)?,
+                    row.try_get(1).map_err(storage)?,
+                )?;
+                row.try_get(2).map_err(storage)?
+            }
+        };
+        transaction.commit().await.map_err(storage)?;
         Ok(winner.to_rfc3339_opts(chrono::SecondsFormat::Micros, true))
     })
     .await

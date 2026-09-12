@@ -15,8 +15,12 @@ pub fn select_package_migrations_sql() -> &'static str {
 
 /// Record an effective-release deployment attestation in the CONTROL plane.
 pub fn register_deployment_attestation_sql() -> &'static str {
-    "SELECT catalog.register_deployment_attestation(\
-     $1, $2, $3, $4, $5, $6, $7, $8::text::timestamptz)"
+    "INSERT INTO catalog.deployment_attestations (\
+     tenant_id, environment_instance, effective_release_id, org_id, project_id, \
+     environment, deployed_manifest_hash, source_commit, attested_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::text::timestamptz) \
+     ON CONFLICT (tenant_id, environment_instance, effective_release_id, org_id, project_id, environment) \
+     DO NOTHING RETURNING attested_at"
 }
 
 #[cfg(test)]
