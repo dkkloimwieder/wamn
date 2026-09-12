@@ -1,0 +1,17 @@
+
+running 12 tests
+test router_delivery::tests::a_first_verdict_stands_when_later_frontier_work_fails ... ok
+test router_delivery::tests::a_settled_preview_never_contradicts_what_the_caller_received ... ok
+test router_delivery::tests::host_mints_current_causation_and_only_inherits_parent_root_depth ... ok
+test router_delivery::tests::nested_fresh_only_refusal_retains_its_exact_wire_contract ... ok
+test router_delivery::tests::a_delivery_is_labelled_by_its_source_kind_id_and_wiring_release ... ok
+test router_delivery::tests::a_delivered_run_counts_once_and_raises_no_error_series ... ok
+test router_delivery::tests::each_driver_refusal_counts_as_an_attempt_and_a_named_error ... ok
+test router_delivery::tests::caller_handle_must_match_the_loaded_attachment_identity ... ok
+test router_delivery::tests::nested_permission_denial_uses_the_direct_call_wire_contract ... ok
+test router_delivery::tests::terminal_mapping_preserves_each_router_class_without_node_coordinates ... ok
+test router_delivery::tests::permission_denial_lowers_the_exact_registered_operation ... ok
+test router_delivery::tests::source_ids_resolve_only_the_manifest_target_and_derive_caller_attachment ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 41 filtered out; finished in 0.00s
+

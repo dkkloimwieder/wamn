@@ -1,0 +1,33 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-proof-conformance",
+    "--lib",
+    "runtime_inventory::",
+    "--",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 36.015139062015805,
+  "ended_utc": "2026-09-12T02:22:31.802236+00:00",
+  "exit_code": 0,
+  "name": "runtime-conformance",
+  "source": "b6fbb9a4e23ce73118d9de1b770304af041ce231",
+  "started_utc": "2026-09-12T02:21:55.787110+00:00",
+  "stderr": {
+    "bytes": 7639,
+    "mode": "0o664",
+    "path": "runtime-conformance.stderr",
+    "sha256": "97c1907b4a20e837438d21d0d41032277070e67f4fd22e397292a518446abf85"
+  },
+  "stdout": {
+    "bytes": 1891,
+    "mode": "0o664",
+    "path": "runtime-conformance.stdout",
+    "sha256": "4824ee68f1700996e5ded50f3d98c56eab4359b306ce6409ca5484f9959b2d8e"
+  }
+}

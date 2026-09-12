@@ -1,0 +1,35 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-runtime",
+    "--features",
+    "wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats",
+    "--lib",
+    "expected_router::tests::",
+    "--",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 0.5663977869553491,
+  "ended_utc": "2026-09-12T02:18:59.567332+00:00",
+  "exit_code": 0,
+  "name": "expected-router",
+  "source": "b6fbb9a4e23ce73118d9de1b770304af041ce231",
+  "started_utc": "2026-09-12T02:18:59.000941+00:00",
+  "stderr": {
+    "bytes": 4775,
+    "mode": "0o664",
+    "path": "expected-router.stderr",
+    "sha256": "0a9dbbd0c4017f4709cfa830504c8fe909044e332cd4d2fbd8f60c8db8ca033b"
+  },
+  "stdout": {
+    "bytes": 470,
+    "mode": "0o664",
+    "path": "expected-router.stdout",
+    "sha256": "9fd52d672eff583db17d188f0483456c0eb92bfa313688365ca3955cc76bcde4"
+  }
+}

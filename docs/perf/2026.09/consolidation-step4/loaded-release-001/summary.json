@@ -1,0 +1,155 @@
+{
+  "base": "2adc1f6ff9d29f7a1cd7a79840bc1fadf08605a0",
+  "commands": [
+    {
+      "command": "release-manifest-command.json",
+      "elapsed_seconds": 33.97921582701383,
+      "exit_code": 0,
+      "failed": 0,
+      "ignored": 0,
+      "name": "release-manifest",
+      "outcome": "executed",
+      "passed": 7,
+      "stderr": "release-manifest.stderr",
+      "stdout": "release-manifest.stdout"
+    },
+    {
+      "command": "expected-router-command.json",
+      "elapsed_seconds": 0.5663977869553491,
+      "exit_code": 0,
+      "failed": 0,
+      "ignored": 0,
+      "name": "expected-router",
+      "outcome": "executed",
+      "passed": 4,
+      "stderr": "expected-router.stderr",
+      "stdout": "expected-router.stdout"
+    },
+    {
+      "command": "flow-http-command.json",
+      "elapsed_seconds": 0.5461364950169809,
+      "exit_code": 0,
+      "failed": 0,
+      "ignored": 0,
+      "name": "flow-http",
+      "outcome": "executed",
+      "passed": 21,
+      "stderr": "flow-http.stderr",
+      "stdout": "flow-http.stdout"
+    },
+    {
+      "command": "manifest-source-command.json",
+      "elapsed_seconds": 20.922880423022434,
+      "exit_code": 0,
+      "failed": 0,
+      "ignored": 1,
+      "name": "manifest-source",
+      "outcome": "executed",
+      "passed": 8,
+      "stderr": "manifest-source.stderr",
+      "stdout": "manifest-source.stdout"
+    },
+    {
+      "command": "session-route-command.json",
+      "elapsed_seconds": 0.6765622249804437,
+      "exit_code": 0,
+      "failed": 0,
+      "ignored": 0,
+      "name": "session-route",
+      "outcome": "zero tests selected",
+      "passed": 0,
+      "stderr": "session-route.stderr",
+      "stdout": "session-route.stdout"
+    },
+    {
+      "command": "router-delivery-command.json",
+      "elapsed_seconds": 153.1679180120118,
+      "exit_code": 0,
+      "failed": 0,
+      "ignored": 0,
+      "name": "router-delivery",
+      "outcome": "executed",
+      "passed": 12,
+      "stderr": "router-delivery.stderr",
+      "stdout": "router-delivery.stdout"
+    },
+    {
+      "command": "native-policy-command.json",
+      "elapsed_seconds": 0.9028504909947515,
+      "exit_code": 0,
+      "failed": 0,
+      "ignored": 1,
+      "name": "native-policy",
+      "outcome": "executed",
+      "passed": 7,
+      "stderr": "native-policy.stderr",
+      "stdout": "native-policy.stdout"
+    },
+    {
+      "command": "runtime-conformance-command.json",
+      "elapsed_seconds": 36.015139062015805,
+      "exit_code": 0,
+      "failed": 0,
+      "ignored": 0,
+      "name": "runtime-conformance",
+      "outcome": "executed",
+      "passed": 21,
+      "stderr": "runtime-conformance.stderr",
+      "stdout": "runtime-conformance.stdout"
+    },
+    {
+      "command": "native-callers-command.json",
+      "elapsed_seconds": 249.7072849799879,
+      "exit_code": 0,
+      "name": "native-callers",
+      "outcome": "compiled without executing tests",
+      "stderr": "native-callers.stderr",
+      "stdout": "native-callers.stdout"
+    },
+    {
+      "command": "host-caller-command.json",
+      "elapsed_seconds": 227.7304983289796,
+      "exit_code": 0,
+      "name": "host-caller",
+      "outcome": "compiled without executing tests",
+      "stderr": "host-caller.stderr",
+      "stdout": "host-caller.stdout"
+    },
+    {
+      "command": "session-route-feature-command.json",
+      "elapsed_seconds": 25.393306565994862,
+      "exit_code": 0,
+      "failed": 0,
+      "ignored": 1,
+      "name": "session-route-feature",
+      "outcome": "compiled with live test ignored",
+      "passed": 0,
+      "stderr": "session-route-feature.stderr",
+      "stdout": "session-route-feature.stdout"
+    }
+  ],
+  "executed_failed": 0,
+  "executed_passed": 80,
+  "ignored_live_cases": [
+    {
+      "command": "manifest-source",
+      "name": "a_published_release_pulls_back_byte_exact_and_loads_the_release_it_names",
+      "reason": "requires a disposable authenticated registry holding a published release"
+    },
+    {
+      "command": "native-policy",
+      "name": "router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle",
+      "reason": "requires WAMN_NATIVE_B_AUTH_PG_URL naming this proof's fresh disposable PostgreSQL 18 server"
+    },
+    {
+      "command": "session-route-feature",
+      "name": "sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_identity",
+      "reason": "requires fresh PG18 with pg_stat_statements in WAMN_SESSION_ROUTE_PG18_URL"
+    }
+  ],
+  "live_inputs_armed": false,
+  "source": "b6fbb9a4e23ce73118d9de1b770304af041ce231",
+  "source_unchanged": true,
+  "tracked_paths_outside_beads": 31329,
+  "zero_test_attempt_preserved": true
+}

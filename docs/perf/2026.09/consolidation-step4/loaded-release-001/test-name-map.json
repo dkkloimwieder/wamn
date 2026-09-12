@@ -1,0 +1,97 @@
+{
+  "source": "b6fbb9a4e23ce73118d9de1b770304af041ce231",
+  "mapping": [
+    {
+      "path": "crates/execution/host/src/router_delivery.rs",
+      "command": "router-delivery",
+      "old": "router_delivery::tests::caller_handle_must_match_the_welded_attachment_identity",
+      "new": "router_delivery::tests::caller_handle_must_match_the_loaded_attachment_identity",
+      "observed": "ok"
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/flow_http_routing.rs",
+      "command": "flow-http",
+      "old": "plugins::flow_http_routing::tests::the_welded_manifest_is_the_only_source_the_plugin_reads",
+      "new": "plugins::flow_http_routing::tests::the_loaded_manifest_is_the_only_source_the_plugin_reads",
+      "observed": "ok"
+    },
+    {
+      "path": "crates/platform/runtime/tests/release_manifest_source.rs",
+      "command": "manifest-source",
+      "old": "pulled_bytes_load_through_the_weld_naming_their_carrier",
+      "new": "pulled_bytes_load_the_release_naming_their_carrier",
+      "observed": "ok"
+    },
+    {
+      "path": "crates/platform/runtime/tests/release_manifest_source.rs",
+      "command": "manifest-source",
+      "old": "a_published_release_pulls_back_byte_exact_and_welds_the_release_it_names",
+      "new": "a_published_release_pulls_back_byte_exact_and_loads_the_release_it_names",
+      "observed": "ignored, requires a disposable authenticated registry holding a published release"
+    },
+    {
+      "path": "tests/conformance/src/runtime_inventory.rs",
+      "command": "runtime-conformance",
+      "old": "runtime_inventory::one_release_manifest_weld_construction_site_per_host_process",
+      "new": "runtime_inventory::one_release_load_site_per_host_process",
+      "observed": "ok"
+    },
+    {
+      "path": "tests/conformance/src/runtime_inventory.rs",
+      "command": "runtime-conformance",
+      "old": "runtime_inventory::every_production_release_identity_is_read_off_the_weld",
+      "new": "runtime_inventory::every_production_release_identity_is_read_off_the_loaded_release",
+      "observed": "ok"
+    },
+    {
+      "path": "tests/conformance/src/runtime_inventory.rs",
+      "command": "runtime-conformance",
+      "old": "runtime_inventory::release_identity_inventory_accepts_the_welded_shape",
+      "new": "runtime_inventory::release_identity_list_accepts_the_loaded_shape",
+      "observed": "ok"
+    },
+    {
+      "path": "tests/conformance/src/runtime_inventory.rs",
+      "command": "runtime-conformance",
+      "old": "runtime_inventory::release_identity_inventory_rejects_a_removed_or_duplicated_construction",
+      "new": "runtime_inventory::release_identity_list_rejects_a_removed_or_duplicated_construction",
+      "observed": "ok"
+    },
+    {
+      "path": "tests/conformance/src/runtime_inventory.rs",
+      "command": "runtime-conformance",
+      "old": "runtime_inventory::release_identity_inventory_rejects_a_half_read_from_elsewhere",
+      "new": "runtime_inventory::release_identity_list_rejects_a_half_read_from_elsewhere",
+      "observed": "ok"
+    },
+    {
+      "path": "tests/conformance/src/runtime_inventory.rs",
+      "command": "runtime-conformance",
+      "old": "runtime_inventory::release_identity_inventory_rejects_a_returning_config_key",
+      "new": "runtime_inventory::release_identity_list_rejects_a_returning_config_key",
+      "observed": "ok"
+    },
+    {
+      "path": "tests/conformance/src/runtime_inventory.rs",
+      "command": "runtime-conformance",
+      "old": "runtime_inventory::weld_inventory_ignores_cfg_test_construction_sites",
+      "new": "runtime_inventory::release_load_ignores_cfg_test_construction_sites",
+      "observed": "ok"
+    },
+    {
+      "path": "tests/conformance/src/runtime_inventory.rs",
+      "command": "runtime-conformance",
+      "old": "runtime_inventory::weld_inventory_rejects_removed_or_duplicated_construction_site",
+      "new": "runtime_inventory::release_load_rejects_removed_or_duplicated_construction_site",
+      "observed": "ok"
+    },
+    {
+      "path": "tests/conformance/src/runtime_inventory.rs",
+      "command": "runtime-conformance",
+      "old": "runtime_inventory::weld_inventory_rejects_construction_after_the_first_bind",
+      "new": "runtime_inventory::release_load_rejects_construction_after_the_first_bind",
+      "observed": "ok"
+    }
+  ],
+  "scope": "Existing test identities changed only by the approved terminology mapping."
+}

@@ -1,0 +1,35 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-runtime",
+    "--features",
+    "wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats",
+    "--test",
+    "release_manifest_source",
+    "--",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 20.922880423022434,
+  "ended_utc": "2026-09-12T02:19:21.037439+00:00",
+  "exit_code": 0,
+  "name": "manifest-source",
+  "source": "b6fbb9a4e23ce73118d9de1b770304af041ce231",
+  "started_utc": "2026-09-12T02:19:00.114569+00:00",
+  "stderr": {
+    "bytes": 5607,
+    "mode": "0o664",
+    "path": "manifest-source.stderr",
+    "sha256": "e8da74c0c0c6362eb57d09cbd12adacda2c4ffa55a1af79cd9bc8fad013e47f7"
+  },
+  "stdout": {
+    "bytes": 840,
+    "mode": "0o664",
+    "path": "manifest-source.stdout",
+    "sha256": "549c0e20cf7acfae0f655d418ea957968ea90151e95c50b1721235213a6d9d17"
+  }
+}

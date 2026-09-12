@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "--no-run",
+    "-p",
+    "wamn-host",
+    "--bin",
+    "wamn-host"
+  ],
+  "elapsed_seconds": 227.7304983289796,
+  "ended_utc": "2026-09-12T02:30:29.241657+00:00",
+  "exit_code": 0,
+  "name": "host-caller",
+  "source": "b6fbb9a4e23ce73118d9de1b770304af041ce231",
+  "started_utc": "2026-09-12T02:26:41.511198+00:00",
+  "stderr": {
+    "bytes": 8418,
+    "mode": "0o664",
+    "path": "host-caller.stderr",
+    "sha256": "ebd48c2e1ec1865004fa28b483e856a534380a53d4e33d391623e03b7a0eb245"
+  },
+  "stdout": {
+    "bytes": 0,
+    "mode": "0o664",
+    "path": "host-caller.stdout",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

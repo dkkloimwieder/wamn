@@ -1,0 +1,6 @@
+
+running 1 test
+test sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_identity ... ignored, requires fresh PG18 with pg_stat_statements in WAMN_SESSION_ROUTE_PG18_URL
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

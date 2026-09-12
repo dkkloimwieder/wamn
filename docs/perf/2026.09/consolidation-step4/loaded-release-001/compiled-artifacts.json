@@ -1,0 +1,30 @@
+[
+  {
+    "bytes": 113219832,
+    "command": "native-callers",
+    "mode": "0o775",
+    "path": "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/deps/wamn_executor-701f47c5544ac48b",
+    "sha256": "0d5480dd8553285a79652e6a2e7ae8c2cd2c031e72edd807678eba6b61c5c9d3"
+  },
+  {
+    "bytes": 453810368,
+    "command": "native-callers",
+    "mode": "0o775",
+    "path": "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/deps/wamn_proof_integration-d3f8933d5afdd92a",
+    "sha256": "2ffb4df5d06ce8449fdd3f2aa42d0cf147caec915c424fe9d42e7cee3de9428b"
+  },
+  {
+    "bytes": 497460896,
+    "command": "native-callers",
+    "mode": "0o775",
+    "path": "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/deps/wamn_receiving_tests-58e5237397428436",
+    "sha256": "535cf19829b657ff394609236e70c891c4b67ed9a965040a0a5a61d748f108b6"
+  },
+  {
+    "bytes": 150298104,
+    "command": "host-caller",
+    "mode": "0o775",
+    "path": "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/deps/wamn_host-0494ab923fcc04de",
+    "sha256": "fb211e24e8e89ca059a5df745abcc2d3fb1e5de54ec8eefefb82d85f96ddf89e"
+  }
+]
