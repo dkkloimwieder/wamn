@@ -12,13 +12,13 @@ mod cdc_reader_process;
 pub mod cdcbench;
 #[cfg(test)]
 mod claim_law_live;
-pub mod dashproof;
-pub mod host_session_proof;
+pub mod dashboard_test;
+pub mod host_session_test;
 mod hot_route_trace;
-pub mod identity_keys_proof;
-pub mod identity_session_proof;
+pub mod identity_keys_test;
+pub mod identity_session_test;
 mod measurement_schema;
-pub mod membershipproof;
+pub mod membership_test;
 pub mod provisionbench;
 pub mod readerbench;
 pub mod rc;

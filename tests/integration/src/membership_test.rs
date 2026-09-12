@@ -19,11 +19,11 @@ use wamn_platform_identity::{PrincipalId, assign_project_role, create_human, iss
 const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
 const OPERATION_GRANT: &str = "wamn-receiving:purchase-order/get@1.0.0";
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
-const PROOF_TIMEOUT: Duration = Duration::from_secs(300);
+const TEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Inputs for the existing disposable Receiving deployment.
 #[derive(Args)]
-pub struct MembershipProofArgs {
+pub struct MembershipTestArgs {
     /// Provisioning administrator URL for the existing system database.
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL", hide_env_values = true)]
     pub system_database_url: String,
@@ -54,7 +54,7 @@ pub struct MembershipProofArgs {
     pub throughput_pat_file: Option<PathBuf>,
 }
 
-impl fmt::Debug for MembershipProofArgs {
+impl fmt::Debug for MembershipTestArgs {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("MembershipProofArgs")
@@ -63,7 +63,7 @@ impl fmt::Debug for MembershipProofArgs {
 }
 
 /// Run every real HTTP case and remove this run's identity and permission facts.
-pub async fn run(args: MembershipProofArgs) -> anyhow::Result<()> {
+pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
     wamn_control_provision::validate_project_env(&args.org, &args.project, &args.env)
         .context("invalid membership proof scope")?;
     ensure!(!args.tenant.is_empty(), "membership proof needs a tenant");
@@ -90,7 +90,7 @@ pub async fn run(args: MembershipProofArgs) -> anyhow::Result<()> {
         .context("create the proof human")?;
     let role = format!("membership-proof-{nonce}");
     if let Some(path) = &args.throughput_pat_file {
-        let result = tokio::time::timeout(PROOF_TIMEOUT, async {
+        let result = tokio::time::timeout(TEST_TIMEOUT, async {
             seed_tenant_role(&args, &mut project, human.id(), &role).await?;
             membership(&args, human.id(), "grant-project-env-membership").await?;
             let token = issue_pat(
@@ -114,14 +114,14 @@ pub async fn run(args: MembershipProofArgs) -> anyhow::Result<()> {
         return Ok(());
     }
     let result = tokio::time::timeout(
-        PROOF_TIMEOUT,
+        TEST_TIMEOUT,
         exercise(&args, &http, &system, &mut project, human.id(), &role),
     )
     .await
     .map_err(|_| anyhow!("membership proof exceeded its five-minute deadline"))
     .and_then(|result| result);
     let cleaned = tokio::time::timeout(
-        PROOF_TIMEOUT,
+        TEST_TIMEOUT,
         cleanup(&mut system, &mut project, &args.tenant, human.id(), &role),
     )
     .await
@@ -167,7 +167,7 @@ async fn connect(url: &str, name: &str) -> anyhow::Result<Client> {
 }
 
 async fn exercise(
-    args: &MembershipProofArgs,
+    args: &MembershipTestArgs,
     http: &reqwest::Client,
     system: &Client,
     project: &mut Client,
@@ -178,7 +178,7 @@ async fn exercise(
         system,
         principal,
         "Disposable membership proof",
-        PROOF_TIMEOUT,
+        TEST_TIMEOUT,
     )
     .await
     .context("issue the proof PAT through production identity")?;
@@ -232,7 +232,7 @@ async fn exercise(
 }
 
 async fn seed_tenant_role(
-    args: &MembershipProofArgs,
+    args: &MembershipTestArgs,
     project: &mut Client,
     principal: &PrincipalId,
     role: &str,
@@ -277,7 +277,7 @@ async fn seed_tenant_role(
 }
 
 async fn membership(
-    args: &MembershipProofArgs,
+    args: &MembershipTestArgs,
     principal: &PrincipalId,
     verb: &str,
 ) -> anyhow::Result<()> {
@@ -301,7 +301,7 @@ async fn membership(
 }
 
 async fn post_case(
-    args: &MembershipProofArgs,
+    args: &MembershipTestArgs,
     http: &reqwest::Client,
     token: &str,
     request_id: String,
@@ -405,7 +405,7 @@ async fn cleanup(
 #[cfg(test)]
 mod tests {
     use super::{
-        MembershipProofArgs, OPERATION_GRANT, PURCHASE_ORDER_ID, check_record, write_benchmark_pat,
+        MembershipTestArgs, OPERATION_GRANT, PURCHASE_ORDER_ID, check_record, write_benchmark_pat,
     };
     use clap::Parser;
     use serde_json::json;
@@ -426,9 +426,9 @@ mod tests {
     }
 
     #[derive(Parser)]
-    struct ProofCommand {
+    struct TestCommand {
         #[command(flatten)]
-        proof: MembershipProofArgs,
+        args: MembershipTestArgs,
     }
 
     #[test]
@@ -443,7 +443,7 @@ mod tests {
 
     #[test]
     fn argument_diagnostics_do_not_disclose_database_credentials() {
-        let command = ProofCommand::try_parse_from([
+        let command = TestCommand::try_parse_from([
             "membershipproof",
             "--system-database-url",
             "postgres://proof:system-secret@system/proof",
@@ -463,7 +463,7 @@ mod tests {
             "fixture",
         ])
         .expect("parse every required proof argument");
-        let diagnostic = format!("{:?}", command.proof);
+        let diagnostic = format!("{:?}", command.args);
         for secret in ["system-secret", "project-secret", "endpoint-secret"] {
             assert!(!diagnostic.contains(secret));
         }

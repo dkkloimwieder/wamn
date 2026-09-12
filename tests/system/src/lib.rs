@@ -3,4 +3,4 @@
 //! MVP outcome: proof floor.
 
 pub mod deadlineproof;
-pub mod traceproof;
+pub mod trace_test;

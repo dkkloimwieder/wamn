@@ -25,13 +25,13 @@ const MAX_BYTES: usize = 65_536;
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const WARM_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const REFUSAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const PROOF_TIMEOUT: Duration = Duration::from_secs(420);
+const TEST_TIMEOUT: Duration = Duration::from_secs(420);
 const KEY_MAX_AGE: Duration = Duration::from_secs(300);
 const ROUTE_PATH: &str = "/purchase_order/get";
 
 /// Public endpoint configuration and the path to the protected credential fixture.
 #[derive(Debug, Args)]
-pub struct HostSessionProofArgs {
+pub struct HostSessionTestArgs {
     #[arg(long, env = "WAMN_IDENTITY_ISSUER", hide_env_values = true)]
     pub issuer: String,
     #[arg(long, env = "WAMN_IDENTITY_CA_FILE")]
@@ -295,13 +295,13 @@ async fn host_request(
 }
 
 /// Observe warm acceptance and bounded refusal without changing any deployed authority.
-pub async fn run(args: HostSessionProofArgs) -> anyhow::Result<()> {
-    tokio::time::timeout(PROOF_TIMEOUT, observe(args))
+pub async fn run(args: HostSessionTestArgs) -> anyhow::Result<()> {
+    tokio::time::timeout(TEST_TIMEOUT, observe(args))
         .await
         .map_err(|_| anyhow!("host session proof exceeded 420 seconds"))?
 }
 
-async fn observe(args: HostSessionProofArgs) -> anyhow::Result<()> {
+async fn observe(args: HostSessionTestArgs) -> anyhow::Result<()> {
     ensure!(
         args.issuer.len() <= MAX_BYTES,
         "host proof issuer exceeds the size bound"
@@ -474,7 +474,7 @@ async fn observe(args: HostSessionProofArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        HostSessionProofArgs, IO_TIMEOUT, KEY_MAX_AGE, PROOF_TIMEOUT, REFUSAL_REQUEST_TIMEOUT,
+        HostSessionTestArgs, IO_TIMEOUT, KEY_MAX_AGE, TEST_TIMEOUT, REFUSAL_REQUEST_TIMEOUT,
         ROUTE_PATH, WARM_REQUEST_TIMEOUT, endpoints,
     };
     use clap::{CommandFactory as _, Parser};
@@ -482,17 +482,17 @@ mod tests {
     #[derive(Parser)]
     struct Cli {
         #[command(flatten)]
-        args: HostSessionProofArgs,
+        args: HostSessionTestArgs,
     }
 
     #[test]
-    fn host_request_budgets_outlive_key_fetches_and_fit_the_proof() {
+    fn host_request_budgets_outlive_key_fetches_and_fit_the_test() {
         let required =
             IO_TIMEOUT * 3 + WARM_REQUEST_TIMEOUT * 2 + KEY_MAX_AGE + REFUSAL_REQUEST_TIMEOUT * 4;
         for (outer, inner) in [
             (WARM_REQUEST_TIMEOUT, IO_TIMEOUT),
             (REFUSAL_REQUEST_TIMEOUT, IO_TIMEOUT),
-            (PROOF_TIMEOUT, required),
+            (TEST_TIMEOUT, required),
         ] {
             assert!(outer > inner, "outer proof budget must exceed inner work");
         }

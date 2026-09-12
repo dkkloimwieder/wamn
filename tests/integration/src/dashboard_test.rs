@@ -36,7 +36,7 @@ const SRE_DASHBOARD_TITLE: &str = "wamn SRE overview";
 const SRE_FOLDER_TITLE: &str = "wamn SRE";
 
 #[derive(Debug, Args)]
-pub struct DashproofArgs {
+pub struct DashboardTestArgs {
     /// Grafana base URL, e.g. http://grafana:3000.
     #[arg(long)]
     pub grafana_url: String,
@@ -65,7 +65,7 @@ pub struct DashproofArgs {
     pub system_database_url: Option<String>,
 }
 
-pub async fn run(args: DashproofArgs) -> anyhow::Result<()> {
+pub async fn run(args: DashboardTestArgs) -> anyhow::Result<()> {
     let base = args.grafana_url.trim_end_matches('/');
     let auth = (args.user.as_str(), args.password.as_str());
     println!(

@@ -12,10 +12,10 @@
 use wamn_conformance_tests::socketguard;
 use wamn_integration_tests::agent_pilot;
 use wamn_integration_tests::{
-    dashproof, host_session_proof, identity_keys_proof, identity_session_proof, membershipproof,
+    dashboard_test, host_session_test, identity_keys_test, identity_session_test, membership_test,
     readerbench, rc, retention,
 };
-use wamn_system_tests::traceproof;
+use wamn_system_tests::trace_test;
 
 use std::str::FromStr as _;
 
@@ -40,30 +40,33 @@ enum Command {
     AgentPilotGrade(agent_pilot::GradeArgs),
     /// Prove session acceptance and removed-key refusal on two deployed hosts.
     #[command(name = "host-session-proof")]
-    HostSessionProof(host_session_proof::HostSessionProofArgs),
+    HostSessionTest(host_session_test::HostSessionTestArgs),
     /// Prove public JWKS and cache evidence through deployed identity HTTPS.
     #[command(name = "identity-jwks")]
-    IdentityJwks(identity_keys_proof::IdentityKeysProofArgs),
+    IdentityKeysTest(identity_keys_test::IdentityKeysTestArgs),
     /// Prove fresh PAT exchange and signed environment claims through HTTPS.
     #[command(name = "identity-session")]
-    IdentitySession(identity_session_proof::IdentitySessionProofArgs),
+    IdentitySessionTest(identity_session_test::IdentitySessionTestArgs),
     /// Mint private credentials only inside an explicitly armed disposable fixture.
     #[command(name = "identity-session-fixture")]
-    IdentitySessionFixture(identity_session_proof::IdentitySessionFixtureArgs),
+    IdentitySessionFixture(identity_session_test::IdentitySessionFixtureArgs),
     /// Prove fresh human membership through a deployed Receiving HTTP route.
-    Membershipproof(membershipproof::MembershipProofArgs),
+    #[command(name = "membershipproof")]
+    MembershipTest(membership_test::MembershipTestArgs),
     /// Prove the real prune-run-history verb removes only old TERMINAL runs, keeping recent and non-terminal history.
     Retention(retention::RetentionArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
-    ServeEcho(traceproof::ServeEchoArgs),
+    ServeEcho(trace_test::ServeEchoArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
     Socketguard(socketguard::SocketGuardArgs),
     /// Run the 9.2 trace-inject gate: prove the host stamps `traceparent` on both the P2 and P3 outbound surfaces, read back from serve-echo
-    Traceproof(traceproof::TraceproofArgs),
+    #[command(name = "traceproof")]
+    TraceTest(trace_test::TraceTestArgs),
     /// Run the 9.9 dashboards gate: assert a deployed Grafana's health, its datasources, and the static plus per-tenant folders and dashboards
-    Dashproof(dashproof::DashproofArgs),
+    #[command(name = "dashproof")]
+    DashboardTest(dashboard_test::DashboardTestArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -90,17 +93,17 @@ async fn async_main() -> anyhow::Result<()> {
             exit_code = agent_pilot::grade(args).await;
             Ok(())
         }
-        Command::HostSessionProof(args) => host_session_proof::run(args).await,
-        Command::IdentityJwks(args) => identity_keys_proof::run(args).await,
-        Command::IdentitySession(args) => identity_session_proof::run(args).await,
-        Command::IdentitySessionFixture(args) => identity_session_proof::fixture(args).await,
-        Command::Membershipproof(args) => membershipproof::run(args).await,
+        Command::HostSessionTest(args) => host_session_test::run(args).await,
+        Command::IdentityKeysTest(args) => identity_keys_test::run(args).await,
+        Command::IdentitySessionTest(args) => identity_session_test::run(args).await,
+        Command::IdentitySessionFixture(args) => identity_session_test::fixture(args).await,
+        Command::MembershipTest(args) => membership_test::run(args).await,
         Command::Retention(args) => retention::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
-        Command::ServeEcho(args) => traceproof::serve_echo(args).await,
+        Command::ServeEcho(args) => trace_test::serve_echo(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
-        Command::Traceproof(args) => traceproof::run(args).await,
-        Command::Dashproof(args) => dashproof::run(args).await,
+        Command::TraceTest(args) => trace_test::run(args).await,
+        Command::DashboardTest(args) => dashboard_test::run(args).await,
     };
 
     shutdown_observability();

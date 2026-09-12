@@ -142,7 +142,7 @@ fn header_of(headers: &[String], name: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 #[derive(Args, Debug)]
-pub struct TraceproofArgs {
+pub struct TraceTestArgs {
     /// Reflecting upstream in a separate process/pod.
     #[arg(long)]
     pub upstream: String,
@@ -151,7 +151,7 @@ pub struct TraceproofArgs {
     pub result_file: Option<std::path::PathBuf>,
 }
 
-pub async fn run(args: TraceproofArgs) -> anyhow::Result<()> {
+pub async fn run(args: TraceTestArgs) -> anyhow::Result<()> {
     // A unique, valid W3C traceparent we control. `01` = sampled.
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

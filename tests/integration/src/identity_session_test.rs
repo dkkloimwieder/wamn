@@ -23,12 +23,12 @@ use wamn_platform_identity::session_token::{
 use wamn_platform_identity::{create_human, create_service, issue_pat};
 
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
-const PROOF_TIMEOUT: Duration = Duration::from_secs(90);
+const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_BYTES: usize = 65_536;
 
 /// HTTPS observer inputs; the cases file is a protected Secret mount.
 #[derive(Debug, Args)]
-pub struct IdentitySessionProofArgs {
+pub struct IdentitySessionTestArgs {
     #[arg(long, env = "WAMN_IDENTITY_ISSUER")]
     pub issuer: String,
     #[arg(long, env = "WAMN_IDENTITY_CA_FILE")]
@@ -160,13 +160,13 @@ fn unix_seconds() -> anyhow::Result<i64> {
 }
 
 /// Observe every protected case over the actual configured HTTPS service.
-pub async fn run(args: IdentitySessionProofArgs) -> anyhow::Result<()> {
-    tokio::time::timeout(PROOF_TIMEOUT, observe(args))
+pub async fn run(args: IdentitySessionTestArgs) -> anyhow::Result<()> {
+    tokio::time::timeout(TEST_TIMEOUT, observe(args))
         .await
         .map_err(|_| anyhow!("identity session proof exceeded ninety seconds"))?
 }
 
-async fn observe(args: IdentitySessionProofArgs) -> anyhow::Result<()> {
+async fn observe(args: IdentitySessionTestArgs) -> anyhow::Result<()> {
     validate_identity_issuer(&args.issuer)
         .map_err(|_| anyhow!("identity session HTTPS issuer refused"))?;
     let cases = cases(&read_file(&args.cases_file).await?)?;

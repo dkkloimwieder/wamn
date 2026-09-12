@@ -14,13 +14,13 @@ use wamn_platform_identity::session_keys::{PublicSessionKey, SessionJwks, decode
 use wamn_runtime::session_keys::{IssuerKeys, IssuerKeysConfig};
 
 const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
-const PROOF_TIMEOUT: Duration = Duration::from_secs(90);
+const TEST_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_BODY_BYTES: usize = 65_536;
 const UNKNOWN_KID: &str = "identity-jwks-proof-unknown-key";
 
 /// Public inputs only: exact issuer, endpoint, certificate roots, and expected IDs.
 #[derive(Debug, Args)]
-pub struct IdentityKeysProofArgs {
+pub struct IdentityKeysTestArgs {
     #[arg(long, env = "WAMN_IDENTITY_ISSUER")]
     pub issuer: String,
     #[arg(long, env = "WAMN_IDENTITY_JWKS_URL")]
@@ -35,13 +35,13 @@ pub struct IdentityKeysProofArgs {
 }
 
 /// Require every applicable deployed foundation case before emitting a verdict.
-pub async fn run(args: IdentityKeysProofArgs) -> anyhow::Result<()> {
-    tokio::time::timeout(PROOF_TIMEOUT, exercise(args))
+pub async fn run(args: IdentityKeysTestArgs) -> anyhow::Result<()> {
+    tokio::time::timeout(TEST_TIMEOUT, exercise(args))
         .await
         .map_err(|_| anyhow!("IDENTITY-JWKS proof exceeded ninety seconds"))?
 }
 
-async fn exercise(args: IdentityKeysProofArgs) -> anyhow::Result<()> {
+async fn exercise(args: IdentityKeysTestArgs) -> anyhow::Result<()> {
     ensure!(
         args.expected_kids.len() <= MAX_BODY_BYTES,
         "expected key input is oversized"

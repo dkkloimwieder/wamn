@@ -820,8 +820,8 @@ async fn human_runs(
     let resources = &state.resources;
     let human_pat = resources.work.join("throughput-human-pat");
     let human_secret = "wamn-throughput-human";
-    wamn_integration_tests::membershipproof::run(
-        wamn_integration_tests::membershipproof::MembershipProofArgs {
+    wamn_integration_tests::membership_test::run(
+        wamn_integration_tests::membership_test::MembershipTestArgs {
             system_database_url: state.inputs.system_pg_url.clone(),
             project_database_url: project_database_url.to_owned(),
             endpoint_url: format!("http://flow-http.{}.svc.cluster.local", resources.name),

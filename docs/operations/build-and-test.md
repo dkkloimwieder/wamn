@@ -2026,7 +2026,7 @@ cargo test --locked --offline -p wamn-ctl --lib session_reader
 cargo test --locked --offline -p wamn-ctl --test session_audience_live \
   compiled_session_reader_refuses_invalid_tenants_before_io
 cargo test --locked --offline -p wamn-identity --lib
-cargo test --locked --offline -p wamn-integration-tests --lib identity_session_proof::tests
+cargo test --locked --offline -p wamn-integration-tests --lib identity_session_test::tests
 cargo test --locked --offline -p wamn-system-tests --test deployment_declarations
 ```
 
