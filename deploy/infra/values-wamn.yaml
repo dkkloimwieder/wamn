@@ -153,6 +153,9 @@ gateway:
   enabled: false
 
 operator:
+  # The operator records INFO and higher. Tempo stores request traces.
+  extraArgs:
+    - "-zap-log-level=info"
   # -- The environment namespaces whose WorkloadDeployments this operator
   # reconciles, one entry each. A non-empty list takes the operator off
   # cluster-wide RBAC entirely: the chart drops the ClusterRole and its binding
