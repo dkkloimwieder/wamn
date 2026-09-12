@@ -2412,23 +2412,6 @@ fn verify_management_admitter_grants(
             "USAGE".to_string(),
         ),
         (
-            "schema".to_string(),
-            "wamn_run".to_string(),
-            "wamn_run".to_string(),
-            "USAGE".to_string(),
-        ),
-        (
-            "relation".to_string(),
-            "wamn_run".to_string(),
-            "environment_policies".to_string(),
-            "SELECT".to_string(),
-        ),
-        // `wamn-0h0g.22.28`'s grant, asserted rather than ignored. `runs`
-        // carries `runs_tkey`, so both the INSERT above and any later UPDATE
-        // evaluate that expression index and need EXECUTE on the derivation;
-        // schema USAGE alone raises 42501. Omitting the row let the grant land
-        // unrepresented through wave 65.
-        (
             "routine".to_string(),
             "wamn_authority".to_string(),
             "tenant_key".to_string(),
@@ -2450,37 +2433,6 @@ fn verify_management_admitter_grants(
             format!("wirings.{column}"),
             "INSERT".to_string(),
         ));
-    }
-    for (relation, privilege, columns) in [
-        (
-            "runs",
-            "SELECT",
-            &sql::MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS[..],
-        ),
-        (
-            "runs",
-            "INSERT",
-            &sql::MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS[..],
-        ),
-        (
-            "run_queue",
-            "SELECT",
-            &sql::MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS[..],
-        ),
-        (
-            "run_queue",
-            "INSERT",
-            &sql::MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS[..],
-        ),
-    ] {
-        for column in columns {
-            expected.insert((
-                "column".to_string(),
-                "wamn_run".to_string(),
-                format!("{relation}.{column}"),
-                privilege.to_string(),
-            ));
-        }
     }
     anyhow::ensure!(
         actual == expected,

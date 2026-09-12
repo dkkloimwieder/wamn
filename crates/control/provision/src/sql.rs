@@ -267,79 +267,6 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
     "lease_generation",
     "attempts",
 ];
-/// `runs` columns read directly or through `RETURNING` by management admission.
-///
-/// `status` and `result_json` are the OBSERVATION LEG (wamn-oici). Without them
-/// the admitter can create a run it can never see the outcome of, so a project
-/// run cannot be polled to terminal and sequential case composition has no
-/// credential that can execute it. The admitter is already the run's producer
-/// principal, so widening its own SELECT is narrower than the alternatives a
-/// second mechanism would need: a view, a separate reader role, or replicating
-/// run status into the control database were all considered and rejected.
-///
-/// `caller_outcome_kind`, `caller_outcome_json`, `caller_http_status` and
-/// `fail_kind` are the EVALUATION LEG (wamn-0h0g.8.25). They are exactly the
-/// `runs` columns `wamn_scenario_model::Captured` is documented over, so they
-/// are the facts `evaluate` consumes: `caller_http_status` plus
-/// `caller_outcome_json` when `caller_outcome_kind` is `responded`, and
-/// `fail_kind` when it is `failed`. Status alone says a run reached terminal,
-/// not what it produced, so without these four a test-case run can be admitted
-/// and polled to terminal and still never be evaluated.
-///
-/// `grant_management_admitter_surface_sql` revokes every table and per-column
-/// privilege before granting, so this list is the whole readable surface —
-/// a column absent here is DENIED, not merely unmentioned.
-pub const MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS: [&str; 22] = [
-    "tenant_id",
-    "run_id",
-    "binding_world_json",
-    "idempotency_key",
-    "trigger_source",
-    "capture_mode",
-    "package_id",
-    "effective_release_id",
-    "environment",
-    "wiring_id",
-    "wiring_version",
-    "wiring_hash",
-    "input_json",
-    "invocation_context",
-    "platform_revision",
-    "run_deadline_at",
-    "status",
-    "result_json",
-    "caller_outcome_kind",
-    "caller_outcome_json",
-    "caller_http_status",
-    "fail_kind",
-];
-/// `runs` columns minted by the management-admission statement.
-pub const MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS: [&str; 18] = [
-    "tenant_id",
-    "run_id",
-    "package_id",
-    "effective_release_id",
-    "environment",
-    "wiring_id",
-    "wiring_version",
-    "wiring_hash",
-    "binding_world_json",
-    "status",
-    "trigger_source",
-    "capture_mode",
-    "input_json",
-    "invocation_context",
-    "admission_context_version",
-    "platform_revision",
-    "idempotency_key",
-    "run_deadline_at",
-];
-/// `run_queue` columns observed through the management insert's `RETURNING`.
-pub const MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS: [&str; 2] = ["tenant_id", "run_id"];
-/// `run_queue` columns minted by management admission.
-pub const MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS: [&str; 4] =
-    ["tenant_id", "run_id", "available_at", "stream_seq"];
-
 /// `REVOKE CONNECT ON DATABASE "<database>" FROM "wamn_dispatch_reader"`.
 ///
 /// **This used to GRANT, and the reversal is the whole of `wamn-0h0g.22.24`.**
@@ -519,19 +446,10 @@ fn grant_tenant_key_execute_sql(role: &str) -> String {
     )
 }
 
-/// Converge the stable management-admitter role to its exact admission surface.
+/// Converge management publication to its exact catalog grants.
 ///
-/// This is the seventh [`WorkloadRoleFamily`]'s one family-specific privilege
-/// step. Its A/B identities and their prepare/retire lifecycle remain wholly in
-/// the generic workload machinery. The catalog relations are the surviving
-/// component/wiring facts read by management admission; `catalog.wirings` also
-/// carries the column-exact append performed by `Publish`. The run-plane grants
-/// are column-exact to the ordinary run-plus-queue statement. Environment
-/// policy access is read-only because the invoker trigger resolves the pinned
-/// durability class while inserting a run.
-///
-/// Blanket revocation precedes every grant so reapplying this batch removes a
-/// stale or widened direct ACL instead of merely adding the intended surface.
+/// The family reads component and wiring facts and appends immutable wirings.
+/// Revocation removes stale table, column, and schema privileges before grants.
 pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
     let role = quote_ident(MANAGEMENT_ADMITTER_ROLE);
     let schema_literal = quote_literal(schema);
@@ -555,7 +473,7 @@ pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
            END LOOP; \
          END $management_column_acl$; \
          REVOKE ALL PRIVILEGES ON SCHEMA catalog, {schema} FROM {role}; \
-         GRANT USAGE ON SCHEMA catalog, {schema} TO {role};",
+         GRANT USAGE ON SCHEMA catalog TO {role};",
         ensure = ensure_workload_acl_role_sql(WorkloadRoleFamily::ManagementAdmitter),
         role_literal = quote_literal(MANAGEMENT_ADMITTER_ROLE),
     );
@@ -566,19 +484,10 @@ pub fn grant_management_admitter_surface_sql(schema: &str) -> String {
         ));
     }
     let wiring_insert = quoted_column_list(&MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS);
-    let run_select = quoted_column_list(&MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS);
-    let run_insert = quoted_column_list(&MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS);
-    let queue_select = quoted_column_list(&MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS);
-    let queue_insert = quoted_column_list(&MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS);
     sql.push_str(&format!(
-        " GRANT INSERT ({wiring_insert}) ON TABLE catalog.\"wirings\" TO {role}; \
-         GRANT SELECT ON TABLE {schema}.\"environment_policies\" TO {role}; \
-         GRANT SELECT ({run_select}) ON TABLE {schema}.\"runs\" TO {role}; \
-         GRANT INSERT ({run_insert}) ON TABLE {schema}.\"runs\" TO {role}; \
-         GRANT SELECT ({queue_select}), INSERT ({queue_insert}) \
-           ON TABLE {schema}.\"run_queue\" TO {role};"
+        " GRANT INSERT ({wiring_insert}) ON TABLE catalog.\"wirings\" TO {role};"
     ));
-    // `runs` carries `runs_tkey`, so the INSERT above is dead without this.
+    // The wiring tenant index evaluates this function during INSERT.
     sql.push(' ');
     sql.push_str(&grant_tenant_key_execute_sql(MANAGEMENT_ADMITTER_ROLE));
     sql
@@ -1195,8 +1104,7 @@ mod tests {
             .expect("blanket table revoke");
         let usage = sql
             .find(
-                "GRANT USAGE ON SCHEMA catalog, \"wamn_run\" \
-                 TO \"wamn_management_admitter\"",
+                "GRANT USAGE ON SCHEMA catalog TO \"wamn_management_admitter\"",
             )
             .expect("exact schema usage");
         assert!(revoke < usage);
@@ -1232,36 +1140,10 @@ mod tests {
             ],
             "the grant must remain the exact production Publish INSERT"
         );
-        assert!(sql.contains(
-            "GRANT SELECT ON TABLE \"wamn_run\".\"environment_policies\" \
-             TO \"wamn_management_admitter\""
-        ));
-        assert!(sql.contains("GRANT SELECT (\"tenant_id\", \"run_id\", \"binding_world_json\""));
-        // wamn-oici's probe arm, extended by wamn-0h0g.8.25. The consumers derive
-        // their expectations from the same constant, so a widening flows through
-        // them silently and they show nothing about it. This names the
-        // observation and evaluation columns literally in the emitted grant, so
-        // dropping any of them fails HERE.
-        assert!(
-            sql.contains(
-                "\"run_deadline_at\", \"status\", \"result_json\", \
-                 \"caller_outcome_kind\", \"caller_outcome_json\", \
-                 \"caller_http_status\", \"fail_kind\") \
-                 ON TABLE \"wamn_run\".\"runs\""
-            ),
-            "the observation leg must read runs.status and runs.result_json, and the \
-             evaluation leg the caller-outcome family plus runs.fail_kind"
-        );
-        assert!(sql.contains(
-            "GRANT INSERT (\"tenant_id\", \"run_id\", \"package_id\", \
-             \"effective_release_id\""
-        ));
-        assert!(sql.contains(
-            "GRANT SELECT (\"tenant_id\", \"run_id\"), INSERT (\"tenant_id\", \
-             \"run_id\", \"available_at\", \"stream_seq\")"
-        ));
-
         for forbidden in [
+            "GRANT SELECT ON TABLE \"wamn_run\"",
+            "ON TABLE \"wamn_run\".\"runs\" TO",
+            "ON TABLE \"wamn_run\".\"run_queue\" TO",
             "GRANT SELECT ON ALL TABLES",
             "GRANT INSERT ON TABLE catalog",
             "\"created_at\") ON TABLE catalog.\"wirings\"",
@@ -1280,20 +1162,7 @@ mod tests {
         assert!(grant_management_admitter_surface_sql("we\"ird").contains("\"we\"\"ird\""));
     }
 
-    /// THE INSERT ABOVE IS DEAD WITHOUT THIS, and the ordinary sweep is the only
-    /// place that says so before a cluster does (`wamn-0h0g.22.28`).
-    ///
-    /// `runs` carries the `runs_tkey` EXPRESSION INDEX over
-    /// `wamn_authority.tenant_key(text)`, and PostgreSQL evaluates an index
-    /// expression while inserting the row — so the column-exact `GRANT INSERT`
-    /// this surface emits raises 42501 `permission denied for function
-    /// tenant_key` without the one EXECUTE below. That defect shipped green for
-    /// four beads because the only test that could see it is `#[ignore]`d.
-    ///
-    /// The surface must carry EXACTLY ONE `GRANT EXECUTE` and it must be that
-    /// one: a second would be a widening this family's production statement does
-    /// not need, and the schema-USAGE and `current_tenant_key` grants are
-    /// measured NOT to be required.
+    /// The catalog wiring index needs tenant-key execution during INSERT.
     #[test]
     fn the_management_surface_grants_the_one_execute_its_tkey_index_needs() {
         let sql = grant_management_admitter_surface_sql("wamn_run");

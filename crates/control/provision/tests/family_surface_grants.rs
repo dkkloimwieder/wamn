@@ -508,7 +508,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
              GRANT SELECT ON TABLE catalog.effective_release_heads, \
                catalog.wiring_activation, catalog.wiring_tombstones TO {stable};\n\
              GRANT EXECUTE ON FUNCTION \
-               wamn_run.require_management_admission_authority() TO {stable};\n"
+               wamn_run.guard_event_lineage_immutable() TO {stable};\n"
         ),
     );
     run_admin(&admin, "re-converge after the widening", &surface);

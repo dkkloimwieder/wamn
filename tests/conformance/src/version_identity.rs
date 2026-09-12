@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
-use wamn_run_state::admission::{RunStateSchema, management_admission_transaction};
 use wamn_run_state::invocation_context::INVOCATION_CONTEXT_VERSION;
 
 const MVP_CARGO_VERSION: &str = "0.1.0";
@@ -317,34 +316,6 @@ fn governed_json_schema_violation(source: &str, identity: GovernedJsonSchema) ->
     })
 }
 
-fn admission_version_violations(admission: &str, version: &str) -> Vec<String> {
-    let mut violations = Vec::new();
-    let admitted_context = admission
-        .split_once("expected AS MATERIALIZED (")
-        .and_then(|(_, tail)| tail.split_once("keyed_run AS MATERIALIZED ("))
-        .map(|(section, _)| section);
-    let context_identity = format!("'version', '{version}'");
-    if !admitted_context.is_some_and(|section| section.contains(&context_identity)) {
-        violations.push(format!(
-            "management admission does not stamp invocation-context owner `{version}`"
-        ));
-    }
-
-    let created_run = admission
-        .split_once("created_run AS (")
-        .and_then(|(_, tail)| tail.split_once("created_queue AS ("))
-        .map(|(section, _)| section);
-    let persisted_identity = format!("'{version}', c.platform_revision");
-    if !created_run.is_some_and(|section| {
-        section.contains("admission_context_version") && section.contains(&persisted_identity)
-    }) {
-        violations.push(format!(
-            "management admission does not persist invocation-context owner `{version}`"
-        ));
-    }
-    violations
-}
-
 fn live_invocation_context_version_violations() -> Vec<String> {
     let mut violations = Vec::new();
     if INVOCATION_CONTEXT_VERSION != MVP_SCHEMA_VERSION {
@@ -352,11 +323,6 @@ fn live_invocation_context_version_violations() -> Vec<String> {
             "invocation-context owner is {INVOCATION_CONTEXT_VERSION}, expected {MVP_SCHEMA_VERSION}"
         ));
     }
-    let admission = management_admission_transaction(&RunStateSchema::default());
-    violations.extend(admission_version_violations(
-        admission.admit(),
-        INVOCATION_CONTEXT_VERSION,
-    ));
     violations
 }
 
@@ -497,16 +463,7 @@ fn representative_version_mutants_are_rejected() {
         governed_json_schema_violation(r#"{"schema_version":1}"#, governance_identity).is_some()
     );
 
-    let admission = management_admission_transaction(&RunStateSchema::default());
-    let drifted_admission = admission
-        .admit()
-        .replace("'version', '0.1'", "'version', '0.2'")
-        .replace("'0.1', c.platform_revision", "'0.2', c.platform_revision");
-    assert_eq!(
-        admission_version_violations(&drifted_admission, INVOCATION_CONTEXT_VERSION).len(),
-        2,
-        "both live admission uses must reject drift from the version owner"
-    );
+
 }
 
 #[test]

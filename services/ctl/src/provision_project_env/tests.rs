@@ -1577,8 +1577,6 @@ fn stable_writer_grants_refuse_unrelated_object_kinds() {
 fn management_grants_are_exact_and_required_in_the_target_database() {
     let mut exact = vec![
         role_acl("schema", "catalog", "catalog", "USAGE"),
-        role_acl("schema", "wamn_run", "wamn_run", "USAGE"),
-        role_acl("relation", "wamn_run", "environment_policies", "SELECT"),
         role_acl("routine", "wamn_authority", "tenant_key", "EXECUTE"),
     ];
     for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
@@ -1591,37 +1589,6 @@ fn management_grants_are_exact_and_required_in_the_target_database() {
             &format!("wirings.{column}"),
             "INSERT",
         ));
-    }
-    for (relation, privilege, columns) in [
-        (
-            "runs",
-            "SELECT",
-            &sql::MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS[..],
-        ),
-        (
-            "runs",
-            "INSERT",
-            &sql::MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS[..],
-        ),
-        (
-            "run_queue",
-            "SELECT",
-            &sql::MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS[..],
-        ),
-        (
-            "run_queue",
-            "INSERT",
-            &sql::MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS[..],
-        ),
-    ] {
-        for column in columns {
-            exact.push(role_acl(
-                "column",
-                "wamn_run",
-                &format!("{relation}.{column}"),
-                privilege,
-            ));
-        }
     }
     verify_management_admitter_grants(
         MANAGEMENT_ADMITTER_ROLE,

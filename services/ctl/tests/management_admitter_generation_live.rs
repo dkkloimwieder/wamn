@@ -275,12 +275,6 @@ async fn family_state(admin: &Client, roles: &[&str]) -> Vec<(String, Vec<String
 /// constants the ACL verifier expects, so the fixture cannot drift away from the
 /// grant set and quietly widen what "exact" means.
 fn run_plane_fixture() -> String {
-    let mut run_columns: BTreeSet<&str> = BTreeSet::new();
-    run_columns.extend(sql::MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS);
-    run_columns.extend(sql::MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS);
-    let mut queue_columns: BTreeSet<&str> = BTreeSet::new();
-    queue_columns.extend(sql::MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS);
-    queue_columns.extend(sql::MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS);
     let mut wiring_columns: BTreeSet<&str> = BTreeSet::from(["created_at"]);
     wiring_columns.extend(sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS);
     let column_ddl = |columns: &BTreeSet<&str>| {
@@ -293,12 +287,10 @@ fn run_plane_fixture() -> String {
     let mut ddl = format!(
         "CREATE SCHEMA catalog; CREATE SCHEMA {RUN_SCHEMA}; CREATE SCHEMA unrelated; \
          CREATE TABLE {RUN_SCHEMA}.environment_policies (id bigint); \
-         CREATE TABLE {RUN_SCHEMA}.runs ({runs}); \
-         CREATE TABLE {RUN_SCHEMA}.run_queue ({queue}); \
+         CREATE TABLE {RUN_SCHEMA}.runs (id bigint); \
+         CREATE TABLE {RUN_SCHEMA}.run_queue (id bigint); \
          CREATE TABLE {RUN_SCHEMA}.untouched (id bigint); \
          CREATE TABLE unrelated.probe (id bigint);",
-        runs = column_ddl(&run_columns),
-        queue = column_ddl(&queue_columns),
     );
     for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
         if relation == "wirings" {
@@ -318,12 +310,7 @@ fn run_plane_fixture() -> String {
 fn expected_stable_acl() -> BTreeSet<String> {
     let mut expected = BTreeSet::from([
         "schema:catalog:catalog:USAGE".to_string(),
-        format!("schema:{RUN_SCHEMA}:{RUN_SCHEMA}:USAGE"),
-        format!("relation:{RUN_SCHEMA}:environment_policies:SELECT"),
-        // `runs` carries `runs_tkey`, so the INSERT grants above are dead
-        // without this EXECUTE. Spelled as a literal, not read back from the
-        // builder that emits the grant: a row derived from the same constant
-        // that produced it would assert nothing about what the server did.
+        // The catalog wiring index still needs this exact function grant.
         "routine:wamn_authority:tenant_key:EXECUTE".to_string(),
     ]);
     for relation in sql::MANAGEMENT_ADMITTER_CATALOG_RELATIONS {
@@ -331,34 +318,6 @@ fn expected_stable_acl() -> BTreeSet<String> {
     }
     for column in sql::MANAGEMENT_ADMITTER_WIRING_INSERT_COLUMNS {
         expected.insert(format!("column:catalog:wirings.{column}:INSERT"));
-    }
-    for (relation, privilege, columns) in [
-        (
-            "runs",
-            "SELECT",
-            &sql::MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS[..],
-        ),
-        (
-            "runs",
-            "INSERT",
-            &sql::MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS[..],
-        ),
-        (
-            "run_queue",
-            "SELECT",
-            &sql::MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS[..],
-        ),
-        (
-            "run_queue",
-            "INSERT",
-            &sql::MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS[..],
-        ),
-    ] {
-        for column in columns {
-            expected.insert(format!(
-                "column:{RUN_SCHEMA}:{relation}.{column}:{privilege}"
-            ));
-        }
     }
     expected
 }

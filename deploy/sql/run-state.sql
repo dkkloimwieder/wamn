@@ -169,26 +169,6 @@ BEGIN
 END
 $$;
 
-CREATE FUNCTION wamn_run.require_management_admission_authority()
-RETURNS boolean
-LANGUAGE plpgsql
-SECURITY INVOKER
-AS $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-          FROM pg_catalog.pg_roles AS authority
-         WHERE authority.rolname = 'wamn_management_admitter'
-           AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER')
-    ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '42501',
-            MESSAGE = 'management-admission-authority-required';
-    END IF;
-    RETURN true;
-END
-$$;
-
 -- Producer roles cannot name `runs.durability_class` in their INSERT grants.
 -- This invoker-rights trigger therefore performs the only admission-time
 -- selection, from the project-local projection below.

@@ -513,8 +513,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
 
 const REQUIRE_EXECUTOR_PLATFORM_AUTHORITY_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.require_executor_platform_authority()\n RETURNS boolean\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NOT EXISTS (\n        SELECT 1\n          FROM pg_catalog.pg_roles AS authority\n         WHERE authority.rolname = 'wamn_executor_platform'\n           AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER')\n    ) THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '42501',\n            MESSAGE = 'executor-platform-authority-required';\n    END IF;\n    RETURN true;\nEND\n$function$\n";
 
-const REQUIRE_MANAGEMENT_ADMISSION_AUTHORITY_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.require_management_admission_authority()\n RETURNS boolean\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NOT EXISTS (\n        SELECT 1\n          FROM pg_catalog.pg_roles AS authority\n         WHERE authority.rolname = 'wamn_management_admitter'\n           AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER')\n    ) THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '42501',\n            MESSAGE = 'management-admission-authority-required';\n    END IF;\n    RETURN true;\nEND\n$function$\n";
-
 const PIN_RUN_DURABILITY_CLASS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.pin_run_durability_class()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    projected_environment text;\n    projected_class text;\nBEGIN\n    SELECT policy.expected_environment, policy.durability_class\n      INTO projected_environment, projected_class\n      FROM wamn_run.environment_policies AS policy\n     WHERE policy.tenant_id = NEW.tenant_id;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'environment-policy-not-converged';\n    END IF;\n    IF NEW.environment IS DISTINCT FROM projected_environment THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'environment-policy-environment-mismatch';\n    END IF;\n    NEW.durability_class := projected_class;\n    RETURN NEW;\nEND\n$function$\n";
 
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
@@ -546,26 +544,6 @@ BEGIN
         RAISE EXCEPTION USING
             ERRCODE = '42501',
             MESSAGE = 'executor-platform-authority-required';
-    END IF;
-    RETURN true;
-END
-$$;"#;
-
-const REQUIRE_MANAGEMENT_ADMISSION_AUTHORITY_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.require_management_admission_authority()
-RETURNS boolean
-LANGUAGE plpgsql
-SECURITY INVOKER
-AS $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-          FROM pg_catalog.pg_roles AS authority
-         WHERE authority.rolname = 'wamn_management_admitter'
-           AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER')
-    ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '42501',
-            MESSAGE = 'management-admission-authority-required';
     END IF;
     RETURN true;
 END
@@ -739,11 +717,6 @@ fn helper_specs() -> Vec<HelperSpec> {
             "require_executor_platform_authority",
             REQUIRE_EXECUTOR_PLATFORM_AUTHORITY_DEF,
             REQUIRE_EXECUTOR_PLATFORM_AUTHORITY_SQL,
-        ),
-        borrowed_helper_spec(
-            "require_management_admission_authority",
-            REQUIRE_MANAGEMENT_ADMISSION_AUTHORITY_DEF,
-            REQUIRE_MANAGEMENT_ADMISSION_AUTHORITY_SQL,
         ),
         borrowed_helper_spec(
             "pin_run_durability_class",
@@ -3819,7 +3792,6 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
      WHERE n.nspname = $1 \
        AND p.proname IN ('lock_catalog_head', \
                          'require_executor_platform_authority', \
-                         'require_management_admission_authority', \
                          'pin_run_durability_class', \
                          'guard_event_lineage_immutable', \
                          'reject_immutable_effect_fact_change', \

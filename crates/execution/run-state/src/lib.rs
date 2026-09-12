@@ -13,9 +13,6 @@
 //! host-owned executor adapter supplies the `wamn:postgres` effects against the
 //! schema in `deploy/sql/run-state.sql`.
 //!
-//! Private management admission composes the one surviving admission
-//! transaction; hot HTTP and stream ingress execute through the router.
-//!
 //! ## SR12 — what the pure tests cover, and what they cannot
 //!
 //! This crate's tests exercise the **decision** (which statement, what shape,
@@ -29,8 +26,6 @@
 //! pure tests do NOT cover; the live half is the throwaway-PG gates over the
 //! real prepared-statement path (SR12b).
 
-/// The private management admission transaction.
-pub mod admission;
 /// Capture-independent effect-attempt generation facts.
 ///
 /// Durable-tier shelf (`wamn-hopk` R1): behind `durable-tier`, off by default,

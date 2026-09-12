@@ -2,10 +2,8 @@
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
-use std::thread;
 
 use wamn_control_provision::{WorkloadRoleFamily, sql};
-use wamn_run_state::admission::{RunStateSchema, management_admission_transaction};
 use wamn_run_state::queue::select_production_claim_sql;
 
 const EXECUTOR_LOGIN: &str = "wamn_matrix_executor_login";
@@ -65,52 +63,6 @@ fn assert_sqlstate(url: &str, script: &str, state: &str, message: &str) {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains(state), "SQLSTATE drifted:\n{stderr}");
     assert!(stderr.contains(message), "refusal drifted:\n{stderr}");
-}
-
-fn management_prepares() -> String {
-    let management = management_admission_transaction(&RunStateSchema::default());
-    format!(
-        "PREPARE management_lock(text,text,text,int) AS {}; \
-         PREPARE management_admit(\
-           text,text,text,int,text,text,text,text,timestamptz,text,text,int,\
-           text,int,text,text\
-         ) AS {};",
-        management.lock_producer(),
-        management.admit(),
-    )
-}
-
-/// One test-case admission. `report_id` is the report the caller names, which
-/// admission requires to equal the candidate's own `wiring_hash`
-/// (wamn-0h0g.8.5.6) -- so passing anything else is the `gate-report-mismatch`
-/// case rather than a second parameter to vary.
-fn test_case_admission(
-    report_id: &str,
-    ordinal: i32,
-    run_id: &str,
-    wiring_id: &str,
-    wiring_hash: &str,
-    prior_binding_world: Option<&str>,
-) -> String {
-    let prior = prior_binding_world
-        .map(|world| format!("$binding_world${world}$binding_world$"))
-        .unwrap_or_else(|| "NULL".to_string());
-    format!(
-        "EXECUTE management_lock('test-case',NULL,'{report_id}',{ordinal}); \
-         EXECUTE management_admit(\
-           'test-case','cat','dev',1,'{run_id}','{{}}','{{}}','proof-revision',\
-           '2099-01-01T00:00:00Z',NULL,'{report_id}',{ordinal},'{wiring_id}',1,\
-           '{wiring_hash}',{prior}\
-         );"
-    )
-}
-
-fn as_management(script: &str) -> String {
-    format!(
-        "BEGIN; SET LOCAL ROLE {MANAGEMENT_LOGIN}; SET LOCAL app.tenant='t1'; \
-         SELECT current_user; {} {script} COMMIT;",
-        management_prepares(),
-    )
 }
 
 #[test]
@@ -183,20 +135,7 @@ fn surviving_authority_matrix_live() {
              {management_provision}"
         ),
     );
-    // `wamn-0h0g.22.28`: `runs` carries the `runs_tkey` EXPRESSION INDEX over
-    // `wamn_authority.tenant_key(text)`, and PostgreSQL evaluates an index
-    // expression while INSERTING the row — so the surface's column-exact INSERT
-    // is DEAD without one function EXECUTE, and every admission below this point
-    // raises 42501 `permission denied for function tenant_key`. Measured on
-    // PostgreSQL 18.6 before the grant existed: this test failed at the first
-    // admission with exactly that message.
-    //
-    // The two negatives are the measured boundary of that grant. An index
-    // expression is a stored, already resolved node tree, so schema USAGE is
-    // never checked; and the tenant floor policy that calls `current_tenant_key`
-    // is narrowed `TO wamn_app`, so this family matches only the permissive
-    // `TO wamn_platform` arm and never evaluates it. Both are asserted so a
-    // later widening of the surface has to move a named assertion.
+    // Publication still needs tenant-key execution for its catalog index.
     success(
         &url,
         &format!(
@@ -282,53 +221,7 @@ fn surviving_authority_matrix_live() {
         ),
     );
 
-    let component_digest = format!("sha256:{}", "a".repeat(64));
-    let projection_hash = format!("sha256:{}", "6".repeat(64));
-    let imports_fingerprint = format!("sha256:{}", "b".repeat(64));
-    let wiring_hash = format!("sha256:{}", "c".repeat(64));
-    let race_wiring_hash = format!("sha256:{}", "d".repeat(64));
-    let requirement_z_hash = format!("sha256:{}", "e".repeat(64));
-    let requirement_a_hash = format!("sha256:{}", "f".repeat(64));
-    let definition_z_hash = format!("sha256:{}", "1".repeat(64));
-    let definition_a_hash = format!("sha256:{}", "2".repeat(64));
-    let definition_a2_hash = format!("sha256:{}", "3".repeat(64));
-    let validation_z_hash = format!("sha256:{}", "4".repeat(64));
-    let validation_a_hash = format!("sha256:{}", "5".repeat(64));
-
-    // THE EXECUTOR'S TEST-ONLY UNION GRANT IS GONE (`wamn-0h0g.22.31`). Both
-    // families now stand on the production builder and nothing else:
-    // `grant_executor_platform_surface_sql` is the whole authority this suite
-    // drives the claim under, so a leg that passes here passes on what
-    // provisioning actually emits. The union it replaces was
-    // `SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA catalog, wamn_run`
-    // — every catalog write and every `runs`/`run_queue` column, none of which
-    // the family holds any more.
-    //
-    // The wrong-class management attempt below still reaches the `current_user`
-    // guard on this narrow surface, and that is MEASURED, not assumed:
-    // `lock_management_producer_sql` names NO relation at all — only the
-    // authority function and `pg_catalog` — so it has no table ACL to fail
-    // ahead of the guard. Only schema `USAGE` is load bearing there, for
-    // resolving `wamn_run.` and `catalog.` while the sibling admit statement is
-    // PREPAREd, and the builder grants exactly that.
-    //
-    // `wamn_control_author` keeps a bare schema `USAGE`: it is not an executor
-    // grant, it is what lets the denied-role loop at the end of this test reach
-    // `wamn_run.require_executor_platform_authority()` and fail on the guard's
-    // literal rather than on schema resolution.
-    //
-    // THE THREE DELIBERATE OVER-GRANTS AHEAD OF THE REPLAY ARE THE MANAGEMENT
-    // ARM'S DEVICE, applied to this family: the surface `executor_provision`
-    // already installed is REPLAYED here over a widened ACL, and the denial
-    // matrix below asserts the replay NARROWED. Without them the totals would
-    // only show that the builder grants what it grants; with them they show that
-    // its blanket `REVOKE` withdraws a table privilege, a `runs` column and a
-    // `run_queue` column that no longer belong to the family. One is a catalog
-    // WRITE, one an admission pin, one the FIFO position — the three grains the
-    // surface's own documentation says it must never hold.
-    //
-    // The two candidate rows share one component with two requirements so array
-    // ordering is observable.
+    // Reapplying the executor grants must remove table and column over-grants.
     let executor_surface = sql::grant_executor_platform_surface_sql("wamn_run");
     success(
         &url,
@@ -348,51 +241,6 @@ fn surviving_authority_matrix_live() {
              INSERT INTO catalog.effective_release_packages \
                (tenant_id,effective_release_id,package_id,package_version) \
              VALUES ('t1',1,'cat','1.0.0'); \
-             INSERT INTO catalog.component_library \
-               (tenant_id,package_id,package_version,component,interface_version,operations, \
-                component_digest,projection_hash,imports,imports_fingerprint,effects) \
-             VALUES ('t1','cat','1.0.0','entity','0.1', \
-                     '{{\"create\":{{\"input-ports\":[],\"output-ports\":[],\"parameters\":[]}}}}', \
-                     '{component_digest}','{projection_hash}','[]','{imports_fingerprint}','[]'); \
-             INSERT INTO catalog.wirings \
-               (tenant_id,package_id,package_version,wiring_id,version, \
-                graph_json,wiring_hash) VALUES \
-               ('t1','cat','1.0.0','candidate',1, \
-                '{{\"format-version\":\"0.1\",\"wiring-id\":\"candidate\",\"version\":1, \
-                   \"entry\":\"node\",\"nodes\":{{\"node\":{{\"component\":\"entity\", \
-                   \"interface-version\":\"0.1\",\"operation\":\"create\"}}}}}}', \
-                '{wiring_hash}'), \
-               ('t1','cat','1.0.0','race',1, \
-                '{{\"format-version\":\"0.1\",\"wiring-id\":\"race\",\"version\":1, \
-                   \"entry\":\"node\",\"nodes\":{{\"node\":{{\"component\":\"entity\", \
-                   \"interface-version\":\"0.1\",\"operation\":\"create\"}}}}}}', \
-                '{race_wiring_hash}'); \
-             INSERT INTO catalog.connection_requirements \
-               (tenant_id,component_digest,store_alias,requirement_json,requirement_hash) VALUES \
-               ('t1','{component_digest}','z-store','{{\"requirement-type\":\"http\"}}', \
-                '{requirement_z_hash}'), \
-               ('t1','{component_digest}','a-store','{{\"requirement-type\":\"http\"}}', \
-                '{requirement_a_hash}'); \
-             INSERT INTO catalog.connection_instances \
-               (tenant_id,environment,instance_id,requirement_type,contract) VALUES \
-               ('t1','dev','instance-z','http','wamn:http/0.1'), \
-               ('t1','dev','instance-a','http','wamn:http/0.1'); \
-             INSERT INTO catalog.connection_generations \
-               (tenant_id,environment,instance_id,generation,definition_json, \
-                definition_hash,credential_set_handle) VALUES \
-               ('t1','dev','instance-z',1,'{{\"base-url\":\"https://z.invalid\"}}', \
-                '{definition_z_hash}','credential-z-1'), \
-               ('t1','dev','instance-a',1,'{{\"base-url\":\"https://a.invalid\"}}', \
-                '{definition_a_hash}','credential-a-1'); \
-             UPDATE catalog.connection_instances \
-                SET active_generation=1,revision=1,updated_at=clock_timestamp()+interval '1 second'; \
-             INSERT INTO catalog.connection_bindings \
-               (tenant_id,effective_release_id,component_digest,store_alias, \
-                environment,instance_id,binding_status,validation_status,validation_hash) VALUES \
-               ('t1',1,'{component_digest}','z-store','dev','instance-z', \
-                'active','valid','{validation_z_hash}'), \
-               ('t1',1,'{component_digest}','a-store','dev','instance-a', \
-                'active','valid','{validation_a_hash}'); \
              INSERT INTO wamn_run.environment_policies \
                (tenant_id,expected_environment,durability_class) \
              VALUES ('t1','dev','standard'); \
@@ -498,96 +346,6 @@ result_json,state_json,status,terminal_reason,updated_at', \
     assert!(claimed.contains(EXECUTOR_LOGIN));
     assert!(claimed.contains("run-1"));
 
-    let ordinal_zero = test_case_admission(
-        &wiring_hash,
-        0,
-        "case-run-0",
-        "candidate",
-        &wiring_hash,
-        None,
-    );
-    let admitted = success(&url, &as_management(&ordinal_zero));
-    let admitted_row = admitted
-        .lines()
-        .find(|line| line.starts_with("admitted|case-run-0|"))
-        .expect("candidate admission returns its frozen world");
-    let binding_world = admitted_row
-        .splitn(3, '|')
-        .nth(2)
-        .expect("binding-world result column");
-    let binding_world_value: serde_json::Value =
-        serde_json::from_str(binding_world).expect("binding world is JSON");
-    let aliases = binding_world_value
-        .as_array()
-        .expect("binding world is an array")
-        .iter()
-        .map(|fact| fact["store-alias"].as_str().unwrap())
-        .collect::<Vec<_>>();
-    assert_eq!(aliases, ["a-store", "z-store"]);
-    assert!(!binding_world.contains("base-url"));
-
-    let duplicate = success(&url, &as_management(&ordinal_zero));
-    assert!(duplicate.contains(&format!("duplicate|case-run-0|{binding_world}")));
-
-    // The report is not guest echo: it IS the candidate row's own content hash
-    // (wamn-0h0g.8.5.6), with its own refusal literal and no mutation. The
-    // mismatched value here is the OTHER seeded candidate's real hash, so this
-    // refuses because the report names a different document rather than because
-    // the value is malformed -- which `wiring_hash !~ '^sha256:...'` would have
-    // caught as `invalid-input` instead.
-    let gate_mismatch = success(
-        &url,
-        &as_management(&test_case_admission(
-            &race_wiring_hash,
-            0,
-            "wrong-report-run",
-            "candidate",
-            &wiring_hash,
-            None,
-        )),
-    );
-    assert!(gate_mismatch.contains("gate-report-mismatch||"));
-
-    // Rotate one mutable instance pointer. The already-admitted ordinal still
-    // recovers its frozen world, while a later ordinal exact-comparing that
-    // trusted prior world refuses before a run or queue row is inserted.
-    success(
-        &url,
-        &format!(
-            "INSERT INTO catalog.connection_generations \
-           (tenant_id,environment,instance_id,generation,definition_json, \
-            definition_hash,credential_set_handle) \
-         VALUES ('t1','dev','instance-a',2,'{{\"base-url\":\"https://a2.invalid\"}}', \
-                 '{definition_a2_hash}','credential-a-2'); \
-         UPDATE catalog.connection_instances \
-            SET active_generation=2,revision=revision+1, \
-                updated_at=clock_timestamp()+interval '1 second' \
-          WHERE tenant_id='t1' AND environment='dev' AND instance_id='instance-a';"
-        ),
-    );
-    let recovered = success(&url, &as_management(&ordinal_zero));
-    assert!(recovered.contains(&format!("duplicate|case-run-0|{binding_world}")));
-    let drift = success(
-        &url,
-        &as_management(&test_case_admission(
-            &wiring_hash,
-            1,
-            "case-run-1",
-            "candidate",
-            &wiring_hash,
-            Some(binding_world),
-        )),
-    );
-    assert!(drift.contains("binding-world-drift||"));
-    assert_eq!(
-        success(
-            &url,
-            "SELECT count(*) FROM wamn_run.runs WHERE run_id='case-run-1'; \
-             SELECT count(*) FROM wamn_run.run_queue WHERE run_id='case-run-1';"
-        ),
-        "0\n0\n"
-    );
-
     // The complete-grain CHECK makes a half candidate row unrepresentable, and
     // the trigger names every component-era pin.
     assert_sqlstate(
@@ -603,37 +361,9 @@ result_json,state_json,status,terminal_reason,updated_at', \
     assert_sqlstate(
         &url,
         "UPDATE wamn_run.runs SET binding_world_json='[]' \
-          WHERE tenant_id='t1' AND run_id='case-run-0';",
+          WHERE tenant_id='t1' AND run_id='run-1';",
         "55000",
         "run-admission-pin-immutable",
-    );
-
-    // Two simultaneous first admissions serialize on the DB-derived producer
-    // key. One creates the ordinary run/queue pair and the other observes the
-    // same row and world; neither can return a key-only duplicate.
-    let race = as_management(&test_case_admission(
-        &race_wiring_hash,
-        0,
-        "race-run",
-        "race",
-        &race_wiring_hash,
-        None,
-    ));
-    let (race_a, race_b) = thread::scope(|scope| {
-        let left = scope.spawn(|| success(&url, &race));
-        let right = scope.spawn(|| success(&url, &race));
-        (left.join().unwrap(), right.join().unwrap())
-    });
-    let combined = format!("{race_a}\n{race_b}");
-    assert!(combined.contains("admitted|race-run|"));
-    assert!(combined.contains("duplicate|race-run|"));
-    assert_eq!(
-        success(
-            &url,
-            "SELECT count(*) FROM wamn_run.runs WHERE run_id='race-run'; \
-             SELECT count(*) FROM wamn_run.run_queue WHERE run_id='race-run';"
-        ),
-        "1\n1\n"
     );
 
     // Every ordered cross-class attempt reaches the exact current_user guard.
@@ -650,15 +380,6 @@ result_json,state_json,status,terminal_reason,updated_at', \
              EXECUTE wrong_claim('cat','dev');"
         ),
         "executor-platform-authority-required",
-    );
-    assert_refusal(
-        &url,
-        &format!(
-            "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL app.tenant='t1'; \
-             {} EXECUTE management_lock('test-case',NULL,'report-a',0);",
-            management_prepares(),
-        ),
-        "management-admission-authority-required",
     );
 
     success(
@@ -685,13 +406,6 @@ result_json,state_json,status,terminal_reason,updated_at', \
             ),
             "executor-platform-authority-required",
         );
-        assert_refusal(
-            &url,
-            &format!(
-                "BEGIN; SET LOCAL ROLE {denied_role}; \
-                 SELECT wamn_run.require_management_admission_authority();"
-            ),
-            "management-admission-authority-required",
-        );
+
     }
 }

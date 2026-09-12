@@ -141,11 +141,10 @@ const MATRIX_PRIVILEGES: [&str; 4] = ["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// The authority-bearing routines. `catalog`'s two trigger functions are
 /// deliberately absent: they are invoker-rights triggers, not a family's
 /// authority.
-const MATRIX_ROUTINES: [&str; 4] = [
+const MATRIX_ROUTINES: [&str; 3] = [
     "wamn_authority.current_tenant_key()",
     "wamn_authority.tenant_key(text)",
     "wamn_run.require_executor_platform_authority()",
-    "wamn_run.require_management_admission_authority()",
 ];
 
 /// One family's REACH over [`MATRIX_RELATIONS`] and [`MATRIX_ROUTINES`], spelled
@@ -238,11 +237,6 @@ const MATRIX: [FamilyReach; 10] = [
             "catalog.component_library|SELECT|table",
             "catalog.wirings|INSERT|column",
             "catalog.wirings|SELECT|table",
-            "wamn_run.environment_policies|SELECT|table",
-            "wamn_run.run_queue|INSERT|column",
-            "wamn_run.run_queue|SELECT|column",
-            "wamn_run.runs|INSERT|column",
-            "wamn_run.runs|SELECT|column",
         ],
         routines: &["wamn_authority.tenant_key(text)"],
     },
@@ -1390,7 +1384,7 @@ fn the_authority_derivations_match_their_pinned_definition_digest() {
     }
 }
 
-/// The two run-plane guards are PUBLIC EXECUTE today, which is why the routine
+/// The executor guard is PUBLIC EXECUTE today, which is why the routine
 /// half of the matrix reads `aclexplode` and not `has_function_privilege`.
 ///
 /// Recorded as a measured fact rather than assumed, so that revoking PUBLIC —
@@ -1407,13 +1401,11 @@ fn the_run_plane_guards_are_still_public_execute() {
             "SELECT has_function_privilege('public', \
                'wamn_run.require_executor_platform_authority()', 'EXECUTE')::text || ' ' || \
              has_function_privilege('public', \
-               'wamn_run.require_management_admission_authority()', 'EXECUTE')::text || ' ' || \
-             has_function_privilege('public', \
                'wamn_authority.tenant_key(text)', 'EXECUTE')::text || ' ' || \
              has_function_privilege('public', \
                'wamn_authority.current_tenant_key()', 'EXECUTE')::text",
         ),
-        "true true false false",
+        "true false false",
         "PUBLIC's EXECUTE on the run-plane guards or on the authority \
          derivations moved; the routine arms of this matrix are built on the \
          first pair being PUBLIC and the second pair not being"
