@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/debug/deps/production_claim_durable_live-e440e22bafd9346c",
+    "production_claim_durable_live",
+    "--exact",
+    "--ignored",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "started": "2026-09-12T16:00:48.668022+00:00",
+  "ended": "2026-09-12T16:00:48.778077+00:00",
+  "elapsed_seconds": 0.1100326330633834,
+  "exit": 101
+}

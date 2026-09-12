@@ -1,0 +1,11 @@
+{
+  "test_exit_code": 101,
+  "reported_counts": [
+    0,
+    1,
+    0,
+    0
+  ],
+  "public_temporary_revoked_before_test": true,
+  "executor_temporary_absent_after_test": false
+}

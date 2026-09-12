@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "pg_virtualenv",
+    "-t",
+    "-v",
+    "18",
+    "-o",
+    "log_min_error_statement=panic",
+    "/usr/bin/python3",
+    "/home/kaalin/dev/wamn/evidence/consolidation/run-state-temp-fix-20260912-001/capture.py",
+    "--inside"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "started": "2026-09-12T15:51:42.582589+00:00",
+  "elapsed_seconds": 2.9449197250651196,
+  "exit_code": 101
+}

@@ -1,0 +1,4 @@
+
+thread 'dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it' (2630027) panicked at services/dispatcher/tests/read_authority.rs:200:10:
+set WAMN_PROVISION_PG_URL to a disposable PostgreSQL 18 server: NotPresent
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

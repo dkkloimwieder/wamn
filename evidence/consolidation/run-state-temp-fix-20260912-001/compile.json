@@ -1,0 +1,35 @@
+{
+  "source": "39a1eca415b7c2ee6937b6b8277dd426737b48cf",
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-run-state",
+    "--test",
+    "run_state_live",
+    "--no-run",
+    "--message-format=json-render-diagnostics"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_TARGET_DIR": null
+  },
+  "started_at": "2026-09-12T15:49:52.723147+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 32.2059612510493,
+  "source_after": "39a1eca415b7c2ee6937b6b8277dd426737b48cf",
+  "tracked_status_after": "",
+  "test_artifacts": [
+    {
+      "executable": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/debug/deps/run_state_live-bc598bbefa2a4a36",
+      "source_path": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/crates/execution/run-state/tests/run_state_live.rs",
+      "sha256": "839de4c934569c586783d761c4103244a28d45edde6c3e8fad1e92defb61fd58",
+      "size": 23009984
+    }
+  ]
+}

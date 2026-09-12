@@ -1,0 +1,6 @@
+{
+  "commit": "eea095bcd41b31cd52b11109bc2e16b9b5d57b5c",
+  "paths": [
+    "tests/conformance/src/docker_component_provenance.rs"
+  ]
+}

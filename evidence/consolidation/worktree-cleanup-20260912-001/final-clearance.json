@@ -1,0 +1,547 @@
+{
+  "observed_at_utc": "2026-09-12T16:07:26.149875+00:00",
+  "processes_seen": 582,
+  "unreadable_cmdlines": 0,
+  "command_references_including_embedded_shell_text": [],
+  "candidate_or_parent_bind_mounts": [],
+  "candidate_root_symlinks": [],
+  "record_dispositions": [
+    {
+      "blob": "713eb860f428026e29f648fc83c20ab29892ae2d",
+      "path": "docs/perf/2026.09/consolidation-step3/pilot-stub-live-002/publication.json",
+      "introduced_in": "9ab987a7e30a69419a93447cd110a195688dbb2a",
+      "updated_in": "69270e533d1b0b57cea9c7bae4484627a43c2593",
+      "reason": "Approved raw-log publication updated current status. The earlier record remains in preserved repository history."
+    },
+    {
+      "blob": "50b0f6d8f5d7d20d6fba9ba9fa46b62bd7204dac",
+      "path": "docs/experiments/agent-authoring/tasks/dock-appointments/task.json",
+      "introduced_in": "1438acc18453b0248dd25babf8ac839ef07b51f4",
+      "updated_in": "9bd09193404cf967d5d5738f1b1be6911c40a5df",
+      "reason": "The active task received its explicitly declared application home. The earlier tracked configuration remains in preserved repository history."
+    }
+  ],
+  "candidate_count": 74,
+  "allocated_bytes_at_initial_measurement": 48462614528,
+  "candidates": [
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-active-doc-links-20260912",
+      "head": "7ee09bbbffd6cc5b714934a61e696a3adf2da488",
+      "branch": "refs/heads/work/consolidation-active-doc-links-20260912",
+      "allocated_bytes": 799117312,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-app-generation-results-20260911",
+      "head": "f2367ab182450ad6811110c4abb499a2eb80f7e8",
+      "branch": "refs/heads/work/consolidation-app-generation-results-20260911",
+      "allocated_bytes": 639750144,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-app-sqlx-20260911",
+      "head": "9ecc8115c643c35875fae4ded469da6621b52204",
+      "branch": "refs/heads/work/consolidation-app-sqlx-20260911",
+      "allocated_bytes": 639643648,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-app-sqlx-results-20260911",
+      "head": "b2fb8fbf5429b3bc643e0c43d1cb89bb486337c7",
+      "branch": "refs/heads/work/consolidation-app-sqlx-results-20260911",
+      "allocated_bytes": 639983616,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-app-test-docs-20260911",
+      "head": "a7bcb33157b87f620b3e689abff5ebb96570e98f",
+      "branch": "refs/heads/work/consolidation-app-test-docs-20260911",
+      "allocated_bytes": 639651840,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-architecture-content-20260912",
+      "head": "534e053757f98cf89544bb888eb5c3c8d2b632a5",
+      "branch": "refs/heads/work/consolidation-architecture-content-20260912",
+      "allocated_bytes": 799813632,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-c-foreign-attachment-20260911",
+      "head": "e634cc075f3ab28092e790fe48bcfc0c1532638d",
+      "branch": "refs/heads/work/consolidation-c-foreign-attachment-20260911",
+      "allocated_bytes": 632532992,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-c-tls-results-20260911",
+      "head": "5e2e101894fb938bd3071e83701ee00e15dd8632",
+      "branch": "refs/heads/work/consolidation-c-tls-results-20260911",
+      "allocated_bytes": 632598528,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-deploy-sql-doc-20260912",
+      "head": "5b04da89900aee66fc6a09d45157876a369f4137",
+      "branch": "refs/heads/work/consolidation-naming-doc-links-20260912",
+      "allocated_bytes": 799703040,
+      "integration": "ancestor"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-features-20260911",
+      "head": "7ac06b4a4029ec0ce9a3a7d2035ce04e438ba47f",
+      "branch": "refs/heads/work/consolidation-features-20260911",
+      "allocated_bytes": 575737856,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+      "head": "a601dcead5338b0a42aa0fd31868652c42af85e8",
+      "branch": "refs/heads/work/consolidation-approved-doc-placement-20260912",
+      "allocated_bytes": 799461376,
+      "integration": "ancestor"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-journey-helpers-20260911",
+      "head": "9a39d4e45f5ec9a0ab8c8aed057ab7347c11babb",
+      "branch": "refs/heads/work/consolidation-journey-helpers-20260911",
+      "allocated_bytes": 622125056,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-materializer-docker-results-20260911",
+      "head": "f99a2cb13c6316e588c40b9a6c562abfd2be2754",
+      "branch": "refs/heads/work/consolidation-materializer-docker-results-20260911",
+      "allocated_bytes": 639631360,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-operator-recovery-20260911",
+      "head": "7939d322936972886c8ee1cb0e148ca7a4cd92f8",
+      "branch": "refs/heads/work/consolidation-operator-recovery-20260911",
+      "allocated_bytes": 621748224,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-operator-start-20260912",
+      "head": "944a038c67c72da20cb701e90514990be1330d75",
+      "branch": "refs/heads/work/consolidation-operator-start-20260912",
+      "allocated_bytes": 663621632,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-902-raw-results-20260912",
+      "head": "287f9992b7d002a42b71a46402ce30a5be4ecead",
+      "branch": "refs/heads/work/consolidation-pilot-902-raw-results-20260912",
+      "allocated_bytes": 663576576,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-902-results-20260911",
+      "head": "0d51fdeea0cc7d5ea5e6769c2df117cd15e39c41",
+      "branch": "refs/heads/work/consolidation-pilot-902-results-20260911",
+      "allocated_bytes": 654987264,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-903-results-20260911",
+      "head": "f9abdd5589e8dc6755faa55b6b0f8dd4f4b83eab",
+      "branch": "refs/heads/work/consolidation-pilot-903-results-20260911",
+      "allocated_bytes": 657854464,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-build-004-results-20260911",
+      "head": "63061832ace01689ee0fcdbd78bc62f6cf511328",
+      "branch": "refs/heads/work/consolidation-pilot-build-004-results-20260911",
+      "allocated_bytes": 654184448,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-build-005-results-20260911",
+      "head": "a83ef31b39f8655e25f053e2a34142f2dc2840a0",
+      "branch": "refs/heads/work/consolidation-pilot-build-005-results-20260911",
+      "allocated_bytes": 654934016,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-build-report-20260911",
+      "head": "a57c617206c0dc0d087f80234f798ba1d57b3385",
+      "branch": "refs/heads/work/consolidation-pilot-build-report-20260911",
+      "allocated_bytes": 654163968,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-build-results-20260911",
+      "head": "1e93f42a4d79ce9626d6b93484b8986f543ebc64",
+      "branch": "refs/heads/work/consolidation-pilot-build-results-20260911",
+      "allocated_bytes": 642031616,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-identity-20260911",
+      "head": "91f951e76e79c41046fe206e1415ecd608d6633b",
+      "branch": "refs/heads/work/consolidation-pilot-identity-20260911",
+      "allocated_bytes": 654336000,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-owned-cleanup-20260911",
+      "head": "ce9b3d2a67a13ff2e3b9e8767ec2676795eabcd6",
+      "branch": "refs/heads/work/consolidation-pilot-owned-cleanup-20260911",
+      "allocated_bytes": 641970176,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-preparation-20260911",
+      "head": "3eb2aac26b2c00b725abaf8a7fb28c06d924c617",
+      "branch": "refs/heads/work/consolidation-pilot-preparation-20260911",
+      "allocated_bytes": 625319936,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-replay-20260911",
+      "head": "41d84beefa571d3b60928c20900a05931f6f844b",
+      "branch": "refs/heads/work/consolidation-pilot-replay-20260911",
+      "allocated_bytes": 625483776,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-runbook-20260911",
+      "head": "cb0771393cfd2b10570390c0c29860375e7c4f5f",
+      "branch": "refs/heads/work/consolidation-pilot-runbook-20260911",
+      "allocated_bytes": 624132096,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-results-20260911",
+      "head": "d87c60af0d8b51cb13cf3f085250dadd72f1c20a",
+      "branch": "refs/heads/work/consolidation-pilot-stub-results-20260911",
+      "allocated_bytes": 654290944,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-system-database-20260911",
+      "head": "5388c346fd01dbcc2c9bf07f13c50235d543a15e",
+      "branch": "refs/heads/work/consolidation-pilot-system-database-20260911",
+      "allocated_bytes": 654159872,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-postcommit-001-results-20260911",
+      "head": "b57ed25b9fa5d915df4b846ecd9ec5f26dcb7f1f",
+      "branch": "refs/heads/work/consolidation-postcommit-001-results-20260911",
+      "allocated_bytes": 639549440,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-postcommit-pair-results-20260911",
+      "head": "7ffb66c333c1c7455bb9ad3401c2c1b670afe83a",
+      "branch": "refs/heads/work/consolidation-postcommit-pair-results-20260911",
+      "allocated_bytes": 641966080,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-private-tests-20260911",
+      "head": "40eb9a0ed2719d50f01602f8d4197d065cece5de",
+      "branch": "refs/heads/work/consolidation-private-tests-20260911",
+      "allocated_bytes": 621785088,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pty-final-20260911",
+      "head": "4a25e44588a4139a22ca1a9e67a4d4532b8920ba",
+      "branch": "refs/heads/work/consolidation-pty-final-20260911",
+      "allocated_bytes": 654188544,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-pty-receiving-results-20260911",
+      "head": "407b5985694a2507e8ef5279187e6bae9432fb3a",
+      "branch": "refs/heads/work/consolidation-pty-receiving-results-20260911",
+      "allocated_bytes": 654893056,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-rc-image-load-20260911",
+      "head": "b5771ed2fd1b72f0897a51e1acb52d6a49db15b4",
+      "branch": "refs/heads/work/consolidation-rc-image-load-20260911",
+      "allocated_bytes": 625340416,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-rc-native-image-20260911",
+      "head": "b2978e7224cd9b087cfdf72e7d09b95b5822a4a2",
+      "branch": "refs/heads/work/consolidation-rc-native-image-20260911",
+      "allocated_bytes": 626749440,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-rc-results-20260911",
+      "head": "506882ae0b154ce28869259f7ba8baa3150eb77a",
+      "branch": "refs/heads/work/consolidation-rc-results-20260911",
+      "allocated_bytes": 626720768,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-rc-runner-20260911",
+      "head": "9c0bc3ee377e2e3cf03d865ae492fc5468c96611",
+      "branch": "refs/heads/work/consolidation-rc-runner-20260911",
+      "allocated_bytes": 622608384,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-rc-system-url-20260911",
+      "head": "6ef9937788347f8918425c3979fa5c1118cbd418",
+      "branch": "refs/heads/work/consolidation-rc-system-url-20260911",
+      "allocated_bytes": 626839552,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-004-results-20260911",
+      "head": "9022d04e794f860f0c20d30201a99ddb674343b2",
+      "branch": "refs/heads/work/consolidation-receiving-004-results-20260911",
+      "allocated_bytes": 632541184,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-005-results-20260911",
+      "head": "68f4939a919377245e29600d68dc685eab0d6d00",
+      "branch": "refs/heads/work/consolidation-receiving-005-results-20260911",
+      "allocated_bytes": 633610240,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-006-results-20260911",
+      "head": "5ca9257566f42c88f84b4f79f0c88eb8b192e26b",
+      "branch": "refs/heads/work/consolidation-receiving-006-results-20260911",
+      "allocated_bytes": 673787904,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-007-results-20260911",
+      "head": "831e1e784ae650602c583dc99606b787789d396e",
+      "branch": "refs/heads/work/consolidation-receiving-007-results-20260911",
+      "allocated_bytes": 703418368,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-build-output-20260911",
+      "head": "f484554afbf8129d7c0d0177a3dace048d361801",
+      "branch": "refs/heads/work/consolidation-receiving-build-output-20260911",
+      "allocated_bytes": 633610240,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-cluster-20260911",
+      "head": "731b17a690c712d623669045e82bee1045c5ea26",
+      "branch": "refs/heads/work/consolidation-receiving-cluster-20260911",
+      "allocated_bytes": 620654592,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-generation-20260911",
+      "head": "b406a56b8090364b565ba24961a84a9d9eca1ac5",
+      "branch": "refs/heads/work/consolidation-receiving-generation-20260911",
+      "allocated_bytes": 639557632,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-measurement-20260911",
+      "head": "90658d92793900c91310bcc8fd1737d3fe156281",
+      "branch": "refs/heads/work/consolidation-receiving-measurement-20260911",
+      "allocated_bytes": 621563904,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-nodeport-20260911",
+      "head": "72daf1c5d37a0db2d31ca24125a604837962bfa8",
+      "branch": "refs/heads/work/consolidation-receiving-nodeport-20260911",
+      "allocated_bytes": 624623616,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-readme-20260911",
+      "head": "dd3298a17e1974a74acb31ea46051ca91926c763",
+      "branch": "refs/heads/work/consolidation-receiving-readme-20260911",
+      "allocated_bytes": 639553536,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-session-20260911",
+      "head": "57f8b6b172cd622c221801eb6f5264a1b86650ed",
+      "branch": "refs/heads/work/consolidation-receiving-session-20260911",
+      "allocated_bytes": 621387776,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-startup-tls-20260911",
+      "head": "ccd312d23d30cad0bf4b11fc69885568147886ea",
+      "branch": "refs/heads/work/consolidation-receiving-startup-tls-20260911",
+      "allocated_bytes": 663556096,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-receiving-tls-20260911",
+      "head": "76855f6aea8af1412e874d8bea2eb64bd9cdbe58",
+      "branch": "refs/heads/work/consolidation-receiving-tls-20260911",
+      "allocated_bytes": 631758848,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-run-plane-live-20260912",
+      "head": "f4533fa22100adde62929a839259c77da6238a92",
+      "branch": "refs/heads/work/consolidation-run-plane-live-20260912",
+      "allocated_bytes": 797954048,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-followup-results-20260911",
+      "head": "fc29b1b00e175aca609242d9e43d7c7547545773",
+      "branch": "refs/heads/work/consolidation-stage3-followup-results-20260911",
+      "allocated_bytes": 629047296,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-live-failures-20260911",
+      "head": "98f19be94ccf6d514b47ab433fc55431c8df2794",
+      "branch": "refs/heads/work/consolidation-stage3-live-failures-20260911",
+      "allocated_bytes": 630669312,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-overview-final-20260911",
+      "head": "6cba884285202c15a8f3a2e39b923ab6a73e20ca",
+      "branch": "refs/heads/work/consolidation-stage3-overview-final-20260911",
+      "allocated_bytes": 641982464,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-rc-pass-20260911",
+      "head": "b4135f2e734fdbb7e29ca91bc6b86216dcd3805e",
+      "branch": "refs/heads/work/consolidation-stage3-rc-pass-20260911",
+      "allocated_bytes": 631152640,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-report-pilot-20260911",
+      "head": "efefbd9d79c664b854f61f673a417fa73fb4a764",
+      "branch": "refs/heads/work/consolidation-stage3-report-pilot-20260911",
+      "allocated_bytes": 657686528,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-report-status-20260912",
+      "head": "7b26c79b5d47ce1f6d474580b675cb4848dc7a12",
+      "branch": "refs/heads/work/consolidation-stage3-report-status-20260912",
+      "allocated_bytes": 683405312,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-results-20260911",
+      "head": "9c136079fa8fa5453a00416cfff0684b9adea863",
+      "branch": "refs/heads/work/consolidation-stage3-results-20260911",
+      "allocated_bytes": 625299456,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-sweep-005-results-20260912",
+      "head": "f08afc461f6d35d11f66bca072cda1ae3b7df96e",
+      "branch": "refs/heads/work/consolidation-stage3-sweep-005-results-20260912",
+      "allocated_bytes": 669253632,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-sweep-006-results-20260912",
+      "head": "216b1e7e451203f8e04d0914b2d6a53e9158d74a",
+      "branch": "refs/heads/work/consolidation-stage3-sweep-006-results-20260912",
+      "allocated_bytes": 689147904,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-sweep-results-20260911",
+      "head": "cda28ff9034399a95f5fb32e0a5095c7fdefb282",
+      "branch": "refs/heads/work/consolidation-stage3-sweep-results-20260911",
+      "allocated_bytes": 639295488,
+      "integration": "ancestor"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-sweep002-results-20260911",
+      "head": "4769ecb9be36dd3e33e2dcabee9b261edf0e2366",
+      "branch": "refs/heads/work/consolidation-stage3-sweep002-results-20260911",
+      "allocated_bytes": 652206080,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-sweep004-results-20260911",
+      "head": "394b680587173b7ff21745bf89095218137c173f",
+      "branch": "refs/heads/work/consolidation-stage3-sweep004-results-20260911",
+      "allocated_bytes": 663482368,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-test-fixes-20260911",
+      "head": "217b6ba1a0cc9d36c2c6e9900b9b93c8edcb0c69",
+      "branch": "refs/heads/work/consolidation-stage3-test-fixes-20260911",
+      "allocated_bytes": 633614336,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-testing-docs-20260912",
+      "head": "8bdfedc40fc5c8ac1985e409e62c8e2300830872",
+      "branch": "refs/heads/work/consolidation-deployment-declarations-20260912",
+      "allocated_bytes": 799629312,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-wms-c-caller-20260911",
+      "head": "c5e9adb4cbf8a8d06166d8ed2e00526fbf2cb80b",
+      "branch": "refs/heads/work/consolidation-wms-c-caller-20260911",
+      "allocated_bytes": 621318144,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-wms-readme-20260911",
+      "head": "3563aa45356ed5a1467334c549b243801796ad94",
+      "branch": "refs/heads/work/consolidation-wms-readme-20260911",
+      "allocated_bytes": 640090112,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-wms-results-20260911",
+      "head": "a581933f10a3eb3534275b8b2481557d941e168e",
+      "branch": "refs/heads/work/consolidation-wms-results-20260911",
+      "allocated_bytes": 624574464,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-wms-startup-ratio-20260911",
+      "head": "63345829d95063549d044088fa5b6090267d12bb",
+      "branch": "refs/heads/work/consolidation-wms-startup-ratio-20260911",
+      "allocated_bytes": 663535616,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-wms-startup-results-20260911",
+      "head": "6ea53a8e088ad9bdacdfd9396754086bd0e91dcf",
+      "branch": "refs/heads/work/consolidation-wms-startup-results-20260911",
+      "allocated_bytes": 667602944,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-wms-startup-review-20260911",
+      "head": "e5658cbd6d9d8f08240b64b32f28bbe2be4b3884",
+      "branch": "refs/heads/work/consolidation-wms-startup-review-20260911",
+      "allocated_bytes": 657788928,
+      "integration": "all branch-only patches are equivalent"
+    },
+    {
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-wms-terminal-results-20260911",
+      "head": "3709229aab9e47afb35b96e8e5d08a09e66d211d",
+      "branch": "refs/heads/work/consolidation-wms-terminal-results-20260911",
+      "allocated_bytes": 657068032,
+      "integration": "all branch-only patches are equivalent"
+    }
+  ],
+  "limits": "Root-owned cwd/exe/FD descriptors are inaccessible. Readable descriptors, all process arguments, and Docker source mounts were checked. No private or untracked data is included. Root must recheck branch/head/status immediately before plain worktree removal."
+}

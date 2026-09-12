@@ -1,0 +1,15 @@
+psql closed stdin before the full script was written: Broken pipe (os error 32)
+
+thread 'run_state_live' (2642188) panicked at crates/execution/run-state/tests/run_state_live.rs:37:5:
+psql failed
+stdout:
+
+stderr:
+WARNING:  role "wamn_app" has not been granted membership in role "wamn_platform" by role "kaalin"
+WARNING:  role "wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a" has not been granted membership in role "wamn_app" by role "kaalin"
+NOTICE:  schema "wamn_run" does not exist, skipping
+NOTICE:  schema "catalog" does not exist, skipping
+WARNING:  there is already a transaction in progress
+ERROR:  role "postgres" does not exist
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

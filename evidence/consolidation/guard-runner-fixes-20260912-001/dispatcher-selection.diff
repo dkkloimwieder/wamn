@@ -1,0 +1,31 @@
+diff --git a/services/dispatcher/tests/read_authority.rs b/services/dispatcher/tests/read_authority.rs
+index 1708799fd..4a5e9d70f 100644
+--- a/services/dispatcher/tests/read_authority.rs
++++ b/services/dispatcher/tests/read_authority.rs
+@@ -3,7 +3,7 @@
+ //! Set `WAMN_PROVISION_PG_URL` to a **superuser** URL of a throwaway Postgres
+ //! (`CREATE DATABASE` / `CREATE ROLE` need it, exactly as the CNPG cluster
+ //! superuser does in production). Use a dedicated fresh PG18: this gate converges
+-//! the cluster-wide PUBLIC `CONNECT` floor. Skipped cleanly when unset.
++//! the cluster-wide PUBLIC `CONNECT` floor. Ignored unless explicitly selected.
+ //!
+ //! This gate lives with the dispatcher, not with the provisioner, because what is
+ //! under test is a RELATIONSHIP between the two: the provisioner's real builders
+@@ -194,14 +194,10 @@ fn assert_permitted_to(url: &str, role: &str, label: &str, statement: &str) {
+ }
+ 
+ #[test]
++#[ignore = "requires WAMN_PROVISION_PG_URL and a disposable PostgreSQL 18 server"]
+ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
+-    let Ok(url) = std::env::var("WAMN_PROVISION_PG_URL") else {
+-        eprintln!(
+-            "skipping dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it \
+-             (set WAMN_PROVISION_PG_URL to run)"
+-        );
+-        return;
+-    };
++    let url = std::env::var("WAMN_PROVISION_PG_URL")
++        .expect("set WAMN_PROVISION_PG_URL to a disposable PostgreSQL 18 server");
+     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, "k3m9x2p7");
+     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
+ 

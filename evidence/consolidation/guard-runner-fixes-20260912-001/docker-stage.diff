@@ -1,0 +1,116 @@
+diff --git a/tests/conformance/src/docker_component_provenance.rs b/tests/conformance/src/docker_component_provenance.rs
+index 4e269e3b5..79638dacb 100644
+--- a/tests/conformance/src/docker_component_provenance.rs
++++ b/tests/conformance/src/docker_component_provenance.rs
+@@ -3,11 +3,14 @@
+ const DOCKERFILE: &str = include_str!("../../../Dockerfile");
+ const DOCKERIGNORE: &str = include_str!("../../../.dockerignore");
+ 
+-fn stage(name: &str) -> &str {
++fn stage<'a>(source: &'a str, name: &str) -> &'a str {
+     let marker = format!(" AS {name}\n");
+-    let (_, contents) = DOCKERFILE
++    let (_, contents) = source
+         .split_once(&marker)
+         .unwrap_or_else(|| panic!("Dockerfile must define stage {name}"));
++    if contents.starts_with("FROM ") {
++        return "";
++    }
+     contents
+         .split_once("\nFROM ")
+         .map_or(contents, |(stage, _)| stage)
+@@ -43,6 +46,22 @@ fn assert_shared_locked_caches(contents: &str, owner: &str) {
+ 
+ #[test]
+ fn every_embedded_component_comes_from_the_locked_builder() {
++    assert_eq!(
++        stage(
++            "FROM base AS gates\nFROM base AS other\nCOPY component.wasm /bench/component.wasm\n",
++            "gates",
++        ),
++        "",
++        "an empty stage must not inherit the next stage's component bytes"
++    );
++    assert_eq!(
++        stage(
++            "FROM base AS gates\nRUN true\nFROM base AS other\nCOPY component.wasm /bench/component.wasm\n",
++            "gates",
++        ),
++        "RUN true",
++        "the next stage must also bound a nonempty stage"
++    );
+     let expected = [
+         ("/component-output/busyloop.wasm", "/bench/busyloop.wasm"),
+         (
+@@ -98,11 +117,11 @@ fn every_embedded_component_comes_from_the_locked_builder() {
+         "waker",
+     ] {
+         assert!(
+-            !stage(image_stage).contains(".wasm"),
++            !stage(DOCKERFILE, image_stage).contains(".wasm"),
+             "{image_stage} service image must not carry component bytes"
+         );
+     }
+-    let gates_stage = stage("gates");
++    let gates_stage = stage(DOCKERFILE, "gates");
+     for (source, destination) in expected {
+         assert!(
+             gates_stage.contains(&format!(
+@@ -116,11 +135,7 @@ fn every_embedded_component_comes_from_the_locked_builder() {
+     assert!(DOCKERFILE.contains("COPY apps /build/apps"));
+     assert!(DOCKERFILE.contains("rustup target add --toolchain 1.97.0 wasm32-wasip2"));
+     assert!(DOCKERFILE.contains("cargo +1.97.0 build --locked --release --target wasm32-wasip2"));
+-    assert!(
+-        DOCKERIGNORE
+-            .lines()
+-            .any(|line| line == "/apps/target")
+-    );
++    assert!(DOCKERIGNORE.lines().any(|line| line == "/apps/target"));
+ }
+ 
+ #[test]
+@@ -174,7 +189,7 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
+ 
+     for (stage_name, package, image_stage, outputs) in packages {
+         let cook_name = format!("cook-{stage_name}");
+-        let cook = stage(&cook_name);
++        let cook = stage(DOCKERFILE, &cook_name);
+         assert!(
+             DOCKERFILE.contains(&format!("FROM root-recipe AS {cook_name}")),
+             "{cook_name} must consume the one shared recipe"
+@@ -187,7 +202,7 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
+         assert_shared_locked_caches(cook, &cook_name);
+ 
+         let build_name = format!("build-{stage_name}");
+-        let build = stage(&build_name);
++        let build = stage(DOCKERFILE, &build_name);
+         assert!(
+             DOCKERFILE.contains(&format!("FROM {cook_name} AS {build_name}")),
+             "{build_name} must follow its matching cook"
+@@ -200,7 +215,7 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
+         );
+         assert_shared_locked_caches(build, &build_name);
+ 
+-        let image = stage(image_stage);
++        let image = stage(DOCKERFILE, image_stage);
+         let native_copies: Vec<_> = image
+             .lines()
+             .filter(|line| line.contains("/native-output/"))
+@@ -225,7 +240,7 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
+ fn build_graph_has_no_shared_or_retired_cook_leg() {
+     assert!(DOCKERFILE.contains("cargo install cargo-chef --version 0.1.77 --locked"));
+     assert!(DOCKERFILE.contains("COPY Cargo.toml Cargo.lock ./"));
+-    assert!(stage("root-planner").contains("COPY apps ./apps"));
++    assert!(stage(DOCKERFILE, "root-planner").contains("COPY apps ./apps"));
+     assert!(
+         DOCKERFILE.contains("COPY --from=root-planner /build/root-recipe.json ./root-recipe.json")
+     );
+@@ -236,7 +251,7 @@ fn build_graph_has_no_shared_or_retired_cook_leg() {
+     assert!(DOCKERFILE.contains("id=wamn-root-target,target=/build/target"));
+     assert!(DOCKERFILE.contains("id=wamn-component-target,target=/build/apps/target"));
+ 
+-    let gates = stage("build-gates");
++    let gates = stage(DOCKERFILE, "build-gates");
+     assert_eq!(selected_packages(gates), ["wamn-gates"]);
+     assert_shared_locked_caches(gates, "build-gates");
+ 

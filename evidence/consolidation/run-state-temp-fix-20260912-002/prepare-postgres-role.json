@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "psql",
+    "-X",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-Atqc",
+    "CREATE ROLE postgres LOGIN SUPERUSER CREATEDB CREATEROLE INHERIT REPLICATION BYPASSRLS; SELECT rolcanlogin AND rolsuper AND rolcreatedb AND rolcreaterole AND rolinherit AND rolreplication AND rolbypassrls FROM pg_roles WHERE rolname='postgres';"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "started": "2026-09-12T15:57:02.815894+00:00",
+  "elapsed_seconds": 0.03099682496394962,
+  "exit_code": 0
+}

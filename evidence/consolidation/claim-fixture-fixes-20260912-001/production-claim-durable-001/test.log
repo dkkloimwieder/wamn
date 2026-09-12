@@ -1,0 +1,12 @@
+
+running 1 test
+Error: backend application=None role=Some("wamn_effect_writer_e3fe1f8bba39304bbeb2af2471ba5785ea662a71_a") never waited on the advisory lock
+test production_claim_durable_live ... FAILED
+
+failures:
+
+failures:
+    production_claim_durable_live
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.94s
+

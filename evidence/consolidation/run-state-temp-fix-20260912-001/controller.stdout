@@ -1,0 +1,15 @@
+Creating new PostgreSQL cluster 18/regress ...
+*** /tmp/pg_virtualenv.aVs9p7/log/postgresql-18-regress.log (last 100 lines) ***
+2026-09-12 11:51:43.018 EDT [2642135] LOG:  starting PostgreSQL 18.6 (Ubuntu 18.6-1.pgdg26.04+2) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0, 64-bit
+2026-09-12 11:51:43.018 EDT [2642135] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-09-12 11:51:43.018 EDT [2642135] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2026-09-12 11:51:43.019 EDT [2642141] LOG:  database system was shut down at 2026-09-12 11:51:42 EDT
+2026-09-12 11:51:43.021 EDT [2642135] LOG:  database system is ready to accept connections
+2026-09-12 11:51:45.309 EDT [2642194] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_platform" by role "kaalin"
+2026-09-12 11:51:45.309 EDT [2642194] kaalin@postgres CONTEXT:  SQL statement "REVOKE "wamn_platform" FROM "wamn_app""
+	PL/pgSQL function inline_code_block line 1 at SQL statement
+2026-09-12 11:51:45.309 EDT [2642194] kaalin@postgres WARNING:  role "wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a" has not been granted membership in role "wamn_app" by role "kaalin"
+2026-09-12 11:51:45.312 EDT [2642194] kaalin@postgres WARNING:  there is already a transaction in progress
+2026-09-12 11:51:45.312 EDT [2642194] kaalin@postgres ERROR:  role "postgres" does not exist
+2026-09-12 11:51:45.338 EDT [2642196] kaalin@postgres ERROR:  role "wamn_transitions_executor_login" does not exist
+Dropping cluster 18/regress ...

@@ -1,0 +1,7 @@
+{
+  "base_source": "eea095bcd41b31cd52b11109bc2e16b9b5d57b5c",
+  "path": "services/dispatcher/tests/read_authority.rs",
+  "all_database_setup_sql_and_assertions_unchanged": true,
+  "source_sha256": "c7aa2418829679ac48492372ed23f94b606cd39db086a9db6a9e2e98e1f32083",
+  "diff_sha256": "564ffe280e5765db6914d71719eae9cda236b062d3a754f8bfb58fa8b4fcc4ac"
+}

@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "psql",
+    "-X",
+    "-v",
+    "ON_ERROR_STOP=1",
+    "-Atqc",
+    "SELECT has_database_privilege('wamn_transitions_executor_login', current_database(), 'TEMPORARY');"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "started": "2026-09-12T15:57:05.184945+00:00",
+  "elapsed_seconds": 0.02945783408358693,
+  "exit_code": 0
+}

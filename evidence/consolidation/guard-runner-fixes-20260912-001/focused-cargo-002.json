@@ -1,0 +1,44 @@
+{
+  "source": "378ab5e4e4e4da235f4fef41710deef32b7df892",
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-dispatcher",
+    "-p",
+    "wamn-runtime",
+    "--test",
+    "read_authority",
+    "--test",
+    "production_claim_live",
+    "--test",
+    "production_claim_durable_live",
+    "--no-run",
+    "--message-format=json-render-diagnostics"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_TARGET_DIR": null
+  },
+  "started_at": "2026-09-12T15:38:37.738231+00:00",
+  "elapsed_seconds": 206.92253854405135,
+  "exit_code": 101,
+  "finished_at": "2026-09-12T15:42:04.660805+00:00",
+  "source_after": "378ab5e4e4e4da235f4fef41710deef32b7df892",
+  "tracked_status_after": "",
+  "test_artifacts": [
+    {
+      "package_id": "path+file:///home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/services/dispatcher#wamn-dispatcher@0.1.0",
+      "name": "read_authority",
+      "source_path": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/services/dispatcher/tests/read_authority.rs",
+      "executable": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/debug/deps/read_authority-6817d0ca137f77c2",
+      "sha256": "ef37f3bac0b6be7208d9beaa46ecbecf76611d5635da1cc3a88c3ef93caaa19e",
+      "size": 29060400
+    }
+  ]
+}

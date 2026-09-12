@@ -1,0 +1,39 @@
+{
+  "source": "4cc0e99c817d1fecdea1a29ab8c8b6bb94261aad",
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-runtime",
+    "--test",
+    "production_claim_durable_live",
+    "--no-run",
+    "--message-format=json-render-diagnostics"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_TARGET_DIR": null
+  },
+  "started_at": "2026-09-12T16:00:01.587087+00:00",
+  "exit_code": 0,
+  "elapsed_seconds": 1.7517890239832923,
+  "finished_at": "2026-09-12T16:00:03.338903+00:00",
+  "source_after": "4cc0e99c817d1fecdea1a29ab8c8b6bb94261aad",
+  "tracked_status_after": "",
+  "test_artifacts": [
+    {
+      "package_id": "path+file:///home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/crates/platform/runtime#wamn-runtime@0.1.0",
+      "name": "production_claim_durable_live",
+      "source_path": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/crates/platform/runtime/tests/production_claim_durable_live.rs",
+      "executable": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/debug/deps/production_claim_durable_live-e440e22bafd9346c",
+      "sha256": "fee22413f6f19f1c22fef3b4c3ca94ef8b39abfbed2058cf64d045b0dd7b27bc",
+      "size": 107272576,
+      "fresh": false
+    }
+  ]
+}

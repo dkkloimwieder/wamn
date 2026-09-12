@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "pg_virtualenv",
+    "-t",
+    "-v",
+    "18",
+    "-o",
+    "log_min_error_statement=panic",
+    "/usr/bin/python3",
+    "/home/kaalin/dev/wamn/evidence/consolidation/claim-fixture-fixes-20260912-001/capture-durable-retry.py",
+    "--inside",
+    "production-claim-durable-002",
+    "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/target/debug/deps/production_claim_durable_live-e440e22bafd9346c"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "started": "2026-09-12T16:00:46.029177+00:00",
+  "ended": "2026-09-12T16:00:48.979176+00:00",
+  "elapsed_seconds": 2.9499938489170745,
+  "exit": 101
+}

@@ -1,0 +1,6 @@
+
+running 1 test
+test dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it ... ignored, requires WAMN_PROVISION_PG_URL and a disposable PostgreSQL 18 server
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
