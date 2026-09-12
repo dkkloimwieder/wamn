@@ -264,20 +264,6 @@ CREATE TABLE catalog.effective_release_heads (
             (tenant_id, effective_release_id, environment)
 );
 
-CREATE FUNCTION catalog.publication_boundary(p_stage text)
-RETURNS void
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF current_setting('wamn.test.publication_fault', true) = p_stage THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '40000',
-            MESSAGE = 'injected-publication-fault-' || p_stage;
-    END IF;
-END
-$$;
-REVOKE ALL ON FUNCTION catalog.publication_boundary(text) FROM PUBLIC;
-
 CREATE TABLE catalog.component_library (
     tenant_id           text        NOT NULL CHECK (tenant_id <> ''),
     package_id          text        NOT NULL CHECK (package_id <> ''),

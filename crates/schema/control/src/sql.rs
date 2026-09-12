@@ -13,11 +13,6 @@ pub fn select_package_migrations_sql() -> &'static str {
      ORDER BY ordinal"
 }
 
-/// Traverse a named superuser-only publication fault boundary.
-pub fn publication_boundary_sql() -> &'static str {
-    "SELECT catalog.publication_boundary($1)"
-}
-
 /// Record an effective-release deployment attestation in the CONTROL plane.
 pub fn register_deployment_attestation_sql() -> &'static str {
     "SELECT catalog.register_deployment_attestation(\
