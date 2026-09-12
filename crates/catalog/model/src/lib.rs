@@ -47,7 +47,9 @@ pub use wiring::{
     WiringOperationDependency, WiringResponse, WiringTerminal, partial_response_schema,
 };
 pub use wiring_activation::{
+    WiringActivationError, WiringActivationErrorKind, WiringActivationFacts, activation_facts,
     flip_activation, previous_confirmed_definition, record_activation_event,
+    validate_wiring_activation,
 };
 pub use wiring_compatibility::{
     WiringCompatibilityError, WiringCompatibilityErrorKind, validate_resolved_wiring_compatibility,

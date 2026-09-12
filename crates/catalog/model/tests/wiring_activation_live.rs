@@ -317,33 +317,8 @@ fn wiring_activation_live() {
         "five committed changes retain their activation history in order\n{stdout}"
     );
 
-    // A definition whose package coordinate is absent from this environment's
-    // effective release cannot be activated, however the caller spells the request.
-    let refused = refusal(
-        &url,
-        &format!(
-            "\\set VERBOSITY verbose\n\
-             SET app.tenant = 't1';\n{prepared}\
-             EXECUTE flip('shop','prod','orders-create','{c}',true);\n",
-            prepared = prepared(),
-            c = hash('c'),
-        ),
-    );
-    let refused_sqlstate = refused.lines().find_map(|line| {
-        line.strip_prefix("ERROR:  ")
-            .and_then(|detail| detail.split_once(':'))
-            .map(|(sqlstate, _message)| sqlstate)
-    });
-    assert_eq!(
-        refused_sqlstate,
-        Some("23503"),
-        "the ungated definition must use the foreign-key refusal class: {refused}"
-    );
-    assert!(
-        refused.contains("wiring-definition-not-current"),
-        "the ungated definition must be refused by name: {refused}"
-    );
-
+    // Rust promotion tests cover retirement and release membership refusals.
+    // This raw statement test retains the database permission boundary.
     let denied = refusal(
         &url,
         &format!(
@@ -457,8 +432,7 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
     let mut script = preamble(&database, &app_generation);
     script.push_str(
         "DROP TABLE catalog.wiring_activation_events, catalog.wiring_activation, \
-                    catalog.wiring_tombstones, catalog.wirings CASCADE;\n\
-         DROP FUNCTION catalog.validate_wiring_activation();\n",
+                    catalog.wiring_tombstones, catalog.wirings CASCADE;\n",
     );
     script.push_str(&probe("before"));
     script.push_str(converge_slice);

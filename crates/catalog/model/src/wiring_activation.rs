@@ -1,52 +1,116 @@
-//! Activation changes and their committed history.
+//! Wiring activation decisions, statements, and committed history.
 //!
-//! Activating a wiring is *moving a pointer*, not shipping an artifact
-//! (`docs/exe-model.md` R3, "wirings are data"). One statement writes
-//! `catalog.wiring_activation`; another appends `catalog.wiring_activation_events`
-//! in the same transaction. The driver holds the transaction; this module
-//! supplies SQL statements.
+//! The driver reads [`activation_facts`] and calls [`validate_wiring_activation`].
+//! It writes the activation and its history in that same transaction.
+//! An enabled activation requires an exact definition in the environment release.
+//! A tombstone, which records a retired wiring, prevents activation.
+//! Disabling an activation does not require either condition.
 //!
-//! # Rollback is the same flip
-//!
-//! There is one write builder here and no `rollback_sql`. [`flip_activation`]
-//! takes the confirmed definition hash and the enabled flag as parameters, so
-//! the same statement performs all three operational moves:
-//!
-//! * activate — flip onto the newly gated hash with `enabled = true`;
-//! * roll back — flip onto the *prior* hash ([`previous_confirmed_definition`])
-//!   with `enabled = true`;
-//! * take a wiring dark — the same key with `enabled = false`, which
-//!   `catalog.validate_wiring_activation()` returns early for and therefore can
-//!   never refuse.
-//!
-//! Because the pointer's primary key is `(tenant, package, environment,
-//! wiring)`, every one of those is an `UPDATE` of one row after the first
-//! activation. Rollback is not a compensating action with its own failure modes;
-//! it is the forward path with an older argument.
-//!
-//! # Where the tenant comes from
-//!
-//! Every statement scopes to `app.tenant` rather than accepting a tenant
-//! parameter. The management principal is a superuser or the schema owner, and a
-//! superuser bypasses row-level security outright — so `FORCE ROW LEVEL
-//! SECURITY` cannot be what keeps a flip inside its tenant. Reading the claim
-//! makes the wrong tenant unrepresentable instead of merely rejected, and an
-//! unset claim fails closed on the `NOT NULL` column.
-//!
-//! # What the pure tests cannot cover (SR12)
-//!
-//! These are statements, not behaviour: nothing here observes the activation
-//! trigger refusing a stale definition or activation history surviving a
-//! committed transaction. Those
-//! live in `crates/catalog/model/tests/wiring_activation_live.rs` against a
-//! throwaway PostgreSQL.
+//! Every statement reads the tenant from `app.tenant`.
+//! PostgreSQL retains its row permissions and integrity constraints.
 
-/// The flip: activate, roll back, or take dark — one statement for all three.
+use std::fmt;
+
+/// Stored facts for one requested wiring definition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WiringActivationFacts {
+    pub tombstoned: bool,
+    pub definition_in_release: bool,
+}
+
+/// The reason that an enabled activation was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WiringActivationErrorKind {
+    Tombstoned,
+    DefinitionNotInRelease,
+}
+
+/// A refused activation and its package, environment, and wiring.
+#[derive(Debug)]
+pub struct WiringActivationError {
+    kind: WiringActivationErrorKind,
+    package_id: String,
+    environment: String,
+    wiring_id: String,
+}
+
+impl WiringActivationError {
+    /// Return the refusal reason without parsing its text.
+    pub fn kind(&self) -> WiringActivationErrorKind {
+        self.kind
+    }
+}
+
+impl fmt::Display for WiringActivationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let refusal = match self.kind {
+            WiringActivationErrorKind::Tombstoned => "wiring-activation-tombstoned",
+            WiringActivationErrorKind::DefinitionNotInRelease => {
+                "wiring-activation-definition-not-in-effective-release"
+            }
+        };
+        write!(
+            formatter,
+            "{refusal}: {}/{}/{}",
+            self.package_id, self.environment, self.wiring_id
+        )
+    }
+}
+
+impl std::error::Error for WiringActivationError {}
+
+/// Refuse an enabled activation when its stored facts do not permit it.
+pub fn validate_wiring_activation(
+    package_id: &str,
+    environment: &str,
+    wiring_id: &str,
+    enabled: bool,
+    facts: WiringActivationFacts,
+) -> Result<(), WiringActivationError> {
+    let kind = if !enabled {
+        return Ok(());
+    } else if facts.tombstoned {
+        WiringActivationErrorKind::Tombstoned
+    } else if !facts.definition_in_release {
+        WiringActivationErrorKind::DefinitionNotInRelease
+    } else {
+        return Ok(());
+    };
+    Err(WiringActivationError {
+        kind,
+        package_id: package_id.to_owned(),
+        environment: environment.to_owned(),
+        wiring_id: wiring_id.to_owned(),
+    })
+}
+
+/// Read retirement and release membership for one exact definition.
 ///
-/// Params: package id, environment, wiring id, confirmed definition hash,
-/// enabled. `catalog.validate_wiring_activation()` refuses an enabling flip onto
-/// a definition whose exact package version is not a member of this
-/// environment's effective release, tombstoned, or absent.
+/// Parameters: package ID, environment, wiring ID, confirmed definition hash.
+/// The driver reads these facts in the transaction that writes the activation.
+pub fn activation_facts() -> &'static str {
+    "SELECT EXISTS (
+        SELECT 1 FROM catalog.wiring_tombstones AS dead
+         WHERE dead.tenant_id = NULLIF(current_setting('app.tenant', true), '')
+           AND dead.package_id = $1 AND dead.environment = $2 AND dead.wiring_id = $3
+    ) AS tombstoned, EXISTS (
+        SELECT 1 FROM catalog.wirings AS wiring
+          JOIN catalog.effective_release_heads AS head
+            ON head.tenant_id = wiring.tenant_id AND head.environment = $2
+          JOIN catalog.effective_release_packages AS member
+            ON member.tenant_id = head.tenant_id
+           AND member.effective_release_id = head.effective_release_id
+           AND member.package_id = wiring.package_id
+           AND member.package_version = wiring.package_version
+         WHERE wiring.tenant_id = NULLIF(current_setting('app.tenant', true), '')
+           AND wiring.package_id = $1 AND wiring.wiring_id = $3 AND wiring.wiring_hash = $4
+    ) AS definition_in_release"
+}
+
+/// Write an activation, rollback, or disabled state.
+///
+/// Parameters: package ID, environment, wiring ID, confirmed definition hash, enabled.
+/// The driver first calls [`validate_wiring_activation`] in the same transaction.
 pub fn flip_activation() -> &'static str {
     "\
 INSERT INTO catalog.wiring_activation \
@@ -102,10 +166,53 @@ SELECT confirmed_definition_hash \
 
 #[cfg(test)]
 mod tests {
-    use super::{flip_activation, previous_confirmed_definition, record_activation_event};
+    use super::{
+        WiringActivationErrorKind, WiringActivationFacts, activation_facts, flip_activation,
+        previous_confirmed_definition, record_activation_event, validate_wiring_activation,
+    };
 
-    fn statements() -> [&'static str; 3] {
+    #[test]
+    fn disabled_activation_accepts_each_retirement_and_membership_state() {
+        for tombstoned in [false, true] {
+            for definition_in_release in [false, true] {
+                validate_wiring_activation(
+                    "shop",
+                    "prod",
+                    "orders-create",
+                    false,
+                    WiringActivationFacts {
+                        tombstoned,
+                        definition_in_release,
+                    },
+                )
+                .expect("disabling does not require a current definition");
+            }
+        }
+    }
+
+    #[test]
+    fn retirement_takes_precedence_over_missing_release_membership() {
+        let error = validate_wiring_activation(
+            "shop",
+            "prod",
+            "orders-create",
+            true,
+            WiringActivationFacts {
+                tombstoned: true,
+                definition_in_release: false,
+            },
+        )
+        .expect_err("a retired wiring cannot be enabled");
+        assert_eq!(error.kind(), WiringActivationErrorKind::Tombstoned);
+        assert_eq!(
+            error.to_string(),
+            "wiring-activation-tombstoned: shop/prod/orders-create"
+        );
+    }
+
+    fn statements() -> [&'static str; 4] {
         [
+            activation_facts(),
             flip_activation(),
             record_activation_event(),
             previous_confirmed_definition(),

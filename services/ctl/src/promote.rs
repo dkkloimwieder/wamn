@@ -13,7 +13,8 @@ use anyhow::{Context as _, ensure};
 use clap::Args;
 use tokio_postgres::{Client, GenericClient, IsolationLevel, NoTls, Row, Transaction};
 use wamn_catalog::{
-    AdmittedComponent, ComponentPackageScope, PackageCoordinate, ServingManifest, WiringDocument,
+    AdmittedComponent, ComponentPackageScope, PackageCoordinate, ServingManifest,
+    WiringActivationFacts, WiringDocument, activation_facts, validate_wiring_activation,
     validate_wiring_compatibility,
 };
 use wamn_runtime::component_artifact_source::{
@@ -916,6 +917,28 @@ async fn activate_once(
     if current.is_some_and(|row| row.get::<_, String>(0) == graph_hash && row.get::<_, bool>(1)) {
         return Ok(false);
     }
+    let facts = tx
+        .query_one(
+            activation_facts(),
+            &[
+                &package_id,
+                &args.target_environment,
+                &wiring_id,
+                &graph_hash,
+            ],
+        )
+        .await
+        .context("read target wiring activation facts")?;
+    validate_wiring_activation(
+        package_id,
+        &args.target_environment,
+        wiring_id,
+        true,
+        WiringActivationFacts {
+            tombstoned: facts.get("tombstoned"),
+            definition_in_release: facts.get("definition_in_release"),
+        },
+    )?;
     tx.execute(
         UPSERT_ACTIVATION_SQL,
         &[
@@ -1051,3 +1074,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod activation_live;

@@ -546,50 +546,6 @@ CREATE TABLE catalog.wiring_activation_events (
     changed_at                 timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE FUNCTION catalog.validate_wiring_activation()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF NOT NEW.enabled THEN
-        RETURN NEW;
-    END IF;
-    IF EXISTS (
-        SELECT 1 FROM catalog.wiring_tombstones AS dead
-         WHERE dead.tenant_id = NEW.tenant_id
-           AND dead.package_id = NEW.package_id
-           AND dead.environment = NEW.environment
-           AND dead.wiring_id = NEW.wiring_id
-    ) THEN
-        RAISE EXCEPTION USING ERRCODE = '55000',
-            MESSAGE = 'wiring-activation-tombstoned';
-    END IF;
-    IF NOT EXISTS (
-        SELECT 1
-          FROM catalog.wirings AS wiring
-          JOIN catalog.effective_release_heads AS head
-            ON head.tenant_id = wiring.tenant_id
-           AND head.environment = NEW.environment
-          JOIN catalog.effective_release_packages AS member
-            ON member.tenant_id = head.tenant_id
-           AND member.effective_release_id = head.effective_release_id
-           AND member.package_id = wiring.package_id
-           AND member.package_version = wiring.package_version
-         WHERE wiring.tenant_id = NEW.tenant_id
-           AND wiring.package_id = NEW.package_id
-           AND wiring.wiring_id = NEW.wiring_id
-           AND wiring.wiring_hash = NEW.confirmed_definition_hash
-    ) THEN
-        RAISE EXCEPTION USING ERRCODE = '23503',
-            MESSAGE = 'wiring-activation-definition-not-in-effective-release';
-    END IF;
-    RETURN NEW;
-END
-$$;
-CREATE TRIGGER wiring_activation_valid
-    BEFORE INSERT OR UPDATE ON catalog.wiring_activation
-    FOR EACH ROW EXECUTE FUNCTION catalog.validate_wiring_activation();
-
 CREATE TABLE catalog.release_components (
     tenant_id             text NOT NULL CHECK (tenant_id <> ''),
     effective_release_id  int  NOT NULL CHECK (effective_release_id > 0),
