@@ -131,10 +131,52 @@ async fn seed_package_and_release(client: &Client) {
         .expect("register release identities");
 }
 
+async fn assert_immutable_rows(client: &Client, store: Store) {
+    let row = client
+        .query_one(
+            "SELECT pg_get_userbyid(proowner)::text, current_user::text, \
+             NOT EXISTS (SELECT FROM aclexplode(COALESCE(proacl, acldefault('f', proowner))) \
+                         WHERE grantee = 0 AND privilege_type = 'EXECUTE') \
+               FROM pg_proc \
+              WHERE oid = 'catalog.reject_immutable_row_change()'::regprocedure",
+            &[],
+        )
+        .await
+        .expect("read the installed integrity function owner and privileges");
+    let expected_owner = match store {
+        Store::Project => row.get::<_, String>(1),
+        Store::Control => "wamn_system".to_owned(),
+    };
+    assert_eq!(row.get::<_, String>(0), expected_owner);
+    assert!(
+        row.get::<_, bool>(2),
+        "PUBLIC cannot execute the integrity function"
+    );
+
+    for statement in [
+        "UPDATE catalog.package_migrations SET sha256 = 'sha256:' || repeat('c', 64)",
+        "DELETE FROM catalog.package_migrations",
+    ] {
+        let error = client
+            .execute(statement, &[])
+            .await
+            .expect_err("the installed trigger must refuse changes to recorded migration bytes");
+        let database_error = error
+            .as_db_error()
+            .expect("PostgreSQL enforces immutability");
+        assert_eq!(database_error.code().code(), "55000");
+        assert_eq!(
+            database_error.message(),
+            "catalog.package_migrations is immutable"
+        );
+    }
+}
+
 async fn prove_package_seal(url: &str, store: Store) {
     let installer = connect(url).await;
     install(&installer, store).await;
     seed_package_and_release(&installer).await;
+    assert_immutable_rows(&installer, store).await;
 
     let mut publisher = connect(url).await;
     let migrator = connect(url).await;
