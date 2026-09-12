@@ -240,14 +240,14 @@ async fn production_session_client_login_and_fresh_selection() -> anyhow::Result
         .context("session client proof exceeded 180 seconds")?
 }
 
-pub(super) async fn nested_session_caller(fresh_only: bool, client_proof: bool) -> anyhow::Result<()> {
+pub(super) async fn nested_session_caller(fresh_only: bool, session_client: bool) -> anyhow::Result<()> {
     assert_nested_session(
         JourneyDocument::required()?,
         &required_journey("WAMN_IDENTITY_ISSUER")?,
         &required_journey("WAMN_SESSION_NESTED_HTTPS_ENDPOINT")?,
         &std::fs::read(required_journey_path("WAMN_IDENTITY_CA_FILE")?)?,
         fresh_only,
-        client_proof,
+        session_client,
     ).await
 }
 
@@ -257,7 +257,7 @@ pub(super) async fn assert_nested_session(
     endpoint: &str,
     ca: &[u8],
     fresh_only: bool,
-    client_proof: bool,
+    session_client: bool,
 ) -> anyhow::Result<()> {
     const ROLE: &str = "session-nested-caller";
     let overlay_attachment = JOURNEY_ATTACHMENTS
@@ -272,7 +272,7 @@ pub(super) async fn assert_nested_session(
     if fresh_only {
         selected_attachments.push(direct_attachment);
     }
-    if client_proof {
+    if session_client {
         selected_attachments.push(
             JOURNEY_ATTACHMENTS
                 .iter()
@@ -464,7 +464,7 @@ pub(super) async fn assert_nested_session(
         )
         .await?;
     let mut permitted_operations = vec![OVERLAY_RECORD_RECEIPT, BASE_RECORD_RECEIPT];
-    if client_proof {
+    if session_client {
         permitted_operations.push(OPERATION);
     }
     for operation in permitted_operations {
@@ -491,7 +491,7 @@ pub(super) async fn assert_nested_session(
         Duration::from_secs(600),
     )
     .await?;
-    let client_login = if client_proof {
+    let client_login = if session_client {
         Some(session_client::login(http.clone(), &endpoint, &audience, pat.token()).await?)
     } else {
         None

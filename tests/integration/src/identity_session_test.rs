@@ -2,7 +2,7 @@
 //!
 //! The observer holds PAT cases and public keys, not database credentials. Its
 //! timing check brackets client dispatch with the approved clock tolerance;
-//! exact server validation-start aging belongs to the live issuer proof.
+//! exact server validation-start aging belongs to the live issuer test.
 //! Neither path claims that a host admits session tokens.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -460,7 +460,7 @@ mod tests {
     }
 
     #[test]
-    fn header_receipts_refuse_missing_wrong_and_duplicate_values() {
+    fn headers_refuse_missing_wrong_and_duplicate_values() {
         use reqwest::header::{HeaderMap, HeaderValue, WWW_AUTHENTICATE};
 
         let mut headers = HeaderMap::new();

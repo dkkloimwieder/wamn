@@ -201,7 +201,7 @@ def verify_request(request):
     return request_id
 
 
-def prove(binary, root):
+def assert_operator(binary, root):
     check_query_descriptors(root)
     fixture = Fixture()
     try:
@@ -283,7 +283,7 @@ def main():
     try:
         binary = args.binary.resolve(strict=True)
         require(binary.is_file() and os.access(binary, os.X_OK), "--binary must name an executable file")
-        prove(binary, Path(__file__).resolve().parents[3])
+        assert_operator(binary, Path(__file__).resolve().parents[3])
     except TestError as error:
         print(f"operator PTY proof failed: {error}", file=sys.stderr)
         return 1

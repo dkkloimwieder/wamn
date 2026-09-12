@@ -303,8 +303,8 @@ gate() {
   jq -n --arg ns "$namespace" --arg name "$name" --arg image "$gates_image" --arg issuer "$issuer" --arg kids "$expected" \
     '{apiVersion:"batch/v1",kind:"Job",metadata:{name:$name,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{metadata:{labels:{app:"identity-jwks"}},spec:{restartPolicy:"Never",automountServiceAccountToken:false,containers:[{name:"identity-jwks",image:$image,imagePullPolicy:"Never",args:["identity-jwks"],env:[{name:"WAMN_IDENTITY_ISSUER",value:$issuer},{name:"WAMN_IDENTITY_JWKS_URL",value:($issuer+"/.well-known/jwks.json")},{name:"WAMN_IDENTITY_CA_FILE",value:"/etc/wamn-identity-ca/ca.crt"},{name:"WAMN_IDENTITY_WRONG_CA_FILE",value:"/etc/wamn-identity-ca/wrong-ca.crt"},{name:"WAMN_IDENTITY_EXPECTED_KIDS",value:$kids}],volumeMounts:[{name:"public-ca",mountPath:"/etc/wamn-identity-ca",readOnly:true}]}],volumes:[{name:"public-ca",configMap:{name:"identity-jwks-public"}}]}}}}' \
     >"$evidence_dir/$name.json"
-  spec=$(jq -nc --arg name "$name" --arg image "$gates_image" --arg receipt "IDENTITY_JWKS result=pass expected_keys=$count token_admission=not_proven expiry_outage=not_proven" \
-    '{name:$name,container:"identity-jwks",expectation:"positive",exit_code:0,image:$image,log_contains:$receipt}')
+  spec=$(jq -nc --arg name "$name" --arg image "$gates_image" --arg result_line "IDENTITY_JWKS result=pass expected_keys=$count token_admission=not_proven expiry_outage=not_proven" \
+    '{name:$name,container:"identity-jwks",expectation:"positive",exit_code:0,image:$image,log_contains:$result_line}')
   run env KUBECTL="$work_dir/kubectl" "$repo_root/tools/kubernetes-gate-run" \
     --namespace "$namespace" --timeout-secs 180 --manifest "$evidence_dir/$name.json" \
     --verdict-record "$evidence_dir/$name-verdict.json" --job "$spec" \
@@ -340,8 +340,8 @@ session_gate() {
   jq -n --arg ns "$namespace" --arg name "$name" --arg image "$gates_image" --arg issuer "$issuer" --arg secret "$secret" \
     '{apiVersion:"batch/v1",kind:"Job",metadata:{name:$name,namespace:$ns},spec:{backoffLimit:0,activeDeadlineSeconds:120,template:{metadata:{labels:{app:"identity-session"}},spec:{restartPolicy:"Never",automountServiceAccountToken:false,containers:[{name:"identity-session",image:$image,imagePullPolicy:"Never",args:["identity-session"],env:[{name:"WAMN_IDENTITY_ISSUER",value:$issuer},{name:"WAMN_IDENTITY_CA_FILE",value:"/etc/wamn-identity-ca/ca.crt"},{name:"WAMN_IDENTITY_SESSION_CASES_FILE",value:"/etc/wamn-identity-cases/cases.json"}],volumeMounts:[{name:"public-ca",mountPath:"/etc/wamn-identity-ca",readOnly:true},{name:"cases",mountPath:"/etc/wamn-identity-cases",readOnly:true}]}],volumes:[{name:"public-ca",configMap:{name:"identity-jwks-public",items:[{key:"ca.crt",path:"ca.crt"}]}},{name:"cases",secret:{secretName:$secret,defaultMode:256,items:[{key:"cases.json",path:"cases.json"}]}}]}}}}' \
     >"$evidence_dir/$name.json"
-  spec=$(jq -nc --arg name "$name" --arg image "$gates_image" --arg receipt "IDENTITY_SESSION result=pass cases=$count host_admission=not_proven" \
-    '{name:$name,container:"identity-session",expectation:"positive",exit_code:0,image:$image,log_contains:$receipt}')
+  spec=$(jq -nc --arg name "$name" --arg image "$gates_image" --arg result_line "IDENTITY_SESSION result=pass cases=$count host_admission=not_proven" \
+    '{name:$name,container:"identity-session",expectation:"positive",exit_code:0,image:$image,log_contains:$result_line}')
   run env KUBECTL="$work_dir/kubectl" "$repo_root/tools/kubernetes-gate-run" \
     --namespace "$namespace" --timeout-secs 180 --manifest "$evidence_dir/$name.json" \
     --verdict-record "$evidence_dir/$name-verdict.json" --job "$spec" \
@@ -461,9 +461,9 @@ session_journey() {
   session_completed=true
 }
 key_command() {
-  local receipt=$1; shift
+  local result_name=$1; shift
   run "${kube[@]}" -n "$namespace" exec "deployment/$release" -c identity -- \
-    /usr/local/bin/wamn-identity "$@" >"$evidence_dir/$receipt.json"
+    /usr/local/bin/wamn-identity "$@" >"$evidence_dir/$result_name.json"
 }
 key_command published-a publish
 kid_a=$(jq -er '.kid | select(test("^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"))' "$evidence_dir/published-a.json")

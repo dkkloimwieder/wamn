@@ -273,7 +273,7 @@ fn child_has_started(fixture: &Fixture) -> bool {
         })
 }
 
-async fn prove_case(scenario: Scenario, caller: &AuthenticatedCaller) {
+async fn assert_case(scenario: Scenario, caller: &AuthenticatedCaller) {
     let child_case = match scenario {
         Scenario::InitializationDeadline => Case::StartDeadline,
         Scenario::Deadline => Case::RunDeadline,
@@ -484,7 +484,7 @@ async fn prove_case(scenario: Scenario, caller: &AuthenticatedCaller) {
     println!("authenticated-native-case={scenario:?} result=pass");
 }
 
-async fn prove() -> anyhow::Result<()> {
+async fn assert_authenticated() -> anyhow::Result<()> {
     let admin_url = std::env::var(URL_ENV).with_context(|| {
         format!("set {URL_ENV} to this proof's fresh disposable PostgreSQL 18 server")
     })?;
@@ -492,7 +492,7 @@ async fn prove() -> anyhow::Result<()> {
     let parent_only = authenticated(&route, false).await;
     let permitted = authenticated(&route, true).await;
     for scenario in SCENARIOS {
-        prove_case(
+        assert_case(
             scenario,
             if scenario == Scenario::PermissionDenied {
                 &parent_only
@@ -546,11 +546,11 @@ fn native_authenticated_nested_authority_and_lifecycle() {
                 .count(),
             1
         );
-        for receipt in stdout
+        for result_line in stdout
             .lines()
             .filter(|line| line.starts_with("authenticated-native-"))
         {
-            println!("{receipt}");
+            println!("{result_line}");
         }
         return;
     }
@@ -567,7 +567,7 @@ fn native_authenticated_nested_authority_and_lifecycle() {
         .build()
         .expect("isolated native runtime");
     runtime
-        .block_on(prove())
+        .block_on(assert_authenticated())
         .expect("real authenticated native proof");
     drop(runtime);
     done.send(()).expect("finish watchdog");

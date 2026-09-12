@@ -132,11 +132,11 @@ cleanup() {
 trap cleanup EXIT
 blockers="$work/blockers"
 : >"$blockers"
-pod_uid_inventory="$work/pod-uids"
-pod_reference_inventory="$work/pod-references"
-workload_reference_inventory="$work/workload-references"
+pod_uids_file="$work/pod-uids"
+pod_references_file="$work/pod-references"
+workload_references_file="$work/workload-references"
 
-if ! jq -r '.items[].metadata.uid // empty' <<<"$pods_json" >"$pod_uid_inventory"; then
+if ! jq -r '.items[].metadata.uid // empty' <<<"$pods_json" >"$pod_uids_file"; then
   echo "failed to parse Kubernetes Pod UIDs" >&2
   exit 1
 fi
@@ -146,7 +146,7 @@ if ! jq -r '
      $pod.spec.ephemeralContainers[]?)
   | ["Pod/\($pod.metadata.namespace)/\($pod.metadata.name)", .image]
   | @tsv
-' <<<"$pods_json" >"$pod_reference_inventory"; then
+' <<<"$pods_json" >"$pod_references_file"; then
   echo "failed to parse Kubernetes Pod image references" >&2
   exit 1
 fi
@@ -159,7 +159,7 @@ if ! jq -r '
      $spec.ephemeralContainers[]?)
   | ["\($workload.kind)/\($workload.metadata.namespace)/\($workload.metadata.name)", .image]
   | @tsv
-' <<<"$workloads_json" >"$workload_reference_inventory"; then
+' <<<"$workloads_json" >"$workload_references_file"; then
   echo "failed to parse Kubernetes workload image references" >&2
   exit 1
 fi
@@ -167,7 +167,7 @@ fi
 declare -A live_pod_uids=()
 while IFS= read -r uid; do
   [[ -n "$uid" ]] && live_pod_uids[$uid]=1
-done <"$pod_uid_inventory"
+done <"$pod_uids_file"
 
 record_workload_blocker() {
   local owner=$1 reference=$2 canonical
@@ -181,12 +181,12 @@ record_workload_blocker() {
 while IFS=$'\t' read -r owner reference; do
   [[ -n "$owner" && -n "$reference" ]] &&
     record_workload_blocker "$owner" "$reference"
-done <"$pod_reference_inventory"
+done <"$pod_references_file"
 
 while IFS=$'\t' read -r owner reference; do
   [[ -n "$owner" && -n "$reference" ]] &&
     record_workload_blocker "$owner" "$reference"
-done <"$workload_reference_inventory"
+done <"$workload_references_file"
 
 image_plan_count=0
 container_plan_count=0
@@ -194,7 +194,7 @@ for node in "${nodes[@]}"; do
   node_key=${node//[^A-Za-z0-9_.-]/_}
   cri_images="$work/$node_key.cri-images.json"
   cri_containers="$work/$node_key.cri-containers.json"
-  image_inventory="$work/$node_key.images.tsv"
+  node_images_file="$work/$node_key.images.tsv"
   image_plan="$work/$node_key.image-plan"
   alias_plan="$work/$node_key.alias-plan"
   container_plan="$work/$node_key.container-plan"
@@ -220,13 +220,13 @@ for node in "${nodes[@]}"; do
     exit 1
   fi
   awk 'NR > 1 && $3 ~ /^sha256:[0-9a-f]{64}$/ {print $1 "\t" $3}' \
-    <<<"$ctr_images" >"$image_inventory"
+    <<<"$ctr_images" >"$node_images_file"
 
   declare -A digest_by_image=()
   declare -A config_by_digest=()
   for image in "${images[@]}"; do
     target_digest=$(awk -F '\t' -v image="$image" '$1 == image {print $2}' \
-      "$image_inventory")
+      "$node_images_file")
     config_id=$(jq -r --arg image "$image" '
       [.images[] | select(any(.repoTags[]?; . == $image)) | .id]
       | unique
@@ -272,7 +272,7 @@ for node in "${nodes[@]}"; do
           "$node" "$target_digest" "$reference" | tee -a "$blockers" >&2
         retained=true
       fi
-    done <"$image_inventory"
+    done <"$node_images_file"
     [[ "$retained" == false ]] || continue
 
     while IFS=$'\t' read -r reference digest; do
@@ -285,9 +285,9 @@ for node in "${nodes[@]}"; do
       printf 'PLAN node=%s remove-image=%s digest=%s\n' \
         "$node" "$reference" "$target_digest"
       ((image_plan_count += 1))
-    done <"$image_inventory"
+    done <"$node_images_file"
 
-    container_inventory="$work/$node_key.${target_digest#sha256:}.containers.tsv"
+    containers_file="$work/$node_key.${target_digest#sha256:}.containers.tsv"
     if ! jq -r --arg config_id "$config_id" '
       .containers[]
       | select(
@@ -297,7 +297,7 @@ for node in "${nodes[@]}"; do
       | [.id, .state, (.labels["io.kubernetes.pod.uid"] // "-"),
          (.image.userSpecifiedImage // "-"), (.image.image // "-")]
       | @tsv
-    ' "$cri_containers" >"$container_inventory"; then
+    ' "$cri_containers" >"$containers_file"; then
       echo "failed to parse CRI containers on kind node $node" >&2
       exit 1
     fi
@@ -326,7 +326,7 @@ for node in "${nodes[@]}"; do
         printf 'PLAN node=%s remove-orphaned-container=%s\n' "$node" "$container_id"
         ((container_plan_count += 1))
       fi
-    done <"$container_inventory"
+    done <"$containers_file"
   done
 done
 

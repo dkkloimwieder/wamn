@@ -192,7 +192,7 @@ async fn main() -> anyhow::Result<()> {
             .as_str()
             .context("hook trace absent at real peer")?
             .to_owned();
-        receipt(&normal, &observed, Some(upstream));
+        print_observation(&normal, &observed, Some(upstream));
 
         // The guest asks for http, but the probe's binding selects verified TLS.
         let encrypted = request("probe_alias_forces_tls", "http", "secure.invalid");
@@ -211,7 +211,7 @@ async fn main() -> anyhow::Result<()> {
                 && upstream["host_credential"] == true,
             "TLS alias did not reach its credentialed fixture peer"
         );
-        receipt(&encrypted, &observed, Some(upstream));
+        print_observation(&encrypted, &observed, Some(upstream));
 
         let mut forwarded = normal.clone();
         forwarded.name = "guest_trace_preserved";
@@ -230,7 +230,7 @@ async fn main() -> anyhow::Result<()> {
             upstream["traceparent"] == GUEST_TRACE,
             "guest trace precedence changed"
         );
-        receipt(&forwarded, &observed, Some(upstream));
+        print_observation(&forwarded, &observed, Some(upstream));
 
         let parent_call = calls
             .lock()
@@ -260,7 +260,7 @@ async fn main() -> anyhow::Result<()> {
             parent_call["workload_id"] == child_call["workload_id"],
             "native workload hook changed identity semantics"
         );
-        receipt(&child, &observed, Some(server::last(&plain)?));
+        print_observation(&child, &observed, Some(server::last(&plain)?));
         println!(
             "{}",
             json!({"case":"invocation_context_gap", "result":"gap",
@@ -325,7 +325,7 @@ async fn main() -> anyhow::Result<()> {
                     "allowlist denial ran the hook"
                 );
             }
-            receipt(&case, &observed, None);
+            print_observation(&case, &observed, None);
         }
 
         for (name, scheme, peer, content_type) in [
@@ -386,7 +386,7 @@ async fn main() -> anyhow::Result<()> {
                 upstream["traceparent"].is_null(),
                 "native gRPC now injects trace headers; update the finding"
             );
-            receipt(&case, &observed, Some(upstream));
+            print_observation(&case, &observed, Some(upstream));
         }
 
         let unbound = request("native_unbound_context", "http", plain.address.to_string());
@@ -400,7 +400,7 @@ async fn main() -> anyhow::Result<()> {
             before == plain.requests.lock().expect("peer observations").len(),
             "unbound context reached the recording peer"
         );
-        receipt(&unbound, &observed, None);
+        print_observation(&unbound, &observed, None);
         Ok::<_, anyhow::Error>(injected_trace)
     };
     let injected_trace = tokio::time::timeout(Duration::from_secs(120), exercise)
@@ -528,7 +528,7 @@ fn require_success(observed: &Value) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn receipt(case: &RequestCase, guest: &Value, upstream: Option<Value>) {
+fn print_observation(case: &RequestCase, guest: &Value, upstream: Option<Value>) {
     println!(
         "{}",
         json!({"case":case.name, "result":"observed", "guest":guest, "upstream":upstream})
