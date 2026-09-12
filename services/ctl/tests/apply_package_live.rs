@@ -2,11 +2,12 @@
 
 mod support;
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tokio_postgres::{Client, NoTls};
-use wamn_control_provision::operation_grants::OPERATION_GRANT_LOCK_SQL;
+use wamn_control_provision::operation_grants::{OPERATION_GRANT_LOCK_SQL, operation_grant_tokens};
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
@@ -297,6 +298,12 @@ async fn prove_concurrent_package_grants_share_one_carrier(url: &str) {
         fixture_root().with_file_name(format!("apply-package-race-beta-{}", std::process::id()));
     copy_receiving_package_as(&alpha, "race_alpha", "race_alpha");
     copy_receiving_package_as(&beta, "race_beta", "race_beta");
+    let expected_grants = [&alpha, &beta]
+        .into_iter()
+        .flat_map(|package| {
+            operation_grant_tokens(&std::fs::read(package.join("wamn.json")).unwrap()).unwrap()
+        })
+        .collect::<BTreeSet<_>>();
 
     let mut blocker = connect(url).await;
     let observer = connect(url).await;
@@ -363,20 +370,22 @@ async fn prove_concurrent_package_grants_share_one_carrier(url: &str) {
             .get::<_, i64>(0),
         1
     );
+    let actual_grants = observer
+        .query(
+            "SELECT permission FROM app_system.permissions \
+              WHERE tenant_id = $1 AND role_name = 'route-caller' \
+                AND (permission LIKE 'race-alpha:%@1.0.0' \
+                     OR permission LIKE 'race-beta:%@1.0.0')",
+            &[&RACE_TENANT],
+        )
+        .await
+        .expect("read both package grant sets")
+        .into_iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<BTreeSet<_>>();
     assert_eq!(
-        observer
-            .query_one(
-                "SELECT count(*) FROM app_system.permissions \
-                  WHERE tenant_id = $1 AND role_name = 'route-caller' \
-                    AND (permission LIKE 'race-alpha:%@1.0.0' \
-                         OR permission LIKE 'race-beta:%@1.0.0')",
-                &[&RACE_TENANT],
-            )
-            .await
-            .expect("read both package grant sets")
-            .get::<_, i64>(0),
-        12,
-        "a concurrent first package lost its six grants"
+        actual_grants, expected_grants,
+        "concurrent packages must retain every declared grant"
     );
 }
 
@@ -586,19 +595,23 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .get::<_, bool>(0),
         "apply-package hardens the package grant carrier"
     );
-    assert_eq!(
-        client
-            .query_one(
-                "SELECT count(*) FROM app_system.permissions \
-                  WHERE tenant_id = $1 AND role_name = 'route-caller' \
-                    AND permission LIKE 'wamn-receiving:%@1.0.0'",
-                &[&TENANT],
-            )
-            .await
-            .unwrap()
-            .get::<_, i64>(0),
-        6
-    );
+    let actual_grants = client
+        .query(
+            "SELECT permission FROM app_system.permissions \
+              WHERE tenant_id = $1 AND role_name = 'route-caller' \
+                AND permission LIKE 'wamn-receiving:%@1.0.0'",
+            &[&TENANT],
+        )
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<BTreeSet<_>>();
+    let expected_grants = operation_grant_tokens(
+        &std::fs::read(package.join("wamn.json")).expect("read applied manifest"),
+    )
+    .expect("derive the declared package grants");
+    assert_eq!(actual_grants, expected_grants);
     assert_eq!(
         client
             .query_one(
