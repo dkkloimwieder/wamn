@@ -472,7 +472,7 @@ mod tests {
                 wiring_id: WIRING_ID.to_owned(),
                 wiring_version: WIRING_VERSION,
                 delivery_id: "virtualized-environment-test".to_owned(),
-                payload: serde_json::json!({"proof": "environment"}),
+                payload: serde_json::json!({"test": "environment"}),
                 caller_attached: true,
                 caller: None,
                 traceparent: None,
@@ -498,7 +498,7 @@ mod tests {
                 wiring_id: WIRING_ID.to_owned(),
                 wiring_version: WIRING_VERSION,
                 delivery_id: "virtualized-connection-test".to_owned(),
-                payload: serde_json::json!({"proof": "connection"}),
+                payload: serde_json::json!({"test": "connection"}),
                 caller_attached: true,
                 caller: None,
                 traceparent: None,
@@ -538,7 +538,7 @@ mod tests {
             &flow_http_wasm,
             routing,
             bridge,
-            Bytes::from_static(br#"{"proof":"panic"}"#),
+            Bytes::from_static(br#"{"test":"panic"}"#),
         )
         .await
         .context("drive the deliberate panic through released ingress")?;

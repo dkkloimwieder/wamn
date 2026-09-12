@@ -26,15 +26,15 @@ impl Guest for Component {
         let input: serde_json::Value = serde_json::from_str(&input).map_err(|error| {
             invalid_input("invalid-json", format!("input is not JSON: {error}"))
         })?;
-        match input.get("proof").and_then(serde_json::Value::as_str) {
+        match input.get("test").and_then(serde_json::Value::as_str) {
             Some("environment") => Ok(environment_probe()),
             Some("connection") => connection_probe(&context),
             Some("panic") => {
-                panic!("the std virtualization trap proof requested a deliberate guest panic");
+                panic!("the std virtualization trap test requested a deliberate guest panic");
             }
             _ => Err(invalid_input(
-                "invalid-proof",
-                "proof must be environment, connection, or panic",
+                "invalid-test",
+                "test must be environment, connection, or panic",
             )),
         }
     }
@@ -67,8 +67,8 @@ fn connection_probe(context: &NodeContext) -> Result<Emission, NodeError> {
     })
     .map_err(|error| {
         NodeError::Terminal(ErrorDetail {
-            message: format!("connection proof failed: {error:?}"),
-            code: Some("connection-proof-failed".to_owned()),
+            message: format!("connection test failed: {error:?}"),
+            code: Some("connection-test-failed".to_owned()),
         })
     })?;
     Ok(Emission {
