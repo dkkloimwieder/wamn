@@ -32,7 +32,7 @@ A confirmed pre-commit refusal leaves the **named business state** unchanged; li
 |---|---|---|
 | **Build verification** | The complete generated and authored application SQL corpus through the shared SQLx verification stage; compile components and contracts. | SQL/type and build-contract checks. Not data-dependent business behavior, rollback, or concurrency. [2] |
 | **Pure decisions** | Real application/platform functions with examples and Proptest inputs. | Calculations, transitions, validation, and boundary refusals. Do not copy production logic into a test-only implementation. |
-| **Command histories** | Generated sequences against real command implementations; component-backed database tests through production capability and transaction paths. | Results and business state agree with an independently expressed, small reference model. Native-only execution does not prove the guest boundary. |
+| **Command histories** | Generated sequences against real command implementations; component-backed database tests through production capability and transaction paths. | Results and business state agree with an independently expressed, small reference model. Native-only execution does not test the guest boundary. |
 | **Controlled guest scenarios** | Real guests with test-controlled effects, clocks, and randomness where needed. | Repeatable behavior for the modeled scenario. Recorded answers do not establish database or external-service correctness. |
 | **Live integration and contention** | Real PostgreSQL, authenticated routes, and relevant broker/process boundaries. | Transactions, locking, constraints, privileges/RLS, cleanup, delivery, and served behavior under the exercised failures. A seed does not control PostgreSQL’s internal scheduling. |
 
@@ -58,7 +58,7 @@ Run competing transactions on separate real connections. Establish overlap with 
 
 ### Failure and replay behavior
 
-Distinguish **before commit**, **commit with lost response**, and **downstream failure after commit**. Prove which boundary the control reached; a timeout alone does not.
+Distinguish **before commit**, **commit with lost response**, and **downstream failure after commit**. Show which boundary the control reached. A timeout alone does not establish this.
 
 Apply the declared replay contract: claim-backed calls recover the original result; state/revision calls need not. Inner-command idempotency does not make a composed route safe to replay. Add no automatic mutation retries. [3, 5]
 
@@ -103,7 +103,7 @@ Detect and reproduce a deliberate business defect, including a contention-protec
 |---|---|
 | **Additive base** | Both fresh installations satisfy the unchanged overlay’s required schema contract; its named operations work against fresh fixtures and its artifact digests remain unchanged. |
 | **Breaking base** | The second fresh-install combination refuses with the named unsatisfied schema requirement or ownership conflict; an unrelated build failure is not the compatibility result. |
-| **Duplicate committed event** | Commit a receipt through the real command, observe its event, and redeliver the same source identity through the registered materializer path after the first handler completion. Prove the handler receives it again and `quality.create_inspection` leaves one inspection for that receipt, without resetting its business state. A distinct valid receipt event creates its own inspection. [3, 8] |
+| **Duplicate committed event** | Commit a receipt through the real command, observe its event, and redeliver the same source identity through the registered materializer path after the first handler completion. Make sure that the handler receives it again. Make sure that `quality.create_inspection` leaves one inspection for that receipt, without resetting its business state. A distinct valid receipt event creates its own inspection. [3, 8] |
 | **Poison event and progress** | Deliver a routable poison event to the same registration, followed by a valid independent receipt event. Under the existing bounded retry/DLQ policy, observe the poison’s correlated dead-letter record and the valid event’s inspection within the declared test bound. No indefinite blockage and no fabricated DLQ row. [6, 9] |
 
 These eventual-outcome tests use the actual broker/materializer and private handler, not a new public route. Record observed deliveries, source/registration identity, configured retry and time bounds, and settled business/DLQ state. Publishing twice is insufficient if broker deduplication prevents the second handler delivery. State the recovery assumptions; bounded progress does not promise zero delay while poison handling runs. **One inspection per receipt is application idempotency, not a platform-wide exactly-once guarantee.** [3, 6, 8, 9]
@@ -122,7 +122,7 @@ Report invariant IDs, source/component/corpus identity, fixture/history, execute
 | **2 — Overlay reuse** | Execute §6’s fresh-install compatibility pairs and materializer duplicate/poison/progress cases. Keep the overlay artifacts unchanged and invariants application-owned; extract only demonstrated shared helpers. No in-place update or lifecycle work. [3, 7] |
 | **3 — Targeted simulation** | Extend platform scheduling or guest replay under existing D1–D5 work only where it closes a named coverage gap. Keep the live tests for unmodeled behavior. |
 
-Respect existing platform-wave fences. This specification governs reconciliation with the older proposal and authoring procedure. Beads and executed receipts own completion. Do not maintain competing plans.
+Respect existing platform-wave fences. This specification governs reconciliation with the older proposal and authoring procedure. Beads and executed test results own completion. Do not maintain competing plans.
 
 The owner accepted this specification and authorized Increment 1 on 2026-09-09. Bead `wamn-10yt.77` owns implementation and evidence. Increment 2 remains a future slice with two independent fresh installations and unchanged overlay artifacts. The implementing bead selects exact helper APIs and finite budgets for each suite. This approval makes no completion claim.
 

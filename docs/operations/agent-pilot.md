@@ -2,7 +2,7 @@
 
 Status: living protocol. Runs are snapshots under
 `evidence/experiments/agent-authoring/<nnn>-<agent>-<task>/`. Pinned per run: `main`
-commit, model ids, skill inventory.
+commit, model ids, skill list.
 
 Tooling: `docs/poc/agent-authoring-tooling-spec.md`. This document owns the question, the
 measurements, the rubric, and the task fixtures. Applications appear here only as
@@ -10,7 +10,7 @@ fixtures that satisfy the tooling's task interface (work spec A6).
 
 ## 1. Question
 
-Can a coding agent author a new wamn package from a scenario and prove it works,
+Can a coding agent author a new wamn package from a scenario and test that it works,
 with no human relay? Where does it stall, and which stalls are the platform's fault?
 
 The unit of result is a stall list. A pass with no stalls and a fail with a clean
@@ -35,8 +35,8 @@ stall list are both results. A fail attributed to the environment is a wasted ru
 ## 3. Design
 
 - **Arms.** Baseline: repository as-is (`CLAUDE.md`, `.agents/skills/beads`, and
-  whatever global skills the machine has — inventoried and frozen). Later arms
-  change exactly one tooling item (skills; receipts; invoke; flow tests) and rerun
+  whatever global skills the machine has, listed and frozen). Later arms
+  change exactly one tooling item (skills, results, invoke, flow tests) and rerun
   the same task, so every item is justified by a measured delta.
 - **Agents.** Claude Code, three runs per task. Ruled by the owner on
   2026-09-06: the baseline arm is one agent, not two. Codex stays an arm the
@@ -204,7 +204,7 @@ variable.
 #### Accepted testing amendment (2026-09-09)
 
 The owner accepted [WAMN platform and application testing](../poc/wamn_testing_spec.md) and authorized Receiving Increment 1 under `wamn-10yt.77`.
-Application testing proceeds without the complete deterministic simulation framework. Beads and executed receipts own completion.
+Application testing proceeds without the complete deterministic simulation framework. Beads and executed test results own completion.
 
 Application briefs own fixtures, expected outcomes, and invariant IDs. Each invariant records its rule, affected state, observation boundary, enforcing code or constraint, and named tests.
 Extend existing support to execute real commands through guest, capability, transaction, and authenticated route boundaries.
@@ -371,7 +371,7 @@ Human items, scored from the worktree and the transcript:
 ## 6. Operator directions
 
 1. `tools/agent-pilot-run all --run <nnn> --agent {claude|codex} --task <dir>`.
-   Record the `main` commit, model id, machine load, skill inventory.
+   Record the `main` commit, model id, machine load, skill list.
 2. Do not intervene. Environment failure → mark `INVALID-ENV`, fix the runner,
    rerun as `<nnn>b`.
 3. On driver exit: grade (the runner does the machine half); fill the human items;
@@ -451,7 +451,7 @@ of all stalls in more than one run; fix the runner, rerun, rank nothing from it.
 A 3/3 PASS with an empty stall table means the baseline needs no tooling for this
 task and T2 opens.
 
-Three runs buy a stall inventory, not a rate. Read the resulting table the way §2
+Three runs produce a stall list, not a rate. Read the resulting table the way §2
 already reads H4: it is recorded, not tested.
 
 ## 8. Decision rule
@@ -460,7 +460,7 @@ Rank stall categories by minutes lost across valid runs.
 
 | category | opens |
 |---|---|
-| `output-parsing` | B2 receipts |
+| `output-parsing` | B2 results |
 | `verb-missing`, `invented-script` | B3 invoke, then B4 flow tests |
 | `rule-unknown` | B1 skills and the rule paragraphs |
 | `provisioning` | findings on `wamn-10yt.10` (`.10.32` identity, base-only loop) |
@@ -632,7 +632,7 @@ Raw: <nnn>-<agent>-<task>/
   runner will produce stalls in every run; they are priced, not discovered, and
   do not count against the agent in H-6.
 - Global skills: `rust-guidelines` is present via `CLAUDE.md:107` only if
-  installed on the machine; the inventory is frozen across runs so arms compare
+  installed on the machine. The list is frozen across runs so arms compare
   like with like.
 - Machine settings and the active output style. Run 001 measured this rather
   than assumed it: the driver inherited the machine's output style and used the
