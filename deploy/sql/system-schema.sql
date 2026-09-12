@@ -279,7 +279,7 @@ CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
 --
 -- Signers hold a SHARE lock on their issuer's signing-state row through the
 -- signature. Activation and compromise removal hold UPDATE locks on that row.
--- After old signers drain, activation records clock_timestamp() as a proven
+-- After old signers drain, activation records clock_timestamp() as a confirmed
 -- signing cutoff and erases the old private key in the same transaction.
 -- The public key remains valid through cutoff + 930 seconds (900 + 30).
 -- A failed flip rolls back both state and cutoff; no last-use/token writes are

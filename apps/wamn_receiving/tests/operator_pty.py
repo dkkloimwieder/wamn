@@ -285,13 +285,13 @@ def main():
         require(binary.is_file() and os.access(binary, os.X_OK), "--binary must name an executable file")
         assert_operator(binary, Path(__file__).resolve().parents[3])
     except TestError as error:
-        print(f"operator PTY proof failed: {error}", file=sys.stderr)
+        print(f"operator PTY test failed: {error}", file=sys.stderr)
         return 1
     except (Exception, KeyboardInterrupt) as error:
         # Do not dump PTY output, HTTP headers, the launch environment, or a traceback.
-        print(f"operator PTY proof failed: {type(error).__name__}", file=sys.stderr)
+        print(f"operator PTY test failed: {type(error).__name__}", file=sys.stderr)
         return 1
-    print("operator PTY proof passed: HTTP bytes, pending barriers, terminal restoration, and target replacement")
+    print("operator PTY test passed: HTTP bytes, pending barriers, terminal restoration, and target replacement")
     return 0
 
 

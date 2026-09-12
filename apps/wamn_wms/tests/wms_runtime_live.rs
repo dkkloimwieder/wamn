@@ -535,7 +535,7 @@ pub(crate) async fn assert_committed_move_after_label_failure(document: &Journey
         .context("the pallet has a numeric revision")?;
     anyhow::ensure!(
         before["location_id"] != runtime.to_location_id,
-        "the partial proof must move to a different location"
+        "the partial test must move to a different location"
     );
     let key = uuid::Uuid::new_v4().to_string();
     let request_id = format!("partial-{key}");
@@ -628,7 +628,7 @@ pub(crate) async fn assert_committed_move_after_label_failure(document: &Journey
         after["location_id"] == expected["location_id"]
             && after["row_version"] == expected["row_version"]
             && after["status"] == expected["pallet_status"],
-        "the later read proves the movement stayed committed: {after}"
+        "the later read shows the movement stayed committed: {after}"
     );
     Ok((
         http,

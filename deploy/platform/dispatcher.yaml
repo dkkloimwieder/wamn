@@ -17,7 +17,7 @@
 # TWO REPLICAS, NO LEADER: replicas may publish duplicate hints from the same
 # durable queue rows. Hints are repeatable and the executor's direct claim is
 # the state-transition arbiter, so reconciliation needs no leader election.
-# The retired dispatchbench executable is not a current proof source.
+# The retired dispatchbench executable is not a current test source.
 #
 # CRASH SAFETY + SHUTDOWN: a sweep only reads durable queue state and publishes
 # repeatable hints. A killed pod leaves no dispatcher-owned database mutation;

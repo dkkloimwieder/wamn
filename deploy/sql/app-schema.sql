@@ -4,7 +4,7 @@
 -- audit_log, and api_keys.
 --
 -- This is the AUTH/RBAC half of item 2.4. Package coordinates, immutable
--- migration ledgers, effective releases, and release membership are already
+-- migration tables, effective releases, and release membership are already
 -- shipped by deploy/sql/catalog-schema.sql and are deliberately not redefined
 -- here. A
 -- `deployments` table is deferred — a live WorkloadDeployment is a K8s CR, so a

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove descriptor startup behavior in isolated production processes."""
+"""Test descriptor startup behavior in isolated production processes."""
 
 import argparse
 import datetime
@@ -47,9 +47,9 @@ def run_case(role, binary, mode, soft, hard, output_dir):
     name = f"{role}_{mode}"
     missing_ca = str(output_dir / "deliberately-missing-ca.pem")
     service_args = ["host"] if role == "host" else [
-        "--release-artifact-base", "registry.invalid/wamn-proof/release",
+        "--release-artifact-base", "registry.invalid/wamn-test/release",
         "--release-manifest-digest", "sha256:" + "0" * 64,
-        "--component-artifact-base", "registry.invalid/wamn-proof/component",
+        "--component-artifact-base", "registry.invalid/wamn-test/component",
         "--registry-auth-file", str(output_dir / "deliberately-missing-auth.json"),
     ]
     service_args += ["--oci-ca-path", missing_ca]
@@ -159,7 +159,7 @@ def main():
         "artifacts": {role: {"path": str(binary), "sha256": sha256(binary),
                              "bytes": binary.stat().st_size} for role, binary in binaries.items()},
         "parent_nofile_before": list(parent_before),
-        "scope": "Startup hook and native defaults only; no engine, workload, or network proof.",
+        "scope": "Startup hook and native defaults only; no engine, workload, or network test.",
         "hard_ceiling_scope": "Equal soft and hard limits; no injected syscall failure.",
         "cases": [],
     }

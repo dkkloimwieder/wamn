@@ -42,7 +42,7 @@ pub(super) fn prepare_fresh_only_packages(root: &Path) -> anyhow::Result<()> {
     for source in [package_root(), overlay_package_root()] {
         let directory = source
             .file_name()
-            .expect("the proof package has a directory name");
+            .expect("the test package has a directory name");
         copy_fresh_only_package(&source, &root.join(directory))?;
     }
     let base = root.join("wamn_receiving");

@@ -41,12 +41,12 @@ if [[ $status -eq 0 ]]; then
        $abis[] | "\($prefix)-\(.)"]) as $expected |
     (map(.case) | sort) == ($expected | sort) and
     all(.[]; (.evidence | type) == "object" and
-      (.verdict as $verdict | ["declared","observed","pass","gap","source-gap","unproved"] | index($verdict) != null)) and
-    .[-1] == {case:"completion",verdict:"observed",evidence:{protocol_rows:8,native_adoption_proved:false}}
+      (.verdict as $verdict | ["declared","observed","pass","gap","source-gap","not-tested"] | index($verdict) != null)) and
+    .[-1] == {case:"completion",verdict:"observed",evidence:{protocol_rows:8,native_adoption_tested:false}}
   ' "$evidence_dir/stdout.jsonl" >"$evidence_dir/shape-check.log" 2>&1 || status=1
 fi
 jq -n --argjson status "$status" \
-  '{exit_code:$status,verdict:(if $status == 0 then "observed" else "failed" end),production_adoption_proved:false}' \
+  '{exit_code:$status,verdict:(if $status == 0 then "observed" else "failed" end),production_adoption_tested:false}' \
   >"$evidence_dir/run-receipt.json"
 printf 'NATIVE_HTTP_PROBE exit_code=%s evidence=%s\n' "$status" "$evidence_dir"
 exit "$status"

@@ -18,7 +18,7 @@ pub(super) async fn prepare_session_host_fixture(
 ) -> anyhow::Result<()> {
     const SESSION_ATTACHMENT: &str = "purchase-order-get-http";
     const SESSION_ROLE: &str = "session-host-reader";
-    const REQUEST_ID: &str = "session-host-proof";
+    const REQUEST_ID: &str = "session-host-test";
     const ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
     const SESSION_RELEASE_ID: u32 = RELEASE_ID + 1;
 
@@ -110,7 +110,7 @@ pub(super) async fn prepare_session_host_fixture(
     .await?;
     anyhow::ensure!(
         release.release().effective_release_id == 2 && release.manifest().format_version == 1,
-        "session proof must publish format 1 as release 2"
+        "session test must publish format 1 as release 2"
     );
     let mut expected_attachments = previous_release.manifest().attachments.clone();
     expected_attachments
@@ -128,7 +128,7 @@ pub(super) async fn prepare_session_host_fixture(
     let human = create_human(
         admin.as_ref(),
         "session-host@example.test",
-        "Session host proof",
+        "Session host test",
     )
     .await?;
     project_env_membership::grant(ProjectEnvMembershipArgs {
@@ -163,7 +163,7 @@ pub(super) async fn prepare_session_host_fixture(
     let pat = issue_pat(
         admin.as_ref(),
         human.id(),
-        "deployed host session proof",
+        "deployed host session test",
         Duration::from_secs(3600),
     )
     .await?;
@@ -221,7 +221,7 @@ async fn production_nested_session_call_preserves_original_caller() -> anyhow::R
         nested_session_caller(false, false),
     )
     .await
-    .context("nested session proof exceeded 180 seconds")?
+    .context("nested session test exceeded 180 seconds")?
 }
 
 #[tokio::test]
@@ -229,7 +229,7 @@ async fn production_nested_session_call_preserves_original_caller() -> anyhow::R
 async fn production_nested_fresh_only_requires_pat_and_observes_revocation() -> anyhow::Result<()> {
     tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, false))
         .await
-        .context("nested fresh-only proof exceeded 180 seconds")?
+        .context("nested fresh-only test exceeded 180 seconds")?
 }
 
 #[tokio::test]
@@ -237,7 +237,7 @@ async fn production_nested_fresh_only_requires_pat_and_observes_revocation() -> 
 async fn production_session_client_login_and_fresh_selection() -> anyhow::Result<()> {
     tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, true))
         .await
-        .context("session client proof exceeded 180 seconds")?
+        .context("session client test exceeded 180 seconds")?
 }
 
 pub(super) async fn nested_session_caller(fresh_only: bool, session_client: bool) -> anyhow::Result<()> {
@@ -290,7 +290,7 @@ pub(super) async fn assert_nested_session(
             && endpoint.password().is_none()
             && endpoint.query().is_none()
             && endpoint.fragment().is_none(),
-        "nested proof requires an explicit loopback HTTPS port-forward origin"
+        "nested test requires an explicit loopback HTTPS port-forward origin"
     );
     let keys = IssuerKeys::new(IssuerKeysConfig::new(
         &issuer,
@@ -352,7 +352,7 @@ pub(super) async fn assert_nested_session(
     anyhow::ensure!(
         operation_freshness(BASE_RECORD_RECEIPT) == Some(fresh_only)
             && operation_freshness(OVERLAY_RECORD_RECEIPT) == Some(false),
-        "nested proof requires the admitted base freshness and an ordinary overlay"
+        "nested test requires the admitted base freshness and an ordinary overlay"
     );
     let digests = released_component_digests(&previous, &inputs.route_host)?;
     let deployed_bytes: Vec<u8> = project
@@ -381,7 +381,7 @@ pub(super) async fn assert_nested_session(
                 anyhow::ensure!(
                     attachment["registered-operation"] == selected.operation
                         && attachment["auth-policy"] == serde_json::json!({"modes": ["pat"]}),
-                    "caller proof route differs from the authored PAT attachment"
+                    "caller test route differs from the authored PAT attachment"
                 );
                 attachment["auth-policy"] = auth_policy.clone();
                 changed += 1;
@@ -393,13 +393,13 @@ pub(super) async fn assert_nested_session(
         std::fs::write(&path, serde_json::to_vec(&document)?)?;
         anyhow::ensure!(
             std::fs::read(&source)? == original,
-            "nested proof changed package source"
+            "nested test changed package source"
         );
         attachments.push(path);
     }
     anyhow::ensure!(
         changed == selected_attachments.len(),
-        "caller proof must change exactly the selected copied route policies"
+        "caller test must change exactly the selected copied route policies"
     );
     let (_, release) = publish_journey_release(
         &inputs,
@@ -418,7 +418,7 @@ pub(super) async fn assert_nested_session(
     for selected in selected_attachments {
         expected
             .get_mut(selected.id)
-            .context("original caller proof attachment missing")?
+            .context("original caller test attachment missing")?
             .auth_policy = auth_policy.clone();
     }
     anyhow::ensure!(
@@ -428,7 +428,7 @@ pub(super) async fn assert_nested_session(
             && release.manifest().components == previous.manifest().components
             && release.manifest().wirings == previous.manifest().wirings
             && release.manifest().registrations == previous.manifest().registrations,
-        "caller proof changed facts beyond its release ID and selected route policies"
+        "caller test changed facts beyond its release ID and selected route policies"
     );
     let after: Vec<u8> = project
         .query_one(
@@ -446,7 +446,7 @@ pub(super) async fn assert_nested_session(
     let human = create_human(
         admin.as_ref(),
         "session-nested@example.test",
-        "Nested session proof",
+        "Nested session test",
     )
     .await?;
     project_env_membership::grant(ProjectEnvMembershipArgs {
@@ -487,7 +487,7 @@ pub(super) async fn assert_nested_session(
     let pat = issue_pat(
         admin.as_ref(),
         human.id(),
-        "nested session proof",
+        "nested session test",
         Duration::from_secs(600),
     )
     .await?;

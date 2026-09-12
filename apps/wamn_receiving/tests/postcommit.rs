@@ -363,7 +363,7 @@ async fn assert_replay_and_progress(
             && graph["nodes"]["operation"]["operation"]
                 == "client-acme-receiving:quality/create-inspection@3.0.0"
             && graph["nodes"]["operation"]["config"].get("retry").is_none(),
-        "the proof requires the unchanged one-node private handler and default retry policy"
+        "the test requires the unchanged one-node private handler and default retry policy"
     );
     evidence["wiring"] = graph;
     let registration: Value = project.query_one(
@@ -601,7 +601,7 @@ async fn assert_replay_and_progress(
     ).await?.get(0);
     ensure!(
         registration_after == evidence["registration"],
-        "post-commit proof changed its registration"
+        "post-commit test changed its registration"
     );
     Ok(())
 }
@@ -643,7 +643,7 @@ pub(super) async fn assert_postcommit(
             && phase.namespace == owned_namespace
             && phase.materializer_workload == "receiving-materializer"
             && phase.kubeconfig.is_file(),
-        "post-commit proof requires the exact owned disposable Receiving materializer"
+        "post-commit test requires the exact owned disposable Receiving materializer"
     );
     ensure!(
         phase.source_commit.len() == 40
@@ -653,7 +653,7 @@ pub(super) async fn assert_postcommit(
                 .all(|byte| byte.is_ascii_hexdigit())
             && phase.statement_timeout_ms > 0
             && phase.statement_timeout_ms <= 10_000,
-        "post-commit proof requires source identity and a bounded deployed statement timeout"
+        "post-commit test requires source identity and a bounded deployed statement timeout"
     );
     ensure!(
         !phase.evidence_file.exists(),

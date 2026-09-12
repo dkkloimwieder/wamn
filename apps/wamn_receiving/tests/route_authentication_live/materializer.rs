@@ -9,26 +9,26 @@ pub(super) async fn connect_event_test_client(
     password_file_key: &str,
 ) -> anyhow::Result<async_nats::Client> {
     let username = std::env::var(username_key)
-        .with_context(|| format!("the event proof requires {username_key}"))?;
+        .with_context(|| format!("the event test requires {username_key}"))?;
     let password_file = std::env::var_os(password_file_key)
-        .with_context(|| format!("the event proof requires {password_file_key}"))?;
+        .with_context(|| format!("the event test requires {password_file_key}"))?;
     anyhow::ensure!(
         !username.is_empty()
             && username.bytes().all(|byte| {
                 byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
             }),
-        "the event proof username must contain only ASCII letters, digits, underscore or hyphen"
+        "the event test username must contain only ASCII letters, digits, underscore or hyphen"
     );
     let password = tokio::fs::read_to_string(password_file)
         .await
-        .context("read the private event proof password file")?;
-    anyhow::ensure!(!password.is_empty(), "the event proof password is empty");
+        .context("read the private event test password file")?;
+    anyhow::ensure!(!password.is_empty(), "the event test password is empty");
     async_nats::ConnectOptions::new()
         .custom_inbox_prefix(format!("_INBOX_{username}"))
         .user_and_password(username, password)
         .connect(url)
         .await
-        .context("connect to the disposable event plane with the scoped proof role")
+        .context("connect to the disposable event plane with the scoped test role")
 }
 
 #[tokio::test]

@@ -27,7 +27,7 @@
 #     one, or Helm refuses with an ownership-metadata error on the identically
 #     named Deployment, Service and NetworkPolicy (all three are named after the
 #     host group, not the release). A fresh namespace has nothing to collide
-#     with, which is how the RC proves this (wamn-0h0g.15.25).
+#     with, which is how the RC shows this (wamn-0h0g.15.25).
 #
 # WHY THIS ENVIRONMENT'S HOST NAMESPACE EQUALS THE OPERATOR'S RELEASE NAMESPACE.
 # Giving the host tier a namespace of its own is not free at the pinned chart
@@ -117,7 +117,7 @@ runtime:
       # Keep at least one replica for synchronous HTTP serving. Three remains
       # this profile's capacity choice (wamn-0h0g.10.8). Native /readyz and /livez
       # use port 8081 independently of the workload HTTP listener on port 80.
-      # Readiness does not prove route-aware traffic removal or remove rebind outages.
+      # Readiness does not show route-aware traffic removal or remove rebind outages.
       replicas: 3
       service:
         type: ClusterIP

@@ -47,7 +47,7 @@ spec:
       # object's own namespace; any other value is refused with a
       # `CrossEnvironmentSchedulingDenied` Warning Event and a
       # `HostSelection=False` condition. Naming it rather than leaving it unset
-      # makes the target legible and gives the RC one string to flip to prove
+      # makes the target legible and gives the RC one string to flip to show
       # the refusal.
       environment: wamn-system
       # HTTP exposure: the operator manages EndpointSlices for this Service

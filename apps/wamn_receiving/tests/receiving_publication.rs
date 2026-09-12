@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use wamn_catalog::{AttachmentKind, ComponentDeclaration, WiringDocument, WiringTerminal};
 
-const TENANT: &str = "receiving-publication-proof";
+const TENANT: &str = "receiving-publication-test";
 const PACKAGE_ID: &str = "wamn_receiving";
 const PACKAGE_VERSION: &str = "1.0.0";
 const COMPONENT: &str = "receiving";

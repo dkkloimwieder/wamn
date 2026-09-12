@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     record(
         "completion",
         "observed",
-        json!({"protocol_rows":8,"native_adoption_proved":false}),
+        json!({"protocol_rows":8,"native_adoption_tested":false}),
     );
     Ok(())
 }
@@ -68,7 +68,7 @@ async fn experiments() -> Result<()> {
     peer_pinning().await?;
     record(
         "private_wamn_integration",
-        "unproved",
+        "not-tested",
         json!({
             "subjects":["real ConnectionHttp send substitution","candidate bindings including blobstore","original caller and executing nested identity"],
             "reason":"ConnectionHttp::send/execute and closure checks are private; this probe neither copies nor patches them",

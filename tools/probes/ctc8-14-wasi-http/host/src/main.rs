@@ -265,7 +265,7 @@ async fn main() -> anyhow::Result<()> {
             "{}",
             json!({"case":"invocation_context_gap", "result":"gap",
             "parent_hook":parent_call, "child_hook":child_call,
-            "scope":"two separate component contexts; no production nested-call proof"})
+            "scope":"two separate component contexts; no production nested-call test"})
         );
 
         let mut denied_cases = vec![
@@ -446,7 +446,7 @@ async fn main() -> anyhow::Result<()> {
         json!({"case":"report", "result":"probe-complete", "production_adoption":false,
         "gaps":["tenant-wasi-http-unadmitted", "native-grpc-bypasses-request-hook",
             "native-grpc-no-wire-trace-injection", "workload-id-is-not-invocation-authority",
-            "production-nesting-and-candidate-binding-unproven", "native-connector-peer-pinning-not-exposed",
+            "production-nesting-and-candidate-binding-not-tested", "native-connector-peer-pinning-not-exposed",
             "p3-guest-not-probed", "wamn-outcome-vocabulary-not-preserved-by-standard-errors"],
         "limits":"no pooling, rotation or aggregate-quota claim; owned by ctc8.13"})
     );

@@ -35,9 +35,9 @@ nonzero. The final JSON record says `probe-complete`, never that adoption is saf
 `ProbeHook` is deliberately a fixture adapter. Its three URI aliases, path rule,
 credential sentinel, and trace injection demonstrate what the public request
 hook can transform. They are not copies of WAMN binding authorization, and they
-do not prove invocation, release, candidate, tenant, or credential-generation
+do not establish invocation, release, candidate, tenant, or credential-generation
 authority. Server observations establish the actual loopback peer reached;
-they do not prove native DNS pinning or a connector policy callback exists.
+they do not establish native DNS pinning or a connector policy callback exists.
 
 The gRPC cases are negative controls for adopting this adapter. They send real
 H2 requests, including TLS, through the runtime's guest-selected fast path. The

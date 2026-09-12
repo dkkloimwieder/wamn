@@ -86,7 +86,7 @@ DO $scenario_author$ BEGIN
   END IF;
 END $scenario_author$;
 
--- Stable host-only ACL role for the effect ledger. Credential generations are
+-- Stable host-only ACL role for the effect table. Credential generations are
 -- provisioned separately; this local fixture needs only the NOLOGIN grant
 -- carrier so canonical run-state.sql can be applied.
 DO $effect_writer$ BEGIN
@@ -164,7 +164,7 @@ END $platform_group$;
 -- `pg_auth_members` as a member. This grant WAS that row, so a fresh install
 -- built a cluster that `reconcile-run-plane` then refused. Measured before the
 -- removal: 8 of the 17 tests in `services/ctl/tests/run_plane_live.rs` failed on
--- that exact code. The writer reaches its four run-plane ledgers through
+-- that exact code. The writer reaches its four run-plane tables through
 -- per-relation arms naming it directly in `deploy/sql/run-state.sql`, so
 -- deleting this line strands no read.
 GRANT wamn_platform TO wamn_run_retention WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;

@@ -110,7 +110,7 @@ def run_mode(driver, tree, binary, directory, mode, failure, timeout):
                           product="44444444-0000-0000-0000-000000000002",
                           source="44444444-0000-0000-0000-000000000003",
                           destination="44444444-0000-0000-0000-000000000004")
-    result = {"passed": False, "mode": mode, "scope": "synthetic terminal preflight", "platform_proof": False}
+    result = {"passed": False, "mode": mode, "scope": "synthetic terminal preflight", "platform_test": False}
     fixture = relay = session = None
     try:
         fixture = HttpFixture(ids, mode, failure)
@@ -160,7 +160,7 @@ def main():
     partial = json.loads(json.loads(partial_path.read_text())["body"])
     evidence = driver.support.Evidence(args.evidence_dir, [])
     evidence.json("inputs.json", {
-        "scope": "synthetic terminal preflight", "platform_proof": False, "binary": str(binary),
+        "scope": "synthetic terminal preflight", "platform_test": False, "binary": str(binary),
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
         "driver_sha256": hashlib.sha256(driver_path.read_bytes()).hexdigest(),
         "preflight_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
@@ -169,7 +169,7 @@ def main():
     })
     modes = [run_mode(driver, tree, binary, args.evidence_dir / mode, mode, partial["failed_outcome"], args.timeout)
              for mode in ("success", "partial")]
-    result = {"passed": all(mode["passed"] for mode in modes), "platform_proof": False,
+    result = {"passed": all(mode["passed"] for mode in modes), "platform_test": False,
               "scope": "synthetic terminal preflight", "modes": modes}
     evidence.json("result.json", result)
     evidence.sums()

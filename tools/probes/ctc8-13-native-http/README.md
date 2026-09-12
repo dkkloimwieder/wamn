@@ -28,7 +28,7 @@ Detection after dispatch does not prevent an unauthorized effect.
 
 The `gap` verdict means that the fixture observed a missing guarantee.
 The `source-gap` verdict names an API limitation from source inspection.
-The `unproved` verdict names work that this probe did not execute.
+The `not-tested` verdict names work that this probe did not execute.
 The final `observed` receipt confirms that all listed experiments ran, not that native adoption is safe.
 A failed assertion or missing final receipt fails the run.
 
@@ -65,7 +65,7 @@ Keep failed runs as well as successful runs.
 The executable emits one JSON object per line and limits the whole fixture to ninety seconds.
 
 The probe does not exercise the private `ConnectionHttp::send` replacement, frozen candidate bindings, blobstore authorization, or nested caller propagation.
-It records native transport errors; it does not prove their translation into WAMN's outcome vocabulary.
+It records native transport errors; it does not establish their translation into WAMN's outcome vocabulary.
 Root owns the existing regression tests and the benchmark integration.
 Neither this program nor its elapsed request times establish a production performance improvement.
 No schema, grants, production runtime, guard, shared manifest, or fork change belongs to this experiment.

@@ -1433,7 +1433,7 @@ fn internal_relation_cdc_exclusion_is_closed_and_not_a_model() {
         package
             .file("generated/models/record_receipt_command.json")
             .is_none(),
-        "the command ledger is mechanism state, not a fabricated model"
+        "the command table is mechanism state, not a fabricated model"
     );
 
     let mut overlap = manifest.clone();
@@ -1791,19 +1791,19 @@ fn custom_statement_declarations_drive_both_siblings_without_domain_tables() {
 fn custom_operation_ir_references_require_declared_fields_and_named_constraints() {
     let manifest = shipped_manifest();
     let catalog = receiving_catalog();
-    let ledger = table(&catalog, "record_receipt_command");
+    let command_table = table(&catalog, "record_receipt_command");
 
     let missing_field = replacing_table(
         &catalog,
         rebuilt_table(
-            ledger,
-            ledger
+            command_table,
+            command_table
                 .columns()
                 .iter()
                 .filter(|column| column.name() != "canonical_command")
                 .cloned()
                 .collect(),
-            ledger.constraints().to_vec(),
+            command_table.constraints().to_vec(),
         ),
     );
     assert_eq!(
@@ -1813,12 +1813,12 @@ fn custom_operation_ir_references_require_declared_fields_and_named_constraints(
         GenerateErrorKind::UnknownColumn
     );
 
-    let missing_ledger_constraint = replacing_table(
+    let missing_command_constraint = replacing_table(
         &catalog,
         rebuilt_table(
-            ledger,
-            ledger.columns().to_vec(),
-            ledger
+            command_table,
+            command_table.columns().to_vec(),
+            command_table
                 .constraints()
                 .iter()
                 .filter(|constraint| {
@@ -1829,7 +1829,7 @@ fn custom_operation_ir_references_require_declared_fields_and_named_constraints(
         ),
     );
     assert_eq!(
-        shipped_generation(&missing_ledger_constraint, &manifest)
+        shipped_generation(&missing_command_constraint, &manifest)
             .unwrap_err()
             .kind(),
         GenerateErrorKind::InvalidOperation
@@ -1895,8 +1895,8 @@ fn additive_unused_column_on_consumed_relation_preserves_required_contract() {
     let manifest = shipped_manifest();
     let catalog = receiving_catalog();
     let base = shipped_generation(&catalog, &manifest).unwrap();
-    let command_ledger = table(&catalog, "record_receipt_command");
-    let mut columns = command_ledger.columns().to_vec();
+    let command_table = table(&catalog, "record_receipt_command");
+    let mut columns = command_table.columns().to_vec();
     columns.push(Column::new(
         "unused_receiving_note",
         ColumnType::Text,
@@ -1907,9 +1907,9 @@ fn additive_unused_column_on_consumed_relation_preserves_required_contract() {
     let additive_catalog = replacing_table(
         &catalog,
         rebuilt_table(
-            command_ledger,
+            command_table,
             columns,
-            command_ledger.constraints().to_vec(),
+            command_table.constraints().to_vec(),
         ),
     );
     let additive = shipped_generation(&additive_catalog, &manifest).unwrap();

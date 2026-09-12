@@ -15,7 +15,7 @@
 -- (`wamn-0h0g.12.69`) -- and naming a role that may not exist is an apply-time
 -- failure rather than a degradation. Role and
 -- scoped LOGIN credential-generation lifecycle is provisioning-owned; this
--- artifact grants the stable role ledger append/read authority plus only the
+-- artifact grants the stable role table append/read authority plus only the
 -- narrow run columns needed for its fenced runnable-state recheck.
 --
 -- Security shape mirrors the rest of the platform (s2/s3, catalog): tenant
@@ -146,7 +146,7 @@ END
 $wamn_authority_bootstrap$;
 
 -- Effect attempt, dispatch, and outcome facts are immutable even for their
--- owning role; retention requires a future explicit ledger protocol.
+-- owning role; retention requires a future explicit record retention protocol.
 CREATE FUNCTION wamn_run.reject_immutable_effect_fact_change()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -191,7 +191,7 @@ END
 $$;
 
 -- Admission pins, including `effective_release_id`, never change. The claiming
--- pod proves it carries that release and records only its verified manifest
+-- pod shows it carries that release and records only its verified manifest
 -- digest. That digest is write-once per claim attempt: a runnable pre-effect
 -- reclaim may clear it; a terminal run or durable run with immutable effect
 -- evidence may not. The next claim then records the digest afresh.
@@ -361,7 +361,7 @@ CREATE TABLE wamn_run.runs (
     -- derived by private management admission. Array order is
     -- (component-digest, store-alias); callers never author this value.
     binding_world_json jsonb,
-    -- Admission pins the exact effective release. At claim, the worker proves
+    -- Admission pins the exact effective release. At claim, the worker shows
     -- its mounted release has that identity and records the RFC 8785 digest of
     -- its component/interface/wiring serving closure, once per claim attempt.
     manifest_digest text,
@@ -555,7 +555,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();
 -- nor that relation's FORCE RLS policy, so a retention session holding zero
 -- queue privilege still cascades the queue row away. That is also the ONLY
 -- cascade out of `runs`: every other foreign key in the run plane is
--- `NO ACTION`, so the effect ledgers are not reachable from a run delete and
+-- `NO ACTION`, so the effect tables are not reachable from a run delete and
 -- retention is granted nothing on them.
 --
 -- THE ACCEPTED RESIDUAL (`wamn-0h0g.22.34`). Column scoping bounds WHAT a
@@ -587,7 +587,7 @@ GRANT SELECT (tenant_id, run_id, status)
     ON wamn_run.runs TO wamn_effect_writer;
 
 -- ---------------------------------------------------------------------------
--- Immutable effect-attempt ledger. Every effectful occurrence has one
+-- Immutable effect-attempt table. Every effectful occurrence has one
 -- server-minted identity here.
 -- wamn-0h0g.4.9 installs the inaccessible writer primitive. Whoever first
 -- wires and activates it lifts the refusal; until then execution remains
@@ -664,7 +664,7 @@ CREATE TABLE wamn_run.effect_attempts (
                 run_id, frame_id, local_node_id, occurrence)
 );
 -- Deliberately no FK from (tenant_id, run_id) to runs: effect attempts are an
--- audit ledger with an independent retention lifetime. Pruning terminal run
+-- audit table with an independent retention lifetime. Pruning terminal run
 -- history cascades through the mutable node projection but must leave these
 -- immutable facts intact.
 CREATE INDEX effect_attempts_bulk_scope
@@ -683,7 +683,7 @@ CREATE POLICY effect_attempts_platform ON wamn_run.effect_attempts
 -- The effect-writer arm, on the same footing as `runs_effect_writer` above and
 -- for the same reason (`wamn-0h0g.22.32`): `wamn_effect_writer` cannot hold the
 -- `wamn_platform` membership its own shape guard forbids, so without an arm
--- naming it this ledger default-denies to zero rows in silence. It is
+-- naming it this table default-denies to zero rows in silence. It is
 -- `USING (true)` rather than tenant-scoped because ONE PROJECT-ENVIRONMENT
 -- DATABASE SERVES EXACTLY ONE TENANT — the row-level tenant boundary it would
 -- express is a wall against a neighbour that cannot exist in this plane, and
@@ -703,7 +703,7 @@ GRANT SELECT ON wamn_run.effect_attempts TO wamn_app;
 -- generation login inherits `wamn_effect_writer` with INHERIT TRUE, so a live
 -- INSERT here would be dormant authority mass-produced by the provisioner. A
 -- fresh environment is therefore refused by the SERVER (42501), not by prose.
--- Whoever wires the writer grants this INSERT explicitly and re-proves this
+-- Whoever wires the writer grants this INSERT explicitly and reruns this
 -- gate; the record deliberately no longer arms it for them.
 GRANT SELECT ON wamn_run.effect_attempts TO wamn_effect_writer;
 CREATE TRIGGER effect_attempts_update_immutable
@@ -752,7 +752,7 @@ CREATE POLICY effect_attempt_dispatches_platform ON wamn_run.effect_attempt_disp
     WITH CHECK (true);
 -- The effect-writer arm, for the reason `runs_effect_writer` carries in full
 -- (`wamn-0h0g.22.32`): the writer's stable role may hold no membership, so
--- without an arm naming it this ledger default-denies to zero rows in silence.
+-- without an arm naming it this table default-denies to zero rows in silence.
 -- `USING (true)` rather than tenant-scoped because ONE PROJECT-ENVIRONMENT
 -- DATABASE SERVES EXACTLY ONE TENANT — the tenant boundary it would express is
 -- a wall against a neighbour that cannot exist in this plane. The writer's
@@ -766,12 +766,12 @@ CREATE INDEX effect_attempt_dispatches_tkey
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_dispatches
     FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON wamn_run.effect_attempt_dispatches TO wamn_app;
--- BORN PARKED, for the reason the attempt ledger above is: the writer primitive
+-- BORN PARKED, for the reason the attempt table above is: the writer primitive
 -- is installed but unwired, and every provisioned generation login inherits
 -- `wamn_effect_writer` with INHERIT TRUE, so a live INSERT here would be dormant
 -- authority mass-produced by the provisioner. A fresh environment is refused by
 -- the SERVER (42501), not by prose. Whoever wires the writer grants this INSERT
--- explicitly and re-proves the gate; the record deliberately does not arm it.
+-- explicitly and reruns the gate; the record deliberately does not arm it.
 GRANT SELECT ON wamn_run.effect_attempt_dispatches TO wamn_effect_writer;
 CREATE TRIGGER effect_attempt_dispatches_update_immutable
 BEFORE UPDATE ON wamn_run.effect_attempt_dispatches
@@ -809,7 +809,7 @@ CREATE POLICY effect_attempt_outcomes_platform ON wamn_run.effect_attempt_outcom
     WITH CHECK (true);
 -- The effect-writer arm, for the reason `runs_effect_writer` carries in full
 -- (`wamn-0h0g.22.32`): the writer's stable role may hold no membership, so
--- without an arm naming it this ledger default-denies to zero rows in silence.
+-- without an arm naming it this table default-denies to zero rows in silence.
 -- `USING (true)` rather than tenant-scoped because ONE PROJECT-ENVIRONMENT
 -- DATABASE SERVES EXACTLY ONE TENANT — the tenant boundary it would express is
 -- a wall against a neighbour that cannot exist in this plane. The writer's
@@ -823,11 +823,11 @@ CREATE INDEX effect_attempt_outcomes_tkey
 REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_outcomes
     FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON wamn_run.effect_attempt_outcomes TO wamn_app;
--- BORN PARKED, on the same footing as the two ledgers above: the primitive is
+-- BORN PARKED, on the same footing as the two tables above: the primitive is
 -- installed but unwired, the stable role is inherited by every provisioned
 -- generation LOGIN, so append here would be dormant authority. The SERVER
 -- refuses a fresh environment (42501). Whoever wires the writer grants this
--- INSERT explicitly and re-proves the gate; the record does not arm it.
+-- INSERT explicitly and reruns the gate; the record does not arm it.
 GRANT SELECT ON wamn_run.effect_attempt_outcomes TO wamn_effect_writer;
 CREATE TRIGGER effect_attempt_outcomes_update_immutable
 BEFORE UPDATE ON wamn_run.effect_attempt_outcomes

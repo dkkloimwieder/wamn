@@ -30,7 +30,7 @@
 #
 # EXACTLY-ONCE: run_id = <flow>:evt:<stream_seq> (zero-padded) + ON CONFLICT
 # DO NOTHING on both the write-ahead and the enqueue — replicas > 1 is SAFE
-# (duplicates collapse; the matbench redelivery phase proves it) but 1 is the
+# (duplicates collapse; the matbench redelivery phase shows it) but 1 is the
 # v1 shape: JetStream redelivery, not replica count, is the availability story.
 apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment

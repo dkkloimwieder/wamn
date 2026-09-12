@@ -234,7 +234,7 @@ spec:
             # Authenticated /v2/ returns 401 to the kubelet, which has no
             # secret interpolation for HTTP Basic headers. Listening is the
             # registry process's readiness boundary; authenticated transfer is
-            # proved by the publisher/puller path. This stays a tcpSocket probe
+            # shown by the publisher/puller path. This stays a tcpSocket probe
             # under TLS: an httpGet with scheme HTTPS would still be answered
             # 401, and the kubelet has no trust root for the chart CA either.
             tcpSocket:

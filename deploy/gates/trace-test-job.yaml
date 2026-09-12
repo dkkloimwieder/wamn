@@ -1,17 +1,17 @@
-# [9.2] The in-cluster gate of record: prove host-enforced traceparent
+# [9.2] The in-cluster gate of record: show host-enforced traceparent
 # propagation over real networking on wamn:connection/http, the surface that
 # carries production egress. trace-test runs the shipped injector without a
 # guest, takes only the header that injector wrote, then uses that header for a
 # request to serve-echo; the reflected trace id must match. Runs the wamn-gates
 # image (SR1) — no external client to pull.
 #
-# [wamn-k9ea] RE-AIMED 2026-08-26. This gate previously proved the same property
+# [wamn-k9ea] RE-AIMED 2026-08-26. This gate previously showed the same property
 # on wash-runtime's P2 and P3 wasi:http HostHandler surfaces. That injection was
 # fork patch g2br.4, dropped at the vanilla v2.8.0 sync.
 # docs/architecture/native-alignment.md links that earlier record. WAMN's real outbound-effect
 # path is wamn:connection/http, which injects the active span context itself,
 # and the wasi:http egress surface has no WAMN production call site. The gate
-# was re-aimed rather than retired because every surviving proof of the live
+# was re-aimed rather than retired because every surviving test of the live
 # path is in-process; this is the only cross-process traceparent witness.
 #
 # Prereqs: serve-echo and the OTel collector rolled out.

@@ -265,7 +265,7 @@ pub(super) async fn verify_dev_target_package_and_acl_state(project: &Client) ->
             &[&TENANT],
         )
         .await
-        .context("read product-command target migration ledgers")?;
+        .context("read product-command target migration records")?;
     let observed_migrations = migrations
         .iter()
         .map(|row| {
@@ -287,7 +287,7 @@ pub(super) async fn verify_dev_target_package_and_acl_state(project: &Client) ->
                         && hash.starts_with("sha256:")
                 }
             ),
-        "wamn dev installed the wrong exact migration ledgers: {observed_migrations:?}"
+        "wamn dev installed the wrong exact migration records: {observed_migrations:?}"
     );
 
     let observed_permissions = project
@@ -547,7 +547,7 @@ pub(super) async fn assert_dev_command(
         .context("read the product-command source identity")?;
     anyhow::ensure!(
         source.state() == DevSourceState::Clean,
-        "the live product-command proof requires a clean worktree"
+        "the live product-command test requires a clean worktree"
     );
     let source_commit = source.source_commit().to_owned();
 

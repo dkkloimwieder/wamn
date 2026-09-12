@@ -9,7 +9,7 @@ use wamn_catalog::{
     WiringTerminal,
 };
 
-const TENANT: &str = "acme-overlay-publication-proof";
+const TENANT: &str = "acme-overlay-publication-test";
 const PACKAGE_ID: &str = "client_acme_receiving";
 const PACKAGE_VERSION: &str = "3.0.0";
 const COMPONENT: &str = "client_acme_receiving";

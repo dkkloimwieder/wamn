@@ -106,9 +106,9 @@ CREATE TABLE catalog.effective_release_packages (
 );
 
 -- Immutable release membership is the sole package-coordinate seal. Both the
--- publisher and migration ledger serialize on the package row, so whichever
+-- publisher and migration table serialize on the package row, so whichever
 -- commits first determines whether one last migration precedes the seal or is
--- refused after it. There is no second seal flag or release ledger snapshot.
+-- refused after it. There is no second seal flag or snapshot of release records.
 CREATE FUNCTION catalog.lock_package_coordinate_for_release_membership()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -454,7 +454,7 @@ CREATE INDEX event_registrations_by_entity
     ON catalog.event_registrations (tenant_id, package_id, entity_id);
 
 -- Tenant floors are one mechanism applied to the complete current relation
--- set. The server inventory, rather than checked-in SQL text, proves the result.
+-- set. The server catalog, rather than checked-in SQL text, shows the result.
 DO $tenant_floors$
 DECLARE
     relation_name text;

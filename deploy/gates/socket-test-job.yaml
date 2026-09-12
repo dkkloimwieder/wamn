@@ -3,7 +3,7 @@
 # HERMETIC — it synthesizes P2 and P3 wasi:sockets importers that must be REFUSED
 # at publish, plus a standard world that must still publish, so it needs no
 # registry, no external fixtures, no DB, and no NATS. The in-cluster sweep still
-# carries it so publish-time refusal is proven independently of the arm-specific
+# carries it so publish-time refusal is confirmed independently of the arm-specific
 # runtime denial in egressbench-job.yaml. The suite exits non-zero if the guard
 # does not hold, so job completion IS the verdict.
 #

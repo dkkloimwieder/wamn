@@ -70,7 +70,7 @@
 # `runtime.hostGroups: []` deletes them — and only then may the host release be
 # installed, or Helm refuses on ownership metadata for all three identically
 # named objects. A fresh namespace has nothing to collide with, which is the
-# shape the RC proves and the reason this file targets new environments.
+# shape the RC shows and the reason this file targets new environments.
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate

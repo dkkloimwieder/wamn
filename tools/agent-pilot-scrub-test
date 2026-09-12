@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline proof for tools/agent-pilot-scrub.
+# Offline test for tools/agent-pilot-scrub.
 #
 # Every case plants a secret of one minting shape and asserts it is gone. The
 # negative controls matter as much: a scrubber that eats `Bearer $TOKEN` hides
@@ -8,7 +8,7 @@
 #
 # No environment, no network, no run directory.
 #
-#   agent-pilot-scrub-proof
+#   agent-pilot-scrub-test
 #
 # Exit codes: 0 all cases pass · 1 a case failed.
 set -euo pipefail
@@ -52,7 +52,7 @@ gone_and_kept() {
   check "$name" ok
 }
 
-printf 'agent-pilot-scrub-proof\n\n'
+printf 'agent-pilot-scrub-test\n\n'
 
 # 1. The PAT grammar. The secret half goes, the lookup half stays.
 f="$tmp/pat.txt"

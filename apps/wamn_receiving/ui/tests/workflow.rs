@@ -161,7 +161,7 @@ async fn a_nested_fresh_credential_refusal_is_visible_without_a_retry() {
             app.screen(Panel::Receipt).submission().state(),
             State::Uncertain { .. }
         ),
-        "the shared layer cannot prove whole-submission refusal from this response"
+        "the shared layer cannot establish whole-submission refusal from this response"
     );
     assert_eq!(
         app.screen(Panel::Receipt).draft().item()["value"]["receipt_reference"],

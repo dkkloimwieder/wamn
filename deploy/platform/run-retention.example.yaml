@@ -15,7 +15,7 @@
 # authority is `DELETE` plus a three-column `SELECT` on `wamn_run.runs`. It
 # needs no superuser, no queue privilege, and no `app.tenant` claim — the tenant
 # reaches the statement as a bound parameter, and the verb REFUSES unless the
-# connected generation's own name proves it was minted for that tenant in that
+# connected generation's own name shows it was minted for that tenant in that
 # database. A CronJob pointed at the wrong Secret therefore FAILS LOUDLY instead
 # of reporting `pruned 0 terminal run(s)` and exiting 0.
 #

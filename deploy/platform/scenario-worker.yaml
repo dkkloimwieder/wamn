@@ -67,7 +67,7 @@
 #                        PROJECT database. It is a separate plane from the
 #                        authoring connection above, not a fallback for it and
 #                        not reachable from it — authoring writes the control
-#                        ledger, admission writes project run state, and a
+#                        table, admission writes project run state, and a
 #                        transaction cannot span two databases. It is refused
 #                        before any I/O on exactly the same predicates
 #                        (crates/control/provision parse_management_admission_url),
@@ -89,7 +89,7 @@
 #
 # WHO USES IT: the `gate` authoring command, which reads the project database
 # through it (services/scenario-worker/src/management.rs `gate` ->
-# store::admission::run_gate); `serve` also proves the credential is in scope at
+# store::admission::run_gate); `serve` also shows the credential is in scope at
 # startup. Moving the production management path off the shared `wamn_app` role
 # onto this family is wamn-0h0g.22.10. Landing the plumbing first makes that
 # cutover a traffic change rather than a plumbing change.
@@ -106,7 +106,7 @@
 # serializes commands behind it. Horizontal scale-out needs a connection-pool
 # decision first; a second replica would double the author sessions with no
 # coordination benefit. Rolling to a new pod is safe — every command is a single
-# request and the ledger is append-only.
+# request and the table is append-only.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

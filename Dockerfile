@@ -175,7 +175,7 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
     cargo build --locked --release -p wamn-identity \
  && install -D -m 0755 target/release/wamn-identity /native-output/wamn-identity
 
-# The proof image is outside the retained MVP image set. It remains a separate,
+# The test image is outside the retained MVP image set. It remains a separate,
 # package-scoped build and reuses the same locked caches without adding an
 # additional production cook stage.
 FROM root-source AS build-gates
@@ -281,8 +281,8 @@ ENTRYPOINT ["/usr/local/bin/wamn-identity"]
 # ---- gates image: the host stage + the gate suite + wasm fixtures -----------
 FROM host AS gates
 COPY --from=build-gates /native-output/wamn-gates /usr/local/bin/wamn-gates
-# Control-plane integration proofs drive the deployable ctl artifact through its
-# executable boundary; the proof packages do not link the service crate.
+# Control-plane integration tests drive the deployable ctl artifact through its
+# executable boundary; the test packages do not link the service crate.
 COPY --from=build-ctl /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 # Operations-only impact analysis crosses its own executable boundary.
 COPY --from=build-ctl /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
@@ -292,7 +292,7 @@ COPY --from=build-cdc-reader /native-output/wamn-cdc-reader /usr/local/bin/wamn-
 # Dispatcher gates drive stepped and lifecycle behavior through the executable
 # boundary; the gates package does not link the deployable service crate.
 COPY --from=build-dispatcher /native-output/wamn-dispatcher /usr/local/bin/wamn-dispatcher
-# Proof fixtures baked in so the retained gates run with no volume plumbing.
+# Test fixtures baked in so the retained gates run with no volume plumbing.
 COPY --from=component-builder /component-output/busyloop.wasm /bench/busyloop.wasm
 COPY --from=component-builder /component-output/sockprobe.wasm /bench/sockprobe.wasm
 # Callable-flow HTTP ingress: bounded routing/auth/mapping adapter over the

@@ -90,7 +90,7 @@ pub(super) async fn assert_startup(
         final_result["first_success_since_process_start_seconds"] = json!(
             (number(&protocol["cold"]["started_unix_ns"])? - number(&protocol["process_started_unix_ns"])?) as f64 / 1e9
                 + protocol["cold"]["first_success_seconds"].as_f64().context("cold progress has a first success time")?);
-        final_result["occupancy_limit"] = json!("workload_start begins before the permit; overlap proves queued demand, not active permit occupancy or CPU-core use");
+        final_result["occupancy_limit"] = json!("workload_start begins before the permit; overlap shows queued demand, not active permit occupancy or CPU-core use");
         final_result["comparison_limit"] = json!("Distinct from a herd of different cold digests; local host cgroup and new native probe semantics differ from historical in-cluster timings. Existing performance modes are unchanged.");
         Ok::<(),anyhow::Error>(())
     }.await;

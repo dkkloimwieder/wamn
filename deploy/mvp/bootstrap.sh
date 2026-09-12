@@ -325,7 +325,7 @@ rotate_effect_writer() {
         fi
     fi
 
-    # NO PICKUP PROOF STANDS HERE, DELIBERATELY (wamn-0h0g.10.12). Publication
+    # NO PICKUP TEST STANDS HERE, DELIBERATELY (wamn-0h0g.10.12). Publication
     # used to be followed by a roll of deployment/executor and a
     # `pg_stat_activity` count proving the replacement generation held a live
     # private-pool session. Both were residue of `deploy/platform/runner.yaml`,
@@ -338,7 +338,7 @@ rotate_effect_writer() {
     #
     # THE LOST GUARANTEE HAS AN OWNER: wamn-0h0g.10.17 blocks the FIRST
     # effect-writer consumer, because retiring the old generation below without
-    # proof of pickup is harmless only while nothing reads the credential.
+    # a successful pickup check is harmless only while nothing reads the credential.
     if [[ -n $old_role ]]; then
         if ! old_login=$(effect_writer_role_login "$old_role"); then
             echo "bootstrap: failed to verify old effect-writer generation" >&2

@@ -876,7 +876,7 @@ mod tests {
         let transaction = client
             .transaction()
             .await
-            .context("begin location-lock proof transaction")?;
+            .context("begin location-lock test transaction")?;
         let line = json!([{
             "purchase_order_line_id": purchase_order_line_id.hyphenated().to_string(),
             "quantity": "1.0",
@@ -888,7 +888,7 @@ mod tests {
             .context("validate lines while holding referenced location locks")?;
         ensure!(
             validation.get::<_, Option<String>>("outcome").as_deref() == Some("ready"),
-            "location-lock proof fixture did not validate"
+            "location-lock test fixture did not validate"
         );
 
         let contender = connect(url).await?;
@@ -903,7 +903,7 @@ mod tests {
         transaction
             .rollback()
             .await
-            .context("release location-lock proof transaction")?;
+            .context("release location-lock test transaction")?;
 
         let source = delete
             .err()
@@ -924,7 +924,7 @@ mod tests {
             .await
             .context("verify locked location remains")?
             .get::<_, bool>(0);
-        ensure!(location_remains, "location-lock proof deleted its fixture");
+        ensure!(location_remains, "location-lock test deleted its fixture");
         Ok(())
     }
 
@@ -1178,7 +1178,7 @@ mod tests {
             || finalized.get::<_, Option<i64>>("row_version") != Some(row_version)
         {
             return Err(CommandAttemptError::Internal(
-                "ledger result differs from purchase_order result".to_owned(),
+                "stored command result differs from purchase_order result".to_owned(),
             ));
         }
         Ok(ReceiptCommandResult {

@@ -79,9 +79,9 @@ CREATE TABLE catalog.effective_release_packages (
 );
 
 -- Immutable release membership is the sole package-coordinate seal. Both the
--- publisher and migration ledger serialize on the package row, so whichever
+-- publisher and migration table serialize on the package row, so whichever
 -- commits first determines whether one last migration precedes the seal or is
--- refused after it. There is no second seal flag or release ledger snapshot.
+-- refused after it. There is no second seal flag or snapshot of release records.
 CREATE FUNCTION catalog.lock_package_coordinate_for_release_membership()
 RETURNS trigger
 LANGUAGE plpgsql

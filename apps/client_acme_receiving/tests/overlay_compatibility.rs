@@ -240,7 +240,7 @@ fn foreign_key_action(action: &str) -> anyhow::Result<ForeignKeyAction> {
 fn required_contract_observation(required: &Value, observed: &Value) -> anyhow::Result<Value> {
     let tables = required["tables"]
         .as_array()
-        .context("overlay weld must carry required tables")?;
+        .context("overlay package contract must carry required tables")?;
     ensure!(
         !tables.is_empty(),
         "overlay schema observation must execute at least one requirement"
@@ -471,7 +471,7 @@ fn ensure_unchanged_overlay(evidence: &Value) -> anyhow::Result<()> {
     ensure!(
         evidence["overlay_files"]
             == serde_json::to_value(tree_digests(&super::overlay_package_root())?)?,
-        "overlay input or generated artifact changed during compatibility proof"
+        "overlay input or generated artifact changed during compatibility test"
     );
     Ok(())
 }

@@ -1,4 +1,4 @@
-# [9.2] The reflecting upstream for the trace-test cross-pod proof: a plain
+# [9.2] The reflecting upstream for the trace-test cross-pod test: a plain
 # HTTP server (NOT wash-served) that answers every request 200 with
 # {"traceparent": <received|null>, "tracestate": <received|null>}. The
 # trace-test gate invokes each public host surface, captures only the header

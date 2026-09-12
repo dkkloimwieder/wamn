@@ -94,7 +94,7 @@
 # owning the ENTIRE PKI, the NATS and operator certificates included, renews
 # automatically and is genuinely cleaner. It is rejected for now because it
 # rewires the one configuration that currently works, and the frozen cluster
-# means it could not be tested — it would land unproven until an RC on a fresh
+# means it could not be tested — it would land untested until an RC on a fresh
 # cluster. The ruling (2026-08-24) is STAY ADDITIVE: cert-manager keeps issuing
 # only the per-environment leaves while the chart keeps its own CA, so nothing
 # that currently converges gets rewired.
@@ -143,7 +143,7 @@
 #   git -C "$WASMCLOUD_CHECKOUT" grep -n 'with \.volumes\|with \.volumeMounts' 68ebece9c537f8bb4b5c9999f274ec68d60f35a9 -- charts/runtime-operator/templates/runtime/deployment.yaml
 # Distributed render and image metadata evidence:
 #   evidence/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/
-# Live stage 4 proofs remain separate and unexecuted by this source inspection.
+# Live stage 4 tests remain separate and unexecuted by this source inspection.
 
 # Deprecated HTTP gateway off, and never adopted: HTTP exposure rides
 # operator-managed EndpointSlices on standard Services (chart

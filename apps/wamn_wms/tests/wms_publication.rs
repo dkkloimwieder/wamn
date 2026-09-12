@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use wamn_catalog::{AttachmentKind, ComponentDeclaration, WiringDocument, WiringTerminal};
 
-const TENANT: &str = "wms-publication-proof";
+const TENANT: &str = "wms-publication-test";
 const PACKAGE_ID: &str = "wamn_wms";
 const COMPONENT: &str = "wms";
 const INTERFACE_VERSION: &str = "0.1.0";

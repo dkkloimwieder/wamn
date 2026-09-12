@@ -621,7 +621,7 @@ assert_log ''
 
 # Writer generation rotation is wrapper-owned: ctl prepares/authenticates,
 # kubectl publishes, and only then ctl retires the old generation. NO PICKUP
-# PROOF SITS BETWEEN PUBLISH AND RETIRE (wamn-0h0g.10.12) - see the rationale in
+# TEST SITS BETWEEN PUBLISH AND RETIRE (wamn-0h0g.10.12) - see the rationale in
 # bootstrap.sh, and wamn-0h0g.10.17 for the tripwire on the first consumer.
 reset_writer_state
 if MOCK_APPLY_FAIL=effect-writer run_writer_rotation a >/dev/null 2>&1; then

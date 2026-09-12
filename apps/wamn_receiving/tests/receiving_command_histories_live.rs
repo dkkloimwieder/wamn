@@ -934,39 +934,39 @@ pub(crate) fn assert_histories_with_cancellation(
         .args(["rev-parse", "--verify", "HEAD"])
         .current_dir(&repository)
         .output()
-        .context("read the Receiving proof source identity")?;
+        .context("read the Receiving test source identity")?;
     ensure!(
         source_head.status.success(),
-        "cannot read the proof source HEAD"
+        "cannot read the test source HEAD"
     );
     ensure!(
         std::str::from_utf8(&source_head.stdout)?.trim() == inputs.source_commit,
-        "Receiving proof source identity differs from the current checkout"
+        "Receiving test source identity differs from the current checkout"
     );
     let metadata: Value = serde_json::from_slice(&std::fs::read(
         repository.join("apps/wamn_receiving/generated/package-weld.json"),
     )?)?;
     ensure!(
         metadata["application_sql_corpus_identity"] == inputs.corpus_sha256,
-        "Receiving proof SQL corpus identity differs from the package weld"
+        "Receiving test SQL corpus identity differs from the package contract"
     );
     let overlay_metadata: Value = serde_json::from_slice(&std::fs::read(
         repository.join("apps/client_acme_receiving/generated/package-weld.json"),
     )?)?;
     let schema_state_ids = json!({
         "receiving": metadata["verified_schema_state_id"].as_str()
-            .context("Receiving weld has no verified schema identity")?,
+            .context("Receiving package contract has no verified schema identity")?,
         "client_acme_receiving": overlay_metadata["verified_schema_state_id"].as_str()
-            .context("Acme weld has no verified schema identity")?,
+            .context("Acme package contract has no verified schema identity")?,
     });
     let compiler = std::process::Command::new("rustc")
         .args(["--version", "--verbose"])
         .current_dir(&repository)
         .output()
-        .context("read the Receiving proof compiler identity")?;
+        .context("read the Receiving test compiler identity")?;
     ensure!(
         compiler.status.success(),
-        "cannot read the proof compiler version"
+        "cannot read the test compiler version"
     );
     let compiler_version = std::str::from_utf8(&compiler.stdout)?.trim();
     let secret: Value = serde_json::from_slice(&std::fs::read(&inputs.route_caller_secret)?)?;
@@ -1002,7 +1002,7 @@ pub(crate) fn assert_histories_with_cancellation(
         "postgres_server_version_num":version,"schema_state_ids":schema_state_ids,
         "generation_provenance":{"receiving":metadata["provenance"],
             "client_acme_receiving":overlay_metadata["provenance"]},
-        "proof_compiler_version":compiler_version,
+        "test_compiler_version":compiler_version,
         "seed":inputs.seed,"generated_cases":inputs.cases,"max_shrink_iterations":64,
         "invariants":["REC-HISTORY","REC-REFUSAL","REC-REPLAY","REC-CONTENTION",
             "REC-ROLLBACK","REC-LOST-RESPONSE","REC-REVISION","REC-AUTHORITY"]}),

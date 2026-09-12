@@ -36,7 +36,7 @@ readonly WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS='-C panic=abort'
 readonly WAMN_NO_STD_NATIVE_RUSTFLAGS='-C panic=abort'
 
 # The retained client owner must keep the complete approved authority scope.
-# Runtime isolation tests prove behavior; this leg guards its source structure.
+# Runtime isolation tests exercise behavior; this leg guards its source structure.
 readonly WAMN_CONNECTION_HTTP_SOURCE="$WAMN_REPOSITORY_ROOT/crates/platform/runtime/src/plugins/connection_http.rs"
 readonly WAMN_CONNECTION_HTTP_TRANSPORT="$WAMN_REPOSITORY_ROOT/crates/platform/runtime/src/plugins/connection_http/transport.rs"
 
@@ -162,7 +162,7 @@ wamn_run_no_std_native_clippy() {
 }
 
 # Deliberately recognizes these concrete declarations, not arbitrary Rust.
-# A different representation requires an explicit guard update and runtime proof.
+# A different representation requires an explicit guard update and runtime test.
 wamn_connection_http_scope() {
   local -r label='connection HTTP scoped retained clients'
   printf 'repo-lint: %s\n' "$label" >&2
