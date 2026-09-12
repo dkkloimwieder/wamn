@@ -23,14 +23,9 @@ use tokio::process::Command;
 use super::{GradeArgs, GradeFailure, failure, home, read_json, text, write, write_json};
 
 const PORTS: [u16; 6] = [54332, 5004, 4224, 3201, 4319, 8088];
-const GATE_DOCUMENT: &str = "docs/operations/build-and-test.md";
+const GATE_DOCUMENT: &str = "docs/operations/development-loop.md";
 const PILOT_SECTION: &str = "[AGENT-PILOT]";
 const REPLAY_RESULTS: &str = "evidence/perf/2026.09/consolidation-step3/pilot-recorded-replay-001";
-const HARNESS_DOCUMENTS: [&str; 3] = [
-    "docs/poc/agent-authoring-tooling-spec.md",
-    "docs/poc/deterministic-testing-spec.md",
-    "docs/operations/agent-pilot.md",
-];
 
 /// Select an existing pilot action and its recorded run.
 #[derive(Debug, Args)]
@@ -307,11 +302,6 @@ fn assert_rubric_unreachable(
     {
         found.push(format!("{GATE_DOCUMENT}({PILOT_SECTION})"));
     }
-    for path in HARNESS_DOCUMENTS {
-        if worktree.join(path).is_file() {
-            found.push(path.to_owned());
-        }
-    }
     if let Ok(entries) = fs::read_dir(worktree.join("tools")) {
         for entry in entries {
             let path = entry?.path();
@@ -529,10 +519,7 @@ impl Run {
             "tests/integration/fixtures/agent-pilot",
             "tests/integration/src/agent_pilot",
             REPLAY_RESULTS,
-        ]
-        .into_iter()
-        .chain(HARNESS_DOCUMENTS)
-        {
+        ] {
             if worktree.join(path).exists() {
                 removed.push(path.to_owned());
             }
