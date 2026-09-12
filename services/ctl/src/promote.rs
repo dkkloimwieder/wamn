@@ -185,7 +185,7 @@ struct MigrationRecord {
 }
 
 #[derive(Clone, Debug)]
-struct PackageProof {
+struct PackageRecord {
     coordinate: PackageCoordinate,
     manifest_sha256: String,
     predecessor_version: Option<String>,
@@ -198,7 +198,7 @@ enum PromotionAction {
 }
 
 #[derive(Clone, Copy)]
-struct TargetPackageProof<'a> {
+struct TargetPackageRecord<'a> {
     manifest_sha256: &'a str,
     predecessor_version: Option<&'a str>,
     migrations: &'a [MigrationRecord],
@@ -226,7 +226,7 @@ struct PortableRequirement {
 struct SourceRelease {
     manifest: ServingManifest,
     manifest_digest: String,
-    packages: Vec<PackageProof>,
+    packages: Vec<PackageRecord>,
     components: Vec<AdmittedComponent>,
     projection_hashes: BTreeMap<String, String>,
     wirings: Vec<PortableWiring>,
@@ -396,7 +396,7 @@ async fn load_source_release(
     let mut components = Vec::new();
     let mut wirings = Vec::new();
     for coordinate in &release_packages {
-        packages.push(load_package_proof(&tx, &args.tenant, coordinate).await?);
+        packages.push(load_package_record(&tx, &args.tenant, coordinate).await?);
         let scope = ComponentPackageScope {
             tenant_id: args.tenant.clone(),
             package_id: coordinate.package_id().to_owned(),
@@ -470,11 +470,11 @@ async fn load_release_packages(
         .collect()
 }
 
-async fn load_package_proof(
+async fn load_package_record(
     client: &impl GenericClient,
     tenant: &str,
     coordinate: &PackageCoordinate,
-) -> anyhow::Result<PackageProof> {
+) -> anyhow::Result<PackageRecord> {
     let row = client
         .query_opt(
             SELECT_PACKAGE_SQL,
@@ -509,7 +509,7 @@ async fn load_package_proof(
             migration.ordinal
         );
     }
-    Ok(PackageProof {
+    Ok(PackageRecord {
         coordinate: coordinate.clone(),
         manifest_sha256: row.get(0),
         predecessor_version: row.get(1),
@@ -738,7 +738,7 @@ async fn promote_target(
 async fn verify_target_packages(
     client: &impl GenericClient,
     tenant: &str,
-    expected: &[PackageProof],
+    expected: &[PackageRecord],
 ) -> anyhow::Result<PromotionAction> {
     for package in expected {
         let coordinate = &package.coordinate;
@@ -761,7 +761,7 @@ async fn verify_target_packages(
         let target_migrations = load_migrations(client, tenant, coordinate).await?;
         compare_target_package(
             package,
-            Some(TargetPackageProof {
+            Some(TargetPackageRecord {
                 manifest_sha256: &target_manifest,
                 predecessor_version: target_predecessor.as_deref(),
                 migrations: &target_migrations,
@@ -772,8 +772,8 @@ async fn verify_target_packages(
 }
 
 fn compare_target_package(
-    expected: &PackageProof,
-    target: Option<TargetPackageProof<'_>>,
+    expected: &PackageRecord,
+    target: Option<TargetPackageRecord<'_>>,
 ) -> Result<PromotionAction, PromotionError> {
     let coordinate = &expected.coordinate;
     let Some(target) = target else {
@@ -981,8 +981,8 @@ mod tests {
         }
     }
 
-    fn package() -> PackageProof {
-        PackageProof {
+    fn package() -> PackageRecord {
+        PackageRecord {
             coordinate: PackageCoordinate::new("wamn_receiving", "1.1.0")
                 .expect("fixture coordinate is valid"),
             manifest_sha256: format!("sha256:{}", "a".repeat(64)),
@@ -991,8 +991,8 @@ mod tests {
         }
     }
 
-    fn target(package: &PackageProof) -> TargetPackageProof<'_> {
-        TargetPackageProof {
+    fn target(package: &PackageRecord) -> TargetPackageRecord<'_> {
+        TargetPackageRecord {
             manifest_sha256: &package.manifest_sha256,
             predecessor_version: package.predecessor_version.as_deref(),
             migrations: &package.migrations,
@@ -1016,7 +1016,7 @@ mod tests {
         let wrong_manifest = format!("sha256:{}", "f".repeat(64));
         let manifest_error = compare_target_package(
             &package,
-            Some(TargetPackageProof {
+            Some(TargetPackageRecord {
                 manifest_sha256: &wrong_manifest,
                 ..target(&package)
             }),
@@ -1029,7 +1029,7 @@ mod tests {
 
         let predecessor_error = compare_target_package(
             &package,
-            Some(TargetPackageProof {
+            Some(TargetPackageRecord {
                 predecessor_version: Some("0.9.0"),
                 ..target(&package)
             }),
@@ -1054,7 +1054,7 @@ mod tests {
         for migrations in [&missing, &extra, &divergent] {
             let error = compare_target_package(
                 &package,
-                Some(TargetPackageProof {
+                Some(TargetPackageRecord {
                     migrations,
                     ..target(&package)
                 }),
@@ -1065,7 +1065,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_target_proof_unlocks_only_portable_fact_copy() {
+    fn exact_target_record_unlocks_only_portable_fact_copy() {
         let package = package();
         assert_eq!(
             compare_target_package(&package, Some(target(&package)))
