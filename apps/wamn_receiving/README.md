@@ -1,27 +1,12 @@
-Package `wamn_receiving` uses component `receiving`, data crate `wamn-receiving-data-access`, generated library `wamn-generated-receiving-tui`, UI crate `wamn-receiving-tui` with binary `wamn-receiving`, and test crate `wamn-receiving-tests`.
+Receiving owns package `wamn_receiving`, its SQL, guest, generated code, operator application, and application tests.
 
-The manifest is `wamn.json`. SQL migrations live in `migrations/`, and the data crate uses the generated code in `generated/`.
-The `component/` directory contains the application guest, and `ui/` contains its operator application.
-Application tests live in `tests/` and beside the source that they exercise.
-
-From the repository root, run the local tests:
-
-```bash
-cargo test --locked --offline -p wamn-receiving-tui
-cargo test --manifest-path apps/Cargo.toml --locked --offline -p wamn-receiving-data-access --all-targets
-cargo test --locked --offline -p wamn-receiving-tests --test generation
-SQLX_OFFLINE=true cargo test --locked --offline -p wamn-receiving-tests --test receiving_sqlx_verifier
-cargo test --locked --offline -p wamn-receiving-tests --test receiving_command_histories_live -- --include-ignored --nocapture
-```
-
-The history test requires `WAMN_RECEIVING_CORRECTNESS_DOCUMENT` to run its live cases.
-The local model tests run without that input.
-
-The terminal test uses a built Receiving operator and a local HTTP fixture.
-
-```bash
-python3 apps/wamn_receiving/tests/operator_pty.py --binary target/debug/wamn-receiving
-```
-
-SQLx reads the committed metadata in `tests/.sqlx/`.
-The [build and test runbook](../../docs/operations/build-and-test.md) gives the database and metadata regeneration commands.
+[Receiving scenario](receiving-scenario.md): Application behavior, limits, and source owners.
+[Manifest](wamn.json): Package identity and declared operations.
+[Migrations](migrations/): Authored application schema.
+[Data access](data/): SQL-backed operation implementations.
+[Generated output](generated/): Derived contracts, SQL, and client code.
+[Component](component/): Application guest.
+[Operator application](ui/): Application-specific client composition.
+[Tests](tests/): Application assertions and SQLx metadata.
+[Running tests](../../docs/operations/running-tests.md): Commands and required inputs.
+[Development loop](../../docs/operations/development-loop.md): Generation and SQLx preparation.

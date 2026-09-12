@@ -1,10 +1,11 @@
-`apps/client_acme_receiving/` owns package `client_acme_receiving`, guest component `client-acme-receiving`, data crate `wamn-client-acme-receiving-data-access`, generated native UI crate `wamn-generated-client-acme-receiving-tui`, and test crate `wamn-client-acme-receiving-tests`.
+Acme owns package `client_acme_receiving`, its Receiving overlay, SQL, guest, generated client, and application tests.
 
-From the repository root, run the local SQLx test:
-
-```bash
-SQLX_OFFLINE=true cargo test --locked --offline -p wamn-client-acme-receiving-tests --test client_acme_sqlx_verifier
-```
-
-SQLx reads the committed metadata in `tests/.sqlx/` without a database.
-The [build and test runbook](../../docs/operations/build-and-test.md) gives the database and metadata regeneration commands.
+[Overlay scenario](overlay-scenario.md): Application behavior, limits, and source owners.
+[Manifest](wamn.json): Package identity and declared operations.
+[Migrations](migrations/): Authored application schema.
+[Data access](data/): SQL-backed operation implementations.
+[Generated output](generated/): Derived contracts, SQL, and client code.
+[Component](component/): Application guest.
+[Tests](tests/): Application assertions and SQLx metadata.
+[Running tests](../../docs/operations/running-tests.md): Commands and required inputs.
+[Development loop](../../docs/operations/development-loop.md): Generation and SQLx preparation.
