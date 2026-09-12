@@ -1,217 +1,67 @@
-# wamn
+# WAMN
 
-A wasmCloud-based managed low-code platform: a data/schema layer, wiring execution,
-and a four-tier Postgres control plane, all hosted on the native wasmCloud runtime with WAMN plugins. **`docs/exe-model.md` is the single WIP design authority.**
-`docs/PLAN/PLAN.md` is its non-normative ordering and ambiguity map; Beads and
-git own status. `docs/operations/build-and-test.md` is the gate of record and
-the per-bead build and test commands.
+WAMN provides application data, component execution, and generated operator interfaces on wasmCloud.
+Applications declare their data and operations in `wamn.json`.
+Rust owns platform behavior, and PostgreSQL stores its durable state.
 
-`services/host` is the production washlet host. Production queue execution and
-deterministic scenario execution are separate artifacts which share
-`crates/execution/host`. The root `Cargo.toml` pins `wash-runtime` directly to
-upstream wasmCloud v2.9.0 at `68ebece9c537f8bb4b5c9999f274ec68d60f35a9`.
-WAMN carries no upstream patches. The [cutover runbook](deploy/README.md#wasmcloud-29-cutover)
-keeps one active runtime version and links the separate live proof requirements.
+Read the [architecture overview](docs/exe-model.md) for the current ownership and security rules.
+The [build and test instructions](docs/operations/build-and-test.md) contain the complete workspace test command and live test inputs.
+Beads and Git record work status.
 
-## Repository layout
+## Repository
 
-```
-services/               native deployable Rust services
-  host                  production host: washlet embedding + host plugins
-                        (wamn:postgres, logging, jetstream) — washlet only (SR9)
-  ctl                   one-shot control-plane verbs (provision-*, apply-package,
-                        publish-release, dump/restore/copy-project-env,
-                        enable-cdc-project-env) — SR9 split
-  dispatcher            shared trigger dispatcher service (SR9 split)
-  executor              production router executor service; emits the stable
-                        wamn-run-worker binary
-  scenario-worker       authoring management service
-  cdc-reader            CDC event-reader service (SR9 split)
-  waker                 scale-to-zero wake actuator
+| Path | Owner |
+| --- | --- |
+| `apps/wamn_receiving/` | Receiving manifest, migrations, guest, generated code, operator UI, and tests |
+| `apps/wamn_wms/` | WMS manifest, migrations, guest, generated code, example, and tests |
+| `apps/client_acme_receiving/` | Acme Receiving overlay and its tests |
+| `apps/platform/` | Shared platform guests and guest libraries |
+| `services/` | Deployable native processes and their service tests |
+| `crates/` | Platform libraries, grouped by responsibility |
+| `tests/` | Conformance, integration, system, and orchestration test owners |
+| `test-support/` | Shared test functions, fixtures, and infrastructure |
+| `deploy/` | Infrastructure, platform manifests, test Jobs, and SQL |
+| `docs/` | Current architecture, contracts, and operations |
+| `evidence/` | Raw run data and historical results |
 
-crates/                 shared Rust workspace packages
-  # shared, non-deployable packages grouped by bounded context:
-  authoring/
-    model               wamn-authoring-model: public commands and projections
-  platform/
-    component-policy    pure component-import and grant policy
-    runtime             shared engine, plugins, WIT, and metrics
-    pg-core             wamn-pg-core: guest-safe PostgreSQL primitives
-  data/
-    api                 wamn-api: HTTP/event-registration adapter
-  schema/
-    control             wamn-schema-control: package migration and runtime storage
-    generator           wamn-schema-generator: package contracts and projections
-    introspection       wamn-schema-introspection: migration policy + catalog IR
-  execution/
-    host                shared native host for execution components
-    router              wamn-router: host-side graph walk
-    run-state           wamn-run-state: run history, queue, lease, and timer state
-    scheduler           wamn-scheduler: pure cron, due-tick, and cadence decisions
-  control/
-    registry            wamn-control-registry: org/project/environment model
-    provision           wamn-control-provision: Postgres provisioning builders
-  identity/
-    project-state       wamn-project-state: per-project app_system model
-  scenarios/
-    model               wamn-scenario-model: test-set/assertion vocabulary
+## Build
 
-apps/                   application homes and the guest Cargo workspace
-  wamn_receiving/        Receiving manifest, SQL, and generated output
-    component/          Receiving guest
-    data/               generated Receiving data-access kernel
-    ui/                 composed wamn-receiving operator
-    tests/              Receiving command histories
-  wamn_wms/             WMS manifest, SQL, generated output, component, and data
-  client_acme_receiving/ Acme Receiving overlay with its component and data
-  platform/             shared guests and guest libraries
-    data/               capability-shaped SQLx transport/transaction runner
-    ingress/            product ingress components (flow-http)
-    events/             guest-consumed event rlibs (wamn-event-wire,
-                        wamn-event-reg, wamn-materializer)
-    execution/          product execution components (materializer) and the
-                        node contract rlib (wamn-execution-contract)
-    fixtures/           non-product test fixtures (busyloop,
-                        connection-http-standard, sockprobe, sqlx-command)
-    no-std/             separate Cargo workspace for the no_std palette guests
-                        (http-request, transform), isolated from serde_json/std
-
-test-support/
-  harness/              shared measurement helpers for gates
-  fixtures/             repository-only fixture implementations
-  infrastructure/       temporary proof infrastructure helpers
-
-tests/
-  conformance/          narrow contract and compatibility proofs
-  integration/          real-adapter compositions and failure injection
-  system/               deployed public-surface journeys
-  orchestrator/         compatibility CLI for the existing wamn-gates commands
-
-deploy/                 deployment, gate, schema, and bootstrap assets
-  infra/                install-once cluster infrastructure
-    kind-config.yaml    local kind cluster definition
-    values-wamn.yaml    runtime-operator Helm values (custom host image)
-  platform/             long-lived production/platform manifests
-  gates/                gate/bench Jobs and their support assets
-    *-job.yaml          in-cluster gate-of-record Jobs
-  sql/                  standalone SQL schemas
-    *.sql               postgres-init, catalog-schema, run-state, run-queue,
-                        authoring-tests, system-schema, app-schema, ops-schema,
-                        control-portable-store
-  mvp/                  bootstrap scripts; outside SR8 lifecycle tiers
-                        (pre-tier provisioning; runs before any tier exists)
-
-docs/                   exe-model.md: single WIP design authority
-                        PLAN/PLAN.md: ordering and ambiguity map
-                        operations/build-and-test.md: gate of record and the
-                        per-bead build + test commands
-
-Cargo.toml              root workspace; pins the direct upstream wash-runtime rev
-Dockerfile              shared build plus one final stage per deployable artifact
-```
-
-## Prerequisites
-
-- **Rust** (pinned by `rust-toolchain.toml`: 1.97.0, edition 2024) with the
-  `wasm32-wasip2` target and `clippy`/`rustfmt` — installed automatically by
-  `rustup` from the toolchain file.
-- **protoc** (+ well-known-type includes) to build `wamn-host`.
-- **Docker** for the image build and throwaway Postgres/NATS/etc. used by local
-  gates.
-- **kind**, **kubectl**, **helm** for the in-cluster gates.
-
-## Develop
+The root `rust-toolchain.toml` selects Rust, Clippy, rustfmt, and the Wasm target.
+Use the pinned toolchain and lock files.
+Native builds use the debug profile unless a selected test requires release artifacts.
 
 ```bash
-# host + gate suite (debug by default)
-cargo build -p wamn-host -p wamn-ctl -p wamn-identity -p wamn-dispatcher \
-  -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-gates
-
-# Build and virtualize the declared proof guests.
-# The tool isolates the P3 HTTP shell and the no_std workspace.
-tools/build-components all
+cargo build --locked --offline -p wamn-host -p wamn-ctl -p wamn-identity \
+  -p wamn-dispatcher -p wamn-executor -p wamn-scenario-worker \
+  -p wamn-cdc-reader -p wamn-gates
+tools/build-components app apps/wamn_receiving
 ```
 
-The product binary starts its own disposable environment. `wamn dev up`
-provisions it and uses a separate `wamn-identity` process to mint its initial PATs.
-It requires a disposable system database named `wamn_system`.
-It then spawns `wamn-scenario-worker serve` as the authoring Gate
-on a fixed port, holds that Gate open, and prints the `wamn dev --tui` line to
-run in a second terminal. For the disposable services it needs and the exact
-flags, read `[WAMN-DEV-ENVIRONMENT]` in `docs/operations/build-and-test.md`.
+`wamn` provides `dev`, `dev up`, and `ui scaffold`.
+The separate `wamn-ctl-ops` binary requires the `ops` feature.
+`tools/build-components all` builds every guest with one Cargo invocation per guest.
+For parallel work, use a separate worktree and target directory as described in the runbook.
 
-Watch mode requires the Git reflog. `wamn dev --watch` refuses to start when
-`core.logAllRefUpdates` is false, because Git then writes no `HEAD` reflog and a
-commit would not rerun the loop.
+## Test and develop
 
-## Test
+Run only relevant existing tests for a behavior change or a concrete failure.
+For mechanical edits, compare source, paths, and syntax.
+Do not repeat builds or tests without a new behavior change or concrete failure.
+Cleanup boundaries do not require broad test runs.
+A root workspace test does not include the separate guest workspaces.
+Live tests require explicit disposable services or their app-owned cluster setup.
 
 ```bash
-# pure-crate unit/integration tests (no cluster needed)
-cargo test                       # a specific crate: cargo test -p wamn-router
-
-# lint + format
-# --workspace is required: without it Cargo selects default-members only, which
-# is 15 of the 34 workspace crates. --keep-going is required because Cargo stops
-# scheduling new units at the first error, hiding every later package's lints.
-cargo clippy --workspace --all-targets --keep-going && cargo fmt --all --check
+cargo test --locked --offline -p wamn-receiving-tests --test generation
+cargo test --locked --offline -p wamn-wms-tests --lib
+tools/contract-diff run
 ```
 
-Many crates also have optional live-apply tests that run against a throwaway
-Postgres and skip when their `WAMN_*_PG_URL` env var is unset.
+The [Receiving README](apps/wamn_receiving/README.md) lists its data, SQLx, and terminal tests.
+The [WMS README](apps/wamn_wms/README.md) identifies its example and application tests.
+The [Acme README](apps/client_acme_receiving/README.md) lists its overlay SQLx test.
+The runbook covers [the full sweep](docs/operations/build-and-test.md#the-full-sweep) and [the developer session](docs/operations/build-and-test.md#wamn-dev-environment-developer-session).
 
-**Proofs** live in `tests/{conformance,integration,system}`. The `wamn-gates`
-package at `tests/orchestrator` is the stable deploy-facing command router. The full per-bead
-command set — local iteration and the in-cluster gate of record for each
-subsystem — is in **`docs/operations/build-and-test.md`**.
-Example (S1, no backend):
-
-```bash
-./target/release/wamn-gates --log-level warn socket-test \
-  --component apps/target/wasm32-wasip2/release/sockprobe.wasm
-```
-
-## Deploy (in-cluster)
-
-The in-cluster gate of record runs on a local `kind` cluster named `wamn`,
-with the host + gate images built from the two-stage `Dockerfile`:
-
-```bash
-# 1. stand up the cluster, its base infrastructure, and the runtime-operator
-kind create cluster --name wamn --config deploy/infra/kind-config.yaml
-
-#    cert-manager is install-once base infrastructure applied by hand at
-#    standup, before anything that renders `cert-manager.io` CRs; it is
-#    vendored at a pinned tag and `deploy/README.md` owns the bump procedure.
-kubectl apply -f deploy/infra/cert-manager.yaml
-kubectl -n cert-manager wait --for=condition=Available deploy --all --timeout=180s
-
-#    The runtime-operator is installed as TWO Helm releases from one chart, in
-#    this order: the cluster-singleton operator (which carries the CRDs and no
-#    host groups), then this environment's host tier. The chart version pin is
-#    deliberately NOT restated here — each values file's header carries the
-#    exact `helm upgrade --install` command for its release, and
-#    tests/conformance/tests/chart_seam_governance.rs fails if the two drift:
-#      deploy/infra/values-wamn.yaml             operator + CRDs, cluster singleton
-#      deploy/platform/values-host-default.yaml  host tier, one per environment
-
-# 2. build the host and gate images and load them into kind
-docker build --target host  -t wamn-host:dev  .
-docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-host:dev  --name wamn
-kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system rollout status deploy/hostgroup-default
-
-# 3. apply the manifests / gate Jobs for the subsystem under test
-#    (see docs/operations/build-and-test.md for the exact per-bead steps)
-kubectl -n wamn-system apply -f deploy/gates/<subsystem>-job.yaml
-kubectl -n wamn-system logs -f job/<subsystem>
-```
-
-## More
-
-- `docs/exe-model.md` — the single WIP design authority.
-- `docs/PLAN/PLAN.md` — the non-normative ordering and ambiguity map.
-- `docs/operations/build-and-test.md` — the gate of record, every subsystem's
-  build + gate commands, and the traps that produce false green.
-- `CLAUDE.md` / `AGENTS.md` — instructions for AI coding agents (identical).
+Do not use the frozen `kind-wamn` cluster as a test fixture.
+Use the app tests or native RC command to create and clean up their own clusters.
+Read [deployment instructions](deploy/README.md) before changing a deployed environment.
