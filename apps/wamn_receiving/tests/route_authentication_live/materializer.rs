@@ -3,7 +3,7 @@
 use super::*;
 
 
-pub(super) async fn connect_event_proof_client(
+pub(super) async fn connect_event_test_client(
     url: &str,
     username_key: &str,
     password_file_key: &str,
@@ -40,7 +40,7 @@ async fn production_materializer_consumes_the_causal_receipt_exactly_once() -> a
          provision the project environment and the trigger must produce a receipt \
          before this test runs",
     )?;
-    let nats = connect_event_proof_client(
+    let nats = connect_event_test_client(
         &phase.nats_url,
         "WAMN_EVT_NATS_USERNAME",
         "WAMN_EVT_NATS_PASSWORD_FILE",

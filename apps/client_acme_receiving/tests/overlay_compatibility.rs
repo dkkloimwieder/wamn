@@ -78,16 +78,16 @@ pub(super) async fn after_install(
     component_directory: &Path,
 ) -> anyhow::Result<()> {
     let overlay = super::overlay_package_root();
-    let weld: Value =
+    let metadata: Value =
         serde_json::from_slice(&std::fs::read(overlay.join("generated/package-weld.json"))?)?;
     let (project, connection_task) = super::connect(project_url).await?;
-    let observation = observe_installed_contract(&project, &weld["required_schema_contract"]).await;
+    let observation = observe_installed_contract(&project, &metadata["required_schema_contract"]).await;
     drop(project);
     connection_task
         .await
         .context("join installed schema observer")?;
     let observed = observation?;
-    let requirements = required_contract_observation(&weld["required_schema_contract"], &observed)?;
+    let requirements = required_contract_observation(&metadata["required_schema_contract"], &observed)?;
     let purchase_order = observed["tables"]
         .as_array()
         .context("catalog tables must be an array")?
@@ -117,7 +117,7 @@ pub(super) async fn after_install(
     evidence["overlay_component_sha256"] = json!(digest_file(
         &component_directory.join(format!("{OVERLAY_COMPONENT}.wasm"))
     )?);
-    evidence["required_schema_contract"] = weld["required_schema_contract"].clone();
+    evidence["required_schema_contract"] = metadata["required_schema_contract"].clone();
     evidence["schema_admission_claim"] = json!(false);
     write_evidence(phase, &evidence)
 }
@@ -352,7 +352,7 @@ pub(super) async fn breaking_refusal(
         ))
         .await
         .context("create separate empty database for breaking candidate")?;
-    let proof = breaking_install(&base, url.as_str()).await;
+    let result = breaking_install(&base, url.as_str()).await;
     let cleanup = admin
         .batch_execute(&format!("DROP DATABASE \"{database}\""))
         .await
@@ -371,7 +371,7 @@ pub(super) async fn breaking_refusal(
         absent?.get::<_, bool>(0),
         "breaking candidate database remains after cleanup"
     );
-    let refusal = proof?;
+    let refusal = result?;
     let mut evidence = read_evidence(phase)?;
     ensure_unchanged_overlay(&evidence)?;
     ensure!(
@@ -571,10 +571,10 @@ async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirem
         refusal.kind() == PostgresIntrospectionErrorKind::UnsupportedAcl,
         "authoring ACL refusal changed: {refusal}"
     );
-    let weld: Value = serde_json::from_slice(&std::fs::read(
+    let metadata: Value = serde_json::from_slice(&std::fs::read(
         super::overlay_package_root().join("generated/package-weld.json"),
     )?)?;
-    let required = &weld["required_schema_contract"];
+    let required = &metadata["required_schema_contract"];
     let baseline = observe_installed_contract(&project, required).await?;
     let positive = required_contract_observation(required, &baseline)?;
     project

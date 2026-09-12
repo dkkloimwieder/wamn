@@ -17,7 +17,7 @@ use wamn_runtime::plugins::wamn_jetstream::{
 
 use super::{
     BASE_PACKAGE_ID, ENVIRONMENT, JourneyDocument, MATERIALIZER_DURABLE, MATERIALIZER_STREAM,
-    OVERLAY_PACKAGE_ID, PROJECT, TENANT, connect, connect_event_proof_client, overlay_route_path, secret_value,
+    OVERLAY_PACKAGE_ID, PROJECT, TENANT, connect, connect_event_test_client, overlay_route_path, secret_value,
 };
 
 const REGISTRATION: &str = "client_acme_receiving::quality.create_inspection";
@@ -196,12 +196,12 @@ async fn source(stream: &mut Stream, receipt: &str) -> anyhow::Result<StreamMess
     }
 }
 
-fn source_receipt(message: &StreamMessage) -> Value {
+fn source_message(message: &StreamMessage) -> Value {
     json!({"subject":message.subject.as_str(), "sequence":message.sequence,
         "headers":message.headers, "body":serde_json::from_slice::<Value>(&message.payload).unwrap_or(Value::Null)})
 }
 
-fn consumer_receipt(info: &async_nats::jetstream::consumer::Info) -> Value {
+fn consumer_state(info: &async_nats::jetstream::consumer::Info) -> Value {
     json!({"name":info.name, "config":info.config,
         "delivered":{"consumer_sequence":info.delivered.consumer_sequence,
             "stream_sequence":info.delivered.stream_sequence},
@@ -379,8 +379,8 @@ async fn prove(
             && before_consumer.ack_floor.stream_sequence >= original.sequence,
         "the first handler must finish and acknowledge before replay"
     );
-    evidence["original_source"] = source_receipt(&original);
-    evidence["consumer_before"] = consumer_receipt(&before_consumer);
+    evidence["original_source"] = source_message(&original);
+    evidence["consumer_before"] = consumer_state(&before_consumer);
     let approved = request(&http, document, phase, overlay_route_path("quality_approve_inspection"), json!([{
         "request_id":"postcommit-approve", "receipt_id":materializer.receipt_id, "expected_row_version":"1"
     }])).await?;
@@ -432,7 +432,7 @@ async fn prove(
                     == before_consumer.ack_floor.consumer_sequence + 1,
                 "replay did not acknowledge exactly one further registered delivery"
             );
-            evidence["consumer_after_replay"] = consumer_receipt(&consumer);
+            evidence["consumer_after_replay"] = consumer_state(&consumer);
             break;
         }
         ensure!(
@@ -501,7 +501,7 @@ async fn prove(
         lock.batch_execute("BEGIN").await?;
         lock.query_one("SELECT id FROM receiving.receipt WHERE id=$1::text::uuid FOR UPDATE", &[&poison_receipt]).await?;
         let blocker: i32 = lock.query_one("SELECT pg_backend_pid()", &[]).await?.get(0);
-        evidence["poison_source"] = source_receipt(&poison_source);
+        evidence["poison_source"] = source_message(&poison_source);
         evidence["blocker_pid"] = json!(blocker);
         let started = Instant::now();
         let deadline = started + PROGRESS_BOUND;
@@ -558,13 +558,13 @@ async fn prove(
         ensure!(inspection(project, &materializer.receipt_id).await? == approved_state, "poison handling changed the approved replay state");
         let valid_source = source(&mut events, &valid_receipt).await?;
         ensure!(valid_source.sequence > poison_source.sequence, "independent valid event did not follow poison");
-        evidence["independent_source"] = source_receipt(&valid_source);
+        evidence["independent_source"] = source_message(&valid_source);
         loop {
             let consumer = events.consumer_info(MATERIALIZER_DURABLE).await?;
             if consumer.ack_floor.stream_sequence >= valid_source.sequence
                 && consumer.num_ack_pending == 0 && consumer.num_pending == 0
             {
-                evidence["consumer_after_poison"] = consumer_receipt(&consumer);
+                evidence["consumer_after_poison"] = consumer_state(&consumer);
                 break;
             }
             ensure!(Instant::now() < deadline, "poison and valid deliveries did not settle within 90 seconds");
@@ -612,12 +612,12 @@ async fn production_materializer_preserves_replay_and_progress() -> anyhow::Resu
     let document = JourneyDocument::required()?;
     let materializer = document.materializer.as_ref()
         .context("the journey omitted its materializer baseline")?;
-    let nats = connect_event_proof_client(
+    let nats = connect_event_test_client(
         &materializer.nats_url,
         "WAMN_EVT_NATS_USERNAME",
         "WAMN_EVT_NATS_PASSWORD_FILE",
     ).await?;
-    let replay = connect_event_proof_client(
+    let replay = connect_event_test_client(
         &materializer.nats_url,
         "WAMN_EVT_NATS_REPLAY_USERNAME",
         "WAMN_EVT_NATS_REPLAY_PASSWORD_FILE",

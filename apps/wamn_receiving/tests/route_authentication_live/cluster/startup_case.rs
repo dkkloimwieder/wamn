@@ -65,7 +65,7 @@ pub(super) async fn assert_startup(
             scheduler_nats_tls_cert:private.join("runtime-tls.crt"), scheduler_nats_tls_key:private.join("runtime-tls.key"),
             scheduler_client_tls_cert:private.join("operator-tls.crt"), scheduler_client_tls_key:private.join("operator-tls.key"),
             otlp_endpoint:format!("http://127.0.0.1:{otlp}"),
-            proof_id:format!("startup-{}",uuid::Uuid::new_v4().simple()),
+            test_id:format!("startup-{}",uuid::Uuid::new_v4().simple()),
             component_artifact_base:cluster.inputs.component_artifact_base.clone(), release_artifact_base:carrier.artifact_base.clone(),
             manifest_digest:carrier.manifest_digest.to_string(), org:super::super::ORG.to_owned(), project:super::super::PROJECT.to_owned(),
             schema:"receiving".to_owned(), environment:cluster.resources.name.clone(), route_host:cluster.inputs.route_host.clone(),
@@ -78,7 +78,7 @@ pub(super) async fn assert_startup(
         final_result["test_exit_code"] = json!(0);
         let protocol: Value = serde_json::from_slice(&fs::read(evidence.join("protocol.json"))?)?;
         ensure!(protocol["verdict"] == "protocol-pass-awaiting-trace-exposure", "the native startup protocol did not pass");
-        let spans = collect(cluster, &inputs.proof_id, &protocol, &evidence, &redactions).await?;
+        let spans = collect(cluster, &inputs.test_id, &protocol, &evidence, &redactions).await?;
         final_result["phases"] = phases(&protocol, &spans, limit)?;
         let raw = fs::read(private.join("host.raw.log"))?;
         let raw = strip_ansi(&String::from_utf8_lossy(&raw));

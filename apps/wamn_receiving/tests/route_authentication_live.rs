@@ -84,7 +84,7 @@ use wamn_test_infrastructure::scratch::ScratchRoot;
 use runtime::{TraceHarness, journey_trace, span_attribute, span_descends_from, trace_component_invocations, assert_invocation_identity, assert_postgres_descendants, assert_direct_route_trace, assert_nested_record_receipt_trace, assert_native_nested_acquisition, assert_nested_permission_denial_trace, assert_no_component_trace, build_journey_runtime, JourneyGuestMemory, invoke_journey_route, invoke_journey_request, successful_value};
 use routes::copy_fresh_only_package;
 use sessions::{assert_operation_refusal, nested_receipt_state};
-use materializer::{connect_event_proof_client};
+use materializer::{connect_event_test_client};
 use environment::{package_root, overlay_package_root, journey_package_root, required_journey, required_journey_path, journey_scenario_worker_binary, journey_publication_root, overlay_route_path, install_journey_project, reconcile_journey_data_access, verify_journey_operation_grants, repository_root, render_component_declarations, push_journey_components, verify_journey_components_are_effectful, gate_journey_wirings, verify_zero_case_gate_reports, author_journey_wirings, JourneyReleaseTarget, publish_journey_release, released_component_digests, seed_receiving_business_rows, seed_preexisting_quality_fixture, seed_materializer_trigger_rows};
 
 const ROUTE_CALLER_ROLE: &str = "route-caller";

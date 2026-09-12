@@ -103,7 +103,7 @@ pub(super) async fn run_dev_product_command(
         .context("run the literal wamn dev product command")
 }
 
-pub(super) fn verify_dev_command_receipt(output: &std::process::Output) -> anyhow::Result<()> {
+pub(super) fn verify_dev_command_output(output: &std::process::Output) -> anyhow::Result<()> {
     let stdout = String::from_utf8(output.stdout.clone()).context("wamn dev stdout is UTF-8")?;
     let stderr = String::from_utf8(output.stderr.clone()).context("wamn dev stderr is UTF-8")?;
     anyhow::ensure!(
@@ -117,13 +117,13 @@ pub(super) fn verify_dev_command_receipt(output: &std::process::Output) -> anyho
         .collect::<Vec<_>>()
         .join(",");
     let expected = format!("run completed: {stages}");
-    let receipts = stdout
+    let results = stdout
         .lines()
         .filter(|line| line.starts_with("run completed:"))
         .collect::<Vec<_>>();
     anyhow::ensure!(
-        receipts == [expected.as_str()],
-        "wamn dev returned the wrong product receipt: {receipts:?}; stdout={stdout:?}"
+        results == [expected.as_str()],
+        "wamn dev returned the wrong product receipt: {results:?}; stdout={stdout:?}"
     );
     // The endpoint the activated release served, read off the public dev seam.
     // Only the Activate stage can publish it, so dropping that publish leaves
@@ -514,7 +514,7 @@ pub(super) async fn verify_dev_verification_database_absent(
 
 #[tokio::test]
 #[ignore = "requires disposable PG18, NATS, authenticated OCI, and built wamn/host/flow-http binaries"]
-async fn product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup() -> anyhow::Result<()>
+async fn product_dev_command_owns_the_clean_twelve_stage_output_and_cleanup() -> anyhow::Result<()>
 {
     let system_url = required_journey(JOURNEY_URL_ENV)?;
     let inputs = DevJourneyInputs::required()?;
@@ -604,9 +604,9 @@ pub(super) async fn assert_dev_command(
 
     let command_result = async {
         let output = run_dev_product_command(&inputs, &config).await?;
-        // The literal command emits this receipt only after native workload
+        // The literal command emits this result only after native workload
         // stop and supervised host reaping have both succeeded.
-        verify_dev_command_receipt(&output)?;
+        verify_dev_command_output(&output)?;
         let system_acl_after = current_database_acl(admin.as_ref()).await?;
         let durable_acl_after = current_database_acl(project.as_ref()).await?;
         anyhow::ensure!(

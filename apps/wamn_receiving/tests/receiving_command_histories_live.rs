@@ -943,20 +943,20 @@ pub(crate) fn assert_histories_with_cancellation(
         std::str::from_utf8(&source_head.stdout)?.trim() == inputs.source_commit,
         "Receiving proof source identity differs from the current checkout"
     );
-    let weld: Value = serde_json::from_slice(&std::fs::read(
+    let metadata: Value = serde_json::from_slice(&std::fs::read(
         repository.join("apps/wamn_receiving/generated/package-weld.json"),
     )?)?;
     ensure!(
-        weld["application_sql_corpus_identity"] == inputs.corpus_sha256,
+        metadata["application_sql_corpus_identity"] == inputs.corpus_sha256,
         "Receiving proof SQL corpus identity differs from the package weld"
     );
-    let overlay_weld: Value = serde_json::from_slice(&std::fs::read(
+    let overlay_metadata: Value = serde_json::from_slice(&std::fs::read(
         repository.join("apps/client_acme_receiving/generated/package-weld.json"),
     )?)?;
     let schema_state_ids = json!({
-        "receiving": weld["verified_schema_state_id"].as_str()
+        "receiving": metadata["verified_schema_state_id"].as_str()
             .context("Receiving weld has no verified schema identity")?,
-        "client_acme_receiving": overlay_weld["verified_schema_state_id"].as_str()
+        "client_acme_receiving": overlay_metadata["verified_schema_state_id"].as_str()
             .context("Acme weld has no verified schema identity")?,
     });
     let compiler = std::process::Command::new("rustc")
@@ -1000,8 +1000,8 @@ pub(crate) fn assert_histories_with_cancellation(
         json!({"case":"identity","source_commit":inputs.source_commit,
         "component_digests":inputs.component_digests,"corpus_sha256":inputs.corpus_sha256,
         "postgres_server_version_num":version,"schema_state_ids":schema_state_ids,
-        "generation_provenance":{"receiving":weld["provenance"],
-            "client_acme_receiving":overlay_weld["provenance"]},
+        "generation_provenance":{"receiving":metadata["provenance"],
+            "client_acme_receiving":overlay_metadata["provenance"]},
         "proof_compiler_version":compiler_version,
         "seed":inputs.seed,"generated_cases":inputs.cases,"max_shrink_iterations":64,
         "invariants":["REC-HISTORY","REC-REFUSAL","REC-REPLAY","REC-CONTENTION",

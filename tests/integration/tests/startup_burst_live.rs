@@ -49,7 +49,8 @@ pub(crate) struct Inputs {
     pub(crate) scheduler_client_tls_cert: PathBuf,
     pub(crate) scheduler_client_tls_key: PathBuf,
     pub(crate) otlp_endpoint: String,
-    pub(crate) proof_id: String,
+    #[serde(rename = "proof_id")]
+    pub(crate) test_id: String,
     pub(crate) component_artifact_base: String,
     pub(crate) release_artifact_base: String,
     pub(crate) manifest_digest: String,
@@ -199,10 +200,10 @@ async fn burst(
     token: &str,
     phase: &str,
     owned: &mut Vec<String>,
-    receipt: &mut Value,
+    result: &mut Value,
 ) -> Result<()> {
     let began = Instant::now();
-    receipt["started_unix_ns"] = json!(
+    result["started_unix_ns"] = json!(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)?
             .as_nanos()
@@ -216,7 +217,7 @@ async fn burst(
         .context("burst count")?;
     let mut starts = JoinSet::new();
     for index in 0..count {
-        let id = format!("{}-{phase}-{index}", inputs.proof_id);
+        let id = format!("{}-{phase}-{index}", inputs.test_id);
         let request = workload_request(inputs, &id)?;
         owned.push(id.clone());
         let client = client.clone();
@@ -245,7 +246,7 @@ async fn burst(
     while !starts.is_empty() {
         tokio::select! {
             response = starts.join_next() => {
-                receipt["starts"].as_array_mut().unwrap().push(
+                result["starts"].as_array_mut().unwrap().push(
                     response.context("start task disappeared")???,
                 );
             }
@@ -257,8 +258,8 @@ async fn burst(
                 let live = http.get(format!("{probe}/livez")).send().await?.status().as_u16();
                 let ready = http.get(format!("{probe}/readyz")).send().await?.status().as_u16();
                 ensure!(live == 200 && ready == 200, "native probes failed during starts");
-                let request_id = format!("{}-{phase}-{}", inputs.proof_id,
-                    receipt["observations"].as_array().unwrap().len());
+                let request_id = format!("{}-{phase}-{}", inputs.test_id,
+                    result["observations"].as_array().unwrap().len());
                 let response = application_request(inputs, http, base, token, &request_id).await?;
                 let status = response["status"].as_u64().unwrap();
                 if phase == "warm" || first_success.is_some() {
@@ -270,7 +271,7 @@ async fn burst(
                 if status == 200 && first_success.is_none() {
                     first_success = Some(began.elapsed().as_secs_f64());
                 }
-                receipt["observations"].as_array_mut().unwrap().push(json!({
+                result["observations"].as_array_mut().unwrap().push(json!({
                     "started_seconds":observation_started,
                     "finished_seconds":began.elapsed().as_secs_f64(),
                     "pending_client_starts":starts.len(),"heartbeat_workload_count":heartbeat.workload_count,
@@ -278,13 +279,13 @@ async fn burst(
             }
         }
     }
-    receipt["all_running_seconds"] = json!(began.elapsed().as_secs_f64());
+    result["all_running_seconds"] = json!(began.elapsed().as_secs_f64());
     let after = application_request(
         inputs,
         http,
         base,
         token,
-        &format!("{}-{phase}-final", inputs.proof_id),
+        &format!("{}-{phase}-final", inputs.test_id),
     )
     .await?;
     ensure!(
@@ -292,9 +293,9 @@ async fn burst(
         "route did not serve after all starts"
     );
     let completed = began.elapsed().as_secs_f64();
-    receipt["first_success_seconds"] = json!(first_success.unwrap_or(completed));
-    receipt["final_success_seconds"] = json!(completed);
-    receipt["final_application"] = after;
+    result["first_success_seconds"] = json!(first_success.unwrap_or(completed));
+    result["final_success_seconds"] = json!(completed);
+    result["final_application"] = after;
     Ok(())
 }
 
@@ -359,7 +360,7 @@ pub(crate) async fn assert_startup(
         inputs.scheduler_nats_url != inputs.nats_url,
         "the startup proof requires separate scheduler and event brokers"
     );
-    let mut receipt = json!({"source":inputs.source,"proof_id":inputs.proof_id,
+    let mut result = json!({"source":inputs.source,"proof_id":inputs.test_id,
         "native_start_limit":inputs.max_concurrent_starts,"profile":"release",
         "manifest_digest":inputs.manifest_digest,"verdict":"fail",
         "cache_scope":"Fresh host/empty private caches; native HTTP digest is first loaded by cold herd; replicas share native compile deduplication.",
@@ -407,11 +408,11 @@ pub(crate) async fn assert_startup(
         .args([
             "host",
             "--host-group",
-            &inputs.proof_id,
+            &inputs.test_id,
             "--host-name",
-            &inputs.proof_id,
+            &inputs.test_id,
             "--runner",
-            &inputs.proof_id,
+            &inputs.test_id,
             "--environment",
             &inputs.environment,
             "--scheduler-nats-url",
@@ -453,7 +454,7 @@ pub(crate) async fn assert_startup(
         .env("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
         .env(
             "OTEL_RESOURCE_ATTRIBUTES",
-            format!("wamn.startup.proof={}", inputs.proof_id),
+            format!("wamn.startup.proof={}", inputs.test_id),
         )
         .env("OTEL_BSP_SCHEDULE_DELAY", "1")
         .env("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "1")
@@ -488,7 +489,7 @@ pub(crate) async fn assert_startup(
         command.env(key, credential(&inputs.host_secrets, name)?);
     }
     let began = Instant::now();
-    receipt["process_started_unix_ns"] = json!(
+    result["process_started_unix_ns"] = json!(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)?
             .as_nanos()
@@ -497,14 +498,14 @@ pub(crate) async fn assert_startup(
     let mut child = command
         .spawn()
         .context("start fresh production WAMN host")?;
-    receipt["pid"] = json!(child.id());
+    result["pid"] = json!(child.id());
     let mut owned = Vec::new();
     let mut host_id = None;
     let outcome = async {
         let heartbeat = timeout(STARTUP_BUDGET, async {
             while let Some(message) = heartbeats.next().await {
                 let heartbeat: v2::HostHeartbeat = serde_json::from_slice(&message.payload)?;
-                if heartbeat.hostname == inputs.proof_id
+                if heartbeat.hostname == inputs.test_id
                     && heartbeat.environment == inputs.environment
                 {
                     return Ok::<_, anyhow::Error>(heartbeat);
@@ -518,8 +519,8 @@ pub(crate) async fn assert_startup(
             heartbeat.workload_count == 0,
             "fresh host already has native workloads"
         );
-        receipt["host"] = serde_json::to_value(&heartbeat)?;
-        receipt["heartbeat_seconds"] = json!(began.elapsed().as_secs_f64());
+        result["host"] = serde_json::to_value(&heartbeat)?;
+        result["heartbeat_seconds"] = json!(began.elapsed().as_secs_f64());
         let http = reqwest::Client::builder().timeout(CONTROL_BUDGET).build()?;
         let base = format!("http://127.0.0.1:{}", heartbeat.http_port);
         let probe = format!("http://{probe_address}");
@@ -535,7 +536,7 @@ pub(crate) async fn assert_startup(
         })
         .await
         .context("fresh host native readiness exceeded existing budget")?;
-        receipt["host_ready_seconds"] = json!(began.elapsed().as_secs_f64());
+        result["host_ready_seconds"] = json!(began.elapsed().as_secs_f64());
         let pat = read_json(&inputs.pat_secret)?;
         let token = pat["stringData"]["token"]
             .as_str()
@@ -551,7 +552,7 @@ pub(crate) async fn assert_startup(
                 token,
                 phase,
                 &mut owned,
-                &mut receipt[phase],
+                &mut result[phase],
             )
             .await?;
         }
@@ -588,15 +589,15 @@ pub(crate) async fn assert_startup(
         }
     }
     let stopped = stop_child(&mut child).await;
-    receipt["fixture_cgroup"] = json!(std::fs::read_to_string("/proc/self/cgroup").ok());
-    receipt["fixture_load_average"] = json!(std::fs::read_to_string("/proc/loadavg").ok());
-    receipt["host_shutdown"] = match &stopped {
+    result["fixture_cgroup"] = json!(std::fs::read_to_string("/proc/self/cgroup").ok());
+    result["fixture_load_average"] = json!(std::fs::read_to_string("/proc/loadavg").ok());
+    result["host_shutdown"] = match &stopped {
         Ok(value) => value.clone(),
         Err(_) => json!({"verdict":"fail"}),
     };
-    receipt["owned_workloads"] = json!(owned);
-    receipt["cleanup_errors"] = json!(cleanup_errors);
-    receipt["verdict"] = json!(
+    result["owned_workloads"] = json!(owned);
+    result["cleanup_errors"] = json!(cleanup_errors);
+    result["verdict"] = json!(
         if outcome.is_ok() && stopped.is_ok() && cleanup_errors == 0 {
             "protocol-pass-awaiting-trace-exposure"
         } else {
@@ -619,7 +620,7 @@ pub(crate) async fn assert_startup(
     }
     std::fs::write(
         inputs.evidence_dir.join("protocol.json"),
-        serde_json::to_vec_pretty(&receipt)?,
+        serde_json::to_vec_pretty(&result)?,
     )?;
     ensure!(
         outcome.is_ok(),
