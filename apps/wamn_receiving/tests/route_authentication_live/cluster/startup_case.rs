@@ -13,7 +13,7 @@ use sha2::{Digest as _, Sha256};
 use tokio::process::Child;
 use wamn_ctl::print_release_env::ReleaseCarrier;
 
-use super::{ReceivingCluster, checked, kubectl};
+use super::{ReceivingCluster, checked, kubectl, write_private};
 
 pub(super) async fn assert_startup(
     cluster: &ReceivingCluster,
@@ -52,6 +52,7 @@ pub(super) async fn assert_startup(
             ("production-workload.json",cluster.resources.evidence.join("flow-http-workload.json"))] {
             final_result["input_sha256"][name] = json!(hex::encode(Sha256::digest(fs::read(path)?)));
         }
+        prepare_scheduler_tls(cluster, &private, &evidence).await?;
         let scheduler = forward(cluster, &private, "scheduler", "service/nats", 4222, &mut forwards).await?;
         let otlp = forward(cluster, &private, "otlp", "deployment/otel-collector", 4317, &mut forwards).await?;
         let inputs = super::super::startup_burst::Inputs {
@@ -59,7 +60,11 @@ pub(super) async fn assert_startup(
             host_secrets:cluster.inputs.host_secret_directory.clone(), registry_auth:cluster.inputs.registry_auth_file.clone(),
             workload:cluster.resources.evidence.join("flow-http-workload.json"), pat_secret:cluster.inputs.route_caller_secret_output.clone(),
             private_dir:private.clone(), evidence_dir:evidence.clone(), nats_url:cluster.nats_url.clone(),
-            scheduler_nats_url:format!("nats://127.0.0.1:{scheduler}"), otlp_endpoint:format!("http://127.0.0.1:{otlp}"),
+            scheduler_nats_url:format!("tls://127.0.0.1:{scheduler}"),
+            scheduler_nats_tls_ca:private.join("runtime-ca.crt"),
+            scheduler_nats_tls_cert:private.join("runtime-tls.crt"), scheduler_nats_tls_key:private.join("runtime-tls.key"),
+            scheduler_client_tls_cert:private.join("operator-tls.crt"), scheduler_client_tls_key:private.join("operator-tls.key"),
+            otlp_endpoint:format!("http://127.0.0.1:{otlp}"),
             proof_id:format!("startup-{}",uuid::Uuid::new_v4().simple()),
             component_artifact_base:cluster.inputs.component_artifact_base.clone(), release_artifact_base:carrier.artifact_base.clone(),
             manifest_digest:carrier.manifest_digest.to_string(), org:super::super::ORG.to_owned(), project:super::super::PROJECT.to_owned(),
@@ -178,6 +183,167 @@ pub(super) async fn assert_startup(
     }
     fs::write(evidence.join("evidence.sha256"), hashes)?;
     result
+}
+
+// The chart certificate covers its Service names. The local test also uses loopback.
+async fn prepare_scheduler_tls(
+    cluster: &ReceivingCluster,
+    private: &Path,
+    evidence: &Path,
+) -> anyhow::Result<()> {
+    let certificate = evidence.join("scheduler-certificate.json");
+    fs::write(
+        &certificate,
+        serde_json::to_vec_pretty(&json!({
+            "apiVersion":"cert-manager.io/v1", "kind":"Certificate",
+            "metadata":{"name":"receiving-startup-nats-tls", "namespace":"wamn-system"},
+            "spec":{
+                "secretName":"receiving-startup-nats-tls",
+                "issuerRef":{"name":"wasmcloud-ca", "kind":"ClusterIssuer", "group":"cert-manager.io"},
+                "commonName":"nats",
+                "dnsNames":["nats", "nats.wamn-system", "nats.wamn-system.svc", "nats.wamn-system.svc.cluster.local"],
+                "ipAddresses":["127.0.0.1"],
+                "usages":["server auth", "digital signature", "key encipherment"],
+            },
+        }))?,
+    )?;
+    checked(
+        kubectl(&cluster.resources)
+            .args(["apply", "-f"])
+            .arg(&certificate),
+    )
+    .await?;
+    checked(kubectl(&cluster.resources).args([
+        "-n",
+        "wamn-system",
+        "wait",
+        "--for=condition=Ready",
+        "certificate/receiving-startup-nats-tls",
+        "--timeout=120s",
+    ]))
+    .await?;
+    let ready = checked(kubectl(&cluster.resources).args([
+        "-n",
+        "wamn-system",
+        "get",
+        "certificate",
+        "receiving-startup-nats-tls",
+        "-o",
+        "json",
+    ]))
+    .await?;
+    fs::write(evidence.join("scheduler-certificate-ready.json"), ready)?;
+    let deployment = checked(kubectl(&cluster.resources).args([
+        "-n",
+        "wamn-system",
+        "get",
+        "deployment",
+        "nats",
+        "-o",
+        "json",
+    ]))
+    .await?;
+    fs::write(
+        evidence.join("scheduler-deployment-before.json"),
+        &deployment,
+    )?;
+    let patch = private.join("scheduler-volume-patch.json");
+    fs::write(
+        &patch,
+        serde_json::to_vec(&scheduler_volume_patch(&serde_json::from_slice(
+            &deployment,
+        )?)?)?,
+    )?;
+    checked(
+        kubectl(&cluster.resources)
+            .args([
+                "-n",
+                "wamn-system",
+                "patch",
+                "deployment",
+                "nats",
+                "--type=json",
+                "--patch-file",
+            ])
+            .arg(&patch),
+    )
+    .await?;
+    checked(kubectl(&cluster.resources).args([
+        "-n",
+        "wamn-system",
+        "rollout",
+        "status",
+        "deployment/nats",
+        "--timeout=120s",
+    ]))
+    .await?;
+    let deployment = checked(kubectl(&cluster.resources).args([
+        "-n",
+        "wamn-system",
+        "get",
+        "deployment",
+        "nats",
+        "-o",
+        "json",
+    ]))
+    .await?;
+    fs::write(evidence.join("scheduler-deployment-ready.json"), deployment)?;
+    for (namespace, name, prefix, keys) in [
+        (
+            cluster.resources.name.as_str(),
+            "wasmcloud-runtime-tls",
+            "runtime",
+            &["ca.crt", "tls.crt", "tls.key"][..],
+        ),
+        (
+            "wamn-system",
+            "wasmcloud-operator-tls",
+            "operator",
+            &["tls.crt", "tls.key"][..],
+        ),
+    ] {
+        let secret = checked(
+            kubectl(&cluster.resources)
+                .args(["-n", namespace, "get", "secret", name, "-o", "json"]),
+        )
+        .await?;
+        let secret: Value = serde_json::from_slice(&secret)?;
+        for key in keys {
+            let bytes = base64::engine::general_purpose::STANDARD.decode(
+                secret["data"][key]
+                    .as_str()
+                    .context("the existing TLS Secret has its required file")?,
+            )?;
+            ensure!(!bytes.is_empty(), "the existing TLS file must not be empty");
+            write_private(&private.join(format!("{prefix}-{key}")), &bytes)?;
+        }
+    }
+    Ok(())
+}
+
+fn scheduler_volume_patch(deployment: &Value) -> anyhow::Result<Value> {
+    let volumes = deployment["spec"]["template"]["spec"]["volumes"]
+        .as_array()
+        .context("the scheduler Deployment has volumes")?;
+    let matches = volumes
+        .iter()
+        .enumerate()
+        .filter(|(_, volume)| volume["name"] == "nats-cert")
+        .collect::<Vec<_>>();
+    ensure!(
+        matches.len() == 1,
+        "the scheduler must have exactly one certificate volume"
+    );
+    let (index, volume) = matches[0];
+    ensure!(
+        volume["secret"]["secretName"] == "wasmcloud-nats-tls",
+        "the owned scheduler must still use the chart certificate before test setup"
+    );
+    let path = format!("/spec/template/spec/volumes/{index}/secret/secretName");
+    Ok(json!([
+        {"op":"test", "path":path, "value":"wasmcloud-nats-tls"},
+        {"op":"replace", "path":path, "value":"receiving-startup-nats-tls"},
+    ]))
 }
 
 async fn forward(
@@ -583,6 +749,30 @@ fn redactions(cluster: &ReceivingCluster) -> anyhow::Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scheduler_patch_selects_the_certificate_volume_and_refuses_changed_ownership() {
+        let mut deployment = json!({"spec":{"template":{"spec":{"volumes":[
+            {"name":"nats-config", "configMap":{"name":"nats"}},
+            {"name":"nats-cert", "secret":{"secretName":"wasmcloud-nats-tls"}},
+            {"name":"jetstream", "emptyDir":{}},
+        ]}}}});
+        let patch = scheduler_volume_patch(&deployment).unwrap();
+        assert_eq!(patch.as_array().unwrap().len(), 2);
+        assert_eq!(patch[0]["op"], "test");
+        assert_eq!(patch[1]["op"], "replace");
+        for operation in patch.as_array().unwrap() {
+            assert_eq!(
+                operation["path"],
+                "/spec/template/spec/volumes/1/secret/secretName"
+            );
+        }
+        deployment["spec"]["template"]["spec"]["volumes"][1]["secret"]["secretName"] =
+            json!("another-certificate");
+        assert!(scheduler_volume_patch(&deployment).is_err());
+        deployment["spec"]["template"]["spec"]["volumes"] = json!([]);
+        assert!(scheduler_volume_patch(&deployment).is_err());
+    }
 
     fn observed() -> (Value, BTreeMap<(String, String), (Value, String)>) {
         let mut spans = BTreeMap::new();

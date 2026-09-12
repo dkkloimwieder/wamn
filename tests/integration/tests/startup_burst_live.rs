@@ -43,6 +43,11 @@ pub(crate) struct Inputs {
     pub(crate) evidence_dir: PathBuf,
     pub(crate) nats_url: String,
     pub(crate) scheduler_nats_url: String,
+    pub(crate) scheduler_nats_tls_ca: PathBuf,
+    pub(crate) scheduler_nats_tls_cert: PathBuf,
+    pub(crate) scheduler_nats_tls_key: PathBuf,
+    pub(crate) scheduler_client_tls_cert: PathBuf,
+    pub(crate) scheduler_client_tls_key: PathBuf,
     pub(crate) otlp_endpoint: String,
     pub(crate) proof_id: String,
     pub(crate) component_artifact_base: String,
@@ -366,6 +371,12 @@ pub(crate) async fn assert_startup(
         CONTROL_BUDGET,
         async_nats::ConnectOptions::new()
             .request_timeout(None)
+            .require_tls(true)
+            .add_root_certificates(inputs.scheduler_nats_tls_ca.clone())
+            .add_client_certificate(
+                inputs.scheduler_client_tls_cert.clone(),
+                inputs.scheduler_client_tls_key.clone(),
+            )
             .connect(&inputs.scheduler_nats_url),
     )
     .await??;
@@ -425,6 +436,12 @@ pub(crate) async fn assert_startup(
             &inputs.schema,
             "--allow-insecure-registries",
         ])
+        .arg("--scheduler-nats-tls-ca")
+        .arg(&inputs.scheduler_nats_tls_ca)
+        .arg("--scheduler-nats-tls-cert")
+        .arg(&inputs.scheduler_nats_tls_cert)
+        .arg("--scheduler-nats-tls-key")
+        .arg(&inputs.scheduler_nats_tls_key)
         .arg("--registry-auth-file")
         .arg(&inputs.registry_auth)
         .arg("--wasmtime-cache-dir")
