@@ -1,0 +1,63 @@
+[
+  {
+    "argv": [
+      "pg_virtualenv",
+      "-t",
+      "-v",
+      "18",
+      "/usr/bin/python3",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/immutable-row-source-002/postgres-run.py",
+      "inside",
+      "registration",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_ctl-2529f5b20a18a95c",
+      "apply_package::registration_tests::registration_serializes_replay_conflicts_successors_and_rollback",
+      "--exact",
+      "--ignored",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T01:59:05.694943+00:00",
+    "elapsed_seconds": 3.7542637199512683,
+    "exit": 0,
+    "temporary_cluster_removed": true
+  },
+  {
+    "argv": [
+      "pg_virtualenv",
+      "-t",
+      "-v",
+      "18",
+      "/usr/bin/python3",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/immutable-row-source-002/postgres-run.py",
+      "inside",
+      "publish-release",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/publish_release_live-2fe8541b650b6d1a",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T01:59:09.449446+00:00",
+    "elapsed_seconds": 3.514200750971213,
+    "exit": 0,
+    "temporary_cluster_removed": true
+  },
+  {
+    "argv": [
+      "pg_virtualenv",
+      "-t",
+      "-v",
+      "18",
+      "/usr/bin/python3",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/immutable-row-source-002/postgres-run.py",
+      "inside",
+      "portable-store",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/control_portable_store-63cccd79efaca84e",
+      "control_",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T01:59:12.963946+00:00",
+    "elapsed_seconds": 3.0602229649666697,
+    "exit": 0,
+    "temporary_cluster_removed": true
+  }
+]

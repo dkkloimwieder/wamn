@@ -1,0 +1,199 @@
+{
+  "source_commit": "8b2a80add6c0cfc43e2271cc9703e4db268811b6",
+  "original_files": [
+    {
+      "path": "immutable-row-source-001/capture.py",
+      "bytes": 2409,
+      "sha256": "9d19f3963ffa8dc9a73bee3e4eedf56e0eac28c08dcb188554bdc7e4ea596dc0",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-001/command-1.log",
+      "bytes": 7509,
+      "sha256": "ce3fa2da3f195e70ae593189d5bb83fad2ff1a7913aafde17fa2f738461b7ef1",
+      "mode": "0o600"
+    },
+    {
+      "path": "immutable-row-source-001/command-2.log",
+      "bytes": 18446,
+      "sha256": "eab931d2dbefaa4d8fb16331eb5947b445905fb0bd5c5b376b90d37f48c31fc5",
+      "mode": "0o600"
+    },
+    {
+      "path": "immutable-row-source-001/commands.json",
+      "bytes": 1007,
+      "sha256": "2b9ecbe27442a6ce37acd7a1903752f2c2aa27fbf52280ac2f1c37f941dabefe",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-001/comparison.json",
+      "bytes": 2924,
+      "sha256": "f82406b8ee663295d22fdc05b0c36f90b7e2e3af711630fc8931a02798511867",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-001/compiled-string-build.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-001/compiled-string-comparison.json",
+      "bytes": 1186,
+      "sha256": "0d8889b516bbe7ceca887aa6b181c696170aa72e17b4125e54f4d7899ffb1dff",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-001/compiled-strings.rs",
+      "bytes": 1123,
+      "sha256": "7419cdcc573886392463f7f2388ba585a5b5aafcbaeb85fb2ced87aebedc8ecb",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-001/metadata.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-001/postgres-run.py",
+      "bytes": 3329,
+      "sha256": "9d964effd494dddc351ac92728a7a61e06c60211e01b84825dc9ab1ac56b6b67",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-001/source-after.json",
+      "bytes": 24,
+      "sha256": "1ae748d5796cc995906ddf0fba5e5626f9c1c6ac79cec8fb465106e92254a77b",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-001/source.json",
+      "bytes": 8056,
+      "sha256": "b4466f01d49fcfc2afb786a4fb99e61558eaa87b45c62593bc87892d2551415d",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-002/artifacts.json",
+      "bytes": 807,
+      "sha256": "ca28570ec51b2366089f2181eedec5cc9677b3a97ee32c7a61dbbac9dbb3f33e",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-002/capture.py",
+      "bytes": 2284,
+      "sha256": "88130c173a937d523c5b05f98b8b5255cb3d3d43de67cab64de8981fcde49821",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-002/command-1.log",
+      "bytes": 9435,
+      "sha256": "c3d24de2494cfe8d965c55a7afbc75f61987dd06227fcbfce53803522d4156b9",
+      "mode": "0o600"
+    },
+    {
+      "path": "immutable-row-source-002/command-2.log",
+      "bytes": 583109,
+      "sha256": "005a0084b266d58dc0e6229014c8cc889eda2a6f1f799636feb6c8fcb4c93b44",
+      "mode": "0o600"
+    },
+    {
+      "path": "immutable-row-source-002/command-3.log",
+      "bytes": 181769,
+      "sha256": "3a466849eea26d53338cb4c08da62183d8a0d719f40961e7144dac96d7e36704",
+      "mode": "0o600"
+    },
+    {
+      "path": "immutable-row-source-002/commands.json",
+      "bytes": 1592,
+      "sha256": "f4d1c92384e97c4f2e41916fe8a908cb6e4fa03895ccef4e31b434b745fdf420",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-002/portable-store-controller.log",
+      "bytes": 79,
+      "sha256": "80cb7584be3f0b3fd8c687cc9fbb32248308cb09eef096ce3a9aa715083bf71a",
+      "mode": "0o600"
+    },
+    {
+      "path": "immutable-row-source-002/portable-store.json",
+      "bytes": 523,
+      "sha256": "e6a4c0151ebd956a50d32d39653a1387865f9e926e360720fd0c4b613f96f5ea",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-002/portable-store.log",
+      "bytes": 262,
+      "sha256": "7be5c49df0975970a8bc1cd1b1ef4966e7d2e54027905999a32ed85dcd97479e",
+      "mode": "0o600"
+    },
+    {
+      "path": "immutable-row-source-002/postgres-results.json",
+      "bytes": 2215,
+      "sha256": "5e926c90a91666458b21c8e86f0a4f147ee25ad3d4235b899b391755073be20e",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-002/postgres-run.py",
+      "bytes": 3329,
+      "sha256": "99f2bb44ba2f415217da469a2919b87cf3ed1d0f8a523030fbd0f07d1b129db3",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-002/publish-release-controller.log",
+      "bytes": 79,
+      "sha256": "80cb7584be3f0b3fd8c687cc9fbb32248308cb09eef096ce3a9aa715083bf71a",
+      "mode": "0o600"
+    },
+    {
+      "path": "immutable-row-source-002/publish-release.json",
+      "bytes": 505,
+      "sha256": "8918b1a381a49116385f20072a8dd0e72d333c697a38e4b77e9b039f540296db",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-002/publish-release.log",
+      "bytes": 180,
+      "sha256": "c925d3cb52c17fb3390faf759ac176f1b8585256061114500118e17ec2ae30d8",
+      "mode": "0o600"
+    },
+    {
+      "path": "immutable-row-source-002/registration-controller.log",
+      "bytes": 79,
+      "sha256": "80cb7584be3f0b3fd8c687cc9fbb32248308cb09eef096ce3a9aa715083bf71a",
+      "mode": "0o600"
+    },
+    {
+      "path": "immutable-row-source-002/registration.json",
+      "bytes": 632,
+      "sha256": "684c529beb70b27707de967f0cedf513cd441fd301fbf5ff494f068ef5468883",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-002/registration.log",
+      "bytes": 226,
+      "sha256": "d85361b079222e6d3316fb5c863f75c1899cf32ba84d03932b889b468213e42d",
+      "mode": "0o600"
+    },
+    {
+      "path": "immutable-row-source-002/source-after.json",
+      "bytes": 24,
+      "sha256": "1ae748d5796cc995906ddf0fba5e5626f9c1c6ac79cec8fb465106e92254a77b",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-002/source-final.json",
+      "bytes": 202,
+      "sha256": "11cb746f4f57e3ee7db7b5ceff5253cae412b8cb9e74f043055d523be09c7330",
+      "mode": "0o664"
+    },
+    {
+      "path": "immutable-row-source-002/source.json",
+      "bytes": 8370,
+      "sha256": "84975a7d7f9216816232e5fec2b4357fb33809017f7aae5096a98cb1d9e259bc",
+      "mode": "0o664"
+    }
+  ],
+  "original_file_count": 32,
+  "original_bytes": 841714
+}
