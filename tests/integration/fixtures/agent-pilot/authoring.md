@@ -3,7 +3,7 @@
 This document defines the independently authored task and driver inputs for the agent pilot.
 The [protocol](protocol.md) owns the experiment and human grading rules.
 The [Rust runner](../../src/agent_pilot/runner.rs) prepares runs, and the [grader](../../src/agent_pilot/mod.rs) evaluates their recorded outputs.
-Operating commands belong in [development operations](../../../../docs/operations/development-loop.md#agent-pilot).
+Operating commands belong in [development operations](../../../../docs/operations/development-loop.md#agent-pilot-authoring-experiment).
 
 ## Task input
 
