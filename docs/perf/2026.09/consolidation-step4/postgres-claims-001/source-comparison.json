@@ -1,0 +1,52 @@
+{
+  "source_base": "510e4fbf22d8ab321ef3cff1eabc69cf487a3cce",
+  "functions": 69,
+  "all_function_bodies_byte_identical": true,
+  "all_literal_bytes_preserved": true,
+  "tests": 40,
+  "all_test_bodies_byte_identical": true,
+  "paths": {
+    "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs": {
+      "sha256": "dd87be0abb64167661cb6bd31317f54f3f5c26aab8e63f8786b1cd3a6dfbd3a0",
+      "bytes": 65799
+    },
+    "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs": {
+      "sha256": "149ea0b10e123d2cbf02fed2d82f49aee3405d7983ae03544b1da194bf078a95",
+      "bytes": 16904
+    },
+    "crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs": {
+      "sha256": "f7d69a7ee29ba73a1bd8f02848e2ec79b873cdcb350bcdd0e492908777385849",
+      "bytes": 24006
+    },
+    "crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs": {
+      "sha256": "f907b20114eab34e51168a5a95712d50ed74a7e863beebafc6744ad450ad53bb",
+      "bytes": 84963
+    }
+  },
+  "moved_functions": {
+    "causation_emit_sql": "crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs",
+    "claim_sql": "crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs",
+    "build_pool": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "pools": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "ensure_pool": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "project_pool_count": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "destroyed_connections": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "pool_status_all_by_lifecycle": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "pool_status_of": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "pool_status": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "pool_status_all": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "register_pool_metrics": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "probe_checkout": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "probe_checkout_of": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "destroy": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "checkout_class": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "checkout_guest": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "checkout_workload": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "checkout_platform": "crates/platform/runtime/src/plugins/wamn_postgres/claims/pools.rs",
+    "begin_with_claims": "crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs",
+    "warm_claim_statement": "crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs",
+    "one_shot": "crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs",
+    "one_shot_for_project": "crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs",
+    "one_shot_statement": "crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs"
+  }
+}

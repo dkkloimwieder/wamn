@@ -1,0 +1,485 @@
+   Compiling aws-lc-sys v0.44.0
+   Compiling wasmparser v0.252.0
+   Compiling cranelift-srcgen v0.134.4
+   Compiling cranelift-assembler-x64-meta v0.134.4
+   Compiling idna_adapter v1.2.2
+   Compiling crc32fast v1.5.1
+   Compiling zerocopy v0.8.56
+   Compiling getrandom v0.4.3
+   Compiling target-lexicon v0.13.5
+   Compiling cranelift-bitset v0.134.4
+   Compiling form_urlencoded v1.2.2
+   Compiling indexmap v2.14.0
+   Compiling iana-time-zone v0.1.65
+   Compiling rustls v0.23.43
+   Compiling chrono v0.4.45
+   Compiling idna v1.1.0
+   Compiling sha2 v0.11.0
+   Compiling pulley-macros v47.0.4
+   Compiling allocator-api2 v0.2.21
+   Compiling tower-service v0.3.3
+   Compiling hashbrown v0.16.1
+   Compiling id-arena v2.3.0
+   Compiling httparse v1.10.1
+   Compiling tinyvec_macros v0.1.1
+   Compiling tinyvec v1.12.0
+   Compiling gimli v0.33.0
+   Compiling bumpalo v3.20.3
+   Compiling url v2.5.8
+   Compiling cranelift-entity v0.134.4
+   Compiling wasm-encoder v0.252.0
+   Compiling chacha20 v0.10.1
+   Compiling cobs v0.3.0
+   Compiling aho-corasick v1.1.5
+   Compiling strsim v0.11.1
+   Compiling atomic-waker v1.1.2
+   Compiling ident_case v1.0.1
+   Compiling regex-syntax v0.8.11
+   Compiling try-lock v0.2.5
+   Compiling cranelift-isle v0.134.4
+   Compiling want v0.3.1
+   Compiling regex-automata v0.4.18
+   Compiling h2 v0.4.19
+   Compiling postcard v1.1.3
+   Compiling rand v0.10.2
+   Compiling cranelift-bforest v0.134.4
+   Compiling unicode-normalization v0.1.25
+   Compiling pulley-interpreter v47.0.4
+   Compiling cranelift-codegen-shared v0.134.4
+   Compiling crossbeam-utils v0.8.22
+   Compiling getrandom v0.3.4
+   Compiling memchr v2.8.3
+   Compiling httpdate v1.0.3
+   Compiling hyper v1.11.0
+   Compiling cranelift-codegen-meta v0.134.4
+   Compiling cranelift-assembler-x64 v0.134.4
+   Compiling sync_wrapper v1.0.2
+   Compiling openssl-probe v0.2.1
+   Compiling tower-layer v0.3.3
+   Compiling cpp_demangle v0.5.1
+   Compiling object v0.39.1
+   Compiling io-lifetimes v2.0.4
+   Compiling rustls-native-certs v0.8.4
+   Compiling cranelift-codegen v0.134.4
+   Compiling ppv-lite86 v0.2.21
+   Compiling http-body-util v0.1.5
+   Compiling prost-derive v0.14.4
+   Compiling zstd-sys v2.0.16+zstd.1.5.7
+   Compiling wasmtime-internal-versioned-export-macros v47.0.4
+   Compiling crossbeam-epoch v0.9.20
+   Compiling rustc-hash v2.1.3
+   Compiling termcolor v1.4.1
+   Compiling wasmtime-internal-component-util v47.0.4
+   Compiling arbitrary v1.4.2
+   Compiling aws-lc-rs v1.18.0
+   Compiling typenum v1.20.1
+   Compiling generic-array v0.14.7
+   Compiling rustls-webpki v0.103.15
+   Compiling cranelift-control v0.134.4
+   Compiling wasmprinter v0.252.0
+   Compiling regalloc2 v0.15.2
+   Compiling tokio-rustls v0.26.4
+   Compiling tower v0.5.3
+   Compiling hyper-util v0.1.20
+   Compiling thiserror v2.0.20
+   Compiling serde_json v1.0.151
+   Compiling winnow v1.0.4
+   Compiling rustc-demangle v0.1.28
+   Compiling wasmtime-environ v47.0.4
+   Compiling toml_parser v1.1.3+spec-1.1.0
+   Compiling md-5 v0.11.0
+   Compiling signature v2.2.0
+   Compiling toml_datetime v0.7.5+spec-1.1.0
+   Compiling serde_spanned v1.1.1
+   Compiling zstd-safe v7.2.4
+   Compiling crossbeam-deque v0.8.7
+   Compiling unicode-properties v0.1.4
+   Compiling unicode-bidi v0.3.18
+   Compiling toml_writer v1.1.2+spec-1.1.0
+   Compiling winnow v0.7.15
+   Compiling toml v0.9.12+spec-1.1.0
+   Compiling stringprep v0.1.5
+   Compiling fs-set-times v0.20.3
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling regex v1.13.1
+   Compiling darling_core v0.20.11
+   Compiling rustix-linux-procfs v0.1.1
+   Compiling hmac v0.13.0
+   Compiling deranged v0.5.8
+   Compiling thiserror v1.0.69
+   Compiling maybe-owned v0.3.4
+   Compiling base64ct v1.8.3
+   Compiling time-core v0.1.9
+   Compiling num-conv v0.2.2
+   Compiling powerfmt v0.2.0
+   Compiling wasmtime-internal-unwinder v47.0.4
+   Compiling byteorder v1.5.0
+   Compiling io-lifetimes v3.0.1
+   Compiling fallible-iterator v0.2.0
+   Compiling rayon-core v1.13.0
+   Compiling ambient-authority v0.0.2
+   Compiling siphasher v1.0.3
+   Compiling phf_shared v0.13.1
+   Compiling postgres-protocol v0.6.12
+   Compiling time v0.3.55
+   Compiling pem-rfc7468 v0.7.0
+   Compiling darling_macro v0.20.11
+   Compiling digest v0.10.7
+   Compiling wit-parser v0.252.0
+   Compiling wasmtime-internal-fiber v47.0.4
+   Compiling rustc_version v0.4.1
+   Compiling rand_core v0.6.4
+   Compiling opentelemetry v0.31.0
+   Compiling tokio-stream v0.1.19
+   Compiling dirs-sys-next v0.1.2
+   Compiling thiserror-impl v1.0.69
+   Compiling pin-project-internal v1.1.13
+   Compiling rustix v1.1.4
+   Compiling const-oid v0.9.6
+   Compiling wasmtime-internal-cache v47.0.4
+   Compiling wasmtime-internal-cranelift v47.0.4
+   Compiling wasmtime-internal-component-macro v47.0.4
+   Compiling leb128 v0.2.7
+   Compiling io-extras v0.19.0
+   Compiling bytes v1.12.1
+   Compiling wast v35.0.2
+   Compiling prost v0.14.4
+   Compiling der v0.7.10
+   Compiling pin-project v1.1.13
+   Compiling directories-next v2.0.0
+   Compiling curve25519-dalek v4.1.3
+   Compiling wasmtime-internal-wit-bindgen v47.0.4
+   Compiling zstd v0.13.3
+   Compiling sha2 v0.10.9
+   Compiling darling v0.20.11
+   Compiling postgres-types v0.2.14
+   Compiling phf v0.13.1
+   Compiling cranelift-frontend v0.134.4
+   Compiling cranelift-native v0.134.4
+   Compiling wasmtime v47.0.4
+   Compiling smallvec v1.15.2
+   Compiling whoami v2.1.3
+   Compiling serde_derive_internals v0.29.1
+   Compiling simd-adler32 v0.3.10
+   Compiling foldhash v0.1.5
+   Compiling fastrand v2.5.0
+   Compiling ref-cast v1.0.27
+   Compiling hex v0.4.3
+   Compiling ryu v1.0.23
+   Compiling linux-raw-sys v0.12.1
+   Compiling schemars v0.8.22
+   Compiling mime v0.3.17
+   Compiling lazy_static v1.5.0
+   Compiling cap-primitives v4.0.3
+   Compiling prettyplease v0.2.37
+   Compiling adler2 v2.0.1
+   Compiling miniz_oxide v0.8.9
+   Compiling axum-core v0.5.6
+   Compiling schemars_derive v0.8.22
+   Compiling hashbrown v0.15.5
+   Compiling tokio-postgres v0.7.18
+   Compiling derive_builder_core v0.20.2
+   Compiling rayon v1.12.0
+   Compiling spki v0.7.3
+   Compiling witx v0.9.1
+   Compiling prost-types v0.14.4
+   Compiling rand_chacha v0.3.1
+   Compiling rand_core v0.9.5
+   Compiling addr2line v0.26.1
+   Compiling memfd v0.6.5
+   Compiling wasmtime-internal-jit-icache-coherence v47.0.4
+   Compiling wasmparser v0.253.0
+   Compiling futures v0.3.34
+   Compiling ahash v0.8.12
+   Compiling encoding_rs v0.8.35
+   Compiling curve25519-dalek-derive v0.1.1
+   Compiling ref-cast-impl v1.0.27
+   Compiling once_cell v1.21.4
+   Compiling cap-std v4.0.3
+   Compiling wiggle-macro v47.0.4
+   Compiling matchit v0.8.4
+   Compiling io-extras v0.18.4
+   Compiling dyn-clone v1.0.20
+   Compiling portable-atomic v1.15.0
+   Compiling konst_macro_rules v0.2.19
+   Compiling unicode-xid v0.2.6
+   Compiling fixedbitset v0.5.7
+   Compiling petgraph v0.8.3
+   Compiling const_format_proc_macros v0.2.34
+   Compiling konst v0.2.20
+   Compiling axum v0.8.9
+   Compiling tempfile v3.27.0
+   Compiling rand_chacha v0.9.0
+   Compiling rand v0.8.8
+   Compiling wiggle-generate v47.0.4
+   Compiling pkcs8 v0.10.2
+   Compiling derive_builder_macro v0.20.2
+   Compiling flate2 v1.1.9
+   Compiling serde_urlencoded v0.7.1
+   Compiling ed25519 v2.2.3
+   Compiling hyper-rustls v0.27.9
+   Compiling hyper-timeout v0.5.2
+   Compiling tower-http v0.6.11
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling darling_core v0.24.1
+   Compiling wasmparser v0.254.0
+   Compiling cap-fs-ext v4.0.3
+   Compiling multimap v0.10.1
+   Compiling prettyplease v0.3.0
+   Compiling cap-primitives v3.4.6
+   Compiling borrow-or-share v0.2.4
+   Compiling rustversion v1.0.23
+   Compiling fluent-uri v0.3.2
+   Compiling prost-build v0.14.4
+   Compiling darling_macro v0.24.1
+   Compiling reqwest v0.13.4
+   Compiling tonic v0.14.6
+   Compiling ed25519-dalek v2.2.0
+   Compiling derive_builder v0.20.2
+   Compiling signatory v0.27.1
+   Compiling rand v0.9.5
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/apps/platform/execution/contract)
+   Compiling const_format v0.2.36
+   Compiling wasm-encoder v0.253.0
+   Compiling pbjson-build v0.8.0
+   Compiling sharded-slab v0.1.7
+   Compiling matchers v0.2.0
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/apps/platform/events/wire)
+   Compiling strum_macros v0.27.2
+   Compiling tracing-log v0.2.0
+   Compiling tracing-serde v0.2.0
+   Compiling futures-executor v0.3.34
+   Compiling deadpool-runtime v0.3.1
+   Compiling thread_local v1.1.10
+   Compiling getset v0.1.7
+   Compiling strum v0.27.2
+   Compiling nu-ansi-term v0.50.3
+   Compiling cap-std v3.4.6
+   Compiling appendlist v1.4.0
+   Compiling data-encoding v2.11.0
+   Compiling boon v0.6.1
+   Compiling nkeys v0.4.5
+   Compiling oci-spec v0.9.0
+   Compiling tracing-subscriber v0.3.23
+   Compiling deadpool v0.13.1
+   Compiling opentelemetry_sdk v0.31.0
+   Compiling wasm-metadata v0.253.0
+   Compiling pbjson-types v0.8.0
+   Compiling wiggle v47.0.4
+   Compiling tonic-prost v0.14.6
+   Compiling darling v0.24.1
+   Compiling wasm-encoder v0.254.0
+   Compiling wasmtime-wasi-io v47.0.4
+   Compiling wit-parser v0.253.0
+   Compiling jsonwebtoken v10.4.0
+   Compiling olpc-cjson v0.1.4
+   Compiling num-integer v0.1.47
+   Compiling webpki-roots v1.0.9
+   Compiling tryhard v0.5.2
+   Compiling http-auth v0.1.10
+   Compiling serde_nanos v0.1.4
+   Compiling serde_repr v0.1.21
+   Compiling names v0.14.0
+   Compiling wamn-component-policy v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/crates/platform/component-policy)
+   Compiling unicase v2.9.0
+   Compiling unicode-width v0.2.2
+   Compiling wast v252.0.0
+   Compiling oci-client v0.17.0
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:791:4
+    |
+791 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling async-nats v0.49.1
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wit-component v0.253.0
+   Compiling num-bigint v0.4.8
+   Compiling wasm-metadata v0.254.0
+   Compiling wasmtime-wasi v47.0.4
+   Compiling arc-swap v1.9.2
+   Compiling bon-macros v3.10.0
+   Compiling opentelemetry-proto v0.31.0
+   Compiling deadpool-postgres v0.14.2
+   Compiling wit-parser v0.254.0
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/crates/schema/introspection)
+   Compiling opentelemetry-http v0.31.0
+   Compiling crossbeam-channel v0.5.16
+   Compiling uuid v1.26.0
+   Compiling itertools v0.13.0
+   Compiling combine v4.6.8
+   Compiling pbjson v0.8.0
+   Compiling tagptr v0.2.0
+   Compiling spin v0.10.1
+   Compiling humantime v2.4.0
+   Compiling home v0.5.12
+   Compiling wamn-pg-core v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/crates/platform/pg-core)
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/crates/execution/run-state)
+   Compiling etcetera v0.10.0
+   Compiling crc-fast v1.10.0
+   Compiling moka v0.12.16
+   Compiling redis v0.27.6
+   Compiling wasmtime-wasi-http v47.0.4
+   Compiling opentelemetry-otlp v0.31.1
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/crates/schema/generator)
+   Compiling wit-component v0.254.0
+   Compiling cap-net-ext v3.4.6
+   Compiling bon v3.10.0
+   Compiling oci-wasm v0.6.0
+   Compiling wat v1.252.0
+   Compiling webpki-roots v0.26.11
+   Compiling opentelemetry-appender-tracing v0.31.1
+   Compiling tracing-opentelemetry v0.32.1
+   Compiling yasna v0.6.0
+   Compiling wasm-metadata v0.252.0
+   Compiling itertools v0.15.0
+   Compiling docker_credential v1.4.0
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/crates/control/registry)
+   Compiling pem v3.0.6
+   Compiling sysinfo v0.32.1
+   Compiling quick-xml v0.41.0
+   Compiling hostname v0.4.2
+   Compiling opentelemetry-semantic-conventions v0.31.0
+   Compiling wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)
+   Compiling object_store v0.14.1
+   Compiling rcgen v0.14.8
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/crates/control/provision)
+   Compiling wit-component v0.252.0
+   Compiling wamn-router v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/crates/execution/router)
+   Compiling wamn-platform-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/crates/identity/platform)
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/crates/platform/runtime)
+warning: unused import: `reject_claim_mutation`
+  --> crates/platform/runtime/src/plugins/wamn_postgres/claims/transactions.rs:16:42
+   |
+16 | use super::{OneShotResult, WamnPostgres, reject_claim_mutation, validate_claims};
+   |                                          ^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: the item `ToSql` is imported redundantly
+ --> crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs:6:5
+  |
+4 | use super::*;
+  |     -------- the item `ToSql` is already imported here
+5 | use tokio_postgres::NoTls;
+6 | use tokio_postgres::types::ToSql;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:131:1
+    |
+131 | / pub struct ConnectionHttp {
+132 | |     postgres: Arc<WamnPostgres>,
+133 | |     transport: Arc<HttpTransport>,
+134 | |     vault: Arc<WamnCredentials>,
+...   |
+151 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+152 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:507:1
+    |
+507 | / pub struct WamnJetstream {
+508 | |     nats_url: Option<String>,
+509 | |     stream_replicas: Option<usize>,
+510 | |     dup_window_secs: Option<u64>,
+...   |
+536 | |     release: Option<Arc<ReleaseManifestWeld>>,
+537 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:51:1
+    |
+ 51 | / pub struct WamnPostgres {
+ 52 | |     /// Resolves a project id → its database connection + policy.
+ 53 | |     provider: Arc<dyn CredentialProvider>,
+ 54 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+114 | |     pub(super) bind_counters: super::BindCounters,
+115 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:248:1
+    |
+248 | / pub struct StaticCredentialProvider {
+249 | |     projects: HashMap<String, ProjectConfig>,
+250 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:423:1
+    |
+423 | / pub struct K8sSecretProvider {
+424 | |     pub namespace: String,
+425 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: `wamn-runtime` (lib test) generated 12 warnings (run `cargo fix --lib -p wamn-runtime --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5m 58s
+     Running unittests src/lib.rs (target/debug/deps/wamn_runtime-59a22e60a47dd619)
+WAMN_SCS_OFF_PG_URL unset — skipping the wamn-2jkm.65 R18 live negative (boot a postgres:18 with -c standard_conforming_strings=off; see docs/operations/build-and-test.md [R18-NEG])

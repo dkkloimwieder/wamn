@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "/usr/lib/postgresql/18/bin/initdb",
+    "-D",
+    "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-pg-002-20260912/data",
+    "--auth-local=trust",
+    "--auth-host=trust",
+    "--no-locale",
+    "--encoding=UTF8"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912",
+  "source": "1ea88f3f6da30b0e26f8fc96507310850dc9ef35"
+}

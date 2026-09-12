@@ -1,0 +1,8 @@
+{
+  "utc": "2026-09-12T01:44:46.205926+00:00",
+  "capture_pid": 1586803,
+  "cargo_pids": [
+    1587244
+  ],
+  "reason": "Static inspection found the moved tests need an explicit VerifiedStatement import. This attempt stopped during dependency compilation. No Rust test outcome is claimed."
+}

@@ -1,0 +1,33 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-proof-conformance",
+    "--test",
+    "state_ownership",
+    "--",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 5.897419165994506,
+  "ended_utc": "2026-09-12T01:59:03.368934+00:00",
+  "exit_code": 0,
+  "name": "state-ownership",
+  "source": "5ea8ffe9a39547ed6ac52e132696d95b5767c9e5",
+  "started_utc": "2026-09-12T01:58:57.471526+00:00",
+  "stderr": {
+    "bytes": 7169,
+    "mode": "0o664",
+    "path": "state-ownership.stderr",
+    "sha256": "d6de4aa3f423184effb4b78f3879b10d89d6756c5ef36a68e42fb834c3217116"
+  },
+  "stdout": {
+    "bytes": 2020,
+    "mode": "0o664",
+    "path": "state-ownership.stdout",
+    "sha256": "610cc3b948b2e5a03f59190b99759642b8e7f31b45fa023179e492b94fd9c3f4"
+  }
+}

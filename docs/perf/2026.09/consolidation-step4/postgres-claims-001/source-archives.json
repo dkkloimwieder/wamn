@@ -1,0 +1,18 @@
+[
+  {
+    "path": "source-after.json.gz",
+    "compressed_bytes": 1117280,
+    "compressed_sha256": "1bd6de1613f4254584f88b09e2e524e19880e38789301c1d480ffd578f4caa26",
+    "original_bytes": 6942986,
+    "original_sha256": "7e785d90c11ab57cda136147e72cd46dcdc64f9b476963daad685528f0d96695",
+    "lossless": true
+  },
+  {
+    "path": "source-before.json.gz",
+    "compressed_bytes": 1117280,
+    "compressed_sha256": "1bd6de1613f4254584f88b09e2e524e19880e38789301c1d480ffd578f4caa26",
+    "original_bytes": 6942986,
+    "original_sha256": "7e785d90c11ab57cda136147e72cd46dcdc64f9b476963daad685528f0d96695",
+    "lossless": true
+  }
+]

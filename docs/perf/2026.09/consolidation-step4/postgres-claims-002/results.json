@@ -1,0 +1,230 @@
+[
+  {
+    "argv": [
+      "/usr/lib/postgresql/18/bin/initdb",
+      "-D",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-pg-002-20260912/data",
+      "--auth-local=trust",
+      "--auth-host=trust",
+      "--no-locale",
+      "--encoding=UTF8"
+    ],
+    "elapsed_seconds": 1.2065004979958758,
+    "ended_utc": "2026-09-12T01:45:23.974194+00:00",
+    "exit_code": 0,
+    "name": "initdb",
+    "source": "1ea88f3f6da30b0e26f8fc96507310850dc9ef35",
+    "started_utc": "2026-09-12T01:45:22.767702+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "initdb.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 953,
+      "mode": "0o664",
+      "path": "initdb.stdout",
+      "sha256": "a7e14035b6e33f9635a28fe2ee6c975895020060513d7a78d2db41a577fa0a9c"
+    }
+  },
+  {
+    "argv": [
+      "/usr/lib/postgresql/18/bin/pg_ctl",
+      "-D",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-pg-002-20260912/data",
+      "-l",
+      "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step4/postgres-claims-002/postgres.log",
+      "-o",
+      "-h 127.0.0.1 -p 36579 -k /home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-pg-002-20260912 -c max_connections=100",
+      "-w",
+      "start"
+    ],
+    "elapsed_seconds": 0.10799798095831648,
+    "ended_utc": "2026-09-12T01:45:24.082685+00:00",
+    "exit_code": 0,
+    "name": "postgres-start",
+    "source": "1ea88f3f6da30b0e26f8fc96507310850dc9ef35",
+    "started_utc": "2026-09-12T01:45:23.974697+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "postgres-start.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 52,
+      "mode": "0o664",
+      "path": "postgres-start.stdout",
+      "sha256": "66afd0411ccc09366e99fdd99b85f21899c8d2d064f5835126859618802153ad"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-runtime",
+      "--features",
+      "wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats",
+      "--lib",
+      "plugins::wamn_postgres::claims::tests::",
+      "--",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "elapsed_seconds": 359.1894874640275,
+    "ended_utc": "2026-09-12T01:51:23.279913+00:00",
+    "exit_code": 0,
+    "name": "claims",
+    "source": "1ea88f3f6da30b0e26f8fc96507310850dc9ef35",
+    "started_utc": "2026-09-12T01:45:24.090451+00:00",
+    "stderr": {
+      "bytes": 18644,
+      "mode": "0o664",
+      "path": "claims.stderr",
+      "sha256": "d68f79e94fe30c2c9e70b07b0c8c11e95b1153a1dfbda3395a64f9340d567ab3"
+    },
+    "stdout": {
+      "bytes": 4450,
+      "mode": "0o664",
+      "path": "claims.stdout",
+      "sha256": "f0958de5a26569a36730c15538ef9e78071c0628638510dba27761a63196f4b2"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-runtime",
+      "--features",
+      "wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats",
+      "--lib",
+      "plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving",
+      "--",
+      "--ignored",
+      "--exact",
+      "--nocapture"
+    ],
+    "elapsed_seconds": 0.6648110940004699,
+    "ended_utc": "2026-09-12T01:51:23.945529+00:00",
+    "exit_code": 101,
+    "name": "lifecycle",
+    "source": "1ea88f3f6da30b0e26f8fc96507310850dc9ef35",
+    "started_utc": "2026-09-12T01:51:23.280727+00:00",
+    "stderr": {
+      "bytes": 6064,
+      "mode": "0o664",
+      "path": "lifecycle.stderr",
+      "sha256": "2714b73c3cbf613392ac6615f5eece16bc01e0886d9dbc282370d53799ab667f"
+    },
+    "stdout": {
+      "bytes": 388,
+      "mode": "0o664",
+      "path": "lifecycle.stdout",
+      "sha256": "5642272cef3403119c9bbda06382d3810f0a02468e1ee8584b4304e5ab5e80d4"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-runtime",
+      "--features",
+      "wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats",
+      "--test",
+      "postgres_wit_coherence"
+    ],
+    "elapsed_seconds": 23.448598465009127,
+    "ended_utc": "2026-09-12T01:51:47.394720+00:00",
+    "exit_code": 0,
+    "name": "postgres-wit",
+    "source": "1ea88f3f6da30b0e26f8fc96507310850dc9ef35",
+    "started_utc": "2026-09-12T01:51:23.946131+00:00",
+    "stderr": {
+      "bytes": 6051,
+      "mode": "0o664",
+      "path": "postgres-wit.stderr",
+      "sha256": "515c3179fbe1800cdefc87a6d070ea7a74a93723ecadfe3340b9fd09fba3367c"
+    },
+    "stdout": {
+      "bytes": 170,
+      "mode": "0o664",
+      "path": "postgres-wit.stdout",
+      "sha256": "661a81aa8d7e502500f88897b01ca7ce7f545c0c18beec6c0ef42a41960aafef"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-proof-conformance",
+      "--test",
+      "state_ownership",
+      "--",
+      "--nocapture"
+    ],
+    "elapsed_seconds": 351.4334126160247,
+    "ended_utc": "2026-09-12T01:57:38.828720+00:00",
+    "exit_code": 0,
+    "name": "state-ownership",
+    "source": "1ea88f3f6da30b0e26f8fc96507310850dc9ef35",
+    "started_utc": "2026-09-12T01:51:47.395325+00:00",
+    "stderr": {
+      "bytes": 18634,
+      "mode": "0o664",
+      "path": "state-ownership.stderr",
+      "sha256": "7dcf14ea9a7d97a3d98efec5a8a31cfad6be36e02d9235dc9f87d30180da0562"
+    },
+    "stdout": {
+      "bytes": 2020,
+      "mode": "0o664",
+      "path": "state-ownership.stdout",
+      "sha256": "39b63cd501d8f08fe9a94deed8c9d752269cbd84c01a08ecd9b6715d01fa86bc"
+    }
+  },
+  {
+    "argv": [
+      "/usr/lib/postgresql/18/bin/pg_ctl",
+      "-D",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-pg-002-20260912/data",
+      "-m",
+      "fast",
+      "-w",
+      "stop"
+    ],
+    "elapsed_seconds": 0.20200856996234506,
+    "ended_utc": "2026-09-12T01:57:39.031675+00:00",
+    "exit_code": 0,
+    "name": "postgres-stop",
+    "source": "1ea88f3f6da30b0e26f8fc96507310850dc9ef35",
+    "started_utc": "2026-09-12T01:57:38.829672+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "postgres-stop.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 56,
+      "mode": "0o664",
+      "path": "postgres-stop.stdout",
+      "sha256": "ca19178a35ab4153b75b494963b66ce8243e1b94c173107c87b44d09db23652d"
+    }
+  }
+]

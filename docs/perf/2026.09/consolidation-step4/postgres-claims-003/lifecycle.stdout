@@ -1,0 +1,6 @@
+
+running 1 test
+test plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 311 filtered out; finished in 0.02s
+

@@ -1,0 +1,37 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-runtime",
+    "--features",
+    "wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats",
+    "--lib",
+    "plugins::wamn_postgres::claims::tests::live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving",
+    "--",
+    "--ignored",
+    "--exact",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 0.6648110940004699,
+  "ended_utc": "2026-09-12T01:51:23.945529+00:00",
+  "exit_code": 101,
+  "name": "lifecycle",
+  "source": "1ea88f3f6da30b0e26f8fc96507310850dc9ef35",
+  "started_utc": "2026-09-12T01:51:23.280727+00:00",
+  "stderr": {
+    "bytes": 6064,
+    "mode": "0o664",
+    "path": "lifecycle.stderr",
+    "sha256": "2714b73c3cbf613392ac6615f5eece16bc01e0886d9dbc282370d53799ab667f"
+  },
+  "stdout": {
+    "bytes": 388,
+    "mode": "0o664",
+    "path": "lifecycle.stdout",
+    "sha256": "5642272cef3403119c9bbda06382d3810f0a02468e1ee8584b4304e5ab5e80d4"
+  }
+}

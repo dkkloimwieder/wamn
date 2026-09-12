@@ -1,0 +1,31 @@
+{
+  "argv": [
+    "/usr/lib/postgresql/18/bin/pg_ctl",
+    "-D",
+    "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-pg-20260912/data",
+    "-l",
+    "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step4/postgres-claims-001/postgres.log",
+    "-o",
+    "-h 127.0.0.1 -p 34025 -k /home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-pg-20260912 -c max_connections=100",
+    "-w",
+    "start"
+  ],
+  "elapsed_seconds": 0.10848141100723296,
+  "ended_utc": "2026-09-12T01:43:38.257368+00:00",
+  "exit_code": 0,
+  "name": "postgres-start",
+  "source": "6e8731782715ff0a632b80c2d17d4160c72d4d56",
+  "started_utc": "2026-09-12T01:43:38.148893+00:00",
+  "stderr": {
+    "bytes": 0,
+    "mode": "0o664",
+    "path": "postgres-start.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": {
+    "bytes": 52,
+    "mode": "0o664",
+    "path": "postgres-start.stdout",
+    "sha256": "66afd0411ccc09366e99fdd99b85f21899c8d2d064f5835126859618802153ad"
+  }
+}

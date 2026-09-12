@@ -1,0 +1,33 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-runtime",
+    "--features",
+    "wasm_component_model_implements,wash-runtime/washlet,wash-runtime/wasi-config,wash-runtime/wasi-otel,wash-runtime/wasmcloud-nats",
+    "--test",
+    "postgres_wit_coherence"
+  ],
+  "elapsed_seconds": 2.8661552889971063,
+  "ended_utc": "2026-09-12T01:58:57.471078+00:00",
+  "exit_code": 0,
+  "name": "postgres-wit",
+  "source": "5ea8ffe9a39547ed6ac52e132696d95b5767c9e5",
+  "started_utc": "2026-09-12T01:58:54.604930+00:00",
+  "stderr": {
+    "bytes": 5610,
+    "mode": "0o664",
+    "path": "postgres-wit.stderr",
+    "sha256": "2e08a651781be7c430733beca20ceff31f3c3bd0b3e49524e62779b064e30c1f"
+  },
+  "stdout": {
+    "bytes": 170,
+    "mode": "0o664",
+    "path": "postgres-wit.stdout",
+    "sha256": "bb71f91f4cd7ef65fc6584deac1f7ca6e74a1ca2b06d049a6a1c62b7bdd18269"
+  }
+}

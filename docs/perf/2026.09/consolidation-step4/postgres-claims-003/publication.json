@@ -1,0 +1,708 @@
+{
+  "original_root": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step4",
+  "files": [
+    {
+      "path": "postgres-claims-001/capture.py",
+      "bytes": 5818,
+      "mode": "0o664",
+      "sha256": "902f9e7941333ca97b2ae56a730f8c8c006bcf93c37dd0c4a4d644519010399d"
+    },
+    {
+      "path": "postgres-claims-001/claims-command.json",
+      "bytes": 527,
+      "mode": "0o664",
+      "sha256": "47b71714019db032690cad78b69152be268f5471d8f22c8f2f113eed8e9dd578"
+    },
+    {
+      "path": "postgres-claims-001/claims.stderr",
+      "bytes": 4050,
+      "mode": "0o664",
+      "sha256": "8a4b74c19c27b38a940cfefd781f055e99c1de16591ca34e3dcd221626b3e2bd"
+    },
+    {
+      "path": "postgres-claims-001/claims.stdout",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-001/classification.json",
+      "bytes": 782,
+      "mode": "0o664",
+      "sha256": "e8fb13b0ac594d37f9f88d61630b015cc5618d6b51063247226079b32440361c"
+    },
+    {
+      "path": "postgres-claims-001/environment.json",
+      "bytes": 381,
+      "mode": "0o664",
+      "sha256": "2273caea72a96c4838ce56053136b204b988e99f649aa0d78d52d89133fb6285"
+    },
+    {
+      "path": "postgres-claims-001/initdb-command.json",
+      "bytes": 386,
+      "mode": "0o664",
+      "sha256": "749c147edbc4b46231585d2ece0cd021553b4c1c553b45f7c71f02720e46b3b7"
+    },
+    {
+      "path": "postgres-claims-001/initdb-result.json",
+      "bytes": 821,
+      "mode": "0o664",
+      "sha256": "eb0b14079c02622c1cc76ccb0e4e568f90c6ac1b38b8a95b06da7ee32c2b5eff"
+    },
+    {
+      "path": "postgres-claims-001/initdb.stderr",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-001/initdb.stdout",
+      "bytes": 945,
+      "mode": "0o664",
+      "sha256": "1a5d17a6bbb3e1c889d5175885269515eeb308c6601442dd064c669ce57688e6"
+    },
+    {
+      "path": "postgres-claims-001/interruption.json",
+      "bytes": 292,
+      "mode": "0o664",
+      "sha256": "799c010d36d0030131ceffea57081fa3d5bc64bba148cfacd5a15ef0b79db708"
+    },
+    {
+      "path": "postgres-claims-001/postgres-start-command.json",
+      "bytes": 564,
+      "mode": "0o664",
+      "sha256": "a570ae1d1dc958156f6df1cf681480abe99c80b4b2dca5da58b00e99ccef23df"
+    },
+    {
+      "path": "postgres-claims-001/postgres-start-result.json",
+      "bytes": 1023,
+      "mode": "0o664",
+      "sha256": "cf0c19770d690321ddde5a250382254eb6608d03d3cbbd423d5321f1d03f0158"
+    },
+    {
+      "path": "postgres-claims-001/postgres-start.stderr",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-001/postgres-start.stdout",
+      "bytes": 52,
+      "mode": "0o664",
+      "sha256": "66afd0411ccc09366e99fdd99b85f21899c8d2d064f5835126859618802153ad"
+    },
+    {
+      "path": "postgres-claims-001/postgres-stop-command.json",
+      "bytes": 337,
+      "mode": "0o664",
+      "sha256": "51e782732c402f02fa741b1ccceff3a33534bbd4431a35be518369958a89f718"
+    },
+    {
+      "path": "postgres-claims-001/postgres-stop-result.json",
+      "bytes": 792,
+      "mode": "0o664",
+      "sha256": "cd37d40f0f760f62f382f14f89e914320d95b3004cd74c1d34956c9422653bbf"
+    },
+    {
+      "path": "postgres-claims-001/postgres-stop.stderr",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-001/postgres-stop.stdout",
+      "bytes": 56,
+      "mode": "0o664",
+      "sha256": "ca19178a35ab4153b75b494963b66ce8243e1b94c173107c87b44d09db23652d"
+    },
+    {
+      "path": "postgres-claims-001/postgres.json",
+      "bytes": 376,
+      "mode": "0o664",
+      "sha256": "171d6ca5e03191426868ac5cbfedf2397030e3fbc98f656c12e6a8f59ab13088"
+    },
+    {
+      "path": "postgres-claims-001/postgres.log",
+      "bytes": 1438,
+      "mode": "0o600",
+      "sha256": "3d4504392f2d31f71b99e23d2772e736bc04f1282b9485e9b7bad0f3047f6de1"
+    },
+    {
+      "path": "postgres-claims-001/report.md",
+      "bytes": 561,
+      "mode": "0o664",
+      "sha256": "3cf53a9f804b523d73f4632e5b22e83044978ac23a5fce878e0236023e57a8a0"
+    },
+    {
+      "path": "postgres-claims-001/results.json",
+      "bytes": 2820,
+      "mode": "0o664",
+      "sha256": "708babf80dabbe6909cbc2d90766f2c90dcfbb008f21b30d39e9e2fa7fd6b3c7"
+    },
+    {
+      "path": "postgres-claims-001/source-after.json.gz",
+      "bytes": 1117280,
+      "mode": "0o664",
+      "sha256": "1bd6de1613f4254584f88b09e2e524e19880e38789301c1d480ffd578f4caa26"
+    },
+    {
+      "path": "postgres-claims-001/source-archives.json",
+      "bytes": 632,
+      "mode": "0o664",
+      "sha256": "33b423a2ebfda17a0f884c88e4aed1dc28a0b03187881ad8507c1b4a1c7c7074"
+    },
+    {
+      "path": "postgres-claims-001/source-before.json.gz",
+      "bytes": 1117280,
+      "mode": "0o664",
+      "sha256": "1bd6de1613f4254584f88b09e2e524e19880e38789301c1d480ffd578f4caa26"
+    },
+    {
+      "path": "postgres-claims-001/source-comparison.json",
+      "bytes": 3279,
+      "mode": "0o664",
+      "sha256": "f887f8e040dfca58f2325c2489eb78387440e2aeea832e66e81b9b42bc24970e"
+    },
+    {
+      "path": "postgres-claims-001/source-stability.json",
+      "bytes": 244,
+      "mode": "0o664",
+      "sha256": "af125475a3b919b9e8e81a02d10f4d427e2bb1d64a98ec028ac0861a7ce50e4d"
+    },
+    {
+      "path": "postgres-claims-001/status-after.txt",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-001/status-before.txt",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-002/capture.py",
+      "bytes": 5822,
+      "mode": "0o664",
+      "sha256": "2fbce914c5e40eaa8d4600ac9470f20b6cd4c6f84ee98d0bcd4d50bedb0b9466"
+    },
+    {
+      "path": "postgres-claims-002/claims-command.json",
+      "bytes": 527,
+      "mode": "0o664",
+      "sha256": "43fd71e9f767f806fd8d1c7c5b76f23c64eb8320af308bd0bfcb1b69dc1e4499"
+    },
+    {
+      "path": "postgres-claims-002/claims-result.json",
+      "bytes": 966,
+      "mode": "0o664",
+      "sha256": "e8f1df8b622538167ca6a6375a7a114b6e2664caba740ba6e4917d994ff14d39"
+    },
+    {
+      "path": "postgres-claims-002/claims.stderr",
+      "bytes": 18644,
+      "mode": "0o664",
+      "sha256": "d68f79e94fe30c2c9e70b07b0c8c11e95b1153a1dfbda3395a64f9340d567ab3"
+    },
+    {
+      "path": "postgres-claims-002/claims.stdout",
+      "bytes": 4450,
+      "mode": "0o664",
+      "sha256": "f0958de5a26569a36730c15538ef9e78071c0628638510dba27761a63196f4b2"
+    },
+    {
+      "path": "postgres-claims-002/classification.json",
+      "bytes": 17756,
+      "mode": "0o664",
+      "sha256": "2bec84559d3a0a3f589f191adeb40a577055dbe61db62d86ba7d39a0048c9321"
+    },
+    {
+      "path": "postgres-claims-002/environment.json",
+      "bytes": 381,
+      "mode": "0o664",
+      "sha256": "2273caea72a96c4838ce56053136b204b988e99f649aa0d78d52d89133fb6285"
+    },
+    {
+      "path": "postgres-claims-002/initdb-command.json",
+      "bytes": 390,
+      "mode": "0o664",
+      "sha256": "89b561bd0035a15c6ba0c100a5ff701133aea17052e279fe9476b976f25c08bc"
+    },
+    {
+      "path": "postgres-claims-002/initdb-result.json",
+      "bytes": 825,
+      "mode": "0o664",
+      "sha256": "386167aad5e735aa652ba1696240a107795ef053aa6803ecce9f40d35ffe9893"
+    },
+    {
+      "path": "postgres-claims-002/initdb.stderr",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-002/initdb.stdout",
+      "bytes": 953,
+      "mode": "0o664",
+      "sha256": "a7e14035b6e33f9635a28fe2ee6c975895020060513d7a78d2db41a577fa0a9c"
+    },
+    {
+      "path": "postgres-claims-002/lifecycle-command.json",
+      "bytes": 609,
+      "mode": "0o664",
+      "sha256": "33f205b89979c7ab21ff09401bc873b0454d9ab3b7b8a22aa413ddb4db10c762"
+    },
+    {
+      "path": "postgres-claims-002/lifecycle-membership.json",
+      "bytes": 530,
+      "mode": "0o664",
+      "sha256": "853a05e6432378afae9b39f98e067a8ffefaca9990cb1946661b8ded58f68bef"
+    },
+    {
+      "path": "postgres-claims-002/lifecycle-membership.stderr",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-002/lifecycle-membership.stdout",
+      "bytes": 116,
+      "mode": "0o664",
+      "sha256": "664849110a5bf0dfdd2a1b85b1e80e17fc8ed74f99d495b0f2833de7120c5e49"
+    },
+    {
+      "path": "postgres-claims-002/lifecycle-result.json",
+      "bytes": 1058,
+      "mode": "0o664",
+      "sha256": "7b8ad9bf0c072485631cf3bba5e2d4cd7a67f1b52086c6d01324211ac37af538"
+    },
+    {
+      "path": "postgres-claims-002/lifecycle.stderr",
+      "bytes": 6064,
+      "mode": "0o664",
+      "sha256": "2714b73c3cbf613392ac6615f5eece16bc01e0886d9dbc282370d53799ab667f"
+    },
+    {
+      "path": "postgres-claims-002/lifecycle.stdout",
+      "bytes": 388,
+      "mode": "0o664",
+      "sha256": "5642272cef3403119c9bbda06382d3810f0a02468e1ee8584b4304e5ab5e80d4"
+    },
+    {
+      "path": "postgres-claims-002/postgres-start-command.json",
+      "bytes": 572,
+      "mode": "0o664",
+      "sha256": "58108ba523d60b67f100f01c6449ae40074613a4a518d0524125e0a8ca8ce875"
+    },
+    {
+      "path": "postgres-claims-002/postgres-start-result.json",
+      "bytes": 1031,
+      "mode": "0o664",
+      "sha256": "71db044c0eb085749a931262ee18e75b84b987df4d3d945222a56c3bb2476b40"
+    },
+    {
+      "path": "postgres-claims-002/postgres-start.stderr",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-002/postgres-start.stdout",
+      "bytes": 52,
+      "mode": "0o664",
+      "sha256": "66afd0411ccc09366e99fdd99b85f21899c8d2d064f5835126859618802153ad"
+    },
+    {
+      "path": "postgres-claims-002/postgres-stop-command.json",
+      "bytes": 341,
+      "mode": "0o664",
+      "sha256": "6ce3fe76ee2636af65650ac7b131046c987ad3dbc085e1af9be6404713155f99"
+    },
+    {
+      "path": "postgres-claims-002/postgres-stop-result.json",
+      "bytes": 797,
+      "mode": "0o664",
+      "sha256": "4ea55479704b04fd4577fc00b17d9f130cc3f56b2f5d1bd10a3604393058ca23"
+    },
+    {
+      "path": "postgres-claims-002/postgres-stop.stderr",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-002/postgres-stop.stdout",
+      "bytes": 56,
+      "mode": "0o664",
+      "sha256": "ca19178a35ab4153b75b494963b66ce8243e1b94c173107c87b44d09db23652d"
+    },
+    {
+      "path": "postgres-claims-002/postgres-wit-command.json",
+      "bytes": 458,
+      "mode": "0o664",
+      "sha256": "01919ae5e7ae05fe14b4bff4a8e1aa3a299f7299163e37e735ac499a0cd545b7"
+    },
+    {
+      "path": "postgres-claims-002/postgres-wit-result.json",
+      "bytes": 914,
+      "mode": "0o664",
+      "sha256": "9de308abc51852d8752a674f8aaf0b1346189e2b3645cd46c4ae724b9aa5613c"
+    },
+    {
+      "path": "postgres-claims-002/postgres-wit.stderr",
+      "bytes": 6051,
+      "mode": "0o664",
+      "sha256": "515c3179fbe1800cdefc87a6d070ea7a74a93723ecadfe3340b9fd09fba3367c"
+    },
+    {
+      "path": "postgres-claims-002/postgres-wit.stdout",
+      "bytes": 170,
+      "mode": "0o664",
+      "sha256": "661a81aa8d7e502500f88897b01ca7ce7f545c0c18beec6c0ef42a41960aafef"
+    },
+    {
+      "path": "postgres-claims-002/postgres.json",
+      "bytes": 384,
+      "mode": "0o664",
+      "sha256": "7cf09a0fe4be1a0d3430a5d53f8e5134fa44014050123eea66de22de57ac41ce"
+    },
+    {
+      "path": "postgres-claims-002/postgres.log",
+      "bytes": 3082,
+      "mode": "0o600",
+      "sha256": "f0ed69da413bfed096c5b620a2791ba3c01e5a7a3964be4db692eeff39a5264c"
+    },
+    {
+      "path": "postgres-claims-002/report.md",
+      "bytes": 971,
+      "mode": "0o664",
+      "sha256": "c68a27bd745dc0387925df212d2d3e74b29851308e49a5e548ed1cf9db6c19d8"
+    },
+    {
+      "path": "postgres-claims-002/results.json",
+      "bytes": 6859,
+      "mode": "0o664",
+      "sha256": "6f6ea66631fe6f4e62d54dfe246744333d2b0c45756285f7d27bf90b8a2c865b"
+    },
+    {
+      "path": "postgres-claims-002/source-after.json.gz",
+      "bytes": 1117280,
+      "mode": "0o664",
+      "sha256": "0805c15e319d3f86f31e8654bcd9fac7fe3c46005751c05aa77462fe56041280"
+    },
+    {
+      "path": "postgres-claims-002/source-archives.json",
+      "bytes": 632,
+      "mode": "0o664",
+      "sha256": "ec1aa0b8da876a184efa0e810aca4510e3bcbd47473ccf8ec9fd08dc47ac0404"
+    },
+    {
+      "path": "postgres-claims-002/source-before.json.gz",
+      "bytes": 1117280,
+      "mode": "0o664",
+      "sha256": "0805c15e319d3f86f31e8654bcd9fac7fe3c46005751c05aa77462fe56041280"
+    },
+    {
+      "path": "postgres-claims-002/source-comparison.json",
+      "bytes": 3311,
+      "mode": "0o664",
+      "sha256": "7eb2d3f425e2390bc7b106caee4e476693d83b9fa29b3405e3c0dcb6f9079d33"
+    },
+    {
+      "path": "postgres-claims-002/source-stability.json",
+      "bytes": 244,
+      "mode": "0o664",
+      "sha256": "dcc483472d677efe129ec887a2a7b8317963ec72fc268cc383345d7124ab5238"
+    },
+    {
+      "path": "postgres-claims-002/state-ownership-command.json",
+      "bytes": 336,
+      "mode": "0o664",
+      "sha256": "964b95eba88feb9d50191a11c7fcfa990cf83bc5a8f25b436d11b0868f15f557"
+    },
+    {
+      "path": "postgres-claims-002/state-ownership-result.json",
+      "bytes": 802,
+      "mode": "0o664",
+      "sha256": "04284b3e17029b76f2d4f87b062ed4e67eb8e29fc976bc16f9b83201b1f270c2"
+    },
+    {
+      "path": "postgres-claims-002/state-ownership.stderr",
+      "bytes": 18634,
+      "mode": "0o664",
+      "sha256": "7dcf14ea9a7d97a3d98efec5a8a31cfad6be36e02d9235dc9f87d30180da0562"
+    },
+    {
+      "path": "postgres-claims-002/state-ownership.stdout",
+      "bytes": 2020,
+      "mode": "0o664",
+      "sha256": "39b63cd501d8f08fe9a94deed8c9d752269cbd84c01a08ecd9b6715d01fa86bc"
+    },
+    {
+      "path": "postgres-claims-002/status-after.txt",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-002/status-before.txt",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-003/capture.py",
+      "bytes": 5822,
+      "mode": "0o664",
+      "sha256": "cd7980b542310526ea9339270b19657fea830c17afeeec3776e9002589dae155"
+    },
+    {
+      "path": "postgres-claims-003/claims-command.json",
+      "bytes": 527,
+      "mode": "0o664",
+      "sha256": "e10e861d8bc8348fcec386303f38fddf46b9ba8ca5bc25f3cf55b3f66fd6c367"
+    },
+    {
+      "path": "postgres-claims-003/claims-result.json",
+      "bytes": 965,
+      "mode": "0o664",
+      "sha256": "c36e817f73c37f360138e0a86302c826718f4819bcfdabe1e34d4aacc9d0d968"
+    },
+    {
+      "path": "postgres-claims-003/claims.stderr",
+      "bytes": 5094,
+      "mode": "0o664",
+      "sha256": "8684bf63562e6337bc266263704ffee07c00892efddff6743b02e13ac7f3646d"
+    },
+    {
+      "path": "postgres-claims-003/claims.stdout",
+      "bytes": 4450,
+      "mode": "0o664",
+      "sha256": "5442fb8f13bcdf35a66ec46ffc2d2322136b47fb49d37753096581733267b395"
+    },
+    {
+      "path": "postgres-claims-003/classification.json",
+      "bytes": 17748,
+      "mode": "0o664",
+      "sha256": "1920c69da117a6a30f7f230646b4acbc5999dfcd553c2dd4ccd389b09554e7a6"
+    },
+    {
+      "path": "postgres-claims-003/environment.json",
+      "bytes": 381,
+      "mode": "0o664",
+      "sha256": "2273caea72a96c4838ce56053136b204b988e99f649aa0d78d52d89133fb6285"
+    },
+    {
+      "path": "postgres-claims-003/initdb-command.json",
+      "bytes": 390,
+      "mode": "0o664",
+      "sha256": "db9aaf8bdf948de8ead593962df67e406aafc56d0315fcae488ee3045e3340bf"
+    },
+    {
+      "path": "postgres-claims-003/initdb-result.json",
+      "bytes": 825,
+      "mode": "0o664",
+      "sha256": "d082765a14d2ab92624898467faccfd4c189d990e26067141175d42827fa570d"
+    },
+    {
+      "path": "postgres-claims-003/initdb.stderr",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-003/initdb.stdout",
+      "bytes": 953,
+      "mode": "0o664",
+      "sha256": "e77d5306b8381e4341a9ca7010f9aef7ef834a755ac8513049743ba13829ec80"
+    },
+    {
+      "path": "postgres-claims-003/lifecycle-command.json",
+      "bytes": 609,
+      "mode": "0o664",
+      "sha256": "d2935f841d527689f00739c51977ae22a221247cfcd7e5d844e0fbac7ed881d5"
+    },
+    {
+      "path": "postgres-claims-003/lifecycle-result.json",
+      "bytes": 1056,
+      "mode": "0o664",
+      "sha256": "6fe651aec07bc1b4eb17a653d5b0030b28565d8b3666ad15e0f80487d4ad3716"
+    },
+    {
+      "path": "postgres-claims-003/lifecycle.stderr",
+      "bytes": 4781,
+      "mode": "0o664",
+      "sha256": "ebe257777b07338a825e40d1ad1c15f658400a1b3cf438648681818beca8375b"
+    },
+    {
+      "path": "postgres-claims-003/lifecycle.stdout",
+      "bytes": 240,
+      "mode": "0o664",
+      "sha256": "a95289ebcb3a137402d220beebd46515c5fd5a0ebfb56805a7b6b5233c8d132c"
+    },
+    {
+      "path": "postgres-claims-003/postgres-start-command.json",
+      "bytes": 572,
+      "mode": "0o664",
+      "sha256": "e72960db581422ef6d56b97399a5b7266b5cb9819d90e582d545a7098f509ce1"
+    },
+    {
+      "path": "postgres-claims-003/postgres-start-result.json",
+      "bytes": 1031,
+      "mode": "0o664",
+      "sha256": "9e696d4926dfb52d486a39de2e7755717954aa5eea7528a475fc62e64216c036"
+    },
+    {
+      "path": "postgres-claims-003/postgres-start.stderr",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-003/postgres-start.stdout",
+      "bytes": 52,
+      "mode": "0o664",
+      "sha256": "66afd0411ccc09366e99fdd99b85f21899c8d2d064f5835126859618802153ad"
+    },
+    {
+      "path": "postgres-claims-003/postgres-stop-command.json",
+      "bytes": 341,
+      "mode": "0o664",
+      "sha256": "59da434ee9cd0a2a39bc9efef8100ad21360539e51b98f683a99c1f09f0ec6ed"
+    },
+    {
+      "path": "postgres-claims-003/postgres-stop-result.json",
+      "bytes": 797,
+      "mode": "0o664",
+      "sha256": "ebe44d48bbb273d83f63a04941a727d92fa3a2961e250f6eb9c98460c6159915"
+    },
+    {
+      "path": "postgres-claims-003/postgres-stop.stderr",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-003/postgres-stop.stdout",
+      "bytes": 56,
+      "mode": "0o664",
+      "sha256": "ca19178a35ab4153b75b494963b66ce8243e1b94c173107c87b44d09db23652d"
+    },
+    {
+      "path": "postgres-claims-003/postgres-wit-command.json",
+      "bytes": 458,
+      "mode": "0o664",
+      "sha256": "df41135141a5532082c30034f2003a362227609b037dc8460050526dce0371c0"
+    },
+    {
+      "path": "postgres-claims-003/postgres-wit-result.json",
+      "bytes": 914,
+      "mode": "0o664",
+      "sha256": "4db23df41d27cf9f22295e5528c4bb37f0ef529a79a6a20120d117a073abff9b"
+    },
+    {
+      "path": "postgres-claims-003/postgres-wit.stderr",
+      "bytes": 5610,
+      "mode": "0o664",
+      "sha256": "2e08a651781be7c430733beca20ceff31f3c3bd0b3e49524e62779b064e30c1f"
+    },
+    {
+      "path": "postgres-claims-003/postgres-wit.stdout",
+      "bytes": 170,
+      "mode": "0o664",
+      "sha256": "bb71f91f4cd7ef65fc6584deac1f7ca6e74a1ca2b06d049a6a1c62b7bdd18269"
+    },
+    {
+      "path": "postgres-claims-003/postgres.json",
+      "bytes": 384,
+      "mode": "0o664",
+      "sha256": "87719c042ebda72b168a1f92169ff24520de342791ecd701aac9e7552d1828ea"
+    },
+    {
+      "path": "postgres-claims-003/postgres.log",
+      "bytes": 2530,
+      "mode": "0o600",
+      "sha256": "ecab4047f0696b3ed8058406e4fb906ca7251875d4b2c84169f19108ec6e4c8a"
+    },
+    {
+      "path": "postgres-claims-003/report.md",
+      "bytes": 1819,
+      "mode": "0o664",
+      "sha256": "131800ffd8eaf5641796f2a81e922e4f1183c44e2eb39f944e91d79d0f9da8fc"
+    },
+    {
+      "path": "postgres-claims-003/results.json",
+      "bytes": 6855,
+      "mode": "0o664",
+      "sha256": "dc9a298b68722c0331406334df4557244f3464d70d36e8a8a4e62d83e0c0fc50"
+    },
+    {
+      "path": "postgres-claims-003/source-after.json.gz",
+      "bytes": 1117281,
+      "mode": "0o664",
+      "sha256": "e413fad110d8702e2660336f7879793bd15e0481fa3f77e0b2f4cf547155ad93"
+    },
+    {
+      "path": "postgres-claims-003/source-archives.json",
+      "bytes": 632,
+      "mode": "0o664",
+      "sha256": "89017d176225617a144369f659337fa6428a059a7769436745bc45fc0558caa3"
+    },
+    {
+      "path": "postgres-claims-003/source-before.json.gz",
+      "bytes": 1117281,
+      "mode": "0o664",
+      "sha256": "e413fad110d8702e2660336f7879793bd15e0481fa3f77e0b2f4cf547155ad93"
+    },
+    {
+      "path": "postgres-claims-003/source-comparison.json",
+      "bytes": 5219,
+      "mode": "0o664",
+      "sha256": "e97930e0fabb5375c918cafd4b29483fa02f96c03ea6a1389682fd1f0be7de6f"
+    },
+    {
+      "path": "postgres-claims-003/source-stability.json",
+      "bytes": 244,
+      "mode": "0o664",
+      "sha256": "b25db454fc6a5948810cf4a14b097b76b89e998fee7bba8cc5a2d84e5a66ac54"
+    },
+    {
+      "path": "postgres-claims-003/state-ownership-command.json",
+      "bytes": 336,
+      "mode": "0o664",
+      "sha256": "b95ca4763f151fc0b5d242a2eaa17a647986279b53b137e6fe4888bfe84cffea"
+    },
+    {
+      "path": "postgres-claims-003/state-ownership-result.json",
+      "bytes": 801,
+      "mode": "0o664",
+      "sha256": "36684aff92f8e8e77acfb267336da9655f005c55a8a27f70e55568ed887e1c86"
+    },
+    {
+      "path": "postgres-claims-003/state-ownership.stderr",
+      "bytes": 7169,
+      "mode": "0o664",
+      "sha256": "d6de4aa3f423184effb4b78f3879b10d89d6756c5ef36a68e42fb834c3217116"
+    },
+    {
+      "path": "postgres-claims-003/state-ownership.stdout",
+      "bytes": 2020,
+      "mode": "0o664",
+      "sha256": "610cc3b948b2e5a03f59190b99759642b8e7f31b45fa023179e492b94fd9c3f4"
+    },
+    {
+      "path": "postgres-claims-003/status-after.txt",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "postgres-claims-003/status-before.txt",
+      "bytes": 0,
+      "mode": "0o664",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "all_copied_bytes_modes_identical": true
+}

@@ -1,0 +1,29 @@
+{
+  "argv": [
+    "/usr/lib/postgresql/18/bin/initdb",
+    "-D",
+    "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-pg-002-20260912/data",
+    "--auth-local=trust",
+    "--auth-host=trust",
+    "--no-locale",
+    "--encoding=UTF8"
+  ],
+  "elapsed_seconds": 1.2065004979958758,
+  "ended_utc": "2026-09-12T01:45:23.974194+00:00",
+  "exit_code": 0,
+  "name": "initdb",
+  "source": "1ea88f3f6da30b0e26f8fc96507310850dc9ef35",
+  "started_utc": "2026-09-12T01:45:22.767702+00:00",
+  "stderr": {
+    "bytes": 0,
+    "mode": "0o664",
+    "path": "initdb.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": {
+    "bytes": 953,
+    "mode": "0o664",
+    "path": "initdb.stdout",
+    "sha256": "a7e14035b6e33f9635a28fe2ee6c975895020060513d7a78d2db41a577fa0a9c"
+  }
+}
