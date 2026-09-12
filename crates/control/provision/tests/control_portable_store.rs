@@ -226,20 +226,9 @@ BEGIN
 END
 $shape$;
 
-SELECT catalog.register_package(
-  'tenant-a', 'receiving', '1.0.0', 'sha256:' || repeat('a', 64), NULL);
-SELECT catalog.register_package(
-  'tenant-a', 'receiving', '1.0.0', 'sha256:' || repeat('a', 64), NULL);
-DO $package_conflict$ BEGIN
-  BEGIN
-    PERFORM catalog.register_package(
-      'tenant-a', 'receiving', '1.0.0', 'sha256:' || repeat('b', 64), NULL);
-    ASSERT false, 'same package coordinate accepted different bytes';
-  EXCEPTION WHEN unique_violation THEN
-    ASSERT SQLERRM LIKE 'package-coordinate-content-conflict:%';
-  END;
-END
-$package_conflict$;
+INSERT INTO catalog.packages
+  (tenant_id, package_id, package_version, manifest_sha256, predecessor_version)
+VALUES ('tenant-a', 'receiving', '1.0.0', 'sha256:' || repeat('a', 64), NULL);
 
 INSERT INTO catalog.package_migrations
   (tenant_id, package_id, package_version, ordinal, relative_path, sha256)
@@ -448,8 +437,9 @@ DO $seed$ DECLARE tenant text; package text; release int; BEGIN
     ) AS seed(tenant, package, release)
   LOOP
     PERFORM set_config('app.tenant', tenant, false);
-    PERFORM catalog.register_package(
-      tenant, package, '1.0.0', 'sha256:' || repeat('a', 64), NULL);
+    INSERT INTO catalog.packages
+      (tenant_id, package_id, package_version, manifest_sha256, predecessor_version)
+    VALUES (tenant, package, '1.0.0', 'sha256:' || repeat('a', 64), NULL);
     PERFORM catalog.project_effective_release_identity(tenant, release, 'dev');
     INSERT INTO catalog.effective_release_packages
       (tenant_id, effective_release_id, package_id, package_version)

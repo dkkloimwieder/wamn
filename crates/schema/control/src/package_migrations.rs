@@ -78,7 +78,7 @@ pub struct PendingMigration {
     pub sha256: String,
 }
 
-/// Complete ordered body for one database transaction.
+/// Ordered migration statements after registration in the same database transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageMigrationPlan {
     pub coordinate: PackageCoordinate,
@@ -92,7 +92,7 @@ pub struct PackageMigrationPlan {
 }
 
 impl PackageMigrationPlan {
-    /// A converged package executes no root, ledger, or migration writes.
+    /// A converged package executes no ledger or migration writes.
     pub fn is_noop(&self) -> bool {
         self.statements.is_empty()
     }
@@ -108,6 +108,9 @@ pub enum PackageMigrationErrorKind {
     Gap,
     MigrationDrift,
     PredecessorPrefixMismatch,
+    CoordinateContentConflict,
+    CoordinatePredecessorConflict,
+    PredecessorNotCurrent,
 }
 
 impl PackageMigrationErrorKind {
@@ -120,6 +123,9 @@ impl PackageMigrationErrorKind {
             Self::Gap => PACKAGE_MIGRATION_GAP_REFUSAL,
             Self::MigrationDrift => PACKAGE_MIGRATION_DRIFT_REFUSAL,
             Self::PredecessorPrefixMismatch => PREDECESSOR_PREFIX_MISMATCH_REFUSAL,
+            Self::CoordinateContentConflict => "package-coordinate-content-conflict",
+            Self::CoordinatePredecessorConflict => "package-coordinate-predecessor-conflict",
+            Self::PredecessorNotCurrent => "predecessor-not-current",
         }
     }
 }
@@ -236,6 +242,55 @@ impl Error for PackageMigrationError {
     }
 }
 
+/// Decide registration from rows read under the tenant/package lineage transaction lock.
+///
+/// An exact existing coordinate takes precedence over the current leaf. A fresh
+/// database accepts a declared predecessor without requiring its older versions.
+/// The driver inserts only when this returns `true`, in the same transaction.
+pub fn plan_package_registration(
+    coordinate: &PackageCoordinate,
+    manifest_sha256: &str,
+    predecessor_version: Option<&str>,
+    recorded: Option<(&str, Option<&str>)>,
+    current_version: Option<&str>,
+) -> Result<bool, PackageMigrationError> {
+    if let Some((recorded_hash, recorded_predecessor)) = recorded {
+        if recorded_hash != manifest_sha256 {
+            return Err(PackageMigrationError::new(
+                PackageMigrationErrorKind::CoordinateContentConflict,
+                format!(
+                    "package-coordinate-content-conflict: coordinate={} recorded-sha256={recorded_hash} presented-sha256={manifest_sha256}",
+                    coordinate_text(coordinate)
+                ),
+            ));
+        }
+        if recorded_predecessor != predecessor_version {
+            return Err(PackageMigrationError::new(
+                PackageMigrationErrorKind::CoordinatePredecessorConflict,
+                format!(
+                    "package-coordinate-predecessor-conflict: coordinate={} recorded-predecessor={} presented-predecessor={}",
+                    coordinate_text(coordinate),
+                    recorded_predecessor.unwrap_or("<none>"),
+                    predecessor_version.unwrap_or("<none>")
+                ),
+            ));
+        }
+        return Ok(false);
+    }
+    if let Some(current) = current_version {
+        if predecessor_version != Some(current) {
+            return Err(PackageMigrationError::new(
+                PackageMigrationErrorKind::PredecessorNotCurrent,
+                format!(
+                    "predecessor-not-current: declared={} current={current}",
+                    predecessor_version.unwrap_or("<none>")
+                ),
+            ));
+        }
+    }
+    Ok(true)
+}
+
 /// Validate a package directory against its immutable applied prefix.
 pub fn plan_package_migrations(
     directory: &PackageDirectory,
@@ -338,14 +393,7 @@ pub fn plan_package_migrations(
             sha256: migration.sha256.clone(),
         })
         .collect::<Vec<_>>();
-    let statements = transaction_statements(
-        &coordinate,
-        predecessor_version.as_deref(),
-        &manifest_sha256,
-        applied.is_none(),
-        &[],
-        pending_sources,
-    )?;
+    let statements = transaction_statements(&coordinate, &[], pending_sources)?;
 
     Ok(PackageMigrationPlan {
         coordinate,
@@ -428,14 +476,7 @@ fn plan_package_migrations_from_predecessor(
     let pending_sources = &migrations[prefix_len..];
     let verified_prefix = prefix_sources.iter().map(migration_identity).collect();
     let pending = pending_sources.iter().map(migration_identity).collect();
-    let statements = transaction_statements(
-        &fresh.coordinate,
-        fresh.predecessor_version.as_deref(),
-        &fresh.manifest_sha256,
-        true,
-        prefix_sources,
-        pending_sources,
-    )?;
+    let statements = transaction_statements(&fresh.coordinate, prefix_sources, pending_sources)?;
 
     Ok(PackageMigrationPlan {
         coordinate: fresh.coordinate,
@@ -616,28 +657,10 @@ fn validate_recorded_prefix(
 
 fn transaction_statements(
     coordinate: &PackageCoordinate,
-    predecessor_version: Option<&str>,
-    manifest_sha256: &str,
-    register_root: bool,
     verified_prefix: &[NormalizedMigration<'_>],
     pending: &[NormalizedMigration<'_>],
 ) -> Result<Vec<SqlStatement>, PackageMigrationError> {
-    let mut statements =
-        Vec::with_capacity(usize::from(register_root) + verified_prefix.len() + pending.len() * 2);
-    if register_root {
-        statements.push(SqlStatement {
-            summary: "register immutable package root".into(),
-            sql: "SELECT catalog.register_package(\
-                  NULLIF(current_setting('app.tenant', true), ''), $1, $2, $3, $4::text)"
-                .into(),
-            params: vec![
-                Value::Text(coordinate.package_id().into()),
-                Value::Text(coordinate.package_version().into()),
-                Value::Text(manifest_sha256.into()),
-                Value::NullableText(predecessor_version.map(str::to_owned)),
-            ],
-        });
-    }
+    let mut statements = Vec::with_capacity(verified_prefix.len() + pending.len() * 2);
     for migration in verified_prefix {
         statements.push(record_migration_statement(
             coordinate, migration, "inherit",
@@ -748,6 +771,74 @@ mod tests {
                 source("migrations/0002_add_receipt.sql", "SELECT 2;"),
                 source("migrations/0001_initial.sql", "SELECT 1;"),
             ],
+        }
+    }
+
+    #[test]
+    fn registration_preserves_replay_conflicts_and_current_predecessor() {
+        let coordinate = PackageCoordinate::new("receiving", "2.0.0").unwrap();
+        assert!(plan_package_registration(&coordinate, "hash", Some("1.0.0"), None, None).unwrap());
+        assert!(
+            plan_package_registration(&coordinate, "hash", Some("1.0.0"), None, Some("1.0.0"))
+                .unwrap()
+        );
+        assert!(
+            !plan_package_registration(
+                &coordinate,
+                "hash",
+                Some("1.0.0"),
+                Some(("hash", Some("1.0.0"))),
+                Some("3.0.0")
+            )
+            .unwrap()
+        );
+        for (hash, predecessor, recorded, current, kind, literal) in [
+            (
+                "other",
+                Some("1.0.0"),
+                Some(("hash", Some("1.0.0"))),
+                None,
+                PackageMigrationErrorKind::CoordinateContentConflict,
+                "package-coordinate-content-conflict",
+            ),
+            (
+                "hash",
+                None,
+                Some(("hash", Some("1.0.0"))),
+                None,
+                PackageMigrationErrorKind::CoordinatePredecessorConflict,
+                "package-coordinate-predecessor-conflict",
+            ),
+            (
+                "hash",
+                Some("1.0.0"),
+                Some(("hash", None)),
+                None,
+                PackageMigrationErrorKind::CoordinatePredecessorConflict,
+                "package-coordinate-predecessor-conflict",
+            ),
+            (
+                "hash",
+                None,
+                None,
+                Some("1.0.0"),
+                PackageMigrationErrorKind::PredecessorNotCurrent,
+                "predecessor-not-current",
+            ),
+            (
+                "hash",
+                Some("0.9.0"),
+                None,
+                Some("1.0.0"),
+                PackageMigrationErrorKind::PredecessorNotCurrent,
+                "predecessor-not-current",
+            ),
+        ] {
+            let error =
+                plan_package_registration(&coordinate, hash, predecessor, recorded, current)
+                    .unwrap_err();
+            assert_eq!(error.kind(), kind);
+            assert!(error.context().starts_with(literal));
         }
     }
 

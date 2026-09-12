@@ -41,7 +41,6 @@ const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 const LOCK_PROJECTION_SQL: &str =
     "SELECT pg_advisory_xact_lock(hashtextextended('wamn.component.projection:' || $1, 0))";
 
-const REGISTER_PACKAGE_SQL: &str = "SELECT catalog.register_package($1, $2, $3, $4, $5)";
 const SELECT_PACKAGE_SQL: &str = "SELECT manifest_sha256, predecessor_version FROM catalog.packages \
      WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3";
 
@@ -1533,52 +1532,37 @@ async fn persist_with_client(
         None
     };
     let package_inserted = if plane == ProjectionPlane::Control {
-        let existing = transaction
-            .query_opt(
-                SELECT_PACKAGE_SQL,
-                &[
-                    &component.scope.tenant_id,
-                    &component.scope.package_id,
-                    &component.scope.package_version,
-                ],
-            )
-            .await
-            .context("read control package root before projection")?;
-        if let Some(existing) = existing {
-            let recorded: String = existing.get(0);
-            let recorded_predecessor: Option<String> = existing.get(1);
-            if recorded != manifest_sha256
-                || recorded_predecessor.as_deref() != package.predecessor_version.as_deref()
+        crate::apply_package::register_package(
+            &transaction,
+            &component.scope.tenant_id,
+            &package.coordinate,
+            manifest_sha256,
+            package.predecessor_version.as_deref(),
+        )
+        .await
+        .map_err(|source| {
+            if source
+                .downcast_ref::<wamn_schema_control::PackageMigrationError>()
+                .is_some_and(|error| {
+                    matches!(
+                        error.kind(),
+                        PackageMigrationErrorKind::CoordinateContentConflict
+                            | PackageMigrationErrorKind::CoordinatePredecessorConflict
+                    )
+                })
             {
-                return Err(ComponentProjectionError::new(
+                anyhow::Error::from(ComponentProjectionError::new(
                     ComponentProjectionErrorKind::PackageManifestMismatch,
                     format!(
-                        "control {}@{} recorded-sha256={} presented-sha256={manifest_sha256} recorded-predecessor={recorded_predecessor:?} presented-predecessor={:?}",
-                        component.scope.package_id,
-                        component.scope.package_version,
-                        recorded,
-                        package.predecessor_version
+                        "control {}@{}: {source}",
+                        component.scope.package_id, component.scope.package_version
                     ),
-                )
-                .into());
+                ))
+            } else {
+                source
             }
-            false
-        } else {
-            transaction
-                .query_one(
-                    REGISTER_PACKAGE_SQL,
-                    &[
-                        &component.scope.tenant_id,
-                        &component.scope.package_id,
-                        &component.scope.package_version,
-                        &manifest_sha256,
-                        &package.predecessor_version,
-                    ],
-                )
-                .await
-                .context("project immutable package root into control")?;
-            true
-        }
+        })
+        .context("project immutable package root into control")?
     } else {
         false
     };
@@ -2682,8 +2666,8 @@ mod tests {
             ComponentProjectionErrorKind::SourcePackageNotApplied
         );
         project
-            .query_one(
-                REGISTER_PACKAGE_SQL,
+            .execute(
+                "INSERT INTO catalog.packages (tenant_id, package_id, package_version, manifest_sha256, predecessor_version) VALUES ($1, $2, $3, $4, $5)",
                 &[
                     &component.scope.tenant_id,
                     &component.scope.package_id,

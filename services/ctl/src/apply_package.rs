@@ -18,7 +18,7 @@ use wamn_event_reg::{
 };
 use wamn_schema_control::{
     AppliedPackage, MigrationSource, PackageDirectory, PackageMigrationError, RecordedMigration,
-    SqlStatement, plan_package_migrations,
+    SqlStatement, plan_package_migrations, plan_package_registration,
 };
 use wamn_schema_generator::{ModelDeclaration, PackageManifest};
 use wamn_schema_introspection::migration_policy::{
@@ -493,14 +493,20 @@ async fn apply(
         match current_package_version(&tx, tenant, &package_id).await? {
             None => presented,
             Some(current_version) => {
-                if presented.predecessor_version.as_deref() != Some(current_version.as_str()) {
-                    return Err(predecessor_not_current_error(
+                plan_package_registration(
+                    &presented.coordinate,
+                    &presented.manifest_sha256,
+                    presented.predecessor_version.as_deref(),
+                    None,
+                    Some(&current_version),
+                )
+                .map_err(|_| {
+                    predecessor_not_current_error(
                         coordinate_text,
                         presented.predecessor_version.as_deref(),
                         &current_version,
                     )
-                    .into());
-                }
+                })?;
                 let predecessor = load_applied_package(&tx, tenant, &package_id, &current_version)
                     .await?
                     .expect("the selected package-family leaf is an applied package");
@@ -564,9 +570,18 @@ async fn apply(
     set_package_owner_role(&tx).await?;
     ensure_model_schemas(&tx, &plan).await?;
     reset_host_role(&tx).await?;
+    let package_inserted = register_package(
+        &tx,
+        tenant,
+        &plan.coordinate,
+        &plan.manifest_sha256,
+        plan.predecessor_version.as_deref(),
+    )
+    .await
+    .context("register package before applying migrations")?;
     for statement in &plan.statements {
         // The planner carries exact package bytes as its parameter-free batch
-        // statements; every host-authored root/ledger statement has binds.
+        // statements; every host-authored ledger statement has binds.
         if statement.params.is_empty() {
             set_package_owner_role(&tx).await?;
             execute(&tx, statement, &coordinate_text).await?;
@@ -594,7 +609,8 @@ async fn apply(
     tx.commit().await.context("commit whole package suffix")?;
     Ok(ApplyOutcome {
         migrations_applied: applied_count,
-        changed: migration_changed
+        changed: package_inserted
+            || migration_changed
             || ownership_changed
             || !operation_grants.is_noop()
             || registrations_changed,
@@ -716,6 +732,55 @@ async fn reconcile_package_operation_grants(
         row.get("grants_added"),
         row.get("grants_removed"),
     ))
+}
+
+/// Register a package while retaining its lineage lock through the caller's transaction.
+pub(crate) async fn register_package(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    coordinate: &wamn_catalog::PackageCoordinate,
+    manifest_sha256: &str,
+    predecessor_version: Option<&str>,
+) -> anyhow::Result<bool> {
+    let package_id = coordinate.package_id();
+    tx.query_one(LOCK_PACKAGE_SQL, &[&tenant, &package_id])
+        .await
+        .context("lock package lineage before registration")?;
+    let recorded = tx
+        .query_opt(
+            SELECT_PACKAGE_SQL,
+            &[&tenant, &package_id, &coordinate.package_version()],
+        )
+        .await
+        .context("read package coordinate before registration")?;
+    let recorded = recorded.map(|row| (row.get::<_, String>(0), row.get::<_, Option<String>>(1)));
+    let current = current_package_version(tx, tenant, package_id).await?;
+    let insert = plan_package_registration(
+        coordinate,
+        manifest_sha256,
+        predecessor_version,
+        recorded
+            .as_ref()
+            .map(|(hash, predecessor)| (hash.as_str(), predecessor.as_deref())),
+        current.as_deref(),
+    )?;
+    if insert {
+        tx.execute(
+            "INSERT INTO catalog.packages \
+             (tenant_id, package_id, package_version, manifest_sha256, predecessor_version) \
+             VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &tenant,
+                &package_id,
+                &coordinate.package_version(),
+                &manifest_sha256,
+                &predecessor_version,
+            ],
+        )
+        .await
+        .context("insert immutable package root")?;
+    }
+    Ok(insert)
 }
 
 async fn current_package_version(
@@ -1710,3 +1775,7 @@ mod tests {
         assert_eq!(registration.ops, [wamn_event_reg::Op::Insert]);
     }
 }
+
+#[cfg(test)]
+#[path = "apply_package/registration_tests.rs"]
+mod registration_tests;

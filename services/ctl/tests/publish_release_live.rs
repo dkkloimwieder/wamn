@@ -92,8 +92,8 @@ async fn seed_package_and_release(client: &Client) {
         ("receiving", "2.0.0", Some("1.0.0")),
     ] {
         client
-            .query_one(
-                "SELECT catalog.register_package($1, $2, $3, $4, $5)",
+            .execute(
+                "INSERT INTO catalog.packages (tenant_id, package_id, package_version, manifest_sha256, predecessor_version) VALUES ($1, $2, $3, $4, $5)",
                 &[
                     &TENANT,
                     &package_id,
