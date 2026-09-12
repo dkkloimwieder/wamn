@@ -221,7 +221,7 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
     // lives; that each host process still *invokes* it, before it binds a
     // component, is pinned by the conformance guard
     // `one_release_load_site_per_host_process`
-    // (wamn-0h0g.15.101, tests/conformance/src/runtime_inventory.rs).
+    // (wamn-0h0g.15.101, tests/conformance/src/runtime_policy.rs).
     let source = ReleaseManifestSource::new(&artifact_base, true, Path::new(&registry_auth_file))
         .expect("the disposable registry configures")
         .with_ca_paths(&[])

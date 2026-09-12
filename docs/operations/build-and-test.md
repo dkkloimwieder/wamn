@@ -900,10 +900,11 @@ structural proof of the same kind, but it lives in `wamn-system-tests` — it
 belongs beside the conformance guards. It was kept out of that package only so
 it would not collide with `wamn-0h0g.12.10`'s retained-manifest reconcile; that
 reconcile has landed, so the relocation is unblocked and needs its own bead.
-Measured 6 passed / 0 failed on the `w65-deploy` branch, base `2179f9c7`:
+Measured 6 passed / 0 failed on the `w65-deploy` branch, base `2179f9c7`.
+The current command is:
 
 ```bash
-cargo test -p wamn-system-tests --test deploy_platform_inventory
+cargo test -p wamn-system-tests --test deployment_declarations
 ```
 
 ### Known red
@@ -1948,7 +1949,7 @@ cargo test --locked --offline -p wamn-identity --test pat_issuance \
   operator_ca_configuration_refuses_missing_or_malformed_roots
 cargo test --locked --offline -p wamn-ctl --lib pat_client
 cargo test --locked --offline -p wamn-control-provision --lib identity_issuer
-cargo test --locked --offline -p wamn-system-tests --test deploy_platform_inventory
+cargo test --locked --offline -p wamn-system-tests --test deployment_declarations
 ```
 
 Use a separate, fresh PostgreSQL 18 server for each live command below.
@@ -2026,7 +2027,7 @@ cargo test --locked --offline -p wamn-ctl --test session_audience_live \
   compiled_session_reader_refuses_invalid_tenants_before_io
 cargo test --locked --offline -p wamn-identity --lib
 cargo test --locked --offline -p wamn-integration-tests --lib identity_session_proof::tests
-cargo test --locked --offline -p wamn-system-tests --test deploy_platform_inventory
+cargo test --locked --offline -p wamn-system-tests --test deployment_declarations
 ```
 
 The chart check requires Helm.

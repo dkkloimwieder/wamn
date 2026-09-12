@@ -30,19 +30,17 @@ Placement judgment calls, recorded: `postgres.yaml` is platform (the shared
 long-lived fixture ~8 gates and the dispatcher point at, despite its bench
 header); `serve-echo` is gates (gate support, not product).
 
-**The `platform/` bullet above is illustrative; the BILL OF MATERIALS is
-`tests/system/tests/deploy_platform_inventory.rs` (`wamn-0h0g.10.5`).** Its
-`BILL_OF_MATERIALS` table names every manifest in the tier, the Kubernetes
-objects each one yields in document order, and the images each one schedules;
-the same file asserts that table against the directory, so the tier and the
-list cannot drift apart silently. Do not restate the inventory here — one
-carrier, and this is not it. Run it with:
+`tests/system/tests/deployment_declarations.rs` owns the `deploy/platform`
+declaration list (`wamn-0h0g.10.5`). Its `BILL_OF_MATERIALS` table names each
+manifest, Kubernetes object, and image. Objects retain document order. The
+same file compares that table with the directory. Keep the list in that
+test. Run it with:
 
 ```bash
-cargo test -p wamn-system-tests --test deploy_platform_inventory
+cargo test -p wamn-system-tests --test deployment_declarations
 ```
 
-The proof also records what the tier MOUNTS but does not DECLARE. Three
+The test also records what the tier MOUNTS but does not DECLARE. Three
 prerequisites are minted elsewhere on purpose (`wasmcloud-ca` by the
 runtime-operator release, `pg-init` by the bootstrap `kubectl create configmap`
 in `platform/postgres.yaml`'s header, `wamn-executor-db` by `wamn-ctl

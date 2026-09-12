@@ -3,10 +3,10 @@
 //! [`BILL_OF_MATERIALS`] below IS the bill of materials — there is no second
 //! carrier. A BoM held in a doc alongside a test that checks something narrower
 //! is the dual-representation shape this repository keeps closing; the table a
-//! reader consults and the table the proof asserts are the same lines.
+//! reader consults and the table the test asserts are the same lines.
 //!
-//! WHAT THIS IS A PROOF ABOUT. It reads the manifests under `deploy/platform`
-//! as ARTIFACTS and asserts their declared inventory — the Kubernetes objects
+//! WHAT THESE TESTS CHECK. It reads the manifests under `deploy/platform`
+//! as ARTIFACTS and asserts their declarations — the Kubernetes objects
 //! each file yields, the container images the tier schedules, and the Secrets it
 //! mounts without declaring. It reads no Rust source as text (`wamn-hopk` R5);
 //! a YAML manifest is the artifact, not the implementation.
@@ -19,7 +19,7 @@
 //! PLACEMENT, RECORDED SO IT CAN BE MOVED IN ONE STEP. This belongs in
 //! `tests/conformance` beside the other static structural guards. It sits in
 //! `wamn-system-tests` because `wamn-0h0g.12.10` owns the conformance retained-
-//! manifest inventory and reconciles it against THIS table; landing both in one
+//! manifest declarations and reconciles it against THIS table; landing both in one
 //! package would have made the two edits collide. `wamn-system-tests` is the
 //! black-box tier over deployed surfaces, which a deployment manifest is.
 
@@ -28,7 +28,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// The tier this proof owns.
+/// The tier this test owns.
 const PLATFORM: &str = "deploy/platform";
 
 /// One row of the bill of materials: `(file, [(kind, name)], [image])`.
@@ -202,7 +202,7 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// declared by a file in the table above.
 ///
 /// This is the tier's external-prerequisite list, and it is derived rather than
-/// asserted by hand: the proof computes mounted-minus-declared and compares.
+/// asserted by hand: the test computes mounted-minus-declared and compares.
 ///
 /// A `Certificate` in this tier DECLARES the Secret its `spec.secretName`
 /// names — cert-manager writes those bytes, so `wamn-registry-tls`,
@@ -247,7 +247,7 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 5] = [
 /// Per-project-environment Secret name PREFIXES the scenario worker mounts.
 ///
 /// These carry an `<org>--<project>--<env>` suffix, so they cannot be listed as
-/// literals without pinning the demo triple into the proof. What a prefix is
+/// literals without pinning the demo triple into the test. What a prefix is
 /// allowed to absorb is [`absorbed_by_a_prerequisite_prefix`], not
 /// `starts_with`.
 const EXTERNAL_PREREQUISITE_PREFIXES: [&str; 6] = [
@@ -293,7 +293,7 @@ fn absorbed_by_a_prerequisite_prefix(name: &str) -> bool {
     })
 }
 
-/// One Kubernetes object as this proof reads it off a manifest.
+/// One Kubernetes object as this test reads it off a manifest.
 #[derive(Debug)]
 struct Object {
     kind: String,
@@ -310,7 +310,7 @@ fn repository_root() -> PathBuf {
 }
 
 /// Drop whole-line comments and blank lines. A trailing `#` is left alone: every
-/// value this proof reads is a single whitespace-delimited token, so a trailing
+/// value this test reads is a single whitespace-delimited token, so a trailing
 /// comment falls off when the token is taken.
 fn significant(source: &str) -> Vec<&str> {
     source
@@ -1058,7 +1058,7 @@ fn the_readiness_contract_is_provisioned_once() {
 
 /// EVERY MOUNTED SECRET IS DECLARED HERE OR NAMED AS A PREREQUISITE.
 ///
-/// Computed, not transcribed: the proof collects `secretName`, `secretKeyRef`
+/// Computed, not transcribed: the test collects `secretName`, `secretKeyRef`
 /// and `configMap` names off the manifests, subtracts what the tier declares,
 /// and compares the remainder against [`EXTERNAL_PREREQUISITES`]. A pod that
 /// starts mounting an undeclared, unlisted Secret fails here — which is how

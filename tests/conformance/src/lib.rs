@@ -17,7 +17,7 @@ mod ip_name_lookup;
 mod manifest_dependencies;
 
 #[cfg(test)]
-mod runtime_inventory;
+mod runtime_policy;
 
 #[cfg(test)]
 mod schema_drift;

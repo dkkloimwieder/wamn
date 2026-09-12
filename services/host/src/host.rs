@@ -543,7 +543,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // connections, the engine and every plugin, makes that ordering impossible to
     // get wrong, and makes a host that cannot verify its release refuse before it
     // opens a socket. The one-site-per-process guard in
-    // tests/conformance/src/runtime_inventory.rs pins both facts across both hosts.
+    // tests/conformance/src/runtime_policy.rs pins both facts across both hosts.
     //
     // It also runs after the CA install above, which is why the release pull can
     // reach a registry behind the chart's own CA.
