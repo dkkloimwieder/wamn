@@ -1302,7 +1302,7 @@ mod tests {
         Ok(caller)
     }
 
-    struct Receipt {
+    struct ObservedRequest {
         connection_id: u64,
         request_id: u64,
         authorization: String,
@@ -1311,7 +1311,7 @@ mod tests {
 
     struct Origin {
         address: SocketAddr,
-        receipts: mpsc::Receiver<Receipt>,
+        requests: mpsc::Receiver<ObservedRequest>,
         task: JoinHandle<()>,
     }
 
@@ -1324,7 +1324,7 @@ mod tests {
     async fn origin() -> anyhow::Result<Origin> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
-        let (sent, receipts) = mpsc::channel(16);
+        let (sent, requests) = mpsc::channel(16);
         let task = tokio::spawn(async move {
             let mut connections = JoinSet::new();
             let mut connection_id = 0;
@@ -1345,7 +1345,7 @@ mod tests {
         });
         Ok(Origin {
             address,
-            receipts,
+            requests,
             task,
         })
     }
@@ -1353,7 +1353,7 @@ mod tests {
     async fn serve_socket(
         mut socket: TcpStream,
         connection_id: u64,
-        sent: mpsc::Sender<Receipt>,
+        sent: mpsc::Sender<ObservedRequest>,
     ) -> anyhow::Result<()> {
         loop {
             let mut head = Vec::new();
@@ -1386,7 +1386,7 @@ mod tests {
             socket.read_exact(&mut body).await?;
             let body: serde_json::Value = serde_json::from_slice(&body)?;
             let request_id = body["id"].as_u64().context("fixture request has no id")?;
-            let receipt = Receipt {
+            let observed_request = ObservedRequest {
                 connection_id,
                 request_id,
                 authorization: headers
@@ -1398,11 +1398,11 @@ mod tests {
                     .context("effect omitted its delivery idempotency key")?
                     .clone(),
             };
-            // Emit before the response: a completed driver call cannot race an
-            // unobserved receipt, including the denial checks below.
-            sent.send(receipt)
+            // Record the request before sending the response.
+            // A completed driver call always exposes its request to the assertions below.
+            sent.send(observed_request)
                 .await
-                .map_err(|_| anyhow::anyhow!("receipt receiver closed"))?;
+                .map_err(|_| anyhow::anyhow!("request receiver closed"))?;
             let body = serde_json::json!({
                 "connection-id": connection_id,
                 "request-id": request_id,
@@ -1485,7 +1485,7 @@ mod tests {
         )?))
     }
 
-    async fn receipt(
+    async fn assert_observed_request(
         origin: &mut Origin,
         delivery: RouterDelivery,
         request_id: u64,
@@ -1497,26 +1497,26 @@ mod tests {
             delivery.outcome.failure
         );
         assert_eq!(delivery.outcome.result["status"], 200);
-        let receipt = origin
-            .receipts
+        let observed_request = origin
+            .requests
             .recv()
             .await
             .context("upstream origin stopped")?;
-        assert_eq!(receipt.request_id, request_id);
+        assert_eq!(observed_request.request_id, request_id);
         assert!(
-            receipt.authorization == authorization,
+            observed_request.authorization == authorization,
             "wrong generation credential reached the wire"
         );
         assert_eq!(
-            receipt.idempotency_key,
+            observed_request.idempotency_key,
             format!("reuse-{request_id}:{NODE_ID}:0")
         );
         assert_eq!(delivery.outcome.result["body"]["request-id"], request_id);
         assert_eq!(
             delivery.outcome.result["body"]["connection-id"],
-            receipt.connection_id
+            observed_request.connection_id
         );
-        Ok(receipt.connection_id)
+        Ok(observed_request.connection_id)
     }
 
     async fn set_instance_status(client: &Client, status: &str) -> anyhow::Result<()> {
@@ -1620,14 +1620,14 @@ mod tests {
         .await?;
         // RouterDriver instantiates and drops a distinct Store for each call.
         // The peer identity comes from accept(), not a transport cache counter.
-        let first = receipt(
+        let first = assert_observed_request(
             &mut origin,
             route.driver.execute(request(1)).await?,
             1,
             "Bearer fixture-token",
         )
         .await?;
-        let second = receipt(
+        let second = assert_observed_request(
             &mut origin,
             route.driver.execute(request(2)).await?,
             2,
@@ -1655,13 +1655,13 @@ mod tests {
             "connection failed: ConnectionError::CredentialUnavailable"
         );
         assert!(
-            origin.receipts.try_recv().is_err(),
+            origin.requests.try_recv().is_err(),
             "denied effect reached the warm socket"
         );
         set_instance_status(&admin, "enabled").await?;
 
         let frozen = binding_world(&admin, &route).await?;
-        let candidate_first = receipt(
+        let candidate_first = assert_observed_request(
             &mut origin,
             route
                 .driver
@@ -1671,7 +1671,7 @@ mod tests {
             "Bearer fixture-token",
         )
         .await?;
-        let candidate_second = receipt(
+        let candidate_second = assert_observed_request(
             &mut origin,
             route
                 .driver
@@ -1700,11 +1700,11 @@ mod tests {
         assert_eq!(refusal.kind(), CandidateExecutionRefusalKind::Binding);
         assert_eq!(refusal.refusal(), "candidate-binding-world-drift");
         assert!(
-            origin.receipts.try_recv().is_err(),
+            origin.requests.try_recv().is_err(),
             "drifted candidate reached the wire"
         );
 
-        let generation_two = receipt(
+        let generation_two = assert_observed_request(
             &mut origin,
             route.driver.execute(request(7)).await?,
             7,
@@ -1720,7 +1720,7 @@ mod tests {
             "new generation reused a candidate's old socket"
         );
         let frozen = binding_world(&admin, &route).await?;
-        let current = receipt(
+        let current = assert_observed_request(
             &mut origin,
             route
                 .driver
@@ -1730,7 +1730,7 @@ mod tests {
             "Bearer fixture-token",
         )
         .await?;
-        let current_again = receipt(
+        let current_again = assert_observed_request(
             &mut origin,
             route
                 .driver
@@ -1746,7 +1746,7 @@ mod tests {
         );
 
         rotate(&admin, 3, ROTATED_HANDLE).await?;
-        let generation_three = receipt(
+        let generation_three = assert_observed_request(
             &mut origin,
             route.driver.execute(request(10)).await?,
             10,
@@ -1761,7 +1761,7 @@ mod tests {
             generation_three, current,
             "rotated credential reused the candidate socket"
         );
-        let generation_three_again = receipt(
+        let generation_three_again = assert_observed_request(
             &mut origin,
             route.driver.execute(request(11)).await?,
             11,
@@ -1773,7 +1773,7 @@ mod tests {
             "rotated generation did not become reusable"
         );
         assert!(
-            origin.receipts.try_recv().is_err(),
+            origin.requests.try_recv().is_err(),
             "unexpected extra upstream effect"
         );
         drop(admin);
@@ -1858,7 +1858,7 @@ mod tests {
         for id in [21, 22] {
             let mut direct = request(id);
             direct.caller = Some(caller.clone());
-            let accepted = receipt(
+            let accepted = assert_observed_request(
                 &mut origin,
                 route.driver.execute(direct).await?,
                 id,
@@ -1878,7 +1878,7 @@ mod tests {
             let mut nested = request(id);
             nested.wiring_version = 2;
             nested.caller = Some(caller.clone());
-            let accepted = receipt(
+            let accepted = assert_observed_request(
                 &mut origin,
                 route.driver.execute(nested).await?,
                 id,
@@ -1948,7 +1948,7 @@ mod tests {
             "wrong undeclared-export refusal: {refusal:#}"
         );
         assert!(
-            origin.receipts.try_recv().is_err(),
+            origin.requests.try_recv().is_err(),
             "undeclared child reached the wire"
         );
 
@@ -1973,14 +1973,14 @@ mod tests {
             "connection failed: ConnectionError::CredentialUnavailable"
         );
         assert!(
-            origin.receipts.try_recv().is_err(),
+            origin.requests.try_recv().is_err(),
             "disabled nested effect reached the wire"
         );
         set_instance_status(&admin, "enabled").await?;
         let mut nested = request(27);
         nested.wiring_version = 2;
         nested.caller = Some(caller);
-        let restored = receipt(
+        let restored = assert_observed_request(
             &mut origin,
             route.driver.execute(nested).await?,
             27,
@@ -1993,7 +1993,7 @@ mod tests {
             "a refused request poisoned the reusable socket"
         );
         assert!(
-            origin.receipts.try_recv().is_err(),
+            origin.requests.try_recv().is_err(),
             "unexpected extra nested effect"
         );
         drop(admin);

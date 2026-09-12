@@ -1213,10 +1213,10 @@ struct PreparedMsg {
     payload: bytes::Bytes,
 }
 
-/// A settled publish's server receipt — the ONLY delivery truth (a sent-but-
-/// unacked publish proves nothing: the async-nats client buffers while
-/// disconnected). `duplicate` is JetStream's `Nats-Msg-Id` dedupe verdict.
-struct Receipt {
+/// The server acknowledgment for a completed publish.
+/// A buffered message can remain unsent while the client is disconnected.
+/// `duplicate` states whether JetStream already accepted this `Nats-Msg-Id`.
+struct PublishAcknowledgment {
     duplicate: bool,
 }
 
@@ -1239,7 +1239,7 @@ struct PublishTally {
 trait AckPublisher {
     type Ack;
     async fn send(&self, msg: &PreparedMsg) -> anyhow::Result<Self::Ack>;
-    async fn settle(&self, ack: Self::Ack) -> anyhow::Result<Receipt>;
+    async fn settle(&self, ack: Self::Ack) -> anyhow::Result<PublishAcknowledgment>;
 }
 
 /// Production publisher: async-nats JetStream. `send` sends and returns the ack
@@ -1262,9 +1262,9 @@ impl AckPublisher for JsPublisher<'_> {
             .map_err(|e| anyhow::anyhow!("publish: {e}"))
     }
 
-    async fn settle(&self, ack: Self::Ack) -> anyhow::Result<Receipt> {
+    async fn settle(&self, ack: Self::Ack) -> anyhow::Result<PublishAcknowledgment> {
         let ack = ack.await.map_err(|e| anyhow::anyhow!("ack: {e}"))?;
-        Ok(Receipt {
+        Ok(PublishAcknowledgment {
             duplicate: ack.duplicate,
         })
     }
@@ -1602,11 +1602,11 @@ async fn settle_all<P: AckPublisher>(
     tally: &mut PublishTally,
 ) -> anyhow::Result<()> {
     for (idx, ack) in held.drain(..) {
-        let receipt = publisher.settle(ack).await?;
+        let acknowledgment = publisher.settle(ack).await?;
         debug_assert_eq!(idx, *first_unacked, "acks settle strictly in publish order");
         *first_unacked = idx + 1;
         tally.published += 1;
-        if receipt.duplicate {
+        if acknowledgment.duplicate {
             tally.deduped += 1;
             tracing::debug!(id = msgs[idx].id, "redelivery deduped by the stream");
         }
@@ -2157,7 +2157,7 @@ mod tests {
             self.log.borrow_mut().push(format!("send:{idx}"));
             Ok(idx)
         }
-        async fn settle(&self, ack: usize) -> anyhow::Result<Receipt> {
+        async fn settle(&self, ack: usize) -> anyhow::Result<PublishAcknowledgment> {
             let idx = ack;
             if self.settle_fails.borrow()[idx] > 0 {
                 self.settle_fails.borrow_mut()[idx] -= 1;
@@ -2165,7 +2165,7 @@ mod tests {
                 return Err(anyhow::anyhow!("scripted ack failure at {idx}"));
             }
             self.log.borrow_mut().push(format!("settle:{idx}"));
-            Ok(Receipt {
+            Ok(PublishAcknowledgment {
                 duplicate: self.duplicate.borrow()[idx],
             })
         }
