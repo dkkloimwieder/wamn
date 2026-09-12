@@ -59,10 +59,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions, Permissions};
-use std::io::Write as _;
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+#[cfg(test)]
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::str::FromStr as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -96,6 +95,24 @@ use wamn_platform_identity::{
 
 use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policy};
 use crate::pat_client::{PatClient, PatIssuerArgs};
+
+mod database;
+mod output;
+mod pat_secrets;
+
+use database::{
+    connect_config, exact_project_database_config, named_database_config, workload_config,
+    workload_url,
+};
+use output::{emit_json, emit_text, ensure_distinct_secret_paths, ensure_secret_path, parse_secret_path};
+use pat_secrets::{issue_pat_secrets, parse_pat_prefix, revoke_provisioning_pat};
+
+pub(crate) use output::write_secret_json;
+
+#[cfg(test)]
+use output::SECRET_TEMP_SEQUENCE;
+#[cfg(test)]
+use pat_secrets::{MANAGEMENT_AUTHOR, PAT_TTL, ROUTE_CALLER, render_pat_secret};
 
 #[derive(Debug, Args)]
 pub struct ProvisionProjectEnvArgs {
@@ -1837,69 +1854,6 @@ fn mint_instance_suffix() -> anyhow::Result<String> {
     Ok(suffix)
 }
 
-fn exact_project_database_config(admin_url: &str, database: &str) -> anyhow::Result<PgConfig> {
-    let config = PgConfig::from_str(admin_url).context("parse target admin database URL")?;
-    anyhow::ensure!(
-        config.get_dbname() == Some(database),
-        "--target-admin-database-url must name the exact project database"
-    );
-    Ok(config)
-}
-
-fn named_database_config(admin_url: &str, purpose: &str) -> anyhow::Result<PgConfig> {
-    let config = PgConfig::from_str(admin_url).with_context(|| format!("parse {purpose} URL"))?;
-    anyhow::ensure!(
-        config
-            .get_dbname()
-            .is_some_and(|database| !database.is_empty()),
-        "{purpose} URL must name the exact database"
-    );
-    Ok(config)
-}
-
-fn workload_config(admin: &PgConfig, role: &str, password: &str, database: &str) -> PgConfig {
-    let mut config = admin.clone();
-    config.user(role);
-    config.password(password);
-    config.dbname(database);
-    config
-}
-
-fn workload_url(
-    admin_url: &str,
-    role: &str,
-    password: &str,
-    database: &str,
-) -> anyhow::Result<String> {
-    let mut url = Url::parse(admin_url).context("parse target admin URL for credential")?;
-    anyhow::ensure!(
-        matches!(url.scheme(), "postgres" | "postgresql"),
-        "target admin URL must use postgres or postgresql"
-    );
-    url.set_username(role)
-        .map_err(|_| anyhow::anyhow!("set workload URL username"))?;
-    url.set_password(Some(password))
-        .map_err(|_| anyhow::anyhow!("set workload URL password"))?;
-    url.set_path(&format!("/{database}"));
-    url.set_query(None);
-    url.set_fragment(None);
-    Ok(url.into())
-}
-
-async fn connect_config(
-    config: &PgConfig,
-    purpose: &str,
-) -> anyhow::Result<(
-    tokio_postgres::Client,
-    tokio::task::JoinHandle<Result<(), tokio_postgres::Error>>,
-)> {
-    let (client, connection) = config
-        .connect(NoTls)
-        .await
-        .with_context(|| format!("connect {purpose}"))?;
-    Ok((client, tokio::spawn(connection)))
-}
-
 async fn authenticate_workload_generation(
     config: &PgConfig,
     lifecycle: WorkloadLifecycle<'_>,
@@ -2907,362 +2861,10 @@ async fn read_workload_role_state(
     }))
 }
 
-/// Provisioning PATs retain their existing 30-day lifetime.
-const PAT_TTL: Duration = Duration::from_secs(2_592_000);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PatPurpose {
-    purpose: &'static str,
-    subject_stem: &'static str,
-    display_stem: &'static str,
-    role: &'static str,
-    secret_stem: &'static str,
-}
-
-const MANAGEMENT_AUTHOR: PatPurpose = PatPurpose {
-    purpose: "management-author",
-    subject_stem: "wamn-management-author",
-    display_stem: "WAMN management author",
-    role: "project-author",
-    secret_stem: "wamn-pat-management-author",
-};
-
-const ROUTE_CALLER: PatPurpose = PatPurpose {
-    purpose: "route-caller",
-    subject_stem: "wamn-route-caller",
-    display_stem: "WAMN route caller",
-    role: "route-caller",
-    secret_stem: "wamn-pat-route-caller",
-};
-
-impl PatPurpose {
-    fn subject(self, triple: &Triple) -> anyhow::Result<String> {
-        if self == ROUTE_CALLER {
-            return route_caller_subject(&triple.org, &triple.project, triple.env.as_str())
-                .context("derive the canonical route-caller subject");
-        }
-        Ok(format!(
-            "{}-{}--{}--{}",
-            self.subject_stem, triple.org, triple.project, triple.env
-        ))
-    }
-
-    fn display_name(self, triple: &Triple) -> String {
-        format!(
-            "{} {}/{}/{}",
-            self.display_stem, triple.org, triple.project, triple.env
-        )
-    }
-
-    fn secret_name(self, triple: &Triple) -> String {
-        format!(
-            "{}-{}--{}--{}",
-            self.secret_stem, triple.org, triple.project, triple.env
-        )
-    }
-}
-
-async fn issue_pat_secrets(
-    system_url: &str,
-    pat_client: &PatClient,
-    triple: &Triple,
-    namespace: &str,
-    management_author_path: Option<&Path>,
-    route_caller_path: Option<&Path>,
-) -> anyhow::Result<()> {
-    let (client, connection) = tokio_postgres::connect(system_url, NoTls)
-        .await
-        .context("system db connect for PAT issuance")?;
-    let connection_task = tokio::spawn(connection);
-    let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("SET ROLE wamn_system for PAT issuance")?;
-        if let Some(path) = management_author_path {
-            issue_pat_secret(
-                &client,
-                pat_client,
-                triple,
-                namespace,
-                MANAGEMENT_AUTHOR,
-                path,
-            )
-            .await?;
-        }
-        if let Some(path) = route_caller_path {
-            issue_pat_secret(&client, pat_client, triple, namespace, ROUTE_CALLER, path).await?;
-        }
-        Ok::<(), anyhow::Error>(())
-    }
-    .await;
-    drop(client);
-    let _ = connection_task.await;
-    result
-}
-
-async fn issue_pat_secret(
-    client: &tokio_postgres::Client,
-    pat_client: &PatClient,
-    triple: &Triple,
-    namespace: &str,
-    purpose: PatPurpose,
-    path: &Path,
-) -> anyhow::Result<()> {
-    let subject = purpose.subject(triple)?;
-    let display_name = purpose.display_name(triple);
-    let principal = resolve_or_create_service(client, &subject, &display_name).await?;
-    anyhow::ensure!(
-        principal.status() == PrincipalStatus::Active,
-        "service principal {subject:?} is disabled"
-    );
-    assign_project_role(
-        client,
-        principal.id(),
-        &triple.org,
-        &triple.project,
-        purpose.role,
-    )
-    .await
-    .with_context(|| format!("assign {} role", purpose.role))?;
-
-    let issued = pat_client
-        .issue(principal.id(), purpose.purpose, PAT_TTL)
-        .await
-        .with_context(|| format!("issue {} PAT", purpose.purpose))?;
-    let authenticated = authenticate_pat(client, &issued.token)
-        .await
-        .with_context(|| format!("authenticate newly issued {} PAT", purpose.purpose))?
-        .with_context(|| format!("newly issued {} PAT did not authenticate", purpose.purpose))?;
-    anyhow::ensure!(
-        authenticated.principal() == &principal,
-        "newly issued {} PAT authenticated as an unexpected principal",
-        purpose.purpose
-    );
-
-    let secret = render_pat_secret(
-        triple,
-        namespace,
-        purpose,
-        principal.id().as_str(),
-        &issued.token,
-        &issued.token_prefix,
-        &issued.expires_at,
-    )?;
-    write_secret_json(path, &secret)?;
-    println!(
-        "wrote {} ({} PAT Secret; kubectl apply)",
-        path.display(),
-        purpose.purpose
-    );
-    Ok(())
-}
-
-async fn resolve_or_create_service(
-    client: &tokio_postgres::Client,
-    subject: &str,
-    display_name: &str,
-) -> anyhow::Result<Principal> {
-    if let Some(principal) = resolve_subject(client, PrincipalKind::Service, subject)
-        .await
-        .context("resolve service principal")?
-    {
-        return Ok(principal);
-    }
-
-    match create_service(client, subject, display_name).await {
-        Ok(principal) => Ok(principal),
-        Err(error) if error.kind() == IdentityErrorKind::Conflict => {
-            resolve_subject(client, PrincipalKind::Service, subject)
-                .await
-                .context("resolve concurrently created service principal")?
-                .context("service principal conflict was not resolvable")
-        }
-        Err(error) => Err(error).context("create service principal"),
-    }
-}
-
-async fn revoke_provisioning_pat(system_url: &str, prefix: &str) -> anyhow::Result<()> {
-    let (client, connection) = tokio_postgres::connect(system_url, NoTls)
-        .await
-        .context("system db connect for PAT revocation")?;
-    let connection_task = tokio::spawn(connection);
-    let result = async {
-        client
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("SET ROLE wamn_system for PAT revocation")?;
-        revoke_pat(&client, prefix)
-            .await
-            .context("revoke PAT by prefix")?;
-        Ok::<(), anyhow::Error>(())
-    }
-    .await;
-    drop(client);
-    let _ = connection_task.await;
-    result
-}
-
-fn render_pat_secret(
-    triple: &Triple,
-    namespace: &str,
-    purpose: PatPurpose,
-    principal_id: &str,
-    token: &str,
-    prefix: &str,
-    expires_at: &str,
-) -> anyhow::Result<Value> {
-    let subject = purpose.subject(triple)?;
-    Ok(json!({
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {
-            "name": purpose.secret_name(triple),
-            "namespace": namespace,
-            "labels": {
-                "app.kubernetes.io/managed-by": "wamn",
-                "app.kubernetes.io/component": "project-env-pat",
-                "wamn.org": triple.org,
-                "wamn.project": triple.project,
-                "wamn.env": triple.env.as_str(),
-            },
-            "annotations": {
-                "wamn.io/credential-purpose": purpose.purpose,
-                "wamn.io/principal-id": principal_id,
-                "wamn.io/principal-kind": "service",
-                "wamn.io/principal-subject": subject,
-                "wamn.io/project-role": purpose.role,
-                "wamn.io/pat-prefix": prefix,
-                "wamn.io/pat-expires-at": expires_at,
-            },
-        },
-        "type": "Opaque",
-        "stringData": {
-            "token": token,
-        },
-    }))
-}
-
 fn provision_summary(triple: &Triple, database: &str, cluster: &str) -> String {
     format!(
         "project-env {triple}: database {database:?} on cluster {cluster:?} (owner {DB_OWNER_ROLE})"
     )
-}
-
-fn parse_secret_path(value: &str) -> Result<PathBuf, String> {
-    let path = PathBuf::from(value);
-    ensure_secret_path(&path, "secret output").map_err(|error| error.to_string())?;
-    Ok(path)
-}
-
-fn ensure_secret_path(path: &Path, flag: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        path.as_os_str() != "-",
-        "{flag} must name a file; '-' and stdout are forbidden for credentials"
-    );
-    Ok(())
-}
-
-fn ensure_distinct_secret_paths<const N: usize>(
-    paths: [(&str, Option<&Path>); N],
-) -> anyhow::Result<()> {
-    let mut seen = Vec::with_capacity(N);
-    for (flag, path) in paths {
-        let Some(path) = path else {
-            continue;
-        };
-        let absolute = std::path::absolute(path)
-            .with_context(|| format!("resolve credential output path for {flag}"))?;
-        let parent = absolute
-            .parent()
-            .context("credential output path has no parent directory")?;
-        let file_name = absolute
-            .file_name()
-            .context("credential output path has no file name")?;
-        let comparable = std::fs::canonicalize(parent)
-            .with_context(|| format!("resolve credential output parent for {flag}"))?
-            .join(file_name);
-        if let Some((other_flag, _)) = seen
-            .iter()
-            .find(|(_, other_path)| other_path == &comparable)
-        {
-            anyhow::bail!("{flag} and {other_flag} must name distinct credential output files");
-        }
-        seen.push((flag, comparable));
-    }
-    Ok(())
-}
-
-fn parse_pat_prefix(value: &str) -> Result<String, String> {
-    let valid = value.len() == 16
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
-    if !valid {
-        return Err("PAT prefix must be 16 lowercase hex digits".to_owned());
-    }
-    Ok(value.to_owned())
-}
-
-static SECRET_TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
-
-fn create_secret_temp(path: &Path) -> anyhow::Result<(PathBuf, File)> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let file_name = path
-        .file_name()
-        .context("credential output path has no file name")?;
-
-    for _ in 0..128 {
-        let sequence = SECRET_TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let mut temp_name = OsString::from(".");
-        temp_name.push(file_name);
-        temp_name.push(format!(".wamn-tmp-{}-{sequence}", std::process::id()));
-        let temp_path = parent.join(temp_name);
-        match OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(&temp_path)
-        {
-            Ok(file) => return Ok((temp_path, file)),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("create credential output beside {}", path.display())
-                });
-            }
-        }
-    }
-    anyhow::bail!(
-        "could not allocate a temporary credential output beside {}",
-        path.display()
-    )
-}
-
-pub(crate) fn write_secret_json(path: &Path, doc: &Value) -> anyhow::Result<()> {
-    let mut bytes = serde_json::to_vec_pretty(doc).context("serialize Secret JSON")?;
-    bytes.push(b'\n');
-    let (temp_path, mut file) = create_secret_temp(path)?;
-    let result = (|| -> anyhow::Result<()> {
-        file.set_permissions(Permissions::from_mode(0o600))
-            .with_context(|| format!("set credential output mode on {}", temp_path.display()))?;
-        file.write_all(&bytes)
-            .with_context(|| format!("write credential output {}", temp_path.display()))?;
-        file.sync_all()
-            .with_context(|| format!("sync credential output {}", temp_path.display()))?;
-        drop(file);
-        std::fs::rename(&temp_path, path)
-            .with_context(|| format!("install credential output {}", path.display()))?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp_path);
-    }
-    result
 }
 
 /// Read the org's placement + the env's policy from the registry and **derive**
@@ -3529,23 +3131,6 @@ async fn project_tenant_environment(
         .commit()
         .await
         .context("commit the project-env control projection")
-}
-
-/// Print a JSON document to a path, or to stdout with a labeled header when the
-/// path is absent (`-` also means stdout).
-fn emit_json(path: &Option<PathBuf>, label: &str, doc: &serde_json::Value) -> anyhow::Result<()> {
-    emit_text(path, label, &serde_json::to_string_pretty(doc)?)
-}
-
-fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyhow::Result<()> {
-    match path {
-        Some(p) if p.as_os_str() != "-" => {
-            std::fs::write(p, text).with_context(|| format!("write {}", p.display()))?;
-            println!("wrote {} ({label})", p.display());
-        }
-        _ => println!("--- {label} ---\n{text}"),
-    }
-    Ok(())
 }
 
 #[cfg(test)]
