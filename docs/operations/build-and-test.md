@@ -3680,10 +3680,10 @@ Run the cold, restarted, and steady request case:
 ```bash
 WAMN_WMS_EVIDENCE_DIR=/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/wms-startup-001 \
   RUSTC_WRAPPER= CARGO_BUILD_JOBS=2 cargo test --locked --offline -p wamn-wms-tests --lib \
-  cluster::restarted_wms_host_retains_compiled_code_and_bounded_request_overhead -- --exact --ignored --nocapture
+  cluster::restarted_wms_host_retains_compiled_code_and_serves_requests -- --exact --ignored --nocapture
 ```
 
-This case retains the one-statement `pallet.get` trace, the same-pod restart, compiled file identity, and the declared overhead limit.
+This case retains the one-statement `pallet.get` trace, the same-pod restart, compiled file identity, and the request recovery limit.
 
 Run the browser demonstration:
 

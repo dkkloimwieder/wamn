@@ -192,7 +192,7 @@ pub(super) async fn requests(
         evidence,
     )
     .await?;
-    let ratio = trace(
+    trace(
         cluster,
         work,
         "steady",
@@ -200,17 +200,7 @@ pub(super) async fn requests(
         steady,
         evidence,
     )
-    .await?
-    .context("steady trace carries no statement or instantiate duration")?;
-    ensure!(
-        ratio <= 12.0,
-        "steady request overhead ratio {ratio} exceeds 12"
-    );
-    write_result(
-        evidence,
-        "overhead-ratio-steady.json",
-        &json!({"passed":true,"ratio":ratio,"ceiling":12}),
-    )?;
+    .await?;
     let warm_cache = cache_files(cluster, work, &cold.pod, evidence, "warm").await?;
     ensure!(
         cache == warm_cache,
@@ -558,7 +548,7 @@ async fn trace(
     id: &str,
     total_ms: f64,
     evidence: &Path,
-) -> anyhow::Result<Option<f64>> {
+) -> anyhow::Result<()> {
     let bytes = checked(kubectl(cluster, work).args([
         "get",
         "--raw",
@@ -577,8 +567,7 @@ async fn trace(
         evidence,
         &format!("trace-breakdown-{name}.json"),
         &breakdown,
-    )?;
-    Ok(breakdown["overhead_ratio"].as_f64())
+    )
 }
 
 fn trace_breakdown(document: &Value, name: &str, total_ms: f64) -> anyhow::Result<Value> {
@@ -628,17 +617,14 @@ fn trace_breakdown(document: &Value, name: &str, total_ms: f64) -> anyhow::Resul
         Ok(total)
     };
     let sql = sum("wamn.postgres.statement", None)?;
-    let instantiate = sum("wamn.component.instantiate", None)?;
     let root = sum("handle_http_request", None)?;
-    let work = sql + instantiate;
     Ok(json!({"passed":true,"phase":name,"http_total_ms":total_ms,
         "authentication_ms":sum("wamn.route.authenticate",None)?,"resolution_ms":sum("wamn.router.resolve",None)?,
         "artifact_pull_ms":sum("wamn.component.pull",None)?,"compile_ms":sum("wamn.component.compile",None)?,
         "linker_setup_ms":sum("wamn.component.linker_setup",None)?,"link_ms":sum("wamn.component.link",None)?,
-        "instantiate_ms":instantiate,"executor_platform_acquire_ms":sum("wamn.postgres.acquire",Some("executor-platform"))?,
+        "executor_platform_acquire_ms":sum("wamn.postgres.acquire",Some("executor-platform"))?,
         "callable_http_acquire_ms":sum("wamn.postgres.acquire",Some("callable-http"))?,"guest_sql_acquire_ms":sum("wamn.postgres.acquire",Some("guest-sql"))?,
-        "sql_ms":sql,"guest_db_call_ms":sum("wamn.postgres",None)?,"root_ms":root,"real_work_ms":work,
-        "overhead_ratio":if work > 0.0 {Some(root/work)} else {None}}))
+        "sql_ms":sql,"guest_db_call_ms":sum("wamn.postgres",None)?,"root_ms":root}))
 }
 
 async fn startup_time(

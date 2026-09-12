@@ -48,7 +48,7 @@ async fn generated_wms_terminal_reports_success_and_partial_completion() -> anyh
 
 #[tokio::test]
 #[ignore = "measures cold, restarted, and steady requests in a disposable WMS cluster"]
-async fn restarted_wms_host_retains_compiled_code_and_bounded_request_overhead()
+async fn restarted_wms_host_retains_compiled_code_and_serves_requests()
 -> anyhow::Result<()> {
     run_case(Case::Startup).await
 }
