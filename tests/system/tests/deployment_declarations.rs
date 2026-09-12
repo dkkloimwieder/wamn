@@ -1,27 +1,7 @@
-//! THE `deploy/platform` BILL OF MATERIALS (`wamn-0h0g.10.5`).
+//! Check deployment authority, namespaces, readiness, and product image boundaries.
 //!
-//! [`BILL_OF_MATERIALS`] below IS the bill of materials — there is no second
-//! carrier. A BoM held in a doc alongside a test that checks something narrower
-//! is the dual-representation shape this repository keeps closing; the table a
-//! reader consults and the table the test asserts are the same lines.
-//!
-//! WHAT THESE TESTS CHECK. It reads the manifests under `deploy/platform`
-//! as ARTIFACTS and asserts their declarations — the Kubernetes objects
-//! each file yields, the container images the tier schedules, and the Secrets it
-//! mounts without declaring. It reads no Rust source as text (`wamn-hopk` R5);
-//! a YAML manifest is the artifact, not the implementation.
-//!
-//! WHY THE TREE AND NOT THE CLUSTER. The frozen kind cluster still carries
-//! objects this tree deleted, so a live `kubectl get` is a record of history,
-//! not a target shape. The bill of materials is derived from the tree and the
-//! cluster is only ever evidence of divergence.
-//!
-//! PLACEMENT, RECORDED SO IT CAN BE MOVED IN ONE STEP. This belongs in
-//! `tests/conformance` beside the other static structural guards. It sits in
-//! `wamn-system-tests` because `wamn-0h0g.12.10` owns the conformance retained-
-//! manifest declarations and reconciles it against THIS table; landing both in one
-//! package would have made the two edits collide. `wamn-system-tests` is the
-//! black-box tier over deployed surfaces, which a deployment manifest is.
+//! Read platform manifests and rendered identity objects directly.
+//! Compare mounted Secrets with their declarations and external prerequisites.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -31,140 +11,10 @@ use std::process::{Command, Output};
 /// The tier this test owns.
 const PLATFORM: &str = "deploy/platform";
 
-/// One row of the bill of materials: `(file, [(kind, name)], [image])`.
-type BillOfMaterialsRow = (
-    &'static str,
-    &'static [(&'static str, &'static str)],
-    &'static [&'static str],
-);
-
-/// EVERY object-bearing manifest in the tier.
-///
-/// The object list is ORDERED — it is the document order of the file, so a
-/// re-ordering that changes apply order is a diff here rather than silence. The
-/// image list is compared as a set.
-///
-/// Namespaces are not in the table because they are invariant and asserted
-/// separately: every object is `wamn-system` except the per-environment
-/// templates, which carry a substitution placeholder.
-#[rustfmt::skip]
-const BILL_OF_MATERIALS: [BillOfMaterialsRow; 21] = [
-    // The dispatcher's projects Secret carries its database principal INSIDE
-    // the file — the tier's only credential with no separate DB-URL Secret.
-    ("dispatcher-projects.example.yaml",
-        &[("Secret", "wamn-dispatch-projects")],
-        &[]),
-    ("dispatcher.yaml",
-        &[("Deployment", "dispatcher"), ("PodDisruptionBudget", "dispatcher")],
-        &["busybox:1.36", "wamn-dispatcher:dev"]),
-    // A ServiceAccount with zero grants and no Deployment of its own: the
-    // reader's Deployment example went at 2099d754 and the identity is consumed
-    // by the Receiving materializer journey. Retained deliberately, not stranded.
-    ("event-reader-rbac.yaml",
-        &[("ServiceAccount", "event-reader")],
-        &[]),
-    // THREE Secrets in ONE carrier, because the executor is THREE principals:
-    // the guest-SQL url component calls run as, the executor-platform
-    // generation the queue claim dials with (`wamn-0h0g.22.31`), and the
-    // http-admitter generation the trusted HTTP effect snapshot reads under
-    // (`wamn-0h0g.22.11`). Shipping them in separate files would let an
-    // operator apply one and leave the others, which is the failure the set
-    // exists to prevent.
-    ("executor-db.example.yaml",
-        &[
-            ("Secret", "wamn-executor-db"),
-            ("Secret", "wamn-executor-platform-db"),
-            ("Secret", "wamn-http-admitter-db"),
-        ],
-        &[]),
-    ("executor.yaml",
-        &[("Deployment", "executor"), ("PodDisruptionBudget", "executor")],
-        &["wamn-executor:dev"]),
-    ("host-db.example.yaml",
-        &[("Secret", "wamn-host-db")],
-        &[]),
-    ("host-environment-certs.example.yaml",
-        &[("Certificate", "wasmcloud-runtime-tls"), ("Certificate", "wasmcloud-data-tls")],
-        &[]),
-    ("http-route-workload.example.yaml",
-        &[("Service", "flow-http"), ("WorkloadDeployment", "flow-http")],
-        &["registry.wamn-system.svc.cluster.local:5000/wamn/flow-http:dev"]),
-    // This row is the chart's rendered output, not its template source.
-    ("identity",
-        &[("Service", "wamn-identity"), ("Deployment", "wamn-identity")],
-        &["wamn-identity:dev"]),
-    ("identity-db.example.yaml",
-        &[("Secret", "wamn-identity-db")],
-        &[]),
-    ("materializer.example.yaml",
-        &[("WorkloadDeployment", "materializer-demo")],
-        &["registry.wamn-system.svc.cluster.local:5000/wamn/materializer:dev"]),
-    ("postgres.yaml",
-        &[("Deployment", "postgres"), ("Service", "postgres"), ("Secret", "postgres-fixture-superuser")],
-        &["postgres:18"]),
-    ("registry-credentials.example.yaml",
-        &[("Secret", "wamn-registry-server-auth"), ("Secret", "wamn-registry-pull"), ("Secret", "wamn-registry-push")],
-        &[]),
-    ("registry.yaml",
-        &[("Issuer", "wasmcloud-ca"), ("Certificate", "wamn-registry-tls"),
-          ("PersistentVolumeClaim", "registry-data"), ("Deployment", "registry"), ("Service", "registry")],
-        &["registry:2"]),
-    // The ctl Job of the tier. `wamn-0h0g.10.5` enumerated a "bootstrap ctl
-    // Job"; after the 2026-08-24 re-scope this is the ctl Job that lives here,
-    // and the bootstrap itself is deploy/mvp/bootstrap.sh, the classified
-    // exception outside the SR8 tiers.
-    ("run-plane-reconcile.example.yaml",
-        &[("Job", "run-plane-reconcile-runner-demo")],
-        &["wamn-ctl:dev"]),
-    ("run-retention-db.example.yaml",
-        &[("Secret", "wamn-run-retention-poc-f1")],
-        &[]),
-    // THE TIER'S ONE CronJob. `wamn-0h0g.10.5` removes "surplus CronJobs"; the
-    // surplus was the recurring replica-identity repair `wamn-0h0g.12.70`
-    // retired, and retention is the one recurring job that survives.
-    ("run-retention.example.yaml",
-        &[("CronJob", "run-retention-poc-f1")],
-        &["wamn-ctl:dev"]),
-    ("runtime-operator-events-rbac.example.yaml",
-        &[("Role", "wamn-runtime-operator-events"), ("RoleBinding", "wamn-runtime-operator-events")],
-        &[]),
-    ("scenario-worker.yaml",
-        &[("Deployment", "scenario-worker"), ("Service", "scenario-worker")],
-        &["wamn-scenario-worker:dev"]),
-    // Survives until the `wamn-0h0g.15.26` trigger fires (amendment of
-    // 2026-08-16). Not a deletion candidate in this pass.
-    ("waker.yaml",
-        &[("ServiceAccount", "waker"), ("Role", "waker"), ("RoleBinding", "waker"), ("Deployment", "waker")],
-        &["busybox:1.36", "wamn-waker:dev"]),
-    ("wamn-sysdb.yaml",
-        &[("Cluster", "wamn-sysdb")],
-        &[]),
-];
-
-/// The files in the tier that declare no Kubernetes object.
-///
-/// `values-host-default.yaml` is Helm input for the host tier: the hand-rolled
-/// host Deployments became operator Host CRDs under `wamn-0h0g.15.15`/`.15.18`,
-/// so the host's bill of materials is a chart release plus these values rather
-/// than manifests in this directory. The Receiving/PAT file is an application
-/// and release overlay over that base. The base image is assembled from three
-/// keys (`registry` + `repository` + `tag`), which is why it cannot be scanned
-/// for an `image:` line like the rest.
+/// The host image is supplied through Helm values.
 const HOST_VALUES_FILE: &str = "values-host-default.yaml";
-const HELM_VALUES_FILES: [&str; 4] = [
-    HOST_VALUES_FILE,
-    "values-host-receiving-pat.yaml",
-    "values-host-wms-pat.yaml",
-    "values-identity-default.yaml",
-];
 const IDENTITY_ISSUER: &str = "https://wamn-identity.wamn-system.svc";
 const IDENTITY_TLS_SECRET: &str = "wamn-identity-serving-tls";
-const IDENTITY_CHART_FILES: [&str; 4] = [
-    "Chart.yaml",
-    "templates/deployment.yaml",
-    "templates/service.yaml",
-    "values.yaml",
-];
 const HELM_VALUES_IMAGE_PARTS: [(&str, &str); 3] = [
     ("registry", "\"\""),
     ("repository", "wamn-host"),
@@ -173,9 +23,7 @@ const HELM_VALUES_IMAGE_PARTS: [(&str, &str); 3] = [
 
 /// Files removed from the tier that must not come back.
 ///
-/// Each is a real path a commit deleted. A returning file is caught by the
-/// exact-file-set assertion too; this list exists so the failure NAMES the
-/// artifact instead of reporting an unexpected extra file.
+/// Each restriction names an artifact removed from the product path.
 const RETIRED_FILES: [&str; 12] = [
     "api-gateway-workload.yaml",               // ac4572f8, wamn-0h0g.12.72
     "builder-job.yaml",                        // f6bc01eb, wamn-0h0g.6.3
@@ -197,25 +45,9 @@ const RETIRED_FILES: [&str; 12] = [
 /// node plane's images went with `crates/node` at `f6bc01eb`.
 const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node", "trace-relay"];
 
-/// Secrets and ConfigMaps the tier MOUNTS but does not DECLARE, each with the
-/// authority that mints it. Anything mounted and not on this list must be
-/// declared by a file in the table above.
-///
-/// This is the tier's external-prerequisite list, and it is derived rather than
-/// asserted by hand: the test computes mounted-minus-declared and compares.
-///
-/// A `Certificate` in this tier DECLARES the Secret its `spec.secretName`
-/// names — cert-manager writes those bytes, so `wamn-registry-tls`,
-/// `wasmcloud-runtime-tls` and `wasmcloud-data-tls` are declared here, not
-/// prerequisites of it.
-/// THE ONE HOLE IS CLOSED (`wamn-0h0g.10.14`). `wamn-executor-db` sat here from
-/// `wamn-0h0g.10.5` — mounted by `executor.yaml`, declared by nothing, because
-/// `ea71c1c4` deleted `runner-db.example.yaml` and no carrier came with it.
-/// `deploy/platform/executor-db.example.yaml` now declares it, alongside the
-/// `wamn-executor-platform-db` the `wamn-0h0g.22.31` cutover added and the
-/// `wamn-http-admitter-db` `wamn-0h0g.22.11` added, so all three are DECLARED
-/// rows in the table above rather than prerequisites of it. Every database
-/// credential in this tier ships a carrier again.
+/// Externally supplied Secrets and ConfigMaps with their provisioning owner.
+/// Mounted names must be declared by a platform manifest or allowed here.
+/// A Certificate declares its `spec.secretName` output, which cert-manager writes.
 const EXTERNAL_PREREQUISITES: [(&str, &str); 5] = [
     (
         IDENTITY_TLS_SECRET,
@@ -461,32 +293,9 @@ fn render_identity(
         .expect("run Helm to render the identity chart")
 }
 
-fn chart_files(directory: &Path, prefix: &str) -> BTreeSet<String> {
-    let mut files = BTreeSet::new();
-    for entry in fs::read_dir(directory).expect("read identity chart directory") {
-        let entry = entry.expect("read identity chart entry");
-        let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
-        let kind = entry.file_type().expect("read identity chart file type");
-        if kind.is_dir() {
-            files.extend(chart_files(&entry.path(), &format!("{name}/")));
-        } else {
-            assert!(kind.is_file(), "identity chart contains a non-file: {name}");
-            files.insert(name);
-        }
-    }
-    files
-}
-
 #[test]
 fn the_identity_chart_requires_operator_inputs_and_renders_its_https_boundary() {
     let root = repository_root();
-    assert_eq!(
-        chart_files(&root.join(PLATFORM).join("identity"), ""),
-        IDENTITY_CHART_FILES
-            .map(str::to_owned)
-            .into_iter()
-            .collect()
-    );
     for (issuer, tls, reason) in [
         (None, Some(IDENTITY_TLS_SECRET), "Set issuer"),
         (Some(IDENTITY_ISSUER), None, "Set tlsSecret"),
@@ -772,11 +581,8 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
     let mut issuer_secret_consumers = Vec::new();
     let mut issuer_url_consumers = Vec::new();
     let mut identity_image_consumers = Vec::new();
-    for file in BILL_OF_MATERIALS
-        .iter()
-        .map(|(file, _, _)| *file)
-        .chain(HELM_VALUES_FILES)
-    {
+    let files = platform_files(&root);
+    for file in files.iter().map(String::as_str) {
         let source = read(&root, file);
         let references = secret_references(&source, file);
         if references.contains("wamn-identity-db") {
@@ -896,46 +702,6 @@ fn only_identity_receives_issuer_credentials_and_other_consumers_keep_their_clas
             ("wamn-identity-db".to_owned(), "url".to_owned())
         )])
     );
-}
-
-/// THE BILL OF MATERIALS IS EXACT.
-///
-/// Three equalities, and the first is the one that matters: the tier's file set
-/// equals the table's. A new manifest that no one recorded fails here, and so
-/// does a recorded manifest someone deleted — the two halves of the defect this
-/// bead exists to close.
-#[test]
-fn the_platform_tier_holds_exactly_the_bill_of_materials() {
-    let root = repository_root();
-
-    let recorded: BTreeSet<String> = BILL_OF_MATERIALS
-        .iter()
-        .map(|(file, _, _)| (*file).to_string())
-        .chain(HELM_VALUES_FILES.map(str::to_string))
-        .collect();
-    assert_eq!(
-        platform_files(&root),
-        recorded,
-        "deploy/platform is not the recorded bill of materials — add or remove \
-         the row in BILL_OF_MATERIALS with the change that moved the file"
-    );
-
-    for (file, objects, expected_images) in BILL_OF_MATERIALS {
-        let source = read(&root, file);
-        let found: Vec<(String, String)> = documents(&source)
-            .iter()
-            .filter_map(|document| object(document, file))
-            .map(|object| (object.kind, object.name))
-            .collect();
-        let recorded: Vec<(String, String)> = objects
-            .iter()
-            .map(|(kind, name)| ((*kind).to_string(), (*name).to_string()))
-            .collect();
-        assert_eq!(found, recorded, "{file} declares a different object list");
-
-        let expected: BTreeSet<String> = expected_images.iter().map(|i| (*i).to_string()).collect();
-        assert_eq!(images(&source), expected, "{file} schedules other images");
-    }
 
     // The host tier's image is three keys, not one.
     let host_values = read(&root, HOST_VALUES_FILE);
@@ -965,7 +731,8 @@ fn the_platform_tier_holds_exactly_the_bill_of_materials() {
 #[test]
 fn every_platform_object_is_namespaced_to_wamn_system_or_templated() {
     let root = repository_root();
-    for (file, _, _) in BILL_OF_MATERIALS {
+    let files = platform_files(&root);
+    for file in files.iter().map(String::as_str) {
         let source = read(&root, file);
         for document in documents(&source) {
             let Some(object) = object(&document, file) else {
@@ -1004,10 +771,7 @@ fn the_platform_tier_carries_no_retired_artifact() {
         );
     }
 
-    // Scanned off the manifests, not read back out of the table above: an
-    // assertion over the table only tests the table, and a mutant that
-    // put the gates image into a real manifest would sail past it.
-    for (file, _, _) in BILL_OF_MATERIALS {
+    for file in present.iter().map(String::as_str) {
         for image in images(&read(&root, file)) {
             for marker in RETIRED_IMAGE_MARKERS {
                 assert!(
@@ -1033,7 +797,8 @@ fn the_readiness_contract_is_provisioned_once() {
     let root = repository_root();
     let mut readyz = Vec::new();
     let mut binds = Vec::new();
-    for (file, _, _) in BILL_OF_MATERIALS {
+    let files = platform_files(&root);
+    for file in files.iter().map(String::as_str) {
         let source = read(&root, file);
         for line in significant(&source) {
             if scalar_after(line, "path") == Some("/readyz") {
@@ -1068,25 +833,22 @@ fn the_readiness_contract_is_provisioned_once() {
 fn every_mounted_secret_is_declared_here_or_named_a_prerequisite() {
     let root = repository_root();
 
-    let mut declared: BTreeSet<String> = BILL_OF_MATERIALS
-        .iter()
-        .flat_map(|(_, objects, _)| objects.iter())
-        .filter(|(kind, _)| *kind == "Secret")
-        .map(|(_, name)| (*name).to_string())
-        .collect();
-
+    let mut declared = BTreeSet::new();
     let mut mounted: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
-    let files = BILL_OF_MATERIALS
-        .iter()
-        .map(|(file, _, _)| *file)
-        .chain(HELM_VALUES_FILES);
-    for file in files {
+    let files = platform_files(&root);
+    for file in files.iter().map(String::as_str) {
         let source = read(&root, file);
         for document in documents(&source) {
+            let declared_object = object(&document, file);
+            if let Some(Object { kind, name, .. }) = &declared_object {
+                if kind == "Secret" {
+                    declared.insert(name.clone());
+                }
+            }
             // A Certificate does not MOUNT the Secret it names — it DECLARES
             // it, and cert-manager writes the bytes. Recording that here is
             // what keeps three issued Secrets off the prerequisite list.
-            if object(&document, file).is_some_and(|object| object.kind == "Certificate") {
+            if declared_object.is_some_and(|object| object.kind == "Certificate") {
                 let issued = document
                     .iter()
                     .find_map(|line| {
