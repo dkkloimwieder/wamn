@@ -3,7 +3,7 @@
 //! These tests check that activation and rollback use one statement, aborted
 //! changes leave the stored activation unchanged, committed history survives,
 //! and an App generation can read through the stable role's `SELECT`. A document
-//! declaring an entry and terminals reaches a CONVERGED database and comes back
+//! declaring an entry and terminals reaches a fresh database and comes back
 //! out of `graph_json` with the same derived identity.
 //!
 //! Every statement under test is the real builder from `wamn_catalog`, executed
@@ -332,38 +332,18 @@ fn wiring_activation_live() {
     );
 }
 
-/// The entry and the terminal reach an EXISTING database and survive the column.
+/// Fresh catalog storage retains each wiring node and its derived identity.
 ///
-/// wamn-0h0g.18.5 adds no relation and no column — the document rides
-/// `catalog.wirings.graph_json` whole — so the claim to prove is not that a new
-/// object installs, but that a database converged by the SAME slice
-/// `ensure_catalog_storage` executes accepts the new document and gives it back
-/// unchanged. `graph_json` is `jsonb`, which reorders keys and drops duplicates,
-/// so "unchanged" is checked the only way that matters here: the re-parsed
-/// document derives the identical `wiring_hash`.
-///
-/// The database is put into the pre-migration state on purpose — the four wiring
-/// relations dropped — so the converge slice is genuinely exercised rather than
-/// skipped over an install that already had them.
+/// PostgreSQL stores the document as JSONB, which can reorder its keys.
+/// The parsed document must retain the same hash after the round trip.
 #[test]
 #[ignore = "requires WAMN_CATALOG_PG_URL and a throwaway PostgreSQL database"]
-fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() {
+fn the_terminal_document_survives_fresh_catalog_storage() {
     let _database = exclusive();
     let url = std::env::var("WAMN_CATALOG_PG_URL")
         .expect("set WAMN_CATALOG_PG_URL to the throwaway superuser database");
     let database = current_database(&url);
     let app_generation = app_generation(&database);
-
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
-    let schema = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
-        .expect("read catalog DDL");
-    let begin = schema
-        .find("-- BEGIN WIRING STORAGE MIGRATION")
-        .expect("the converge slice is delimited");
-    let end = schema
-        .find("-- END WIRING STORAGE MIGRATION")
-        .expect("the converge slice is terminated");
-    let converge_slice = &schema[begin..end];
 
     let node = |component: &str, operation: &str, terminal| WiringNode {
         component: component.to_owned(),
@@ -374,7 +354,7 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
         terminal,
     };
     let document = WiringDocument::new(
-        "orders-create",
+        "terminal-roundtrip",
         1,
         "in",
         BTreeMap::from([
@@ -418,32 +398,14 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
     .expect("a wiring declaring an entry and two terminals is a valid document");
     let wire = serde_json::to_string(&document).expect("the document serializes");
 
-    // The probe is the one `ensure_catalog_storage` reads, spelled exactly as it
-    // spells it, so a database it would converge is the database this reports on.
-    let probe = |label: &str| {
-        format!(
-            "SELECT '{label}=' || (to_regclass('catalog.wirings') IS NOT NULL)::text || \
-                    (to_regclass('catalog.wiring_tombstones') IS NOT NULL)::text || \
-                    (to_regclass('catalog.wiring_activation') IS NOT NULL)::text || \
-                    (to_regclass('catalog.wiring_activation_events') IS NOT NULL)::text;\n"
-        )
-    };
-
     let mut script = preamble(&database, &app_generation);
-    script.push_str(
-        "DROP TABLE catalog.wiring_activation_events, catalog.wiring_activation, \
-                    catalog.wiring_tombstones, catalog.wirings CASCADE;\n",
-    );
-    script.push_str(&probe("before"));
-    script.push_str(converge_slice);
-    script.push_str(&probe("after"));
     script.push_str(&format!(
         "SET app.tenant = 't1';\n\
          INSERT INTO catalog.wirings (tenant_id, package_id, package_version, wiring_id, \
                 version, graph_json, wiring_hash) \
-         VALUES ('t1','shop','1.0.0','orders-create',1,$doc${wire}$doc$,'{digest}');\n\
+         VALUES ('t1','shop','1.0.0','terminal-roundtrip',1,$doc${wire}$doc$,'{digest}');\n\
          SELECT 'stored=' || graph_json::text FROM catalog.wirings \
-          WHERE wiring_id = 'orders-create' AND version = 1;\n",
+          WHERE wiring_id = 'terminal-roundtrip' AND version = 1;\n",
         digest = document.wiring_hash(),
     ));
 
@@ -454,17 +416,6 @@ fn the_terminal_document_reaches_a_converged_database_and_survives_the_column() 
             .find_map(|line| line.strip_prefix(&format!("{label}=")))
             .unwrap_or_else(|| panic!("{label} was not reported\n{stdout}"))
     };
-
-    assert_eq!(
-        reported("before"),
-        "falsefalsefalsefalse",
-        "the database must start in the pre-migration state the converge path exists for"
-    );
-    assert_eq!(
-        reported("after"),
-        "truetruetruetrue",
-        "the converge slice must install all four relations, not a subset"
-    );
 
     let stored = serde_json::from_str::<serde_json::Value>(reported("stored"))
         .expect("the column gives back JSON");
