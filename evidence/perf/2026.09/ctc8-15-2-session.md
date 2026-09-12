@@ -101,7 +101,7 @@ The second expects six catalog SELECT grants that production removed.
 `wamn-0h0g.15.137` records both failures on untouched `86b82b86c60ea73e74be5ac2da88e18809afbbf1` during `wamn-ctc8.19`, with 17 passes and two failures.
 
 The original armed baseline logs were not located in retained evidence.
-The [retained .19 workspace log](../../../docs/operations/evidence/ctc8-19-premerge-20260907/workspace-sweep-6c3b12f8.log) self-skips those rows and does not prove that baseline.
+The [retained .19 workspace log](../../operations/ctc8-19-premerge-20260907/workspace-sweep-6c3b12f8.log) self-skips those rows and does not prove that baseline.
 The baseline attribution therefore rests on the recorded issue and matching current assertions, not an exact comparison of original logs.
 
 The [read-only summarizer](ctc8-15-2-session/summarize.sh) emits JSON for targeted and live increments and labels unfinished runs as incomplete.

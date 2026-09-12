@@ -48,4 +48,4 @@ sha256sum --check raw-files.sha256
 ```
 
 Run future proofs from a clean worktree with a new repository evidence directory.
-Use the [MEMBERSHIP-HTTP command](../../build-and-test.md#membership-http--deployed-human-membership).
+Use the [MEMBERSHIP-HTTP command](https://github.com/dkkloimwieder/wamn/blob/6c3b12f851b86c417161d07cf18b1d4ed8109aa0/docs/operations/build-and-test.md#L1187).
