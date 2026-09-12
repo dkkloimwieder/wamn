@@ -1,0 +1,16 @@
+Creating new PostgreSQL cluster 18/regress ...
+DO
+{"command": ["cargo", "+1.98.0", "test", "--locked", "--offline", "-p", "wamn-catalog", "--test", "wiring_activation_live", "--", "--ignored", "--nocapture", "--test-threads=1"], "exit_code": 101, "seconds": 0.8858322119922377, "postgres_version": "18", "cluster_configuration": "/tmp/pg_virtualenv.TANlmQ/postgresql"}
+*** /tmp/pg_virtualenv.TANlmQ/log/postgresql-18-regress.log (last 100 lines) ***
+2026-09-11 21:24:59.262 EDT [1548819] LOG:  starting PostgreSQL 18.6 (Ubuntu 18.6-1.pgdg26.04+2) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0, 64-bit
+2026-09-11 21:24:59.262 EDT [1548819] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-09-11 21:24:59.262 EDT [1548819] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2026-09-11 21:24:59.264 EDT [1548825] LOG:  database system was shut down at 2026-09-11 21:24:59 EDT
+2026-09-11 21:24:59.266 EDT [1548819] LOG:  database system is ready to accept connections
+2026-09-11 21:25:02.263 EDT [1548993] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_platform" by role "kaalin"
+2026-09-11 21:25:02.263 EDT [1548993] kaalin@postgres CONTEXT:  SQL statement "REVOKE "wamn_platform" FROM "wamn_app""
+	PL/pgSQL function inline_code_block line 1 at SQL statement
+2026-09-11 21:25:02.263 EDT [1548993] kaalin@postgres WARNING:  role "wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a" has not been granted membership in role "wamn_app" by role "kaalin"
+2026-09-11 21:25:02.330 EDT [1548995] kaalin@postgres ERROR:  permission denied for table wiring_activation
+2026-09-11 21:25:02.330 EDT [1548995] kaalin@postgres STATEMENT:  UPDATE catalog.wiring_activation SET enabled = false;
+Dropping cluster 18/regress ...

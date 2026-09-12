@@ -1,0 +1,15 @@
+{
+  "command": [
+    "pg_virtualenv",
+    "-v",
+    "18",
+    "-t",
+    "python3",
+    "-B",
+    "/tmp/consolidation-sql-wiring-live-20260912.py",
+    "promotion-live"
+  ],
+  "exit_code": 0,
+  "seconds": 3.3497810299741104,
+  "cluster_removed": true
+}

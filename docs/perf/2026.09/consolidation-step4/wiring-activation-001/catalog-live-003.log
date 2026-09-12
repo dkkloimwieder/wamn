@@ -1,0 +1,18 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:793:4
+    |
+793 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running tests/wiring_activation_live.rs (target/debug/deps/wiring_activation_live-800a77a6ce2a2671)
+
+running 2 tests
+test the_terminal_document_survives_fresh_catalog_storage ... ok
+test wiring_activation_live ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+

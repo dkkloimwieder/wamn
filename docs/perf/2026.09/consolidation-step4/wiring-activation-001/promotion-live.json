@@ -1,0 +1,21 @@
+{
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-ctl",
+    "--lib",
+    "promote::",
+    "--",
+    "--include-ignored",
+    "--nocapture",
+    "--test-threads=1"
+  ],
+  "exit_code": 0,
+  "seconds": 0.5842646259698085,
+  "postgres_version": "18",
+  "cluster_configuration": "/tmp/pg_virtualenv.6p156v/postgresql"
+}
