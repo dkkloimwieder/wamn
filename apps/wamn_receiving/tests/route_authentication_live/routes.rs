@@ -111,6 +111,22 @@ pub(super) async fn receiving_pat_journey(
     scenario_worker: &Path,
     fresh_only: bool,
 ) -> anyhow::Result<wamn_ctl::dev::environment::ProvisionedRoute> {
+    receiving_release_journey(inputs, scenario_worker, fresh_only, false).await
+}
+
+pub(super) async fn mint_receiving_release(
+    inputs: &JourneyDocument,
+    scenario_worker: &Path,
+) -> anyhow::Result<wamn_ctl::dev::environment::ProvisionedRoute> {
+    receiving_release_journey(inputs, scenario_worker, false, true).await
+}
+
+async fn receiving_release_journey(
+    inputs: &JourneyDocument,
+    scenario_worker: &Path,
+    fresh_only: bool,
+    mint_only: bool,
+) -> anyhow::Result<wamn_ctl::dev::environment::ProvisionedRoute> {
     anyhow::ensure!(
         inputs.fresh_only_packages.is_some() == fresh_only,
         "the selected journey must match its fresh-only package fixture"
@@ -229,9 +245,7 @@ pub(super) async fn receiving_pat_journey(
     verify_zero_case_gate_reports(admin.as_ref(), &gate_reports).await?;
     author_journey_wirings(inputs, &route.database_url, &system_url).await?;
     reconcile_journey_run_plane(&system_url, &route.database_url).await?;
-    let (_, release) = publish_journey_release(
-        &inputs,
-        JourneyReleaseTarget {
+    let target = JourneyReleaseTarget {
             project_url: &route.database_url,
             system_url: &system_url,
             publisher: route
@@ -245,9 +259,17 @@ pub(super) async fn receiving_pat_journey(
                 .iter()
                 .map(|package| journey_publication_root(*package, Some(inputs)).join("attachments.json"))
                 .collect(),
-        },
-    )
-    .await?;
+        };
+    if mint_only {
+        super::environment::mint_journey_release(inputs, target).await?;
+        seed_receiving_business_rows(project.as_ref()).await?;
+        let stopped = management_server.shutdown().await;
+        project_task.abort();
+        admin_task.abort();
+        stopped?;
+        return Ok(route);
+    }
+    let (_, release) = publish_journey_release(inputs, target).await?;
     let component_digests = released_component_digests(&release, &inputs.route_host)?;
     anyhow::ensure!(
         component_digests == admitted_component_digests,

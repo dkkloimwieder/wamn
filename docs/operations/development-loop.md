@@ -1,14 +1,14 @@
 # Development loop
 
-The current developer command builds and publishes components before activation.
-It requires its configured database, registry, NATS, and identity services.
-Local loading without publication and persistent service reuse remain [delivery work](../plan/delivery.md).
+The local developer loop builds components and loads them from files.
+It retains the application database during a watch session and recreates it when schema inputs change.
+Local saves do not publish components or release manifests to a registry.
 [Building](building.md) gives the required build commands.
 
 ## [WAMN-DEV-ENVIRONMENT] Developer session
 
-Build `wamn`, `wamn-host`, `wamn-scenario-worker`, and `wamn-identity` before starting a session.
-Use only disposable PostgreSQL, scheduler NATS, event NATS, registry, and telemetry services.
+Build `wamn`, `wamn-host`, `wamn-scenario-worker`, `wamn-identity`, and the flow-http component before starting a session.
+Use only disposable PostgreSQL 18, scheduler NATS, event NATS, and telemetry services.
 The system administrator URL must name `wamn_system` without a query or fragment.
 `wamn dev up` resets its control store, so shared or durable targets are unsuitable.
 
@@ -18,7 +18,13 @@ Read the current required arguments from the existing command:
 "$CARGO_TARGET_DIR/debug/wamn" dev up --help
 ```
 
-Supply an explicit environment directory, package roots, built binaries, endpoints, artifact references, and registry authentication file.
+Supply an explicit environment directory, package roots, built binaries, and service endpoints.
+For local execution, supply `--flow-http-component` with the absolute path to the built `http_route.wasm`.
+The emitted `local_artifacts` configuration names the local output directory and this component.
+Omit the component repository, release repository, registry authentication, and flow-http image arguments in this mode.
+For declared connections, pass `--local-bindings` with an absolute path to the selection file.
+The emitted configuration stores that path in `local_artifacts.bindings`.
+
 The gate listener needs a fixed, unused port rather than port zero.
 Supply event runtime credentials separately from provisioning credentials.
 Declare `--stream-replicas` and `--dup-window-secs` explicitly.
@@ -42,6 +48,89 @@ Do not copy that token into command arguments.
 The watch loop requires local Git references and a reflog.
 Make sure that `git config core.logAllRefUpdates` reports `true`.
 After changing generator code, rebuild `wamn` and restart the developer process.
+
+## Saved changes and target state
+
+The running loop holds a lease, an exclusive claim on its application database.
+A second loop or reset command cannot take that target while the lease remains active.
+The first run creates the target from the environment template.
+Reuse lasts for that watch session, not across restarts of the developer process.
+
+Rust code saves reuse the schema, database rows, and unchanged generated files.
+Cargo controls which selected components need compilation.
+Named SQL and operation contract changes refresh generation and SQLx metadata against the retained database.
+Changes to generator inputs, dependency locks, checker tools, or grants also invalidate the corresponding generated state.
+Missing or changed generated files prevent reuse.
+Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
+
+Schema inputs include migrations, package identity, model structure, and internal relations.
+When these inputs change, the loop stops the operator and host before recreating the target database.
+The new database receives a new target instance, the identity of one database creation.
+The operator clears records, revisions, cursors, drafts, and pending submissions for the previous instance.
+It does not replay interrupted mutations.
+
+For code and compatible SQL changes, the previous application remains available during candidate preparation.
+Build, Gate, and binding failures keep that application running.
+The loop replaces the host and operator only after the candidate passes preparation.
+The local Gate uses the same wiring rules as release authoring and authenticates the configured publisher.
+The runtime still enforces operation grants, connection bindings, and credentials for each database role.
+
+The local selection file contains one entry for each declared connection:
+
+```json
+[
+  {
+    "package-id": "example_app",
+    "component": "example",
+    "store-alias": "documents",
+    "instance-id": "local_documents",
+    "instance": {
+      "requirement-type": "blobstore",
+      "definition": "/absolute/path/documents.json",
+      "credential-handle": "local-documents"
+    }
+  }
+]
+```
+
+Replace the example package, component, alias, and instance with the actual declaration and target configuration.
+The optional `instance` object creates missing database records through the existing connection provisioning functions.
+It creates no external service and supplies no credential material.
+The definition file uses the existing blobstore `endpoint`, `container`, and `prefix` fields.
+The host resolves the credential handle through its normal credential source.
+
+If the instance already exists, its definition and credential handle must match exactly.
+For changed coordinates or a changed handle, select a different instance ID.
+Without the `instance` object, the selection requires an existing enabled instance and active credential generation.
+The loop watches both the selection file and its absolute definition paths.
+
+To discard the application data manually, stop the loop and reset its target:
+
+```bash
+"$CARGO_TARGET_DIR/debug/wamn" dev reset --config "$WAMN_DEV_ENV_DIR/dev.json"
+```
+
+Keep `wamn dev up` running while the loop is stopped.
+The reset command refuses an active target lease.
+Restart the loop with the same configuration after reset.
+
+## Clean correctness checks
+
+Run selected existing tests independently of the retained developer database:
+
+```bash
+"$CARGO_TARGET_DIR/debug/wamn" dev clean-check --repository "$PWD" \
+  --package wamn-client-tui --test screen \
+  --case unchanged_activation_preserves_state_but_same_schema_target_replacement_resets_everything \
+  --result "$CHANGE_RESULT"
+```
+
+Use an unused result path and replace the package, target, and case with the test that covers the change.
+For an ignored case, add `--include-ignored`.
+For a case that needs PostgreSQL, pass its declared URL variable with `--database-url-env`.
+The shared [owned PostgreSQL runner](running-tests.md#test-database-isolation) supplies a fresh database for each selected case.
+Failed, skipped, ignored, or empty test selections cannot produce a passing result.
+Local reuse and these change checks do not establish [release qualification](delivery.md#candidate-qualification).
 
 The local Receiving terminal test uses an HTTP fixture and requires its built operator:
 

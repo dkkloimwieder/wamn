@@ -12,6 +12,15 @@ use crate::connection_authority::{
     TlsPolicy, parse_http_connection_authority, resolve_http_request,
 };
 
+/// The non-secret validation subject shared by durable and local bindings.
+pub fn binding_validation_subject(
+    descriptor: &wamn_catalog::ConnectionTypeDescriptor,
+    requirement_hash: &str,
+    definition_hash: &str,
+) -> Value {
+    serde_json::json!({"requirement-type": descriptor.requirement_type, "contract": descriptor.contract, "requirement-hash": requirement_hash, "definition-hash": definition_hash})
+}
+
 /// The sole connection type supported by the initial generation validator.
 pub const HTTP_CONNECTION_TYPE: &str = "http";
 

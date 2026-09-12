@@ -13,6 +13,7 @@ pub mod author_wiring;
 pub mod bind_connection;
 #[cfg(feature = "ops")]
 pub mod copy_project_env;
+pub mod delivery;
 pub mod dev;
 pub mod dev_gate;
 #[cfg(feature = "ops")]

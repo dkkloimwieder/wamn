@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod local_delivery;
+
 pub(super) const JOURNEY_URL_ENV: &str = "WAMN_ROUTE_PG18_URL";
 pub(super) const DEV_COMMAND_TIMEOUT: Duration = Duration::from_secs(12 * 60);
 pub(super) const DEV_EXPECTED_MIGRATIONS: [(&str, &str, i32, &str); 3] = [
@@ -35,6 +37,7 @@ impl DevJourneyInputs {
         let inputs = Self {
             wamn_binary: required_journey_path("WAMN_RECEIVING_DEV_BIN")?,
             environment: DevEnvironmentInputs {
+                local_artifacts: None,
                 host_binary: required_journey_path("WAMN_RECEIVING_DEV_HOST_BIN")?,
                 nats_url: required_journey("WAMN_RECEIVING_DEV_NATS_URL")?,
                 event_nats_url: required_journey("WAMN_EVT_NATS_URL")?,

@@ -148,7 +148,7 @@ pub enum DevStageBoundary {
 /// Durability of the target a run deploys into.
 ///
 /// Provenance protects DURABLE state. A development session deploys into a
-/// database it recreates before every run and a registry it owns, so nothing it
+/// database and local candidate files it owns, so nothing it
 /// writes outlives the session and the committed-source refusal has nothing to
 /// protect. The condition is the TARGET, never the stage name: point a run at a
 /// shared environment and the same stages refuse again.
@@ -290,10 +290,14 @@ pub trait DevStageRunner {
         async { Ok(false) }
     }
 
+    /// Select the coarse pipeline boundary before checking retained outputs.
+    fn first_stage(&self, requested: DevStage) -> DevStage {
+        requested
+    }
+
     /// Prepare the target before the first stage of a run.
     ///
-    /// A runner whose target is disposable recreates it here, so every run
-    /// starts from a target that holds nothing an earlier run left behind.
+    /// A disposable runner checks its lease and recreates invalidated schema here.
     fn prepare_run(&mut self) -> impl Future<Output = Result<(), Self::Error>> + Send {
         async { Ok(()) }
     }
@@ -490,9 +494,7 @@ impl DevRunResult {
 
     /// Wall time spent preparing the target before the first stage.
     ///
-    /// It sits outside the stage timings because it is not a stage: it is what
-    /// the run pays to start from a target that holds nothing an earlier run
-    /// left behind.
+    /// Includes checking the retained lease and recreating an invalidated target.
     pub const fn prepared(&self) -> Duration {
         self.prepared
     }
@@ -593,6 +595,14 @@ where
     R: DevStageRunner + Send,
     P: DevSourceStateProvider + Send,
 {
+    if config.local_artifacts().is_some() {
+        return Ok(run_suffix_with_source_state_provider(
+            DevStage::Migrate,
+            runner,
+            source_state_provider,
+        )
+        .await);
+    }
     verification_database::run(config, |verification_database_url| async move {
         bootstrap_verification_world(config, &verification_database_url, runner).await?;
         run_suffix_with_source_state_provider(DevStage::Migrate, runner, source_state_provider)
@@ -632,6 +642,7 @@ where
     R: DevStageRunner,
     P: DevSourceStateProvider,
 {
+    let from = runner.first_stage(from);
     let first = from.position();
     runner.reset(from);
     let preparing = Instant::now();
@@ -726,6 +737,9 @@ where
     S: DevInvalidationSource + Send,
     O: DevWatchObserver + Send,
 {
+    if config.local_artifacts().is_some() {
+        return Ok(run_watch_loop(runner, source, observer).await);
+    }
     verification_database::run(config, |verification_database_url| async move {
         if let Err(error) =
             bootstrap_verification_world(config, &verification_database_url, runner).await
@@ -755,6 +769,15 @@ where
     O: DevWatchObserver + Send,
     P: DevSourceStateProvider + Send,
 {
+    if config.local_artifacts().is_some() {
+        return Ok(run_watch_loop_with_source_state_provider(
+            runner,
+            source,
+            observer,
+            source_state_provider,
+        )
+        .await);
+    }
     verification_database::run(config, |verification_database_url| async move {
         if let Err(error) =
             bootstrap_verification_world(config, &verification_database_url, runner).await

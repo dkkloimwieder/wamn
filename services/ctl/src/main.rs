@@ -4,11 +4,10 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    apply_package, author_wiring, bind_connection, enable_cdc_project_env, identity_issuer,
-    print_release_env, project_env_membership, promote, provision, provision_org,
-    provision_project_env, publish_release, push_component, push_release_manifest,
-    reconcile_package_data_access, reconcile_replica_identity, reconcile_run_plane,
-    terminalize_effect_uncertain,
+    apply_package, author_wiring, bind_connection, delivery, enable_cdc_project_env,
+    identity_issuer, print_release_env, project_env_membership, promote, provision, provision_org,
+    provision_project_env, publish_release, push_component, reconcile_package_data_access,
+    reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
 };
 
 #[derive(Parser)]
@@ -24,6 +23,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Publish only the release that passed required qualification.
+    #[command(alias = "push-release-manifest")]
+    PublishQualifiedRelease(delivery::publication::PublishArgs),
+    /// Select one published release for its environment.
+    SelectRelease(delivery::deployment::SelectArgs),
+    /// Deploy exact qualified artifacts while the selection remains current.
+    DeployRelease(delivery::deployment::DeployArgs),
+    /// Capture a minted release and exact artifact locations for qualification.
+    PrepareRelease(delivery::PrepareReleaseArgs),
+    /// Execute selected existing tests before integration.
+    CheckChanges(delivery::qualification::CheckChangesArgs),
+    /// Qualify the exact release artifacts from a clean selected revision.
+    QualifyRelease(delivery::qualification::QualifyReleaseArgs),
     /// Provision a per-project Postgres database + credential on the shared cluster (2.3)
     ProvisionProject(provision::ProvisionProjectArgs),
     /// Render a dedicated org's CNPG Cluster set (one per recovery domain, sized by env policy) + record it in the T1 registry (wamn-q3n.6 / D18)
@@ -53,8 +65,6 @@ enum Command {
     ///
     /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
     PublishRelease(publish_release::PublishReleaseArgs),
-    /// Publish canonical format-1 serving-manifest bytes as an immutable OCI artifact
-    PushReleaseManifest(push_release_manifest::PushReleaseManifestArgs),
     /// Print the release lines a pod template carries for one minted release (wamn-duyl)
     PrintReleaseEnv(print_release_env::PrintReleaseEnvArgs),
     /// Promote one verified format-1 release into a target environment
@@ -84,6 +94,12 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     match cli.command {
+        Command::PublishQualifiedRelease(args) => delivery::publication::run(args).await,
+        Command::SelectRelease(args) => delivery::deployment::select(args).await,
+        Command::DeployRelease(args) => delivery::deployment::run(args).await,
+        Command::PrepareRelease(args) => delivery::prepare(args).await,
+        Command::CheckChanges(args) => delivery::qualification::check_changes(args).await,
+        Command::QualifyRelease(args) => delivery::qualification::qualify(args).await,
         Command::ProvisionProject(args) => provision::run(args).await,
         Command::ProvisionOrg(args) => provision_org::run(args).await,
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
@@ -97,7 +113,6 @@ async fn main() -> anyhow::Result<()> {
         Command::PushComponent(args) => push_component::run(args).await,
         Command::AuthorWiring(args) => author_wiring::run(args).await,
         Command::PublishRelease(args) => publish_release::run(args).await,
-        Command::PushReleaseManifest(args) => push_release_manifest::run(args).await,
         Command::PrintReleaseEnv(args) => print_release_env::run(args).await,
         Command::Promote(args) => promote::run(args).await,
         Command::ReconcileReplicaIdentity(args) => reconcile_replica_identity::run(args).await,

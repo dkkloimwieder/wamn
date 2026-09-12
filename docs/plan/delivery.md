@@ -124,7 +124,8 @@ It needs no fixed latency threshold or synthetic 200-operation application.
 
 Finer caches, database templates, remote caches, and precise test selection require a measured problem after coarse reuse.
 Broader deterministic testing requires a named state or failure guarantee that existing tests cannot cover economically.
-The open `wamn-54b0` work retains three scoped possibilities:
+The owner retired `wamn-54b0` after its Phase 0 work closed.
+These three possibilities require a named need and a new Bead:
 
 - Supply time explicitly to time-dependent run-state SQL, identified as D2b in the earlier design.
 - Control event scheduling over real run-state SQL, identified as D2.

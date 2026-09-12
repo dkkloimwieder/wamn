@@ -2,10 +2,12 @@
 //!
 //! MVP outcome: publish gate.
 //!
-//! This crate is data only. Git, HTTP, CLI, and future visual clients adapt
+//! Git, HTTP, CLI, and future visual clients adapt
 //! the same messages to canonical application handlers. Authenticated
 //! principals, credentials, endpoints, database authority, and frontend state
 //! are deliberately absent from client-controlled documents.
+
+pub mod gate;
 
 use std::fmt;
 

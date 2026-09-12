@@ -86,20 +86,36 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_OTEL_EXPORTER_OTLP_ENDPOINT")]
     otel_exporter_otlp_endpoint: String,
 
-    #[arg(long, env = "WAMN_DEV_ENV_COMPONENT_ARTIFACT_BASE")]
+    #[arg(long, env = "WAMN_DEV_ENV_COMPONENT_ARTIFACT_BASE", default_value = "")]
     component_artifact_base: String,
 
-    #[arg(long, env = "WAMN_DEV_ENV_RELEASE_ARTIFACT_BASE")]
+    #[arg(long, env = "WAMN_DEV_ENV_RELEASE_ARTIFACT_BASE", default_value = "")]
     release_artifact_base: String,
 
-    #[arg(long, env = "WAMN_DEV_ENV_REGISTRY_AUTH_FILE")]
+    #[arg(long, env = "WAMN_DEV_ENV_REGISTRY_AUTH_FILE", default_value = "")]
     registry_auth_file: PathBuf,
 
     #[arg(long, env = "WAMN_DEV_ENV_ROUTE_HOST")]
     route_host: String,
 
-    #[arg(long, env = "WAMN_DEV_ENV_FLOW_HTTP_WORKLOAD_IMAGE")]
+    #[arg(
+        long,
+        env = "WAMN_DEV_ENV_FLOW_HTTP_WORKLOAD_IMAGE",
+        default_value = ""
+    )]
     flow_http_workload_image: String,
+
+    /// Built flow-http component for local execution without a registry.
+    #[arg(long, env = "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")]
+    flow_http_component: Option<PathBuf>,
+
+    /// Strict local requirement-to-instance selections for components with connections.
+    #[arg(
+        long,
+        env = "WAMN_DEV_ENV_LOCAL_BINDINGS",
+        requires = "flow_http_component"
+    )]
+    local_bindings: Option<PathBuf>,
 
     /// The built `wamn-host` the loop supervises.
     #[arg(long, env = "WAMN_DEV_ENV_HOST_BIN")]
@@ -140,7 +156,29 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
                 .with_context(|| format!("resolve package source {}", package.display()))?,
         );
     }
+    let local_artifacts = args
+        .flow_http_component
+        .as_ref()
+        .map(|path| {
+            Ok::<_, anyhow::Error>(super::config::LocalArtifacts {
+                directory: args.root.canonicalize()?.join("local-artifacts"),
+                bindings: args
+                    .local_bindings
+                    .as_ref()
+                    .map(|path| path.canonicalize())
+                    .transpose()?,
+                flow_http_component: path.canonicalize().with_context(|| {
+                    format!("resolve local flow-http component {}", path.display())
+                })?,
+            })
+        })
+        .transpose()?;
+    anyhow::ensure!(
+        local_artifacts.is_some() || !args.flow_http_workload_image.is_empty(),
+        "supply --flow-http-component for local execution, or an explicit --flow-http-workload-image"
+    );
     let inputs = DevEnvironmentInputs {
+        local_artifacts,
         host_binary: args.host_binary,
         nats_url: args.nats_url,
         event_nats_url: args.event_nats_url,

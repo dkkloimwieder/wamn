@@ -487,10 +487,10 @@ pub(super) struct JourneyReleaseTarget<'a> {
     pub(super) attachments: Vec<PathBuf>,
 }
 
-pub(super) async fn publish_journey_release(
+pub(super) async fn mint_journey_release(
     inputs: &JourneyDocument,
     target: JourneyReleaseTarget<'_>,
-) -> anyhow::Result<(String, Arc<LoadedRelease>)> {
+) -> anyhow::Result<String> {
     let JourneyReleaseTarget {
         project_url,
         system_url,
@@ -556,6 +556,26 @@ pub(super) async fn publish_journey_release(
         .await
         .context("read the production-minted release digest")?
         .get(0);
+    if let Some(candidate) = wamn_ctl::delivery::Candidate::from_env()? {
+        let bytes: Vec<u8> = project.query_one(
+            "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
+            &[&TENANT, &(release_id as i32)],
+        ).await?.get(0);
+        let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+        candidate.assert_manifest(&manifest)?;
+    }
+    Ok(digest)
+}
+
+pub(super) async fn publish_journey_release(
+    inputs: &JourneyDocument,
+    target: JourneyReleaseTarget<'_>,
+) -> anyhow::Result<(String, Arc<LoadedRelease>)> {
+    let project_url = target.project_url;
+    let system_url = target.system_url;
+    let control = target.control;
+    let release_id = target.release_id;
+    let digest = mint_journey_release(inputs, target).await?;
     push_release_manifest::run(PushReleaseManifestArgs {
         database_url: project_url.to_owned(),
         org: ORG.to_owned(),

@@ -6,4 +6,5 @@ These pages contain current commands and their prerequisites. Start with the dev
 - [building.md](building.md): pinned toolchains, native programs, guests, and artifact comparisons.
 - [running-tests.md](running-tests.md): test selection, database isolation, generation, results, and cleanup.
 - [cluster-tests.md](cluster-tests.md): disposable Receiving, WMS, and native cluster runs.
-- [deployment.md](deployment.md): qualify, publish, select a release, and activate it.
+- [deployment.md](deployment.md): provisioning, release carriers, and deployed environments.
+- [delivery.md](delivery.md): repository change checks, qualification, publication, selection, and deployment.

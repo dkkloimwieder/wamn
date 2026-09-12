@@ -23,58 +23,85 @@ pub(super) async fn components_and_tools(
     evidence: &Path,
     standard_images: bool,
 ) -> anyhow::Result<Artifacts> {
-    let target = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .map(|path| {
-            if path.is_absolute() {
-                path
-            } else {
-                repository.join(path)
-            }
+    let candidate = wamn_ctl::delivery::Candidate::from_env()?;
+    let target = candidate
+        .as_ref()
+        .map(|candidate| candidate.target_directory.clone())
+        .or_else(|| {
+            std::env::var_os("CARGO_TARGET_DIR")
+                .map(PathBuf::from)
+                .map(|path| {
+                    if path.is_absolute() {
+                        path
+                    } else {
+                        repository.join(path)
+                    }
+                })
         })
         .unwrap_or_else(|| repository.join("target"));
-    let mut guests = Command::new(repository.join("tools/build-components"));
-    guests.arg("all");
-    run_build(
-        &mut guests,
-        repository,
-        &target,
-        &evidence.join("build-components.log"),
-    )
-    .await?;
-    if !standard_images {
-        let mut host = Command::new("cargo");
-        host.args(["build", "--locked", "--release", "-p", "wamn-host"]);
+    if candidate.is_none() {
+        let mut guests = Command::new(repository.join("tools/build-components"));
+        guests.arg("all");
         run_build(
-            &mut host,
+            &mut guests,
             repository,
             &target,
-            &evidence.join("build-host.log"),
+            &evidence.join("build-components.log"),
         )
         .await?;
+        if !standard_images {
+            let mut host = Command::new("cargo");
+            host.args(["build", "--locked", "--release", "-p", "wamn-host"]);
+            run_build(
+                &mut host,
+                repository,
+                &target,
+                &evidence.join("build-host.log"),
+            )
+            .await?;
+        }
+        let mut tools = Command::new("cargo");
+        tools.args([
+            "build",
+            "--locked",
+            "-p",
+            "wamn-ctl",
+            "-p",
+            "wamn-identity",
+            "-p",
+            "wamn-cdc-reader",
+            "-p",
+            "wamn-scenario-worker",
+            "-p",
+            "wamn-executor",
+        ]);
+        run_build(
+            &mut tools,
+            repository,
+            &target,
+            &evidence.join("build-native-tools.log"),
+        )
+        .await?;
+    } else {
+        for name in [
+            "wamn-ctl",
+            "wamn-identity",
+            "wamn-cdc-reader",
+            "wamn-scenario-worker",
+            "wamn-run-worker",
+        ] {
+            let path = target.join("debug").join(name);
+            let metadata = fs::metadata(&path)
+                .with_context(|| format!("read supplied helper {}", path.display()))?;
+            ensure!(
+                metadata.is_file()
+                    && metadata.len() > 0
+                    && metadata.permissions().mode() & 0o111 != 0,
+                "the supplied helper is not an executable file: {}",
+                path.display()
+            );
+        }
     }
-    let mut tools = Command::new("cargo");
-    tools.args([
-        "build",
-        "--locked",
-        "-p",
-        "wamn-ctl",
-        "-p",
-        "wamn-identity",
-        "-p",
-        "wamn-cdc-reader",
-        "-p",
-        "wamn-scenario-worker",
-        "-p",
-        "wamn-executor",
-    ]);
-    run_build(
-        &mut tools,
-        repository,
-        &target,
-        &evidence.join("build-native-tools.log"),
-    )
-    .await?;
     let artifacts = Artifacts {
         components: target.join("virtualized/std-empty-environment"),
         http: target.join("wasm32-wasip2/release/http_route.wasm"),

@@ -1,43 +1,12 @@
-//! Fresh, run-scoped PostgreSQL target database for the development loop.
+//! Exclusive ownership and explicit recreation of disposable development targets.
 //!
-//! The loop drops and recreates the target database before every Apply. That is
-//! what makes a development run reproducible from saved bytes: a package that
-//! applied once cannot leave a fact behind that the next run has to argue with.
-//! It is also what removes the reason for the committed-source refusal in a
-//! development session, because nothing this database holds is durable.
-//!
-//! WHY THIS IS NOT THE VERIFICATION LIFECYCLE WITH A RENAME. A verification
-//! database is usable the moment it exists. A target database is not. Apply
-//! needs the environment the standup built, and a drop takes all of it: the
-//! platform floor, the run plane and the workload grants.
-//!
-//! SO THE RUN DOES NOT REBUILD IT, IT CLONES IT. `wamn dev up` leaves a pristine
-//! TEMPLATE database behind, and a run is `CREATE DATABASE target TEMPLATE
-//! <name>`. Freshness is then a property of the copy rather than of a replay
-//! this module got right, and there is no second provisioning path to drift
-//! from the first.
-//!
-//! THE ONE THING A CLONE DOES NOT CARRY is the ACL of the database itself.
-//! `CREATE DATABASE` copies every object and every object-level privilege, and
-//! no database-level grant. So ownership, the PUBLIC revoke and the workload
-//! CONNECT grants are re-issued from SQL `wamn dev up` captured off the healthy
-//! database. Captured, never derived: a set this module computed would be its
-//! opinion of what the standup granted rather than what it granted.
-//!
-//! THE DATABASE KEEPS ITS NAME. The environment row in the system database
-//! points at one database name, so recreating under the same name keeps the
-//! durable registry honest and stops a watch session from minting a row per
-//! save.
-//!
-//! THERE IS NO TRAILING DROP, and that is deliberate. The run's product is a
-//! served release, and `--hold` keeps serving it after the loop returns.
-//! Dropping at the end of the run would destroy what the run just produced. The
-//! next run's leading drop is what removes it, so a crash leaves one corpse and
-//! the run after it clears the corpse.
+//! Local watch sessions retain the target until schema inputs change. Recreation
+//! clones the stamped template and restores its captured database ACL. The lease
+//! prevents another session or reset command from replacing a serving target.
 
 use std::error::Error;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
@@ -49,6 +18,33 @@ use super::config::{DevConfig, POSTGRES_SYSTEM_DATABASES};
 const MAINTENANCE_DATABASE: &str = "postgres";
 const STALE_STANDUP_REMEDY: &str =
     "run wamn dev up to provision the environment and emit its privilege SQL";
+
+/// Explicit reset of the disposable target named by the development config.
+#[derive(Debug, clap::Args)]
+pub struct DevResetArgs {
+    #[arg(long, value_name = "FILE")]
+    config: PathBuf,
+}
+
+/// Rotate an idle owned target and its environment instance together.
+#[cfg(target_os = "linux")]
+pub async fn reset(args: DevResetArgs) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+
+    let bytes = std::fs::read(&args.config).context("read development reset configuration")?;
+    let config =
+        super::config::parse_config(&bytes).context("validate development reset configuration")?;
+    let lease = acquire(&config).await?;
+    let instance = lease.recreate(&config).await?;
+    super::coordinator::claim_environment_instance(
+        config.system_database_url(),
+        &config.activation_identity().tenant,
+        &instance,
+    )
+    .await?;
+    println!("reset target-instance={instance}");
+    Ok(())
+}
 
 /// Stable category of a target-database lifecycle failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -229,23 +225,172 @@ fn read_database_acl(path: &Path) -> Result<String, TargetDatabaseError> {
     })
 }
 
-/// Drop the target database and clone it back from the pristine template.
-///
-/// Every statement is issued on a maintenance connection to `postgres`, because
-/// a session connected to the target cannot drop it, and `CREATE DATABASE`
-/// cannot run inside the database it creates.
-pub async fn recreate(config: &DevConfig) -> Result<String, TargetDatabaseError> {
-    let spec = TargetSpec::from_config(config)?;
-    let template =
-        Identifier::new(config.target_template_database().to_owned()).map_err(|source| {
+/// Exact target SQL captured before candidate cutover.
+#[derive(Debug)]
+pub(crate) struct PreparedConfiguration {
+    database: Identifier,
+    privileges: String,
+    acl: String,
+}
+
+pub(crate) fn prepare_configuration(config: &DevConfig) -> anyhow::Result<PreparedConfiguration> {
+    use anyhow::Context as _;
+    Ok(PreparedConfiguration {
+        database: TargetSpec::from_config(config)?.database,
+        privileges: std::fs::read_to_string(config.target_privileges_file())
+            .context("read emitted target privileges")?,
+        acl: read_database_acl(config.target_database_acl_file())?,
+    })
+}
+
+/// Exclusive ownership held while a development session can serve this target.
+pub struct TargetLease {
+    client: Client,
+    spec: TargetSpec,
+    connection: tokio::task::JoinHandle<()>,
+}
+
+impl fmt::Debug for TargetLease {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TargetLease")
+            .field("database", &self.spec.database.as_str())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for TargetLease {
+    fn drop(&mut self) {
+        // Closing this connection releases PostgreSQL's session advisory lock.
+        self.connection.abort();
+    }
+}
+
+impl TargetLease {
+    /// Verify the retained maintenance connection before serving another candidate.
+    pub async fn check(&self) -> Result<(), TargetDatabaseError> {
+        self.client
+            .simple_query("SELECT 1")
+            .await
+            .map_err(|source| {
+                TargetDatabaseError::new(
+                    TargetDatabaseErrorKind::LeaseFailed,
+                    "restart the development session after its exclusive target lease was lost",
+                )
+                .with_source(source)
+            })?;
+        Ok(())
+    }
+
+    /// Validate or converge captured database privileges without retaining obsolete grants.
+    pub(crate) async fn reconcile_configuration(
+        &self,
+        prepared: &PreparedConfiguration,
+        apply: bool,
+    ) -> anyhow::Result<()> {
+        use anyhow::Context as _;
+        self.check().await?;
+        anyhow::ensure!(
+            prepared.database == self.spec.database,
+            "prepared privileges name another local target"
+        );
+        self.client.batch_execute("BEGIN").await?;
+        let result = async {
+            let rows = self.client.query(
+                "SELECT DISTINCT grant_row.grantee, pg_catalog.pg_get_userbyid(grant_row.grantee)::text
+                 FROM pg_catalog.pg_database AS database,
+                      LATERAL pg_catalog.aclexplode(COALESCE(database.datacl, pg_catalog.acldefault('d', database.datdba))) AS grant_row
+                 WHERE database.datname = $1", &[&self.spec.database.as_str()],
+            ).await?;
+            for row in rows {
+                let grantee: u32 = row.get(0);
+                let role = if grantee == 0 { "PUBLIC".to_owned() } else { Identifier::new(row.get::<_, String>(1))?.quoted() };
+                self.client.batch_execute(&format!("REVOKE ALL ON DATABASE {} FROM {role}", self.spec.database.quoted())).await?;
+            }
+            self.client.batch_execute(&prepared.privileges).await?;
+            self.client.batch_execute(&prepared.acl).await?;
+            Ok::<_, anyhow::Error>(())
+        }.await;
+        match result {
+            Ok(()) => {
+                self.client
+                    .batch_execute(if apply { "COMMIT" } else { "ROLLBACK" })
+                    .await?
+            }
+            Err(error) => {
+                self.client
+                    .batch_execute("ROLLBACK")
+                    .await
+                    .context("roll back target privilege validation")?;
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    /// Recreate only the target named by this still-held lease.
+    pub async fn recreate(&self, config: &DevConfig) -> Result<String, TargetDatabaseError> {
+        let selected = TargetSpec::from_config(config)?;
+        if selected.database != self.spec.database {
+            return Err(TargetDatabaseError::new(
+                TargetDatabaseErrorKind::InvalidConfiguration,
+                "the target configuration must name the database held by this session",
+            ));
+        }
+        self.check().await?;
+        let template =
+            Identifier::new(config.target_template_database().to_owned()).map_err(|source| {
+                TargetDatabaseError::new(
+                    TargetDatabaseErrorKind::InvalidConfiguration,
+                    "set target_template_database to a database name PostgreSQL can quote",
+                )
+                .with_source(source)
+            })?;
+        let acl = read_database_acl(config.target_database_acl_file())?;
+        let system_database = database_name(config.system_database_url()).ok_or_else(|| {
             TargetDatabaseError::new(
                 TargetDatabaseErrorKind::InvalidConfiguration,
-                "set target_template_database to a database name PostgreSQL can quote",
+                "set system_database_url to a PostgreSQL URL with an explicit database",
             )
-            .with_source(source)
         })?;
-    let acl = read_database_acl(config.target_database_acl_file())?;
+        let fingerprint = template_fingerprint(
+            self.spec.database.as_str(),
+            &system_database,
+            config.activation_identity(),
+        );
+        let instance =
+            replace_database(&self.client, &self.spec, &template, &fingerprint, &acl).await?;
+        if config.local_artifacts().is_some() {
+            let identity = config.activation_identity();
+            let marker = wamn_runtime::local_application::local_target_marker(
+                &identity.tenant,
+                &identity.environment,
+                instance
+                    .parse()
+                    .expect("database instance is a PostgreSQL oid"),
+            );
+            self.client
+                .batch_execute(&format!(
+                    "COMMENT ON DATABASE {} IS '{}'",
+                    self.spec.database.quoted(),
+                    marker,
+                ))
+                .await
+                .map_err(|source| {
+                    TargetDatabaseError::new(
+                        TargetDatabaseErrorKind::CreateFailed,
+                        "stamp the owned local target before serving the application",
+                    )
+                    .with_source(source)
+                })?;
+        }
+        Ok(instance)
+    }
+}
 
+/// Refuse concurrent sessions or reset commands before any target mutation.
+pub async fn acquire(config: &DevConfig) -> Result<TargetLease, TargetDatabaseError> {
+    let spec = TargetSpec::from_config(config)?;
     let (client, connection) = spec.maintenance.connect(NoTls).await.map_err(|source| {
         TargetDatabaseError::new(
             TargetDatabaseErrorKind::InvalidConfiguration,
@@ -253,83 +398,34 @@ pub async fn recreate(config: &DevConfig) -> Result<String, TargetDatabaseError>
         )
         .with_source(source)
     })?;
-    let handle = tokio::spawn(async move {
+    let connection = tokio::spawn(async move {
         let _ = connection.await;
     });
-
-    let system_database = database_name(config.system_database_url()).ok_or_else(|| {
-        TargetDatabaseError::new(
-            TargetDatabaseErrorKind::InvalidConfiguration,
-            "set system_database_url to a PostgreSQL URL with an explicit database",
-        )
-    })?;
-    let fingerprint = template_fingerprint(
-        spec.database.as_str(),
-        &system_database,
-        config.activation_identity(),
-    );
-
-    let result = recreate_with_client(&client, &spec, &template, &fingerprint, &acl).await;
-    drop(client);
-    handle.abort();
-    result
-}
-
-async fn recreate_with_client(
-    client: &Client,
-    spec: &TargetSpec,
-    template: &Identifier,
-    fingerprint: &str,
-    acl: &str,
-) -> Result<String, TargetDatabaseError> {
-    // The lease is session-scoped and keyed by the database name, so two dev
-    // loops pointed at one target refuse rather than drop each other's database
-    // mid-run.
-    let acquired: bool = client
-        .query_one(
-            "SELECT pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended($1, 0))",
-            &[&spec.database.as_str()],
-        )
-        .await
-        .map(|row| row.get(0))
-        .map_err(|source| {
-            TargetDatabaseError::new(
-                TargetDatabaseErrorKind::LeaseFailed,
-                "ensure the target credential can acquire session advisory locks on the postgres maintenance database",
-            )
+    let lease = TargetLease {
+        client,
+        spec,
+        connection,
+    };
+    let acquired: bool = lease.client.query_one(
+        "SELECT pg_catalog.pg_try_advisory_lock(pg_catalog.hashtextextended($1, 0))",
+        &[&lease.spec.database.as_str()],
+    ).await.map(|row| row.get(0)).map_err(|source| {
+        TargetDatabaseError::new(TargetDatabaseErrorKind::LeaseFailed,
+            "ensure the target credential can acquire session advisory locks on the postgres maintenance database")
             .with_source(source)
-        })?;
+    })?;
     if !acquired {
         return Err(TargetDatabaseError::new(
             TargetDatabaseErrorKind::LeaseUnavailable,
-            "wait for the active wamn dev run using this target database to finish",
+            "stop the active wamn dev session before resetting or reusing this target",
         ));
     }
+    Ok(lease)
+}
 
-    let outcome = replace_database(client, spec, template, fingerprint, acl).await;
-
-    let released: bool = client
-        .query_one(
-            "SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtextextended($1, 0))",
-            &[&spec.database.as_str()],
-        )
-        .await
-        .map(|row| row.get(0))
-        .map_err(|source| {
-            TargetDatabaseError::new(
-                TargetDatabaseErrorKind::LeaseFailed,
-                "ensure the target credential keeps its maintenance session through the recreate",
-            )
-            .with_source(source)
-        })?;
-    let instance = outcome?;
-    if !released {
-        return Err(TargetDatabaseError::new(
-            TargetDatabaseErrorKind::LeaseFailed,
-            "ensure the target credential keeps its maintenance session through the recreate",
-        ));
-    }
-    Ok(instance)
+/// Reset an idle owned target, refusing a target held by a serving session.
+pub async fn recreate(config: &DevConfig) -> Result<String, TargetDatabaseError> {
+    acquire(config).await?.recreate(config).await
 }
 
 /// Returns the INSTANCE identity of the database this call created.
@@ -445,4 +541,282 @@ async fn replace_database(
             .with_source(source)
         })?;
     Ok(instance.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    #[ignore = "starts an owned disposable PostgreSQL 18 server"]
+    async fn local_lease_retains_data_and_reset_reapplies_exact_configuration() -> anyhow::Result<()>
+    {
+        let mut server = wamn_test_infrastructure::postgres::start()?;
+        let admin_database = server.database("postgres")?;
+        let template_database = server.create_database("target_template")?;
+        let target_database = server.create_database("target")?;
+        let directory =
+            std::env::temp_dir().join(format!("wamn-local-target-test-{}", std::process::id()));
+        std::fs::create_dir(&directory)?;
+        let privileges = directory.join("privileges.sql");
+        let acl = directory.join("database-acl.sql");
+        std::fs::write(&privileges, "REVOKE ALL ON DATABASE target FROM PUBLIC;")?;
+        std::fs::write(&acl, "GRANT CONNECT ON DATABASE target TO fixture_reader;")?;
+        let endpoint: std::net::SocketAddr =
+            url::Url::parse(admin_database.url())?.socket_addrs(|| None)?[0];
+        let mut document = crate::dev::config::tests::complete_document(&[endpoint; 16]);
+        document["target_database_url"] = json!(target_database.url());
+        document["target_template_database"] = json!("target_template");
+        document["target_privileges_file"] = json!(privileges);
+        document["target_database_acl_file"] = json!(acl);
+        document["local_artifacts"] =
+            json!({"directory": directory, "flow_http_component": directory.join("http.wasm")});
+        let config = super::super::config::parse_config(&serde_json::to_vec(&document)?)?;
+        let (admin, admin_driver) = tokio_postgres::connect(admin_database.url(), NoTls).await?;
+        let admin_driver = tokio::spawn(admin_driver);
+        admin.batch_execute("CREATE ROLE wamn_app; CREATE ROLE wamn_scenario_author; CREATE ROLE fixture_reader;").await?;
+        let fingerprint = template_fingerprint("target", "system", config.activation_identity());
+        admin
+            .batch_execute(&format!(
+                "COMMENT ON DATABASE \"target_template\" IS '{fingerprint}'"
+            ))
+            .await?;
+        let (template, driver) = tokio_postgres::connect(template_database.url(), NoTls).await?;
+        let driver = tokio::spawn(driver);
+        template
+            .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
+            .await?;
+        template
+            .batch_execute("CREATE TABLE saved_data(value text);")
+            .await?;
+        drop(template);
+        driver.await??;
+
+        let lease = acquire(&config).await?;
+        assert_eq!(
+            acquire(&config).await.unwrap_err().kind(),
+            TargetDatabaseErrorKind::LeaseUnavailable
+        );
+        let first = lease.recreate(&config).await?;
+        let identity = config.activation_identity();
+        wamn_runtime::local_application::require_local_target(
+            target_database.url(),
+            &identity.tenant,
+            &identity.environment,
+        )
+        .await?;
+        assert!(
+            wamn_runtime::local_application::require_local_target(
+                target_database.url(),
+                "another-tenant",
+                &identity.environment
+            )
+            .await
+            .is_err()
+        );
+        let (target, driver) = tokio_postgres::connect(target_database.url(), NoTls).await?;
+        let driver = tokio::spawn(driver);
+        target
+            .batch_execute("INSERT INTO saved_data VALUES ('retained');")
+            .await?;
+        lease.check().await?;
+        assert_eq!(
+            target
+                .query_one("SELECT value FROM saved_data", &[])
+                .await?
+                .get::<_, String>(0),
+            "retained"
+        );
+        assert_eq!(
+            recreate(&config).await.unwrap_err().kind(),
+            TargetDatabaseErrorKind::LeaseUnavailable
+        );
+        std::fs::write(&acl, "REVOKE ALL ON DATABASE target FROM PUBLIC;")?;
+        let prepared_configuration = prepare_configuration(&config)?;
+        lease
+            .reconcile_configuration(&prepared_configuration, false)
+            .await?;
+        assert!(
+            admin
+                .query_one(
+                    "SELECT has_database_privilege('fixture_reader', 'target', 'CONNECT')",
+                    &[]
+                )
+                .await?
+                .get::<_, bool>(0)
+        );
+        std::fs::remove_file(&privileges)?;
+        std::fs::write(&acl, "GRANT ALL ON DATABASE target TO PUBLIC;")?;
+        lease
+            .reconcile_configuration(&prepared_configuration, true)
+            .await?;
+        std::fs::write(&privileges, "REVOKE ALL ON DATABASE target FROM PUBLIC;")?;
+        assert!(
+            !admin
+                .query_one(
+                    "SELECT has_database_privilege('fixture_reader', 'target', 'CONNECT')",
+                    &[]
+                )
+                .await?
+                .get::<_, bool>(0)
+        );
+        std::fs::write(&acl, "this is invalid SQL;")?;
+        assert!(
+            lease
+                .reconcile_configuration(&prepare_configuration(&config)?, false)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            target
+                .query_one("SELECT count(*) FROM saved_data", &[])
+                .await?
+                .get::<_, i64>(0),
+            1
+        );
+        std::fs::write(&acl, "REVOKE ALL ON DATABASE target FROM PUBLIC;")?;
+
+        let definition = directory.join("connection.json");
+        std::fs::write(
+            &definition,
+            r#"{"endpoint":"https://objects.invalid","container":"fixture","prefix":"local/"}"#,
+        )?;
+        let mut input = crate::bind_connection::LocalInstanceInput {
+            requirement_type: crate::bind_connection::RequirementType::Blobstore,
+            definition,
+            credential_handle: "fixture-vault-handle".to_owned(),
+        };
+        let prepared_instance = crate::bind_connection::read_local_instance(&input)?;
+        let requirement = wamn_catalog::ComponentConnectionRequirement::new(
+            &format!("sha256:{}", "7".repeat(64)),
+            "objects",
+            wamn_catalog::ConnectionTypeDescriptor::blobstore_v1(),
+        );
+        target.batch_execute("BEGIN").await?;
+        crate::bind_connection::prepare_local_instance(
+            &target,
+            &identity.tenant,
+            &identity.environment,
+            "objects-a",
+            &prepared_instance,
+        )
+        .await?;
+        let selected = wamn_runtime::local_application::read_local_binding(
+            &target,
+            &identity.tenant,
+            &identity.environment,
+            &requirement,
+            "objects-a",
+        )
+        .await?;
+        target.batch_execute("ROLLBACK").await?;
+        assert!(
+            wamn_runtime::local_application::read_local_binding(
+                &target,
+                &identity.tenant,
+                &identity.environment,
+                &requirement,
+                "objects-a"
+            )
+            .await
+            .is_err()
+        );
+        let definition_bytes = std::fs::read(&input.definition)?;
+        std::fs::remove_file(&input.definition)?;
+        assert!(crate::bind_connection::read_local_instance(&input).is_err());
+        target.batch_execute("BEGIN").await?;
+        crate::bind_connection::prepare_local_instance(
+            &target,
+            &identity.tenant,
+            &identity.environment,
+            "objects-a",
+            &prepared_instance,
+        )
+        .await?;
+        target.batch_execute("COMMIT").await?;
+        crate::bind_connection::prepare_local_instance(
+            &target,
+            &identity.tenant,
+            &identity.environment,
+            "objects-a",
+            &prepared_instance,
+        )
+        .await?;
+        assert_eq!(
+            selected,
+            wamn_runtime::local_application::read_local_binding(
+                &target,
+                &identity.tenant,
+                &identity.environment,
+                &requirement,
+                "objects-a"
+            )
+            .await?
+        );
+        std::fs::write(&input.definition, definition_bytes)?;
+        input.credential_handle = "changed-handle".to_owned();
+        assert!(
+            crate::bind_connection::prepare_local_instance(
+                &target,
+                &identity.tenant,
+                &identity.environment,
+                "objects-a",
+                &crate::bind_connection::read_local_instance(&input)?
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(
+            selected,
+            wamn_runtime::local_application::read_local_binding(
+                &target,
+                &identity.tenant,
+                &identity.environment,
+                &requirement,
+                "objects-a"
+            )
+            .await?
+        );
+        drop(target);
+        driver.await??;
+
+        let second = lease.recreate(&config).await?;
+        assert_ne!(first, second);
+        let (target, driver) = tokio_postgres::connect(target_database.url(), NoTls).await?;
+        let driver = tokio::spawn(driver);
+        assert_eq!(
+            target
+                .query_one("SELECT count(*) FROM saved_data", &[])
+                .await?
+                .get::<_, i64>(0),
+            0
+        );
+        target.batch_execute("BEGIN").await?;
+        crate::bind_connection::prepare_local_instance(
+            &target,
+            &identity.tenant,
+            &identity.environment,
+            "objects-a",
+            &prepared_instance,
+        )
+        .await?;
+        target.batch_execute("COMMIT").await?;
+        wamn_runtime::local_application::read_local_binding(
+            &target,
+            &identity.tenant,
+            &identity.environment,
+            &requirement,
+            "objects-a",
+        )
+        .await?;
+        drop(target);
+        driver.await??;
+        drop(lease);
+        drop(admin);
+        admin_driver.await??;
+        std::fs::remove_dir_all(directory)?;
+        server.stop()?;
+        Ok(())
+    }
 }

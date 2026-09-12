@@ -5545,6 +5545,8 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "wamn-catalog",
+ "wamn-execution-contract",
 ]
 
 [[package]]
@@ -6371,6 +6373,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "tokio",
+ "tokio-postgres",
  "url",
  "wamn-authoring-model",
  "wamn-catalog",
@@ -6407,7 +6410,9 @@ dependencies = [
  "pg_walstream",
  "reqwest",
  "ring",
+ "serde",
  "serde_json",
+ "serde_yaml",
  "sha2 0.11.0",
  "tokio",
  "tokio-postgres",

@@ -41,6 +41,7 @@ fn dev_up_names_the_scenario_worker_binary_and_its_fixed_port() {
         "--system-database-url",
         "--root",
         "--package",
+        "--flow-http-component",
     ] {
         assert!(help.contains(input), "dev up help omitted {input}");
     }

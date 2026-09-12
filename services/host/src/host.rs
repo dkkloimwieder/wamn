@@ -14,9 +14,9 @@ use opentelemetry::global;
 use tokio_postgres::NoTls;
 use wash_runtime::engine::WasmProposal;
 use wash_runtime::engine::host_memory::HostMemoryBudgets;
-use wash_runtime::host::HostConfig;
 use wash_runtime::host::http::{ConnectionLimit, Ingress};
 use wash_runtime::host::probes::{self, Liveness, ProbeState};
+use wash_runtime::host::{HostApi as _, HostConfig};
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
@@ -232,6 +232,20 @@ pub struct HostArgs {
         requires = "release_artifact_base"
     )]
     pub release_manifest_digest: Option<String>,
+
+    /// Explicit unpublished application directory for an owned local session.
+    #[arg(long, requires_all = ["local_application_digest", "local_admission_digest"], conflicts_with_all = [
+        "release_artifact_base", "release_manifest_digest", "component_artifact_base", "registry_auth_file"
+    ])]
+    pub local_application: Option<PathBuf>,
+
+    /// Exact canonical manifest digest selected for the local application.
+    #[arg(long, requires = "local_application")]
+    pub local_application_digest: Option<String>,
+
+    /// Exact digest of the coordinator's validated local admission bytes.
+    #[arg(long, requires = "local_application")]
+    pub local_admission_digest: Option<String>,
 
     /// Maximum resolved wirings retained by the one production router driver.
     #[arg(
@@ -547,20 +561,49 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     //
     // It also runs after the CA install above, which is why the release pull can
     // reach a registry behind the chart's own CA.
-    let release = load_release(
-        args.release_artifact_base.as_deref(),
-        args.release_manifest_digest.as_deref(),
-        args.allow_insecure_registries,
-        args.registry_auth_file.as_deref(),
-        &args.oci_ca_paths,
-    )
-    .await?;
+    let release = if let Some(directory) = args.local_application.as_deref() {
+        let loaded = LoadedRelease::load_from(directory)?;
+        anyhow::ensure!(
+            Some(loaded.release().manifest_digest.as_str())
+                == args.local_application_digest.as_deref(),
+            "local application manifest digest does not match the selected candidate"
+        );
+        wamn_runtime::local_application::load_local_facts(
+            directory,
+            loaded.manifest(),
+            args.local_admission_digest
+                .as_deref()
+                .context("local admission digest is required")?,
+        )?;
+        let target_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")
+            .context("local application requires WAMN_EXECUTOR_PLATFORM_PG_URL")?;
+        wamn_runtime::local_application::require_local_target(
+            &target_url,
+            &loaded.manifest().release.tenant_id,
+            &loaded.manifest().release.environment,
+        )
+        .await?;
+        Some(Arc::new(loaded))
+    } else {
+        load_release(
+            args.release_artifact_base.as_deref(),
+            args.release_manifest_digest.as_deref(),
+            args.allow_insecure_registries,
+            args.registry_auth_file.as_deref(),
+            &args.oci_ca_paths,
+        )
+        .await?
+    };
+    let local_workload = match args.local_application.as_deref() {
+        Some(directory) => Some(load_local_workload(directory).await?),
+        None => None,
+    };
     let pat_routes = release
         .as_ref()
         .is_some_and(|loaded_release| requires_pat_route_authentication(loaded_release.manifest()));
-    let session_routes = release
-        .as_ref()
-        .is_some_and(|loaded_release| requires_session_route_authentication(loaded_release.manifest()));
+    let session_routes = release.as_ref().is_some_and(|loaded_release| {
+        requires_session_route_authentication(loaded_release.manifest())
+    });
     let http_admitter_url = std::env::var("WAMN_HTTP_ADMITTER_PG_URL")
         .ok()
         .filter(|url| !url.is_empty());
@@ -720,32 +763,49 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     } else {
         None
     };
-    let postgres = Arc::new(
-        WamnPostgres::from_env_for_project(&args.project, postgres_credentials)
-            .context("wamn:postgres plugin init")?,
-    );
+    let mut postgres = WamnPostgres::from_env_for_project(&args.project, postgres_credentials)
+        .context("wamn:postgres plugin init")?;
+    if let (Some(directory), Some(release)) = (args.local_application.as_deref(), release.as_ref())
+    {
+        let database_url = std::env::var("WAMN_EXECUTOR_PLATFORM_PG_URL")?;
+        let local = wamn_runtime::local_application::load_local_application(
+            directory,
+            release.manifest(),
+            &database_url,
+            args.local_admission_digest
+                .as_deref()
+                .context("local admission digest is required")?,
+        )
+        .await?;
+        postgres = postgres.with_local_application(local);
+    }
+    let postgres = Arc::new(postgres);
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let http_transport = Arc::new(HttpTransport::new().context("HTTP transport init")?);
     let router_driver = match release.as_ref() {
         Some(release) => {
-            let artifact_base = args
-                .component_artifact_base
-                .as_deref()
-                .context("a serving host requires --component-artifact-base")?;
-            let registry_auth_file = args
-                .registry_auth_file
-                .as_deref()
-                .context("a serving host requires --registry-auth-file")?;
-            let source_config = ComponentArtifactSourceConfig::new(
-                artifact_base,
-                args.allow_insecure_registries,
-                Duration::from_secs(30),
-            )?
-            .with_registry_auth_file(registry_auth_file)
-            .context("load component registry pull credential")?
-            .with_ca_paths(&args.oci_ca_paths)
-            .context("trust the configured OCI CA bundles for component pulls")?;
-            let source = ComponentArtifactSource::new(source_config);
+            let source = if let Some(directory) = args.local_application.as_ref() {
+                ComponentArtifactSource::local(directory.clone())
+            } else {
+                let artifact_base = args
+                    .component_artifact_base
+                    .as_deref()
+                    .context("a serving host requires --component-artifact-base")?;
+                let registry_auth_file = args
+                    .registry_auth_file
+                    .as_deref()
+                    .context("a serving host requires --registry-auth-file")?;
+                let source_config = ComponentArtifactSourceConfig::new(
+                    artifact_base,
+                    args.allow_insecure_registries,
+                    Duration::from_secs(30),
+                )?
+                .with_registry_auth_file(registry_auth_file)
+                .context("load component registry pull credential")?
+                .with_ca_paths(&args.oci_ca_paths)
+                .context("trust the configured OCI CA bundles for component pulls")?;
+                ComponentArtifactSource::new(source_config)
+            };
             let credentials = Arc::new(match &args.credentials_file {
                 Some(path) => WamnCredentials::from_file(path)?,
                 None => WamnCredentials::empty(),
@@ -992,9 +1052,33 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
             std::future::pending(),
         ));
     }
-    let cleanup = wash_runtime::washlet::run_cluster_host(cluster_host)
+    let (native_host, cleanup) = cluster_host
+        .start()
         .await
         .context("failed to start cluster host")?;
+    if let Some(workload) = local_workload {
+        let started = native_host.workload_start(workload).await;
+        if let Err(error) = started.as_ref() {
+            tracing::error!(%error, "local workload startup failed");
+        }
+        let started = match started {
+            Ok(started)
+                if started.workload_status.workload_state
+                    == wash_runtime::types::WorkloadState::Running =>
+            {
+                Ok(())
+            }
+            Ok(started) => Err(anyhow::anyhow!(
+                "local workload refused: {:?}",
+                started.workload_status
+            )),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = started {
+            wamn_runtime::lifecycle::bounded_cleanup(cleanup_budget, cleanup).await?;
+            return Err(error);
+        }
+    }
     tracing::info!(
         elapsed_ms = %startup_started.elapsed().as_millis(),
         cleanup_budget_secs = cleanup_budget.as_secs(),
@@ -1045,6 +1129,83 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     })
     .await;
     result.and(identity_result).and(probe_result)
+}
+
+/// Load the existing workload description with explicitly local component bytes.
+async fn load_local_workload(
+    directory: &Path,
+) -> anyhow::Result<wash_runtime::types::WorkloadStartRequest> {
+    use wash_runtime::component_source::ComponentSource;
+    use wash_runtime::types::{Component, Workload, WorkloadStartRequest};
+    use wash_runtime::washlet::types::v2;
+
+    let bytes = std::fs::read(directory.join("flow-http.json"))
+        .context("read the local flow-http workload description")?;
+    let request: v2::WorkloadStartRequest = serde_json::from_slice(&bytes)
+        .context("decode the local flow-http workload description")?;
+    let workload = request
+        .workload
+        .context("local flow-http description has no workload")?;
+    anyhow::ensure!(
+        workload.service.is_none() && workload.volumes.is_empty(),
+        "local flow-http must declare a component without services or volumes"
+    );
+    let world = workload
+        .wit_world
+        .context("local flow-http has no component world")?;
+    anyhow::ensure!(
+        world.components.len() == 1,
+        "local flow-http requires exactly one component"
+    );
+    let component = world
+        .components
+        .into_iter()
+        .next()
+        .expect("one component was checked");
+    anyhow::ensure!(
+        component.name == "flow-http",
+        "local flow-http must name its explicit component file"
+    );
+    anyhow::ensure!(
+        component.image_pull_secret.is_none()
+            && component.image_pull_policy == v2::ImagePullPolicy::Never as i32,
+        "local flow-http must use explicit local bytes without registry credentials"
+    );
+    let path =
+        wamn_runtime::component_artifact_source::local_component_path(directory, &component.image)?;
+    let loaded = ComponentSource::File(path)
+        .load(wash_runtime::oci::OciConfig::default())
+        .await?;
+    anyhow::ensure!(
+        loaded.digest.as_deref() == Some(component.image.as_str()),
+        "local flow-http component digest does not match the selected bytes"
+    );
+    Ok(WorkloadStartRequest {
+        workload_id: request.workload_id,
+        workload: Workload {
+            namespace: workload.namespace,
+            name: workload.name,
+            annotations: workload.annotations,
+            service: None,
+            volumes: Vec::new(),
+            host_interfaces: world.host_interfaces.into_iter().map(Into::into).collect(),
+            components: vec![Component {
+                name: component.name,
+                bytes: loaded.bytes,
+                digest: loaded.digest,
+                local_resources: component
+                    .local_resources
+                    .map(TryInto::try_into)
+                    .transpose()?
+                    .unwrap_or_default(),
+                pool_size: component.pool_size,
+                max_invocations: component.max_invocations,
+                max_concurrency: component.max_concurrency,
+                reclaim_window_seconds: component.reclaim_window_seconds,
+                reclaim_min_instances: component.reclaim_min_instances,
+            }],
+        },
+    })
 }
 
 fn probe_listener_failure(task: Option<Result<(), tokio::task::JoinError>>) -> anyhow::Error {
@@ -1431,6 +1592,101 @@ mod tests {
             Some(MATERIALIZER)
         );
         assert_eq!(materializer_only.url(AuthorityClass::GuestSql), None);
+    }
+
+    #[tokio::test]
+    async fn local_workload_preserves_limits_and_refuses_missing_or_changed_bytes() {
+        use wash_runtime::washlet::types::v2;
+
+        let directory =
+            std::env::temp_dir().join(format!("wamn-host-local-workload-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let bytes = b"local component transport fixture";
+        let digest = wamn_runtime::component_admission::component_digest(bytes);
+        let path =
+            wamn_runtime::component_artifact_source::local_component_path(&directory, &digest)
+                .unwrap();
+        let request = v2::WorkloadStartRequest {
+            workload_id: "wamn-dev-flow-http".to_owned(),
+            workload: Some(v2::Workload {
+                namespace: "local".to_owned(),
+                name: "flow-http".to_owned(),
+                wit_world: Some(v2::WitWorld {
+                    components: vec![v2::Component {
+                        name: "flow-http".to_owned(),
+                        image: digest.clone(),
+                        image_pull_policy: v2::ImagePullPolicy::Never as i32,
+                        pool_size: 3,
+                        max_invocations: 11,
+                        max_concurrency: 2,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        };
+        std::fs::write(
+            directory.join("flow-http.json"),
+            serde_json::to_vec(&request).unwrap(),
+        )
+        .unwrap();
+        assert!(load_local_workload(&directory).await.is_err());
+        std::fs::write(&path, bytes).unwrap();
+        let loaded = load_local_workload(&directory).await.unwrap();
+        assert_eq!(loaded.workload_id, request.workload_id);
+        assert_eq!(loaded.workload.namespace, "local");
+        let component = &loaded.workload.components[0];
+        assert_eq!(component.bytes.as_ref(), bytes);
+        assert_eq!(component.digest.as_deref(), Some(digest.as_str()));
+        assert_eq!(
+            (
+                component.pool_size,
+                component.max_invocations,
+                component.max_concurrency
+            ),
+            (3, 11, 2)
+        );
+        std::fs::write(&path, b"changed component bytes").unwrap();
+        assert!(
+            load_local_workload(&directory)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("digest")
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn local_application_arguments_require_an_exact_digest_and_exclude_publication_inputs() {
+        let digest = format!("sha256:{}", "7".repeat(64));
+        let local = [
+            "host",
+            "--local-application",
+            "/tmp/wamn-local-candidate",
+            "--local-application-digest",
+            digest.as_str(),
+            "--local-admission-digest",
+            digest.as_str(),
+        ];
+        let cli = TestCli::try_parse_from(local).unwrap();
+        assert!(cli.args.release_artifact_base.is_none());
+        assert!(cli.args.registry_auth_file.is_none());
+        assert!(TestCli::try_parse_from(&local[..3]).is_err());
+        for (flag, value) in [
+            ("--release-artifact-base", "registry.example/releases"),
+            ("--release-manifest-digest", digest.as_str()),
+            ("--component-artifact-base", "registry.example/components"),
+            ("--registry-auth-file", "/tmp/registry.json"),
+        ] {
+            let mut arguments = local.to_vec();
+            arguments.extend([flag, value]);
+            assert!(
+                TestCli::try_parse_from(arguments).is_err(),
+                "local input accepted {flag}"
+            );
+        }
     }
 
     #[test]

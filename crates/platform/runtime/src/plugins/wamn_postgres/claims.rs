@@ -49,6 +49,7 @@ const USER_OPERATION_PERMISSIONS_SQL: &str = "SELECT DISTINCT permissions.permis
     ORDER BY permissions.permission";
 
 pub struct WamnPostgres {
+    pub(super) local_application: Option<Arc<crate::local_application::LocalApplication>>,
     /// Resolves a project id → its database connection + policy.
     provider: Arc<dyn CredentialProvider>,
     /// Guest-visible project pools, built lazily and never shared with host-owned
@@ -185,7 +186,7 @@ pub struct ConnectionEffectLookup<'a> {
 }
 
 /// One DB-derived, non-secret connection fact frozen on a candidate run.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CandidateConnectionBinding {
     pub component_digest: String,
@@ -609,6 +610,15 @@ fn bind_composed_project(
 }
 
 impl WamnPostgres {
+    /// Select an explicitly local definition closure without changing database authority.
+    pub fn with_local_application(
+        mut self,
+        application: crate::local_application::LocalApplication,
+    ) -> Self {
+        self.local_application = Some(Arc::new(application));
+        self
+    }
+
     /// Plugin over a single default database (the [`WamnPostgresConfig`]
     /// credentials). Pools are built lazily; `credentials: None` ⇒ every call
     /// returns `connection-unavailable`.
@@ -625,6 +635,7 @@ impl WamnPostgres {
     /// Plugin over an explicit [`CredentialProvider`] (multi-project / tests).
     pub fn with_provider(provider: Arc<dyn CredentialProvider>) -> Self {
         Self {
+            local_application: None,
             provider,
             guest_pools: std::sync::RwLock::new(HashMap::new()),
             platform_pools: std::sync::RwLock::new(HashMap::new()),
@@ -1254,6 +1265,9 @@ impl WamnPostgres {
             return Err(anyhow::anyhow!(error.to_string()));
         }
         let result: anyhow::Result<Option<ConnectionEffectSnapshot>> = async {
+            if let Some(local) = &self.local_application {
+                return local.effect_snapshot(&conn, tenant, lookup).await;
+            }
             let candidate_instance = lookup
                 .candidate_binding
                 .map(|binding| binding.instance_id.as_str());

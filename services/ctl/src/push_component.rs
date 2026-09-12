@@ -389,6 +389,14 @@ impl fmt::Debug for ComponentAdmission {
 }
 
 impl ComponentAdmission {
+    pub(crate) fn facts(&self) -> &AdmittedComponent {
+        &self.component
+    }
+
+    pub(crate) fn requirements(&self) -> &[ComponentConnectionRequirement] {
+        &self.requirements
+    }
+
     /// Exact package identity carried by the admitted component facts.
     pub fn package_id(&self) -> &str {
         &self.component.scope.package_id
@@ -1855,10 +1863,7 @@ async fn verify_requirements(
         }
         None => {
             transaction
-                .query(
-                    SELECT_REQUIREMENTS_SQL,
-                    &[&tenant_id, &component_digest],
-                )
+                .query(SELECT_REQUIREMENTS_SQL, &[&tenant_id, &component_digest])
                 .await
         }
     }

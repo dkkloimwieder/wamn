@@ -3,6 +3,61 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+/// A portable component-owned connection requirement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ComponentConnectionRequirement {
+    component_digest: String,
+    store_alias: String,
+    requirement: ConnectionTypeDescriptor,
+}
+
+impl ComponentConnectionRequirement {
+    /// Construct one requirement from its admitted component identity.
+    pub fn new(
+        component_digest: impl Into<String>,
+        store_alias: impl Into<String>,
+        requirement: ConnectionTypeDescriptor,
+    ) -> Self {
+        Self {
+            component_digest: component_digest.into(),
+            store_alias: store_alias.into(),
+            requirement,
+        }
+    }
+
+    pub fn component_digest(&self) -> &str {
+        &self.component_digest
+    }
+
+    pub fn store_alias(&self) -> &str {
+        &self.store_alias
+    }
+
+    pub fn requirement(&self) -> &ConnectionTypeDescriptor {
+        &self.requirement
+    }
+
+    /// Canonical environment-independent bytes persisted with the component.
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("portable component connection requirement serializes")
+    }
+
+    /// SHA-256 of [`Self::canonical_bytes`].
+    pub fn requirement_hash(&self) -> String {
+        {
+            use sha2::Digest as _;
+            format!(
+                "sha256:{}",
+                sha2::Sha256::digest(self.canonical_bytes())
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>()
+            )
+        }
+    }
+}
+
 /// Shape version for portable connection-type descriptors.
 pub const CONNECTION_DESCRIPTOR_VERSION: &str = "1";
 

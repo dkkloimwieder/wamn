@@ -5,6 +5,11 @@ Selected public commands need tests through the real guest, capability, transact
 Private operations use their actual caller or ingress.
 See [database tests](database-tests.md) for state and authority observations.
 
+The [owned delivery tests](../operations/delivery.md#owned-application-acceptance) invoke the same application cases with supplied release artifacts.
+Those cases compare the freshly minted manifest with the exact candidate before publication.
+They report success only after application assertions and owned resource cleanup pass.
+Receiving runs command histories and baseline overlay compatibility, while WMS runs its released routes.
+
 ## Receiving commands
 
 The [Receiving history tests](../../apps/wamn_receiving/tests/receiving_command_histories_live.rs) exercise `receiving.record_receipt` and `purchase_order.update`.

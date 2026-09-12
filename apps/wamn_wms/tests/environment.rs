@@ -307,7 +307,7 @@ fn private_file(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn package_coordinate() -> anyhow::Result<PackageCoordinate> {
+pub(crate) fn package_coordinate() -> anyhow::Result<PackageCoordinate> {
     let manifest = read_json(&package_root().join("wamn.json"))?;
     PackageCoordinate::new(
         manifest["package"]["id"]
@@ -344,6 +344,7 @@ pub async fn publish(
     label_render_wasm: &Path,
     minio_endpoint: &str,
     evidence: &Path,
+    mint_only: bool,
 ) -> anyhow::Result<ReleaseCarrier> {
     let package = package_coordinate()?;
     let root = package_root();
@@ -454,6 +455,20 @@ pub async fn publish(
         package_manifests: vec![root.join("wamn.json")],
     })
     .await?;
+    if let Some(candidate) = wamn_ctl::delivery::Candidate::from_env()? {
+        let (project, task) = connect(&route.database_url).await?;
+        let snapshot = project.query_one(
+            "SELECT canonical_bytes FROM catalog.release_manifest_v3_snapshots WHERE tenant_id = $1 AND effective_release_id = $2",
+            &[&TENANT, &(RELEASE_ID as i32)],
+        ).await;
+        drop(project);
+        task.abort();
+        let bytes: Vec<u8> = snapshot
+            .context("read the exact WMS release snapshot")?
+            .get(0);
+        let (manifest, _) = wamn_catalog::ServingManifest::from_canonical_bytes(&bytes)?;
+        candidate.assert_manifest(&manifest)?;
+    }
     let definition = evidence.join("labels-store.definition.json");
     fs::write(
         &definition,
@@ -474,7 +489,8 @@ pub async fn publish(
         store_alias: "labels".into(),
     })
     .await?;
-    push_release_manifest::run(PushReleaseManifestArgs {
+    if !mint_only {
+        push_release_manifest::run(PushReleaseManifestArgs {
         database_url: route.database_url.clone(),
         control_database_url: inputs.system_pg_url.clone(),
         org: ORG.into(),
@@ -485,7 +501,8 @@ pub async fn publish(
         registry_auth_file: inputs.registry_auth_file.clone(),
         insecure_registry: true,
     })
-    .await?;
+        .await?;
+    }
     print_release_env::lookup_release_carrier(
         &route.database_url,
         TENANT,

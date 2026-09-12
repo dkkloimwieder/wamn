@@ -416,6 +416,225 @@ impl PublishReleaseArgs {
 }
 
 pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
+    let minted = mint_candidate(&args, false).await?;
+    let coordinate = args.deployment_coordinate(&minted.manifest.release);
+    report_deployment_coordinate(&coordinate, &minted.digest);
+    project_release_identity(&args.control_database_url, &coordinate).await?;
+    println!("{}", minted.digest);
+    Ok(())
+}
+
+/// Assemble a candidate only in a provisioned disposable target, without publication.
+pub(crate) async fn mint_local(
+    mut args: PublishReleaseArgs,
+    admissions: &[crate::push_component::ComponentAdmission],
+    documents: Vec<(ComponentPackageScope, WiringDocument)>,
+) -> anyhow::Result<(
+    MintedReleaseManifest,
+    wamn_runtime::local_application::LocalApplicationFacts,
+)> {
+    use wamn_runtime::local_application::{LocalApplicationFacts, LocalWiringFacts};
+    wamn_runtime::local_application::require_local_target(
+        &args.database_url,
+        &args.tenant,
+        &args.environment,
+    )
+    .await?;
+    ensure!(
+        read_projected_environment_disposable(&args.control_database_url, &args.tenant).await?,
+        "local candidates require a provisioned disposable environment"
+    );
+    let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls).await?;
+    let driver = tokio::spawn(connection);
+    let transaction = client.transaction().await?;
+    transaction
+        .query_one(CLAIM_TENANT_SQL, &[&args.tenant])
+        .await?;
+    let latest: Option<i32> = transaction
+        .query_one(
+            "SELECT max(effective_release_id) FROM catalog.effective_releases WHERE tenant_id = $1",
+            &[&args.tenant],
+        )
+        .await?
+        .try_get(0)?;
+    args.effective_release_id = u32::try_from(latest.unwrap_or(0))?
+        .checked_add(1)
+        .context("local release identity exhausted")?
+        .max(args.effective_release_id);
+    let authored = read_package_attachments(&args.attachments)?;
+    let attachments = resolve_route_host_overlay(&authored, args.route_host.as_deref())?;
+    let (package_manifests, _) = read_package_manifests(&args.package_manifests)?;
+    let packages = args.packages.iter().cloned().collect::<BTreeSet<_>>();
+    let targets = args.wirings.iter().cloned().collect::<BTreeSet<_>>();
+    ensure!(
+        packages.len() == args.packages.len() && targets.len() == args.wirings.len(),
+        "local candidate repeats a package or wiring"
+    );
+    let request = MintReleaseManifest {
+        tenant_id: &args.tenant,
+        effective_release_id: i32::try_from(args.effective_release_id)?,
+        environment: &args.environment,
+        verified_publisher_principal: &args.verified_publisher_principal,
+        packages: &packages,
+        wirings: &targets,
+        attachments: &attachments,
+        environment_is_disposable: true,
+    };
+    validate_request(&request)?;
+    ensure!(
+        package_manifests.len() == packages.len()
+            && packages.iter().all(|package| package_manifests
+                .get(package.package_id())
+                .is_some_and(|manifest| manifest.package.version == package.package_version())),
+        "local candidate requires every exact package manifest"
+    );
+    let mut component_facts = BTreeMap::<(String, String), Vec<AdmittedComponent>>::new();
+    for admission in admissions {
+        let fact = admission.facts();
+        ensure!(
+            fact.scope.tenant_id == args.tenant
+                && packages
+                    .iter()
+                    .any(|package| package.package_id() == fact.scope.package_id
+                        && package.package_version() == fact.scope.package_version),
+            "local admission is outside package membership"
+        );
+        component_facts
+            .entry((
+                fact.scope.package_id.clone(),
+                fact.scope.package_version.clone(),
+            ))
+            .or_default()
+            .push(fact.clone());
+    }
+    let mut components = BTreeSet::new();
+    let mut wirings = BTreeSet::new();
+    let mut membership = BTreeSet::new();
+    let mut entry_targets = BTreeMap::<String, Vec<ReleaseWiringTarget>>::new();
+    let mut local_wirings = Vec::new();
+    ensure!(
+        documents.len() == targets.len(),
+        "local wiring closure is incomplete"
+    );
+    for (scope, document) in documents {
+        let target = ReleaseWiringTarget {
+            package_id: scope.package_id.clone(),
+            package_version: scope.package_version.clone(),
+            wiring_id: document.wiring_id.clone(),
+            wiring_version: document.version,
+        };
+        ensure!(
+            scope.tenant_id == args.tenant && targets.contains(&target),
+            "local wiring is outside release membership"
+        );
+        let entry_operation = project_wiring_document(
+            &request,
+            &target,
+            &scope,
+            &document,
+            &component_facts,
+            &package_manifests,
+            &mut components,
+            &mut wirings,
+            &mut membership,
+        )?;
+        let node_components = resolve_wiring_components(
+            &document,
+            &scope,
+            &component_facts,
+            package_manifests.get(&scope.package_id),
+            DependencyDigestRule::for_environment(true),
+        )?;
+        local_wirings.push(LocalWiringFacts {
+            scope,
+            document,
+            node_components,
+        });
+        entry_targets
+            .entry(entry_operation)
+            .or_default()
+            .push(target);
+    }
+    let manifest = ServingManifest {
+        format_version: SERVING_MANIFEST_FORMAT_VERSION,
+        release: ServingRelease {
+            tenant_id: args.tenant.clone(),
+            effective_release_id: EffectiveReleaseId::new(args.effective_release_id)?,
+            environment: args.environment.clone(),
+            packages: packages.clone(),
+        },
+        components,
+        wirings,
+        attachments: attachments.clone(),
+        registrations: derive_serving_registrations(&package_manifests, &entry_targets)?,
+    };
+    let canonical_bytes = manifest.canonical_bytes();
+    let (manifest, digest) = ServingManifest::from_canonical_bytes(&canonical_bytes)?;
+    let components = admissions
+        .iter()
+        .map(|admission| admission.facts())
+        .filter(|fact| {
+            manifest
+                .components
+                .iter()
+                .any(|component| component.digest.as_str() == fact.component_digest)
+        })
+        .cloned()
+        .collect();
+    let requirements = admissions
+        .iter()
+        .flat_map(|admission| admission.requirements().iter())
+        .filter(|requirement| {
+            manifest
+                .components
+                .iter()
+                .any(|component| component.digest.as_str() == requirement.component_digest())
+        })
+        .cloned()
+        .collect();
+    let facts = LocalApplicationFacts {
+        manifest_digest: digest.clone(),
+        components,
+        wirings: local_wirings,
+        requirements,
+        bindings: Vec::new(),
+    };
+    let run_schema = args.verified_run_schema()?;
+    let policy = crate::verification_policy::read_authoritative_environment_policy(
+        &args.control_database_url,
+        &args.org,
+        &args.environment,
+        false,
+    )
+    .await?;
+    let projected =
+        read_projected_environment_policy(&transaction, &run_schema, &args.tenant).await?;
+    verify_projected_environment_policy(
+        projected.as_ref(),
+        &policy,
+        &manifest.release,
+        &run_schema,
+    )?;
+    // The retained run-plane FK needs only this session-local identity and
+    // package membership. No immutable component slots or publication facts.
+    establish_release(&transaction, &request).await?;
+    transaction.commit().await?;
+    drop(client);
+    driver.abort();
+    Ok((
+        MintedReleaseManifest {
+            manifest,
+            digest,
+            canonical_bytes,
+        },
+        facts,
+    ))
+}
+
+async fn mint_candidate(
+    args: &PublishReleaseArgs,
+    local: bool,
+) -> anyhow::Result<MintedReleaseManifest> {
     ensure!(
         args.effective_release_id > 0,
         "effective-release-id must be greater than zero"
@@ -473,6 +692,10 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
         read_projected_environment_disposable(&args.control_database_url, &args.tenant)
             .await
             .context("resolve the release target's disposable marker")?;
+    ensure!(
+        !local || environment_is_disposable,
+        "local candidates require a provisioned disposable environment"
+    );
     let request = MintReleaseManifest {
         tenant_id: &args.tenant,
         effective_release_id: release_id,
@@ -513,11 +736,7 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
                 .await
                 .context("join the release mint connection")?
                 .context("drive the release mint connection")?;
-            let coordinate = args.deployment_coordinate(&minted.manifest.release);
-            report_deployment_coordinate(&coordinate, &minted.digest);
-            project_release_identity(&args.control_database_url, &coordinate).await?;
-            println!("{}", minted.digest);
-            Ok(())
+            Ok(minted)
         }
         Err(error) => {
             connection_task.abort();
@@ -1447,6 +1666,34 @@ async fn resolve_wiring(
             "wiring row hash differs from its canonical document hash",
         ));
     }
+    project_wiring_document(
+        request,
+        target,
+        scope,
+        &document,
+        component_facts,
+        package_manifests,
+        components,
+        wirings,
+        membership,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "existing release projection inputs are independent facts"
+)]
+fn project_wiring_document(
+    request: &MintReleaseManifest<'_>,
+    target: &ReleaseWiringTarget,
+    scope: &ComponentPackageScope,
+    document: &WiringDocument,
+    component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
+    package_manifests: &BTreeMap<String, wamn_schema_generator::PackageManifest>,
+    components: &mut BTreeSet<ServingComponent>,
+    wirings: &mut BTreeSet<ServingWiring>,
+    membership: &mut BTreeSet<ReleaseComponentMembership>,
+) -> Result<String, MintManifestError> {
     let rule = DependencyDigestRule::for_environment(request.environment_is_disposable);
     let resolved = resolve_wiring_components(
         &document,
@@ -1472,7 +1719,7 @@ async fn resolve_wiring(
         package_id: target.package_id.clone(),
         wiring_id: target.wiring_id.clone(),
         wiring_version: target.wiring_version,
-        graph_hash: derived_hash,
+        graph_hash: document.wiring_hash(),
     });
     for fact in component_closure {
         components.insert(project_serving_component(&fact)?);

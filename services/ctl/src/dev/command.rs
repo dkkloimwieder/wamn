@@ -12,6 +12,7 @@ use serde::Deserialize;
 use tokio::process::Command;
 use tokio::signal::unix::{SignalKind, signal};
 use tokio::sync::watch;
+use tokio::task::JoinSet;
 
 use super::config::{DevConfig, parse_config, preflight_config, resolve_dev_packages};
 use super::coordinator::{ProductionDevStageError, ProductionDevStageRunner};
@@ -134,6 +135,34 @@ struct NativeInvalidations {
     filesystem: FilesystemInvalidationSource,
     repository_root: PathBuf,
     package_roots: Vec<PathBuf>,
+    config: DevConfig,
+}
+
+fn local_configuration_files(config: &DevConfig) -> Vec<PathBuf> {
+    let Some(local) = config.local_artifacts() else {
+        return Vec::new();
+    };
+    let mut files = vec![
+        config.target_privileges_file().to_owned(),
+        config.target_database_acl_file().to_owned(),
+        local.flow_http_component.clone(),
+    ];
+    if let Some(path) = &local.bindings {
+        files.push(path.clone());
+        // Watches identify input files; the coordinator owns strict interpretation.
+        if let Ok(bytes) = std::fs::read(path) {
+            if let Ok(serde_json::Value::Array(selections)) = serde_json::from_slice(&bytes) {
+                files.extend(
+                    selections
+                        .iter()
+                        .filter_map(|selection| selection["instance"]["definition"].as_str())
+                        .map(PathBuf::from)
+                        .filter(|path| path.is_absolute()),
+                );
+            }
+        }
+    }
+    files
 }
 
 impl DevInvalidationSource for NativeInvalidations {
@@ -148,13 +177,15 @@ impl DevInvalidationSource for NativeInvalidations {
         if packages.iter().all(|package| package.manifest_path.is_file()) {
             match super::native_tui::native_dependency_roots(&self.repository_root, &packages).await
             {
-                Ok(inputs) => self
-                    .filesystem
-                    .replace_native_inputs(inputs.directories, inputs.files)
-                    .await
-                    .map_err(|source| {
-                        CommandInvalidationError::new("watch native build dependencies", source)
-                    })?,
+                Ok(mut inputs) => {
+                    inputs.files.extend(local_configuration_files(&self.config));
+                    self.filesystem
+                        .replace_native_inputs(inputs.directories, inputs.files)
+                        .await
+                        .map_err(|source| {
+                            CommandInvalidationError::new("watch native build dependencies", source)
+                        })?;
+                }
                 Err(error) => {
                     tracing::warn!(%error, "retain the previous native watches until Cargo metadata parses");
                 }
@@ -196,12 +227,6 @@ where
             result = self.source.next() => result.map_err(|source| {
                 CommandInvalidationError::new("read a filesystem invalidation", source)
             }),
-            result = tokio::signal::ctrl_c() => {
-                result.map_err(|source| {
-                    CommandInvalidationError::new("wait for the shutdown signal", source)
-                })?;
-                Ok(None)
-            }
             () = wait_for_shutdown(&mut self.shutdown) => Ok(None),
         }
     }
@@ -294,18 +319,36 @@ impl DevWatchObserver for SilentObserver {
 
 /// Cooperative stop handle for an interactive development session.
 ///
-/// A stop request never aborts an effectful stage. The engine observes it at
-/// the next stage/watch boundary and still runs the existing exact cleanup.
+/// A stop request never aborts an effectful stage. The engine observes it when
+/// the current run finishes and still runs the existing exact cleanup.
 #[derive(Clone, Debug)]
 pub struct DevSessionControl {
     shutdown: watch::Sender<bool>,
 }
 
 impl DevSessionControl {
-    /// Ask the session to finish its current stage and shut down cleanly.
+    /// Ask the session to finish its current run and shut down cleanly.
     pub fn request_shutdown(&self) {
         let _already_requested = self.shutdown.send_replace(true);
     }
+}
+
+fn shutdown_signals(control: DevSessionControl) -> io::Result<JoinSet<()>> {
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut hangup = signal(SignalKind::hangup())?;
+    let mut tasks = JoinSet::new();
+    tasks.spawn(async move {
+        tokio::select! {
+            _ = interrupt.recv() => {}
+            _ = terminate.recv() => {}
+            _ = hangup.recv() => {}
+        }
+        // Latch the request even while an effectful stage is running. The
+        // existing engine owns when that work completes and cleanup begins.
+        control.request_shutdown();
+    });
+    Ok(tasks)
 }
 
 #[derive(Debug, Deserialize)]
@@ -325,6 +368,8 @@ pub struct DevSession {
     git: GitSource,
     control: DevSessionControl,
     shutdown: watch::Receiver<bool>,
+    // JoinSet aborts the signal task if preparation or the session is dropped.
+    _shutdown_signals: JoinSet<()>,
     last_served: Option<DevRuntimeEndpoint>,
 }
 
@@ -361,12 +406,14 @@ impl DevSession {
         let mut runner =
             ProductionDevStageRunner::new(config.clone(), args.overlay_root.clone(), git.clone())
                 .context("construct the production development coordinator")?;
+        let (shutdown, shutdown_receiver) = watch::channel(false);
+        let control = DevSessionControl { shutdown };
+        let shutdown_signals = shutdown_signals(control.clone())
+            .context("install development session shutdown signals")?;
         runner
             .start_observations()
             .await
             .context("start development observation readers")?;
-        let (shutdown, shutdown_receiver) = watch::channel(false);
-        let control = DevSessionControl { shutdown };
         if let Some(package) = operator_component {
             runner.configure_operator(package, super::operator::spawn(control.clone()));
         }
@@ -379,6 +426,7 @@ impl DevSession {
             git,
             control,
             shutdown: shutdown_receiver,
+            _shutdown_signals: shutdown_signals,
             last_served: None,
         })
     }
@@ -440,7 +488,7 @@ impl DevSession {
                     observer.served(result, snapshot.runtime_endpoint());
                 }
                 if result.is_ok() {
-                    wait_for_hold_release(&mut self.shutdown).await;
+                    wait_for_shutdown(&mut self.shutdown).await;
                 }
             }
             result
@@ -513,7 +561,7 @@ async fn run_watch_command(
     let component_roots =
         component_build_watch_roots(git.repository_root(), &package_roots).await?;
     let repository_root = git.repository_root().to_owned();
-    let native_files = [
+    let mut native_files = [
         "Cargo.toml",
         "Cargo.lock",
         ".cargo/config",
@@ -521,7 +569,9 @@ async fn run_watch_command(
         "rust-toolchain",
         "rust-toolchain.toml",
     ]
-    .map(|file| repository_root.join(file));
+    .map(|file| repository_root.join(file))
+    .to_vec();
+    native_files.extend(local_configuration_files(config));
     let mut filesystem = FilesystemInvalidationSource::with_native_inputs(
         package_roots.clone(),
         component_roots,
@@ -540,6 +590,7 @@ async fn run_watch_command(
         filesystem,
         repository_root,
         package_roots,
+        config: config.clone(),
     };
     let source_state = git
         .snapshot()
@@ -558,31 +609,6 @@ async fn run_watch_command(
         .await
         .context("own the disposable verification database")??;
     Ok(())
-}
-
-/// Hold until a cooperative stop, an interrupt, or a termination signal.
-///
-/// The cooperative channel alone is not enough on this path. The interactive
-/// client sets it when the operator quits, but a plain held session is stopped
-/// by a signal, and the default disposition kills the process outright: the
-/// cleanup that stops the spawned host never runs, and the host goes on holding
-/// the port the session has just printed. Watch mode already selects over the
-/// interrupt for the same reason. A machine that cannot install the termination
-/// handler still honours the other two.
-async fn wait_for_hold_release(receiver: &mut watch::Receiver<bool>) {
-    let mut terminate = signal(SignalKind::terminate()).ok();
-    tokio::select! {
-        () = wait_for_shutdown(receiver) => {}
-        _ = tokio::signal::ctrl_c() => {}
-        () = async {
-            match terminate.as_mut() {
-                Some(stream) => {
-                    stream.recv().await;
-                }
-                None => std::future::pending::<()>().await,
-            }
-        } => {}
-    }
 }
 
 async fn wait_for_shutdown(receiver: &mut watch::Receiver<bool>) {
@@ -875,5 +901,114 @@ mod tests {
         };
         shutdown.send_replace(true);
         assert_eq!(source.next().await.expect("stop is a clean close"), None);
+    }
+
+    #[tokio::test]
+    async fn unix_signals_are_remembered_until_active_work_finishes() {
+        // Keep process-wide handlers and real signals out of the test runner.
+        for signal in ["TERM", "INT", "HUP"] {
+            let mut command = Command::new(std::env::current_exe().expect("locate test binary"));
+            command
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "dev::command::tests::signal_child_finishes_work_and_closes_watch",
+                ])
+                .env("WAMN_DEV_SIGNAL_TEST", signal)
+                .kill_on_drop(true);
+            let output = tokio::time::timeout(std::time::Duration::from_secs(15), command.output())
+                .await
+                .expect("signal child must finish cooperative shutdown")
+                .expect("run isolated signal child");
+            assert!(
+                output.status.success(),
+                "{signal} child failed: {}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "isolated child of unix_signals_are_remembered_until_active_work_finishes"]
+    async fn signal_child_finishes_work_and_closes_watch() {
+        use rustix::process::{Signal, getpid, kill_process};
+
+        struct ActiveWork {
+            signal: Signal,
+            shutdown: watch::Receiver<bool>,
+            completed: bool,
+        }
+
+        impl super::super::DevStageRunner for ActiveWork {
+            type Error = Infallible;
+
+            async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
+                assert_eq!(stage, DevStage::Activate);
+                assert!(!self.completed);
+                kill_process(getpid(), self.signal).expect("signal this isolated active stage");
+                wait_for_shutdown(&mut self.shutdown).await;
+                // Work after signal delivery must still run. The command must
+                // close its source only after the stage future completes.
+                tokio::task::yield_now().await;
+                self.completed = true;
+                Ok(())
+            }
+        }
+
+        struct WaitingSource;
+
+        impl DevInvalidationSource for WaitingSource {
+            type Error = Infallible;
+
+            async fn next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
+                std::future::pending().await
+            }
+
+            fn try_next(&mut self) -> Result<Option<DevInvalidation>, Self::Error> {
+                Ok(None)
+            }
+        }
+
+        let selected = match std::env::var("WAMN_DEV_SIGNAL_TEST").as_deref() {
+            Ok("TERM") => Signal::TERM,
+            Ok("INT") => Signal::INT,
+            Ok("HUP") => Signal::HUP,
+            other => panic!("the parent must select a test signal: {other:?}"),
+        };
+        let (shutdown, receiver) = watch::channel(false);
+        let _signals = shutdown_signals(DevSessionControl { shutdown })
+            .expect("install persistent session signal bridge");
+        let mut runner = ActiveWork {
+            signal: selected,
+            shutdown: receiver.clone(),
+            completed: false,
+        };
+        let mut source = CommandInvalidations {
+            initial: Some(DevInvalidation::Rerun {
+                from: DevStage::Activate,
+                source_state: super::super::DevSourceState::Clean,
+            }),
+            source: WaitingSource,
+            shutdown: receiver,
+        };
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            super::super::run_watch_loop(&mut runner, &mut source, &mut SilentObserver),
+        )
+        .await
+        .expect("remembered signal must close the watch loop")
+        .expect("shutdown leaves the watch loop through normal cleanup");
+        assert!(
+            runner.completed,
+            "the active stage must finish before cleanup"
+        );
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            wait_for_shutdown(&mut source.shutdown),
+        )
+        .await
+        .expect("a held session must also see a signal delivered before its wait");
     }
 }

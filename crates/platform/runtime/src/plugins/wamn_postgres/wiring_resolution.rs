@@ -398,17 +398,55 @@ impl WamnPostgres {
             &effective_release_id,
             &manifest_digest,
         ];
-        let selected = connection
-            .query_opt(RELEASE_WIRING_SQL, &params)
-            .await
-            .context("query exact release wiring");
-        let result = match selected {
-            Ok(None) => Ok(None),
-            Ok(Some(row)) => {
-                decode_released_wiring(tenant_id, package_id, environment, wiring_id, &row)
-                    .map(Some)
+        let result = if let Some(local) = &self.local_application {
+            async {
+                local.require_instance(&connection).await?;
+                anyhow::ensure!(
+                    local.manifest.release.tenant_id == tenant_id
+                        && local.manifest.release.environment == environment
+                        && local.manifest.release.effective_release_id.get()
+                            == u32::try_from(effective_release_id)?
+                        && local.facts.manifest_digest.as_str() == manifest_digest,
+                    "local release scope mismatch"
+                );
+                let fact = local.facts.wirings.iter().find(|fact| {
+                    fact.scope.package_id == package_id
+                        && fact.document.wiring_id == wiring_id
+                        && fact.document.version
+                            == u32::try_from(wiring_version).expect("validated wiring version")
+                });
+                fact.map(|fact| {
+                    lower_resolved_wiring(
+                        tenant_id,
+                        package_id,
+                        environment,
+                        DecodedWiring {
+                            version: fact.document.version,
+                            effective_release_id: local.manifest.release.effective_release_id.get(),
+                            package_version: fact.scope.package_version.clone(),
+                            graph_hash: fact.document.wiring_hash().as_str().to_owned(),
+                            document: fact.document.clone(),
+                        },
+                        fact.node_components.clone(),
+                        local.facts.components.clone(),
+                    )
+                })
+                .transpose()
             }
-            Err(error) => Err(error),
+            .await
+        } else {
+            let selected = connection
+                .query_opt(RELEASE_WIRING_SQL, &params)
+                .await
+                .context("query exact release wiring");
+            match selected {
+                Ok(None) => Ok(None),
+                Ok(Some(row)) => {
+                    decode_released_wiring(tenant_id, package_id, environment, wiring_id, &row)
+                        .map(Some)
+                }
+                Err(error) => Err(error),
+            }
         };
 
         match result {
@@ -605,11 +643,23 @@ impl WamnPostgres {
             &environment,
             &component_digests,
         ];
-        let result = connection
-            .query_one(RELEASE_COMPONENT_BINDINGS_READY_SQL, &params)
-            .await
-            .context("query synchronous release connection bindings")
-            .and_then(|row| row.try_get(0).context("decode release binding readiness"));
+        let result = if let Some(local) = &self.local_application {
+            if local.manifest.release.tenant_id != tenant_id
+                || local.manifest.release.environment != environment
+                || i32::try_from(local.manifest.release.effective_release_id.get()).ok()
+                    != Some(effective_release_id)
+            {
+                Err(anyhow::anyhow!("local readiness release scope mismatch"))
+            } else {
+                local.bindings_ready(&connection, &component_digests).await
+            }
+        } else {
+            connection
+                .query_one(RELEASE_COMPONENT_BINDINGS_READY_SQL, &params)
+                .await
+                .context("query synchronous release connection bindings")
+                .and_then(|row| row.try_get(0).context("decode release binding readiness"))
+        };
 
         match result {
             Ok(ready) => {

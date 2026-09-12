@@ -415,6 +415,7 @@ async fn seed_catalog(
     release: &LoadedRelease,
     additional_wiring: Option<(&AdmittedComponent, &[WiringDocument])>,
 ) -> anyhow::Result<ClassCredentials> {
+    wamn_test_infrastructure::postgres::require_owned_url_when_recorded(&options.database_url)?;
     let (client, connection) = tokio_postgres::connect(&options.database_url, NoTls)
         .await
         .context("connect the seeding session")?;

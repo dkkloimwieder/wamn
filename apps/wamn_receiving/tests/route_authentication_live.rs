@@ -21,6 +21,7 @@ mod routes;
 mod sessions;
 mod materializer;
 mod environment;
+mod delivery;
 
 
 use std::collections::{BTreeSet, HashMap};

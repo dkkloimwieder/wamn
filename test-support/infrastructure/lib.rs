@@ -7,6 +7,7 @@ pub mod declarations;
 pub mod event_broker;
 pub mod executor;
 pub mod platform;
+pub mod postgres;
 
 pub mod rendering;
 pub mod scratch;

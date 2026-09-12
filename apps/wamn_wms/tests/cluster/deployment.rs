@@ -36,7 +36,8 @@ pub(super) async fn preflight(lifecycle: &Path, cluster: &str, image: &str) -> a
                 "control-plane",
                 "worker",
                 "worker2",
-                "demo-proxy"
+                "demo-proxy",
+                "executor"
             ]
             .iter()
             .any(|suffix| name == format!("{cluster}-{suffix}")),

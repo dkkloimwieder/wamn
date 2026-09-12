@@ -11,3 +11,5 @@ mod wms_wiring_shape;
 mod cluster;
 #[cfg(test)]
 mod environment;
+#[cfg(test)]
+mod delivery;

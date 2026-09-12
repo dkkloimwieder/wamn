@@ -43,9 +43,29 @@ Make sure that a real query succeeds through the same connection path that the t
 Read the selected test's database-name and role requirements before setting its URL.
 Exercise the intended role because a superuser bypasses row security.
 
-This isolation rule is required practice.
-It does not claim that every test constructor rejects an interactive database URL automatically.
-[Delivery work](../plan/delivery.md) retains any unbuilt automatic refusal.
+The delivery test runner creates its own PostgreSQL 18 server and database.
+It passes a private ownership record through `WAMN_TEST_POSTGRES_OWNERSHIP`.
+It sets `WAMN_TEST_REQUIRED=1`, so selected optional constructors require their database input.
+The record identifies the live process, connection port, and databases created by that runner.
+The selected test constructors refuse mismatched coordinates before connecting.
+The runner stops its test process group and removes its server on completion, failure, or handled interruption.
+
+Build the runner, then give it the exact test command:
+
+```bash
+cargo build --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres
+"${CARGO_TARGET_DIR:-target}/debug/wamn-test-postgres" \
+  --database wamn_ctl --url-env WAMN_CTL_PG_URL -- \
+  cargo test --locked --offline -p wamn-ctl --test publish_release_live \
+  -- --nocapture --test-threads=1
+```
+
+The runner requires PostgreSQL 18 binaries under `/usr/lib/postgresql/18/bin`.
+Repeat `--url-env` when multiple variable names must identify the same owned database.
+Its Rust fixture API creates separate databases when a test needs different targets.
+The runner does not accept an existing database URL.
+Legacy optional tests retain their manual inputs when no ownership record is present.
+This bounded adoption does not establish automatic refusal in every repository test.
 
 ## Capture a run
 
@@ -112,7 +132,8 @@ Some tests return early when an environment variable is absent and appear among 
 Read their `--nocapture` output and required inputs before reporting execution.
 
 `services/ctl/tests/support/mod.rs` owns `WAMN_CTL_PG_URL` and its cross-process database lock.
-Its optional constructor permits an explicit skip. Its required constructor refuses missing input.
+Its optional constructor permits an explicit skip and enforces an ownership record when supplied.
+Its required constructor requires the owned runner above and refuses missing input or ownership.
 Do not infer execution from the aggregate Cargo pass count.
 
 | Existing reference | Current owner and required setup |

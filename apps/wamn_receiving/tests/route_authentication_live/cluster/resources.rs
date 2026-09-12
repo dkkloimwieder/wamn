@@ -28,6 +28,7 @@ pub(super) struct Resources {
     pub host_image: String,
     pub gates_image: Option<String>,
     pub identity_image: Option<String>,
+    pub candidate: Option<(wamn_ctl::delivery::Candidate, wamn_catalog::ServingManifest)>,
     pub reader: Option<(
         pg_walstream::CancellationToken,
         tokio::task::JoinHandle<anyhow::Result<()>>,
@@ -42,6 +43,17 @@ pub(super) async fn prepare(
     standard_images: bool,
     session_host: bool,
 ) -> anyhow::Result<Resources> {
+    let candidate = super::super::delivery::candidate()?;
+    if let Some((candidate, _)) = &candidate {
+        ensure!(
+            !standard_images || candidate.gates_image.is_some(),
+            "this Receiving case requires a supplied gates image"
+        );
+        ensure!(
+            !session_host || candidate.identity_image.is_some(),
+            "this Receiving case requires a supplied identity image"
+        );
+    }
     ensure!(
         std::env::consts::ARCH == "x86_64",
         "the Receiving images require an x86_64 build host"
@@ -92,9 +104,30 @@ pub(super) async fn prepare(
         repository: repository.to_owned(),
         work,
         evidence: evidence.to_owned(),
-        host_image: format!("wamn-host:{name}"),
-        gates_image: standard_images.then(|| format!("wamn-gates:{name}")),
-        identity_image: session_host.then(|| format!("wamn-identity:{name}")),
+        host_image: candidate
+            .as_ref()
+            .map(|(candidate, _)| super::super::delivery::image_reference(&candidate.host_image))
+            .transpose()?
+            .unwrap_or_else(|| format!("wamn-host:{name}")),
+        gates_image: if let Some((candidate, _)) = &candidate {
+            candidate
+                .gates_image
+                .as_deref()
+                .map(super::super::delivery::image_reference)
+                .transpose()?
+        } else {
+            standard_images.then(|| format!("wamn-gates:{name}"))
+        },
+        identity_image: if let Some((candidate, _)) = &candidate {
+            candidate
+                .identity_image
+                .as_deref()
+                .map(super::super::delivery::image_reference)
+                .transpose()?
+        } else {
+            session_host.then(|| format!("wamn-identity:{name}"))
+        },
+        candidate,
         name,
         source,
         lifecycle,
@@ -157,6 +190,9 @@ pub(super) async fn build_images(
     cluster: &mut Resources,
     standard_images: bool,
 ) -> anyhow::Result<()> {
+    if cluster.candidate.is_some() {
+        return Ok(());
+    }
     cluster.owned = true;
     record_build(
         &cluster.evidence,
@@ -190,6 +226,9 @@ pub(super) async fn build_images(
 }
 
 pub(super) async fn create(cluster: &mut Resources) -> anyhow::Result<()> {
+    if let Some((candidate, _)) = &cluster.candidate {
+        super::super::delivery::registry_files(candidate, &cluster.work)?;
+    }
     cluster.owned = true;
     checked(
         Command::new(&cluster.lifecycle)
@@ -482,9 +521,19 @@ pub(super) async fn remove(cluster: &mut Resources) -> anyhow::Result<()> {
                 .arg("remove")
                 .arg(&cluster.name)
                 .arg(&cluster.work)
-                .arg(&cluster.host_image)
-                .args(cluster.gates_image.iter())
-                .args(cluster.identity_image.iter()),
+                .args(cluster.candidate.is_none().then_some(&cluster.host_image))
+                .args(
+                    cluster
+                        .gates_image
+                        .iter()
+                        .filter(|_| cluster.candidate.is_none()),
+                )
+                .args(
+                    cluster
+                        .identity_image
+                        .iter()
+                        .filter(|_| cluster.candidate.is_none()),
+                ),
         )
         .await?;
         cluster.owned = false;
@@ -514,9 +563,13 @@ impl Drop for Resources {
                 .arg("remove")
                 .arg(&self.name)
                 .arg(&self.work)
-                .arg(&self.host_image)
-                .args(self.gates_image.iter())
-                .args(self.identity_image.iter())
+                .args(self.candidate.is_none().then_some(&self.host_image))
+                .args(self.gates_image.iter().filter(|_| self.candidate.is_none()))
+                .args(
+                    self.identity_image
+                        .iter()
+                        .filter(|_| self.candidate.is_none()),
+                )
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status();

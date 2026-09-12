@@ -50,6 +50,7 @@ use tokio_postgres::types::ToSql;
 use tokio_postgres::{Client, Config, NoTls, Row};
 
 use wamn_authoring_model::GateRefusal;
+use wamn_authoring_model::gate::{judge_gate_document, validate_gate_cases};
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentOperation, ComponentPackageScope,
     WiringDocument, validate_wiring_compatibility,
@@ -57,7 +58,6 @@ use wamn_catalog::{
 use wamn_control_provision::{
     MANAGEMENT_ADMITTER_ROLE, ManagementAdmissionConnection, parse_management_admission_url, sql,
 };
-use wamn_execution_contract::{TestSetCase, validate_cases};
 use wamn_runtime::plugins::wamn_postgres::{
     AclExpectation, AclTarget, AmbientCredentialState, CredentialExactnessProbe,
     CredentialProbeError, ExpectedCredentialIdentity, MembershipExpectation, MembershipMode,
@@ -141,75 +141,6 @@ SELECT EXISTS (\
 // The gate now reads `catalog.wirings` NOT AT ALL. Its candidate is the document
 // the command carries, which is what the ratified stateless-gate model meant by
 // a report REPRODUCIBLE FROM THE DOCUMENT.
-
-/// Name the components a gate case would reach whose admitted effects
-/// projection is NOT empty.
-///
-/// The constitutional clause (wamn-0h0g.8.5.5, ratified spec section 5.1): a
-/// gate is a JUDGMENT ABOUT A DOCUMENT, not an execution of it. Effects belong
-/// to admitted runs under run identity, and a report keyed by content hash must
-/// be reproducible from the document alone or that identity is a lie.
-///
-/// Enforcement is the effect-posture fact `wamn-0h0g.21.9` mints AT ADMISSION:
-/// `catalog.component_library.effects` is the validator's derived projection of
-/// a component's imports onto the authority packages that leave the host, and a
-/// projection no validator derived is already refused at publication and on the
-/// serving path. This is a THIRD READER of that same fact, not a new mechanism —
-/// it derives nothing and asserts nothing of its own, it only reads the stored
-/// projection and refuses a candidate that reaches a non-empty one.
-///
-/// The join is the candidate's `nodes` object onto the library at the candidate's
-/// own applied package version, so compatibility and effect posture agree on
-/// which components a document reaches.
-/// A node naming no library row contributes nothing here because `run_gate`'s
-/// compatibility validation refuses it before this posture is read.
-///
-/// Params: `$1` tenant, `$2` package id, `$3` package version, `$4` nodes.
-const SELECT_EFFECTFUL_COMPONENTS_SQL: &str = "WITH node AS ( \
-        SELECT entry.value ->> 'component' AS component, \
-               entry.value ->> 'interface-version' AS interface_version, \
-               entry.value ->> 'operation' AS operation \
-          FROM jsonb_each($4::jsonb) AS entry \
-    ) \
-    SELECT DISTINCT library.component \
-      FROM node JOIN catalog.component_library AS library \
-        ON library.tenant_id = $1 AND library.package_id = $2 \
-       AND library.package_version = $3 \
-       AND library.component = node.component \
-       AND library.interface_version = node.interface_version \
-       AND library.operations ? node.operation \
-     WHERE jsonb_array_length(library.effects) > 0 \
-     ORDER BY 1";
-
-/// The exact candidate projection one gate command judges.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CandidateWiring {
-    pub package_id: String,
-    /// Exact package version whose admitted facts judge this definition.
-    pub package_version: String,
-    pub wiring_id: String,
-    pub wiring_version: i32,
-    pub wiring_hash: String,
-    /// The candidate's own `cases` array, riding `graph_json`.
-    pub cases: Vec<TestSetCase>,
-    /// The candidate's `nodes` object, retained to resolve the components it
-    /// reaches and their effect posture.
-    nodes: Value,
-}
-
-impl CandidateWiring {
-    /// The `nodes` object as a `jsonb`-safe value.
-    ///
-    /// A candidate whose graph carries no object here reaches no component, and
-    /// `jsonb_each` requires an object rather than a null.
-    fn nodes_object(&self) -> Value {
-        if self.nodes.is_object() {
-            self.nodes.clone()
-        } else {
-            Value::Object(serde_json::Map::new())
-        }
-    }
-}
 
 /// Project-side result of parsing and compatibility-checking one publication.
 #[derive(Debug)]
@@ -690,32 +621,6 @@ impl AdmissionSurface {
             })
             .collect()
     }
-
-    /// Name the effectful components this candidate's gate cases reach.
-    ///
-    /// Empty means this posture permits the candidate: every component it reaches
-    /// carries the empty effects projection, which is the POSITIVE fact the
-    /// validator derived rather than the absence of one.
-    pub async fn effectful_components(
-        &mut self,
-        candidate: &CandidateWiring,
-    ) -> anyhow::Result<Vec<String>> {
-        let tenant_id = self.tenant_id.to_string();
-        let nodes = candidate.nodes_object();
-        let rows = self
-            .query(
-                SELECT_EFFECTFUL_COMPONENTS_SQL,
-                &[
-                    &tenant_id,
-                    &candidate.package_id,
-                    &candidate.package_version,
-                    &nodes,
-                ],
-                "name the candidate's effectful components",
-            )
-            .await?;
-        Ok(rows.iter().map(|row| row.get(0)).collect())
-    }
 }
 
 fn sanitized_postgres_endpoint(config: &Config) -> Box<str> {
@@ -911,30 +816,11 @@ pub async fn run_gate(
     admission: &mut AdmissionSurface,
     request: &GateRequest<'_>,
 ) -> anyhow::Result<GateJudgment> {
-    // The candidate is the DOCUMENT (wamn-0h0g.8.28). It arrives already through
-    // `WiringDocument::parse` — the one validating reader for these bytes — and
-    // the identity the report is keyed by is DERIVED from what that accepted,
-    // never taken from the caller (wamn-0h0g.7.8).
     let document = request.document;
-    let candidate = CandidateWiring {
-        package_id: request.package_id.to_owned(),
-        package_version: request.package_version.to_owned(),
-        wiring_id: document.wiring_id.clone(),
-        wiring_version: i32::try_from(document.version)
-            .context("wiring version exceeds the PostgreSQL integer carrier")?,
-        wiring_hash: document.wiring_hash().as_str().to_owned(),
-        cases: document.cases.clone(),
-        nodes: serde_json::to_value(&document.nodes)
-            .context("re-serialize the judged document's nodes")?,
-    };
-    if !candidate.cases.is_empty()
-        && let Err(error) = validate_cases(&candidate.cases)
-    {
-        return Ok(GateJudgment::Refused(GateRefusal::InvalidTestSet {
-            detail: error.to_string(),
-        }));
+    if let Err(refusal) = validate_gate_cases(document) {
+        return Ok(GateJudgment::Refused(refusal));
     }
-    let component_scope = match ComponentPackageScope::new(
+    let scope = match ComponentPackageScope::new(
         admission.tenant_id.to_string(),
         request.package_id,
         request.package_version,
@@ -946,46 +832,13 @@ pub async fn run_gate(
             }));
         }
     };
-    let components = admission.component_facts(&component_scope).await?;
-    if let Err(error) = validate_wiring_compatibility(document, &component_scope, &components) {
-        return Ok(GateJudgment::Refused(GateRefusal::InvalidDocument {
-            detail: error.to_string(),
-        }));
+    let components = admission.component_facts(&scope).await?;
+    if let Err(refusal) = judge_gate_document(document, &scope, &components) {
+        return Ok(GateJudgment::Refused(refusal));
     }
-
-    // THE CONSTITUTIONAL CLAUSE (wamn-0h0g.8.5.5): gate cases are EFFECT-FREE BY
-    // CONTRACT. Effects belong to admitted runs under run identity, and a report
-    // keyed by content hash must be reproducible from the document alone or that
-    // identity is a lie. This refuses BEFORE the candidate is accepted and before
-    // any other posture is read, so nothing is performed and then regretted.
-    // Assume the clause instead of checking it and the first effectful case
-    // silently double-fires. This is the clause's ONE firing point in the tree:
-    // it moved here with the gate verb when the composition machinery that used
-    // to hold it was deleted, and it did not move out of the way.
-    // With no cases there is no execution posture to read: treating the nodes'
-    // effects alone as a refusal would turn this case contract into a blanket
-    // ban on effectful production wiring. A connection requirement necessarily
-    // implies this same effect posture, so no separate runtime-binding judgment
-    // survives: empty cases execute nothing, and nonempty cases refuse here.
-    if !candidate.cases.is_empty() {
-        let effectful = admission.effectful_components(&candidate).await?;
-        if !effectful.is_empty() {
-            return Ok(GateJudgment::Refused(
-                GateRefusal::EffectfulComponentReached {
-                    components: effectful,
-                },
-            ));
-        }
-    }
-
-    // The report identity is DERIVED, never minted: it IS the candidate's
-    // content hash. Reached only here, after every refusing posture — the
-    // effect-free clause above included — has already declined to fire.
     Ok(GateJudgment::Accepted(GateReport {
-        summary: serde_json::json!({
-            "cases": candidate.cases.len(),
-        }),
-        wiring_hash: candidate.wiring_hash,
+        summary: serde_json::json!({ "cases": document.cases.len() }),
+        wiring_hash: document.wiring_hash().as_str().to_owned(),
         passed: true,
     }))
 }
@@ -1057,72 +910,6 @@ mod tests {
             }))
             .is_err()
         );
-    }
-
-    /// The effect-posture read is EXACTLY the `wamn-0h0g.21.9` fact, resolved
-    /// over exactly the components a run would reach.
-    ///
-    /// This is a static statement built in Rust, so its text is the contract and
-    /// is pinned whole. What each clause buys:
-    ///
-    /// - it reads `catalog.component_library.effects` and nothing else, so it
-    ///   is a third READER of the admitted posture rather than a second
-    ///   derivation of it;
-    /// - `jsonb_array_length(...) > 0` is the non-empty test, so the empty
-    ///   projection — the validator's POSITIVE "leaves the host nowhere" fact —
-    ///   is the only thing that passes;
-    #[test]
-    fn the_effect_posture_read_is_the_admitted_projection_and_nothing_else() {
-        let sql = SELECT_EFFECTFUL_COMPONENTS_SQL;
-        assert_eq!(
-            sql,
-            "WITH node AS ( \
-                SELECT entry.value ->> 'component' AS component, \
-                       entry.value ->> 'interface-version' AS interface_version, \
-                       entry.value ->> 'operation' AS operation \
-                  FROM jsonb_each($4::jsonb) AS entry \
-            ) \
-            SELECT DISTINCT library.component \
-              FROM node JOIN catalog.component_library AS library \
-                ON library.tenant_id = $1 AND library.package_id = $2 \
-               AND library.package_version = $3 \
-               AND library.component = node.component \
-               AND library.interface_version = node.interface_version \
-               AND library.operations ? node.operation \
-             WHERE jsonb_array_length(library.effects) > 0 \
-             ORDER BY 1"
-        );
-        // The refusal is a judgment, never a mutation: a gate that wrote
-        // anything on this path would not be a judgment about a document.
-        for mutation in ["INSERT", "UPDATE", "DELETE", "TRUNCATE"] {
-            assert!(
-                !sql.contains(mutation),
-                "the posture read performs {mutation}"
-            );
-        }
-    }
-
-    /// A candidate whose graph carries no `nodes` object reaches no component,
-    /// and the value handed to `jsonb_each` is an object rather than a null.
-    #[test]
-    fn a_candidate_with_no_nodes_object_is_read_as_reaching_nothing() {
-        let candidate = |graph: Value| CandidateWiring {
-            package_id: "package_a".to_owned(),
-            package_version: "1.0.0".to_owned(),
-            wiring_id: "wiring-a".to_owned(),
-            wiring_version: 1,
-            wiring_hash: "sha256:".to_owned() + &"0".repeat(64),
-            cases: Vec::new(),
-            nodes: graph.get("nodes").cloned().unwrap_or(Value::Null),
-        };
-        assert_eq!(
-            candidate(json!({"cases": []})).nodes_object(),
-            json!({}),
-            "an absent nodes object must not reach jsonb_each as null"
-        );
-        assert_eq!(candidate(json!({"nodes": []})).nodes_object(), json!({}));
-        let nodes = json!({"a": {"component": "c", "interface-version": "1", "operation": "op"}});
-        assert_eq!(candidate(json!({"nodes": nodes})).nodes_object(), nodes);
     }
 
     /// The builder and the live credential probe agree on the exact seven-column

@@ -125,7 +125,7 @@ async fn push(
     Ok(format!("{repository}@{digest}"))
 }
 
-pub(super) async fn install_http(cluster: &ReceivingCluster, image: &str) -> anyhow::Result<()> {
+pub(super) fn http_workload(cluster: &ReceivingCluster, image: &str) -> anyhow::Result<String> {
     let input = HttpWorkloadInput {
         namespace: cluster.resources.name.clone(),
         image: image.to_owned(),
@@ -138,7 +138,7 @@ pub(super) async fn install_http(cluster: &ReceivingCluster, image: &str) -> any
             schema: "receiving".to_owned(),
         },
     };
-    let rendered = render_http_workload(
+    render_http_workload(
         &fs::read_to_string(
             cluster
                 .resources
@@ -146,7 +146,11 @@ pub(super) async fn install_http(cluster: &ReceivingCluster, image: &str) -> any
                 .join("deploy/platform/http-route-workload.example.yaml"),
         )?,
         &input,
-    )?;
+    )
+}
+
+pub(super) async fn install_http(cluster: &ReceivingCluster, image: &str) -> anyhow::Result<()> {
+    let rendered = http_workload(cluster, image)?;
     let path = cluster.resources.work.join("http-route-workload.yaml");
     fs::write(&path, rendered)?;
     apply(&cluster.resources, &path).await?;

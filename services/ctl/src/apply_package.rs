@@ -28,7 +28,7 @@ use wamn_schema_introspection::migration_policy::{
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 const SELECT_ROLE_CONTEXT_SQL: &str = "SELECT current_user::text, session_user::text";
-const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
+pub(crate) const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.lineage:' || $1 || ':' || $2, 0))";
 const SELECT_PACKAGE_SQL: &str = "\
 SELECT manifest_sha256, predecessor_version FROM catalog.packages \
@@ -38,7 +38,7 @@ const SELECT_MIGRATIONS_SQL: &str = "\
 SELECT ordinal, relative_path, sha256 FROM catalog.package_migrations \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
  ORDER BY ordinal";
-const SELECT_CURRENT_PACKAGE_VERSION_SQL: &str = "\
+pub(crate) const SELECT_CURRENT_PACKAGE_VERSION_SQL: &str = "\
 SELECT package.package_version FROM catalog.packages AS package \
  WHERE package.tenant_id = $1 AND package.package_id = $2 \
    AND NOT EXISTS (\
@@ -615,6 +615,47 @@ async fn apply(
             || !operation_grants.is_noop()
             || registrations_changed,
     })
+}
+
+/// Reconcile mutable local configuration only after confirming the installed schema.
+pub(crate) async fn reconcile_local_package_configuration(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    directory: &PackageDirectory,
+) -> anyhow::Result<()> {
+    let plan = plan_package_migrations(directory, None)?;
+    let installed = load_applied_package(
+        tx,
+        tenant,
+        plan.coordinate.package_id(),
+        plan.coordinate.package_version(),
+    )
+    .await?
+    .context("local configuration requires an applied package schema")?;
+    let expected = plan
+        .pending
+        .iter()
+        .map(|migration| RecordedMigration {
+            ordinal: migration.ordinal,
+            relative_path: migration.relative_path.clone(),
+            sha256: migration.sha256.clone(),
+        })
+        .collect::<Vec<_>>();
+    ensure!(
+        installed.predecessor_version == plan.predecessor_version
+            && installed.migrations == expected,
+        "local schema inputs changed; recreate the owned disposable target"
+    );
+    let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
+    reconcile_package_operation_grants(tx, &directory.manifest_bytes, tenant).await?;
+    reconcile_package_registrations(
+        tx,
+        tenant,
+        plan.coordinate.package_id(),
+        &derive_catalog_registrations(&manifest),
+    )
+    .await?;
+    Ok(())
 }
 
 async fn set_package_owner_role(tx: &Transaction<'_>) -> anyhow::Result<()> {

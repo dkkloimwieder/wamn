@@ -20,8 +20,23 @@ case "$action" in
     work=${3:?work directory}; repository=${4:?repository}; host_image=${5:?host image}
     export KUBECONFIG="$work/kubeconfig"
     kind create cluster --name "$cluster" --config "$work/kind.yaml" --kubeconfig "$KUBECONFIG"
-    kind load docker-image "$host_image" --name "$cluster"
-    if [[ -n ${6:-} ]]; then kind load docker-image "$6" --name "$cluster"; fi
+    if [[ -n ${WAMN_DELIVERY_CANDIDATE:-} ]]; then
+      for node in $(kind get nodes --name "$cluster"); do
+        if [[ -f $work/native-registry-authority ]]; then
+          authority=$(cat "$work/native-registry-authority")
+          docker exec "$node" mkdir -p "/etc/containerd/certs.d/$authority"
+          docker cp "$work/native-registry-hosts.toml" "$node:/etc/containerd/certs.d/$authority/hosts.toml"
+        fi
+        timeout 180 docker exec "$node" ctr --namespace k8s.io images pull \
+          --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$host_image" || {
+          printf 'Cannot pull supplied image %s into owned node %s; its registry must permit access without additional credentials.\n' "$host_image" "$node" >&2
+          exit 1
+        }
+      done
+    else
+      kind load docker-image "$host_image" --name "$cluster"
+      if [[ -n ${6:-} ]]; then kind load docker-image "$6" --name "$cluster"; fi
+    fi
     docker run --detach --name "$cluster-postgres" --network kind --env POSTGRES_PASSWORD=probe \
       --publish 127.0.0.1::5432 \
       --volume "$repository/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/postgres-init.sql:ro" \
@@ -74,11 +89,14 @@ case "$action" in
     work=${3:?work directory}
     status=0
     kind delete cluster --name "$cluster" --kubeconfig "$work/kubeconfig" || status=$?
-    for suffix in postgres registry nats minio demo-proxy; do
+    for suffix in postgres registry nats minio demo-proxy executor; do
       if docker container inspect "$cluster-$suffix" >/dev/null 2>&1; then
         docker rm --force --volumes "$cluster-$suffix" || status=$?
       fi
     done
+    if [[ -f $work/native-registry-owned ]]; then
+      "$(dirname -- "${BASH_SOURCE[0]}")/delivery-owned" remove-native "$cluster" "$work" || status=$?
+    fi
     if [[ -n ${4:-} ]] && docker image inspect "$4" >/dev/null 2>&1; then
       docker image rm --force "$4" || status=$?
     fi

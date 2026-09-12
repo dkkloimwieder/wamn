@@ -50,13 +50,14 @@ const FIRST_GENERATION: i64 = 1;
 /// The one connection type this verb can bind today. The enum is the CLI's
 /// closed vocabulary: a type not listed here cannot be named on the command
 /// line, so a descriptor is never authored from a string.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum RequirementType {
     Blobstore,
 }
 
 impl RequirementType {
-    fn descriptor(self) -> ConnectionTypeDescriptor {
+    pub(crate) fn descriptor(self) -> ConnectionTypeDescriptor {
         match self {
             Self::Blobstore => ConnectionTypeDescriptor::blobstore_v1(),
         }
@@ -160,19 +161,8 @@ pub fn validate_definition(
     Ok(())
 }
 
-/// The bytes `validation_hash` is the hash of, so a reader can name them.
-pub fn validation_subject(
-    descriptor: &ConnectionTypeDescriptor,
-    requirement_hash: &str,
-    definition_hash: &str,
-) -> Value {
-    serde_json::json!({
-        "requirement-type": descriptor.requirement_type,
-        "contract": descriptor.contract,
-        "requirement-hash": requirement_hash,
-        "definition-hash": definition_hash,
-    })
-}
+#[doc(inline)]
+pub use wamn_runtime::connection_generation::binding_validation_subject as validation_subject;
 
 pub async fn run(args: BindConnectionArgs) -> anyhow::Result<()> {
     let bound = bind(&args).await?;
@@ -280,55 +270,16 @@ async fn bind_in(
         &requirement_hash,
         &definition_digest,
     ));
-    let definition_text =
-        serde_json::to_string(definition).context("serialize the generation definition")?;
-
-    transaction
-        .execute(
-            insert_connection_instance_sql(),
-            &[
-                &args.tenant,
-                &args.environment,
-                &args.instance_id,
-                &descriptor.requirement_type,
-                &descriptor.contract,
-            ],
-        )
-        .await
-        .context("insert the connection instance")?;
-    transaction
-        .execute(
-            insert_connection_generation_sql(),
-            &[
-                &args.tenant,
-                &args.environment,
-                &args.instance_id,
-                &FIRST_GENERATION,
-                &definition_text,
-                &definition_digest,
-                &args.credential_handle,
-            ],
-        )
-        .await
-        .context("insert the connection generation")?;
-    // Activation advances the instance's revision: the schema's own guard
-    // refuses an update that does not, so the builder is the library's.
-    let activated = transaction
-        .execute(
-            activate_connection_generation_sql(),
-            &[
-                &args.tenant,
-                &args.environment,
-                &args.instance_id,
-                &FIRST_GENERATION,
-            ],
-        )
-        .await
-        .context("activate the connection generation")?;
-    ensure!(
-        activated == 1,
-        "activating generation {FIRST_GENERATION} touched {activated} instance rows, not one"
-    );
+    insert_instance_generation(
+        &transaction,
+        &args.tenant,
+        &args.environment,
+        &args.instance_id,
+        descriptor,
+        definition,
+        &args.credential_handle,
+    )
+    .await?;
     let release_id = i32::try_from(args.effective_release_id)
         .context("the effective release id does not fit the catalog's int column")?;
     transaction
@@ -443,4 +394,152 @@ mod tests {
         assert_ne!(baseline, moved);
         assert!(baseline.starts_with("sha256:") && baseline.len() == 71);
     }
+}
+
+/// Existing non-secret provisioning inputs for a disposable local instance.
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) struct LocalInstanceInput {
+    pub requirement_type: RequirementType,
+    pub definition: PathBuf,
+    pub credential_handle: String,
+}
+
+/// Validated non-secret instance inputs retained until candidate cutover.
+#[derive(Debug)]
+pub(crate) struct PreparedLocalInstance {
+    requirement_type: RequirementType,
+    definition: Value,
+    credential_handle: String,
+}
+
+pub(crate) fn read_local_instance(
+    input: &LocalInstanceInput,
+) -> anyhow::Result<PreparedLocalInstance> {
+    ensure!(
+        input.definition.is_absolute(),
+        "local connection definition path must be absolute"
+    );
+    ensure!(
+        !input.credential_handle.is_empty(),
+        "local credential handle must not be empty"
+    );
+    let definition: Value = serde_json::from_slice(
+        &std::fs::read(&input.definition).context("read local instance definition")?,
+    )?;
+    validate_definition(input.requirement_type, &definition)?;
+    Ok(PreparedLocalInstance {
+        requirement_type: input.requirement_type,
+        definition,
+        credential_handle: input.credential_handle.clone(),
+    })
+}
+
+/// Insert only absent local instances; never replace live generation authority.
+pub(crate) async fn prepare_local_instance(
+    client: &impl tokio_postgres::GenericClient,
+    tenant: &str,
+    environment: &str,
+    instance_id: &str,
+    input: &PreparedLocalInstance,
+) -> anyhow::Result<()> {
+    ensure!(
+        !instance_id.is_empty(),
+        "local instance id must not be empty"
+    );
+    let definition = &input.definition;
+    let descriptor = input.requirement_type.descriptor();
+    let current = client.query_opt(
+        "SELECT instance.requirement_type, instance.contract, instance.lifecycle_status, instance.active_generation,
+                generation.definition_json::text, generation.definition_hash, generation.credential_set_handle
+         FROM catalog.connection_instances AS instance
+         LEFT JOIN catalog.connection_generations AS generation
+           ON generation.tenant_id = instance.tenant_id AND generation.environment = instance.environment
+          AND generation.instance_id = instance.instance_id AND generation.generation = instance.active_generation
+         WHERE instance.tenant_id = $1 AND instance.environment = $2 AND instance.instance_id = $3",
+        &[&tenant, &environment, &instance_id],
+    ).await?;
+    if let Some(row) = current {
+        let text: Option<String> = row.try_get(4)?;
+        let existing: Option<Value> = text.as_deref().map(serde_json::from_str).transpose()?;
+        ensure!(
+            row.try_get::<_, String>(0)? == descriptor.requirement_type
+                && row.try_get::<_, String>(1)? == descriptor.contract
+                && row.try_get::<_, String>(2)? == "enabled"
+                && row.try_get::<_, Option<i64>>(3)?.is_some()
+                && existing.as_ref() == Some(definition)
+                && row.try_get::<_, Option<String>>(5)?.as_deref()
+                    == Some(definition_hash(definition).as_str())
+                && row.try_get::<_, Option<String>>(6)?.as_deref()
+                    == Some(input.credential_handle.as_str()),
+            "local instance inputs differ from live authority; use a distinct instance-id for a changed definition or credential handle"
+        );
+        return Ok(());
+    }
+    insert_instance_generation(
+        client,
+        tenant,
+        environment,
+        instance_id,
+        &descriptor,
+        &definition,
+        &input.credential_handle,
+    )
+    .await
+}
+
+async fn insert_instance_generation(
+    client: &impl tokio_postgres::GenericClient,
+    tenant: &str,
+    environment: &str,
+    instance_id: &str,
+    descriptor: &ConnectionTypeDescriptor,
+    definition: &Value,
+    credential_handle: &str,
+) -> anyhow::Result<()> {
+    let definition_digest = definition_hash(definition);
+    let definition_text =
+        serde_json::to_string(definition).context("serialize the generation definition")?;
+    client
+        .execute(
+            insert_connection_instance_sql(),
+            &[
+                &tenant,
+                &environment,
+                &instance_id,
+                &descriptor.requirement_type,
+                &descriptor.contract,
+            ],
+        )
+        .await
+        .context("insert the connection instance")?;
+    client
+        .execute(
+            insert_connection_generation_sql(),
+            &[
+                &tenant,
+                &environment,
+                &instance_id,
+                &FIRST_GENERATION,
+                &definition_text,
+                &definition_digest,
+                &credential_handle,
+            ],
+        )
+        .await
+        .context("insert the connection generation")?;
+    // Activation advances the instance's revision: the schema's own guard
+    // refuses an update that does not, so the builder is the library's.
+    let activated = client
+        .execute(
+            activate_connection_generation_sql(),
+            &[&tenant, &environment, &instance_id, &FIRST_GENERATION],
+        )
+        .await
+        .context("activate the connection generation")?;
+    ensure!(
+        activated == 1,
+        "activating generation {FIRST_GENERATION} touched {activated} instance rows, not one"
+    );
+    Ok(())
 }

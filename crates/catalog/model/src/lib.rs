@@ -29,8 +29,9 @@ pub use component_library::{
     schema_digests_match, verify_stored_effect_projection,
 };
 pub use connection::{
-    CONNECTION_DESCRIPTOR_VERSION, ConnectionAuthorityModel, ConnectionField, ConnectionFieldOwner,
-    ConnectionFieldOwnership, ConnectionTypeDescriptor, CredentialInjection,
+    CONNECTION_DESCRIPTOR_VERSION, ComponentConnectionRequirement, ConnectionAuthorityModel,
+    ConnectionField, ConnectionFieldOwner, ConnectionFieldOwnership, ConnectionTypeDescriptor,
+    CredentialInjection,
 };
 pub use package::{EffectiveReleaseId, PackageCoordinate};
 pub use serving_manifest::{

@@ -4,6 +4,7 @@ mod application;
 mod bootstrap;
 mod build;
 mod demo;
+mod delivery_case;
 mod deployment;
 mod reader;
 mod startup;
@@ -35,6 +36,12 @@ async fn released_wms_routes() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "runs release preparation, qualification, publication, and deployment on owned services"]
+async fn owned_release_delivery() -> anyhow::Result<()> {
+    run_case(Case::Delivery).await
+}
+
+#[tokio::test]
 #[ignore = "builds and runs a disposable WMS cluster with a failed labels store"]
 async fn released_wms_routes_retain_committed_work_after_label_failure() -> anyhow::Result<()> {
     run_case(Case::PartialCompletion).await
@@ -62,6 +69,7 @@ async fn wms_browser_demo() -> anyhow::Result<()> {
 #[derive(Clone, Copy, Debug)]
 enum Case {
     Routes,
+    Delivery,
     PartialCompletion,
     GeneratedTerminal,
     Startup,
@@ -69,6 +77,11 @@ enum Case {
 }
 
 async fn run_case(case: Case) -> anyhow::Result<()> {
+    let candidate = crate::delivery::candidate()?;
+    ensure!(
+        candidate.is_none() || matches!(case, Case::Routes),
+        "supplied-artifact execution supports the released_wms_routes case"
+    );
     let partial_completion = matches!(case, Case::PartialCompletion | Case::GeneratedTerminal);
     let generated_terminal = matches!(case, Case::GeneratedTerminal);
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
@@ -99,12 +112,22 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     .to_owned();
     let identifier = uuid::Uuid::new_v4().simple().to_string();
     let cluster = format!("wamn-wms-{identifier}");
-    let tag = format!("wms-{}-{}-debug", &head[..12], &identifier[..12]);
-    let image = format!("wamn-host:{tag}");
+    let tag = if matches!(case, Case::Delivery) {
+        cluster.clone()
+    } else {
+        format!("wms-{}-{}-debug", &head[..12], &identifier[..12])
+    };
+    let image = candidate
+        .as_ref()
+        .map(|(candidate, _)| crate::delivery::image_reference(&candidate.host_image))
+        .transpose()?
+        .unwrap_or_else(|| format!("wamn-host:{tag}"));
     let lifecycle = repository.join("tools/wms-cluster-journey-run");
     deployment::preflight(&lifecycle, &cluster, &image).await?;
-    let target = std::env::var_os("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
+    let target = candidate
+        .as_ref()
+        .map(|(candidate, _)| candidate.target_directory.clone())
+        .or_else(|| std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from))
         .unwrap_or_else(|| repository.join("target"));
     let target = if target.is_absolute() {
         target
@@ -150,8 +173,9 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         .create(&work_path)
         .context("create the private owned WMS directory")?;
     let work = ScratchRoot(work_path);
-    let run = std::panic::AssertUnwindSafe(async {
-        build::build(&repository, &target, &evidence, generated_terminal).await?;
+    let delivery_cancelled = pg_walstream::CancellationToken::new();
+    let mut run = Box::pin(std::panic::AssertUnwindSafe(async {
+        build::build(&repository, &target, &evidence, generated_terminal, matches!(case, Case::Delivery)).await?;
         let files = bootstrap::prepare(&repository, work.path())?;
         let scope = Triple::new(
             crate::environment::ORG,
@@ -168,15 +192,23 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             &advisory,
             &[],
         )?;
-        deployment::prepare_image(&target, work.path(), &head)?;
-        checked(
-            Command::new(&lifecycle)
-                .arg("build-images")
-                .arg(&cluster)
-                .arg(work.path())
-                .arg(&image),
-        )
-        .await?;
+        if matches!(case, Case::Delivery) {
+            checked(Command::new(repository.join("tools/delivery-owned"))
+                .arg("build-host").arg(&cluster).arg(work.path()).arg(&head)).await?;
+        } else if candidate.is_none() {
+            deployment::prepare_image(&target, work.path(), &head)?;
+            checked(
+                Command::new(&lifecycle)
+                    .arg("build-images")
+                    .arg(&cluster)
+                    .arg(work.path())
+                    .arg(&image),
+            )
+            .await?;
+        }
+        if let Some((candidate, _)) = &candidate {
+            crate::delivery::registry_files(candidate, work.path())?;
+        }
         checked(
             Command::new(&lifecycle)
                 .arg("create")
@@ -192,7 +224,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             work.path(),
             &image,
             &head,
-            "debug",
+            if candidate.is_some() || matches!(case, Case::Delivery) { "release" } else { "debug" },
             &evidence,
         )
         .await?;
@@ -206,24 +238,38 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             &evidence,
             &image,
             &tag,
+            &head,
             &digest,
             &files,
             &broker,
             &scope,
             &source,
             case,
+            &delivery_cancelled,
         )
         .await;
         demo::hold(work.path(), matches!(case, Case::Demo) && result.is_ok()).await?;
         result
     })
-    .catch_unwind();
-    let run = tokio::select! {
-        result = run => result,
-        _ = interrupt.recv() => Ok(Err(anyhow::anyhow!("the WMS test received SIGINT"))),
-        _ = terminate.recv() => Ok(Err(anyhow::anyhow!("the WMS test received SIGTERM"))),
-        _ = hangup.recv() => Ok(Err(anyhow::anyhow!("the WMS test received SIGHUP"))),
+    .catch_unwind());
+    let observed = tokio::select! {
+        result = &mut run => Ok(result),
+        _ = interrupt.recv() => Err("the WMS test received SIGINT"),
+        _ = terminate.recv() => Err("the WMS test received SIGTERM"),
+        _ = hangup.recv() => Err("the WMS test received SIGHUP"),
     };
+    let observed = match observed {
+        Ok(result) => result,
+        Err(cause) => {
+            delivery_cancelled.cancel();
+            if matches!(case, Case::Delivery) {
+                let _ = tokio::time::timeout(Duration::from_secs(180), &mut run).await;
+            }
+            Ok(Err(anyhow::anyhow!(cause)))
+        }
+    };
+    drop(run);
+    let run = observed;
     let failure_capture = if matches!(&run, Ok(Ok(()))) {
         Ok(())
     } else {
@@ -234,7 +280,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             .arg("remove")
             .arg(&cluster)
             .arg(work.path())
-            .arg(&image),
+            .args(candidate.is_none().then_some(&image)),
     )
     .await;
     let absent = deployment::preflight(&lifecycle, &cluster, &image).await;
@@ -263,6 +309,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             "source":head,"cluster":cluster,"completed":matches!(&run, Ok(Ok(()))),
             "partial_completion":partial_completion,"generated_terminal":generated_terminal,
             "startup":matches!(case, Case::Startup),"demo":matches!(case, Case::Demo),
+            "delivery":matches!(case, Case::Delivery),
             "failure_capture":failure_capture.as_ref().err().map(|error|format!("{error:#}")),
             "failure":match &run { Ok(Err(error)) => Some(format!("{error:#}")), Err(_) => Some("test panicked".to_owned()), _ => None },
             "resource_cleanup":removed.is_ok() && absent.is_ok(),
@@ -282,7 +329,12 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     .await;
     match run {
         Ok(result) => match (result, cleanup) {
-            (Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Ok(())) => {
+                if let Some((candidate, manifest)) = &candidate {
+                    wamn_ctl::delivery::report_candidate_success(candidate, manifest)?;
+                }
+                Ok(())
+            }
             (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
             (Err(error), Err(cleanup)) => {
                 Err(error.context(format!("WMS cleanup also failed: {cleanup:#}")))
@@ -306,12 +358,14 @@ async fn run_created(
     evidence: &Path,
     image: &str,
     tag: &str,
+    source_head: &str,
     runtime_digest: &str,
     files: &bootstrap::BootstrapFiles,
     broker: &EventBroker,
     scope: &Triple,
     source: &async_nats::jetstream::stream::Config,
     case: Case,
+    delivery_cancelled: &pg_walstream::CancellationToken,
 ) -> anyhow::Result<()> {
     let partial_completion = matches!(case, Case::PartialCompletion | Case::GeneratedTerminal);
     let generated_terminal = matches!(case, Case::GeneratedTerminal);
@@ -367,10 +421,11 @@ async fn run_created(
         &target.join("wasm32-wasip2/release/label_render.wasm"),
         &minio_endpoint,
         evidence,
+        matches!(case, Case::Delivery),
     )
     .await?;
     event_broker::write_binding(broker, &nats_url, source)?;
-    if measure_startup {
+    if measure_startup || matches!(case, Case::Delivery) {
         let provisioning = event_broker::connect(&broker.provisioning, &nats_url).await?;
         wamn_ctl::event_streams::provision(
             &async_nats::jetstream::new(provisioning.clone()),
@@ -410,10 +465,43 @@ async fn run_created(
     drop(source_observed);
     drop(advisory_observed);
     drop(context);
+    if let Some(candidate) = wamn_ctl::delivery::Candidate::from_env()? {
+        if let Some(image) = &candidate.executor_image {
+            let binary = crate::delivery::executor_launcher(work, image, &format!("{cluster}-executor"))?;
+            wamn_test_infrastructure::executor::assert_idle_lifecycle(
+                &wamn_test_infrastructure::executor::ExecutorInput {
+                    binary: &binary,
+                    host_secrets: &document.host_secret_directory,
+                    component_artifact_base: &document.component_artifact_base,
+                    release_artifact_base: &release.artifact_base,
+                    manifest_digest: release.manifest_digest.as_str(),
+                    registry_auth: &document.registry_auth_file,
+                    nats_url: &nats_url,
+                    event_scope: scope,
+                    project: crate::environment::PROJECT,
+                    schema: crate::environment::SCHEMA,
+                    credentials: &broker.runtime,
+                    source: source_head,
+                    stream: source,
+                },
+                evidence,
+            ).await?;
+            write_result(evidence, "candidate-executor.json", &json!({
+                "image":image,"manifest_digest":release.manifest_digest,
+                "boundary":"idle-readiness-and-signal-shutdown","result":"pass",
+            }))?;
+        }
+    }
     observer
         .drain()
         .await
         .context("close the scoped stream observation client")?;
+    if matches!(case, Case::Delivery) {
+        return delivery_case::run(
+            repository, lifecycle, cluster, work, target, evidence, source_head,
+            files, broker, source, &document, &route, &release, &postgres_ip, &nats_url, delivery_cancelled,
+        ).await;
+    }
     let (project, project_task) = wamn_ctl::dev::environment::connect(&route.database_url).await?;
     let reader_args = if measure_startup {
         None

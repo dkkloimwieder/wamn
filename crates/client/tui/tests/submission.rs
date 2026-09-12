@@ -277,23 +277,37 @@ fn a_declared_transaction_refusal_requires_its_details_and_the_whole_route() {
 
 #[test]
 fn replacement_blocks_sends_clears_capture_and_rejects_late_old_responses() {
-    let mut submission = Submission::new(binding("one"));
-    let contract = contract(Replay::Claim);
-    let old = submission.begin(request(), &contract).unwrap();
-    assert!(
-        submission.invalidate(),
-        "pending work can still complete on the old target"
-    );
-    assert!(!submission.available());
-    assert!(submission.captured().is_none());
-    assert!(submission.begin(request(), &contract).is_err());
-    assert!(submission.activate(binding("two")));
-    let current = submission.begin(request(), &contract).unwrap();
-    assert!(
-        !submission.resolve_evidence(old, Evidence::Refused(json!({"code":"permission_denied"})))
-    );
-    assert_eq!(submission.state(), &State::Pending);
-    assert!(submission.resolve(current, &contract, lost()));
+    for response_lost in [false, true] {
+        let mut submission = Submission::new(binding("one"));
+        let contract = contract(Replay::Claim);
+        let old = submission.begin(request(), &contract).unwrap();
+        if response_lost {
+            assert!(submission.resolve(old, &contract, lost()));
+            assert!(matches!(submission.state(), State::Uncertain { .. }));
+            assert!(submission.captured().is_some());
+        }
+        assert!(
+            submission.invalidate(),
+            "pending or interrupted work can still complete on the old target"
+        );
+        assert!(!submission.available());
+        assert!(submission.captured().is_none());
+        assert!(submission.begin(request(), &contract).is_err());
+        assert!(submission.activate(binding("two")));
+        assert_eq!(submission.state(), &State::Editable);
+        assert!(submission.captured().is_none());
+        assert!(
+            submission.retry().is_err(),
+            "the new target cannot replay an old mutation"
+        );
+        let current = submission.begin(request(), &contract).unwrap();
+        assert!(
+            !submission
+                .resolve_evidence(old, Evidence::Refused(json!({"code":"permission_denied"})))
+        );
+        assert_eq!(submission.state(), &State::Pending);
+        assert!(submission.resolve(current, &contract, lost()));
+    }
 }
 
 #[test]

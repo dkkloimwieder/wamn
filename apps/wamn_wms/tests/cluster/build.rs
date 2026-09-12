@@ -1,6 +1,7 @@
 //! Retained self-contained builds for the WMS cluster cases.
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use anyhow::{Context as _, ensure};
@@ -13,19 +14,56 @@ pub(super) async fn build(
     target: &Path,
     evidence: &Path,
     generated_terminal: bool,
+    delivery: bool,
 ) -> anyhow::Result<()> {
+    if let Some(candidate) = wamn_ctl::delivery::Candidate::from_env()? {
+        candidate.artifact_hashes()?;
+        for name in [
+            "wamn-ctl",
+            "wamn-identity",
+            "wamn-cdc-reader",
+            "wamn-scenario-worker",
+        ] {
+            let path = target.join("debug").join(name);
+            let metadata = fs::metadata(&path)
+                .with_context(|| format!("read supplied helper {}", path.display()))?;
+            ensure!(
+                metadata.is_file()
+                    && metadata.len() > 0
+                    && metadata.permissions().mode() & 0o111 != 0,
+                "the supplied helper is not an executable file: {}",
+                path.display()
+            );
+        }
+        for relative in [
+            "virtualized/std-empty-environment/wms.wasm",
+            "virtualized/std-empty-environment/blob_put.wasm",
+            "wasm32-wasip2/release/label_render.wasm",
+            "wasm32-wasip2/release/http_route.wasm",
+            "wasm32-wasip2/release/materializer.wasm",
+        ] {
+            let path = target.join(relative);
+            ensure!(
+                !fs::read(&path)
+                    .with_context(|| format!("read supplied component {}", path.display()))?
+                    .is_empty(),
+                "the supplied component is empty: {}",
+                path.display()
+            );
+        }
+        return Ok(());
+    }
     let mut guests = Command::new(repository.join("tools/build-components"));
     guests.arg("all");
     prepare(&mut guests, repository, target);
     run(&mut guests, evidence, "guests").await?;
 
     let mut native = Command::new("cargo");
+    native.args(["build", "--locked", "--offline"]);
+    if !delivery {
+        native.args(["-p", "wamn-host"]);
+    }
     native.args([
-        "build",
-        "--locked",
-        "--offline",
-        "-p",
-        "wamn-host",
         "-p",
         "wamn-ctl",
         "-p",
@@ -35,6 +73,9 @@ pub(super) async fn build(
         "-p",
         "wamn-scenario-worker",
     ]);
+    if delivery {
+        native.args(["-p", "wamn-executor"]);
+    }
     prepare(&mut native, repository, target);
     run(&mut native, evidence, "native").await?;
     if generated_terminal {
@@ -75,6 +116,9 @@ pub(super) async fn build(
     }
     components.sort_by(|left, right| left.0.cmp(&right.0));
     crate::wms_runtime_live::write_result(evidence, "component-bytes.json", &json!(components))?;
+    if delivery {
+        return Ok(());
+    }
     let host = target.join("debug/wamn-host");
     let bytes = fs::read(&host).context("read the host produced by the native build")?;
     crate::wms_runtime_live::write_result(

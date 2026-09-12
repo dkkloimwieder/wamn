@@ -133,8 +133,8 @@ fn every_embedded_component_comes_from_the_locked_builder() {
 
     assert!(DOCKERFILE.contains("FROM component-toolchain AS component-builder"));
     assert!(DOCKERFILE.contains("COPY apps /build/apps"));
-    assert!(DOCKERFILE.contains("rustup target add --toolchain 1.97.0 wasm32-wasip2"));
-    assert!(DOCKERFILE.contains("cargo +1.97.0 build --locked --release --target wasm32-wasip2"));
+    assert!(DOCKERFILE.contains("rustup target add --toolchain 1.98.0 wasm32-wasip2"));
+    assert!(DOCKERFILE.contains("cargo +1.98.0 build --locked --release --target wasm32-wasip2"));
     assert!(DOCKERIGNORE.lines().any(|line| line == "/apps/target"));
 }
 

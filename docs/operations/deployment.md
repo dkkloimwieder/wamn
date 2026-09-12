@@ -87,7 +87,8 @@ wamn-ctl publish-release \
   --route-host "$ROUTE_HOST" \
   --package-manifest apps/wamn_receiving/wamn.json
 
-wamn-ctl push-release-manifest \
+wamn-ctl publish-qualified-release \
+  --qualification "$DELIVERY_QUALIFICATION" \
   --database-url "$OWNER_URL" --control-database-url "$CONTROL_URL" \
   --tenant "$TENANT" --effective-release-id "$EFFECTIVE_RELEASE_ID" \
   --org "$ORG" --project "$PROJECT" \
@@ -100,7 +101,8 @@ wamn-ctl print-release-env \
 ```
 
 Publication freezes the effective release and its canonical manifest digest.
-The push reads that frozen snapshot and refuses conflicting artifact bytes.
+[Qualify the exact candidate](delivery.md#candidate-qualification) before publication.
+The push requires that result, reads the frozen snapshot, and refuses conflicting artifact bytes.
 `print-release-env` prints the executor environment entries and host flags without editing files.
 
 Copy its output into the executor manifest and the selected complete host overlay.
@@ -131,8 +133,8 @@ Record the selected source, artifact identity, release identity, command exits, 
 
 `wamn-ctl promote` copies portable release facts only after the target's package and migration records match exactly.
 It does not apply migrations to the target.
-Current operation is manual, so a CI completion order is not a deployment-ordering mechanism.
-The future automation requirements remain in [delivery](../plan/delivery.md).
+The [repository delivery commands](delivery.md) serialize activation against the existing selected release.
+A CI completion order does not set deployment precedence.
 
 ## Identity target credentials
 

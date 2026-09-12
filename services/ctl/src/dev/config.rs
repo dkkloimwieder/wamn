@@ -79,6 +79,16 @@ const POSTGRES_ROUTING_QUERY_KEYS: [&str; 5] = ["host", "hostaddr", "port", "dbn
 const REFERENCE_PROBE_DIGEST: &str =
     "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
+/// Explicit local candidate files owned by one disposable development session.
+#[derive(Clone, Debug, Deserialize, serde::Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LocalArtifacts {
+    pub directory: PathBuf,
+    pub flow_http_component: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bindings: Option<PathBuf>,
+}
+
 /// Sole field authority for the strict deployment-owned `dev.json` document.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -102,9 +112,13 @@ struct DevConfigDocument {
     dup_window_secs: u64,
     tempo_query_url: String,
     otel_exporter_otlp_endpoint: String,
+    #[serde(default)]
     component_artifact_base: String,
+    #[serde(default)]
     release_artifact_base: String,
+    #[serde(default)]
     registry_auth_file: PathBuf,
+    #[serde(default)]
     insecure_registry: bool,
     gate_url: String,
     gate_bearer_token: String,
@@ -112,7 +126,11 @@ struct DevConfigDocument {
     #[schemars(with = "String")]
     operator_bearer_token: Option<String>,
     route_host: String,
+    #[serde(default)]
     flow_http_workload_image: String,
+    #[serde(default)]
+    #[schemars(with = "LocalArtifacts")]
+    local_artifacts: Option<LocalArtifacts>,
     package_sources: Vec<PathBuf>,
     effective_release_id: NonZeroU32,
     tenant: String,
@@ -595,6 +613,7 @@ pub struct DevConfig {
     dup_window_secs: u64,
     tempo_query_url: Box<str>,
     otel_exporter_otlp_endpoint: Box<str>,
+    local_artifacts: Option<LocalArtifacts>,
     component_artifact_base: Box<str>,
     release_artifact_base: Box<str>,
     registry_auth_file: PathBuf,
@@ -814,6 +833,11 @@ impl DevConfig {
         &self.otel_exporter_otlp_endpoint
     }
 
+    /// Local input for an unpublished candidate, when configured.
+    pub fn local_artifacts(&self) -> Option<&LocalArtifacts> {
+        self.local_artifacts.as_ref()
+    }
+
     /// Explicit component registry and repository base.
     pub fn component_artifact_base(&self) -> &str {
         &self.component_artifact_base
@@ -887,7 +911,14 @@ impl DevConfig {
 
 /// Language-neutral JSON Schema generated from the strict `dev.json` input type.
 pub fn dev_config_schema() -> Value {
-    serde_json::to_value(schemars::schema_for!(DevConfigDocument)).expect("schema serializes")
+    let mut schema =
+        serde_json::to_value(schemars::schema_for!(DevConfigDocument)).expect("schema serializes");
+    schema["if"] = serde_json::json!({ "not": { "required": ["local_artifacts"] } });
+    schema["then"] = serde_json::json!({ "required": [
+        COMPONENT_ARTIFACT_BASE, RELEASE_ARTIFACT_BASE, REGISTRY_AUTH_FILE,
+        INSECURE_REGISTRY, FLOW_HTTP_WORKLOAD_IMAGE,
+    ] });
+    schema
 }
 
 /// Byte-stable pretty JSON Schema generated from the strict `dev.json` input type.
@@ -944,6 +975,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         dup_window_secs,
         tempo_query_url,
         otel_exporter_otlp_endpoint,
+        local_artifacts,
         component_artifact_base,
         release_artifact_base,
         registry_auth_file,
@@ -1016,10 +1048,32 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let tempo_query_url = nonempty_string(tempo_query_url, TEMPO_QUERY_URL)?;
     let otel_exporter_otlp_endpoint =
         nonempty_string(otel_exporter_otlp_endpoint, OTEL_EXPORTER_OTLP_ENDPOINT)?;
-    let component_artifact_base =
-        nonempty_string(component_artifact_base, COMPONENT_ARTIFACT_BASE)?;
-    let release_artifact_base = nonempty_string(release_artifact_base, RELEASE_ARTIFACT_BASE)?;
-    let registry_auth_file = nonempty_path(registry_auth_file, REGISTRY_AUTH_FILE)?;
+    let (component_artifact_base, release_artifact_base, registry_auth_file) =
+        if let Some(local) = &local_artifacts {
+            for path in [&local.directory, &local.flow_http_component]
+                .into_iter()
+                .chain(local.bindings.iter())
+            {
+                if !path.is_absolute() {
+                    return Err(DevConfigError::new(
+                        DevConfigErrorKind::InvalidValue,
+                        "local_artifacts",
+                        "local artifact paths must be absolute",
+                    ));
+                }
+            }
+            (
+                component_artifact_base.into_boxed_str(),
+                release_artifact_base.into_boxed_str(),
+                registry_auth_file,
+            )
+        } else {
+            (
+                nonempty_string(component_artifact_base, COMPONENT_ARTIFACT_BASE)?,
+                nonempty_string(release_artifact_base, RELEASE_ARTIFACT_BASE)?,
+                nonempty_path(registry_auth_file, REGISTRY_AUTH_FILE)?,
+            )
+        };
     let target_privileges_file = nonempty_path(target_privileges_file, TARGET_PRIVILEGES_FILE)?;
     let target_template_database =
         nonempty_string(target_template_database, TARGET_TEMPLATE_DATABASE)?;
@@ -1031,8 +1085,11 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         .map(|token| nonempty_string(token, OPERATOR_BEARER_TOKEN))
         .transpose()?;
     let route_host = nonempty_string(route_host, ROUTE_HOST)?;
-    let flow_http_workload_image =
-        nonempty_string(flow_http_workload_image, FLOW_HTTP_WORKLOAD_IMAGE)?;
+    let flow_http_workload_image = if local_artifacts.is_some() {
+        flow_http_workload_image.into_boxed_str()
+    } else {
+        nonempty_string(flow_http_workload_image, FLOW_HTTP_WORKLOAD_IMAGE)?
+    };
     let package_sources = package_sources
         .into_iter()
         .map(|root| nonempty_path(root, PACKAGE_SOURCES))
@@ -1136,20 +1193,40 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         4317,
         false,
     )?;
-    let registry_port = if insecure_registry { 80 } else { 443 };
-    let component_probe = artifact_base_probe(
-        COMPONENT_ARTIFACT_BASE,
-        &component_artifact_base,
-        registry_port,
-    )?;
-    let release_probe =
-        artifact_base_probe(RELEASE_ARTIFACT_BASE, &release_artifact_base, registry_port)?;
     let gate_probe = url_probe(GATE_URL, &gate_url, &["http", "https"], 443, true)?;
-    let flow_http_probe = workload_image_probe(
-        FLOW_HTTP_WORKLOAD_IMAGE,
-        &flow_http_workload_image,
-        registry_port,
-    )?;
+    let mut probes = vec![
+        verification_probe,
+        target_probe,
+        system_probe,
+        identity_probe,
+        guest_probe,
+        executor_platform_probe,
+        http_admitter_probe,
+        event_materializer_probe,
+        scheduler_probe,
+        event_probe,
+        gate_probe,
+        tempo_probe,
+        otel_exporter_probe,
+    ];
+    if local_artifacts.is_none() {
+        let registry_port = if insecure_registry { 80 } else { 443 };
+        probes.push(artifact_base_probe(
+            COMPONENT_ARTIFACT_BASE,
+            &component_artifact_base,
+            registry_port,
+        )?);
+        probes.push(artifact_base_probe(
+            RELEASE_ARTIFACT_BASE,
+            &release_artifact_base,
+            registry_port,
+        )?);
+        probes.push(workload_image_probe(
+            FLOW_HTTP_WORKLOAD_IMAGE,
+            &flow_http_workload_image,
+            registry_port,
+        )?);
+    }
 
     Ok(DevConfig {
         verification_database_url,
@@ -1171,6 +1248,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         dup_window_secs,
         tempo_query_url,
         otel_exporter_otlp_endpoint,
+        local_artifacts,
         component_artifact_base,
         release_artifact_base,
         registry_auth_file,
@@ -1185,25 +1263,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         activation_identity,
         host_binary,
         wasmtime_cache_dir,
-        probes: vec![
-            verification_probe,
-            target_probe,
-            system_probe,
-            identity_probe,
-            guest_probe,
-            executor_platform_probe,
-            http_admitter_probe,
-            event_materializer_probe,
-            scheduler_probe,
-            event_probe,
-            component_probe,
-            release_probe,
-            gate_probe,
-            flow_http_probe,
-            tempo_probe,
-            otel_exporter_probe,
-        ]
-        .into_boxed_slice(),
+        probes: probes.into_boxed_slice(),
     })
 }
 
@@ -1372,7 +1432,15 @@ fn validate_config_document_shape(
         .get("required")
         .and_then(Value::as_array)
         .expect("derived dev config schema names required properties");
-    for key in required {
+    let registry_required = schema["then"]["required"]
+        .as_array()
+        .expect("registry input condition names required properties");
+    let conditional = if object.contains_key("local_artifacts") {
+        &[][..]
+    } else {
+        registry_required.as_slice()
+    };
+    for key in required.iter().chain(conditional) {
         let key = key
             .as_str()
             .expect("derived dev config required properties are strings");
@@ -1385,6 +1453,16 @@ fn validate_config_document_shape(
         }
     }
     for (key, value) in object {
+        if key == "local_artifacts" {
+            serde_json::from_value::<LocalArtifacts>(value.clone()).map_err(|_| {
+                DevConfigError::new(
+                    DevConfigErrorKind::InvalidValue,
+                    key.as_str(),
+                    "local artifacts require only directory and flow_http_component paths",
+                )
+            })?;
+            continue;
+        }
         if !json_value_matches_schema(
             properties
                 .get(key)
@@ -1787,7 +1865,7 @@ fn sanitized_registry_hint(raw: &str, default_port: u16) -> Box<str> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::net::SocketAddr;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -1836,7 +1914,7 @@ mod tests {
             .join(name)
     }
 
-    fn complete_document(addresses: &[SocketAddr; ENDPOINT_COUNT]) -> Value {
+    pub(crate) fn complete_document(addresses: &[SocketAddr; ENDPOINT_COUNT]) -> Value {
         json!({
             (VERIFICATION_DATABASE_URL): format!("postgresql://verify:verify-secret@{}/verification", addresses[0]),
             (TARGET_DATABASE_URL): format!("postgresql://target:target-secret@{}/target", addresses[1]),
@@ -1956,6 +2034,55 @@ mod tests {
             assert_eq!(error.key(), key);
             assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
         }
+    }
+
+    #[test]
+    fn local_configuration_needs_no_registry_and_keeps_authority_inputs() {
+        let addresses = ["127.0.0.1:41000".parse().unwrap(); ENDPOINT_COUNT];
+        let mut document = complete_document(&addresses);
+        for key in [
+            COMPONENT_ARTIFACT_BASE,
+            RELEASE_ARTIFACT_BASE,
+            REGISTRY_AUTH_FILE,
+            INSECURE_REGISTRY,
+            FLOW_HTTP_WORKLOAD_IMAGE,
+        ] {
+            document.as_object_mut().unwrap().remove(key);
+        }
+        document["local_artifacts"] = json!({"directory": "/tmp/wamn-local-candidate",
+            "flow_http_component": "/tmp/wamn-flow-http.wasm"});
+        let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
+        assert!(config.local_artifacts().is_some());
+        assert!(config.probes.iter().all(|probe| {
+            ![
+                COMPONENT_ARTIFACT_BASE,
+                RELEASE_ARTIFACT_BASE,
+                FLOW_HTTP_WORKLOAD_IMAGE,
+            ]
+            .contains(&probe.key)
+        }));
+        assert!(
+            config
+                .probes
+                .iter()
+                .any(|probe| probe.key == IDENTITY_DATABASE_URL)
+        );
+        assert!(config.probes.iter().any(|probe| probe.key == GATE_URL));
+        document["local_artifacts"]["directory"] = json!("relative-directory");
+        assert_eq!(
+            parse_config(&serde_json::to_vec(&document).unwrap())
+                .unwrap_err()
+                .key(),
+            "local_artifacts"
+        );
+        document["local_artifacts"]["directory"] = json!("/tmp/wamn-local-candidate");
+        document["local_artifacts"]["unexpected"] = json!(true);
+        assert_eq!(
+            parse_config(&serde_json::to_vec(&document).unwrap())
+                .unwrap_err()
+                .key(),
+            "local_artifacts"
+        );
     }
 
     #[test]

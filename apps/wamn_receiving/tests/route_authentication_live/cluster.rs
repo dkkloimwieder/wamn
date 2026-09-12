@@ -3,6 +3,7 @@
 mod build;
 mod cdc;
 mod default_case;
+mod delivery_case;
 mod deployment;
 mod materializer_case;
 mod measurement;
@@ -76,7 +77,7 @@ async fn start(
         &advisory,
         &consumers,
     )?;
-    if !standard_images {
+    if !standard_images && cluster.candidate.is_none() {
         build::prepare_host_image(&cluster.work, &artifacts.target, &cluster.source)?;
     }
     resources::build_images(&mut cluster, standard_images).await?;
@@ -288,6 +289,52 @@ async fn provision(
     Ok((route, carrier))
 }
 
+async fn candidate_executor(
+    cluster: &ReceivingCluster,
+    carrier: &ReleaseCarrier,
+) -> anyhow::Result<()> {
+    let Some(image) = cluster
+        .resources
+        .candidate
+        .as_ref()
+        .and_then(|(candidate, _)| candidate.executor_image.as_deref())
+    else {
+        return Ok(());
+    };
+    let binary = super::delivery::executor_launcher(
+        &cluster.resources.work,
+        image,
+        &format!("{}-executor", cluster.resources.name),
+    )?;
+    let scope = Triple::new(ORG, PROJECT, ENVIRONMENT);
+    wamn_test_infrastructure::executor::assert_idle_lifecycle(
+        &wamn_test_infrastructure::executor::ExecutorInput {
+            binary: &binary,
+            host_secrets: &cluster.inputs.host_secret_directory,
+            component_artifact_base: &cluster.inputs.component_artifact_base,
+            release_artifact_base: &carrier.artifact_base,
+            manifest_digest: carrier.manifest_digest.as_str(),
+            registry_auth: &cluster.inputs.registry_auth_file,
+            nats_url: &cluster.nats_url,
+            event_scope: &scope,
+            project: PROJECT,
+            schema: "receiving",
+            credentials: &cluster.broker.runtime,
+            source: &cluster.resources.source,
+            stream: &cluster.source,
+        },
+        &cluster.resources.evidence,
+    )
+    .await?;
+    fs::write(
+        cluster.resources.evidence.join("candidate-executor.json"),
+        serde_json::to_vec_pretty(
+            &json!({"image":image,"manifest_digest":carrier.manifest_digest,"boundary":"idle-readiness-and-signal-shutdown","result":"pass"}),
+        )?,
+    )?;
+    Ok(())
+}
+
 async fn install_host(
     cluster: &Resources,
     inputs: &JourneyDocument,
@@ -298,6 +345,49 @@ async fn install_host(
     source: &async_nats::jetstream::stream::Config,
     session: Option<(&str, &str)>,
 ) -> anyhow::Result<()> {
+    let (base, overlay) = prepare_host(
+        cluster,
+        inputs,
+        carrier,
+        replicas,
+        nats_url,
+        native_nats_secrets,
+        source,
+        session,
+    )
+    .await?;
+    checked(
+        Command::new(&cluster.lifecycle)
+            .arg("install-host")
+            .arg(&cluster.name)
+            .arg(&cluster.work)
+            .arg(&cluster.name)
+            .arg(&base)
+            .arg(&overlay),
+    )
+    .await?;
+    checked(kubectl(cluster).args([
+        "-n",
+        &cluster.name,
+        "rollout",
+        "status",
+        "deployment/hostgroup-default",
+        "--timeout=240s",
+    ]))
+    .await?;
+    Ok(())
+}
+
+async fn prepare_host(
+    cluster: &Resources,
+    inputs: &JourneyDocument,
+    carrier: &ReleaseCarrier,
+    replicas: u32,
+    nats_url: &str,
+    native_nats_secrets: &[PathBuf],
+    source: &async_nats::jetstream::stream::Config,
+    session: Option<(&str, &str)>,
+) -> anyhow::Result<(PathBuf, PathBuf)> {
     let database_host = reqwest::Url::parse(&inputs.system_pg_url)?
         .host_str()
         .context("the owned system URL has a host")?
@@ -361,7 +451,7 @@ async fn install_host(
             name: secret.name.clone(),
         })
         .collect();
-    let values = render_host_values(
+    let mut values = render_host_values(
         &fs::read_to_string(
             cluster
                 .repository
@@ -392,6 +482,9 @@ async fn install_host(
             dup_window_secs: source.duplicate_window.as_secs(),
         },
     )?;
+    if cluster.candidate.is_some() {
+        values.base = super::delivery::host_values(&values.base, &cluster.host_image)?;
+    }
     assert_rendered_identity(
         &values.overlay,
         &HostIdentity {
@@ -409,26 +502,7 @@ async fn install_host(
         values.overlay
     };
     fs::write(&overlay, overlay_values)?;
-    checked(
-        Command::new(&cluster.lifecycle)
-            .arg("install-host")
-            .arg(&cluster.name)
-            .arg(&cluster.work)
-            .arg(&cluster.name)
-            .arg(&base)
-            .arg(&overlay),
-    )
-    .await?;
-    checked(kubectl(cluster).args([
-        "-n",
-        &cluster.name,
-        "rollout",
-        "status",
-        "deployment/hostgroup-default",
-        "--timeout=240s",
-    ]))
-    .await?;
-    Ok(())
+    Ok((base, overlay))
 }
 
 async fn install_route_credential(
@@ -594,6 +668,7 @@ async fn released_http(
 )> {
     use wamn_test_infrastructure::workload;
     let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
+    candidate_executor(cluster, &carrier).await?;
     let secrets = deployment::native_secrets(cluster)?;
     let resources = &cluster.resources;
     install_host(

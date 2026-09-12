@@ -28,6 +28,7 @@ pub(super) async fn prepare_application(
     label_render: &Path,
     minio_endpoint: &str,
     evidence: &Path,
+    mint_only: bool,
 ) -> anyhow::Result<(
     wamn_ctl::dev::environment::ProvisionedRoute,
     wamn_ctl::print_release_env::ReleaseCarrier,
@@ -62,6 +63,7 @@ pub(super) async fn prepare_application(
         label_render,
         minio_endpoint,
         evidence,
+        mint_only,
     )
     .await?;
     let (project, task) = wamn_ctl::dev::environment::connect(&route.database_url).await?;
@@ -124,7 +126,7 @@ pub(super) fn render_host(
             name: secret.name.clone(),
         })
         .collect();
-    let rendered = render_host_values(
+    let mut rendered = render_host_values(
         &std::fs::read_to_string(repository.join("deploy/platform/values-host-default.yaml"))?,
         &std::fs::read_to_string(repository.join("deploy/platform/values-host-wms-pat.yaml"))?,
         &HostValuesInput {
@@ -152,6 +154,12 @@ pub(super) fn render_host(
             )),
         },
     )?;
+    if let Some(candidate) = wamn_ctl::delivery::Candidate::from_env()? {
+        rendered.base = crate::delivery::host_values(
+            &rendered.base,
+            &crate::delivery::image_reference(&candidate.host_image)?,
+        )?;
+    }
     assert_rendered_identity(
         &rendered.overlay,
         &HostIdentity {

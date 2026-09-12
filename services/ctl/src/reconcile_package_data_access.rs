@@ -113,6 +113,7 @@ struct EffectiveAcl {
     column: BTreeSet<(String, String, String, String)>,
 }
 
+#[derive(Debug)]
 struct PresentedPackage {
     coordinate: String,
     package_id: String,
@@ -120,7 +121,12 @@ struct PresentedPackage {
     manifest_sha256: String,
     schemas: Vec<String>,
     overlay: DataAccessOverlay,
+    directory: wamn_schema_control::PackageDirectory,
 }
+
+/// The same parsed package evidence used by validation and local cutover.
+#[derive(Debug)]
+pub(crate) struct PreparedLocalDataAccess(Vec<PresentedPackage>);
 
 /// Reconcile the exact installed set of generated package contributions.
 pub async fn run(args: ReconcilePackageDataAccessArgs) -> anyhow::Result<()> {
@@ -148,14 +154,41 @@ async fn execute(
     args: ReconcilePackageDataAccessArgs,
 ) -> anyhow::Result<(Vec<String>, DataAccessReconcileResult)> {
     ensure!(!args.tenant.is_empty(), "tenant must not be empty");
-    ensure!(
-        !args.packages.is_empty(),
-        "package-data-access-installed-set-empty"
-    );
-    let mut packages = Vec::with_capacity(args.packages.len());
+    let packages = read_presented_packages(&args.packages)?;
+    let outcome =
+        execute_prepared(&args.database_url, &args.tenant, &packages, false, true).await?;
+    Ok((
+        packages
+            .into_iter()
+            .map(|package| package.coordinate)
+            .collect(),
+        outcome,
+    ))
+}
+
+pub(crate) fn prepare_local(packages: &[PathBuf]) -> anyhow::Result<PreparedLocalDataAccess> {
+    read_presented_packages(packages).map(PreparedLocalDataAccess)
+}
+
+/// Recheck live schema and grants using the already parsed local source inputs.
+pub(crate) async fn reconcile_local(
+    prepared: &PreparedLocalDataAccess,
+    database_url: &str,
+    tenant: &str,
+    environment: &str,
+    apply: bool,
+) -> anyhow::Result<DataAccessReconcileResult> {
+    wamn_runtime::local_application::require_local_target(database_url, tenant, environment)
+        .await?;
+    execute_prepared(database_url, tenant, &prepared.0, true, apply).await
+}
+
+fn read_presented_packages(roots: &[PathBuf]) -> anyhow::Result<Vec<PresentedPackage>> {
+    ensure!(!roots.is_empty(), "package-data-access-installed-set-empty");
+    let mut packages = Vec::with_capacity(roots.len());
     let mut coordinates = BTreeSet::new();
     let mut package_ids = BTreeSet::new();
-    for package_root in &args.packages {
+    for package_root in roots {
         let directory = super::apply_package::read_package_directory(package_root)?;
         let plan = plan_package_migrations(&directory, None)
             .context("validate package directory before data-access reconciliation")?;
@@ -200,15 +233,26 @@ async fn execute(
             manifest_sha256: plan.manifest_sha256,
             schemas,
             overlay,
+            directory,
         });
     }
     packages.sort_by(|left, right| left.coordinate.cmp(&right.coordinate));
+    Ok(packages)
+}
 
-    let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
+async fn execute_prepared(
+    database_url: &str,
+    tenant: &str,
+    packages: &[PresentedPackage],
+    local: bool,
+    apply: bool,
+) -> anyhow::Result<DataAccessReconcileResult> {
+    ensure!(!tenant.is_empty(), "tenant must not be empty");
+    let (mut client, connection) = tokio_postgres::connect(database_url, NoTls)
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
-    let result = reconcile(&mut client, &args.tenant, &packages).await;
+    let result = reconcile_mode(&mut client, tenant, packages, local, apply).await;
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -218,19 +262,15 @@ async fn execute(
             .context("join data-access database connection")?
             .context("drive data-access database connection")?;
     }
-    Ok((
-        packages
-            .into_iter()
-            .map(|package| package.coordinate)
-            .collect(),
-        result?,
-    ))
+    result
 }
 
-async fn reconcile(
+async fn reconcile_mode(
     client: &mut Client,
     tenant: &str,
     packages: &[PresentedPackage],
+    local: bool,
+    apply: bool,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     let tx = client
         .transaction()
@@ -242,7 +282,17 @@ async fn reconcile(
     tx.query_one(LOCK_SQL, &[])
         .await
         .context("lock project data-access carrier")?;
-    validate_installed_set(&tx, tenant, packages).await?;
+    if local {
+        for package in packages {
+            crate::apply_package::reconcile_local_package_configuration(
+                &tx,
+                tenant,
+                &package.directory,
+            )
+            .await?;
+        }
+    }
+    validate_installed_set(&tx, tenant, packages, local).await?;
     let schemas = packages
         .iter()
         .flat_map(|package| package.schemas.iter().cloned())
@@ -311,9 +361,15 @@ async fn reconcile(
         "package-data-access-undeclared-relation-refused: role={DATA_ACCESS_ROLE}; relations=[{}]; cause=the App role reaches authority no package declares, and an owner never loses a privilege on its own relation; remedy=declare the relation in a package, or drop the relation",
         residue_targets(&after_residue)
     );
-    tx.commit()
-        .await
-        .context("commit package data-access reconciliation")?;
+    if apply {
+        tx.commit()
+            .await
+            .context("commit package data-access reconciliation")?;
+    } else {
+        tx.rollback()
+            .await
+            .context("finish local data-access validation")?;
+    }
     Ok(DataAccessReconcileResult { changed })
 }
 
@@ -321,6 +377,7 @@ async fn validate_installed_set(
     tx: &Transaction<'_>,
     tenant: &str,
     packages: &[PresentedPackage],
+    local: bool,
 ) -> anyhow::Result<()> {
     let mut installed = CoordinateHashes::new();
     for row in tx
@@ -345,7 +402,14 @@ async fn validate_installed_set(
         .map(|package| {
             (
                 (package.package_id.clone(), package.package_version.clone()),
-                package.manifest_sha256.clone(),
+                if local {
+                    installed
+                        .get(&(package.package_id.clone(), package.package_version.clone()))
+                        .cloned()
+                        .unwrap_or_default()
+                } else {
+                    package.manifest_sha256.clone()
+                },
             )
         })
         .collect::<CoordinateHashes>();
@@ -815,8 +879,12 @@ fn quote_identifier(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use wamn_schema_control::plan_package_migrations;
+    use wamn_schema_generator::{DATA_ACCESS_OVERLAY_PATH, validate_data_access_contribution};
+
     use super::{
-        CoordinateHashes, UndeclaredResidue, render_undeclared_revocation,
+        CoordinateHashes, UndeclaredResidue, prepare_local, render_undeclared_revocation,
         validate_presented_lineages,
     };
 
@@ -893,6 +961,32 @@ mod tests {
             refusal.contains("package-data-access-source-drift: package=dock@1.0.0"),
             "the refusal did not name the immutable coordinate: {refusal}"
         );
+
+        // Local cutover retains the owner's exact parsed evidence; removing
+        // source files after validation cannot substitute a later manifest/ACL.
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
+        let original = crate::apply_package::read_package_directory(&source).unwrap();
+        let overlay_bytes = std::fs::read(source.join(DATA_ACCESS_OVERLAY_PATH)).unwrap();
+        let root =
+            std::env::temp_dir().join(format!("wamn-local-grant-evidence-{}", std::process::id()));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("wamn.json"), &original.manifest_bytes).unwrap();
+        for migration in &original.migrations {
+            let path = root.join(&migration.relative_path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, &migration.bytes).unwrap();
+        }
+        let path = root.join(DATA_ACCESS_OVERLAY_PATH);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, &overlay_bytes).unwrap();
+        let prepared = prepare_local(std::slice::from_ref(&root)).unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        let selected = &prepared.0[0];
+        assert_eq!(selected.directory, original);
+        assert_eq!(selected.overlay.canonical_bytes(), overlay_bytes);
+        validate_data_access_contribution(&selected.overlay, &selected.directory.manifest_bytes)
+            .unwrap();
+        plan_package_migrations(&selected.directory, None).unwrap();
     }
 
     #[test]

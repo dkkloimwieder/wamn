@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Existing app fixtures own the stores, release mint, assertions, and cleanup.
+set -euo pipefail
+umask 077
+action=${1:?receiving, wms, native-registry, load-native, remove-native, or render-host}
+repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+if [[ $action == receiving ]]; then
+  export WAMN_RECEIVING_EVIDENCE_DIR=${2:?new absolute evidence directory}
+  [[ -z ${WAMN_DELIVERY_CANDIDATE:-} ]] || { printf 'The owned setup mints its own candidate.\n' >&2; exit 64; }
+  cd "$repository"
+  exec cargo test --locked --offline -p wamn-receiving-tests --lib \
+    route_authentication_live::cluster::delivery_case::owned_release_delivery \
+    -- --exact --ignored --nocapture
+fi
+if [[ $action == wms ]]; then
+  export WAMN_WMS_EVIDENCE_DIR=${2:?new absolute evidence directory}
+  [[ -z ${WAMN_DELIVERY_CANDIDATE:-} ]] || { printf 'The owned setup mints its own candidate.\n' >&2; exit 64; }
+  cd "$repository"
+  exec cargo test --locked --offline -p wamn-wms-tests --lib cluster::owned_release_delivery \
+    -- --exact --ignored --nocapture
+fi
+cluster=${2:?owned cluster name}
+[[ $cluster =~ ^wamn-(receiving|wms)-[a-f0-9]{32}$ ]] || { printf 'An exact owned application cluster name is required.\n' >&2; exit 64; }
+work=${3:?owned private work directory}
+case "$action" in
+  build-host)
+    source=${4:?source commit}
+    docker build --platform=linux/amd64 --provenance=false --file "$repository/Dockerfile" \
+      --target host --tag "wamn-host:$cluster" --label "wamn.dev/source-head=$source" \
+      --label wamn.dev/build-profile=release "$repository"
+    ;;
+  native-registry)
+    source=${4:?source commit}
+    if docker container inspect "$cluster-native-registry" >/dev/null 2>&1; then
+      printf 'The owned native registry name already exists.\n' >&2
+      exit 64
+    fi
+    if [[ $cluster == wamn-receiving-* ]] && docker image inspect "wamn-executor:$cluster" >/dev/null 2>&1; then
+      printf 'The owned executor image name already exists.\n' >&2
+      exit 64
+    fi
+    : > "$work/native-registry-owned"
+    roles=(host)
+    if [[ $cluster == wamn-receiving-* ]]; then
+      docker build --platform=linux/amd64 --provenance=false --file "$repository/Dockerfile" \
+        --target executor --tag "wamn-executor:$cluster" --label "wamn.dev/source-head=$source" \
+        --label wamn.dev/build-profile=release "$repository"
+      roles+=(gates executor)
+    fi
+    docker run --detach --name "$cluster-native-registry" --network kind \
+      --publish 127.0.0.1::5000 registry:2
+    port=$(docker inspect --format '{{(index (index .NetworkSettings.Ports "5000/tcp") 0).HostPort}}' "$cluster-native-registry")
+    printf '%s' "$port" > "$work/native-registry-port"
+    curl --fail --silent --show-error --retry 30 --retry-delay 1 --retry-connrefused --max-time 2 "http://127.0.0.1:$port/v2/"
+    for role in "${roles[@]}"; do
+      tag="localhost:$port/wamn-$role:$cluster"
+      docker tag "wamn-$role:$cluster" "$tag"
+      timeout 180 docker push "$tag"
+      digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$tag" | \
+        awk -v prefix="localhost:$port/wamn-$role@" 'index($0,prefix)==1 {sub(/^.*@/, ""); print}')
+      [[ $digest =~ ^sha256:[a-f0-9]{64}$ ]] || { printf 'The owned native upload has no unique digest.\n' >&2; exit 1; }
+      printf '%s@%s' "$tag" "$digest" > "$work/native-$role-image"
+    done
+    ;;
+  load-native)
+    authority=$(cat "$work/native-registry-authority")
+    for node in $(kind get nodes --name "$cluster"); do
+      docker exec "$node" mkdir -p "/etc/containerd/certs.d/$authority"
+      docker cp "$work/native-registry-hosts.toml" "$node:/etc/containerd/certs.d/$authority/hosts.toml"
+      for role in host gates executor; do
+        [[ -f $work/native-$role-image ]] || continue
+        image=$(cat "$work/native-$role-image")
+        timeout 180 docker exec "$node" ctr --namespace k8s.io images pull \
+          --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$image"
+      done
+    done
+    ;;
+  remove-native)
+    status=0
+    if docker container inspect "$cluster-native-registry" >/dev/null 2>&1; then
+      docker rm --force --volumes "$cluster-native-registry" || status=$?
+    fi
+    if [[ -f $work/native-registry-port ]]; then
+      port=$(cat "$work/native-registry-port")
+      [[ $port =~ ^[0-9]+$ ]] || exit 64
+      for role in host gates executor; do
+        tag="localhost:$port/wamn-$role:$cluster"
+        if docker image inspect "$tag" >/dev/null 2>&1; then docker image rm "$tag" || status=$?; fi
+      done
+    fi
+    if docker image inspect "wamn-executor:$cluster" >/dev/null 2>&1; then
+      docker image rm "wamn-executor:$cluster" || status=$?
+    fi
+    exit "$status"
+    ;;
+  render-host)
+    helm template wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+      --namespace "$cluster" --kubeconfig "$work/kubeconfig" \
+      -f "$work/host-base.yaml" -f "$work/host-overlay.yaml"
+    ;;
+  *) printf 'Unknown owned delivery action: %s\n' "$action" >&2; exit 64 ;;
+esac

@@ -254,5 +254,9 @@ pub(super) async fn finish(
             "failure":result.as_ref().err().map(|error| format!("{error:#}")),
         }))?,
     )?;
-    result
+    result?;
+    if let Some((candidate, manifest)) = &cluster.resources.candidate {
+        wamn_ctl::delivery::report_candidate_success(candidate, manifest)?;
+    }
+    Ok(())
 }

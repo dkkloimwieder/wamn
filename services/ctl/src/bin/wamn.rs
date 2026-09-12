@@ -50,6 +50,10 @@ struct DevArgs {
 enum DevEnvironmentCommand {
     /// Stand up the disposable environment the loop runs against, and hold it.
     Up(wamn_ctl::dev::up::DevUpArgs),
+    /// Reset this environment's idle disposable application target.
+    Reset(wamn_ctl::dev::target_database::DevResetArgs),
+    /// Execute selected correctness cases through the shared owned-fixture runner.
+    CleanCheck(wamn_ctl::delivery::qualification::CheckChangesArgs),
 }
 
 #[cfg(target_os = "linux")]
@@ -67,6 +71,12 @@ async fn main() -> anyhow::Result<()> {
         Command::Ui(args) => wamn_ctl::ui::run(args).await,
         Command::Dev(dev) => match dev.environment {
             Some(DevEnvironmentCommand::Up(args)) => wamn_ctl::dev::up::run(args).await,
+            Some(DevEnvironmentCommand::Reset(args)) => {
+                wamn_ctl::dev::target_database::reset(args).await
+            }
+            Some(DevEnvironmentCommand::CleanCheck(args)) => {
+                wamn_ctl::delivery::qualification::check_changes(args).await
+            }
             None => {
                 let run = dev
                     .run
@@ -85,6 +95,30 @@ fn main() -> anyhow::Result<()> {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reset_and_clean_check_parse_without_run_inputs() {
+        let reset =
+            Cli::try_parse_from(["wamn", "dev", "reset", "--config", "/tmp/dev.json"]).unwrap();
+        assert!(
+            matches!(reset.command, Command::Dev(dev) if matches!(dev.environment, Some(DevEnvironmentCommand::Reset(_))))
+        );
+        let clean = Cli::try_parse_from([
+            "wamn",
+            "dev",
+            "clean-check",
+            "--package",
+            "wamn-ctl",
+            "--case",
+            "exact_case",
+            "--result",
+            "/tmp/new-result.json",
+        ])
+        .unwrap();
+        assert!(
+            matches!(clean.command, Command::Dev(dev) if matches!(dev.environment, Some(DevEnvironmentCommand::CleanCheck(_))))
+        );
+    }
 
     #[test]
     fn scaffold_parses_without_development_loop_flags() {

@@ -47,6 +47,7 @@ use crate::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
 /// command takes them as flags; neither builds a second set of arguments.
 #[derive(Debug)]
 pub struct DevEnvironmentInputs {
+    pub local_artifacts: Option<super::config::LocalArtifacts>,
     pub host_binary: PathBuf,
     pub nats_url: String,
     pub event_nats_url: String,
@@ -990,7 +991,7 @@ pub fn write_dev_config(
     // compilation cache is the point of keeping it.
     std::fs::create_dir_all(&wasmtime_cache)
         .context("create the product-command Wasmtime cache")?;
-    let config = serde_json::json!({
+    let mut config = serde_json::json!({
         "verification_database_url": verification.database_url.as_str(),
         "target_database_url": route.database_url.as_str(),
         // The loop recreates the target before every run, which drops every
@@ -1042,6 +1043,21 @@ pub fn write_dev_config(
         "host_binary": &inputs.host_binary,
         "wasmtime_cache_dir": wasmtime_cache,
     });
+    if let Some(local) = &inputs.local_artifacts {
+        let document = config
+            .as_object_mut()
+            .expect("development configuration is an object");
+        for key in [
+            "component_artifact_base",
+            "release_artifact_base",
+            "registry_auth_file",
+            "insecure_registry",
+            "flow_http_workload_image",
+        ] {
+            document.remove(key);
+        }
+        document.insert("local_artifacts".to_owned(), serde_json::to_value(local)?);
+    }
     let path = root.join("dev.json");
     std::fs::write(&path, serde_json::to_vec_pretty(&config)?)
         .context("write the strict product-command configuration")?;

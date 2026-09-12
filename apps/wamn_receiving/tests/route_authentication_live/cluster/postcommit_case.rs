@@ -35,6 +35,11 @@ pub(super) async fn run_selected(
     base: BaseCandidate,
     evidence: &std::path::Path,
 ) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        wamn_ctl::delivery::Candidate::from_env()?.is_none()
+            || matches!(base, BaseCandidate::Baseline),
+        "supplied-artifact execution supports only the baseline Receiving and Acme installation"
+    );
     let mut cluster = start(evidence, true, false).await?;
     cluster.inputs.overlay_compatibility = Some(CompatibilityPhase {
         base,
@@ -63,11 +68,16 @@ pub(super) async fn run_selected(
                 "duplicate-handler-delivery", "retry-exhaustion-advisory", "independent-event-progress"] } else { Vec::new() },
         }))?,
     )?;
-    result
+    result?;
+    if let Some((candidate, manifest)) = &cluster.resources.candidate {
+        wamn_ctl::delivery::report_candidate_success(candidate, manifest)?;
+    }
+    Ok(())
 }
 
 async fn exercise(cluster: &mut ReceivingCluster) -> anyhow::Result<()> {
     let (route, carrier) = provision(&cluster.inputs, &cluster.artifacts).await?;
+    super::candidate_executor(cluster, &carrier).await?;
     let replication_password = uuid::Uuid::new_v4().simple().to_string();
     let reader = cdc::configure(
         &cluster.inputs,

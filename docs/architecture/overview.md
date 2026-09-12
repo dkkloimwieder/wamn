@@ -73,6 +73,12 @@ A rollout changes the serving release.
 Runtime requests resolve wiring from the supplied release, independently of mutable activation pointers and PostgreSQL notifications.
 Frozen candidate execution retains its own admitted facts throughout the traversal.
 
+The control CLI qualifies exact artifacts against a selected clean source revision through the existing application tests.
+Publication requires that qualification and the same immutable manifest.
+Deployment locks the environment's selected release through workload readiness, an authenticated operation, and activation.
+A later selection makes a superseded deployment refuse before changing workloads.
+The [delivery commands](../operations/delivery.md) reuse the existing release records and package lineage locks.
+
 An additive base can satisfy an unchanged overlay's declared schema and operation requirements.
 This compatibility does not authorize an in-place upgrade or a general migration lifecycle.
 The remaining upgrade design belongs in [upgrade plans](../plan/upgrades.md).
@@ -84,3 +90,8 @@ The host and executor share the [execution driver](execution.md).
 The driver coordinates graph decisions, while private native modules own dispatch, invocation authority, and workload loading.
 The executor and existing run-state libraries own durable queue claims and settlement.
 The [capability owners](capabilities.md) supply database, HTTP, object storage, and event access without guest credentials.
+
+The developer host also loads unpublished components and admitted facts from local files.
+It requires the expected file digests and a database marker tied to the tenant, environment, and physical database creation.
+Local facts supply released wiring, connection requirements, and binding selections without changing the frozen catalog records.
+The normal runtime still owns tenant authority, run claims, credential generations, and effects.

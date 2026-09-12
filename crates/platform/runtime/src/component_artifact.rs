@@ -254,7 +254,9 @@ pub(crate) fn parse_component_artifact_base(
     })
 }
 
-fn component_digest_tag(component_digest: &str) -> Result<&str, ComponentArtifactReferenceError> {
+pub(crate) fn component_digest_tag(
+    component_digest: &str,
+) -> Result<&str, ComponentArtifactReferenceError> {
     component_digest
         .strip_prefix(HASH_PREFIX)
         .filter(|hex| {
