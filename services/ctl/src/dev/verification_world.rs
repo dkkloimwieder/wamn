@@ -19,7 +19,7 @@ const APP_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/app-schema.sql
 
 /// Exact database-local changes made by one verification-world bootstrap.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VerificationWorldBootstrapReceipt {
+pub struct VerificationWorldBootstrapResult {
     management_admitter_connect_granted: bool,
     package_owner_create_granted: bool,
     run_plane_actions: usize,
@@ -42,7 +42,7 @@ impl Error for VerificationWorldBootstrapError {
     }
 }
 
-impl VerificationWorldBootstrapReceipt {
+impl VerificationWorldBootstrapResult {
     /// Whether every database-local structural surface was already present.
     pub const fn is_noop(self) -> bool {
         !self.management_admitter_connect_granted
@@ -64,7 +64,7 @@ impl VerificationWorldBootstrapReceipt {
 pub async fn bootstrap(
     verification_database_url: &str,
     identity: &DevActivationIdentity,
-) -> Result<VerificationWorldBootstrapReceipt, VerificationWorldBootstrapError> {
+) -> Result<VerificationWorldBootstrapResult, VerificationWorldBootstrapError> {
     bootstrap_inner(verification_database_url, identity)
         .await
         .map_err(VerificationWorldBootstrapError)
@@ -73,7 +73,7 @@ pub async fn bootstrap(
 async fn bootstrap_inner(
     verification_database_url: &str,
     identity: &DevActivationIdentity,
-) -> anyhow::Result<VerificationWorldBootstrapReceipt> {
+) -> anyhow::Result<VerificationWorldBootstrapResult> {
     let (mut client, connection) = tokio_postgres::connect(verification_database_url, NoTls)
         .await
         .context("connect to the disposable verification database")?;
@@ -94,7 +94,7 @@ async fn bootstrap_inner(
 async fn bootstrap_with_client(
     client: &mut Client,
     identity: &DevActivationIdentity,
-) -> anyhow::Result<VerificationWorldBootstrapReceipt> {
+) -> anyhow::Result<VerificationWorldBootstrapResult> {
     let management_admitter_connect_granted =
         ensure_management_admitter_connect(client, identity).await?;
     client
@@ -122,7 +122,7 @@ async fn bootstrap_with_client(
         .await
         .context("converge the management-admitter verification surface")?;
 
-    Ok(VerificationWorldBootstrapReceipt {
+    Ok(VerificationWorldBootstrapResult {
         management_admitter_connect_granted,
         package_owner_create_granted,
         run_plane_actions: run_plane.actions.len(),
@@ -595,7 +595,7 @@ mod tests {
         .expect("admit the exact Receiving package/component contract");
         project_admitted_component_for_verification(&admission, &url)
             .await
-            .expect("project the opaque admission receipt into the verification world");
+            .expect("project the opaque admission into the verification world");
         let component_count: i64 = client
             .query_one("SELECT count(*) FROM catalog.component_library", &[])
             .await

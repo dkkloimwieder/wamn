@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 use tokio::sync::watch;
-use wamn_authoring_model::{GateReceipt, GateRefusal};
+use wamn_authoring_model::{GateRefusal, GateResult};
 use wamn_catalog::{
     AttachmentKind, PackageCoordinate, ServingAttachment, ServingComponent,
     ServingComponentOperation, ServingManifest,
@@ -66,8 +66,8 @@ impl DevStageSnapshot {
 /// Exact typed outcome returned by Gate.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DevGateVerdict {
-    /// Gate accepted the wiring and returned its immutable receipt.
-    Accepted(GateReceipt),
+    /// Gate accepted the wiring and returned its immutable result.
+    Accepted(GateResult),
     /// Gate refused the wiring with its owning contract type.
     Refused(GateRefusal),
 }
@@ -103,7 +103,7 @@ impl DevGateOutcome {
         self.wiring_version
     }
 
-    /// Typed Gate receipt or refusal.
+    /// Typed Gate result or refusal.
     pub const fn verdict(&self) -> &DevGateVerdict {
         &self.verdict
     }
@@ -603,7 +603,7 @@ mod tests {
             package_version: "1.0.0".to_owned(),
             wiring_id: "purchase-order/get".to_owned(),
             wiring_version: 1,
-            verdict: DevGateVerdict::Accepted(GateReceipt {
+            verdict: DevGateVerdict::Accepted(GateResult {
                 report_id: "report-1".to_owned(),
                 validated_draft: ValidatedDraftRef {
                     validated_draft_id: DIGEST.to_owned(),
@@ -615,7 +615,7 @@ mod tests {
         assert_eq!(gated.gate_outcomes().len(), 1);
         assert!(matches!(
             gated.gate_outcomes()[0].verdict(),
-            DevGateVerdict::Accepted(receipt) if receipt.report_id == "report-1"
+            DevGateVerdict::Accepted(result) if result.report_id == "report-1"
         ));
 
         publisher.stage_failed(

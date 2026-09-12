@@ -360,9 +360,9 @@ impl fmt::Debug for PublishAdmittedComponentArgs {
 /// Exact saved-byte admission reused by later publication.
 ///
 /// Fields stay private so callers cannot replace admitted facts, package
-/// evidence, or component bytes independently. The receipt deliberately does
+/// evidence, or component bytes independently. The admission deliberately does
 /// not implement `Clone`; retries borrow the same admission.
-pub struct ComponentAdmissionReceipt {
+pub struct ComponentAdmission {
     package_path: PathBuf,
     directory: PackageDirectory,
     component_bytes: Box<[u8]>,
@@ -372,10 +372,10 @@ pub struct ComponentAdmissionReceipt {
     projection_hash: Box<str>,
 }
 
-impl fmt::Debug for ComponentAdmissionReceipt {
+impl fmt::Debug for ComponentAdmission {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("ComponentAdmissionReceipt")
+            .debug_struct("ComponentAdmission")
             .field("package_id", &self.component.scope.package_id)
             .field("package_version", &self.component.scope.package_version)
             .field("component", &self.component.component)
@@ -388,7 +388,7 @@ impl fmt::Debug for ComponentAdmissionReceipt {
     }
 }
 
-impl ComponentAdmissionReceipt {
+impl ComponentAdmission {
     /// Exact package identity carried by the admitted component facts.
     pub fn package_id(&self) -> &str {
         &self.component.scope.package_id
@@ -411,7 +411,7 @@ impl ComponentAdmissionReceipt {
 }
 
 /// Validate saved component and package bytes without publication side effects.
-pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmissionReceipt> {
+pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmission> {
     let directory = crate::apply_package::read_package_directory(&args.package)?;
     let package = plan_package_migrations(&directory, None)
         .context("validate strict package directory before component publication")?;
@@ -457,7 +457,7 @@ pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmi
         .collect::<Vec<_>>();
     let projection_hash = admitted_projection_hash(&admitted, &requirements)?;
 
-    Ok(ComponentAdmissionReceipt {
+    Ok(ComponentAdmission {
         package_path: args.package,
         directory,
         component_bytes: component_bytes.into_boxed_slice(),
@@ -471,9 +471,9 @@ pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmi
 /// Project one opaque admission into a disposable verification database.
 ///
 /// This verification-only write neither publishes component bytes nor reaches
-/// the control plane. The receipt remains the sole source of projected facts.
+/// the control plane. The admission remains the sole source of projected facts.
 pub async fn project_admitted_component_for_verification(
-    admission: &ComponentAdmissionReceipt,
+    admission: &ComponentAdmission,
     verification_database_url: &str,
 ) -> anyhow::Result<()> {
     let verification_config: PgConfig = verification_database_url
@@ -495,7 +495,7 @@ pub async fn project_admitted_component_for_verification(
 
 /// Publish one exact admission and project its facts without rereading sources.
 pub async fn publish_admitted_component(
-    admission: &ComponentAdmissionReceipt,
+    admission: &ComponentAdmission,
     args: PublishAdmittedComponentArgs,
 ) -> anyhow::Result<()> {
     let admitted = &admission.component;
@@ -2102,10 +2102,10 @@ mod tests {
     }
 
     #[test]
-    fn admission_receipt_debug_exposes_identity_without_saved_bytes_or_paths() {
+    fn admission_debug_exposes_identity_without_saved_bytes_or_paths() {
         let component = projection_component();
         let component_digest = component.component_digest.clone();
-        let receipt = ComponentAdmissionReceipt {
+        let admission = ComponentAdmission {
             package_path: PathBuf::from("private-package-path-marker"),
             directory: PackageDirectory {
                 manifest_bytes: b"private-manifest-bytes-marker".to_vec(),
@@ -2118,7 +2118,7 @@ mod tests {
             projection_hash: format!("sha256:{}", "d".repeat(64)).into_boxed_str(),
         };
 
-        let debug = format!("{receipt:?}");
+        let debug = format!("{admission:?}");
         assert!(debug.contains(&component_digest));
         assert!(!debug.contains("private-package-path-marker"));
         assert!(!debug.contains("private-manifest-bytes-marker"));
@@ -2636,7 +2636,7 @@ mod tests {
         )];
         let projection_hash = admitted_projection_hash(&component, &requirements)
             .expect("hash admitted projection once");
-        let admission = ComponentAdmissionReceipt {
+        let admission = ComponentAdmission {
             package_path: package_path.clone(),
             directory: directory.clone(),
             component_bytes: component_bytes.into_boxed_slice(),
@@ -2758,7 +2758,7 @@ mod tests {
 
         project_admitted_component_for_verification(&admission, verification_url.as_str())
             .await
-            .expect("project the opaque receipt into the verification world");
+            .expect("project the opaque admission into the verification world");
         let snapshot_sql = "SELECT jsonb_build_object( \
                 'component-count', (SELECT count(*) FROM catalog.component_library), \
                 'requirement-count', (SELECT count(*) FROM catalog.connection_requirements), \

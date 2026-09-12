@@ -8,7 +8,7 @@ use url::Url;
 use wamn_authoring_model::{
     AuthoringCommand, AuthoringDocument, AuthoringOutcome, AuthoringRequest,
     AuthoringRequestEnvelope, AuthoringResponseEnvelope, AuthoringSuccess, CommandRefusal, Gate,
-    GateReceipt, GateRefusal, PublishRefusal, PublishValidatedDraft, PublishedWiringIdentity,
+    GateRefusal, GateResult, PublishRefusal, PublishValidatedDraft, PublishedWiringIdentity,
     SCHEMA_VERSION, decode_document,
 };
 
@@ -181,16 +181,16 @@ impl GateClient {
         command_id: &str,
         gate: Gate,
         deadline: Instant,
-    ) -> Result<Result<GateReceipt, GateRefusal>, GateClientError> {
+    ) -> Result<Result<GateResult, GateRefusal>, GateClientError> {
         let outcome = self
             .submit_command(command_id, AuthoringCommand::Gate(gate), deadline)
             .await?;
         match outcome {
             AuthoringOutcome::Completed(success) => match *success {
-                AuthoringSuccess::Gate(receipt) => Ok(Ok(receipt)),
+                AuthoringSuccess::Gate(result) => Ok(Ok(result)),
                 AuthoringSuccess::Publish(_) => Err(malformed(
                     &self.sanitized_gate_url,
-                    "Gate returned a publish receipt",
+                    "Gate returned a publish result",
                 )),
             },
             AuthoringOutcome::Refused(refusal) => match refusal {
@@ -215,10 +215,10 @@ impl GateClient {
             .await?;
         match outcome {
             AuthoringOutcome::Completed(success) => match *success {
-                AuthoringSuccess::Publish(receipt) => Ok(Ok(receipt)),
+                AuthoringSuccess::Publish(result) => Ok(Ok(result)),
                 AuthoringSuccess::Gate(_) => Err(malformed(
                     &self.sanitized_gate_url,
-                    "Publish returned a Gate receipt",
+                    "Publish returned a Gate result",
                 )),
             },
             AuthoringOutcome::Refused(refusal) => match refusal {
@@ -494,7 +494,7 @@ mod tests {
 
         assert_eq!(
             outcome,
-            Ok(GateReceipt {
+            Ok(GateResult {
                 report_id: "sha256:abc".to_owned(),
                 validated_draft: ValidatedDraftRef {
                     validated_draft_id: "sha256:abc".to_owned(),

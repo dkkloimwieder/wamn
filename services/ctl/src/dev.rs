@@ -109,7 +109,7 @@ impl DevStage {
     /// Source-integrity boundary this stage requires.
     pub const fn boundary(self) -> DevStageBoundary {
         match self {
-            // Gate validates and returns a receipt; it writes nothing, so it
+            // Gate validates and returns a result; it writes nothing, so it
             // still runs from saved bytes. Admit does not: since the authoring
             // chain moved to the project-environment database it projects the
             // admitted component there, which is durable work
@@ -270,7 +270,7 @@ pub trait DevStageRunner {
     /// Report that one stage was skipped because its input is unchanged.
     fn stage_skipped(&mut self, _stage: DevStage) {}
 
-    /// Facts observed during the run that the receipt must carry.
+    /// Facts observed during the run that the result must carry.
     ///
     /// Read once, after the last stage. A run that refuses reports nothing
     /// here, because the error already carries the refusal.
@@ -418,7 +418,7 @@ impl Error for DevRunError {
 
 /// Successful result of one exact ordered run.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DevRunReceipt {
+pub struct DevRunResult {
     completed: Box<[DevStage]>,
     skipped: Box<[DevStage]>,
     timings: Box<[(DevStage, Duration)]>,
@@ -460,7 +460,7 @@ impl DevRunNotice {
     }
 }
 
-impl DevRunReceipt {
+impl DevRunResult {
     /// Stages completed by the runner, in execution order.
     ///
     /// A skipped stage is completed: its work is already present. Read
@@ -502,7 +502,7 @@ impl DevRunReceipt {
 #[derive(Debug)]
 pub struct DevWatchOutcome {
     from: DevStage,
-    result: Result<DevRunReceipt, DevRunError>,
+    result: Result<DevRunResult, DevRunError>,
 }
 
 impl DevWatchOutcome {
@@ -512,12 +512,12 @@ impl DevWatchOutcome {
     }
 
     /// Borrow the run result reported to the client.
-    pub const fn result(&self) -> &Result<DevRunReceipt, DevRunError> {
+    pub const fn result(&self) -> &Result<DevRunResult, DevRunError> {
         &self.result
     }
 
     /// Consume the outcome and return its run result.
-    pub fn into_result(self) -> Result<DevRunReceipt, DevRunError> {
+    pub fn into_result(self) -> Result<DevRunResult, DevRunError> {
         self.result
     }
 }
@@ -533,9 +533,9 @@ pub trait DevWatchObserver {
     /// interactive client reads the same endpoint live off the read handle,
     /// and a silent session has nowhere to print it. The endpoint is optional
     /// for the same reason [`crate::dev::command`] treats it as optional when
-    /// the run tore down, and the receipt travels with it so the caller can
+    /// the run tore down, and the result travels with it so the caller can
     /// emit the completion line first without reaching back into the session.
-    fn served(&mut self, _receipt: &DevRunReceipt, _endpoint: Option<&DevRuntimeEndpoint>) {}
+    fn served(&mut self, _result: &DevRunResult, _endpoint: Option<&DevRuntimeEndpoint>) {}
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -575,7 +575,7 @@ pub async fn run_once<R>(
     config: &DevConfig,
     source_state: DevSourceState,
     runner: &mut R,
-) -> Result<Result<DevRunReceipt, DevRunError>, VerificationDatabaseError>
+) -> Result<Result<DevRunResult, DevRunError>, VerificationDatabaseError>
 where
     R: DevStageRunner + Send,
 {
@@ -588,7 +588,7 @@ pub async fn run_once_with_source_state_provider<R, P>(
     config: &DevConfig,
     runner: &mut R,
     source_state_provider: &mut P,
-) -> Result<Result<DevRunReceipt, DevRunError>, VerificationDatabaseError>
+) -> Result<Result<DevRunResult, DevRunError>, VerificationDatabaseError>
 where
     R: DevStageRunner + Send,
     P: DevSourceStateProvider + Send,
@@ -604,7 +604,7 @@ where
 async fn run_once_stages<R>(
     source_state: DevSourceState,
     runner: &mut R,
-) -> Result<DevRunReceipt, DevRunError>
+) -> Result<DevRunResult, DevRunError>
 where
     R: DevStageRunner,
 {
@@ -615,7 +615,7 @@ async fn run_suffix<R>(
     from: DevStage,
     source_state: DevSourceState,
     runner: &mut R,
-) -> Result<DevRunReceipt, DevRunError>
+) -> Result<DevRunResult, DevRunError>
 where
     R: DevStageRunner,
 {
@@ -627,7 +627,7 @@ async fn run_suffix_with_source_state_provider<R, P>(
     from: DevStage,
     runner: &mut R,
     source_state_provider: &mut P,
-) -> Result<DevRunReceipt, DevRunError>
+) -> Result<DevRunResult, DevRunError>
 where
     R: DevStageRunner,
     P: DevSourceStateProvider,
@@ -699,7 +699,7 @@ where
         completed.push(stage);
         timings.push((stage, began.elapsed()));
     }
-    Ok(DevRunReceipt {
+    Ok(DevRunResult {
         completed: completed.into_boxed_slice(),
         skipped: skipped.into_boxed_slice(),
         timings: timings.into_boxed_slice(),
@@ -916,22 +916,22 @@ mod tests {
         }
     }
 
-    /// The receipt carries what the run reported without refusing. A durable
+    /// The result carries what the run reported without refusing. A durable
     /// publish from this same source refuses on that pin, so a run that stayed
     /// silent would push the discovery to promotion time.
     #[tokio::test]
-    async fn a_run_that_proceeds_past_a_stale_pin_reports_it_on_the_receipt() {
+    async fn a_run_that_proceeds_past_a_stale_pin_reports_it_in_the_result() {
         let mut runner = NoticingRunner::default();
 
-        let receipt = run_once_stages(DevSourceState::Dirty, &mut runner)
+        let result = run_once_stages(DevSourceState::Dirty, &mut runner)
             .await
             .expect("a disposable target runs every stage");
 
-        assert_eq!(receipt.completed().len(), DEV_STAGE_ORDER.len());
-        assert_eq!(receipt.notices().len(), 1);
-        assert_eq!(receipt.notices()[0].code(), "pin stale");
+        assert_eq!(result.completed().len(), DEV_STAGE_ORDER.len());
+        assert_eq!(result.notices().len(), 1);
+        assert_eq!(result.notices()[0].code(), "pin stale");
         assert!(
-            receipt.notices()[0].detail().contains("sha256:bb"),
+            result.notices()[0].detail().contains("sha256:bb"),
             "the notice names the digest the run actually built"
         );
     }
@@ -942,11 +942,11 @@ mod tests {
     async fn a_run_with_nothing_to_report_carries_no_notices() {
         let mut runner = RecordingRunner::default();
 
-        let receipt = run_once_stages(DevSourceState::Clean, &mut runner)
+        let result = run_once_stages(DevSourceState::Clean, &mut runner)
             .await
             .expect("a clean run completes");
 
-        assert!(receipt.notices().is_empty());
+        assert!(result.notices().is_empty());
     }
 
     #[derive(Clone, Debug)]
@@ -1150,12 +1150,12 @@ mod tests {
     async fn clean_source_completes_the_exact_stage_order() {
         let mut runner = RecordingRunner::default();
 
-        let receipt = run_once_stages(DevSourceState::Clean, &mut runner)
+        let result = run_once_stages(DevSourceState::Clean, &mut runner)
             .await
             .expect("clean semantic runner completes");
 
         assert_eq!(runner.invoked, DEV_STAGE_ORDER);
-        assert_eq!(receipt.completed(), DEV_STAGE_ORDER.as_slice());
+        assert_eq!(result.completed(), DEV_STAGE_ORDER.as_slice());
     }
 
     #[tokio::test]
@@ -1290,13 +1290,13 @@ mod tests {
             ..SkippingRunner::default()
         };
 
-        let receipt = run_once_stages(DevSourceState::Clean, &mut runner)
+        let result = run_once_stages(DevSourceState::Clean, &mut runner)
             .await
             .expect("an unchanged stage does not fail a run");
 
-        assert_eq!(receipt.skipped(), [DevStage::Generate]);
+        assert_eq!(result.skipped(), [DevStage::Generate]);
         assert_eq!(
-            receipt.completed(),
+            result.completed(),
             DEV_STAGE_ORDER,
             "a skipped stage is still completed: its work is present"
         );
@@ -1312,11 +1312,11 @@ mod tests {
     async fn a_run_with_nothing_unchanged_reports_no_skips() {
         let mut runner = SkippingRunner::default();
 
-        let receipt = run_once_stages(DevSourceState::Clean, &mut runner)
+        let result = run_once_stages(DevSourceState::Clean, &mut runner)
             .await
             .expect("a full run succeeds");
 
-        assert!(receipt.skipped().is_empty());
+        assert!(result.skipped().is_empty());
         assert_eq!(runner.invoked, DEV_STAGE_ORDER);
     }
 
@@ -1324,11 +1324,11 @@ mod tests {
     async fn a_disposable_target_reaches_every_stage_from_dirty_bytes() {
         let mut runner = DisposableTargetRunner::default();
 
-        let receipt = run_once_stages(DevSourceState::Dirty, &mut runner)
+        let result = run_once_stages(DevSourceState::Dirty, &mut runner)
             .await
             .expect("a disposable target has no durable provenance to protect");
 
-        assert_eq!(receipt.completed(), DEV_STAGE_ORDER);
+        assert_eq!(result.completed(), DEV_STAGE_ORDER);
         assert_eq!(runner.invoked, DEV_STAGE_ORDER);
         assert_eq!(
             runner.prepared, 1,

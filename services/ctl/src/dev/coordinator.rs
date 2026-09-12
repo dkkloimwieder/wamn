@@ -20,7 +20,7 @@ use tokio::process::Command;
 use tokio::time::Instant;
 use tokio_postgres::NoTls;
 use wamn_authoring_model::{
-    AuthoringScope, CommitProvenance, Gate, GateReceipt, PublishValidatedDraft,
+    AuthoringScope, CommitProvenance, Gate, GateResult, PublishValidatedDraft,
     PublishedWiringIdentity,
 };
 use wamn_catalog::{PackageCoordinate, WiringDocument};
@@ -44,7 +44,7 @@ use crate::dev_gate::GateClient;
 use crate::print_release_env::{ReleaseCarrier, lookup_release_snapshot};
 use crate::publish_release::{PublishReleaseArgs, ReleaseWiringTarget};
 use crate::push_component::{
-    AdmitComponentArgs, ComponentAdmissionReceipt, PublishAdmittedComponentArgs, admit_component,
+    AdmitComponentArgs, ComponentAdmission, PublishAdmittedComponentArgs, admit_component,
     project_admitted_component_for_verification, publish_admitted_component,
 };
 use crate::push_release_manifest::PushReleaseManifestArgs;
@@ -335,13 +335,13 @@ struct WiringInput {
 #[derive(Clone, Debug)]
 struct GatedWiring {
     input: WiringInput,
-    receipt: GateReceipt,
+    result: GateResult,
 }
 
 #[derive(Clone, Debug)]
 struct PublishedWiring {
     input: WiringInput,
-    receipt: PublishedWiringIdentity,
+    result: PublishedWiringIdentity,
 }
 
 /// Concrete runner carrying production-owner outputs through all twelve stages.
@@ -355,7 +355,7 @@ pub struct ProductionDevStageRunner {
     build: Option<BuildStageOutput>,
     artifacts: Vec<SelectedComponentArtifact>,
     verified_base_digests: Vec<VerifiedBaseComponentDigest>,
-    admissions: Vec<ComponentAdmissionReceipt>,
+    admissions: Vec<ComponentAdmission>,
     gated_wirings: Vec<GatedWiring>,
     published_wirings: Vec<PublishedWiring>,
     target_instance: Option<String>,
@@ -856,16 +856,16 @@ impl ProductionDevStageRunner {
                     ProductionDevStageError::owner("submit production Gate", source.into())
                 })?;
             match outcome {
-                Ok(receipt) => {
+                Ok(result) => {
                     read_outcomes.push(DevGateOutcome {
                         package_id: input.package_id.to_string(),
                         package_version: input.package_version.to_string(),
                         wiring_id: input.wiring.wiring_id.clone(),
                         wiring_version: input.wiring.version,
-                        verdict: DevGateVerdict::Accepted(receipt.clone()),
+                        verdict: DevGateVerdict::Accepted(result.clone()),
                     });
                     self.read_publisher.set_gate_outcomes(read_outcomes.clone());
-                    self.gated_wirings.push(GatedWiring { input, receipt });
+                    self.gated_wirings.push(GatedWiring { input, result });
                 }
                 Err(refusal) => {
                     read_outcomes.push(DevGateOutcome {
@@ -900,7 +900,7 @@ impl ProductionDevStageRunner {
         if self
             .gated_wirings
             .iter()
-            .any(|gated| gated.receipt.report_id.is_empty())
+            .any(|gated| gated.result.report_id.is_empty())
         {
             return Err(ProductionDevStageError::invalid(
                 "publish package wirings",
@@ -990,7 +990,7 @@ impl ProductionDevStageRunner {
                         source.into(),
                     )
                 })?;
-            let receipt = outcome.map_err(|refusal| {
+            let result = outcome.map_err(|refusal| {
                 ProductionDevStageError::invalid(
                     "publish package wiring",
                     format!(
@@ -1000,15 +1000,15 @@ impl ProductionDevStageRunner {
                 )
             })?;
             let expected_hash = input.wiring.wiring_hash();
-            if receipt.wiring_id != input.wiring.wiring_id
-                || receipt.version != input.wiring.version
-                || receipt.artifact_hash != expected_hash.as_str()
+            if result.wiring_id != input.wiring.wiring_id
+                || result.version != input.wiring.version
+                || result.artifact_hash != expected_hash.as_str()
             {
                 return Err(ProductionDevStageError::invalid(
                     "carry published wiring identity",
                     format!(
                         "published identity {:?} differs from {}@{}::{}={} ({})",
-                        receipt,
+                        result,
                         input.package_id,
                         input.package_version,
                         input.wiring.wiring_id,
@@ -1018,7 +1018,7 @@ impl ProductionDevStageRunner {
                 ));
             }
             self.published_wirings
-                .push(PublishedWiring { input, receipt });
+                .push(PublishedWiring { input, result });
         }
         self.publish_provenance = Some(provenance);
         Ok(())
@@ -1091,8 +1091,8 @@ impl ProductionDevStageRunner {
             .map(|published| ReleaseWiringTarget {
                 package_id: published.input.package_id.to_string(),
                 package_version: published.input.package_version.to_string(),
-                wiring_id: published.receipt.wiring_id.clone(),
-                wiring_version: published.receipt.version,
+                wiring_id: published.result.wiring_id.clone(),
+                wiring_version: published.result.version,
             })
             .collect();
         let attachments = packages

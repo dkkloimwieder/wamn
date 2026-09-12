@@ -27,7 +27,7 @@ use ratatui::widgets::Widget;
 // terminal rather than as a client crate.
 use wamn_client_terminal as terminal;
 
-use super::command::{DevCommandArgs, DevSession, DevSessionControl, print_receipt};
+use super::command::{DevCommandArgs, DevSession, DevSessionControl, print_result};
 use super::read::{DevGateVerdict, DevSnapshot, DevStageState};
 
 /// Lines a page-up or page-down key moves the viewport.
@@ -246,9 +246,9 @@ fn pipeline_lines(snapshot: &DevSnapshot) -> Vec<String> {
     } else {
         for outcome in snapshot.gate_outcomes() {
             let verdict = match outcome.verdict() {
-                DevGateVerdict::Accepted(receipt) => format!(
+                DevGateVerdict::Accepted(result) => format!(
                     "accepted report-id={} validated-draft-id={}",
-                    receipt.report_id, receipt.validated_draft.validated_draft_id,
+                    result.report_id, result.validated_draft.validated_draft_id,
                 ),
                 DevGateVerdict::Refused(refusal) => {
                     format!("refused {}", exact_json(refusal))
@@ -493,12 +493,12 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     };
 
     drop(screen);
-    let receipt = outcome?;
+    let result = outcome?;
     if let Some(error) = driver_failure {
         return Err(anyhow::Error::new(error).context("drive the interactive terminal"));
     }
-    if let Some(receipt) = receipt {
-        print_receipt("run", &receipt);
+    if let Some(result) = result {
+        print_result("run", &result);
     }
     Ok(())
 }
@@ -534,7 +534,7 @@ mod tests {
 
     use crossterm::event::KeyEventState;
     use serde_json::json;
-    use wamn_authoring_model::{GateReceipt, GateRefusal, ValidatedDraftRef};
+    use wamn_authoring_model::{GateRefusal, GateResult, ValidatedDraftRef};
     use wamn_catalog::{
         ArtifactHash, AttachmentKind, ComponentOperationDependency, DefinitionHash,
         EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment,
@@ -571,7 +571,7 @@ mod tests {
         publisher.set_gate_outcomes(vec![
             gate_outcome(
                 "accepted",
-                DevGateVerdict::Accepted(GateReceipt {
+                DevGateVerdict::Accepted(GateResult {
                     report_id: "report-7".to_owned(),
                     validated_draft: ValidatedDraftRef {
                         validated_draft_id: DIGEST.to_owned(),

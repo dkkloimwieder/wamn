@@ -243,7 +243,7 @@ pub enum AuthoringOutcome {
     deny_unknown_fields
 )]
 pub enum AuthoringSuccess {
-    Gate(GateReceipt),
+    Gate(GateResult),
     Publish(PublishedWiringIdentity),
 }
 
@@ -406,12 +406,22 @@ pub struct GetReport {
     pub report_id: String,
 }
 
-/// Receipt for one accepted gate.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct GateReceipt {
-    pub report_id: String,
-    pub validated_draft: ValidatedDraftRef,
+#[doc(inline)]
+pub use gate_result::GateReceipt as GateResult;
+
+mod gate_result {
+    use super::ValidatedDraftRef;
+    use schemars::JsonSchema;
+    use serde::{Deserialize, Serialize};
+
+    /// Result for one accepted gate.
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+    #[serde(rename = "GateReceipt", rename_all = "kebab-case", deny_unknown_fields)]
+    #[schemars(rename = "GateReceipt", description = "Receipt for one accepted gate.")]
+    pub struct GateReceipt {
+        pub report_id: String,
+        pub validated_draft: ValidatedDraftRef,
+    }
 }
 
 /// Immutable identity produced by publishing the tested draft.

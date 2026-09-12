@@ -18,7 +18,7 @@ use super::coordinator::{ProductionDevStageError, ProductionDevStageRunner};
 use super::read::{DevReadHandle, DevRuntimeEndpoint};
 use super::watch::{FilesystemInvalidationSource, GitSource};
 use super::{
-    DevInvalidation, DevInvalidationSource, DevRunReceipt, DevStage, DevWatchObserver,
+    DevInvalidation, DevInvalidationSource, DevRunResult, DevStage, DevWatchObserver,
     DevWatchOutcome, run_once_with_source_state_provider, run_watch_with_source_state_provider,
 };
 
@@ -221,7 +221,7 @@ where
 
 /// Prints every watch and held run, reading the endpoint off the session seam.
 ///
-/// The engine hands `completed` a receipt and nothing else, so a watch run has
+/// The engine hands `completed` a result and nothing else, so a watch run has
 /// to read where it served from the same handle the interactive client reads.
 /// Without it a `--watch` session printed only that stages finished, and the
 /// operator had no way to learn the port each rerun had just bound
@@ -233,8 +233,8 @@ struct CommandObserver {
 impl DevWatchObserver for CommandObserver {
     fn completed(&mut self, outcome: DevWatchOutcome) {
         match outcome.into_result() {
-            Ok(receipt) => {
-                print_receipt("watch", &receipt);
+            Ok(result) => {
+                print_result("watch", &result);
                 // Absent whenever the run stopped before Activate, which the
                 // read handle reports at the actual shutdown boundary.
                 let snapshot = self.read.snapshot();
@@ -258,8 +258,8 @@ impl DevWatchObserver for CommandObserver {
     /// buffered, so each line has already left; the explicit flush is for the
     /// reader that is a pipe rather than a terminal, which is every caller
     /// that scripts this.
-    fn served(&mut self, receipt: &DevRunReceipt, endpoint: Option<&DevRuntimeEndpoint>) {
-        print_receipt("run", receipt);
+    fn served(&mut self, result: &DevRunResult, endpoint: Option<&DevRuntimeEndpoint>) {
+        print_result("run", result);
         if let Some(endpoint) = endpoint {
             print_served(endpoint);
         }
@@ -394,7 +394,7 @@ impl DevSession {
     }
 
     /// Run without terminal output; state remains available through the handle.
-    pub async fn run(mut self) -> anyhow::Result<Option<DevRunReceipt>> {
+    pub async fn run(mut self) -> anyhow::Result<Option<DevRunResult>> {
         self.run_with_observer(&mut SilentObserver, false).await
     }
 
@@ -402,7 +402,7 @@ impl DevSession {
     ///
     /// The one-shot loop holds after activation; watch mode continues receiving
     /// invalidations. Both leave through the same native cleanup path.
-    pub async fn run_until_shutdown(mut self) -> anyhow::Result<Option<DevRunReceipt>> {
+    pub async fn run_until_shutdown(mut self) -> anyhow::Result<Option<DevRunResult>> {
         self.run_with_observer(&mut SilentObserver, true).await
     }
 
@@ -410,7 +410,7 @@ impl DevSession {
         &mut self,
         observer: &mut O,
         hold_after_one_shot: bool,
-    ) -> anyhow::Result<Option<DevRunReceipt>>
+    ) -> anyhow::Result<Option<DevRunResult>>
     where
         O: DevWatchObserver + Send,
     {
@@ -435,9 +435,9 @@ impl DevSession {
                 // hold is that another process acts on these lines while this
                 // one sits still. Printing after the hold ends tells nobody
                 // anything.
-                if let Ok(Some(receipt)) = &result {
+                if let Ok(Some(result)) = &result {
                     let snapshot = self.read_handle().snapshot();
-                    observer.served(receipt, snapshot.runtime_endpoint());
+                    observer.served(result, snapshot.runtime_endpoint());
                 }
                 if result.is_ok() {
                     wait_for_hold_release(&mut self.shutdown).await;
@@ -471,11 +471,11 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     let mut observer = CommandObserver {
         read: session.read_handle(),
     };
-    let receipt = session.run_with_observer(&mut observer, hold).await?;
+    let result = session.run_with_observer(&mut observer, hold).await?;
     // Under --hold the observer already printed, before the hold. Printing
     // here as well would repeat all of it once the interrupt arrives.
-    if !hold && let Some(receipt) = receipt {
-        print_receipt("run", &receipt);
+    if !hold && let Some(result) = result {
+        print_result("run", &result);
         print_serving(&session);
     }
     Ok(())
@@ -485,11 +485,11 @@ async fn run_once_command(
     config: &DevConfig,
     runner: &mut ProductionDevStageRunner,
     git: &mut GitSource,
-) -> anyhow::Result<DevRunReceipt> {
-    let receipt = run_once_with_source_state_provider(config, runner, git)
+) -> anyhow::Result<DevRunResult> {
+    let result = run_once_with_source_state_provider(config, runner, git)
         .await
         .context("own the disposable verification database")??;
-    Ok(receipt)
+    Ok(result)
 }
 
 async fn run_watch_command(
@@ -680,8 +680,8 @@ fn print_served(endpoint: &DevRuntimeEndpoint) {
     );
 }
 
-pub(super) fn print_receipt(prefix: &str, receipt: &DevRunReceipt) {
-    let completed = receipt
+pub(super) fn print_result(prefix: &str, result: &DevRunResult) {
+    let completed = result
         .completed()
         .iter()
         .map(|stage| stage.as_str())
@@ -690,8 +690,8 @@ pub(super) fn print_receipt(prefix: &str, receipt: &DevRunReceipt) {
     println!("{prefix} completed: {completed}");
     // A separate line on purpose. Scripted callers read the completed line and
     // the served line by shape, so a skip must not change either of them.
-    if !receipt.skipped().is_empty() {
-        let skipped = receipt
+    if !result.skipped().is_empty() {
+        let skipped = result
             .skipped()
             .iter()
             .map(|stage| stage.as_str())
@@ -699,7 +699,7 @@ pub(super) fn print_receipt(prefix: &str, receipt: &DevRunReceipt) {
             .join(",");
         println!("{prefix} skipped: unchanged {skipped}");
     }
-    let timings = receipt
+    let timings = result
         .timings()
         .iter()
         .map(|(stage, elapsed)| format!("{}={}ms", stage.as_str(), elapsed.as_millis()))
@@ -707,12 +707,12 @@ pub(super) fn print_receipt(prefix: &str, receipt: &DevRunReceipt) {
         .join(" ");
     println!(
         "{prefix} stage-ms: prepare={}ms {timings}",
-        receipt.prepared().as_millis()
+        result.prepared().as_millis()
     );
     // One line per notice, after the timings, for the same reason the skip line
     // is separate: a scripted caller reads the completed and served lines by
     // shape. A notice never refuses, so it must never change either of them.
-    for notice in receipt.notices() {
+    for notice in result.notices() {
         println!("{prefix} {}: {}", notice.code(), notice.detail());
     }
 }

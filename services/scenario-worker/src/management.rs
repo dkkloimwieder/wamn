@@ -35,7 +35,7 @@ use wamn_authoring_model::{
     AuthoringCommand, AuthoringDocument, AuthoringOutcome, AuthoringQuery, AuthoringQueryOutcome,
     AuthoringQueryRequest, AuthoringQueryResponse, AuthoringQuerySuccess, AuthoringRequest,
     AuthoringRequestEnvelope, AuthoringResponse, AuthoringResponseEnvelope, AuthoringSuccess,
-    CommandRefusal, CommitProvenance, ContractDecodeErrorKind, GateReceipt, GateRefusal,
+    CommandRefusal, CommitProvenance, ContractDecodeErrorKind, GateRefusal, GateResult,
     GetReportRefusal, PublishRefusal, PublishedWiringIdentity, QueryRefusal, ReportProjection,
     SCHEMA_VERSION, ValidatedDraftRef, decode_document,
 };
@@ -1081,7 +1081,7 @@ async fn gate_route(
 /// commit leaves neither row, so the retry classifies as `Execute` and
 /// re-derives the same judgment from the same immutable candidate. Once the
 /// ledger row exists the command is finished, and the retry replays the stored
-/// receipt.
+/// result.
 async fn gate(
     backend: &mut InternalAuthoringBackend,
     admission: &mut crate::store::admission::AdmissionSurface,
@@ -1147,8 +1147,8 @@ async fn gate(
     // the same fact rather than two.
     let (outcome, report) = match judgment {
         crate::store::admission::GateJudgment::Accepted(report) => (
-            AuthoringOutcome::Completed(Box::new(AuthoringSuccess::Gate(GateReceipt {
-                // The receipt hands back the key the report is stored under, so
+            AuthoringOutcome::Completed(Box::new(AuthoringSuccess::Gate(GateResult {
+                // The result hands back the key the report is stored under, so
                 // `get-report` resolves exactly what the gate wrote. Both fields
                 // are now the SERVER'S derived identity for the submitted
                 // document (wamn-0h0g.8.28) — the client stated neither.
