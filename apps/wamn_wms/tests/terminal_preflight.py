@@ -156,7 +156,7 @@ def main():
     spec = importlib.util.spec_from_file_location("wms_live_driver", driver_path)
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
-    partial_path = tree / "evidence/perf/2026.09/effects-response/live-002/journey/wms-partial-http.json"
+    partial_path = tree / "apps/wamn_wms/tests/fixtures/wms-partial-http.json"
     partial = json.loads(json.loads(partial_path.read_text())["body"])
     evidence = driver.support.Evidence(args.evidence_dir, [])
     evidence.json("inputs.json", {
