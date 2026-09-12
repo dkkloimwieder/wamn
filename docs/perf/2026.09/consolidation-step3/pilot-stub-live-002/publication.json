@@ -129,6 +129,16 @@
       "git_mode": "100644",
       "bytes_equal": true,
       "mode_equal": true
+    },
+    {
+      "source_path": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911/wamn-pilot/runs/902s-stub-dock-appointments/env.log",
+      "published_path": "docs/perf/2026.09/consolidation-step3/pilot-stub-live-002/env.log",
+      "bytes": 41205,
+      "sha256": "ab392ff6a06937836dfc0c16dad95d624e854beffa71bb8d0bb1070306749a3b",
+      "filesystem_mode": "0600",
+      "git_mode": "100644",
+      "bytes_equal": true,
+      "mode_equal": true
     }
   ],
   "original_bytes_and_modes_unchanged": true,
@@ -170,9 +180,11 @@
     "bytes": 41205,
     "sha256": "ab392ff6a06937836dfc0c16dad95d624e854beffa71bb8d0bb1070306749a3b",
     "filesystem_mode": "0600",
-    "copied": false,
+    "copied": true,
     "prior_explicit_raw_log_approval_scope": "Run901s only.",
-    "publication_status": "Withheld after automatic approval review rejected the copy.",
-    "restriction_record": "raw-log-restriction.json"
+    "publication_status": "Included in the repository result after explicit approval. Remote publication is handled separately.",
+    "restriction_record": "raw-log-restriction.json",
+    "published_path": "docs/perf/2026.09/consolidation-step3/pilot-stub-live-002/env.log",
+    "current_approval_record": "raw-log-publication.json"
   }
 }
