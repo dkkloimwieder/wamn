@@ -1,64 +1,71 @@
-# Component artifact boundary — package-grain components
+# Components
 
-Status: RULED 2026-09-01 · supersedes the one-operation-per-artifact rule
-(`wamn-10yt.3.3`) and the interim kind-grouping · closes the root cause of
-wamn-10yt.8 (155 MiB per host).
+A component is compiled behavior with one digest, import set, and export set.
+A package owns schema contributions, operations, SQL, and contracts.
+A palette component supplies schema-less behavior for wiring and has its own component identity.
+Components contain no deployment endpoint, database identity, or credential.
 
-## Definitions
+## Grouping and publication
 
-- **Package** — unit of ownership and versioning: schema contribution
-  (`migrations/`), operations (`custom_operations` + generated CRUD),
-  authored SQL, generated contracts. `package_id@version`, immutable.
-  Not configuration.
-- **Component** — compiled behavior unit: one digest, one import set
-  (effect posture + connection requirements), one export set. Carries no
-  schema or config.
-- **Palette component** — schema-less library component authored for
-  low-code wiring. Independent of packages; unchanged by this spec.
+The default is one component per package, exporting its declared operation set.
+A different import or connection requirement can justify a separate component.
+A heavy dependency that must stay out of the hot execution path can also justify separation.
+CRUD, command, projection, and team labels do not justify separate artifacts by themselves.
 
-## Rule
+Grouping is explicit in the operation's `component` declaration.
+Component names are package-local `snake_case` identifiers.
+An empty name refuses, and duplicate connection requirement sets refuse.
+Package operations version together even when their implementations occupy separate components.
 
-1. **Default: one component per package.** Its export set is the
-   package's operation set. A package's operations version together, so
-   split digests move in lockstep — splitting buys no identity, only
-   duplicated runtime.
-2. **Split only when import/requirement sets differ.** An operation
-   needing a connection requirement or effect the rest of the package
-   lacks (e.g. `integration.sync_receipt` needing `wamn:connection/http`)
-   goes in its own component so wirings bind only what each node needs
-   and effect posture stays honest per artifact. Second valid reason: a
-   heavy dependency that must not ride in the hot pool.
-3. **Grouping is declared, not inferred.** Each operation entry may name
-   `component: "<name>"`; default is the package component. Names are
-   package-local, snake_case. Validation refuses an empty component and
-   refuses two components with identical import/requirement sets
-   (a split with no reason).
-4. **Never split** by taxonomy (CRUD/command/BFF), by team habit, or for
-   versioning.
+A component declaration records its operations, ports, effects, static SQL, and connection requirements.
+Admission derives effects from the actual imports and compares the declared operation facts.
+The component's complete admitted facts remain separate from its compiled bytes.
+Synchronous nodes export `wamn:node/handler`.
+Nodes that await asynchronous capabilities export `wamn:node/async-handler@0.1.0` with an asynchronous lift.
+The P3 HTTP shell separately exports `wasi:http/handler@0.3.0`.
+The [capability rules](capabilities.md) govern imported authority, and [naming](naming.md) defines exported operation tokens.
 
-## Runtime consequences
+Application operation dependencies resolve to exact admitted providers.
+Every interface imported by the admitted closure has one provider, including its interface version.
+Repeated export-only handlers do not create that uniqueness requirement.
+Dependency membership alone does not authorize a nested operation.
+The [execution rules](execution.md) retain the original caller and each operation's authority.
 
-- Component fact carries an **operation set** (exports), not a singular
-  operation. Dispatch selects the export by operation token.
-- Permission checks, static SQL, and effect facts are unchanged in
-  meaning: permission is per token, SQL is per operation, effects are
-  per artifact (as they were).
-- Pools key by digest; one package component = one warm pool serving all
-  its operations.
-- Release membership records `(package, version, component digests)`.
+Release membership names package versions and component digests.
+Publication uses WAMN-owned OCI media types and retains the component configuration needed to establish admission.
+The host compares bytes and artifact layout with the admitted facts before native loading.
+A generic component pull cannot discard that configuration and still satisfy the publication contract.
 
-## Migration of current tree
+## Guest build identity
 
-- Receiving base: six artifacts → one `receiving` component.
-- Overlay: one `client_acme_receiving` component; `integration.*` gets
-  its own component when `sync_receipt` is implemented (not now — it is
-  deferred).
-- wamn-10yt.8 re-measures after regeneration; expected ~1/6 size.
+`apps/Cargo.toml` and `apps/platform/no-std/Cargo.toml` own guest membership and feature resolution.
+The build tool selects guests from Cargo metadata and application declarations.
+Each guest receives its own Cargo invocation.
+Combining unrelated guests can change dependency features and therefore compiled bytes.
 
-## Acceptance
+Standard-library guests target `wasm32-wasip2` and pass through the pinned WASI virtualizer before admission.
+Its fixed profile supplies an empty environment, denies stdio and exit, passes clocks, and removes unused virtualization.
+It does not run `wasm-opt`.
+The resulting component must satisfy the ordinary import policy without an exemption.
+Existing `no_std` guests keep their separate workspace.
 
-Generator emits one component per declared group; catalog fact and
-dispatch handle export sets; all eight Receiving routes green against the
-single component; a manifest naming a component with an identical
-requirement set refuses with a typed literal; host artifact bytes
-measured and recorded on 10yt.8.
+The virtualizer can change imported WASI versions.
+Its revision and adapter digest must agree with the exact versions in the [capability declaration](capabilities.md#import-admission).
+The [native alignment owner](native-alignment.md) records why this build step remains.
+The operations pages own build commands and artifact comparisons.
+
+## Shared label renderer
+
+The label renderer is an effect-free transform from fields to ZPL printer text.
+`template_id` is a wiring parameter, not a caller input field.
+The closed template set is `pallet`, `location`, and `product`.
+An unknown template refuses during declaration validation or rendering.
+
+The shared [label template library](../../apps/platform/no-std/label-template/src/lib.rs) emits `^PW812`, `^LL1218`, and `^MD0`.
+This means 812 by 1,218 dots for provisional 4-by-6-inch labels at 203 dpi.
+The geometry remains provisional until a real printer requirement replaces it.
+Template authoring is not an existing public interface.
+
+The separate blob writer uses the [blobstore capability](capabilities.md#object-storage) after rendering.
+It preserves a caller's `request_id` and does not weaken object or binding authority.
+A printed label, stored label, and committed application mutation remain separate outcomes.

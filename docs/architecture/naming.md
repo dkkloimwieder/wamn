@@ -1,110 +1,45 @@
-# Application naming law
+# Naming
 
-Status: RATIFIED for the Receiving base and client-overlay POC · native
-operation/export token amended 2026-09-01.
+A package is the unit of ownership, versioning, and compatibility.
+Its source identifier is singular `snake_case`, and its application home is `apps/<exact-package-id>/`.
+Module and domain names organize implementation inside that package.
+They do not create separate package versions or authority.
 
-This document is the naming contract for generated application artifacts. The
-POC design remains in `docs/poc/`; generators cite this contract rather than
-copying its rules.
+## Source and wire identifiers
 
-## Technical identifiers
+WAMN-owned model, domain, route, event, JSON, SQL, and generated function identifiers use singular `snake_case`.
+Generated language types use the language's naming convention.
+Third-party protocol fields retain their required spelling.
+Persisted identifiers and generated artifact names retain their declared contracts.
+Native Rust prose and private names do not redefine those contracts.
 
-WAMN-owned wire and schema identifiers are singular `snake_case`. This applies
-to package-local identifiers, data models, operations, domains, route segments,
-events, JSON properties, SQL relations and fields, and generated function
-names. Generated language types may use that language's naming convention.
-Third-party protocol fields retain externally required spelling.
-
-## Package and operation identity
-
-A package is the ownership, version, and compatibility boundary. A module or
-domain organizes implementation inside a package and has no independent public
-package identity.
-
-Canonical operation, component-export, and authorization identity is one token:
-
-```text
-<package-id-kebab>:<module-kebab>/<action-kebab>@<package-version>
-```
-
-For example, `wamn_receiving` operation `purchase_order.get` at `1.0.0`
-is `wamn-receiving:purchase-order/get@1.0.0`. Package and operation source
-identifiers remain singular `snake_case`; their native external spelling
-replaces each underscore with one hyphen. The package version is the only
-operation-version coordinate. A local operation has one of two forms:
+Local operations use these forms:
 
 ```text
 <data_model>.<crud_action>
 <domain>.<custom_action>
 ```
 
-The closed generated CRUD action set is `get`, `query`, `create`, `update`, and
-`delete`. Custom actions use singular `verb_noun` names.
+The generated CRUD actions are `get`, `query`, `create`, `update`, and `delete`.
+Custom actions use singular `verb_noun` names.
+A model declares which generated actions it exposes.
 
-The exact token keys the component's operation fact, names its exported
-`wamn:node/handler` instance, selects dispatch, and is repeated explicitly in
-`registered-operation` for authorization. Admission refuses a package
-operation when that repeated field differs from its map key. This single
-native spelling prevents invalid Component Model extern names and prevents
-alias drift between dispatch and permission checks; there is no sanitized
-mapping or carrier field.
+## Operation identity
 
-## Pagination order
-
-Keyset pagination uses `id` as the total-order tie-breaker, and `id` inherits
-the declared primary sort direction; descending reverses the compound order.
-Cursor keys preserve canonical PostgreSQL lexical values: `timestamptz` is UTC
-RFC3339 with exactly six fractional digits, always, and `numeric` preserves scale.
-Canonical means one spelling of what PostgreSQL holds, never a transformation
-of it. Durable command, cursor, and package record JSON use
-`wamn_execution_contract::canonical_json_bytes` as their single byte authority.
-
-CANONICALIZE ON INGEST, THEN HASH. An input arrives in any accepted
-representation and is re-spelled to the canonical one before the idempotency key
-hashes it. The key hashes the canonical bytes, never the arriving bytes, because
-a caller whose retry infrastructure re-spells a timestamp or a UUID otherwise
-gets `idempotency_conflict` for the same command.
-
-CANONICALIZATION NORMALIZES REPRESENTATION, NEVER VALUE. Timestamp spelling,
-UUID case and key order are representation, so they re-spell. Numeric scale is
-value in PostgreSQL, because `12.3400` is what the column holds and it differs
-from `12.34`, so scale is preserved and a scale difference is still a body
-difference.
-
-## Command envelopes
-
-`receiving.record_receipt` accepts `1..=100` outer items and `1..=100` lines
-per item. Raising either bound requires a ruled demand naming its consumer.
-Receipt lines are canonicalized by `purchase_order_line_id`; duplicates refuse.
-Raw bodies above 1 MiB refuse at ingress with HTTP 413 before parsing, while
-parsed count breaches refuse inside the operation as `invalid_input` with the
-bound and observed count. Transport and operation refusals remain distinct.
-
-## PostgreSQL schema selection
-
-Migrations author schema selection and require qualified DDL; SQL corpora inherit
-the host-selected `search_path` and refuse qualified references.
-
-## PostgreSQL constraint and index names
-
-Constraint and ordinary-index names normally use:
+One token names an operation's export, dispatch selection, and authorization:
 
 ```text
-<table>_<column_1>[_<column_n>]_<kind>
+<package-id-kebab>:<module-kebab>/<action-kebab>@<package-version>
 ```
 
-Every referenced column appears in table-definition order. The kind suffixes
-are:
+Source underscores become single hyphens in this external spelling.
+For `wamn_receiving`, `purchase_order.get` at `1.0.0` becomes `wamn-receiving:purchase-order/get@1.0.0`.
+The package version is the only operation-version coordinate.
 
-| Object | Kind |
-|---|---|
-| Primary key | `pkey` |
-| Unique constraint | `key` |
-| Foreign key | `fkey` |
-| Check constraint | `check` |
-| Ordinary index | `idx` |
+The token keys the component's operation declaration and names its exported handler instance.
+The `registered-operation` field repeats that exact token for authorization.
+Admission refuses a different repeated value.
+There is no separate alias between the dispatch identity and the permission identity.
 
-Names are explicitly authored and must contain fewer than 64 bytes. PostgreSQL
-auto-generated names and silent identifier truncation are refused. When the
-full conventional name cannot fit, the author writes an explicit shorter name
-in the migration; no tool silently abbreviates it.
+The [component contract](components.md) defines grouping and dependency declarations.
+[Data access](data-access.md#canonical-values-and-sql-names) owns SQL names, canonical values, and pagination order.
