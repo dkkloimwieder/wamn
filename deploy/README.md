@@ -21,10 +21,12 @@ lifecycle tiers because pre-tier provisioning runs before any tier exists.
   Deployment (`serve-echo`). Applied per gate run, deleted after. This bullet
   named a second support Deployment, `egress-escape`, until `wamn-0h0g.10.5`'s
   BoM pass; `ea71c1c4` deleted it with the rest of the runner carriers.
-- **`sql/`** — the standalone SQL schemas (`postgres-init`, `app-schema`,
-  `catalog-schema`, `system-schema`, `run-queue`, `run-state`).
-  Several are `include_str!`'d or read by tests — paths are load-bearing
-  (SR13 tracks generating these from Rust instead of hand-maintaining them).
+- **`sql/`** contains SQL for control and project databases, run state,
+  operations, and test fixtures. The owning Rust libraries select the installation order.
+  Catalog and control-store schemas combine prefixes, a shared immutable-row trigger,
+  and table declarations. Use [`CATALOG_SCHEMA_SQL`](../crates/catalog/model/src/lib.rs)
+  for the project catalog and [`CONTROL_BOOTSTRAP_SQL`](../crates/control/provision/src/lib.rs)
+  for the control database. These owners assemble the fragments before installation.
 
 Placement judgment calls, recorded: `postgres.yaml` is platform (the shared
 long-lived fixture ~8 gates and the dispatcher point at, despite its bench
