@@ -1,0 +1,20 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-ctl",
+    "--lib",
+    "push_component::tests::the_environment_instance_decides_which_run_owns_a_component_fact",
+    "--",
+    "--exact",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+  "started": "2026-09-12T12:17:42.829312+00:00",
+  "elapsed_seconds": 0.8374082029913552,
+  "exit": 0
+}

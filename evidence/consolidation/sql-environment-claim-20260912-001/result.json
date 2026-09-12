@@ -1,0 +1,185 @@
+{
+  "base": "9072bf116cf94b612c7ecf8872979ae85ae5f4e1",
+  "source_commit": "efa99adc31315fa9d285f3ab20692e7a911fe1d9",
+  "approved_patch_sha256": "4275209ae12e893e3d9482ea3b6dd48880ecc30232abdaf8f71d1e0ff078d894",
+  "approved_patch_reverse_check_exit": 0,
+  "adaptations": [],
+  "paths": [
+    {
+      "path": "crates/control/provision/src/error.rs",
+      "sha256": "e8ee598e8e1ce129942c47201eb6da3cf60c5d9d8c2347c4219927685201776b",
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "+1.98.0",
+          "--edition",
+          "2024",
+          "--emit",
+          "stdout"
+        ],
+        "source_stdin": "crates/control/provision/src/error.rs",
+        "exit": 0,
+        "seconds": 0.012764604995027184
+      }
+    },
+    {
+      "path": "crates/control/provision/src/lib.rs",
+      "sha256": "32d8ea86f89746ed6c46c457889cbc1ea7d392261229e2057511e7b599b74272",
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "+1.98.0",
+          "--edition",
+          "2024",
+          "--emit",
+          "stdout"
+        ],
+        "source_stdin": "crates/control/provision/src/lib.rs",
+        "exit": 0,
+        "seconds": 0.012278495007194579
+      }
+    },
+    {
+      "path": "crates/control/provision/src/sql.rs",
+      "sha256": "d991ac45f004d9273b74eee42dc0c53a9ef54150762ac03f69de34a7df5ea6da",
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "+1.98.0",
+          "--edition",
+          "2024",
+          "--emit",
+          "stdout"
+        ],
+        "source_stdin": "crates/control/provision/src/sql.rs",
+        "exit": 0,
+        "seconds": 0.021921414008829743
+      }
+    },
+    {
+      "path": "crates/control/provision/tests/control_portable_store.rs",
+      "sha256": "4e971a1f15a24336e69857a9afbd5ad084c9c2aaa0aee3935c162b1f6d0a0a8e",
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "+1.98.0",
+          "--edition",
+          "2024",
+          "--emit",
+          "stdout"
+        ],
+        "source_stdin": "crates/control/provision/tests/control_portable_store.rs",
+        "exit": 0,
+        "seconds": 0.013425627956166863
+      }
+    },
+    {
+      "path": "crates/schema/control/src/environment.rs",
+      "sha256": "9d6bbbbab031cf0337dbfd21ad59764d22c52c2f687a6150d31872bb103e6175",
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "+1.98.0",
+          "--edition",
+          "2024",
+          "--emit",
+          "stdout"
+        ],
+        "source_stdin": "crates/schema/control/src/environment.rs",
+        "exit": 0,
+        "seconds": 0.012166965985670686
+      }
+    },
+    {
+      "path": "crates/schema/control/src/lib.rs",
+      "sha256": "851ca92db1d6b56803de6dd32f28d770c14b095e3197a21b557212fdb89c5b83",
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "+1.98.0",
+          "--edition",
+          "2024",
+          "--emit",
+          "stdout"
+        ],
+        "source_stdin": "crates/schema/control/src/lib.rs",
+        "exit": 0,
+        "seconds": 0.011741715017706156
+      }
+    },
+    {
+      "path": "deploy/sql/control-portable-store.sql",
+      "sha256": "45fb72d7ce4c8568c227d06f41c7433347e3a62abf19f64cafa80b79d1135375"
+    },
+    {
+      "path": "services/ctl/src/dev/coordinator.rs",
+      "sha256": "17c928bc08f8a10ca56b739734d1a0f6186a07c9997afb1aaa5a9ebb398d1246",
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "+1.98.0",
+          "--edition",
+          "2024",
+          "--emit",
+          "stdout"
+        ],
+        "source_stdin": "services/ctl/src/dev/coordinator.rs",
+        "exit": 0,
+        "seconds": 0.0429231509915553
+      }
+    },
+    {
+      "path": "services/ctl/src/provision_project_env/tests.rs",
+      "sha256": "16f8be735558476d3db8edfc8461b917968a75ff299aae40d76d776f0e701ccf",
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "+1.98.0",
+          "--edition",
+          "2024",
+          "--emit",
+          "stdout"
+        ],
+        "source_stdin": "services/ctl/src/provision_project_env/tests.rs",
+        "exit": 0,
+        "seconds": 0.0268425410031341
+      }
+    },
+    {
+      "path": "services/ctl/src/provision_project_env.rs",
+      "sha256": "3dd0ffe7a1e2d041f86350e0bd413736787a703268fc25da07061076a3027700",
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "+1.98.0",
+          "--edition",
+          "2024",
+          "--emit",
+          "stdout"
+        ],
+        "source_stdin": "services/ctl/src/provision_project_env.rs",
+        "exit": 0,
+        "seconds": 0.0358518700231798
+      }
+    },
+    {
+      "path": "services/ctl/src/push_component.rs",
+      "sha256": "58a04037afed8e2a453daade6ea11e2ec928f0acebad424fa988b57dca52262f",
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "+1.98.0",
+          "--edition",
+          "2024",
+          "--emit",
+          "stdout"
+        ],
+        "source_stdin": "services/ctl/src/push_component.rs",
+        "exit": 0,
+        "seconds": 0.04542680399026722
+      }
+    }
+  ],
+  "cargo_tests_builds_or_postgres_run": false,
+  "committed_blobs_match_compared_sources": true
+}

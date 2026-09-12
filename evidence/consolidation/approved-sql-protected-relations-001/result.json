@@ -1,0 +1,9 @@
+[
+  {
+    "case": "protected-relations",
+    "exit": 101,
+    "temporary_cluster_removed": true,
+    "only_expected_generated_file_changed": true,
+    "changed_paths": []
+  }
+]

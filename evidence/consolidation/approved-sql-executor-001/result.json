@@ -1,0 +1,14 @@
+[
+  {
+    "case": "executor-current-user",
+    "exit": 0,
+    "temporary_cluster_removed": true,
+    "source_unchanged": true
+  },
+  {
+    "case": "executor-surface",
+    "exit": 101,
+    "temporary_cluster_removed": true,
+    "source_unchanged": true
+  }
+]

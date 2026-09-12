@@ -1,0 +1,2067 @@
+{
+  "source": "28e1f27dad466b59503b3156592a099d55350aea",
+  "files": [
+    {
+      "path": "apps/platform/events/registration/tests/event_reg.rs",
+      "old_sha256": "73bb97473b1c8853eec4a54eafe61bd927b729e87ed64464dc5b49f8852fd4cf",
+      "new_sha256": "42238303af0bd08c4fb9019dcda56730da99f398a96ff64a5c71fa9b8671e158",
+      "replacements": [
+        [
+          "// The id `sales_orders` resolves; the TABLE name `orders` does NOT \u2014 proof\n    // the check keys on the rename-proof entity id.",
+          "// The id `sales_orders` resolves. The table name `orders` does not.\n    // The check uses the entity id, which stays fixed when the table name changes."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/apps/platform/events/registration/tests/event_reg.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.026698970003053546,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "apps/platform/events/registration/tests/reconcile_live.rs",
+      "old_sha256": "7e63d7bcdf108bbaf2afe37f2a4d27143744e545f69075c9808c4c86c2810a83",
+      "new_sha256": "439d12214c869d7ad06c636a330e6e337492f215dc9ef0865109dc0c37d22451",
+      "replacements": [
+        [
+          "//! Live PostgreSQL proof for package-coordinate registration reconciliation.",
+          "//! Live PostgreSQL test for package-coordinate registration reconciliation."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/apps/platform/events/registration/tests/reconcile_live.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.033768958994187415,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/sessions.rs",
+      "old_sha256": "53c2db602da6d1efe0abfa9a689f92e28f27fb7930744126e1b37bf9e6251a6f",
+      "new_sha256": "2c0bd6a21a5392045c85dde3ee779c641d9876e1506f2dc38e3ac2bb2e8eed44",
+      "replacements": [
+        [
+          "/// Separate deployed host Jobs prove cluster transport and key-removal bounds.",
+          "/// Separate deployed host Jobs test cluster transport and key-removal bounds."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/apps/wamn_receiving/tests/route_authentication_live/sessions.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.031628996017389,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/client/core/src/lib.rs",
+      "old_sha256": "9a04fe7caeb8eb36c3cb75e1da32e506b6db101d65f665e8ec635d9b139ded67",
+      "new_sha256": "d2e7d78db12022d476b5d38b2e9684d501abff5917efbbf3b978888278f8286c",
+      "replacements": [
+        [
+          "/// A seam, so the envelope and error semantics above can be proven BELOW the\n/// terminal layer without a live server \u2014 which is what the slice's exit gate\n/// requires.",
+          "/// Tests use this boundary to check envelope and error behavior below the\n/// terminal layer without a live server, as the acceptance criteria require."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/client/core/src/lib.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.026416287990286946,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/client/core/tests/invoke.rs",
+      "old_sha256": "b45d1781178a1ac3a2d3cb7229d31fb17e88acb2c5b43678cf7a9d702d6f33dc",
+      "new_sha256": "769159ceebd335be9163b149ca48ecf25b98c972b9d0749a469f7b84600f58b1",
+      "replacements": [
+        [
+          "//! for the network, so envelope, error and paging semantics are proven without",
+          "//! for the network, so the tests check envelope, error and paging behavior without"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/client/core/tests/invoke.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.02604010299546644,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/client/tui/src/submission.rs",
+      "old_sha256": "5ca8e04ac869280da6c4ff53bb6472a453e69d831355fb95af4fd07756b2467d",
+      "new_sha256": "15dc24799aef4e7b7d88ed979263a4fa6a8e854b3fcf6666051ab48f0aa3373a",
+      "replacements": [
+        [
+          "/// One declared error case. Its origins determine whether it proves refusal.",
+          "/// One declared error case. Its origins determine whether it shows refusal."
+        ],
+        [
+          "// A reported literal is diagnostic even when its envelope proves no outcome.",
+          "// A reported literal is diagnostic even when its envelope shows no outcome."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/client/tui/src/submission.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.044749619031790644,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/client/tui/tests/descriptor_driven.rs",
+      "old_sha256": "b60747c77b5815ed92d47cae42a2a5af9379a2eefa6366b349ab072c018c77af",
+      "new_sha256": "48e1a48aa87184d6d9e1b26175cc6376ed96211834945d71656466f650329309",
+      "replacements": [
+        [
+          "//! field lists\" is proven against the corpus rather than against a fixture",
+          "//! field lists\" is tested against the corpus rather than against a fixture"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/client/tui/tests/descriptor_driven.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.027158693003002554,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/control/provision/src/backup.rs",
+      "old_sha256": "719b7750c05c14beede4c052e3139ca33108411510e61a0ad1c98ec6a59947c3",
+      "new_sha256": "f67ba07893fc5107d811f1ac05070254c671c8bea939e3d95fa2ebb430383cfb",
+      "replacements": [
+        [
+          "/// Render the `ScheduledBackup` CR that anchors a cluster's recovery window \u2014 a",
+          "/// Render the `ScheduledBackup` CR that sets a cluster's recovery window with a"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/control/provision/src/backup.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.026173188001848757,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/control/provision/src/control_author.rs",
+      "old_sha256": "350d4d5ba0c435111d1075ed60bed99801d6997d0d52ac02ca405fcf2f7caaf9",
+      "new_sha256": "05d96f931db32a7547799245d9b43bf3e3e40c32bd0e086a4d7e108ad24dff34",
+      "replacements": [
+        [
+          "/// network, database, or filesystem I/O**. It proves everything a pure function\n/// can prove about scope:",
+          "/// network, database, or filesystem I/O**. It checks these scope facts without I/O:"
+        ],
+        [
+          "/// the control database. What a pure check cannot prove is that the named",
+          "/// the control database. A pure check cannot establish that the named"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/control/provision/src/control_author.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.04494462296133861,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/control/provision/src/copy.rs",
+      "old_sha256": "5e59e5f65c1e74f7742ee2670327167f7f73ab483b99fbce489c357ecfcfb8de",
+      "new_sha256": "31e35f920f179db16f25e64f4d62cc7a4f717c3985087b0478454e408b43dd9a",
+      "replacements": [
+        [
+          "/// terminate existing backends) and prove it with a write probe. Cutover",
+          "/// terminate existing backends) and check it with a write probe. Cutover"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/control/provision/src/copy.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03493686503497884,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/control/provision/src/dump.rs",
+      "old_sha256": "f2d5450347f739b9cc6835c560defa8f60f444016257d7e3dfe7ddcf7a2d93fd",
+      "new_sha256": "b27583e221bd4b8bba62fbeb9087a7a33cdb6e5fcb17da3c9c8cdd4918e5b889",
+      "replacements": [
+        [
+          "//! init step still runs). The `.10` round-trip gate proves the artifact valid +",
+          "//! init step still runs). The `.10` round-trip gate checks that the artifact is valid +"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/control/provision/src/dump.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03343505802331492,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/control/provision/src/management_admitter.rs",
+      "old_sha256": "cb8fbfd89b4352189d5949fffa90c6c37a53cfa7d729e602285d27bebe81ee31",
+      "new_sha256": "73861775b2c4ccd5c8f07ed04ab31dc35e65a2648bf70e53e7d03aab47cc1230",
+      "replacements": [
+        [
+          "/// network, database, or filesystem I/O**. It proves everything a pure function\n/// can prove about scope:",
+          "/// network, database, or filesystem I/O**. It checks these scope facts without I/O:"
+        ],
+        [
+          "/// database. What a pure check cannot prove is that the named database *is* that",
+          "/// database. A pure check cannot establish that the named database *is* that"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/control/provision/src/management_admitter.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03929166099987924,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/control/provision/src/operation_grants.rs",
+      "old_sha256": "4c05b203772b81a8c2629985ef42e427b14ce855606811332c4a372b1ab76bd0",
+      "new_sha256": "197d9b8edc49e4d9d14ac40288bb000d766270f607b4cbf528151ab0d709bfad",
+      "replacements": [
+        [
+          "/// After [`operation_grant_floor_check_sql`] proves the existing `app_system`",
+          "/// After [`operation_grant_floor_check_sql`] checks that the existing `app_system`"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/control/provision/src/operation_grants.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.033031713974196464,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/control/provision/src/org.rs",
+      "old_sha256": "ea858846f78277081ddb870148b12ceeff7a6de6505898fff3cbb20ee1496ea4",
+      "new_sha256": "d06da370d1596fff1841faefd47cb99c7e6ee68db9a25813cc58d77605364785",
+      "replacements": [
+        [
+          "/// so no cluster is ever renderable without a bound. `1GB` is the S-CDC-1-proven\n/// value for the 2Gi cluster sizing rendered here.",
+          "/// so no cluster is ever renderable without a bound. S-CDC-1 tested `1GB`\n/// with the 2Gi cluster sizing rendered here."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/control/provision/src/org.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03159568295814097,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/control/provision/src/system_reader.rs",
+      "old_sha256": "bce1d77164ccc2ed47c92d513e08042a6c51f88db37cb2c6d1f3834350ec8738",
+      "new_sha256": "c1bf2a0b233401cd2fd473ed7039f41560fc93ecac2d7725b472cda6056edc1c",
+      "replacements": [
+        [
+          "/// What a pure check cannot prove is that the named database *is* the control",
+          "/// A pure check cannot establish that the named database *is* the control"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/control/provision/src/system_reader.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03345291403820738,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/control/provision/tests/control_storage.rs",
+      "old_sha256": "4d90f17c86912492d2a7d386538e410fed6bb55dda1c2cc93e4dc6bc00ef465e",
+      "new_sha256": "671a9679252912c04d57384d9332b58877a06507085fefc34ba2105b031f79f8",
+      "replacements": [
+        [
+          "// FK \u2014 enable-cdc is an overlay on an already-provisioned env), and prove",
+          "// FK \u2014 enable-cdc is an overlay on an already-provisioned env), and check that"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/control/provision/tests/control_storage.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03492089599603787,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/control/provision/tests/family_denial_matrix.rs",
+      "old_sha256": "87bd348c32528fbc7f6de0a3615224539dcd2893539d5b808e86d1d1fafdca90",
+      "new_sha256": "f2cbb690aabdb006fd29f820c46de848003fbf7dafed4e965a8662ab3a731f21",
+      "replacements": [
+        [
+          "/// carry the role's effective authority through a real connection and prove",
+          "/// carry the role's effective authority through a real connection and check that"
+        ],
+        [
+          "// nothing. It exists to prove that a row count of zero is what a lockout",
+          "// nothing. It shows that a row count of zero is what a lockout"
+        ],
+        [
+          "// this is what proves the retired `app.tenant` path is inert for the guest.",
+          "// this shows that the retired `app.tenant` path is inert for the guest."
+        ],
+        [
+          "/// table read. The synthetic inheriting login proves this as a real SQL refusal,",
+          "/// table read. The synthetic inheriting login tests this as a real SQL refusal,"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/control/provision/tests/family_denial_matrix.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.051670682965777814,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/control/provision/tests/provision.rs",
+      "old_sha256": "6dc19a098c312a8768cc5a686eaf90ce4d7ddaa80138de04445de7c9ddab06a2",
+      "new_sha256": "8be1ef0b091e74a5e750d445db452865323c818287bfe1341ae8936b6039de74",
+      "replacements": [
+        [
+          "// Seed the retired shared-login posture so this proves convergence, not",
+          "// Seed the retired shared-login posture so this tests convergence, not"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/control/provision/tests/provision.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03145392099395394,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/execution/run-state/src/effect_writer.rs",
+      "old_sha256": "da36e6f38d8ab26067e531823043f6ba2be115d6cf31b770cbf52a284b8779cd",
+      "new_sha256": "7ebfe199dfc3c75cd313c9e92b97d3b452fa05862360c9a13321a8d5eb188267",
+      "replacements": [
+        [
+          "/// the eventual private adapter. No live database behavior is proven here.",
+          "/// the eventual private adapter. This builder does not exercise a live database."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/execution/run-state/src/effect_writer.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.041639070957899094,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/execution/run-state/tests/store.rs",
+      "old_sha256": "536866e02b6efbe94835fe0fd093f3b0005c42d68856bf51589ed20cf3ca0ecf",
+      "new_sha256": "0ddb1fdbfb37c473712397fea9a8219aed6da9def8460c425074392ef7ddce83",
+      "replacements": [
+        [
+          "// The erasure arm cannot name its caller, so it proves nothing references",
+          "// The erasure arm cannot name its caller, so it checks that nothing references"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/execution/run-state/tests/store.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03931078396271914,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/identity/platform/src/lib.rs",
+      "old_sha256": "3a545ad99c72e6092f7f27ff444bb360b2cb8ddae5e5701362e718472b589198",
+      "new_sha256": "ecf037fe66e15c33480f01c6fbd0989049110f5f76f5a181d90f73fb3d347fd6",
+      "replacements": [
+        [
+          "/// Parsing checks UUID spelling; it does not prove existence or authentication.",
+          "/// Parsing checks UUID spelling. It does not establish existence or authentication."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/identity/platform/src/lib.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.04075487394584343,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/identity/project-state/tests/authority.rs",
+      "old_sha256": "da1c3545b50e242d8de5548b65bbc1f0fa088ff5123306c2937506df1442d93d",
+      "new_sha256": "599ea38d445e79a6a1b3879b9b81390aa70610b96100d28a389fbeef47cda144",
+      "replacements": [
+        [
+          "//! `tests/schema.rs` pins the GRANT lines as TEXT. This suite proves PostgreSQL",
+          "//! `tests/schema.rs` pins the GRANT lines as TEXT. This suite tests that PostgreSQL"
+        ],
+        [
+          "/// does admit such a row under the App generation is what the other two tests prove.",
+          "/// does admit such a row under the App generation is what the other two tests show."
+        ],
+        [
+          "/// The successful append also proves the tenant floor admits a well-formed",
+          "/// The successful append also shows that the tenant floor admits a well-formed"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/identity/project-state/tests/authority.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03724783699726686,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/component_artifact_source.rs",
+      "old_sha256": "fd2225594c639e641c642bca363060039a569fcdd53d08c0934e0abb1103e7b7",
+      "new_sha256": "f0916d970c597f17de5b152878607f856cf6c402e7c35741d173b09c4c26637e",
+      "replacements": [
+        [
+          "//! component bytes proven against that fact. It owns no catalog read, cache,",
+          "//! component bytes checked against that fact. It owns no catalog read, cache,"
+        ],
+        [
+          "/// admission fact [`ComponentArtifactSource::pull_verified`] re-proves. See",
+          "/// admission fact [`ComponentArtifactSource::pull_verified`] checks again. See"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/component_artifact_source.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.028950150997843593,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/connection_generation.rs",
+      "old_sha256": "4b8427ad1dca0534c0c9a3273f2f5f23cd3d7655f946afb537472fcffa74d325",
+      "new_sha256": "02e34b1e0b4b057e9f52d6cdae88fb6a61806551901c175dfd38d5d80ecfde8c",
+      "replacements": [
+        [
+          "/// Input identities and canonical authorities proven by intrinsic validation.",
+          "/// Input identities and canonical authorities checked by intrinsic validation."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/connection_generation.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.028940801043063402,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/connection_http.rs",
+      "old_sha256": "b64d77f34c341673317eabedbc8d5b70ec93a226e57dc8c65a75cb04bbfd20c5",
+      "new_sha256": "95252abb5e462ca309456d913f4d980508ec2f30813c09275adec554157fded8",
+      "replacements": [
+        [
+          "/// would prove nothing about this one.",
+          "/// does not test this one."
+        ],
+        [
+          "///   [`EffectOutcome::ResponseLost`], because the status line proves the far",
+          "///   [`EffectOutcome::ResponseLost`], because the status line shows that the far"
+        ],
+        [
+          "/// answer proves it. The guest received nothing, so it is not responded",
+          "/// answer shows it. The guest received nothing, so it is not responded"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/plugins/connection_http.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03830104699591175,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_blobstore/binding.rs",
+      "old_sha256": "6dc5623e84e0dced399c9b68ff6fba3e4d8780a641c4a1642051fe5fcda258db",
+      "new_sha256": "02ff0da657457bd6857f11a344be7a03878c5cbc9779b978f817f01dacf3e6b6",
+      "replacements": [
+        [
+          "//! database call so it can be proven against fabricated snapshots the way",
+          "//! database call so it can be tested against fabricated snapshots the way"
+        ],
+        [
+          "/// the parameterized authorizer proves, exercised from the other side.",
+          "/// the parameterized authorizer checks, exercised from the other side."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/plugins/wamn_blobstore/binding.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.028726612974423915,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_blobstore/host.rs",
+      "old_sha256": "286c6be89e8ff746241ccea62a63e3f472736f77660b6ae72a7dd3f4832d051f",
+      "new_sha256": "646328c44f5f97f17781f8905cb05e687d7ccd1d014d93ed766a8e68a85286f5",
+      "replacements": [
+        [
+          "// The body is proven complete BEFORE the store is touched. A truncated",
+          "// The host checks that the body is complete before it touches the store. A truncated"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/plugins/wamn_blobstore/host.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03916669200407341,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_blobstore/intake.rs",
+      "old_sha256": "7d3af1043b83b821620d4b08bb38cafc26915eaa8e0ab2430392d8cab7cf3a63",
+      "new_sha256": "dbc8a6b7fb08029ce7a9f004b6cdcfd674c2797c243311583e14161f53b8e901",
+      "replacements": [
+        [
+          "//! cannot overwrite a complete one. **A put that cannot prove it received the\n//! whole body does not commit.**",
+          "//! cannot overwrite a complete one. The put operation commits only after\n//! it receives the whole body."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/plugins/wamn_blobstore/intake.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.027216858987230808,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_blobstore/mod.rs",
+      "old_sha256": "cb85e120d5989a6988d3dbd870bcbcc64857145666ccae198e1e23729d6eb055",
+      "new_sha256": "ec49fc3687aff7ff5f47289ab1e1d29609e76ba9e109fdbcab1457805bc21a7c",
+      "replacements": [
+        [
+          "//! * [`intake`] bounds a body and refuses to commit one it cannot prove\n//!   complete, so a truncated stream cannot overwrite a good object under a",
+          "//! * [`intake`] bounds a body and requires its complete contents before a commit,\n//!   so a truncated stream cannot overwrite a good object under a"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/plugins/wamn_blobstore/mod.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.024441995017696172,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_blobstore/plugin.rs",
+      "old_sha256": "b15b1f623ed50f9b53280b40f1d21f8e836488d7b06dbab35c79537b2194317f",
+      "new_sha256": "e39d125a6931eadea4baeb36e5a60fe4952943e32aac62adcc1e0fe2609b2804",
+      "replacements": [
+        [
+          "/// the released arm can be proven to ADMIT as well as to refuse.",
+          "/// the tests cover both admission and refusal in the released case."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/plugins/wamn_blobstore/plugin.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.030663324985653162,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_blobstore/store.rs",
+      "old_sha256": "85fb70ee2f8d3ffbf7364e24d43e15c55ac9b9ba16eb0b2d863d598c766b6f59",
+      "new_sha256": "c5041c9f07f2879370cc48f34277a76d7b766c55b5fdee04824ff0a43d628c9b",
+      "replacements": [
+        [
+          "/// The body was over the ceiling, or could not be proven complete.",
+          "/// The body exceeded the ceiling, or the drain did not establish that it was complete."
+        ],
+        [
+          "/// Distinct from [`StoreError::Backend`] because the store already proved\n    /// it acted: the object was found and the read began. The remedy is to",
+          "/// Distinct from [`StoreError::Backend`] because the store found the object\n    /// and began the read. The remedy is to"
+        ],
+        [
+          "/// Confinement or backend failure. The body has already been proven\n    /// complete by the drain before it reaches here.",
+          "/// Confinement or backend failure. The drain checks that the body is\n    /// complete before it reaches here."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/plugins/wamn_blobstore/store.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03578288899734616,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_blobstore/wit_error.rs",
+      "old_sha256": "11aa7428af45206e4029a92c06e4998381a3c0226ea44c7b1dc2e30b2b55c58c",
+      "new_sha256": "5cfd0313d18e4f1190b44a9f7e2641b630bcb37c016e1919d5452855c1d2fb77",
+      "replacements": [
+        [
+          "//! * **A body that cannot be proven complete** is `other`, carrying the",
+          "//! * A body with no established end is `other`, carrying the"
+        ],
+        [
+          "//!   object is gone when the store just proved it is there, and it is NOT",
+          "//!   object is gone when the store just found it, and it is NOT"
+        ],
+        [
+          "/// The store proved the object is there and then stopped sending it. The",
+          "/// The store found the object and then stopped sending it. The"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/plugins/wamn_blobstore/wit_error.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.025311367004178464,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/plugins/wamn_postgres/pool.rs",
+      "old_sha256": "90c05bcd70371229ec0296a967f8d5cb86109f10fd11edec9b170f32a953e4f9",
+      "new_sha256": "9931ae5658eee61d89de3f76eb1114c70ac159e32f3b25adac4944667549105b",
+      "replacements": [
+        [
+          "/// is proven from the credential itself rather than declared beside it,",
+          "/// is checked from the credential itself rather than declared beside it,"
+        ],
+        [
+          "/// Proven in a CHILD PROCESS that actually has `WAMN_PG_URL` set, because",
+          "/// Tested in a CHILD PROCESS that actually has `WAMN_PG_URL` set, because"
+        ],
+        [
+          "/// proves nothing, and `std::env::set_var` is `unsafe` in Rust 2024",
+          "/// establishes nothing, and `std::env::set_var` is `unsafe` in Rust 2024"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/plugins/wamn_postgres/pool.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03213941596914083,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/src/release_manifest_source.rs",
+      "old_sha256": "fd7dba9e6df5c02dcfb9fddd10abeb6d1dda2d62da84c7a5b0243d94bbe10f39",
+      "new_sha256": "aa4956012bb9d4d8e5cf90a54f78c3188e28e6ac8060b392e2d0b59b70ecc7d2",
+      "replacements": [
+        [
+          "//! release's identity is derived here, only proven.",
+          "//! release's identity is derived here. This module only checks it."
+        ],
+        [
+          "// this proves the transferred body against the pod template's name rather",
+          "// this checks the transferred body against the pod template's name rather"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/src/release_manifest_source.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.02657321299193427,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/tests/connection_generation_validation.rs",
+      "old_sha256": "fc1a58740d0d58f08316f2dd7ee5d46d6496b4f5251b1dce9fe1d0b0f537efe6",
+      "new_sha256": "42bc543f4ad64e2ec995a8d55281bf1280e7af5e6921a46271ef9b808064994c",
+      "replacements": [
+        [
+          "// DNS\", \"redirect\", \"proxy\" and \"outer-policy\" is deleted. Dispatch-time\n// enforcement is proven by the behavioural arms above, which call the validator.",
+          "// DNS\", \"redirect\", \"proxy\" and \"outer-policy\" is deleted.\n// The cases above test dispatch-time enforcement by calling the validator."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/tests/connection_generation_validation.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.036665702995378524,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/platform/runtime/tests/guest_environment_isolation.rs",
+      "old_sha256": "6e9b67ed8aee4190032b4fb0af1372aa68e9dc734e45e523b9ff3655e3525a79",
+      "new_sha256": "824da098e040cc2271837e2edf4f4ed1d6facab57de8bad3240b53cb8509e6a7",
+      "replacements": [
+        [
+          "/// Building a `WasiCtx` here instead would prove something about this test's",
+          "/// Building a `WasiCtx` here instead tests this test's"
+        ],
+        [
+          "/// guarantee about isolation should not be proven with a data race.",
+          "/// test for isolation must not use a data race."
+        ],
+        [
+          "//! That is the first door. This test proves the guarantee that holds for a guest",
+          "//! That is the first door. This test checks the guarantee that holds for a guest"
+        ],
+        [
+          "//! `wamn-mrfr` proved this property by reading the pinned fork checkout as text",
+          "//! `wamn-mrfr` checked this property by reading the pinned fork checkout as text"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/platform/runtime/tests/guest_environment_isolation.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.029555668006651103,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/schema/control/src/attestation.rs",
+      "old_sha256": "def689f566a10863abca3bc3d0c08f33ad959648ecfd3c752092a63395dbf927",
+      "new_sha256": "4930500f4f6d464e789dc560249524fb027134e449f1c8513637aa48048df25a",
+      "replacements": [
+        [
+          "/// position would anchor the attestation's key to a coordinate nothing minted.",
+          "/// position binds the attestation's key to a coordinate nothing minted."
+        ],
+        [
+          "/// A moved `$n` would anchor the attestation's foreign key to a coordinate\n    /// nothing minted, which no live gate keyed on the same wrong values could\n    /// see. Pinned here, where the string is built.",
+          "/// A moved `$n` binds the attestation's foreign key to a coordinate nothing minted.\n    /// A live gate keyed on the same wrong values cannot detect this error.\n    /// This test checks the string where it is built."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/schema/control/src/attestation.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.025350833020638674,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/schema/generator/src/generate/contracts.rs",
+      "old_sha256": "bcb09c1e300e0faae86982eb4a4608688c45f7ec3bf0c9ae8cf6773690125695",
+      "new_sha256": "e5d0fc318cf479acb7067b89b5a8b5dd33eb8be32e3053bd438115276a24ed96",
+      "replacements": [
+        [
+          "/// one identity is the defect the law names. What it must prove is that its",
+          "/// one identity is the defect the law names. This test must show that its"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/schema/generator/src/generate/contracts.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03997302596690133,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "crates/schema/introspection/src/migration_policy.rs",
+      "old_sha256": "bb778b59e503e86a17953e36b3cfa2ec27366246a2fe9d16338121e3455a51f0",
+      "new_sha256": "c9440732e3008db41032fe93a2e121e45245269148ea48d14d5f775459f865cc",
+      "replacements": [
+        [
+          "//! final catalog state cannot prove.",
+          "//! final catalog state cannot establish."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/crates/schema/introspection/src/migration_policy.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03321779199177399,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/ctl/src/copy_project_env.rs",
+      "old_sha256": "ba7ac74974a999b4501ebeb75574d864f08824a4ca11e012b9523c44a428dc79",
+      "new_sha256": "5bd4db3f9cffb44c8d7893dac42b3232173a790c6c903ae86a17843a3920a6ad",
+      "replacements": [
+        [
+          "//! default), proven by a write probe that must fail `read_only_sql_transaction`.",
+          "//! default), checked by a write probe that must fail `read_only_sql_transaction`."
+        ],
+        [
+          "// must fail 25006 \u2014 quiesce is *proven*, not assumed.",
+          "// must fail 25006. This tests that the source is read-only."
+        ],
+        [
+          "/// existing backends, then PROVE it \u2014 a probe write must fail",
+          "/// existing backends, then check that a probe write fails with"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/ctl/src/copy_project_env.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03304902103263885,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/ctl/src/dev/activation.rs",
+      "old_sha256": "eef305b0c2e867e0748dadff9ca613e13de28380bc52ae00ace0d12b3dc2e2de",
+      "new_sha256": "833d07d8a2a32fe9414dcdaebbf78c8e3bc8905f14916b432f2cc42a1f3f6dd5",
+      "replacements": [
+        [
+          "/// `wamn.catalog` was left at the template's placeholder, with no anchor, no",
+          "/// `wamn.catalog` was left at the template's placeholder, with no identity check, no"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/ctl/src/dev/activation.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.05130806000670418,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/ctl/src/dev/coordinator.rs",
+      "old_sha256": "c81aab8b6bddf514a0d3e11fea306a51bc44e46200497177be1d35f15437b2a2",
+      "new_sha256": "069d74236c3ea3300819637f1a4e9b43a950275ac22463dea92ec8ca76603b11",
+      "replacements": [
+        [
+          "// The refusal above proves cleanliness only for a DURABLE target. A",
+          "// The refusal above checks cleanliness only for a DURABLE target. A"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/ctl/src/dev/coordinator.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.06210637203184888,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/ctl/src/dev/operator.rs",
+      "old_sha256": "e3e234f164e02663eec957cf52d59a7f0a93c9ffeccfa62d770390210e6f4316",
+      "new_sha256": "72c622bd238725c9085984fbdfb591a521cfdfc2eba5c3d55a2c9fb395d8b304",
+      "replacements": [
+        [
+          "/// Whether a successful wait proves that the failed process is reaped.",
+          "/// Whether a successful wait means that the failed process is reaped."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/ctl/src/dev/operator.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03770986298331991,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/ctl/src/pat_client.rs",
+      "old_sha256": "a95b7c99dd2c2d98fbf17c8ff22c7826b788d373a3ee5f1210c8196691b46e97",
+      "new_sha256": "02bb9855a660cddcceca7389e3fee42a74a511aaed35b64b1b7bbca5d5a013d5",
+      "replacements": [
+        [
+          "/// A lost response does not prove that the service refused to create the PAT.",
+          "/// A lost response does not mean that the service refused to create the PAT."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/ctl/src/pat_client.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03920484200352803,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/ctl/src/promote.rs",
+      "old_sha256": "f4f5b6781cdc58d3309adc1cf02817ca6822c2fa332da97df0080690082d0fe7",
+      "new_sha256": "a0ea3a6ea96144a51417b32eb64f8301056965f43bf816419ef10acb332809a8",
+      "replacements": [
+        [
+          "//! `apply-package` is the sole applier. Promotion proves every source package",
+          "//! `apply-package` is the sole applier. Promotion checks that every source package"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/ctl/src/promote.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03363162197638303,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/ctl/src/prune_run_history.rs",
+      "old_sha256": "7347dad3e8b484ecf2cbf607c0411b733e13ab71ae888c06843f178ab899623b",
+      "new_sha256": "a6f373e0f66b313739bbf54bede0ae1ee7f0cda2574a8e670b1809c40c7f5f05",
+      "replacements": [
+        [
+          "//! **The tenant is proven, not asserted.** `--tenant` used to be a free argument",
+          "//! The verb checks the tenant identity. `--tenant` used to be a free argument"
+        ],
+        [
+          "/// input that chose it would prove nothing.",
+          "/// input that chose it establishes nothing."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/ctl/src/prune_run_history.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.02777922200039029,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/ctl/src/push_release_manifest.rs",
+      "old_sha256": "8879a7dd236633f47dd8004839e4015d235ef1cb08748927812b335b1ebe3901",
+      "new_sha256": "9d3bb6d48f7b841d78b4a0fb5de0170f69fe68a435798ddef4d123700e2e9381",
+      "replacements": [
+        [
+          "/// Publish canonical format-1 bytes or prove their exact artifact already exists.",
+          "/// Publish canonical format-1 bytes or check that their exact artifact already exists."
+        ],
+        [
+          "/// Whether this invocation created the artifact or proved an exact retry.",
+          "/// Whether this invocation created the artifact or matched an exact retry."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/ctl/src/push_release_manifest.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.0382160420413129,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/ctl/src/reconcile_run_plane.rs",
+      "old_sha256": "7a37da4dd576e1086b7341274bbbc1d8f87139aa3b000bbed968ce797e0fcb66",
+      "new_sha256": "039f9494abdeeeaa0cb515059a7d0efec420b757ba108e991ba1ae3d84b90532",
+      "replacements": [
+        [
+          "/// The connected database did not prove the registry-derived target identity.",
+          "/// The connected database did not match the registry-derived target identity."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/ctl/src/reconcile_run_plane.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.04062024998711422,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/dispatcher/src/lib.rs",
+      "old_sha256": "b0c5d6bf8f85ce29ee26dd5d3a37433a807eeffece78864837d2e36b486caa4d",
+      "new_sha256": "804625be6f869283e2e1d655e68b4008a444f3f9a3b309412fb65f2532d2b318",
+      "replacements": [
+        [
+          "/// LIVENESS IS PROVEN BY A SIGNAL THE SUSPECT CANNOT FAKE. The gauge alone\n    /// proves nothing: it is an OBSERVABLE instrument over a last-write-wins",
+          "/// A separate signal shows whether the dispatcher still runs. The gauge alone\n    /// does not show this: it is an OBSERVABLE instrument over a last-write-wins"
+        ],
+        [
+          "/// A DEPTH GAUGE ALONE CANNOT PROVE ITS OWN OBSERVER IS ALIVE.",
+          "/// A depth gauge alone cannot show whether its observer still runs."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/dispatcher/src/lib.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.0382979610003531,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/scenario-worker/src/authoring.rs",
+      "old_sha256": "47832c7e3c8155c1eb2fa259ec73d4a4068c7d8050f287995585d3b8e8f98752",
+      "new_sha256": "00fcc83f90dc05be7afc5942c76d3cf0ba1c78c596d54025cf82e0aa264fa600",
+      "replacements": [
+        [
+          "//! proves the shared typed command/query boundary first.",
+          "//! tests the shared typed command/query boundary first."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/scenario-worker/src/authoring.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.0329856300377287,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "services/scenario-worker/tests/management_live.rs",
+      "old_sha256": "9bb3dbbf75bbe7f202756db92458dbb3552ed52ba65fcd8cc537ca2c6de76c20",
+      "new_sha256": "2445a809fcbd0e8fb53c73c7a8736c8e80a9aaabaf5ddca299e4f11547dcf543",
+      "replacements": [
+        [
+          "//! Proves the whole bridge end to end over HTTP:",
+          "//! Tests the whole bridge end to end over HTTP:"
+        ],
+        [
+          "//! to prove is that the verb judges, refuses typed, attributes exactly once, and",
+          "//! to test is that the verb judges, refuses typed, attributes exactly once, and"
+        ],
+        [
+          "//! queue reads below are kept precisely to prove that emptiness, so a",
+          "//! queue reads below check that emptiness, so a"
+        ],
+        [
+          "//! It NO LONGER owns `wamn-ftfc.2`'s S1 write path. That half proved a checkout",
+          "//! It NO LONGER owns `wamn-ftfc.2`'s S1 write path. That half tested a checkout"
+        ],
+        [
+          "//! draft is a CLIENT-SIDE FILE now, so the platform has nothing to prove about",
+          "//! draft is a CLIENT-SIDE FILE now, so the platform has nothing to test about"
+        ],
+        [
+          "/// document can prove both sides of the case-scoped effect judgment without a",
+          "/// document can test both sides of the case-scoped effect judgment without a"
+        ],
+        [
+          "/// The HTTP candidate proves the clause fires for one registered effect. This\n/// proves it fires for `wasmcloud:blobstore`",
+          "/// The HTTP candidate tests that the clause fires for one registered effect. This\n/// tests that it fires for `wasmcloud:blobstore`"
+        ],
+        [
+          "/// stores, and a gate that put them in one database would prove nothing about a",
+          "/// stores, and a gate that puts them in one database does not test a"
+        ],
+        [
+          "// a socket. Applying the stable surface on its own first proves the",
+          "// a socket. Applying the stable surface on its own first shows that the"
+        ],
+        [
+          "/// This is partial coverage only for wamn-61d0: it proves the common normalized",
+          "/// This is partial coverage only for wamn-61d0: it tests that the common normalized"
+        ],
+        [
+          "// above proves it fires for another registered effect. This proves it fires",
+          "// above tests that it fires for another registered effect. This tests that it fires"
+        ],
+        [
+          "// composition under test spans both, and could not be proved against one.",
+          "// composition under test spans both and needs two databases for the test."
+        ],
+        [
+          "// one truthful answer for every report id, and the query is still proved to",
+          "// one truthful answer for every report id, and the tests still show the query to"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/services/scenario-worker/tests/management_live.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.036017792008351535,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "test-support/harness/src/claim_law.rs",
+      "old_sha256": "557115d67af05fd8b15ccffd1a08255b63fd6ea4a2c480333b6deb7cda6f8bfe",
+      "new_sha256": "647cc57687759133efa0f618bb1cbdfac7c2d675c9e823048488aec6f038ecef",
+      "replacements": [
+        [
+          "//! runner proves the law by construction:",
+          "//! runner tests the law by construction:"
+        ],
+        [
+          "/// The law the cases prove.",
+          "/// The law the cases test."
+        ],
+        [
+          "/// this is always present, and it proves the write detector works.",
+          "/// this is always present, and it shows that the write detector works."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/test-support/harness/src/claim_law.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03680814697872847,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "tests/conformance/src/socket_test.rs",
+      "old_sha256": "33c311258546f0eb51d21082bd619e5a325b9d78edc586ccdc505be9f38177a2",
+      "new_sha256": "e8164dfe62b1cef885d758e58757ec60666c2e24edb4ec18e5ff85d3caf9d3fa",
+      "replacements": [
+        [
+          "//! This gate proves that enforcement HERMETICALLY",
+          "//! This gate tests that enforcement HERMETICALLY"
+        ],
+        [
+          "//! they carry no socket surface \u2014 this gate proves the guard *rejects* an",
+          "//! they carry no socket surface \u2014 this gate tests that the guard *rejects* an"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/tests/conformance/src/socket_test.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.039120006025768816,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "tests/conformance/tests/guest_workspace_closure.rs",
+      "old_sha256": "dbb1afb028c8166809c34b37e315d4c28123d939df2d6e884a684e2f7bd6e377",
+      "new_sha256": "da5cef6a42ed622670c8169a4ffcd8c85cfe871536b57e1cd1698a60e9f2c255",
+      "replacements": [
+        [
+          "//! guests to prove that the selection does not change their bytes.",
+          "//! guests to check that the selection does not change their bytes."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/tests/conformance/tests/guest_workspace_closure.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.03446810401510447,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "tests/conformance/tests/wasmcloud_release_check.rs",
+      "old_sha256": "2c4693f56fac5da10dfeed857ab44e124ed4bd1329747871f635c6f487c13772",
+      "new_sha256": "a8cd175e90397c2e4d07ed8459d5fdbaa6f312a417a55996a6520cae25d40bec",
+      "replacements": [
+        [
+          "//! Proves upstream release identity, gate execution, and isolated Git settings.",
+          "//! Tests upstream release identity, gate execution, and isolated Git settings."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/tests/conformance/tests/wasmcloud_release_check.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.031652818026486784,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "tests/integration/src/readerbench.rs",
+      "old_sha256": "6e0535ed43dcc76c632dd1399659dabf7f1c2aae6689d9a8ce2e72244325de66",
+      "new_sha256": "97941c36e97806b49b9b4e9732a596e93d4e48de7642d52b8d6bd86d478c4952",
+      "replacements": [
+        [
+          "//! the kill/sever drills \u2014 then calls this mode to prove what LANDED: exactly",
+          "//! the kill/sever drills \u2014 then calls this mode to check what LANDED: exactly"
+        ],
+        [
+          "// does the waiting and a final empty fetch proves no strays in-filter.",
+          "// does the waiting and a final empty fetch shows no strays in-filter."
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/tests/integration/src/readerbench.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.032263933040667325,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "tests/integration/src/retention.rs",
+      "old_sha256": "e1dd4a3317f1b6d4cc7ba380ead2a7f111d6fe2ff1a57e35ce8967d1b1988e92",
+      "new_sha256": "8ced071aa96837324cd0a9b80a120f8dd1c0339dcc4039d47e072aaa1cd29b00",
+      "replacements": [
+        [
+          "//! It proves four things,",
+          "//! It tests four things,"
+        ],
+        [
+          "//!    that cannot tell REFUSED from MATCHED-NOTHING proves nothing here.",
+          "//!    that cannot tell REFUSED from MATCHED-NOTHING establishes nothing here."
+        ],
+        [
+          "//! \u2014 under a name that says what it proves.",
+          "//! \u2014 under a name that says what it tests."
+        ],
+        [
+          "/// the gate first proves the role it measures is neither superuser nor",
+          "/// the gate first checks that the role it measures is neither superuser nor"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/tests/integration/src/retention.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.032884208019822836,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "tests/integration/src/trusted_http_route.rs",
+      "old_sha256": "653512ea7cd4f4310a12b02b0a67a865098ba4b8ba6ac9fe616e7e43f1d808e7",
+      "new_sha256": "837b168ebc5643a0174b9bfcd9549c8565ff83fd2e4e83fc584dcb2901735c4c",
+      "replacements": [
+        [
+          "//! trace propagation at the wire; `wamn-0h0g.11.3` needs it to prove HTTP",
+          "//! trace propagation at the wire; `wamn-0h0g.11.3` needs it to test HTTP"
+        ],
+        [
+          "//! connection confinement refusals. The test module also proves native socket",
+          "//! connection confinement refusals. The test module also tests native socket"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/tests/integration/src/trusted_http_route.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.04494136001449078,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "tests/integration/src/walbench.rs",
+      "old_sha256": "ae1e334699cb145990d93ee1606bb183ff48a0cd0dc38109193985cf4c671007",
+      "new_sha256": "346a914ecab608579f7c76e034db4dc020b60d1505af23712307d5ed0496b24d",
+      "replacements": [
+        [
+          "/// Record the WAL level + prove the DB is genuinely pre-CDC: no publication, no",
+          "/// Record the WAL level and check that the database is pre-CDC: no publication, no"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/tests/integration/src/walbench.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.037293442990630865,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    },
+    {
+      "path": "tests/system/tests/deployment_declarations.rs",
+      "old_sha256": "6c627d519bc6ef9116f048f19c3728805cb478f37834708f2ffc4421ab049fda",
+      "new_sha256": "c15a5c6af637309971a095a2604d584459d73626f1b1749b8bb1a3912ff35230",
+      "replacements": [
+        [
+          "// assertion over the table would only re-prove the table, and a mutant that",
+          "// assertion over the table only tests the table, and a mutant that"
+        ]
+      ],
+      "rust_tokens_unchanged": true,
+      "literals_unchanged": true,
+      "syntax": {
+        "argv": [
+          "rustfmt",
+          "--edition",
+          "2024",
+          "--config",
+          "skip_children=true",
+          "--emit",
+          "stdout",
+          "/home/kaalin/.cache/wamn-lanes/consolidation-test-command-names-20260912/tests/system/tests/deployment_declarations.rs"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.05168356100330129,
+        "stderr": ""
+      },
+      "original_git_mode": "100644",
+      "working_mode": "0o664",
+      "git_mode_unchanged": true
+    }
+  ],
+  "cargo_or_live_tests_run": false,
+  "syntax_passed": 60,
+  "diff_check": {
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  "replacement_count": 108,
+  "commit": "a717641b0575d429c2faf338b2e805f00b443cf5",
+  "status_after": ""
+}

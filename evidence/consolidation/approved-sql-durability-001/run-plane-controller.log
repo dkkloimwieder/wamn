@@ -1,0 +1,104 @@
+Creating new PostgreSQL cluster 18/regress ...
+{"argv": ["cargo", "+1.98.0", "test", "--locked", "--offline", "-p", "wamn-ctl", "--test", "run_plane_live", "run_plane_reconcile_live", "--", "--exact", "--nocapture"], "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912", "started": "2026-09-12T12:11:49.619009+00:00", "elapsed_seconds": 22.027613224985544, "exit": 101}
+*** /tmp/pg_virtualenv.ffh7L4/log/postgresql-18-regress.log (last 100 lines) ***
+2026-09-12 08:12:08.753 EDT [2352346] LOG:  checkpoint complete: wrote 2370 buffers (14.5%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 3 recycled; write=0.008 s, sync=0.001 s, total=0.019 s; sync files=0, longest=0.000 s, average=0.000 s; distance=43610 kB, estimate=43610 kB; lsn=0/4200D98, redo lsn=0/4200D40
+2026-09-12 08:12:08.785 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:08.884 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:08.916 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:09.008 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:09.079 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_platform" by role "kaalin"
+2026-09-12 08:12:09.079 EDT [2354108] kaalin@postgres CONTEXT:  SQL statement "REVOKE "wamn_platform" FROM "wamn_app""
+	PL/pgSQL function inline_code_block line 1 at SQL statement
+2026-09-12 08:12:09.079 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a" has not been granted membership in role "wamn_app" by role "kaalin"
+2026-09-12 08:12:09.113 EDT [2354180] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres ERROR:  permission denied for table runs
+2026-09-12 08:12:09.113 EDT [2354180] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres STATEMENT:  INSERT INTO rp_live.runs (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment) VALUES ('t1','r3','f',1,'cat',1,'dev')
+2026-09-12 08:12:09.114 EDT [2354180] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres ERROR:  permission denied for table run_queue
+2026-09-12 08:12:09.114 EDT [2354180] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres STATEMENT:  INSERT INTO rp_live.run_queue (tenant_id, run_id) VALUES ('t1','r3')
+2026-09-12 08:12:09.115 EDT [2354180] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres ERROR:  permission denied for table run_queue
+2026-09-12 08:12:09.115 EDT [2354180] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres STATEMENT:  SELECT count(*) FROM rp_live.run_queue
+2026-09-12 08:12:09.148 EDT [2352346] LOG:  checkpoint starting: immediate force wait
+2026-09-12 08:12:09.151 EDT [2352346] LOG:  checkpoint complete: wrote 533 buffers (3.3%), wrote 2 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.001 s, total=0.003 s; sync files=0, longest=0.000 s, average=0.000 s; distance=9506 kB, estimate=40199 kB; lsn=0/4B49598, redo lsn=0/4B49540
+2026-09-12 08:12:09.179 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:09.298 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:09.397 EDT [2354108] kaalin@postgres ERROR:  durable-child-run-cutover-requires-no-child-or-wait-state
+2026-09-12 08:12:09.397 EDT [2354108] kaalin@postgres CONTEXT:  PL/pgSQL function inline_code_block line 1 at RAISE
+2026-09-12 08:12:09.397 EDT [2354108] kaalin@postgres STATEMENT:  LOCK TABLE "rp_live".runs IN ACCESS EXCLUSIVE MODE; DO $child_run_cutover$ BEGIN IF EXISTS (SELECT 1 FROM "rp_live".runs WHERE "parent_run_id" IS NOT NULL OR "parent_node_id" IS NOT NULL OR "parent_occurrence" IS NOT NULL OR "waiting_child_run_id" IS NOT NULL OR "waiting_child_occurrence" IS NOT NULL OR "wait_generation" IS NOT NULL OR "invoke_depth" IS DISTINCT FROM 0 OR "invoke_root_run_id" IS NOT NULL) THEN RAISE EXCEPTION USING ERRCODE = '55000', MESSAGE = 'durable-child-run-cutover-requires-no-child-or-wait-state'; END IF; END $child_run_cutover$; DROP INDEX IF EXISTS "rp_live"."runs_parent_occurrence"; DROP INDEX IF EXISTS "rp_live"."runs_invoke_root"; DROP INDEX IF EXISTS "rp_live"."runs_waiting_child"; ALTER TABLE "rp_live".runs DROP COLUMN IF EXISTS "parent_run_id", DROP COLUMN IF EXISTS "parent_node_id", DROP COLUMN IF EXISTS "parent_occurrence", DROP COLUMN IF EXISTS "waiting_child_run_id", DROP COLUMN IF EXISTS "waiting_child_occurrence", DROP COLUMN IF EXISTS "wait_generation", DROP COLUMN IF EXISTS "invoke_depth", DROP COLUMN IF EXISTS "invoke_root_run_id"
+2026-09-12 08:12:09.471 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:09.502 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:09.610 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:09.706 EDT [2354108] kaalin@postgres ERROR:  rerun-lineage-cutover-refuses-unknown-runs-root
+2026-09-12 08:12:09.706 EDT [2354108] kaalin@postgres CONTEXT:  PL/pgSQL function inline_code_block line 15 at RAISE
+2026-09-12 08:12:09.706 EDT [2354108] kaalin@postgres STATEMENT:  LOCK TABLE "rp_live".runs IN ACCESS EXCLUSIVE MODE;
+	DO $rerun_lineage_cutover$
+	DECLARE
+	    observed_definition text;
+	    expected_definition constant text := 'CREATE INDEX runs_root ON rp_live.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)';
+	BEGIN
+	    SELECT pg_catalog.pg_get_indexdef(index_relation.oid)
+	      INTO observed_definition
+	      FROM pg_catalog.pg_class AS index_relation
+	      JOIN pg_catalog.pg_namespace AS namespace
+	        ON namespace.oid = index_relation.relnamespace
+	     WHERE namespace.nspname = 'rp_live'
+	       AND index_relation.relname = 'runs_root';
+	    IF observed_definition IS NOT NULL
+	       AND observed_definition <> expected_definition THEN
+	        RAISE EXCEPTION USING
+	            ERRCODE = '55000',
+	            MESSAGE = 'rerun-lineage-cutover-refuses-unknown-runs-root';
+	    END IF;
+	END
+	$rerun_lineage_cutover$;
+	DROP INDEX IF EXISTS "rp_live".runs_root;
+	ALTER TABLE "rp_live".runs
+	    DROP COLUMN IF EXISTS replay_of,
+	    DROP COLUMN IF EXISTS root_run_id;
+2026-09-12 08:12:09.755 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:09.787 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:09.935 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:10.012 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:10.178 EDT [2354108] kaalin@postgres ERROR:  cannot drop column fail_reason of table rp_live.runs because other objects depend on it
+2026-09-12 08:12:10.178 EDT [2354108] kaalin@postgres DETAIL:  view rp_live.retired_failure_detail_dependency depends on column fail_reason of table rp_live.runs
+2026-09-12 08:12:10.178 EDT [2354108] kaalin@postgres HINT:  Use DROP ... CASCADE to drop the dependent objects too.
+2026-09-12 08:12:10.178 EDT [2354108] kaalin@postgres STATEMENT:  LOCK TABLE "rp_live".runs IN ACCESS EXCLUSIVE MODE;
+	-- wamn-0h0g.12.173/.12.175: populated retired failure-detail values are
+	-- deliberately discarded, not archived. fail_node names a deleted plan
+	-- coordinate, and fail_reason is superseded by fail_kind plus the typed caller
+	-- outcome; retaining either would preserve a dangling or duplicate record.
+	ALTER TABLE "rp_live".runs
+	    DROP COLUMN IF EXISTS fail_node RESTRICT,
+	    DROP COLUMN IF EXISTS fail_reason RESTRICT;
+2026-09-12 08:12:10.228 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:10.296 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:10.390 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:10.393 EDT [2354108] kaalin@postgres ERROR:  run-admission-pin-immutable
+2026-09-12 08:12:10.393 EDT [2354108] kaalin@postgres CONTEXT:  PL/pgSQL function rp_live.guard_run_admission_pins_immutable() line 14 at RAISE
+2026-09-12 08:12:10.393 EDT [2354108] kaalin@postgres STATEMENT:  UPDATE rp_live.runs SET capture_mode='full' WHERE run_id='legacy-off'
+2026-09-12 08:12:10.393 EDT [2354108] kaalin@postgres ERROR:  new row for relation "runs" violates check constraint "runs_capture_mode_source_check"
+2026-09-12 08:12:10.393 EDT [2354108] kaalin@postgres DETAIL:  Failing row contains (t1, published-full, f, 1, capture, 1, dev, null, null, null, null, null, completed, http, standard, null, null, null, null, null, null, null, null, {}, 0.1, legacy, null, null, null, null, null, null, null, null, null, null, null, 2026-09-12 08:12:10.393543-04, 2026-09-12 08:12:10.393543-04, full).
+2026-09-12 08:12:10.393 EDT [2354108] kaalin@postgres STATEMENT:  INSERT INTO rp_live.runs (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, status,trigger_source,capture_mode) VALUES ('t1','published-full','f',1,'capture',1,'dev', 'completed','http','full')
+2026-09-12 08:12:10.395 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_platform" by role "kaalin"
+2026-09-12 08:12:10.395 EDT [2354108] kaalin@postgres CONTEXT:  SQL statement "REVOKE "wamn_platform" FROM "wamn_app""
+	PL/pgSQL function inline_code_block line 1 at SQL statement
+2026-09-12 08:12:10.395 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a" has not been granted membership in role "wamn_app" by role "kaalin"
+2026-09-12 08:12:10.429 EDT [2354199] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres ERROR:  permission denied for table runs
+2026-09-12 08:12:10.429 EDT [2354199] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres STATEMENT:  INSERT INTO rp_live.runs (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, status,trigger_source) VALUES ('t1','app-forged','f',1,'capture',1,'dev','dispatched','test')
+2026-09-12 08:12:10.430 EDT [2354199] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres ERROR:  permission denied for table runs
+2026-09-12 08:12:10.430 EDT [2354199] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres STATEMENT:  UPDATE rp_live.runs SET capture_mode='full' WHERE run_id='draft-full'
+2026-09-12 08:12:10.430 EDT [2354199] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres ERROR:  permission denied for table runs
+2026-09-12 08:12:10.430 EDT [2354199] wamn_app_a4143d2ec61c76047c86d52c3dd769f43d146f68_a@postgres STATEMENT:  UPDATE rp_live.runs SET status='running' WHERE run_id='draft-full'
+2026-09-12 08:12:10.507 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:10.608 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:10.692 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:10.747 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_platform" by role "kaalin"
+2026-09-12 08:12:10.747 EDT [2354108] kaalin@postgres CONTEXT:  SQL statement "REVOKE "wamn_platform" FROM "wamn_app""
+	PL/pgSQL function inline_code_block line 1 at SQL statement
+2026-09-12 08:12:10.747 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app_75fde36740eb289d5319954f2c84de3b8c522b11_a" has not been granted membership in role "wamn_app" by role "kaalin"
+2026-09-12 08:12:10.912 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:11.050 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:11.208 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:11.339 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:11.405 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:11.547 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+2026-09-12 08:12:11.579 EDT [2354108] kaalin@postgres WARNING:  role "wamn_app" has not been granted membership in role "wamn_scenario_author" by role "kaalin"
+Dropping cluster 18/regress ...

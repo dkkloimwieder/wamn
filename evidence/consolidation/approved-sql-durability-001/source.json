@@ -1,0 +1,10 @@
+{
+  "commit": "611edf458e43e200b271d598d78518025dc1c9f4",
+  "tree": "adbe5eaae7fc88f69c662e878337db918e7fbaba",
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2",
+    "SQLX_OFFLINE": "true",
+    "KUBECONFIG": "/dev/null"
+  }
+}

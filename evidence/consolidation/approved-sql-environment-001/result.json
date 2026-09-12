@@ -1,0 +1,14 @@
+[
+  {
+    "case": "tenant-and-instance",
+    "exit": 0,
+    "temporary_cluster_removed": true,
+    "source_unchanged": true
+  },
+  {
+    "case": "component-instance",
+    "exit": 0,
+    "temporary_cluster_removed": true,
+    "source_unchanged": true
+  }
+]

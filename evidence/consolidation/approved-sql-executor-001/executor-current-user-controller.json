@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "pg_virtualenv",
+    "-t",
+    "-v",
+    "18",
+    "/usr/bin/python3",
+    "/tmp/wamn-approved-sql-runs-20260912/executor-001/capture.py",
+    "executor-current-user"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+  "started": "2026-09-12T12:05:25.632333+00:00",
+  "elapsed_seconds": 188.80273256701184,
+  "exit": 0
+}

@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-control-provision",
+    "--lib",
+    "management_",
+    "--",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+  "started": "2026-09-12T12:00:34.255188+00:00",
+  "elapsed_seconds": 4.83552760904422,
+  "exit": 0
+}
