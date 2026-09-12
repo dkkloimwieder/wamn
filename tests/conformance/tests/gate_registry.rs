@@ -70,7 +70,8 @@ struct Entry {
     classification: Classification,
     decision_ids: Vec<String>,
     bead_owner: String,
-    proof_tier: String,
+    #[serde(rename = "proof_tier")]
+    test_tier: String,
     expected_outcome: String,
     can_fail: bool,
     allowed_skips: Vec<String>,
@@ -93,10 +94,11 @@ enum Classification {
     RequiredGate,
     Measurement,
     Drill,
-    PartialProof,
+    #[serde(rename = "partial-proof")]
+    PartialTest,
     // A gate whose subject still exists but whose production input path is
     // dormant, so passing proves nothing about production. Distinct from
-    // `Retired` (the subject is gone) and from `PartialProof` (the gate really
+    // `Retired` (the subject is gone) and from `PartialTest` (the gate really
     // does prove part of its claim). The gate stays registered, keeps its
     // decision mapping, and must record why in `coverage_exclusions`.
     ParkedGate,
@@ -330,7 +332,7 @@ fn validate_registry(
                 entry.source
             ));
         }
-        if entry.proof_tier.is_empty()
+        if entry.test_tier.is_empty()
             || entry.expected_outcome.is_empty()
             || entry.cadence.is_empty()
         {

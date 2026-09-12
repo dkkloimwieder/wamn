@@ -1051,7 +1051,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::plugins::effect_span::span_proof::{SpanHarness, expected_attributes};
+    use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
     use crate::plugins::wamn_postgres::WamnPostgresConfig;
 
     fn digest(byte: char) -> String {

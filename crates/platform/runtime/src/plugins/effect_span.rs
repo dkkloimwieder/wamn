@@ -467,7 +467,7 @@ pub(crate) fn record_effect_ms(
 /// freezes the WHOLE span value as a literal, so a second copy of the reader
 /// could disagree with the first about what a trace reader receives.
 #[cfg(test)]
-pub(crate) mod span_proof {
+pub(crate) mod span_tests {
     use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
 
     /// The spans one call exported, read back through an in-memory exporter, so
@@ -606,7 +606,7 @@ mod tests {
     /// One effect span, opened and settled the way a surface settles it, read
     /// back as the value `effect.outcome` carries.
     fn observed_outcome(tracer: &'static str, settled: Option<EffectOutcome>) -> String {
-        let harness = span_proof::SpanHarness::install(tracer);
+        let harness = span_tests::SpanHarness::install(tracer);
         {
             let span = effect_span!(
                 "wamn.outcome_test",

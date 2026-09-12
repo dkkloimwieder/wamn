@@ -789,7 +789,7 @@ mod tests {
     }
 
     #[test]
-    fn operation_dependency_inventory_refuses_missing_extra_and_mismatch() {
+    fn operation_dependencies_refuse_missing_extra_and_mismatch() {
         let engine = crate::build_engine(&[]).expect("engine builds");
 
         let mut missing_request = request();

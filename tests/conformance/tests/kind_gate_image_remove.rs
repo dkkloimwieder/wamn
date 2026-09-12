@@ -347,7 +347,7 @@ fn kubernetes_workload_reference_is_a_hard_blocker() {
 }
 
 #[test]
-fn malformed_workload_inventory_fails_closed() {
+fn malformed_workload_list_fails_closed() {
     let directory = setup(false, &[]);
     let workloads = json!({
         "items": [{
@@ -375,7 +375,7 @@ fn malformed_workload_inventory_fails_closed() {
 }
 
 #[test]
-fn empty_cluster_inventory_is_refused_before_mutation() {
+fn empty_cluster_list_is_refused_before_mutation() {
     let directory = setup(false, &[]);
     let output = run(&directory, "no-nodes", &["--image", SELECTED, "--apply"]);
     assert!(!output.status.success());
@@ -485,7 +485,7 @@ fn same_config_container_from_unselected_tag_is_not_removed() {
 }
 
 #[test]
-fn malformed_cri_container_inventory_fails_closed() {
+fn malformed_cri_container_list_fails_closed() {
     let container = json!({
         "id": "malformed-container",
         "image": "not-an-image-object",

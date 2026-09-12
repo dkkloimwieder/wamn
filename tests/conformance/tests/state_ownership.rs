@@ -326,7 +326,7 @@ fn validate_manifest(repository: &Path, manifest: &Manifest) -> Result<(), Strin
 
     validate_temporary_writers(manifest)?;
     validate_dynamic_writers(repository, manifest)?;
-    validate_canonical_inventory(repository, manifest)?;
+    validate_canonical_objects(repository, manifest)?;
     validate_scan_policy(repository, manifest)?;
     Ok(())
 }
@@ -715,7 +715,7 @@ fn validate_dynamic_writers(repository: &Path, manifest: &Manifest) -> Result<()
     Ok(())
 }
 
-fn validate_canonical_inventory(repository: &Path, manifest: &Manifest) -> Result<(), String> {
+fn validate_canonical_objects(repository: &Path, manifest: &Manifest) -> Result<(), String> {
     let mut discovered = BTreeSet::new();
     for source in manifest
         .canonical_sources

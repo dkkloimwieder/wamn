@@ -178,7 +178,7 @@ fn expected_invocations(root: &Path) -> Vec<Vec<String>> {
 }
 
 #[test]
-fn contract_diff_runs_the_exact_owner_proofs_from_any_directory() {
+fn contract_diff_runs_the_exact_owner_tests_from_any_directory() {
     let root = repository_root();
     let tool = root.join(TOOL);
     let metadata = fs::metadata(&tool).expect("read contract-diff metadata");

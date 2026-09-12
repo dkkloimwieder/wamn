@@ -468,7 +468,7 @@ mod tests {
 
     use super::*;
     use crate::plugins::connection_http::ConnectionOrigin;
-    use crate::plugins::effect_span::span_proof::{SpanHarness, expected_attributes};
+    use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
     use crate::plugins::wamn_postgres::{CandidateBindingWorld, WamnPostgresConfig};
 
     fn released() -> ConnectionInvocation {

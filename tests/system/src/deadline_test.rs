@@ -1,4 +1,4 @@
-//! Repository proof for bounded host effect waits.
+//! Tests for bounded host effect waits.
 
 #[cfg(test)]
 mod tests {
@@ -8,7 +8,7 @@ mod tests {
     use wash_runtime::wasmtime::{Instance, Module, Store, Trap};
 
     // `(module (func (export "run") (loop br 0)))`. Keeping the tiny module
-    // encoded here avoids adding a test-only WAT parser to this proof crate.
+    // encoded here avoids adding a test-only WAT parser to this test crate.
     const SPIN_MODULE: &[u8] = &[
         0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x04, 0x01, 0x60, 0x00, 0x00, 0x03,
         0x02, 0x01, 0x00, 0x07, 0x07, 0x01, 0x03, 0x72, 0x75, 0x6e, 0x00, 0x00, 0x0a, 0x09, 0x01,
@@ -52,7 +52,6 @@ mod tests {
         });
     }
 
-    // wamn-hopk R5: three cross-crate source greps for timeout spellings stood
-    // here. Deleted; the behavioural epoch-interrupt arm above is what proves a
-    // deadline actually fires.
+    // wamn-hopk R5 removed three checks of timeout names.
+    // The epoch interruption test above checks that the deadline fires.
 }
