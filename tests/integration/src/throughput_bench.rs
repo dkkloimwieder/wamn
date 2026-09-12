@@ -658,7 +658,7 @@ pub fn build_report(evidence_dir: &Path) -> anyhow::Result<Report> {
 }
 
 impl Report {
-    /// The report's tables, in the `evidence/perf/2026.09` format.
+    /// Render the report's request rates, latency, and resource measurements as Markdown tables.
     pub fn render_markdown(&self) -> String {
         use std::fmt::Write as _;
         let mut out = String::new();

@@ -677,7 +677,7 @@ pub(super) fn credential_exactness_hook(
 /// (project, class, tenant) -- exactly the pool key -- so every borrower of a
 /// given connection wants the same number. Paying a `SET` round trip for it on
 /// every request is waste: measured at 0.293 ms of each authenticated request
-/// (`evidence/perf/2026.09/2a-auth-instrument.md`).
+/// (measurement record in commit `b40a1714b8a0`).
 ///
 /// SESSION scope, so a later transaction-LOCAL `set_config` still wins. That is
 /// what keeps the guest paths unchanged: they set their own timeout alongside

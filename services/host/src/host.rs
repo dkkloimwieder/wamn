@@ -777,7 +777,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     // SCHEDULE-TIME PRELOAD. prepare_synchronous_release pulls and compiles
     // every digest this release serves and populates the driver's digest-keyed
     // component cache; without it the FIRST request pays a full pull and compile
-    // -- measured at 35.8 s on this journey (evidence/perf/2026.09/1-component-cache.md).
+    // -- measured at 35.8 s in the record retained by commit 1106dc4e6792.
     //
     // It ran only in services/executor before this: the probe was constructed
     // there and nowhere else, so the host that actually serves HTTP routes never
