@@ -1777,5 +1777,4 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "apply_package/registration_tests.rs"]
 mod registration_tests;
