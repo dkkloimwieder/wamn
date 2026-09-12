@@ -72,7 +72,7 @@ fn schema_discriminators<'a>(schema: &'a Value, definition: &str, field: &str) -
         .collect()
 }
 
-/// The WHOLE surviving inventory, frozen as literals.
+/// All surviving command and query kinds, frozen as literals.
 ///
 /// wamn-0h0g.8.5.5 collapsed five commands and two queries to two commands and
 /// one query. This crate is a registered drift gate, so the move is deliberate
@@ -144,7 +144,7 @@ fn the_collapsed_draft_operations_no_longer_decode() {
     }
 }
 
-/// The command inventory is exactly two, in both the tagged enum and the
+/// There are exactly two command kinds, in both the tagged enum and the
 /// standalone kind vocabulary the ledger shares.
 #[test]
 fn command_kinds_and_operation_pairing_are_exact() {
@@ -499,7 +499,7 @@ fn query_request_is_exactly_the_three_ratified_fields() {
 /// path: `successful-report-id` died with wamn-0h0g.8.5.6's collapse of report
 /// id into `wiring_hash`, `validated-draft` named the document this command now
 /// carries whole, and a literal `wiring-hash` would reopen the wamn-0h0g.7.8
-/// close ruling by handing the server a forgeable, replayable proof value.
+/// close ruling by handing the server a forgeable, replayable hash value.
 /// `deny_unknown_fields` is what refuses all three, so each is exercised.
 #[test]
 fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {

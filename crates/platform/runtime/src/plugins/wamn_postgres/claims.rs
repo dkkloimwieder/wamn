@@ -896,7 +896,7 @@ impl WamnPostgres {
     /// whose pair is derived from verified manifest content. Absent leaves the
     /// claim recording nothing.
     ///
-    /// The digest arrives as [`ManifestDigest`], so its shape is already proven;
+    /// The digest arrives as [`ManifestDigest`], so its shape is already validated;
     /// only the integer release identity still needs a check.
     ///
     /// # Why effect authority needs no equality check against this record
@@ -1068,7 +1068,7 @@ impl WamnPostgres {
     /// this id. That is what an idle, never-acquired execution instance must
     /// report, and it is the read half of the checkout-identity seam — the pair
     /// this and [`bind_session_claims`](Self::bind_session_claims) form is what
-    /// lets a proof assert that two concurrent acquisitions never share one
+    /// lets a test assert that two concurrent acquisitions never share one
     /// identity.
     pub fn session_claims(&self, component_id: &str) -> Option<SessionClaims> {
         Some(SessionClaims {

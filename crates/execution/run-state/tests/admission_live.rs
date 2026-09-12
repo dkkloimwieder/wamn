@@ -1,4 +1,4 @@
-//! Ignored PostgreSQL proof for the surviving run-queue authority matrix.
+//! Ignored PostgreSQL test for the surviving run-queue authority matrix.
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};

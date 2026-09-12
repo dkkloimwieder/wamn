@@ -1,4 +1,4 @@
-//! Process-boundary adapter for integration proofs that drive `wamn-ctl`.
+//! Process-boundary adapter for integration tests that drive `wamn-ctl`.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};

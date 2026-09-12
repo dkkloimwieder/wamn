@@ -1,4 +1,4 @@
-//! The live proof that the Rust and SQL halves of the tenant key AGREE.
+//! The live test that the Rust and SQL halves of the tenant key AGREE.
 //!
 //! This is the sharpest failure mode in `wamn-0h0g.22.6`: provisioning mints a
 //! guest login whose name carries the scope digest, and every governed RLS
@@ -410,7 +410,7 @@ fn role_url(admin_url: &str, role: &str, database: &str) -> String {
 /// THE PREDICATE, END TO END, against a login the MINT actually produced.
 ///
 /// `workload_generation_role` composes the name and `current_tenant_key`
-/// decomposes it, in two languages. The Rust unit tests can only prove the
+/// decomposes it, in two languages. The Rust unit tests can only show the
 /// shape they share; whether PostgreSQL's regex agrees is a fact about
 /// PostgreSQL, and this is the only place it is established.
 #[test]
@@ -438,7 +438,7 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
     )
     .expect("App takes a tenant scope");
 
-    // The near misses exist to prove the ANCHORS, which are the difference
+    // The near misses exist to show the ANCHORS, which are the difference
     // between a derivation and a cross-tenant read: without `^` a crafted role
     // could carry a victim's key as a suffix, without `$` as a prefix. Both
     // names are legal identifiers, so nothing but the anchors refuses them.
@@ -529,7 +529,7 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
 /// `catalog-schema.sql` and `app-schema.sql` cannot carry the database literal
 /// (`wamn-0h0g.22.6.6`), so they install through the bootstrap rendering while
 /// provisioning installs through the literal one. Nothing about sharing a Rust
-/// template proves the SERVER ends up with the same function — this does, by
+/// template shows the SERVER ends up with the same function — this does, by
 /// applying both into one database and comparing what `pg_get_functiondef`
 /// reports. It is the digest probe `wamn-0h0g.22.6.1` created, doing the job it
 /// was created for.

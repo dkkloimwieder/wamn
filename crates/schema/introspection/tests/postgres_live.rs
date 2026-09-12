@@ -898,7 +898,7 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     )
     .await;
     // A text LITERAL default is supported since wamn-frru, and the supported
-    // side already proves it (`assert_additive_columns` reads back
+    // side already shows it (`assert_additive_columns` reads back
     // `ColumnDefault::text`). What the allowlist still refuses is a function
     // call that is not one of the two admitted by name, so that is what this
     // case now uses: the server stores `lower('CLOSED')` as
@@ -1112,7 +1112,7 @@ CREATE TABLE receiving.dock_appointment (
 );
 ";
 
-/// The frozen canonical spelling of the modelled constraint, proven separately
+/// The frozen canonical spelling of the modelled constraint, shown separately
 /// against the server's own catalog answer below.
 const EXCLUSION_CANONICAL_JSON: &str = concat!(
     r#""exclusions":[{"name":"dock_appointment_no_overlap","access_method":"gist","keys":["#,
@@ -1378,7 +1378,7 @@ async fn assert_exclusion_is_enforced(client: &Client) {
 
 /// S-1 naming, applied to what is reconstructible.
 ///
-/// Every key here is a column, so the convention binds. The proof that the
+/// Every key here is a column, so the convention binds. The test that the
 /// convention IS PostgreSQL's own default spelling comes from the server: an
 /// identical unnamed constraint is named by PostgreSQL, and that name is the
 /// one the reader demands.

@@ -1,5 +1,5 @@
 //! Live-apply gate for `reconcile-run-plane` (E4/R14-migration, wamn-1wdq): the
-//! durable migration path for provisioned run-plane schemas, proven against a
+//! durable migration path for provisioned run-plane schemas, shown against a
 //! REAL Postgres in every starting state the bead's manifestations recorded.
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a
@@ -37,11 +37,11 @@
 //!   resolves.
 //! - **from-zero** (manifestations 3 + 5 + 6, the ephemeral-fixture wipe): a
 //!   database without project schemas while the cluster-scoped runtime roles
-//!   remain shared. `--dry-run` first, proven STRICTLY read-only; then the apply
+//!   remain shared. `--dry-run` first, shown STRICTLY read-only; then the apply
 //!   provisions everything — run plane + `catalog` schema — and a functional
 //!   smoke as a MINTED GUEST GENERATION LOGIN (not the bare `wamn_app` ACL
 //!   role, under which `current_tenant_key` derives NULL and every read
-//!   matches nothing in silence) proves the sections' grants + RLS isolation
+//!   matches nothing in silence) shows the sections' grants + RLS isolation
 //!   end-to-end.
 //! - **invocation retention cutover**: the legacy admission expiry column/index
 //!   are removed and the client-key carrier becomes optional; a second pass is
@@ -566,7 +566,7 @@ async fn install_legacy_partition_plane(su: &Client) {
 /// wamn-0h0g.12.102 (e45ca35b). It is no longer one of the run-plane files
 /// `install_current_run_plane` applies — but `partition_plane_cutover_sql`
 /// still locks and preflights it for schemas that physically retain the table,
-/// so a leg proving that refusal must install it. Mirrors the unit-side
+/// so a leg showing that refusal must install it. Mirrors the unit-side
 /// fixture `run_plane::add_legacy_flow_registry`.
 async fn install_legacy_flow_registry(su: &Client) {
     su.batch_execute(&format!(
@@ -2291,8 +2291,8 @@ async fn effect_writer_cutover_leg(su: &Client) {
     }));
     // THE CONVERGE PATH for the two sibling ledgers (wamn-0h0g.20.32): an append
     // granted directly to the stable role on an ALREADY-PROVISIONED database is
-    // drift the reconciler must REMOVE. The DDL alone cannot prove this — it only
-    // proves birth — so the drift above is installed on purpose.
+    // drift the reconciler must REMOVE. The DDL alone cannot show this — it only
+    // shows birth — so the drift above is installed on purpose.
     for table in ["effect_attempt_dispatches", "effect_attempt_outcomes"] {
         assert!(
             repair.actions.iter().any(|action| {
@@ -2555,7 +2555,7 @@ async fn drop_generation_role(su: &Client, role: &str) {
 /// The login name is DERIVED by the production builder, never spelled, so the
 /// digest under test is the digest `provision-project-env` would mint. The
 /// production prepare builder also supplies the exact membership edge, direct
-/// database `CONNECT`, finite expiry and stable-role hardening. No proof
+/// database `CONNECT`, finite expiry and stable-role hardening. No test
 /// authenticates as the stable `wamn_app` ACL role.
 async fn mint_guest_generation(su: &Client, url: &str, tenant: &str) -> (String, Client) {
     let database: String = su
@@ -3300,7 +3300,7 @@ async fn rerun_lineage_cutover_leg(su: &Client) {
 /// The retired per-node failure detail is deliberately discarded: its node
 /// coordinate no longer has a live representation. The retained failure class
 /// and typed caller outcome remain on the same run row. `RESTRICT` makes an
-/// un-inventoried dependency a loud, atomic refusal before role bootstrap.
+/// unlisted dependency a loud, atomic refusal before role bootstrap.
 async fn failure_detail_cutover_leg(su: &Client) {
     reset(su).await;
     install_current_run_plane(su).await;
@@ -4143,7 +4143,7 @@ async fn queue_missing_leg(su: &Client) {
 /// project schemas. The fixed runtime roles are cluster-scoped and shared, so
 /// this leg must preserve them even when another database has an object owned
 /// by `wamn_app`. Dry-run first (strictly read-only), then apply provisions run
-/// plane + `catalog`, and a functional smoke as `wamn_app` proves grants + RLS
+/// plane + `catalog`, and a functional smoke as `wamn_app` shows grants + RLS
 /// isolation from the applied sections.
 async fn from_zero_leg(su: &Client, base_url: &str) {
     reset(su).await;
@@ -4276,7 +4276,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
     // hold. wamn-0h0g.22.7 (b1d42599) took every run-plane WRITE away from
     // `wamn_app` — table SELECT and DELETE on `runs`, nothing at all on
     // `run_queue` — so both tenants' rows are seeded as superuser and the guest
-    // is proven to READ its own under RLS and to be REFUSED on write.
+    // is shown to READ its own under RLS and to be REFUSED on write.
     //
     // *** THE PRINCIPAL IS A MINTED GENERATION LOGIN, NOT `SET ROLE wamn_app`
     // (wamn-0h0g.22.36). *** After wamn-0h0g.22.6 the floor is
@@ -4323,7 +4323,7 @@ async fn from_zero_leg(su: &Client, base_url: &str) {
         assert_db_code(denied, "42501", "runtime-role write refusal");
     }
     // THE POST-STATE, not merely a count: the row the guest reads is ITS OWN,
-    // and the foreign tenant's row — proven present above — is absent from the
+    // and the foreign tenant's row — shown present above — is absent from the
     // result. One query settles admission and isolation together, so a
     // regression to matched-nothing fails on the left half and a regression to
     // a `USING (true)` floor fails on the right.
@@ -4546,7 +4546,7 @@ async fn registry_durability_schema_ensure_leg(
 
 /// Named mutants for the four independent ways an existing env-policy table
 /// can lose tenant confinement. Each repair is followed by a fresh observation
-/// proving the catalog converged, not merely that the SQL happened to run.
+/// showing the catalog converged, not merely that the SQL happened to run.
 async fn environment_policy_row_security_leg(su: &Client, url: &str) {
     reset(su).await;
     install_current_run_plane(su).await;
@@ -4705,7 +4705,7 @@ async fn install_control_plane_residency(su: &Client) {
 /// the PROJECT record — `run-state.sql` plus `run-queue.sql` — and nothing else,
 /// on a database that also carries the CONTROL plane's `wamn_run` residency.
 ///
-/// **Why the drift is installed first.** `current_noop_leg` proves the FRESH
+/// **Why the drift is installed first.** `current_noop_leg` shows the FRESH
 /// path: a schema already at record plans nothing. That is the R55 shape
 /// wamn-0h0g.12.1 measured on the control store's own gate — a virgin install
 /// whose every convergence arm sits behind a presence probe that is false both
@@ -4921,9 +4921,9 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
 
     // wamn-0h0g.22.7 (b1d42599) replaced the capture-mode COLUMN confinement
     // with a whole-relation one: `wamn_app` holds table SELECT and DELETE on
-    // `runs` and no write of any shape. The admission that used to prove the
+    // `runs` and no write of any shape. The admission that used to show the
     // `off` default moved to the private management path, so what this leg
-    // still proves live is the confinement the reconciler restores.
+    // still shows live is the confinement the reconciler restores.
     // A MINTED GENERATION LOGIN, not the bare `wamn_app` ACL role: the read
     // below is governed by the tenant floor, under which the ACL role derives a
     // NULL key and matches nothing in silence (`wamn-0h0g.22.36`). The three
@@ -5133,7 +5133,7 @@ async fn stored_suite_cutover_leg(su: &Client) {
     );
 }
 
-/// PLAN 6A additive storage and the host/guest authority boundary. This proves
+/// PLAN 6A additive storage and the host/guest authority boundary. This shows
 /// both ctl provisioning paths add their retained sections, then exercises
 /// adversarial direct, inherited, membership, and ownership authority drift.
 async fn retired_effect_disposition_cutover_leg(su: &Client) {
@@ -5210,7 +5210,7 @@ async fn retired_effect_disposition_cutover_leg(su: &Client) {
     assert!(!table_exists(su, SCHEMA, "operator_run_actions").await);
 }
 
-/// Historical pre-cutover disposition hardening proof, retained only as source
+/// Historical pre-cutover disposition hardening test, retained only as source
 /// archaeology while the replacement cutover gate above owns active coverage.
 #[allow(dead_code)]
 /// wamn-4u7p.42: repair the pre-hardening disposition ledger without replacing

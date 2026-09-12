@@ -1,10 +1,10 @@
-//! Exact orchestration proof for repo-local contract drift check 15.
+//! Exact orchestration test for repo-local contract drift check 15.
 //!
 //! WHAT GREEN HERE MEANS (wamn-0h0g.15.138). This file drives `tools/contract-
-//! diff` against a FAKE CARGO that only records its argv, so a pass proves the
+//! diff` against a FAKE CARGO that only records its argv, so a pass shows the
 //! PLAN SHAPE — that the tool invokes exactly these legs, in this order, with
 //! `--locked --offline`, from any working directory, and stops at the first
-//! failure. It proves NOTHING about whether the guards those legs name are
+//! failure. It shows NOTHING about whether the guards those legs name are
 //! green, and it cannot: no real Cargo runs here.
 //!
 //! Guard health is proved by running the leg targets for real, which is what

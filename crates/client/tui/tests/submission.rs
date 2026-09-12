@@ -319,7 +319,7 @@ fn composed_and_state_uncertainty_offer_refresh_with_their_exact_limit() {
 }
 
 #[test]
-fn exact_ingress_refusals_prove_no_dispatch_even_for_composed_routes() {
+fn exact_ingress_refusals_report_no_dispatch_even_for_composed_routes() {
     let mut contract = contract(Replay::Unknown);
     contract.direct = false;
     for (status, code) in [

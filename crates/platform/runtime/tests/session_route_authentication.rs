@@ -1,8 +1,8 @@
 //! Real scoped permission reads and local HTTPS keys cross the route-authentication boundary.
 //!
-//! This ignored proof requires its own fresh PostgreSQL 18 server with
+//! This ignored test requires its own fresh PostgreSQL 18 server with
 //! `shared_preload_libraries=pg_stat_statements` and `pg_stat_statements.track=all`.
-//! It does not start deployed hosts or prove nested registered-operation guards.
+//! It does not start deployed hosts or show nested registered-operation guards.
 #![cfg(feature = "test-util")]
 
 use std::collections::BTreeMap;

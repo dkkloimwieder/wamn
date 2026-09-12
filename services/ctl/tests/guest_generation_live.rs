@@ -1,7 +1,7 @@
-//! PG18 lifecycle proof for the per-tenant guest-SQL A/B generation pair.
+//! PG18 lifecycle test for the per-tenant guest-SQL A/B generation pair.
 //!
-//! `wamn-0h0g.22.6.4`. The generic `wamn-0h0g.13.59` lifecycle is already proven
-//! live for two other families, so nothing here re-proves prepare, retire or
+//! `wamn-0h0g.22.6.4`. The generic `wamn-0h0g.13.59` lifecycle is already shown
+//! live for two other families, so nothing here retests prepare, retire or
 //! abort. What is new and unproven is the pairing: the App family with TENANT
 //! scope, whose role name carries the very digest
 //! `wamn_authority.tenant_key` computes. If those two disagree by one byte,
@@ -356,7 +356,7 @@ async fn guest_generations_are_per_tenant_and_carry_the_predicate_key() {
         "bounded overlap: A still authenticates while B is published"
     );
 
-    // Retirement is USE-PROVEN: the replacement must have a live session, so a
+    // Retirement requires a live session on the replacement, so a
     // generation nobody adopted can never retire the one still in service. Hold
     // B's session open across the retire.
     let url_b = secret_json(&path_b)["stringData"]["url"]

@@ -134,7 +134,7 @@ pub struct ComponentOperationDeclaration {
     /// Require a fresh originating credential for this registered operation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fresh_only: bool,
-    /// A matching successful payload proves that this registered command committed.
+    /// A matching successful payload shows that this registered command committed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<Value>,
     /// Closed exact operation imports assigned to this exported operation.
@@ -185,7 +185,7 @@ pub struct AdmittedComponentParameter {
     pub required: bool,
 }
 
-/// One authority leaving the host, with the provenance that proves it.
+/// One authority leaving the host, with the provenance that shows it.
 ///
 /// Effects are a projection of the closure, never a second declaration: an
 /// author cannot claim fewer effects than the closure reaches, and an empty
@@ -193,10 +193,10 @@ pub struct AdmittedComponentParameter {
 ///
 /// An imported effect comes from this component's own audited imports, and
 /// `interfaces` names them. An inherited effect comes from a declared operation
-/// dependency the caller did not prove pure. Then `package` names the
+/// dependency the caller did not show is pure. Then `package` names the
 /// dependency package and `interfaces` is empty: this component imports the
 /// dependency operation, not the authority behind it, so it holds no interface
-/// that proves the effect.
+/// that shows the effect.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AdmittedComponentEffect {
@@ -205,16 +205,16 @@ pub struct AdmittedComponentEffect {
     pub interfaces: Vec<String>,
 }
 
-/// What proves one effect fact.
+/// What shows one effect fact.
 ///
 /// The capability registry classifies an import by posture, and it is
 /// package-grain and declared. This classifies an effect by provenance on the
-/// same grain, because the two classes carry different proof and admission
+/// same grain, because the two classes carry different evidence and admission
 /// applies a different rule to each.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ComponentEffectProvenance {
-    /// This component's audited imports prove the effect, and `interfaces`
+    /// This component's audited imports show the effect, and `interfaces`
     /// names them.
     Imported,
     /// A declared operation dependency carries the effect in. `package` names
@@ -278,7 +278,7 @@ pub struct AdmittedComponentOperation {
     /// The admitted success schema for this registered command's committed result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_result_schema: Option<ComponentSchema>,
-    /// Imports assigned to this export and byte-verified in the component inventory.
+    /// Imports assigned to this export and byte-verified in the component import list.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<ComponentOperationDependency>,
     pub input_ports: Vec<AdmittedComponentPort>,
@@ -859,12 +859,12 @@ fn is_application_operation_import(name: &str) -> bool {
 /// Sort and deduplicate derived effects, pinning them to platform imports.
 ///
 /// Both directions are checked after excluding exact cross-package operation
-/// dependencies: those remain in the audited import inventory but are resolved
+/// dependencies: those remain in the audited import list but are resolved
 /// as component calls, not host capability effects.
 ///
 /// Provenance decides which rule an effect meets. An imported effect keeps the
-/// audited-imports proof, so every interface it names is one of this
-/// component's own platform-capability imports. An inherited effect proves no
+/// audited-imports check, so every interface it names is one of this
+/// component's own platform-capability imports. An inherited effect identifies no
 /// interface, so it carries none, and a fact that carries one is refused
 /// rather than trimmed.
 fn normalize_effects(
@@ -941,7 +941,7 @@ fn normalize_effects(
     Ok(normalized)
 }
 
-/// Normalize declared connections against the effects the bytes actually prove.
+/// Normalize declared connections against the effects the bytes actually show.
 fn normalize_connections(
     declarations: Vec<ComponentConnection>,
     effects: &[AdmittedComponentEffect],
@@ -1206,7 +1206,7 @@ mod tests {
     }
 
     /// The effect `operation_dependency` carries into a component that declares
-    /// it and does not prove it pure.
+    /// it and does not show it is pure.
     fn inherited_receiving_effect() -> AdmittedComponentEffect {
         AdmittedComponentEffect {
             package: "wamn-receiving:receiving".to_string(),
@@ -1648,7 +1648,7 @@ mod tests {
 
     /// wamn-0h0g.21.10. The converge ALTER defaulted every pre-existing row to
     /// `'[]'` — the positive claim of purity — for a component whose own
-    /// audited imports prove it reaches Postgres. No validator derived that, so
+    /// audited imports show it reaches Postgres. No validator derived that, so
     /// reading the row must refuse rather than trust it.
     #[test]
     fn a_migration_defaulted_effect_projection_is_refused() {
@@ -1775,7 +1775,7 @@ mod tests {
         );
     }
 
-    /// The inherited arm. A declared dependency the caller did not prove pure
+    /// The inherited arm. A declared dependency the caller did not show is pure
     /// carries its package in. The fact names that package and holds no
     /// interface, because this component imports the dependency operation and
     /// not the authority behind it.
@@ -1803,8 +1803,8 @@ mod tests {
     }
 
     /// The emptiness is by construction, not by convention. The tempting
-    /// mistake is to record the dependency import as the interface that proves
-    /// the effect, and that import proves a component call.
+    /// mistake is to record the dependency import as the interface that shows
+    /// the effect, and that import shows a component call.
     #[test]
     fn an_inherited_effect_that_carries_interfaces_is_refused() {
         let dependency = operation_dependency();

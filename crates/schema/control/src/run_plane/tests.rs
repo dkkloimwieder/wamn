@@ -1409,7 +1409,7 @@ fn environment_policy_writer_grants_are_revoked_and_refused_effectively() {
 
 /// Column-level authority ALONE — no direct grant, no table-level effective
 /// privilege, no ownership — must still surface a repair. `demo.authoring_test_reports`
-/// carried this proof until wamn-0h0g.9.11.2 (38860fab) removed it from
+/// carried this test until wamn-0h0g.9.11.2 (38860fab) removed it from
 /// `AUTHORING_PRIVILEGE_SPECS`; `environment_policies` is the surviving
 /// run-plane relation with a guest spec to hang it on.
 #[test]
@@ -1885,7 +1885,7 @@ fn partial_dispatch_cutover_repairs_attempt_fk_after_creating_peer() {
 // wamn-0h0g.26.3.1 (204220e8) a CHECK on `node_runs` can only exist while the
 // table does, which plans `RetireNodeRuns` and drops both together.
 // `extra_record_check_is_removed_but_floor_check_is_untouched` keeps the
-// independent-drop proof on a live record table.
+// independent-drop test on a live record table.
 
 #[test]
 fn drifted_occurrence_key_is_replaced_by_frame_identity_cutover() {
@@ -2585,7 +2585,7 @@ fn drifted_and_missing_checks_plan_exact_repairs() {
 // the `node_runs_error_kind_check` spec, which wamn-0h0g.26.3.1 (204220e8)
 // deleted from `CHECK_SPECS` with the projection it constrained.
 // `drifted_and_missing_checks_plan_exact_repairs` above keeps the
-// drop-then-add repair proof on live record checks.
+// drop-then-add repair test on live record checks.
 
 /// The separate test-set store is gone: a draft's own `cases` are the only
 /// test source, so no relation, privilege, helper, or FK may name one.
@@ -3335,7 +3335,7 @@ fn environment_policy_row_security_observation_reads_the_exact_contract() {
 }
 
 /// Observation SQL pins (the shell binds these verbatim; the live gate
-/// proves they observe real state).
+/// shows they observe real state).
 #[test]
 fn observation_sql_is_pinned() {
     assert!(select_schema_columns_sql().contains("NOT a.attisdropped"));

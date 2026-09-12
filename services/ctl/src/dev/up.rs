@@ -2,12 +2,12 @@
 //!
 //! `[WAMN-DEV-LIVE]` proved the twelve-stage loop long before anyone could
 //! start it: every value the strict configuration needs was minted inside the
-//! proof and thrown away with it, so the loop was provable and not startable
+//! test and thrown away with it, so the loop was testable and not startable
 //! (wamn-10yt.10.30). This subcommand runs the same standup module the live
 //! gates run, spawns the authoring Gate as a real child process on a fixed
 //! nameable port, writes the strict `dev.json`, and holds until it is stopped.
 //!
-//! It is not a gate: it emits no receipt. Its evidence is that `wamn dev`
+//! It is not a gate: it emits no test result. Its evidence is that `wamn dev`
 //! starts against what it leaves behind.
 //!
 //! Point it only at disposable PostgreSQL 18 and registry services. Standup

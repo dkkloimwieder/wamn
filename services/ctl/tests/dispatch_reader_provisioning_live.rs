@@ -21,11 +21,11 @@
 //! CLUSTER-wide, so two entries mutating `wamn_dispatch_reader` in parallel
 //! would race each other and every other gate pointed at the same container.
 //!
-//! Four proofs:
+//! Four tests:
 //!
 //! 1. **the stable role lands connection-free**, from the real emitted batches —
 //!    NOLOGIN, no password, and NO database `CONNECT` entry of its own;
-//! 2. **replay is a no-op, and a pre-cutover environment CONVERGES**, proven by
+//! 2. **replay is a no-op, and a pre-cutover environment CONVERGES**, shown by
 //!    applying each batch twice and diffing every `aclitem` on the database plus
 //!    every attribute of the role, then by re-introducing the retired `GRANT`
 //!    and watching the shipped batch take it away;
@@ -49,14 +49,14 @@ use wamn_ctl::provision_project_env::{privilege_sql, role_posture_sql, role_sql}
 
 /// The legacy app-password input remains until `wamn-0h0g.12.185`, but
 /// `ensure_app_role_sql` deliberately emits none of it. Keeping a conspicuous
-/// fixture value here proves the role batch cannot leak that input back into
+/// fixture value here shows the role batch cannot leak that input back into
 /// the retired shared LOGIN.
 const APP_PASSWORD: &str = "wamn_app";
 const RETIRED_APP_PASSWORD: &str = "retired-app-session-probe";
 const GENERATION_PASSWORD: &str = "reader-generation-probe";
 const DATABASE: &str = "wamn-db-probe--dispatch--dev";
 const ORDERING_DATABASE: &str = "wamn-db-probe--ordering--dev";
-/// The NEIGHBOUR the cross-database arm proves is unreachable. It is a real
+/// The NEIGHBOUR the cross-database arm shows is unreachable. It is a real
 /// provisioned environment, not an empty database: the reach this closes was
 /// measured between two environments on one cluster.
 const NEIGHBOUR_DATABASE: &str = "wamn-db-probe--neighbour--dev";
@@ -427,7 +427,7 @@ async fn provisioned_reader_is_idempotent_and_connection_free_leg(su: &Client, u
         );
     }
 
-    // The CONVERGENCE direction, which "stopped granting" would not prove: seed
+    // The CONVERGENCE direction, which "stopped granting" would not show: seed
     // exactly what a pre-cutover environment carries and watch the shipped batch
     // take it away.
     run_alone(
@@ -554,7 +554,7 @@ async fn owner_statement_asymmetry_leg(su: &Client) {
     drop_reader_role(su).await;
 }
 
-/// **THE RULED PROOF (`wamn-0h0g.22.24` step 5): a dispatch-reader generation
+/// **THE RULED TEST (`wamn-0h0g.22.24` step 5): a dispatch-reader generation
 /// minted for ONE database cannot open a session on another.**
 ///
 /// This is the reach `wamn-0h0g.12.179` measured live for the guest and the

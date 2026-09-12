@@ -1,7 +1,7 @@
-//! PostgreSQL 18 proof for exact manifest-derived route-caller grants.
+//! PostgreSQL 18 test for exact manifest-derived route-caller grants.
 //!
 //! Set `WAMN_OPERATION_GRANTS_PG18_URL` to a disposable superuser database.
-//! The proof reads the mutation counts and final rows from PostgreSQL itself.
+//! The test reads the mutation counts and final rows from PostgreSQL itself.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -68,7 +68,7 @@ fn result(answer: &str) -> OperationGrantReconcileResult {
     OperationGrantReconcileResult::new(counts[0], counts[1], counts[2])
 }
 
-/// `PREPARE` proves the reconciliation query remains one extended-query
+/// `PREPARE` shows the reconciliation query remains one extended-query
 /// statement, matching the production driver's `query_one` boundary.
 fn transaction(statement: &str) -> String {
     let floor_check = operation_grant_floor_check_sql();

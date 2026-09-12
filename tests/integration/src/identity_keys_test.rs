@@ -1,6 +1,6 @@
 //! Read-only public-key evidence from the actual deployed identity HTTPS service.
 //!
-//! This foundation proof does not authenticate a session token or exercise a
+//! This foundation test does not authenticate a session token or exercise a
 //! host admission boundary. Expiry and outage timing remain covered by the
 //! deterministic cache suite; this short deployed observer claims neither.
 
@@ -29,7 +29,7 @@ pub struct IdentityKeysTestArgs {
     pub ca_file: PathBuf,
     #[arg(long, env = "WAMN_IDENTITY_WRONG_CA_FILE")]
     pub wrong_ca_file: PathBuf,
-    /// Exact JSON array of published IDs; [] explicitly proves the empty stage.
+    /// Exact JSON array of published IDs; [] explicitly shows the empty stage.
     #[arg(long, env = "WAMN_IDENTITY_EXPECTED_KIDS")]
     pub expected_kids: String,
 }
@@ -105,7 +105,7 @@ async fn exercise(args: IdentityKeysTestArgs) -> anyhow::Result<()> {
     pass("issuer_binding");
 
     // These are independent cache instances, not two deployed token-verifying
-    // hosts. Retained evidence is never relabelled as session admission proof.
+    // hosts. Retained evidence is never relabelled as session admission test.
     let mut held = Vec::new();
     for cache in &caches {
         for kid in &expected {
@@ -115,7 +115,7 @@ async fn exercise(args: IdentityKeysTestArgs) -> anyhow::Result<()> {
                 .map_err(|_| anyhow!("expected public key was refused by production cache"))?;
             // Internal dispatch is later than the pre-call observation, so
             // only post-return time supplies this observer's upper bound.
-            // Deterministic cache tests prove exact request-start aging.
+            // Deterministic cache tests show exact request-start aging.
             let observed = Instant::now();
             ensure!(
                 evidence.issuer() == args.issuer,

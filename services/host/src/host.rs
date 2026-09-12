@@ -1509,7 +1509,7 @@ mod tests {
     /// to configure the pull must fail startup before the host serves a release.
     ///
     /// The credential is the first thing the source reads, so an absent one
-    /// refuses before any network I/O — which is what keeps this proof hermetic.
+    /// refuses before any network I/O — which is what keeps this test isolated.
     #[tokio::test]
     async fn a_host_given_an_unusable_release_pair_refuses() {
         let auth_file = Path::new("/nonexistent/wamn-registry-auth.json");

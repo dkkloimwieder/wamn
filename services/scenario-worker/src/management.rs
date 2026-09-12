@@ -623,7 +623,7 @@ async fn serve_inner(
         &scope.project,
         &scope.environment,
     )?;
-    // The admission credential is proven in scope on the same terms, at the same
+    // The admission credential is shown in scope on the same terms, at the same
     // point, for the same reason. Its consumer is the sequential composition
     // (wamn-0h0g.8.5.4); refusing here means a mis-scoped Secret crash-loops at
     // startup instead of surfacing on the first admitted run. The connection
@@ -885,7 +885,7 @@ async fn dispatch_command(
 /// rather than by reading the dispatcher's text. `dispatch_command` has no
 /// second opinion: it matches on this answer and nothing else, so the two cannot
 /// drift (wamn-0h0g.8.5.4 — the source scan this replaced asserted a substring
-/// count over its own source, which the owner ruled the weakest form of proof).
+/// count over its own source, which the owner ruled the weakest form of testing).
 #[derive(Debug)]
 enum CommandRoute<'a> {
     Gate(&'a wamn_authoring_model::Gate),
@@ -1444,8 +1444,8 @@ mod tests {
     /// wamn-0h0g.8.5.3: the admission connection input is settled on the same
     /// terms as the authoring one, and by `serve` itself.
     ///
-    /// This is the CALL-SITE proof. `wamn-control-provision` proves the parser;
-    /// nothing there proves the production entry point runs it. Reaching an
+    /// This is the CALL-SITE test. `wamn-control-provision` tests the parser;
+    /// nothing there shows the production entry point runs it. Reaching an
     /// admission refusal means the authoring gate passed and the admission gate
     /// then ran — before the identity connect, whose failure against an
     /// unresolvable host is the error this test would see instead if the call
@@ -1520,9 +1520,9 @@ mod tests {
     /// surface's whole authorization model is rows in a table that credential
     /// owns. The exposure was live the moment the manifest was applied.
     ///
-    /// This is the CALL-SITE proof, the sibling of
+    /// This is the CALL-SITE test, the sibling of
     /// `the_admission_connection_input_is_settled_before_any_io`.
-    /// `wamn-control-provision` proves the parser; nothing there proves the
+    /// `wamn-control-provision` shows the parser; nothing there shows the
     /// production entry point runs it. The accepting half then fails on the
     /// identity CONNECT — the error this test would see instead if the call were
     /// removed, which is what makes the refusals below the predicate working

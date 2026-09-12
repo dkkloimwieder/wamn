@@ -181,7 +181,7 @@ async fn a_digest_that_cannot_name_an_artifact_refuses_before_any_transport() {
 ///
 /// `#[ignore]` gates *selection*; once a run has selected this leg, an absent
 /// variable is a failed test. A `let Ok(value) = var(..) else { return }` skip
-/// would report success in every default run and prove nothing.
+/// would report success in every default run and show nothing.
 fn live_env(name: &str, expectation: &str) -> String {
     match std::env::var(name) {
         Ok(value) if !value.trim().is_empty() => value,
@@ -217,7 +217,7 @@ async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_name
     .expect("WAMN_RELEASE_MANIFEST_EFFECTIVE_RELEASE_ID is an i32");
 
     // The exact pair of calls both service `load_release` functions make, in
-    // that order and with that spelling. This proves the mechanism where it
+    // that order and with that spelling. This shows the mechanism where it
     // lives; that each host process still *invokes* it, before it binds a
     // component, is pinned by the conformance guard
     // `one_release_load_site_per_host_process`
@@ -427,10 +427,10 @@ async fn a_served_body_the_descriptor_undercounts_refuses_the_pull() {
 /// which `pull_verified` classifies as `Mismatched` rather than as absence
 /// (`wamn-0h0g.19.17`).
 ///
-/// This is therefore the wire proof of the digest-mismatch refusal: a served
+/// This is therefore the wire test of the digest-mismatch refusal: a served
 /// body the name does not address is refused as a contradiction, not as an
 /// unreachable registry, and an operator is paged accordingly. What is *not*
-/// proven here is the source's own digest comparison in
+/// shown here is the source's own digest comparison in
 /// `verify_transferred_body`: it stays unreachable by construction, defense in
 /// depth against the transport dropping its check, and it is held by a direct
 /// call in

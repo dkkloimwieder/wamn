@@ -1,4 +1,4 @@
-//! PostgreSQL 18 proof for the project-admin effect-uncertain terminalization.
+//! PostgreSQL 18 test for the project-admin effect-uncertain terminalization.
 //!
 //! Set `WAMN_OPERATOR_TERMINALIZE_PG18_URL` to the superuser URL of a disposable
 //! database. The gate is skipped when the variable is absent.

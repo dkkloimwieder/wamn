@@ -1342,7 +1342,7 @@ pub fn workload_generation_state_sql() -> &'static str {
        FROM pg_catalog.pg_authid r WHERE r.rolname = $1"
 }
 
-/// Read-only proof that no CONNECTABLE database grants `CONNECT` to PUBLIC.
+/// List connectable databases that grant `CONNECT` to PUBLIC.
 ///
 /// The filter is `datallowconn`, not `NOT datistemplate`, and must stay so:
 /// `template1` is a template AND connectable, so a template filter reported a
@@ -1380,7 +1380,7 @@ pub fn revoke_public_connect_floor_sql() -> &'static str {
      END $$;"
 }
 
-/// Read-only proof of PUBLIC's effective `TEMPORARY` privilege on the target.
+/// Check PUBLIC's effective `TEMPORARY` privilege on the target.
 ///
 /// The caller connects to the already-validated exact project database. Unlike
 /// the cluster-wide `CONNECT` floor, `TEMPORARY` is deliberately confined only
@@ -1392,7 +1392,7 @@ pub fn public_temporary_on_current_database_sql() -> &'static str {
         AND acl.privilege_type = 'TEMPORARY')"
 }
 
-/// All non-template databases available for exact cross-database ACL proof.
+/// All non-template databases available for exact cross-database ACL checks.
 ///
 /// This one keeps the `NOT datistemplate` filter on purpose, unlike
 /// [`public_connect_databases_sql`] / [`revoke_public_connect_floor_sql`]: the
@@ -1597,7 +1597,7 @@ pub fn upsert_control_author_tenant_mapping_sql() -> &'static str {
 /// on that cluster. The accepted T3 boundary is compound: production HBA has
 /// no physical-replication entry; PUBLIC CONNECT is revoked and this role gets
 /// CONNECT only on its own database; ordinary DML remains denied; and each
-/// reader is configured with its own slot and publication. The M1 gate proves
+/// reader is configured with its own slot and publication. The M1 gate shows
 /// those production-shaped legs.
 pub fn ensure_replication_role_sql(role: &str, password: &str) -> String {
     format!(
@@ -2059,7 +2059,7 @@ mod tests {
         assert!(sql.contains("GRANT SELECT (\"tenant_id\", \"run_id\", \"binding_world_json\""));
         // wamn-oici's probe arm, extended by wamn-0h0g.8.25. The consumers derive
         // their expectations from the same constant, so a widening flows through
-        // them silently and they prove nothing about it. This names the
+        // them silently and they show nothing about it. This names the
         // observation and evaluation columns literally in the emitted grant, so
         // dropping any of them fails HERE.
         assert!(
@@ -2248,7 +2248,7 @@ mod tests {
         );
         // The admission pins, the frozen wiring identity and the authoritative
         // input are UNREACHABLE by this family. Named literally, because they are
-        // absent from a constant and an absence proves nothing by itself.
+        // absent from a constant and an absence shows nothing by itself.
         for forbidden in [
             "GRANT INSERT",
             "GRANT TRUNCATE",

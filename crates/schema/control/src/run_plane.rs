@@ -13,7 +13,7 @@
 //! idempotent plan that
 //! brings one project-env's run-plane schema to the schema of record. The
 //! `wamn-ctl reconcile-run-plane` shell reads/executes; the throwaway-PG gate
-//! proves the live transitions.
+//! shows the live transitions.
 //!
 //! **The schema of record is the deploy/sql source itself**, embedded at compile
 //! time (`include_str!`) — the SAME files the wamn-gates `schema_drift` guard
@@ -102,7 +102,7 @@ struct CheckSpec {
     origin: CheckOrigin,
 }
 
-/// PostgreSQL 18's canonical CHECK inventory for the four run-plane record
+/// PostgreSQL 18's canonical CHECK constraint list for the four run-plane record
 /// files. The live shell reads the same `pg_get_constraintdef(..., true)` form.
 /// The throwaway-PG gate applies the deploy SQL and pins that this catalog is a
 /// byte-for-byte projection of the schema of record.
@@ -2042,7 +2042,7 @@ pub struct RunPlaneObservation {
     pub app_run_queue_authority: bool,
     /// Effective `wamn_app` authority on the retired run-write surface. The
     /// first value detects table-level INSERT/UPDATE, the second detects the
-    /// historical `capture_mode` carrier specifically, and the third proves
+    /// historical `capture_mode` carrier specifically, and the third shows
     /// no run column remains writable by the app role.
     pub app_run_capture_privileges: (bool, bool, bool),
     /// Direct table grants for the authoring-state security surface, keyed by
@@ -2053,7 +2053,7 @@ pub struct RunPlaneObservation {
     pub authoring_effective_table_privileges: BTreeMap<(String, String, String), BTreeSet<String>>,
     /// Effective mutation/reference authority on any column. PostgreSQL keeps
     /// column ACLs separate from table ACLs, so a table-level REVOKE alone is
-    /// not a sufficient boundary proof.
+    /// not a sufficient boundary check.
     pub authoring_effective_column_privileges: BTreeMap<(String, String, String), BTreeSet<String>>,
     /// Owner of every managed authoring table, keyed by `(schema, table)`.
     /// Ownership is authority to restore revoked ACLs and therefore must stay
@@ -3166,7 +3166,7 @@ $retire_run_projection_authority$;"#,
             .join(", ");
         // The grant and the self-check move together: whatever APPEND authority
         // this ledger does not carry becomes a privilege the block REFUSES to see
-        // the server still report, so a parked table proves its own denial.
+        // the server still report, so a parked table shows its own denial.
         let writer_grant = writer_privileges.join(", ");
         let writer_forbidden_table = "'INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'";
         let writer_forbidden_columns = "INSERT,UPDATE,REFERENCES";

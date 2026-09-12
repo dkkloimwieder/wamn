@@ -920,8 +920,8 @@ fn duplicate_filters_and_schema_qualified_authored_sql_refuse() {
 // would mint a SECOND id on replay -- a duplicate IDENTITY, which is real stock
 // on a row nothing points at, not merely a duplicate row.
 //
-// These tests are the generator's proof. No package declares a create today, so
-// the emitted statements have no in-cluster consumer yet; the executing proof
+// These tests check the generator. No package declares a create today, so
+// the emitted statements have no in-cluster consumer yet; the executing test
 // is due on the first one.
 // ---------------------------------------------------------------------------
 
@@ -1301,7 +1301,7 @@ fn generated_create_pins_and_grants_its_claim_relation() {
 /// EXIT GATE: every way the claim could stop being the identity source refuses.
 ///
 /// The unmutated manifest and catalog run FIRST as the negative control: if
-/// they did not generate, a refusal below would prove nothing.
+/// they did not generate, a refusal below would show nothing.
 #[test]
 fn generated_create_refuses_a_claim_that_does_not_pre_generate_identity() {
     run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES)

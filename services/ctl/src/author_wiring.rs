@@ -25,7 +25,7 @@
 //! database, so this is a two-connection verb; no single statement, and no
 //! project-plane fact, could carry the check. Because the VERB performs the
 //! read, the requirement is not caller discipline: there is no argument to omit,
-//! no proof value to forge or replay, and no path through this module that
+//! no result value to forge or replay, and no path through this module that
 //! reaches the INSERT with the read skipped.
 //!
 //! An exact resubmission converges. The same `(wiring, version)` carrying any

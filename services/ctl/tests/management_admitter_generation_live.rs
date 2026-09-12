@@ -1,9 +1,9 @@
-//! PG18 lifecycle proof for the management-admitter A/B generation pair.
+//! PG18 lifecycle test for the management-admitter A/B generation pair.
 //!
 //! `wamn-0h0g.12.176` completes `wamn-0h0g.12.118`'s deferral — "no bespoke
 //! prepare, retire, Secret, or A/B implementation", closed at the time for want
 //! of "a ctl lifecycle or call site". `wamn-0h0g.8.5.3` landed the call site, so
-//! this proves the ctl stamp drives the generic `wamn-0h0g.13.59` lifecycle
+//! this shows the ctl stamp drives the generic `wamn-0h0g.13.59` lifecycle
 //! against a real cluster: nothing here reimplements prepare, retire or abort.
 //!
 //! Run only against a disposable cluster: the test creates one database and
@@ -119,7 +119,7 @@ fn action_args(
     }
 }
 
-/// The emitted Secret's URL, proven in-scope by the pure consumer gate rather
+/// The emitted Secret's URL, shown in-scope by the pure consumer gate rather
 /// than by re-deriving the role name here.
 fn secret_url(path: &Path, database: &str) -> String {
     let manifest: serde_json::Value =
@@ -245,7 +245,7 @@ async fn direct_acl_set(admin: &Client, role: &str) -> BTreeSet<String> {
 
 /// The observable converged state of the whole family, as one comparable value.
 ///
-/// R55: a converge path is proven by a SECOND run being a no-op, not by its exit
+/// R55: a converge path is shown by a SECOND run being a no-op, not by its exit
 /// status. The password and `VALID UNTIL` are re-minted by design, so they are
 /// deliberately outside this snapshot — everything else must be identical.
 async fn family_state(admin: &Client, roles: &[&str]) -> Vec<(String, Vec<String>, Vec<String>)> {
@@ -612,7 +612,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
     )
     .await;
 
-    // Retirement is USE-PROVEN: without a live session on the replacement, the
+    // Without a live session on the replacement, the
     // old credential is never withdrawn.
     let before_refusal = family_state(&target, &pair).await;
     provision_project_env::run(action_args(

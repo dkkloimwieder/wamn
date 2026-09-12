@@ -326,7 +326,7 @@ fn required_contract_observation(required: &Value, observed: &Value) -> anyhow::
     )
 }
 
-/// Prove the unchanged overlay refuses a conflicting base in another empty database.
+/// Show the unchanged overlay refuses a conflicting base in another empty database.
 pub(super) async fn breaking_refusal(
     phase: &CompatibilityPhase,
     system_url: &str,
@@ -517,7 +517,7 @@ fn required_contract_observation_refuses_changed_consumed_fields_and_constraints
     );
 }
 
-/// Narrow seam check; the paired journey remains the fresh-install proof.
+/// Narrow seam check; the paired journey remains the fresh-install test.
 #[tokio::test]
 #[ignore = "requires a fresh disposable PostgreSQL 18 server and retained evidence path"]
 async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirements()

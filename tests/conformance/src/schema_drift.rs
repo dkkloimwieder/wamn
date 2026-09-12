@@ -1,4 +1,4 @@
-//! Conformance proofs for the run-state-owned stand-in schema guard.
+//! Conformance tests for the run-state-owned stand-in schema guard.
 
 use wamn_run_state::schema_drift::{Need, assert_run_state_stand_in, assert_stand_in};
 
@@ -73,7 +73,7 @@ fn runs_only_spec() -> [(&'static str, Need); 6] {
 
 /// A gate-style `runs` stand-in: one flat statement, in the DDL dialect the
 /// harnesses actually `format!`, carrying every shipped column. Written out (not
-/// derived from the schema of record) so it proves the guard reads real column
+/// derived from the schema of record) so it shows the guard reads real column
 /// names out of `run-state.sql` rather than fragments of its CHECK bodies.
 fn runs_stand_in() -> String {
     "CREATE TABLE wamn_run.runs (\

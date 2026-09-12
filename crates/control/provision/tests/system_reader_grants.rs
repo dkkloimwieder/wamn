@@ -1,17 +1,17 @@
-//! Live proof that the T1 control-database readers hold EXACTLY their own
+//! Live test that the T1 control-database readers hold EXACTLY their own
 //! grant set (`wamn-0h0g.12.116`).
 //!
-//! The proof is the SERVER'S OWN ANSWER, never the text of a statement:
+//! The test reads the SERVER'S OWN ANSWER, never the text of a statement:
 //! `has_schema_privilege`, `has_table_privilege`, `pg_roles` attributes,
 //! `aclexplode`, and the real SQLSTATE a refused statement raises. Pinning DDL
-//! text would prove nothing here — this crate emits the DDL, so a text
+//! text would show nothing here — this crate emits the DDL, so a text
 //! assertion would be checking a builder against itself, and it cannot tell a
 //! declaration from a comment mentioning one.
 //!
 //! Every denial is measured from a session authenticated AS the reader
 //! generation, and that session first asserts it is neither `rolsuper` nor
 //! `rolbypassrls` — a superuser fixture would satisfy every probe below while
-//! proving nothing.
+//! showing nothing.
 //!
 //! Set `WAMN_REGISTRY_PG_URL` to a throwaway superuser URL to arm it (the same
 //! knob `control_storage.rs` uses); it prints a skip line and returns when unset.

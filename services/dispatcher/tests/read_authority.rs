@@ -6,12 +6,12 @@
 //! the cluster-wide PUBLIC `CONNECT` floor. Skipped cleanly when unset.
 //!
 //! This gate lives with the dispatcher, not with the provisioner, because what is
-//! under proof is a RELATIONSHIP between the two: the provisioner's real builders
+//! under test is a RELATIONSHIP between the two: the provisioner's real builders
 //! mint the role, and the dispatcher's real statements — the very `parked_due_sql`
 //! and [`RUN_QUEUE_DEPTH_SQL`] its sweep executes — must still run as it. A copy
 //! of either statement would let the two drift apart silently.
 //!
-//! Four proofs:
+//! Four tests:
 //!
 //! 1. **the surface is exactly right** — swept over EVERY relation in the project
 //!    database, the reader holds zero write privileges and exactly two `SELECT`s,
@@ -121,7 +121,7 @@ fn with_database(url: &str, database: &str) -> String {
 }
 
 /// Dial `role` as its OWN authenticated principal. Deliberately not `SET ROLE`,
-/// which would prove nothing about the credential, the `CONNECT` grant, or
+/// which would show nothing about the credential, the `CONNECT` grant, or
 /// `pg_hba`.
 fn role_url(superuser_url: &str, role: &str, password: &str, database: &str) -> String {
     format!(
@@ -167,7 +167,7 @@ fn assert_denied(url: &str, label: &str, statement: &str) {
 
 /// The same statement must SUCCEED for a principal that HOLDS the grant, with the
 /// same tenant claim, inside a transaction that is rolled back. This is what
-/// makes [`assert_denied`] non-vacuous: it proves the statement is well-formed,
+/// makes [`assert_denied`] non-vacuous: it shows the statement is well-formed,
 /// FK-satisfiable and RLS-legal, so the reader's refusal can only have been the
 /// missing grant.
 ///
@@ -176,7 +176,7 @@ fn assert_denied(url: &str, label: &str, statement: &str) {
 /// role's queue DML away: `deploy/sql/run-queue.sql` REVOKEs everything from
 /// `wamn_app` and contains ZERO grants to it, so replaying a queue write as
 /// `wamn_app` fails with `permission denied for table run_queue` and the arm
-/// reports a broken control instead of a proof. Each queue statement now names
+/// reports a broken control instead of a test. Each queue statement now names
 /// the principal the schema of record actually grants it to, or names none at
 /// all — see the arm list.
 fn assert_permitted_to(url: &str, role: &str, label: &str, statement: &str) {
@@ -408,7 +408,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
         ),
     );
 
-    // --- proof 1: the surface is exactly right ------------------------------
+    // --- test 1: the surface is exactly right ------------------------------
     //
     // Swept over EVERY relation in the database, not over a list this test chose —
     // a hand-written list cannot notice a table someone adds later.
@@ -514,7 +514,7 @@ END $$;
         ),
     );
 
-    // --- proof 2: the real dispatcher statements still work -----------------
+    // --- test 2: the real dispatcher statements still work -----------------
     let reader_url = role_url(&url, &generation, READER_PASSWORD, &database);
 
     let identity = run_ok(
@@ -551,7 +551,7 @@ END $$;
         "the queue-depth gauge must sample a non-zero depth"
     );
 
-    // THE GOVERNED HALF OF THE SURFACE, READ FOR REAL. `run_queue` above proves
+    // THE GOVERNED HALF OF THE SURFACE, READ FOR REAL. `run_queue` above shows
     // nothing about the tenant floor: it deliberately KEEPS the host-injected
     // `app.tenant` claim, so it answers identically with or without the platform
     // membership. `effect_attempts` is the relation the reader was actually locked
@@ -590,7 +590,7 @@ END $$;
         "the other tenant's row must really exist, or the isolation check is vacuous"
     );
 
-    // --- proofs 3 and 4: denied, for the right reason, non-vacuously --------
+    // --- tests 3 and 4: denied, for the right reason, non-vacuously --------
     //
     // Every statement names TENANT, so the RLS policy admits it and only the
     // missing grant can refuse it.
@@ -614,7 +614,7 @@ END $$;
     let read_runs_plpgsql = format!("PERFORM 1 FROM runs WHERE tenant_id = '{TENANT}'");
     let read_runs_sql = format!("SELECT 1 FROM runs WHERE tenant_id = '{TENANT}'");
     // No replay arm: no in-tree principal holds INSERT on the ledger, so there is
-    // none to prove the statement legal with. It stays because privilege is
+    // none to show the statement legal with. It stays because privilege is
     // checked BEFORE column constraints — a 42501 here can only be the missing
     // grant — and the RLS discrimination in `assert_denied` still applies.
     let insert_ledger =
@@ -667,7 +667,7 @@ END $$;
         // No replay arm for the three below: since `wamn-0h0g.22.6.3` NOTHING in
         // this tree holds UPDATE or DELETE on `run_queue` — the executor-platform
         // family that will is admitted to the vocabulary but has no grant set yet
-        // — so there is no principal to prove them legal with. `assert_denied`
+        // — so there is no principal to show them legal with. `assert_denied`
         // still discriminates a privilege refusal from an RLS one, which is the
         // half that could otherwise pass for the wrong reason.
         ("UPDATE run_queue", update_queue.as_str(), None),

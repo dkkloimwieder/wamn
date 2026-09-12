@@ -1,4 +1,4 @@
-//! Exact fixed-profile tests; these are not route-admission or cache proofs.
+//! Exact fixed-profile tests; these are not route-admission or cache tests.
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::signature::{Ed25519KeyPair, KeyPair as _};

@@ -388,7 +388,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     // The registration read's own credential, minted through the REAL builders
     // now that `registry.event_readers` exists (`wamn-0h0g.12.116`). The grant
     // batch also runs inside `prepare_workload_generation_sql`; applying it
-    // first proves the convergent step is a no-op on replay rather than a
+    // first shows the convergent step is a no-op on replay rather than a
     // one-shot.
     sys.batch_execute(&sql::grant_registry_reader_surface_sql())
         .await
@@ -579,7 +579,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         reader_args(&super_url, &cdc_name, proxied_nats.clone()),
         token.clone(),
     ));
-    // The walsender attaching proves the session opened with the CDC role.
+    // The walsender attaching shows the session opened with the CDC role.
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
         let active: bool = sys
@@ -603,7 +603,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     }
 
     // `FOR TABLES IN SCHEMA` observes the control-owned entity map too. Its
-    // writes are schema-selection facts, not application events: prove the
+    // writes are schema-selection facts, not application events: show the
     // reader stays healthy while publishing nothing.
     let map_stream_count = stream_count(&js, &stream_name).await;
     sys.batch_execute("BEGIN")
@@ -636,7 +636,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
 
     // --- phase A: commit order + envelope shape + dedupe --------------------
     let mut expected: Vec<(Op, String)> = Vec::new();
-    // A mixed transaction proves the internal command ledger is counted but
+    // A mixed transaction shows the internal command ledger is counted but
     // never published while its sibling domain row reaches the stream.
     sys.batch_execute(
         "BEGIN; \
@@ -860,7 +860,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     .await
     .expect("causation txn: message at BEGIN");
     // message-PRE-COMMIT: the frame FOLLOWS the rows — the order-robustness
-    // proof that buffer-per-txn stamps rows seen before the message arrived.
+    // This checks that buffer-per-txn stamps rows seen before the message arrived.
     sys.batch_execute(
         "BEGIN; \
          INSERT INTO app.receipts (id, val) VALUES (102, 'c102'); \

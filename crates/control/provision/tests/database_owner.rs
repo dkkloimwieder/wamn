@@ -6,7 +6,7 @@
 //! superuser does in production) — the same variable `tests/provision.rs` uses,
 //! so one container serves both. Skipped cleanly when unset.
 //!
-//! Two proofs, both driving the REAL project-database builders:
+//! Two tests, both driving the REAL project-database builders:
 //!
 //! 1. **ownership** — a project-env database's `datdba` is `wamn_db_owner`, and
 //!    specifically NOT `wamn_app` (the role guest-authored SQL executes as) and
@@ -69,7 +69,7 @@ fn project_env_database_ownership_and_connect_are_scoped() {
     };
 
     // TWO project-env databases: a single one makes every cross-database sweep
-    // below vacuous (a loop over one row proves nothing about the cluster).
+    // below vacuous (a loop over one row shows nothing about the cluster).
     let first = project_env_database_name("acme", "ownership", "dev", "k3m9x2p7");
     let second = project_env_database_name("acme", "ownership", "prod", "q80zdw41");
     // A sibling database makes the privilege-reach assertion non-vacuous. The
@@ -122,7 +122,7 @@ fn project_env_database_ownership_and_connect_are_scoped() {
     );
 
     // Seed a positive sibling ACL BEFORE running either target batch. Keeping
-    // this canary intact proves those batches do not invoke the cluster-wide
+    // this canary intact shows those batches do not invoke the cluster-wide
     // floor builder.
     run_ok(
         &url,

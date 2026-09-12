@@ -1,4 +1,4 @@
-//! Loader admission proofs use scalar guests because they do not dispatch a node.
+//! Loader admission tests use scalar guests because they do not dispatch a node.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;

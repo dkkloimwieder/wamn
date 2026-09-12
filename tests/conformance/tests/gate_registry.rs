@@ -97,9 +97,9 @@ enum Classification {
     #[serde(rename = "partial-proof")]
     PartialTest,
     // A gate whose subject still exists but whose production input path is
-    // dormant, so passing proves nothing about production. Distinct from
+    // dormant, so passing shows nothing about production. Distinct from
     // `Retired` (the subject is gone) and from `PartialTest` (the gate really
-    // does prove part of its claim). The gate stays registered, keeps its
+    // does show part of its claim). The gate stays registered, keeps its
     // decision mapping, and must record why in `coverage_exclusions`.
     ParkedGate,
     Setup,
@@ -544,7 +544,7 @@ fn fixtures() -> (PathBuf, Registry, BTreeSet<String>) {
 fn canonical_registry_covers_every_live_gate_source() {
     let (root, registry, manifests) = fixtures();
     // socketguard-job.yaml and traceproof-job.yaml. The literal is a tripwire
-    // on the inventory's size; `validate_registry` separately proves the
+    // on the list's size; `validate_registry` separately checks the
     // registry and the directory name the same Jobs.
     assert_eq!(manifests.len(), 2, "the retained Job inventory changed");
     validate_registry(&registry, &manifests, &root).unwrap_or_else(|error| panic!("{error}"));

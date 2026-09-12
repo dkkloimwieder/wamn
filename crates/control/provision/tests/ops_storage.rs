@@ -1,4 +1,4 @@
-//! Drift and optional live-apply proof for the operations persistence extension.
+//! Drift and optional live-apply test for the operations persistence extension.
 //!
 //! The core control schema remains independently installable. The ops artifact
 //! is applied afterwards, owns exactly two operations relations, and may

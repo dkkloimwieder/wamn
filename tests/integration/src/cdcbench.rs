@@ -167,7 +167,7 @@ const APP_PW: &str = "ccdc-app-generation";
 const APP_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
 const PACKAGE_ID: &str = measurement_schema::PACKAGE_ID;
 
-// The shipped DDL + retained receiving catalog, compiled in (drift-proof).
+// The shipped DDL + retained receiving catalog, compiled in (checked for changes).
 const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
 const CATALOG_SQL: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 /// A delete-only registration on `entity` — exactly what drives the l5i9.31
@@ -663,7 +663,7 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
         // The SAME single-txn import decoded under a starved reorder buffer
         // (the 64kB GUC minimum — the buffer holds ~190 B/change, tuple +
         // TOAST pointers, so any non-trivial txn spills): spill_txns/
-        // spill_bytes prove the walsender picked the role GUC up, and the
+        // spill_bytes show the walsender picked the role GUC up, and the
         // drain-rate delta vs `singletxn-narrow` is what spilling costs
         // (wamn-mu4h: whether raising logical_decoding_work_mem always-on has
         // evidence at our txn shapes).
@@ -908,7 +908,7 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
         .context("create failover slot")?;
     let mut reader = spawn_reader(&args.admin_database_url, &args.nats_url)?;
 
-    // Warm write: proves the pipeline is live before the first step.
+    // Warm write: shows the pipeline is live before the first step.
     let app = connect_app(&args.admin_database_url).await?;
     app.execute(
         "INSERT INTO \"suppliers\" (tenant_id, name) \

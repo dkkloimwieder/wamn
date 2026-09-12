@@ -5,7 +5,7 @@
 //!   model (the schema name, each table + its pinned columns, the RLS floor +
 //!   a45 empty-tenant-row hardening, the `users.status` CHECK literals from
 //!   `UserStatus::as_str`, and the FK cascades);
-//! - a **live-apply gate** proving the DB-enforced behavior — tenant RLS
+//! - a **live-apply gate** showing the DB-enforced behavior — tenant RLS
 //!   isolation, the FK cascades (and audit-log immutability), the empty-tenant /
 //!   status CHECKs — gated on
 //!   `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness prepares App generations)
@@ -175,7 +175,7 @@ fn user_status_literals_are_pinned() {
 /// The FK cascades that keep the graph consistent are pinned: the user↔role
 /// linkage and api_keys reference users ON DELETE CASCADE; permissions and the
 /// linkage reference roles ON DELETE CASCADE. (audit_log deliberately does NOT
-/// FK actor_id — immutable history survives user deletion; proven live.)
+/// FK actor_id — immutable history survives user deletion; shown live.)
 #[test]
 fn fk_cascades_are_pinned() {
     let sql = code_only(&app_schema_sql());
@@ -273,7 +273,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // The schema itself (deploy/sql/app-schema.sql, applied verbatim as the superuser).
     script.push_str(&app_schema_sql());
     script.push('\n');
-    // Seed as the superuser (bypasses RLS): two tenants for the isolation proof,
+    // Seed as the superuser (bypasses RLS): two tenants for the isolation test,
     // known user ids to tie the docs rows to. U1 has a role, key, config, and two
     // audit entries; the docs rows are owned by U1 and U2.
     script.push_str(&format!(

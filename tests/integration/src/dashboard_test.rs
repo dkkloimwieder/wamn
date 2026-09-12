@@ -1,11 +1,11 @@
-//! `dashproof` ([9.9], wamn-b4e): the DEPLOYED proof that the 9.9 dashboards
+//! `dashproof` ([9.9], wamn-b4e): the DEPLOYED test that the 9.9 dashboards
 //! layer stands up. There is no emission seam to drive (unlike `metricbench` →
 //! `:8889`), so this follows the `traceproof`/`apiproof` shape — assert against a
-//! running Grafana's HTTP API, not scaffolding. It proves, each a NAMED failure:
+//! running Grafana's HTTP API, not scaffolding. It shows, each a NAMED failure:
 //!
 //!   1. `GET /api/health` -> `database: ok` (Grafana + its DB are up);
 //!   2. `GET /api/datasources` -> Prometheus + Tempo + Loki all present under
-//!      the proof's fixed datasource uids, and each datasource's
+//!      the test's fixed datasource uids, and each datasource's
 //!      `GET /api/datasources/uid/<uid>/health` is OK. Honest-skip policy
 //!      (metricbench phase-6 precedent): Prometheus health is HARD (cheap to
 //!      stand up locally); Tempo/Loki health is soft in `--local` (their
@@ -20,7 +20,7 @@
 //! (GF_SECURITY_ADMIN_USER / GF_SECURITY_ADMIN_PASSWORD) — `/api/datasources`
 //! needs an authenticated admin/editor. The SRE identity + the per-tenant
 //! folder/dashboard identities are asserted independently through Grafana's
-//! public API. The repository-local proof remains available; its in-cluster Job
+//! public API. The repository-local test remains available; its in-cluster Job
 //! is archived for MVP.
 
 use anyhow::{Context as _, bail};
@@ -219,7 +219,7 @@ pub async fn run(args: DashboardTestArgs) -> anyhow::Result<()> {
 /// reach its backend). Any transport error or non-OK reads as unhealthy — except
 /// a 404: a frontend-only plugin (Tempo in Grafana 11) registers no backend
 /// health resource on this route, so fall back to the datasource PROXY echo
-/// (`/api/datasources/proxy/uid/<uid>/api/echo`), which proves the same
+/// (`/api/datasources/proxy/uid/<uid>/api/echo`), which shows the same
 /// property: Grafana can reach the backend and the backend answers.
 async fn datasource_healthy(base: &str, auth: (&str, &str), uid: &str) -> bool {
     let path = format!("/api/datasources/uid/{uid}/health");

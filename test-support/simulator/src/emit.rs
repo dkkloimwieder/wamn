@@ -53,7 +53,7 @@ pub trait EmissionTarget {
 ///
 /// The protocol structure here is not an API contract (`wms-prep-spec.md` §1a):
 /// it mirrors the guest-side envelope authority and the header recipe the
-/// route-authentication proof uses, and it is expected to move when they do.
+/// route-authentication test uses, and it is expected to move when they do.
 /// It is a fresh client rather than a lift of
 /// `tests/integration/src/route_authentication_live.rs` because nothing there
 /// is `pub` — the whole module is `#[cfg(test)]` — and because that file is an

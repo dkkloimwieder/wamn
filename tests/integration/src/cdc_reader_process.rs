@@ -1,4 +1,4 @@
-//! Process-boundary harness for reader-inclusive integration proofs.
+//! Process-boundary harness for reader-inclusive integration tests.
 
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;

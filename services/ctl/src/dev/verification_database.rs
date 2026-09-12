@@ -918,7 +918,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires disposable PostgreSQL through WAMN_DEV_VERIFICATION_PG_URL"]
-    async fn disposable_postgres_proves_freshness_cleanup_and_confinement() {
+    async fn disposable_postgres_checks_freshness_cleanup_and_confinement() {
         let url = std::env::var("WAMN_DEV_VERIFICATION_PG_URL")
             .expect("WAMN_DEV_VERIFICATION_PG_URL must name a disposable database");
         let spec = DatabaseSpec::from_url(&url).expect("valid disposable database URL");

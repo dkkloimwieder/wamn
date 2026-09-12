@@ -71,7 +71,7 @@ impl<'a> AuthoredSql<'a> {
         self.path
     }
 
-    /// Exact authored bytes welded into the SQL corpus.
+    /// Exact authored bytes included in the SQL corpus.
     pub const fn bytes(&self) -> &'a [u8] {
         self.bytes
     }

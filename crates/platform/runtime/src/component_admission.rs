@@ -179,9 +179,9 @@ pub fn validate_component_admission(
         .imports(raw)
         .map(|(name, _)| name.to_string())
         .collect::<Vec<_>>();
-    // The Component Model exposes one top-level import inventory, not a call
+    // The Component Model exposes one top-level import list, not a call
     // graph from each export. Preserve the operation-owned declarations, while
-    // proving only the structural fact the bytes support: their exact union.
+    // showing only the structural fact the bytes support: their exact union.
     let declared_dependency_imports = request
         .declaration
         .operations
@@ -308,14 +308,14 @@ fn operation_signature_mismatch(
 /// Group the audited imports into the authority packages that leave the host,
 /// union the posture of the declared operation dependencies.
 ///
-/// Called with the policy inventory after exact operation dependencies have
+/// Called with the policy import list after exact operation dependencies have
 /// been removed, so every remaining package is authority-free or an admitted
 /// platform capability. `effectful_dependencies` carries the other half of the
-/// union: a wrapper with an empty capability inventory reaches an effect
+/// union: a wrapper with an empty capability list reaches an effect
 /// through the operations it calls, and an empty projection claims it pure.
 ///
 /// A dependency contributes its PACKAGE and no interface, so its fact carries
-/// the INHERITED provenance and the audited-imports proof stays with the
+/// the INHERITED provenance and the audited-imports check stays with the
 /// IMPORTED one. The interface this component imports is the dependency
 /// operation itself, and `wamn_catalog` excludes an operation-dependency
 /// import from the effect interfaces by rule. The package never collides with
@@ -672,7 +672,7 @@ mod tests {
             .insert(ASYNC_HANDLER_OPERATION.to_string(), operation);
         // The fixture's lift is asserted, not assumed: the dummy builder
         // applies the async ABI only where the type allows it, so a test that
-        // skipped this check would pass on a sync lift and prove nothing.
+        // skipped this check would pass on a sync lift and show nothing.
         let component = Component::new(engine.inner(), &bytes).expect("fixture instantiates");
         let raw = component.engine();
         let ComponentItem::ComponentInstance(instance) = component
@@ -714,7 +714,7 @@ mod tests {
             ComponentAdmissionErrorKind::ImportPolicyRefused
         );
         // Guard the guard. The refusal must NAME the socket import, or the
-        // fixture stopped carrying it and this test proves nothing.
+        // fixture stopped carrying it and this test shows nothing.
         assert!(
             error.to_string().contains("wasi:sockets/tcp@0.2.3"),
             "refusal must name the socket import it caught: {error}"
@@ -758,7 +758,7 @@ mod tests {
     // Run this test with `--all-features`.
     #[cfg(feature = "wasm_component_model_implements")]
     #[test]
-    fn multi_export_admission_proves_global_union_and_preserves_attachment() {
+    fn multi_export_admission_checks_global_union_and_preserves_attachment() {
         let engine = crate::build_engine(&[]).expect("engine builds");
         let bytes = component_bytes_with_exports(
             &format!("import {DEPENDENCY_OPERATION};"),
@@ -868,7 +868,7 @@ mod tests {
         assert!(error.to_string().contains(HANDLER_SIGNATURE));
     }
 
-    /// The three classes in one inventory: an authority-free WASI package, the
+    /// The three classes in one import list: an authority-free WASI package, the
     /// router's own invocation seam, and two real effect packages. Only the
     /// last two are recorded, grouped by package with their exact interfaces.
     #[test]
@@ -915,7 +915,7 @@ mod tests {
     }
 
     /// The defect this closes. A wrapper carries an EMPTY capability
-    /// inventory of its own and still reaches Postgres or HTTP through the
+    /// list of its own and still reaches Postgres or HTTP through the
     /// operation it calls. The gate's effect-free-case clause keys on
     /// `jsonb_array_length(library.effects) > 0`
     /// (`scenario-worker/src/store/admission.rs:181`), so a non-empty
@@ -936,7 +936,7 @@ mod tests {
             .expect("a wrapper over an effectful dependency still admits")
             .component;
 
-        // Guard the guard. The wrapper's own capability inventory is empty:
+        // Guard the guard. The wrapper's own capability list is empty:
         // the node types import is the ABI's own and leaves the host not at
         // all, so the posture below comes from the dependency alone.
         assert_eq!(

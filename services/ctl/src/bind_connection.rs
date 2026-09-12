@@ -114,7 +114,7 @@ pub struct BindConnectionArgs {
     pub store_alias: String,
 }
 
-/// What the verb wrote, for the caller's receipt.
+/// What the verb wrote, for the caller's result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BoundConnection {
     pub instance_id: String,
@@ -124,7 +124,7 @@ pub struct BoundConnection {
 }
 
 /// Check a definition against the descriptor's coordinates. Pure; the CLI's
-/// refusal and the proof's controls both go through here.
+/// refusal and the test's controls both go through here.
 pub fn validate_definition(
     requirement_type: RequirementType,
     definition: &Value,

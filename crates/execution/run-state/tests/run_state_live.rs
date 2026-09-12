@@ -64,7 +64,7 @@ fn app_preamble(app_login: &str) -> String {
 /// role is `NOLOGIN` and nothing in production ever authenticates as it — the
 /// executor's platform pool dials a generation that INHERITS it, and
 /// `pool::credential_exactness_hook` asserts exactly that membership on every
-/// physical connection. Driving these legs as the stable role would prove a
+/// physical connection. Driving these legs as the stable role would show a
 /// principal that cannot exist at runtime, and would take its privileges
 /// directly rather than through the inheritance edge that is the real path.
 const EXECUTOR_LOGIN: &str = "wamn_transitions_executor_login";
@@ -88,7 +88,7 @@ fn run_state_live() {
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
         .expect("read run-queue DDL");
 
-    // The class-grant leg below proves the DDL's guest ACL through a prepared
+    // The class-grant leg below shows the DDL's guest ACL through a prepared
     // App generation. Its production builder also converges the stable
     // `wamn_app` carrier to NOLOGIN/NOINHERIT/passwordless, so a drifted cluster
     // role cannot make the leg pass through ambient authority.
@@ -245,7 +245,7 @@ fn run_state_live() {
 
     // THE PRINCIPAL EVERY LEG BELOW RUNS AS, ASSERTED BEFORE ANY OF THEM RUN
     // (`wamn-0h0g.22.31`). A superuser or a `BYPASSRLS` login would satisfy every
-    // transition below while proving nothing about the tenant floor, and would do it
+    // transition below while showing nothing about the tenant floor, and would do it
     // SILENTLY — there is no leg here whose failure would name it. The membership edge is
     // asserted with the same force: these legs must reach their privileges by INHERITING
     // the stable role, which is what the runtime's connection probe checks, not by holding
@@ -549,7 +549,7 @@ fn run_state_live() {
     );
 
     // The claim-time release record (wamn-0h0g.15.23). The effective release is
-    // already an immutable admission pin; the claiming pod proves that identity
+    // already an immutable admission pin; the claiming pod shows that identity
     // and records only its verified manifest digest on the EXISTING claim write.
     // The digest is not blanket write-once: NULL -> value is the claim, value ->
     // NULL is how a runnable, effect-free run reopens its claimability (the queue
@@ -680,7 +680,7 @@ fn run_state_live() {
     // fired it, and that link is never rewritten out from under it. `record-effect`
     // is still `running`, so only the effect evidence can refuse here.
     //
-    // THIS LEG IS A PREMIUM-TIER PROOF (wamn-0h0g.20.2). The guard's
+    // THIS LEG IS A PREMIUM-TIER TEST (wamn-0h0g.20.2). The guard's
     // effect-attempt arm is class-gated, so `record-effect` is admitted
     // `durable` above; on the default `standard` class the same run erases its
     // record freely, which is what the leg below asserts and what keeps the
@@ -805,7 +805,7 @@ fn run_state_live() {
     // policy selected the cheap tier, and nothing outside the pair is storable.
     // The pin trigger normally overwrites every supplied class; the
     // superuser-only replica session disables it for this one transaction so
-    // this remains a narrow proof of the independent stored-row CHECK.
+    // this remains a narrow test of the independent stored-row CHECK.
     success(
         &url,
         "BEGIN; SET LOCAL session_replication_role = replica; DO $$ BEGIN \
@@ -845,7 +845,7 @@ fn run_state_live() {
     //
     // EVERY REFUSAL ARM IS PAIRED WITH THE SAME STATEMENT SUCCEEDING IN THE
     // SAME SESSION. Under FORCE RLS a principal matching no policy reads zero
-    // rows in silence, so a lone zero proves nothing; a zero standing beside a
+    // rows in silence, so a lone zero shows nothing; a zero standing beside a
     // one on the same statement and the same connection does. Every arm also
     // asserts the stored row AFTER the statement, never the statement's own
     // exit status.
@@ -1090,7 +1090,7 @@ fn run_state_live() {
 
     // A malformed digest reaches the named CHECK while the old value is NULL;
     // the immutable-record guard owns only rewrites of a digest already recorded.
-    // This leg is last so every behavioral arm above proves out before a malformed
+    // This leg is last so every behavioral arm above shows out before a malformed
     // release record can abort the suite.
     let digest_shape_script = format!(
         "{} \

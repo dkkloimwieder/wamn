@@ -1,6 +1,6 @@
 //! Every guest-invoked host-plugin effect opens a span, from one constructor.
 //!
-//! # What this proves, and why it is a source proof
+//! # What this tests, and why it reads source
 //!
 //! `wamn-0h0g.24.3` put a span over every effect this host performs for a guest:
 //! a DB call, an outbound HTTP request, or a JetStream publish or ack. The
@@ -16,7 +16,7 @@
 //! Exercising the set at runtime is also not available: each of these surfaces
 //! needs the live dependency behind it (a PostgreSQL, a NATS, an origin server)
 //! before it reaches the instrumented await, so a subscriber-capture test would
-//! prove the spans of whichever surfaces the environment happened to provide.
+//! show the spans of whichever surfaces the environment happened to provide.
 //! This reads the source instead and asserts the shape structurally, through
 //! `syn` rather than text matching (the precedent is `effect_provider_revision`).
 //!

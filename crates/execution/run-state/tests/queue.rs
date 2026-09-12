@@ -1,7 +1,7 @@
-//! Pure proofs of the global run queue: the SURVIVING SPINE and, beside it, the
+//! Pure tests of the global run queue: the SURVIVING SPINE and, beside it, the
 //! SHELVED CRASH FLOOR.
 //!
-//! wamn-0h0g.20.4 partitions the live claim proofs into two suites, one per
+//! wamn-0h0g.20.4 partitions the live claim tests into two suites, one per
 //! durability class. Nothing here needs that treatment — every test in this
 //! file is pure, hermetic and free, so there is no fixture to drop and no tier
 //! to gate. The distinction is still worth naming, because it decides what a
@@ -18,12 +18,12 @@
 //!   effect disjunct inside `select_production_claim_sql`'s eligibility
 //!   predicate. Unreachable by default, NOT deleted.
 //! * THE GATE ITSELF — the `the_default_class_*` and `the_class_gate_*` tests,
-//!   which prove exactly that the shelf is closed on the default class and
+//!   which show exactly that the shelf is closed on the default class and
 //!   that closing it changed nothing else.
 //!
 //! A test asserting on both sides is not a filing error: the gate is a
-//! conjunct inside statements the spine also owns, so proving the spine
-//! unchanged and proving the shelf closed is often one assertion apart. The
+//! conjunct inside statements the spine also owns, so showing the spine
+//! unchanged and showing the shelf closed is often one assertion apart. The
 //! live counterparts are `crates/platform/runtime/tests/production_claim_live.rs`
 //! (spine) and `production_claim_durable_live.rs` (shelf).
 

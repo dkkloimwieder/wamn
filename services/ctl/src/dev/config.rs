@@ -256,7 +256,7 @@ impl DevPackageErrorKind {
     }
 }
 
-/// Refusal to resolve a manifest-declared package or prove its built component.
+/// Refusal to resolve a manifest-declared package or verify its built component.
 #[derive(Debug)]
 pub struct DevPackageError {
     kind: DevPackageErrorKind,
@@ -343,7 +343,7 @@ impl DevPackageError {
         self.observed_digest.as_deref()
     }
 
-    /// Complete candidate-root inventory searched for this dependency.
+    /// Complete list of candidate roots searched for this dependency.
     pub fn searched_roots(&self) -> &[PathBuf] {
         &self.searched_roots
     }
@@ -387,7 +387,7 @@ impl Error for DevPackageError {
 
 /// Whether a base component digest that moved off its manifest pin must refuse.
 ///
-/// The pin proves that a durable target carries the exact base component the
+/// The pin shows that a durable target carries the exact base component the
 /// overlay author reviewed. A development run recreates its target before every
 /// run and carries the digest it just built, so the pin has nothing to protect
 /// there, while an author editing a base package would otherwise be stopped
@@ -501,7 +501,7 @@ impl ResolvedBasePackage {
         &self.manifest
     }
 
-    /// Component digest that the base build must prove before Gate or Publish.
+    /// Component digest that the base build must verify before Gate or Publish.
     pub const fn component_digest(&self) -> &BaseComponentDigestExpectation {
         &self.component_digest
     }
@@ -1576,7 +1576,7 @@ fn validate_verification_database(
             "set verification_database_url to a disposable database other than postgres, template0, or template1",
         ));
     }
-    // DNS, IP, and service aliases cannot be proven disjoint here. Refusing a
+    // DNS, IP, and service aliases cannot be shown disjoint here. Refusing a
     // reused name costs naming flexibility; trusting aliases could DROP a
     // protected database when the disposable verification database is reset.
     if protected

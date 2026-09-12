@@ -1,4 +1,4 @@
-//! Armed, disposable-PostgreSQL proof of the actual signing-key lifecycle.
+//! Armed, disposable-PostgreSQL test of the actual signing-key lifecycle.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -519,7 +519,7 @@ async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
         .await
         .expect("connect disposable key database");
-    // One connection is deliberately terminated to prove transaction rollback.
+    // One connection is deliberately terminated to show transaction rollback.
     tokio::spawn(async move {
         let _ = connection.await;
     });

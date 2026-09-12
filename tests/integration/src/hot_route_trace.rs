@@ -161,7 +161,7 @@ mod tests {
         field_of(traceparent, 2)
     }
 
-    /// THE PROOF. Everything before the assertions is fixture.
+    /// THE TEST. Everything before the assertions is fixture.
     ///
     /// The downstream parent is `wamn.component.invoke`, NOT
     /// `wamn.connection_http`: `inject_trace_context` is only-if-absent and the

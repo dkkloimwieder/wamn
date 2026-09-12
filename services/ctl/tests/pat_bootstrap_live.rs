@@ -53,7 +53,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         .ok()
         .expect("provision system authority");
     // The server records the actual inserting login. A direct CLI INSERT must
-    // fail this proof even if it creates an otherwise valid PAT.
+    // fail this test even if it creates an otherwise valid PAT.
     admin
         .batch_execute(
             "CREATE SCHEMA pat_proof; \

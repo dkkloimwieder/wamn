@@ -162,7 +162,7 @@ END $$;
 /// of the gates gating the replication path (the `REPLICATION` attribute, the
 /// walsender protocol, slot ownership). This seeds an environment provisioned
 /// UNDER that old builder and then applies the current one, so the retroactive
-/// `REVOKE` is what the proof turns on — a narrowed grant alone would leave the
+/// `REVOKE` is what the test turns on — a narrowed grant alone would leave the
 /// already-executed blanket grant standing, and every assertion below would pass
 /// on new environments while production stayed wide open.
 #[test]
@@ -194,7 +194,7 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_tenant_tables()
     // An environment provisioned BEFORE the narrowing: a tenant table, the
     // entity map, and the blanket read the old builder granted. Asserted, so a
     // future refactor that silently stops seeding it turns the retroactive
-    // REVOKE proof below vacuous rather than green.
+    // REVOKE test below vacuous rather than green.
     run_ok(
         &db_url,
         &format!(
@@ -216,7 +216,7 @@ fn cdc_role_reads_only_the_classification_maps_and_still_decodes_tenant_tables()
     );
 
     // The publication, the slot, and the REAL current grants builder applied
-    // over that old state — twice, so the retroactive REVOKE is proven
+    // over that old state — twice, so the retroactive REVOKE is shown
     // idempotent rather than a one-shot that strips its own grant on replay.
     let narrow = format!(
         "{publication}\n{slot}\n{grants}\n{grants}\n",

@@ -1,4 +1,4 @@
-//! Live proof for the release-owned router tap (`wamn-0h0g.24.5`).
+//! Live test for the release-owned router tap (`wamn-0h0g.24.5`).
 //!
 //! This is deliberately not an in-memory bridge test. The checked-in
 //! `WAMN_TAP` provisioning must already have run on a disposable NATS, the

@@ -7,7 +7,7 @@
 //! `ExpiredWithAttempt` classification and the `Terminalized` /
 //! `EffectAttempt` results it produces. wamn-0h0g.20.2 made every one of those
 //! unreachable on the class every run carries by default — UNREACHABLE, NOT
-//! DELETED — so the proofs survive verbatim, on the class that pays for them.
+//! DELETED — so the tests survive verbatim, on the class that pays for them.
 //!
 //! EVERY RUN THIS FILE SEEDS IS `durable`, AT ADMISSION. The class is an
 //! admission pin: `wamn_run.guard_run_admission_pins_immutable` names
@@ -17,7 +17,7 @@
 //!
 //! The queue itself — FIFO, SKIP LOCKED, the lease grant, the pre-effect
 //! reclaim, crash-evidence accounting, the janitor, the release record,
-//! park/wake and dequeue — is proven on the DEFAULT tier in
+//! park/wake and dequeue — is shown on the DEFAULT tier in
 //! `production_claim_live.rs`, and none of it is duplicated here.
 
 use std::sync::Arc;

@@ -15,7 +15,7 @@ pub enum ClaimState {
     /// Visible, holding an **expired** lease, and the redelivery budget is spent
     /// (`attempts >= max_attempts`) — the claim path leaves it for the janitor to
     /// retire to `infrastructure-failure`. A budget-spent row with a *released*
-    /// (NULL) lease is NOT `Exhausted`: a NULL lease is proof the last owner
+    /// (NULL) lease is NOT `Exhausted`: a NULL lease shows the last owner
     /// intentionally queue-parked the run (was alive), never crash evidence, so
     /// it is `Ready` and wakes (wamn-fqg.7).
     Exhausted,

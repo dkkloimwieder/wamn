@@ -128,7 +128,7 @@ fn selected_committed_result_survives_arbitrary_success_and_label_enrichment() {
 }
 
 #[test]
-fn malformed_error_and_mixed_envelopes_cannot_prove_commitment() {
+fn malformed_error_and_mixed_envelopes_cannot_report_commitment() {
     let contract = contract();
     let error_item = json!({"request_id": "request-1", "error": {"code": "stale_revision"}});
     for payload in [

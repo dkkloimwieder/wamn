@@ -29,7 +29,7 @@
 //! Rust implementation would be the one drift this construction cannot absorb:
 //! the role name minted by provisioning and the key computed by the predicate
 //! must be the same string, or every guest read refuses. There is exactly one
-//! Rust definition, and the SQL below is proven equal to it by a live test.
+//! Rust definition, and the SQL below is shown equal to it by a live test.
 //!
 //! # Why the database is baked in as a literal
 //!
@@ -118,7 +118,7 @@ const DATABASE_OCTETS_PLACEHOLDER: &str = "@wamn_database_octets@";
 /// ONE TEMPLATE, TWO RENDERINGS. [`authority_derivations_sql`] substitutes a
 /// real database name; [`authority_derivations_bootstrap_sql`] substitutes
 /// placeholders the server fills in at apply time. Sharing the template is not
-/// the proof they agree — a live test applies both and compares the digests
+/// enough to establish agreement — a live test applies both and compares the digests
 /// `pg_get_functiondef` reports.
 ///
 /// `SET search_path = pg_catalog` pins every builtin these bodies call, so
@@ -178,7 +178,7 @@ fn derivations_template(database_literal: &str, database_octets: &str, owner: &s
 /// Idempotent by construction (`CREATE OR REPLACE`, `IF NOT EXISTS`), which is
 /// what lets it converge on `wamn-0h0g.11.49`'s path for existing databases
 /// while `wamn_catalog::CATALOG_SCHEMA_SQL` carries fresh installs. Idempotence is not the
-/// proof, though: the converge arm asserts POST-STATE — the definition digest,
+/// check, though: the converge arm asserts POST-STATE — the definition digest,
 /// the volatility and parallel-safety flags read from `pg_proc`, and exact
 /// grants.
 ///

@@ -1,4 +1,4 @@
-//! Pure target-document proofs; registry freshness and database grants are live proofs.
+//! Pure target-document tests; registry freshness and database grants are live tests.
 
 use std::collections::BTreeSet;
 

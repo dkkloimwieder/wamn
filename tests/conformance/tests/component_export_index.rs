@@ -1,7 +1,7 @@
 //! Cross-component export-index fencing (wamn-0h0g.17.8).
 //!
 //! Native node dispatch resolves the handler export from the current instance.
-//! This proof retains Wasmtime's underlying `ComponentExportIndex` boundary:
+//! This test retains Wasmtime's underlying `ComponentExportIndex` boundary:
 //! an index minted by one compiled component cannot resolve against another
 //! component, even when both export the same name.
 

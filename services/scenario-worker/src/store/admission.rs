@@ -374,7 +374,7 @@ impl AdmissionSurface {
         Ok(surface)
     }
 
-    /// Open, prove and scope one replacement connection.
+    /// Open, verify and scope one replacement connection.
     ///
     /// The probe precedes the scope statement and every admission operation on
     /// every connection, including recovery after the verification database is
@@ -759,9 +759,9 @@ fn decode_component_json<T: DeserializeOwned>(
 
 /// Bind the parsed admission input to the exact facts the server must report.
 ///
-/// [`parse_management_admission_url`] proves everything a PURE function can:
+/// [`parse_management_admission_url`] shows everything a PURE function can:
 /// the input exists, names one database, and authenticates as one of this
-/// `(org, project, environment)`'s two generation roles. What it cannot prove is
+/// `(org, project, environment)`'s two generation roles. What it cannot show is
 /// that the SERVER agrees — that is a fact about the opened session, not about
 /// the input — so `current_user`, `current_database`, the tenant binding, the
 /// stable ACL membership and the granted surface are asserted here instead of
@@ -873,7 +873,7 @@ pub struct GateRequest<'a> {
 /// It is keyed by `wiring_hash` and nothing else: a gate is effect-free, so the
 /// verdict is reproducible from the document and mints no identity of its own.
 /// `wiring_hash` is therefore both the report's key and the report id the
-/// receipt hands back.
+/// result hands back.
 ///
 /// `summary` counts the cases the judged document declares. It records no
 /// per-case verdict, because nothing was executed — the gate judged the

@@ -285,7 +285,7 @@ impl ExpectedCredentialIdentity {
 /// observed session/current user, database, memberships, and ACL. Host/port may
 /// legitimately name a proxy or replica, and PostgreSQL cannot report which
 /// password authenticated a session, so endpoint and password bytes are
-/// intentionally outside the equality proof and never retained here.
+/// intentionally outside the equality comparison and never retained here.
 pub struct CredentialExactnessProbe {
     source: ExplicitCredentialSource,
     expected: ExpectedCredentialIdentity,

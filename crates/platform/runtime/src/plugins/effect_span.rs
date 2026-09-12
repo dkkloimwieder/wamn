@@ -461,7 +461,7 @@ pub(crate) fn record_effect_ms(
     );
 }
 
-/// Span-shape proof support for the surfaces that fill this vocabulary.
+/// Span-shape test support for the surfaces that fill this vocabulary.
 ///
 /// It lives beside the vocabulary and not beside one surface. Every surface
 /// freezes the WHOLE span value as a literal, so a second copy of the reader

@@ -1,10 +1,10 @@
 //! Fixture scaffolding shared by the two production-claim live suites.
 //!
-//! wamn-0h0g.20.4 split the one live claim proof into a SURVIVING SPINE
+//! wamn-0h0g.20.4 split the one live claim test into a SURVIVING SPINE
 //! (`production_claim_live.rs`, the default `standard` class) and a SHELVED
 //! FLOOR (`production_claim_durable_live.rs`, the premium `durable` class).
 //! Both build the identical fixture, so the fixture lives here exactly once and
-//! neither suite can drift into proving a different schema than the other.
+//! neither suite can drift into showing a different schema than the other.
 //!
 //! Rust compiles this module separately into each test binary, so items only
 //! one suite uses are dead in the other; `dead_code` is allowed for that reason
@@ -431,7 +431,7 @@ async fn seed_run_of_class(
 /// crash floor that reads those attempts is class-gated (wamn-0h0g.20.2): on
 /// the default `standard` class the claim takes no advisory fence, reads no
 /// effect snapshot, and never classifies `ExpiredWithAttempt`, so an
-/// effect-uncertain proof seeded `standard` would prove nothing. Saying
+/// effect-uncertain test seeded `standard` would not exercise that class. Saying
 /// `durable` here is what keeps these legs pointed at the tier they belong to.
 pub async fn seed_live_effect_run(
     client: &Client,
@@ -646,7 +646,7 @@ pub struct LiveFixture {
 /// Install the schema, the private effect writer, and the pod identities.
 ///
 /// Both suites call this and neither may vary it: a spine that proved the queue
-/// against a different schema than the shelved floor would prove nothing about
+/// against a different schema than the shelved floor would show nothing about
 /// the floor's removal.
 pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
     let admin = connect(url).await?;

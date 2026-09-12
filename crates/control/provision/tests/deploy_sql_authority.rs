@@ -13,7 +13,7 @@
 //! not at an error. One permissive arm `TO wamn_platform` per relation is what
 //! admits them, and their table grants stay the thing that limits them.
 //!
-//! The proofs apply the authored artifacts and assert the server's answer from
+//! The tests apply the authored artifacts and assert the server's answer from
 //! `pg_policy`, `pg_index`, ACL catalogs, and authenticated sessions.
 //!
 //! ```bash
@@ -95,14 +95,14 @@ const HOST_INJECTED: [&str; 2] = ["wamn_run.operator_run_actions", "wamn_run.run
 ///
 /// The live arm below used to DERIVE its expected member set from the very
 /// function it was measuring, so mutating `is_platform_grain` moved BOTH SIDES
-/// and the assertion stayed true. PROVEN, not suspected: a mutant setting
+/// and the assertion stayed true. SHOWN, not suspected: a mutant setting
 /// `is_platform_grain(Retention)` to false AND removing the matching edge from
 /// `postgres-init.sql` did NOT kill that test. Only the live retention gate saw
 /// the consequence — `reported_one = false`, `old_gone = false`: a SILENT
 /// LOCKOUT WITH EXIT 0.
 ///
 /// That is the tautology shape this branch has paid for before: when every
-/// consumer delegates to one function, a test comparing two of them proves
+/// consumer delegates to one function, a test comparing two of them shows
 /// nothing. The remedy is the same as last time — PIN THE VALUE, and keep one
 /// consumer that does NOT delegate. Admitting or demoting a family now costs one
 /// deliberate edit here, which is the point.
@@ -413,7 +413,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
     );
 
     // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
-    //    composed by the mint, not by hand, so this also proves the digest the
+    //    composed by the mint, not by hand, so this also shows the digest the
     //    provisioner would issue matches the key the predicate computes.
     let guest = workload_generation_role(
         WorkloadRoleFamily::App,
@@ -692,7 +692,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     let retention = platform_probe_retention();
     let writer = effect_writer_probe();
     // `outsider` holds the SAME grants on BOTH relations and NEITHER membership.
-    // Without it a probe read proves only that SELECT was granted, not that an
+    // Without it a probe read shows only that SELECT was granted, not that an
     // arm is what admitted the rows.
     apply(
         &admin,

@@ -1,4 +1,4 @@
-//! PG18 proof that an operator can run `provision-project-env`'s OWN documented
+//! PG18 test that an operator can run `provision-project-env`'s OWN documented
 //! order end to end, and that a prepare which refuses leaves a documented state.
 //!
 //! `wamn-0h0g.12.179`. Every other live arm for the workload lifecycle builds

@@ -1,4 +1,4 @@
-//! Live proof that authorship needs a GREEN gate report for its own hash.
+//! Live test that authorship needs a GREEN gate report for its own hash.
 //!
 //! Two disposable PostgreSQL 18 databases are required, because the fact under
 //! test is not co-resident with the row it guards: `catalog.wirings` is a
@@ -15,7 +15,7 @@
 //!
 //! `wamn-0h0g.8.28`'s rider said the live tests stop seeding
 //! `wamn_run.gate_reports` directly, because a seeded report is a false green
-//! that proves the STEADY STATE and never the FIRST TRANSITION. `record_report`
+//! that shows the STEADY STATE and never the FIRST TRANSITION. `record_report`
 //! below still seeds. `wamn-0h0g.8.29` measured the alternative and ruled this
 //! the honest disposition rather than neglect; the measurement is recorded here
 //! so it is not re-derived and the rider is not re-raised as an unfixed defect.
@@ -28,12 +28,12 @@
 //! that is where the false green actually lived; it is gone. This file seeds the
 //! VERDICT, not the IDENTITY.
 //!
-//! **What this file therefore does NOT prove.** That the gate verb itself ever
+//! **What this file therefore does NOT show.** That the gate verb itself ever
 //! writes a report — the ordering in which a judgment produces the row this test
 //! then reads. Every arm below starts from a report row that exists because this
 //! file inserted it.
 //!
-//! **The test that DOES prove it** is
+//! **The test that DOES show it** is
 //! `management_surface_authenticates_and_attributes_authoring_commands` in
 //! `services/scenario-worker/tests/management_live.rs`. It drives the real gate
 //! command over the management surface and asserts, at the moment a document
@@ -60,8 +60,8 @@
 //! The one cheap route, making `insert_gate_report` reachable in-process, is an
 //! edit to `services/scenario-worker/src/management.rs`.
 //!
-//! So the proof of the first transition stays where the gate verb lives, and
-//! this file proves the other half: that AUTHORSHIP admits a document only under
+//! So the test of the first transition stays where the gate verb lives, and
+//! this file shows the other half: that AUTHORSHIP admits a document only under
 //! a green report keyed to that document's own hash. Those are different claims,
 //! and this one needs no gate run to make.
 
@@ -255,8 +255,8 @@ async fn provision_control(control: &Client) {
 /// deliberately (`wamn-0h0g.8.29`).** `wiring_hash` is always
 /// `document.wiring_hash()` — derived from the bytes, never a literal — so what
 /// is seeded is the VERDICT, not the IDENTITY. The consequence is that no arm
-/// below proves the gate verb ever WRITES a report; the module header names the
-/// test that does and the measured cost of moving that proof here.
+/// below shows the gate verb ever WRITES a report; the module header names the
+/// test that does and the measured cost of moving that test here.
 async fn record_report(control: &Client, wiring_hash: &DefinitionHash, passed: bool) {
     control
         .execute(

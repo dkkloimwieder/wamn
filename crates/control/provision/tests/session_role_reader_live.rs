@@ -2,7 +2,7 @@
 //!
 //! Arm WAMN_SESSION_ROLE_READER_PG_URL naming wamn_session_role_reader_proof and
 //! WAMN_SESSION_ROLE_READER_ALLOW_SCHEMA_RESET=1. Use a fresh owned cluster: this
-//! proof resets its four project schemas and named fixture roles, and revokes
+//! test resets its four project schemas and named fixture roles, and revokes
 //! the cluster's PUBLIC CONNECT floor. It never connects to a deployed database.
 
 use std::io::Write as _;

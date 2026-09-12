@@ -1,11 +1,11 @@
 //! THE SURVIVING SPINE of the production claim, live on the DEFAULT tier.
 //!
-//! wamn-0h0g.20.4. Every proof here runs on the `standard` durability class —
+//! wamn-0h0g.20.4. Every test here runs on the `standard` durability class —
 //! the class every admitted run carries unless it asks otherwise
 //! (`deploy/sql/run-state.sql`, `durability_class ... DEFAULT 'standard'`).
 //! FIFO, SKIP LOCKED, the lease grant, the pre-effect reclaim, crash-evidence
 //! accounting, the janitor, the claim-time release record, park/wake and
-//! dequeue are all proven here, and NONE of them writes an effect attempt.
+//! dequeue are all shown here, and NONE of them writes an effect attempt.
 //! That is the point: this file is the green signal that the crash floor
 //! wamn-0h0g.20.2 shelved carried none of the queue with it.
 //!
@@ -421,7 +421,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_terminal_status_dequeued(admin, "grant-refused", "infrastructure-failure").await?;
 
     // ---- the default class ignores a POPULATED effect ledger (wamn-0h0g.20.2,
-    // proven live by wamn-0h0g.20.4) ----------------------------------------
+    // shown live by wamn-0h0g.20.4) ----------------------------------------
     //
     // This is the one leg that seeds an effect attempt on this tier, and it
     // seeds it precisely to show the claim path does not act on it. The run is
@@ -502,7 +502,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     assert_terminal_status_dequeued(admin, "standard-ledger", "infrastructure-failure").await?;
 
     // ---- the claim-time manifest record (wamn-0h0g.15.11, carrying the two
-    // surviving proof legs of the superseded wamn-0h0g.4.14) -----------------
+    // surviving test legs of the superseded wamn-0h0g.4.14) -----------------
     //
     // Admission pins the effective release. The matching pod records only its
     // verified manifest digest; it never rewrites that release identity.

@@ -119,7 +119,7 @@ pub fn build_engine_with_socket_policy(
 /// Build the platform engine with this host group's native memory budgets.
 ///
 /// Serving deployables pass their resolved [`HostMemoryBudgets`]. Component
-/// admission, benches, and proofs use [`build_engine`] and the compiled
+/// admission, benches, and tests use [`build_engine`] and the compiled
 /// defaults because their subject is the artifact, not host capacity.
 pub fn build_engine_with_host_memory(
     proposals: &[WasmProposal],

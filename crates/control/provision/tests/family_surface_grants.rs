@@ -1,8 +1,8 @@
-//! Live proof that the executor-platform, event-materializer, and callable-HTTP
+//! Live test that the executor-platform, event-materializer, and callable-HTTP
 //! admitter families
 //! hold EXACTLY their measured production surfaces (`wamn-0h0g.22.37`).
 //!
-//! The proof is the SERVER'S OWN ANSWER — `aclexplode` over `pg_class.relacl`,
+//! The test reads the SERVER'S OWN ANSWER — `aclexplode` over `pg_class.relacl`,
 //! `pg_attribute.attacl`, `pg_namespace.nspacl` and `pg_proc.proacl`, plus
 //! `has_schema_privilege` / `has_table_privilege` / `has_function_privilege` —
 //! never the text of a statement. This crate EMITS that text, so a text
@@ -13,7 +13,7 @@
 //! Every denial is measured from a session authenticated AS the family's own
 //! generation login, and that session first asserts it is neither `rolsuper`
 //! nor `rolbypassrls` — a superuser fixture satisfies every probe below while
-//! proving nothing.
+//! showing nothing.
 //!
 //! # The column-exactness arm
 //!
@@ -477,7 +477,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     // --- 1. THE WHOLE ACL, BY EQUALITY --------------------------------------
     //
     // This is also the ONLY place the `require_executor_platform_authority`
-    // EXECUTE is provable. `deploy/sql/run-state.sql` never revokes PUBLIC on
+    // EXECUTE is testable. `deploy/sql/run-state.sql` never revokes PUBLIC on
     // that guard, so `has_function_privilege` answers TRUE for every role in the
     // cluster and a probe over it would pass with the grant deleted. The
     // `routine|wamn_run|require_executor_platform_authority|EXECUTE` row below
@@ -583,7 +583,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     );
     // COLUMN GRAIN, from the server, both ways. `has_column_privilege` answers
     // TRUE for a column reachable through a TABLE-level grant, so the FALSE arms
-    // are what prove the UPDATE never became blanket.
+    // are what show the UPDATE never became blanket.
     for column in sql::EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS {
         probes.push_str(&format!(
             "  ASSERT has_column_privilege(r, 'wamn_run.runs', '{column}', 'UPDATE'), \

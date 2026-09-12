@@ -344,7 +344,7 @@ fn compile_input_schema(hash: &str, schema: Value) -> InputSchemaValidator {
     }
 }
 
-/// Host-owned proof of an originating caller and its exact operation grants.
+/// Host-owned record of an originating caller and its exact operation grants.
 ///
 /// The guest can hold only the resource handle. It cannot construct this value,
 /// inspect the grant set, or replace the principal while forwarding it to router
@@ -379,7 +379,7 @@ impl std::fmt::Debug for AuthenticatedCaller {
 }
 
 impl AuthenticatedCaller {
-    /// Return the immutable attachment identity whose policy minted this proof.
+    /// Return the immutable attachment identity whose policy produced this caller record.
     pub fn attachment_id(&self) -> &str {
         &self.attachment_id
     }
@@ -740,7 +740,7 @@ impl FlowHttpRouting {
         })
     }
 
-    /// Exercise production route authentication from an integration proof.
+    /// Exercise production route authentication from an integration test.
     #[cfg(feature = "test-util")]
     pub async fn authenticate_authorization_for_test(
         &self,
@@ -762,7 +762,7 @@ impl FlowHttpRouting {
 
 /// Every candidate the adapter could select for this request.
 ///
-/// Free of `self` and of the loaded release so the projection can be proven against a
+/// Free of `self` and of the loaded release so the projection can be shown against a
 /// manifest fixture without a mount.
 fn route_definitions(
     manifest: &ServingManifest,

@@ -29,7 +29,7 @@ pub struct ComponentImports {
 }
 
 impl ComponentImports {
-    /// Build an import inventory without reordering or normalizing wire names.
+    /// Build an import list without reordering or normalizing wire names.
     pub fn new(names: impl IntoIterator<Item = String>) -> Self {
         Self {
             names: names.into_iter().collect(),
@@ -54,7 +54,7 @@ pub enum PolicyProfile {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PolicyReport;
 
-/// Analyze one first-party component import inventory.
+/// Analyze one first-party component import list.
 pub fn analyze(
     imports: &ComponentImports,
     _profile: PolicyProfile,
@@ -204,7 +204,7 @@ pub fn import_posture(import_name: &str) -> Option<Posture> {
 
 /// The exact version of a full import name.
 ///
-/// Import names carry the version last in both shapes an inventory contains —
+/// Import names carry the version last in both shapes an import list contains —
 /// `wamn:postgres/client@0.1.0` (an interface) and `wasi:clocks@0.2.12` (a bare
 /// package) — so the last `@` separates it. `None` for an unversioned name,
 /// which the registry then refuses.
@@ -215,7 +215,7 @@ pub fn import_version(import_name: &str) -> Option<&str> {
         .filter(|version| !version.is_empty())
 }
 
-/// Stable classification for a refused tenant import inventory.
+/// Stable classification for a refused tenant import list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TenantImportErrorKind {
     InvalidPlatformCapability,
@@ -497,7 +497,7 @@ mod tests {
 
         assert!(analyze_tenant(&imports, &admitted, "tenant-node").is_ok());
 
-        // Same inventory, one version off: refused.
+        // Same import list, one version off: refused.
         let drifted = ComponentImports::new(["wasi:io/streams@0.2.9".to_string()]);
         let error = analyze_tenant(&drifted, &admitted, "tenant-node")
             .expect_err("a drifted WASI version must refuse");

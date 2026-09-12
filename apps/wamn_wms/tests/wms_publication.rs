@@ -1,6 +1,6 @@
 //! Semantic gate for the package-owned WMS publication inputs.
 //!
-//! The same proof `receiving_publication` makes, for the second package. It is
+//! The same test `receiving_publication` makes, for the second package. It is
 //! written rather than generalized: two packages is where a shape starts to
 //! look reusable, and the toolkit-promotion rule says the third is where it is
 //! promoted, not the second.

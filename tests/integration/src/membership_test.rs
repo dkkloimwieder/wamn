@@ -1,4 +1,4 @@
-//! Prove human membership and permission revocation through the deployed Receiving HTTP route.
+//! Show human membership and permission revocation through the deployed Receiving HTTP route.
 //!
 //! The caller supplies an already provisioned disposable Receiving fixture.
 //! Only this run's new identity, PAT, tenant user, and role are created and removed.
@@ -49,7 +49,7 @@ pub struct MembershipTestArgs {
     #[arg(long)]
     pub tenant: String,
     /// Seed a disposable human benchmark fixture and write its PAT to a new mode-0600 file.
-    /// The journey teardown owns these retained facts; this mode runs no HTTP proof.
+    /// The journey teardown owns these retained facts; this mode runs no HTTP test.
     #[arg(long)]
     pub throughput_pat_file: Option<PathBuf>,
 }

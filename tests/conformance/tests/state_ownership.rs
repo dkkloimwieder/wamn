@@ -576,7 +576,7 @@ fn is_registered_in_plane(manifest: &Manifest, id: &str, plane: &str) -> bool {
 /// `standard-nodes-raw-sql` - a principal the tests invented, naming a crate the
 /// flow demolition removed - so once the manifest held no temporary writer at
 /// all they failed on `unknown principal` before reaching the rule at all. A
-/// proof of a rule over an empty set, keyed to a name that never existed, is
+/// test of a rule over an empty set, keyed to a name that never existed, is
 /// dead-subject coverage.
 ///
 /// THE RULE BELOW IS LIVE AND ENFORCED. The trigger for a real test is the first
@@ -1021,7 +1021,7 @@ fn is_excluded(path: &str, exclusions: &[ScanExclusion]) -> bool {
 /// [`production_rust_source`] sees one file at a time, so it strips a
 /// `#[cfg(test)] mod tests` block but cannot know that a whole FILE is test
 /// source because the `mod` declaration naming it is gated in its parent. That
-/// blind spot is how a proof fixture's seeding INSERT came to demand a
+/// blind spot is how a test fixture's seeding INSERT came to demand a
 /// declared production writer (`wamn-p3lf`). Recurses, because a module under a
 /// test-gated module is test source too.
 fn is_test_gated_module(repository: &Path, relative: &str) -> bool {
@@ -1891,10 +1891,10 @@ fn conflicting_second_migration_owner_is_rejected() {
     assert!(error.contains("exactly one migration owner"), "{error}");
 }
 
-/// The rule this proves had exactly one witness, `wamn_run.flows`, and that
+/// The rule this shows had exactly one witness, `wamn_run.flows`, and that
 /// relation was deleted by `wamn-0h0g.12.102`. `writers: []` still licenses
 /// author ownership **or** a completed retirement, never both, so the positive
-/// arm is proven against a constructed retirement.
+/// arm is shown against a constructed retirement.
 #[test]
 fn a_retired_relation_may_have_no_static_writer_when_it_names_its_successor() {
     let repository = repository();
@@ -2022,7 +2022,7 @@ fn an_active_relation_cannot_hold_a_forwarding_address() {
 
 /// Synthesizes a completed retirement for the probes below to break one arm of.
 /// The manifest's `retired` population is empty by the decay clause, so the rule
-/// is proven against a constructed retirement rather than a parked relation.
+/// is shown against a constructed retirement rather than a parked relation.
 fn retired_relation(manifest: &mut Manifest) -> &mut Ownership {
     let ownership = &mut manifest
         .objects
@@ -2131,7 +2131,7 @@ fn producer_side_direct_run_admission_is_rejected() {
 }
 
 #[test]
-fn trigger_event_declarations_are_not_inventoried_as_writes() {
+fn trigger_event_declarations_are_not_listed_as_writes() {
     let discoveries = discover_writes(
         "deploy/sql/catalog-schema.sql",
         1,
@@ -2275,7 +2275,7 @@ fn english_prose_context_is_not_an_update() {
 }
 
 #[test]
-fn interpolated_set_clause_still_inventories_the_update() {
+fn interpolated_set_clause_still_lists_the_update() {
     let discoveries = discover_writes(
         "crates/execution/run-state/src/queue/sql.rs",
         154,
@@ -2419,7 +2419,7 @@ fn forgeable_claim_reads(sql: &str) -> Vec<(&'static str, String)> {
 #[test]
 fn app_role_and_app_user_id_have_no_production_reader_while_the_claim_escape_is_open() {
     // A fence that has quietly stopped matching is the failure this one exists
-    // to prevent, so prove the discrimination before trusting the scan.
+    // to prevent, so show the discrimination before trusting the scan.
     assert!(
         forgeable_claim_reads(
             "select set_config('app.role', $5, true), set_config('app.user_id', $6, true)"

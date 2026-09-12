@@ -948,7 +948,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
     assert_eq!(user.as_deref(), Some(user_id));
 
     // COMMIT (the one_shot success path): a `set_config(is_local => true)`
-    // claim reverts even across a commit — proving it is truly LOCAL, not a
+    // claim reverts even across a commit — showing it is truly LOCAL, not a
     // session-level leak.
     conn.batch_execute("COMMIT").await.unwrap();
     let after: Option<String> = conn
@@ -957,7 +957,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
         .unwrap()
         .get(0);
     // `app.role` IS injected by the guest set, so after the commit it reads
-    // back as the empty string — the reset value, which is what proves the
+    // back as the empty string — the reset value, which is what shows the
     // claim was transaction-LOCAL rather than a session-level leak.
     assert_eq!(after.as_deref(), Some(""));
 }
@@ -977,7 +977,7 @@ async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
 /// those are built by the provisioner, which the shipped runtime
 /// deliberately does not link. The floor is not this fixture's subject: the
 /// RESTRICTIVE per-role and per-user layer is, and that is a different claim
-/// class item 2 leaves alone. The production floor is proven live by
+/// class item 2 leaves alone. The production floor is shown live by
 /// `crates/control/provision/tests/deploy_sql_authority.rs` and the static
 /// `deploy/sql/app-schema.sql` contract.
 ///
@@ -1108,7 +1108,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
 // claim already carries and it is GUC-agnostic, so it covers these the moment
 // they exist — but coverage that is never exercised is not coverage, and a
 // binding WITHOUT refusal turns a silent-deny bug into privilege escalation.
-// The CONTROL below proves the escalation is real, so the refusal that
+// The CONTROL below shows the escalation is real, so the refusal that
 // follows is load-bearing rather than vacuous.
 #[tokio::test]
 async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
@@ -1366,7 +1366,7 @@ async fn effect_snapshot_refuses_a_component_with_no_bound_tenant() {
 /// A provider that RECORDS which authority class each resolution was asked
 /// for, and names no credential for any of them.
 ///
-/// `Ok(None)` is what keeps the proof hermetic: `ensure_pool` refuses on the
+/// `Ok(None)` is what keeps the test hermetic: `ensure_pool` refuses on the
 /// spot, so the class under test is observed with no pool built and no socket
 /// opened.
 #[derive(Default)]
@@ -1577,11 +1577,11 @@ fn two_tenant_rls_fixture_sql(
 
 /// *** THE ADVERSARIAL ARM, RE-EXPRESSED ON THE NEW MECHANISM. ***
 ///
-/// This test used to prove that two interleaved CLAIM sets each saw only
+/// This test used to show that two interleaved CLAIM sets each saw only
 /// their own rows. That subject is retired: after `wamn-0h0g.22.6` a guest's
 /// tenant is its LOGIN, and under the owner ruling on `wamn-0h0g.22.6.7` a
 /// host holds ONE guest credential per project-environment. So the property
-/// worth proving is stronger and simpler — a second tenant is REFUSED rather
+/// worth showing is stronger and simpler — a second tenant is REFUSED rather
 /// than quietly served the credential the host does hold.
 ///
 /// The logins are NOSUPERUSER NOBYPASSRLS, so the server cannot be talked
@@ -1697,7 +1697,7 @@ async fn live_a_second_tenant_is_refused_rather_than_served_the_first_tenants_ro
 }
 
 // R18 — the post_create hook runs on connect; a successful checkout from the
-// pool proves the assertion passed on this server (stock PG18 = on).
+// pool shows the assertion passed on this server (stock PG18 = on).
 #[tokio::test]
 async fn live_connect_asserts_standard_conforming_strings() {
     let Some(admin_url) = test_pg_url() else {
@@ -1858,7 +1858,7 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
 
 // R18-neg (wamn-2jkm.65) — the fail-CLOSED branch, exercised against a REAL
 // server booted with standard_conforming_strings=off. The positive above
-// proves the hook passes on a stock server; this proves it REJECTS an unsafe
+// shows the hook passes on a stock server; this shows it REJECTS an unsafe
 // one and that the guest sees `connection-unavailable`. Gated on a SEPARATE
 // url (WAMN_SCS_OFF_PG_URL) so it never runs against the stock test server;
 // skipped LOUDLY when unset. Recipe: docs/operations/build-and-test.md [R18-NEG].
@@ -1876,7 +1876,7 @@ async fn live_scs_off_server_fails_checkout_closed() {
     // CONTROL: the server must be REACHABLE and genuinely report scs=off, so
     // the checkout failure below is the HOOK rejecting a live server, not a
     // dead url or a network-level connect failure. A raw connect that returns
-    // "off" proves both — and if the url were dead this connect would panic,
+    // "off" shows both — and if the url were dead this connect would panic,
     // so the test cannot false-pass against a server-down url.
     let raw = connect_raw(&url).await;
     let scs: String = raw
@@ -1950,7 +1950,7 @@ async fn live_scs_off_server_fails_checkout_closed() {
 }
 
 // ------------------------------------------------------------------
-// wamn-0h0g.17.33 — the pipelined claim flight, and its proof obligation.
+// wamn-0h0g.17.33 — the pipelined claim flight, and its test obligation.
 // ------------------------------------------------------------------
 
 /// The fixture a cold-parse check needs: a schema the session's own

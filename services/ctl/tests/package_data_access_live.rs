@@ -1,4 +1,4 @@
-//! Disposable-PG18 proof for installed-set generated data authority.
+//! Disposable-PG18 test for installed-set generated data authority.
 
 mod support;
 
@@ -227,7 +227,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .expect("seed direct ACL residue");
     // Negative controls. The admin role mints three relations in the
     // package-owned schema that no package declares, one of each carrier the
-    // sweep reads, and grants the App role authority on each. Proving the
+    // sweep reads, and grants the App role authority on each. Showing the
     // absence of authority afterwards needs a relation that no package speaks
     // for. Every declared relation fails that test by construction.
     admin
@@ -339,7 +339,7 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
     );
     // The arm used to name receiving.item, which both packages declare and whose
     // select fields carry id. It asserted that a declared read fails. The subject
-    // is now a relation no package declares, so the arm proves the absence of
+    // is now a relation no package declares, so the arm shows the absence of
     // authority instead of fabricating it.
     for unconsumed in [
         "SELECT id FROM receiving.unconsumed_relation",

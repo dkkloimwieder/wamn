@@ -1,4 +1,4 @@
-//! Optional real-PostgreSQL proof for the personal-access-token presenter.
+//! Optional real-PostgreSQL test for the personal-access-token presenter.
 
 use std::time::Duration;
 

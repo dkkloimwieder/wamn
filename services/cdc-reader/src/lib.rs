@@ -526,7 +526,7 @@ struct Registration {
 }
 
 async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registration> {
-    // Settled PURELY and FIRST: the credential is proven to be this project-env's
+    // Settled PURELY and FIRST: the credential is shown to be this project-env's
     // own registry-reader generation before a socket is opened. The accepted
     // value is deliberately discarded — this call exists to fix the ORDER, so a
     // mis-scoped or over-wide Secret refuses here instead of connecting with it.
@@ -1688,7 +1688,7 @@ mod tests {
     }
 
     /// Its own scoped generation, conversely, passes the pure gate and only
-    /// then fails on the connection — which is what proves the gate is a
+    /// then fails on the connection — which is what shows the gate is a
     /// PREDICATE on the credential and not a blanket refusal.
     #[tokio::test]
     async fn the_registration_read_accepts_its_own_generation_and_then_connects() {
@@ -1766,7 +1766,7 @@ mod tests {
 
     #[test]
     fn relation_classification_lookup_is_by_oid_in_the_event_schema() {
-        // The pinned lookup: OID-keyed (rename-proof, timeless under
+        // The pinned lookup: OID-keyed (stable across renames and during
         // catch-up), qualified by the EVENT's schema — the map lives beside
         // the tables it describes, so no registry column is needed.
         assert_eq!(
@@ -2304,7 +2304,7 @@ mod tests {
 
     /// E1 LIVE gate (env-gated, LOCAL): drive the REAL `JsPublisher` pipeline
     /// against a throwaway JetStream (`docker run -d nats:2 -js`). Set
-    /// `WAMN_E1_NATS_URL`; skipped cleanly when unset. Proves the pipelined
+    /// `WAMN_E1_NATS_URL`; skipped cleanly when unset. Shows the pipelined
     /// publish lands every message, IN ORDER (stream seq == publish order), and
     /// that a re-publish of the same `Nats-Msg-Id`s deduplicates. Uses > 256
     /// messages so a real mid-transaction drain is exercised.
@@ -2382,7 +2382,7 @@ mod tests {
         assert_eq!(tally.published, N, "every message acked");
         assert_eq!(tally.deduped, 0, "first publish deduplicates nothing");
 
-        // Read the stream back in stored order and prove it equals publish order.
+        // Read the stream back in stored order and show it equals publish order.
         let consumer = stream
             .create_consumer(PullConfig {
                 deliver_policy: DeliverPolicy::All,

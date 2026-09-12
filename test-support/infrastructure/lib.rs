@@ -1,6 +1,6 @@
-//! Repository-only temporary services and proof adapters.
+//! Repository-only temporary services and test adapters.
 //!
-//! MVP outcome: proof floor.
+//! MVP outcome: test coverage.
 
 pub mod ctl_process;
 pub mod declarations;

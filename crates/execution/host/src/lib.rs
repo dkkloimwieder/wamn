@@ -18,7 +18,7 @@ pub use router_driver::{
 };
 
 /// Exercise the production attachment resolver and registered-operation guard
-/// from an integration proof.
+/// from an integration test.
 #[cfg(feature = "test-util")]
 pub fn authorize_attachment_for_test(
     release: &wamn_runtime::release_manifest::LoadedRelease,

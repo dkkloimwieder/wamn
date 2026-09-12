@@ -223,7 +223,7 @@ pub(super) async fn invoke_native(
             })
             .await
         {
-            // Only host policy writes this request-owned receipt, before it
+            // Only host policy writes this request-owned error, before it
             // traps. Guest text cannot supply an error's Rust classification.
             let host_error = failure
                 .lock()

@@ -36,9 +36,9 @@ const GOVERNED_JSON_SCHEMAS: &[GovernedJsonSchema] = &[
     },
 ];
 
-// This is deliberately an inventory of positive definitions, not a repository-wide
+// This is deliberately a list of positive definitions, not a repository-wide
 // search for version-looking text. Upstream identities and refusal/mutation fixtures
-// must remain free to carry the foreign versions they prove are rejected.
+// must remain free to carry the foreign versions they show are rejected.
 const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     GovernedLiteral {
         path: "crates/authoring/model/src/lib.rs",

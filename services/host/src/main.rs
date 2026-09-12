@@ -10,7 +10,7 @@
 //! dump/restore/copy-project-env, enable-cdc-project-env) live in `wamn-ctl`
 //! (SR9); this artifact ships none of them.
 //!
-//! The proof suite lives in the separate
+//! The test suite lives in the separate
 //! `wamn-gates` binary (docs/operations/build-and-test.md); this artifact ships
 //! none of it.
 

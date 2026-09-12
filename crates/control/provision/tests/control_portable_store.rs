@@ -1,4 +1,4 @@
-//! PostgreSQL 18 proofs for the control portable package/release store.
+//! PostgreSQL 18 tests for the control portable package/release store.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};

@@ -27,7 +27,7 @@ use crate::push_release_manifest::select_snapshot;
 
 /// The repository name both release-carrying workloads read.
 const ARTIFACT_BASE_ENV: &str = "WAMN_RELEASE_ARTIFACT_BASE";
-/// The welded manifest digest both release-carrying workloads read.
+/// The fixed manifest digest both release-carrying workloads read.
 const MANIFEST_DIGEST_ENV: &str = "WAMN_RELEASE_MANIFEST_DIGEST";
 
 /// The executor's carrier: `env:` entries on its Deployment container.

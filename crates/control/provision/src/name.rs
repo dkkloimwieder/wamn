@@ -52,7 +52,7 @@ pub const DB_OWNER_ROLE: &str = "wamn_db_owner";
 /// the read to every tenant in the database for no gain.
 ///
 /// Deliberately **`NOINHERIT` with zero memberships**: this role's authority is
-/// only what is granted to it directly, so the grant inventory is the whole
+/// only what is granted to it directly, so the grant list is the whole
 /// story.
 pub const DISPATCH_READER_ROLE: &str = "wamn_dispatch_reader";
 
@@ -931,7 +931,7 @@ mod tests {
         }
         // The `--` slugs (2 of 6 org/project values) are filtered by the ban, so
         // exactly the 4 hyphen-run-free slugs survive per id position × 3 envs.
-        // The count being BELOW the full product proves the filter actually ran.
+        // The count being BELOW the full product shows the filter actually ran.
         assert!(
             valid < slugs.len() * slugs.len() * envs.len(),
             "the `--` filter ran"

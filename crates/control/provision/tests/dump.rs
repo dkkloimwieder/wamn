@@ -1,10 +1,10 @@
 //! Live round-trip gate for the per-project-env dump ARTIFACT (wamn-q3n.10).
 //!
-//! The essential proof (Q2, substrate-agnostic): the `pg_dump -Fd` artifact the
+//! The essential test (Q2, substrate-agnostic): the `pg_dump -Fd` artifact the
 //! renderer schedules is **valid and restorable** — seed a database, dump it with
 //! the REAL [`wamn_control_provision::pg_dump_argv`] builder, `pg_restore` into a scratch
 //! database, and assert the seeded rows survive the round-trip. One artifact
-//! serves restore-to-last-dump AND the 10.3 export; this proves it restores.
+//! serves restore-to-last-dump AND the 10.3 export; this shows it restores.
 //!
 //! Set `WAMN_DUMP_PG_URL` to a **superuser** URL (it CREATEs/DROPs two throwaway
 //! databases); skipped cleanly when unset or when the `pg_dump`/`pg_restore`/`psql`
@@ -47,7 +47,7 @@ fn dump_round_trips_a_seeded_database() {
     }
 
     // Seed the source with a table carrying an exact-decimal column (the no-float
-    // rule) so the round-trip proves value fidelity, not just row count.
+    // rule) so the round-trip shows value fidelity, not just row count.
     run_psql(
         &src,
         "CREATE TABLE widgets (id int PRIMARY KEY, name text, qty numeric(6,2)); \
@@ -63,7 +63,7 @@ fn dump_round_trips_a_seeded_database() {
         .status()
         .expect("spawn pg_dump");
     assert!(status.success(), "pg_dump failed ({status})");
-    // A -Fd (directory) dump is a directory with a toc.dat — proves the format live.
+    // A -Fd (directory) dump is a directory with a toc.dat — shows the format live.
     assert!(
         dump_dir.join("toc.dat").exists(),
         "pg_dump -Fd must produce a directory-format artifact (toc.dat)"

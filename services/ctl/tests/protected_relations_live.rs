@@ -289,7 +289,7 @@ async fn install_control_database(client: &Client) {
         .batch_execute(&grant_identity_issuer_surface_sql())
         .await
         .expect("install canonical identity issuer key-table authority");
-    // The mutation inventory intentionally omits SELECT. Prove it here along
+    // The mutation list intentionally omits SELECT. Check it here along
     // with the absence of TRUNCATE before deriving the real catalog ACL rows.
     for table in IDENTITY_ISSUER_TABLES {
         let relation = format!("identity.{table}");
@@ -347,7 +347,7 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
     // R55 (wamn-0h0g.12.177). The install above is the FRESH path — the control
     // schemas were dropped a few lines up, so every convergence arm sits behind a
     // presence probe that is false. The rows this file generates are read off the
-    // reconciled database, so the reconciler must be proven CONVERGED and not
+    // reconciled database, so the reconciler must be shown CONVERGED and not
     // merely exited-zero: a second pass over the same database plans nothing.
     let converged = reconcile_run_plane::reconcile(client, &schema, true)
         .await
@@ -522,7 +522,7 @@ async fn portable_fingerprints(
 /// Column NAMES of one fingerprint, in catalog order.
 ///
 /// The raw fingerprint entries lead with `attnum`, which shifts for every column
-/// after an inserted one, so a divergence proof has to compare names rather than
+/// after an inserted one, so a divergence test has to compare names rather than
 /// those strings.
 fn column_names(fingerprint: &PortableFingerprint) -> Vec<String> {
     fingerprint
@@ -538,7 +538,7 @@ fn column_names(fingerprint: &PortableFingerprint) -> Vec<String> {
         .collect()
 }
 
-/// Prove the control copy is the project copy plus exactly one key column.
+/// Show the control copy is the project copy plus exactly one key column.
 ///
 /// This is the narrowed successor to the cross-plane equality
 /// [`DIVERGED_PORTABLE_RELATIONS`] documents. Both copies must exist, and the

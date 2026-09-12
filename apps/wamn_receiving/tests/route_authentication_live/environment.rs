@@ -748,7 +748,7 @@ pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Re
 }
 
 // Distinct route-only approval precondition. This fixture does not claim that
-// CDC or a materializer created the inspection; `.15.25.4` owns that proof.
+// CDC or a materializer created the inspection; `.15.25.4` owns that test.
 pub(super) async fn seed_preexisting_quality_fixture(project: &Client) -> anyhow::Result<()> {
     project
         .batch_execute(

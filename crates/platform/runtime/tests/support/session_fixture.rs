@@ -1,4 +1,4 @@
-//! Local HTTPS and fixed signing fixtures shared by session proofs.
+//! Local HTTPS and fixed signing fixtures shared by session tests.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

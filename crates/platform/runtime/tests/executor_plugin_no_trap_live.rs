@@ -1,4 +1,4 @@
-//! Runtime proof of the no-trap discipline for the executor-sandbox plugins
+//! Runtime test of the no-trap discipline for the executor-sandbox plugins
 //! (`wamn-0h0g.15.53`).
 //!
 //! # Why this exists
@@ -43,11 +43,11 @@
 //! - trail `[MARK_ENTER]` plus an `Err` from the guest call ⇒ the host
 //!   propagated at the wasmtime level. A TRAP. Every test here fails.
 //! - a result discriminant of `0` ⇒ the host returned `Ok`, i.e. the error path
-//!   was never reached and the test proves nothing. Asserted against
+//!   was never reached and the test shows nothing. Asserted against
 //!   POSITIVELY, so this fails too.
 //!
-//! For the plugin whose WIT declares no error channel the trail proves
-//! survival and a plugin-owned public observation proves the host path actually
+//! For the plugin whose WIT declares no error channel the trail shows
+//! survival and a plugin-owned public observation shows the host path actually
 //! ran.
 
 use std::collections::HashMap;
@@ -67,7 +67,7 @@ use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker};
 
 /// Pushed by every guest immediately BEFORE the plugin call. Its presence
-/// proves the guest reached the call site; a trail containing only this proves
+/// shows the guest reached the call site; a trail containing only this shows
 /// the host trapped instead of returning.
 const MARK_ENTER: u32 = 238;
 

@@ -2,7 +2,7 @@
 //! DATA-PLANE NATS (D19 v3 §5/§7 Phase 1; wamn-l5i9.7 [EVT-NATS]).
 //!
 //! Unlike the throughput ceiling campaigns, this
-//! is a pass/fail GATE: it proves the JetStream substrate the CDC reader
+//! is a pass/fail GATE: it shows the JetStream substrate the CDC reader
 //! (l5i9.10) publishes onto and the materializer (l5i9.17) consumes from behaves
 //! to the v3 contract, on the dedicated data-plane cluster (deploy/nats-
 //! jetstream.yaml), leaving the control-plane/doorbell NATS untouched.
@@ -17,7 +17,7 @@
 //!   * **consume in commit order** — a pull consumer drains every message, each
 //!     carrying its Nats-Msg-Id header, delivered in stream order == the LSN
 //!     order they were published (stronger than the retired outbox's per-project seq);
-//!   * **R3 survives node loss** — proven two ways: a self-contained RAFT
+//!   * **R3 survives node loss** — shown two ways: a self-contained RAFT
 //!     leader step-down + re-election (`--mode all`), and a physical pod
 //!     deletion (the two-step `publish` → `kubectl delete pod` → `heal`
 //!     historical runbook). The repository recipe remains, while its Job is
@@ -136,7 +136,7 @@ fn event(args: &StreamBenchArgs, i: usize) -> (String, u64, String, Bytes) {
     let subject = subject(&args.org, &args.project, &args.env, entity, op);
     let msg_id = msg_id(&args.project, &args.env, lsn);
     // A synthetic `new` image — the substrate gate asserts on lsn / subject /
-    // Nats-Msg-Id, not on row contents; the frozen envelope keeps it drift-proof.
+    // Nats-Msg-Id, not on row contents; the frozen envelope prevents format drift.
     let mut new = serde_json::Map::new();
     new.insert("id".into(), serde_json::Value::String(i.to_string()));
     let env = Envelope {
@@ -305,7 +305,7 @@ async fn stream_state(
     Ok((info.state.messages, leader, peers, info.config.num_replicas))
 }
 
-/// Publish N events, then re-publish them all (same Nats-Msg-Ids) and prove the
+/// Publish N events, then re-publish them all (same Nats-Msg-Ids) and show the
 /// stream did not grow — dedupe holds across the batch.
 async fn publish_phase(
     js: &async_nats::jetstream::Context,
@@ -491,7 +491,7 @@ async fn consume_phase(
     // R1 in-memory: the consumer is transient bookkeeping; the durability
     // guarantee lives on the R3 stream. Forcing R1 lets the heal-mode drain
     // succeed while a node is still down (a fresh R3 consumer can't place 3
-    // replicas during the outage — and it need not, to prove the data survived).
+    // replicas during the outage — and it need not, to show the data survived).
     let cfg = PullConfig {
         deliver_policy: DeliverPolicy::All,
         ack_policy: AckPolicy::Explicit,
@@ -584,7 +584,7 @@ async fn consume_phase(
 }
 
 /// Self-contained R3 durability: force a RAFT leader step-down, wait for
-/// re-election, and prove the stream + all messages survived. No k8s needed.
+/// re-election, and show the stream + all messages survived. No k8s needed.
 async fn stepdown_phase(
     js: &async_nats::jetstream::Context,
     args: &StreamBenchArgs,
@@ -646,7 +646,7 @@ async fn stepdown_phase(
 }
 
 /// The second half of the physical node-loss runbook: after `kubectl delete pod
-/// evt-nats-<n>`, prove the stream + all messages are still there, R3 config is
+/// evt-nats-<n>`, show the stream + all messages are still there, R3 config is
 /// intact, a leader is serving, and a fresh consumer can still drain everything.
 async fn heal_phase(
     js: &async_nats::jetstream::Context,

@@ -43,10 +43,10 @@ fn command_help(binary: &str, command: &str) -> String {
     String::from_utf8(output.stdout).expect("help is UTF-8")
 }
 
-// wamn-hopk R5: the live-database lock inventory was asserted by reading nine
+// wamn-hopk R5: the live-database lock call list was asserted by reading nine
 // sibling test files as source and counting lock calls in them. Deleted - a
-// test that greps other tests proves nothing about the database. The lock's
-// behaviour is proven by ctl_live_database_lock_child_observes_parent and
+// test that greps other tests shows nothing about the database. The lock's
+// behaviour is shown by ctl_live_database_lock_child_observes_parent and
 // ctl_live_database_lock_excludes_another_process below, which take real locks.
 
 #[test]

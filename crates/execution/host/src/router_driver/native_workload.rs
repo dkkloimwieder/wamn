@@ -141,7 +141,7 @@ pub(super) async fn load_native_workload(
         });
         facts_by_name.insert(name, input.fact);
     }
-    // Admission has already matched this inventory to the exact bytes. Only
+    // Admission has already matched this import list to the exact bytes. Only
     // imported interfaces need a unique provider. Wiring selects export-only
     // palette handlers by full admitted fact, not by their shared interface.
     let imports: BTreeSet<_> = facts_by_name

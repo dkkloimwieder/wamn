@@ -1,6 +1,6 @@
-//! Contract proofs for component policy, WIT behavior, schemas, and artifacts.
+//! Contract tests for component policy, WIT behavior, schemas, and artifacts.
 //!
-//! MVP outcome: proof floor.
+//! MVP outcome: test coverage.
 
 pub mod catalog;
 pub mod invocation;

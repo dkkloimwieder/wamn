@@ -1,4 +1,4 @@
-//! PG18 lifecycle proof for private effect-writer credential generations.
+//! PG18 lifecycle test for private effect-writer credential generations.
 //!
 //! Run only against a disposable cluster: the test creates one database and
 //! cluster-global roles, revokes PUBLIC CONNECT on every non-template database,

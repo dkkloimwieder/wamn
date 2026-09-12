@@ -76,7 +76,7 @@ pub const fn component_artifact_layout<'a>(
 /// Catalog scope, names, operations, and typed declarations deliberately stay
 /// out of this document: one component digest may be admitted by several
 /// catalogs, while one digest-derived OCI tag can carry only one config. The
-/// import inventory and fingerprint are derived from the exact component bytes
+/// import list and fingerprint are derived from the exact component bytes
 /// and therefore remain stable for that tag.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

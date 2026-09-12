@@ -25,7 +25,7 @@
 //! rather than an exit status. The principal is asserted NOT `rolsuper` and NOT
 //! `rolbypassrls` before any of it runs: a superuser answers TRUE to every
 //! `pg_has_role` and reads every row, so it would satisfy the whole file while
-//! proving nothing.
+//! showing nothing.
 
 use anyhow::Context as _;
 use serde_json::Value;
@@ -211,7 +211,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
 
     // THE PRINCIPAL, ASSERTED BEFORE ANY LEG RUNS. A superuser or a BYPASSRLS
     // login satisfies every read below and every `pg_has_role` above while
-    // proving nothing about either, and it would do it SILENTLY.
+    // showing nothing about either, and it would do it SILENTLY.
     admin
         .batch_execute(&format!(
             "DO $$ BEGIN \
@@ -552,7 +552,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // database name or the probe refuses before the socket, so the mismatch has
     // to arrive the way it would in production: a connection that is not on the
     // database the credential named. The refusal is therefore the SERVER's
-    // `current_database()`, and it carries a connection kind — proof it was
+    // `current_database()`, and its connection kind shows it was
     // reached over the wire rather than decided from the url.
     let elsewhere_url = generation_url(&admin_url, Some(ELSEWHERE))?;
     let elsewhere = connect(&elsewhere_url).await?;

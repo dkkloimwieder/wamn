@@ -1,4 +1,4 @@
-//! Semantic proof for the Acme overlay publication inputs that close independently.
+//! Semantic test for the Acme overlay publication inputs that close independently.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -78,7 +78,7 @@ fn read_json(path: &Path) -> Value {
 
 /// The base component digest, read from the ONE file that authors it.
 ///
-/// wamn-10yt.50: this proof used to restate the same `sha256:` literal the
+/// wamn-10yt.50: this test used to restate the same `sha256:` literal the
 /// overlay manifest pins, and the template carried a third copy. The template
 /// now leaves a placeholder, so the render is what makes it a declaration.
 fn base_digests() -> BTreeMap<Box<str>, Box<str>> {

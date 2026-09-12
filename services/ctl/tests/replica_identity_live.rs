@@ -1,4 +1,4 @@
-//! Server-answer proof for package-model replica-identity reconciliation.
+//! Server-answer test for package-model replica-identity reconciliation.
 
 mod support;
 

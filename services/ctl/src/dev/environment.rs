@@ -1,14 +1,14 @@
 //! The disposable development environment the twelve-stage `wamn dev` loop runs
 //! against.
 //!
-//! `wamn dev` was provable before it was startable: every value its strict
+//! `wamn dev` was testable before it was startable: every value its strict
 //! configuration needs — five credential URLs, the verification database, the
-//! Gate and its bearer token — only existed inside the live proof. This module
+//! Gate and its bearer token — only existed inside the live test. This module
 //! is the argument-building layer over the platform verbs that mint them, so
 //! `[WAMN-DEV-LIVE]`, `[RECEIVING-ROUTE-JOURNEY]` and the `wamn dev up`
 //! operator command stand up one environment by one path (wamn-10yt.10.32).
 //!
-//! It lives in the product crate rather than in the proof crate because it
+//! It lives in the product crate rather than in the test crate because it
 //! imports nothing test-only, and because a product command that starts its own
 //! environment cannot reach into a test crate to build its configuration. Three
 //! of its five `wamn` imports were already this crate's, so the move removed
@@ -687,8 +687,8 @@ const GATE_READINESS_ATTEMPTS: u32 = 120;
 /// One `wamn-scenario-worker serve` child and the authority it listens on.
 ///
 /// The Gate is a real process, not a task in this one (wamn-10yt.10.32): the
-/// environment it serves outlives the command that stood it up, and a proof
-/// that links the Gate in-process proves something the operator never runs.
+/// environment it serves outlives the command that stood it up, and a test
+/// that links the Gate in-process shows something the operator never runs.
 #[derive(Debug)]
 pub struct JourneyManagementGate {
     child: tokio::process::Child,
@@ -804,7 +804,7 @@ pub async fn spawn_journey_management_gate(
             anyhow::bail!("the management Gate stopped before listening on {bind}: {status}");
         }
         if tokio::net::TcpStream::connect(address).await.is_ok() {
-            // A connect proves SOMETHING listens. Re-check the child so a Gate
+            // A connect shows SOMETHING listens. Re-check the child so a Gate
             // that died between the two reads is never reported ready.
             if let Some(status) = child
                 .try_wait()

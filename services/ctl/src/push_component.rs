@@ -66,7 +66,7 @@ const INSERT_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
 /// This REPLACES the disposable-environment upsert wamn-10yt.38 installed here.
 /// A recreated environment no longer edits the fact whose database was dropped;
 /// it writes its own row under its own creation, so the plain
-/// `ON CONFLICT DO NOTHING` append — and the exact-retry proof beneath it — mean
+/// `ON CONFLICT DO NOTHING` append — and the exact-retry test beneath it — mean
 /// what they say again for every environment.
 const INSERT_CONTROL_COMPONENT_SQL: &str = "INSERT INTO catalog.component_library (\
          tenant_id, environment_instance, package_id, package_version, component, \
@@ -1180,8 +1180,8 @@ async fn publish_and_verify(
     // client-construction seam. Its `push_component` mints the config blob
     // itself from `WasmConfig` and tags the layer `WASM_LAYER_MEDIA_TYPE`; this
     // artifact carries the platform's own `component_artifact_layout`, whose
-    // config blob is the admitted-component fact `pull_verified` re-proves
-    // below. Routing through that API would discard the proof. See standing
+    // config blob is the admitted-component fact `pull_verified` verifies again
+    // below. Routing through that API would discard the admitted fact. See standing
     // trigger 5 in `docs/architecture/native-alignment-ledger.md`
     // (`wamn-kdhw`).
     let client = OciClient::new(ClientConfig {
@@ -1209,7 +1209,7 @@ async fn publish_and_verify(
 
     // Publication is not a successful catalog admission until the immutable
     // reference can be read back by the production puller and independently
-    // proves the descriptor, config facts, and exact component body.
+    // shows the descriptor, config facts, and exact component body.
     let source_config =
         ComponentArtifactSourceConfig::new(artifact_base, insecure, REGISTRY_IO_TIMEOUT)
             .context("configure published component verification source")?
@@ -1750,7 +1750,7 @@ async fn require_exact_package(
     Ok(recorded)
 }
 
-/// Append one portable connection requirement, or prove an exact retry.
+/// Append one portable connection requirement, or verify an exact retry.
 ///
 /// `environment_instance` is `Some` for the CONTROL plane, whose copy keys by the
 /// creation of the project database the requirement belongs to, and `None` for a
@@ -1878,7 +1878,7 @@ async fn verify_requirements(
     Ok(())
 }
 
-/// Append one admitted component fact, or prove an exact retry.
+/// Append one admitted component fact, or verify an exact retry.
 ///
 /// The caller owns the transaction and tenant claim so release promotion can
 /// combine this write with its target wiring and pointer cutover atomically.
@@ -1903,7 +1903,7 @@ pub(crate) async fn append_or_verify_admitted_component(
 ///
 /// There is no longer a replacing arm here. A recreated environment writes its
 /// own row under its own instance, so the append is one plain
-/// `ON CONFLICT DO NOTHING` for every environment and the exact-retry proof below
+/// `ON CONFLICT DO NOTHING` for every environment and the exact-retry test below
 /// judges only genuine retries.
 async fn append_or_verify_admitted_component_count(
     transaction: &tokio_postgres::Transaction<'_>,
@@ -2950,7 +2950,7 @@ mod tests {
     /// creation lets the same admission land, and it lands BESIDE the previous
     /// creation's fact rather than over it.
     ///
-    /// This replaces the wamn-10yt.38 proof that the disposable marker alone
+    /// This replaces the wamn-10yt.38 test that the disposable marker alone
     /// unlocked a replacement. That overwrite is retired; the marker now decides
     /// nothing here.
     #[tokio::test]

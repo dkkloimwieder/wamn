@@ -51,7 +51,7 @@ pub struct QueueEntry {
     pub lease_expires_at: Option<Millis>,
     /// Crash-evidence count: how many times a claim has reclaimed this row's
     /// *expired* lease (the prior owner died holding it). First claims and
-    /// park→wake re-claims do not count — parking is proof of life.
+    /// park→wake re-claims do not count — parking records an active owner.
     #[serde(default)]
     pub attempts: i32,
     /// The redelivery budget: once `attempts >= max_attempts` and the lease is

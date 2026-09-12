@@ -1,13 +1,13 @@
-//! Orchestration facade for retained proof inputs and repository fixtures.
+//! Orchestration facade for retained test inputs and repository fixtures.
 //!
-//! MVP outcome: proof floor.
+//! MVP outcome: test coverage.
 //!
-//! `wamn-gates` retains the routing needed by the MVP proof inputs while their
+//! `wamn-gates` retains the routing needed by the MVP test inputs while their
 //! implementations live in explicit conformance, integration, system, and
-//! test-support homes. Proofs that import service clients remain integration
+//! test-support homes. Tests that import service clients remain integration
 //! evidence even when they also exercise a deployed endpoint.
 
-// Each proof implementation is owned and compiled by its tier package. This
+// Each test implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
 use wamn_conformance_tests::socketguard;
 use wamn_integration_tests::agent_pilot;

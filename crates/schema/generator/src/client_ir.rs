@@ -1271,7 +1271,7 @@ mod tests {
     /// The overlay's `quality/create_inspection` is an `event_handler` the
     /// platform invokes internally: `visibility: private`, null `grant`, null
     /// `permission_token`. Before this was excluded, projecting the overlay
-    /// package failed outright — so this test also proves the overlay, the
+    /// package failed outright — so this test also shows the overlay, the
     /// only package carrying the `/acme` routes, projects at all.
     #[test]
     fn a_private_operation_is_not_a_client_operation() {
@@ -1366,7 +1366,7 @@ mod tests {
         let record = operation(&ir, "receiving", "record_receipt");
         let leaves = leaf_fields(&record.input_fields);
         assert_eq!(leaves.len(), 8, "{:?}", record.input_fields);
-        // A nested array path is the proof the ARRAY was read: the scalar
+        // A nested array path shows the ARRAY was read: the scalar
         // fallback walks top-level members and could never produce one.
         assert!(
             leaves

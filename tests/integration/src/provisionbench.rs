@@ -5,7 +5,7 @@
 //!
 //! * **legacy** — the 2.3 flow, kept as regression: provision TWO projects through
 //!   the **real** `provision-project` path
-//!   (`wamn-ctl provision-project`), then prove routing/resolution
+//!   (`wamn-ctl provision-project`), then show routing/resolution
 //!   (a marker witness resolved through the plugin's own `StaticCredentialProvider`),
 //!   database-level isolation (no cross-database queries), least privilege
 //!   (the App generation is `NOSUPERUSER NOCREATEDB`), and the emitted legacy
@@ -13,13 +13,13 @@
 //! * **orgpair** — a **dedicated** org with two project-envs (`prod` + `dev`) as
 //!   two per-project-env databases (`wamn-db-<org>--<project>--<env>--<instance>`, provisioned
 //!   via the REAL wamn-q3n.7 role/create/grant builders as a plain-SQL stand-in for
-//!   the CNPG `Database` CRD, which needs the operator). Proves per-database
+//!   the CNPG `Database` CRD, which needs the operator). Shows per-database
 //!   routing / isolation / least-priv / the per-project-env Secret layout, records
 //!   the D18 `registry.orgs`/`projects`/`project_envs` rows (placement + env-FK), lands
 //!   a provisioning **saga** in the (ephemeral) system DB.
 //! * **t3** — a **pooled** org (every env collapses onto the shared pool) with one
 //!   project-env, the same per-placement assertions.
-//! * **saga** — a focused proof of the core provisioning-saga builders:
+//! * **saga** — a focused test of the core provisioning-saga builders:
 //!   exactly-once create, durable step advance, terminal complete + fail.
 //! * **all** — legacy, then (over one ephemeral registry schema) saga, orgpair, t3.
 //!
@@ -131,7 +131,7 @@ pub async fn run(args: ProvisionBenchArgs) -> anyhow::Result<()> {
 }
 
 // ============================================================================
-// legacy (2.3) — provision two projects, prove routing / isolation / least-priv
+// legacy (2.3) — provision two projects, show routing / isolation / least-priv
 // ============================================================================
 
 async fn legacy(admin_url: &str) -> anyhow::Result<()> {
@@ -206,7 +206,7 @@ async fn legacy(admin_url: &str) -> anyhow::Result<()> {
         .context("parse emitted projects-file json")?;
     let provider = StaticCredentialProvider::new(projects, None);
 
-    // Resolve as the production guest class so the same proof covers database
+    // Resolve as the production guest class so the same test covers database
     // routing and the generation login's tenant binding.
     let cfg_a = provider
         .resolve(PROJECT_A, AuthorityClass::GuestSql, Some(TENANT_A))?
@@ -314,7 +314,7 @@ async fn create_admin_owned_legacy_database(admin_url: &str, project: &str) -> a
 }
 
 /// Drift a provisioned database onto the retired stable App ACL role so replay
-/// proves that ownership convergence precedes the legacy CONNECT grant. This is
+/// shows that ownership convergence precedes the legacy CONNECT grant. This is
 /// a posture fixture, not an authentication path.
 async fn drift_legacy_database_to_app_owner(admin_url: &str, project: &str) -> anyhow::Result<()> {
     let db = database_name(project);
@@ -518,7 +518,7 @@ async fn t3_mode(admin_url: &str) -> anyhow::Result<()> {
     .await
 }
 
-/// The shared per-tier scenario: provision each project-env database, prove
+/// The shared per-tier scenario: provision each project-env database, show
 /// routing / per-DB isolation / least-priv / Secret layout, record the registry
 /// rows (org + its template-stamped policies + project-envs), and land a
 /// provisioning saga (create → advance → complete). `stamp` is a template's
@@ -881,7 +881,7 @@ async fn drop_env_dbs(
 }
 
 /// The per-env private table name (distinct per env so a sibling's connection can
-/// prove it invisible across databases).
+/// show it invisible across databases).
 fn private_table(project: &str, env: &str) -> String {
     format!("only_in_{}_{}", project.replace('-', "_"), env)
 }

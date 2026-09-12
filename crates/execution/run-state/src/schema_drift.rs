@@ -1,4 +1,4 @@
-//! Contract-owned drift guard for every proof's ephemeral run-plane stand-in DDL
+//! Contract-owned drift guard for every test's ephemeral run-plane stand-in DDL
 //! against the schemas of record (`deploy/sql/run-queue.sql` and
 //! `deploy/sql/run-state.sql`).
 //!
@@ -23,7 +23,7 @@
 //! `event_root_run_id` no longer masks a dropped `run_id`).
 //!
 //! This module is available only through the `test-util` feature. It lives with
-//! the run-state contract so conformance, integration, and system proofs consume
+//! the run-state contract so conformance, integration, and system tests consume
 //! one implementation without depending on one another.
 
 use crate::status::RunStatus;

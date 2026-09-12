@@ -1,8 +1,8 @@
-//! `[BIND-CONNECTION-LIVE]` — the connection-admin verb, proven by the round
+//! `[BIND-CONNECTION-LIVE]` — the connection-admin verb, shown by the round
 //! trip and not by the rows.
 //!
 //! The ruling (wamn-362o.33): bind, then the PLUGIN resolves the binding from
-//! a real snapshot. Rows existing proves nothing the plugin will accept, so
+//! a real snapshot. Existing rows do not show what the plugin accepts, so
 //! the assertion here is `wamn_blobstore::binding::resolve` returning the
 //! coordinates that were bound, over a snapshot the postgres plugin's own
 //! `connection_effect_snapshot` loaded from the rows the verb wrote. Nothing
@@ -441,8 +441,8 @@ async fn assert_nested_effect_snapshot(
         .await
         .expect("seed the immutable origin wiring for the SQL snapshot proof");
 
-    // This proves the SQL snapshot only. The mounted-release helper owns the
-    // separate proof that the origin declares a dependency on this executor.
+    // This shows the SQL snapshot only. The mounted-release helper owns the
+    // separate test that the origin declares a dependency on this executor.
     let nested = ConnectionEffectLookup {
         wiring_package_id: WIRING_PACKAGE,
         origin_package_id: ORIGIN_PACKAGE,

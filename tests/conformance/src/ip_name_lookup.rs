@@ -1,7 +1,7 @@
-//! Conformance proof for the pinned runtime's lookup and socket-policy APIs.
+//! Conformance test for the pinned runtime's lookup and socket-policy APIs.
 //!
 //! The lookup and raw-socket decisions are driven through public wash-runtime
-//! APIs. This deliberately proves behavior rather than the presence of a WAMN
+//! APIs. This deliberately shows behavior rather than the presence of a WAMN
 //! patch or a private runtime call site.
 
 use serde::Deserialize;

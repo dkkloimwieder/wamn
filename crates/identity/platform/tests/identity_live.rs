@@ -1,4 +1,4 @@
-//! Optional real-PostgreSQL proof for the platform identity core.
+//! Optional real-PostgreSQL test for the platform identity core.
 
 use std::time::Duration;
 
