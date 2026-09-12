@@ -1,4 +1,4 @@
-//! traceproof (9.2): prove outbound `traceparent` injection is host-enforced on
+//! traceproof (9.2): check outbound `traceparent` injection is host-enforced on
 //! `wamn:connection/http`, the surface that carries production egress.
 //!
 //! Topology:
@@ -17,11 +17,11 @@
 //!
 //! No guest participates. The header is produced by the production injector
 //! [`inject_trace_context`] — the same function [`ConnectionHttp::send`] reaches
-//! through `outbound_headers` — never by this proof, so an injector that stops
+//! through `outbound_headers` — never by this test, so an injector that stops
 //! injecting fails here exactly as it would in production. A network request is
 //! refused unless that injector produced a valid header; sending only that
-//! header to `serve-echo` composes the host-boundary proof with the
-//! cross-process proof.
+//! header to `serve-echo` composes the host-boundary test with the
+//! cross-process test.
 //!
 //! RE-AIMED 2026-08-26 (`wamn-k9ea`). This gate previously drove wash-runtime's
 //! P2 and P3 `wasi:http` host surfaces. That injection WAS fork patch `g2br.4`,
@@ -30,7 +30,7 @@
 //! `wamn:connection/http`, which injects the active span context itself, and the
 //! `wasi:http` egress surface has no WAMN production call site. The two
 //! host-surface arms were that drop's untaken test tail. The gate keeps a
-//! cross-process subject rather than retiring, because the surviving unit proofs
+//! cross-process subject rather than retiring, because the surviving unit tests
 //! on the live path are all in-process.
 //!
 //! [`ConnectionHttp::send`]: wamn_runtime::plugins::connection_http::ConnectionHttp
@@ -45,7 +45,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
 use wamn_runtime::plugins::connection_http::inject_trace_context;
 
-/// The egress surface this gate proves, named once so every assertion message
+/// The egress surface this gate checks, named once so every assertion message
 /// and the overall verdict cannot drift apart.
 const SURFACE: &str = "wamn:connection/http";
 
@@ -164,7 +164,7 @@ pub async fn run(args: TraceTestArgs) -> anyhow::Result<()> {
     println!("controlled parent traceparent = {sent_tp}");
 
     let parent = parent_context(&trace_id, &sent_span)?;
-    match prove_effect_surface(&args.upstream, &parent, &trace_id, &sent_span).await {
+    match assert_effect_surface(&args.upstream, &parent, &trace_id, &sent_span).await {
         Ok((captured, reflected)) => {
             if let Some(path) = args.result_file {
                 std::fs::write(
@@ -191,7 +191,7 @@ pub async fn run(args: TraceTestArgs) -> anyhow::Result<()> {
     }
 }
 
-async fn prove_effect_surface(
+async fn assert_effect_surface(
     upstream: &str,
     parent: &opentelemetry::Context,
     sent_trace_id: &str,
@@ -288,7 +288,7 @@ fn parent_context(trace_id: &str, span_id: &str) -> anyhow::Result<opentelemetry
 /// function `ConnectionHttp::outbound_headers` calls, so an injector that stops
 /// injecting returns `None` here exactly as it would in production, and the
 /// caller refuses to touch the network. Reading the header back out of the map
-/// is how this proof observes what leaves the host.
+/// is how this test observes what leaves the host.
 fn capture_effect_traceparent(parent: &opentelemetry::Context) -> anyhow::Result<Option<String>> {
     let span = tracing::info_span!("wamn.connection_http");
     span.set_parent(parent.clone())
@@ -406,7 +406,7 @@ mod tests {
     /// must survive onto the wire under a span id that is NOT the caller's.
     /// That is what lets a downstream service parent to the effect rather than
     /// to whatever invoked the host. Driving the shipped
-    /// [`inject_trace_context`] rather than a copy is what makes it a proof of
+    /// [`inject_trace_context`] rather than a copy is what makes it a test of
     /// production behaviour.
     #[test]
     fn the_effect_span_injects_a_child_of_the_controlled_parent() {

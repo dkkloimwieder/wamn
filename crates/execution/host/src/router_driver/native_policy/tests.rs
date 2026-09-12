@@ -891,7 +891,7 @@ async fn native_application_cancelled_resolution_clears_partial_bindings() {
     );
 }
 
-async fn prove_call_owner() {
+async fn assert_call_owner() {
     let fixture = Fixture::new(Case::Cancellation).await;
     let owner = Arc::downgrade(&fixture.application);
     let engine = Arc::clone(&fixture.engine);
@@ -977,6 +977,6 @@ async fn prove_call_owner() {
 fn native_application_call_retains_owner_until_guest_cancellation() {
     run_isolated_test(
         "native_application_call_retains_owner_until_guest_cancellation",
-        prove_call_owner(),
+        assert_call_owner(),
     );
 }

@@ -204,7 +204,7 @@ pub(super) async fn receiving_pat_journey(
 
     // One gate-launch path for both live gates: the Gate is a spawned
     // `wamn-scenario-worker serve`, never a task in this process
-    // (wamn-10yt.10.32). The in-process exemption this proof used to hold died
+    // (wamn-10yt.10.32). The in-process exemption this test used to hold died
     // with that ruling.
     let mut management_server = spawn_journey_management_gate(
         scenario_worker,
@@ -743,7 +743,7 @@ pub(super) async fn receiving_pat_journey(
         String::from_utf8_lossy(oversized.body())
     );
 
-    p3_shell::prove(
+    p3_shell::assert_p3_route(
         &engine,
         &flow_http,
         Arc::clone(&routing),

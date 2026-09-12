@@ -193,7 +193,7 @@ async fn assert_memory_returned(engine: &Engine) {
     .expect("native readiness returns every guest memory reservation");
 }
 
-async fn prove(case: Case) {
+async fn assert_readiness(case: Case) {
     let fixture = load_fixture(case).await;
     let deadline = Instant::now()
         + if matches!(case, Case::Deadline) {
@@ -269,7 +269,7 @@ fn isolated(name: &str, case: Case) {
         .enable_all()
         .build()
         .expect("isolated readiness runtime");
-    runtime.block_on(prove(case));
+    runtime.block_on(assert_readiness(case));
     drop(runtime);
     done.send(()).expect("finish watchdog");
     watchdog.join().expect("join watchdog");

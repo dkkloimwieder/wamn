@@ -1,4 +1,4 @@
-//! Fresh two-package effective-release proof on disposable PostgreSQL.
+//! Fresh two-package effective-release test on disposable PostgreSQL.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -10,9 +10,9 @@ use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_comp
 
 use super::{
     DependencyDigestRule, MintManifestErrorKind, MintReleaseManifest, MintedReleaseManifest,
-    ReleaseWiringTarget, mint_release_manifest_with_package_manifests,
-    proven_effect_free_operation_dependencies, read_package_manifests, resolve_route_host_overlay,
-    sha256, validate_package_metadata,
+    ReleaseWiringTarget, effect_free_operation_dependencies,
+    mint_release_manifest_with_package_manifests, read_package_manifests,
+    resolve_route_host_overlay, sha256, validate_package_metadata,
 };
 use crate::apply_package::{self, ApplyPackageArgs};
 use crate::author_wiring::{self, AuthorWiringRequest};
@@ -63,7 +63,7 @@ fn repository_root() -> PathBuf {
 
 /// The base component digest, read from the ONE file that authors it.
 ///
-/// wamn-10yt.50: this proof used to restate the same `sha256:` literal the
+/// wamn-10yt.50: this test used to restate the same `sha256:` literal the
 /// overlay manifest pins, which is a third copy of a value that must be one.
 fn base_component_digest() -> String {
     let overlay = repository_root().join("apps/client_acme_receiving");
@@ -203,7 +203,7 @@ async fn admit_components(
 ) -> BTreeMap<String, String> {
     let engine = wamn_runtime::build_engine(&[]).expect("build the production admission engine");
     let mut digests = BTreeMap::new();
-    // The proof admits packages in dependency order, base before overlay, so
+    // The test admits packages in dependency order, base before overlay, so
     // the fact a dependency resolves to is already in hand when the component
     // that declares the dependency reaches admission.
     let mut component_facts: BTreeMap<(String, String), Vec<AdmittedComponent>> = BTreeMap::new();
@@ -236,7 +236,7 @@ async fn admit_components(
                 input.version
             );
         }
-        let effect_free_operation_dependencies = proven_effect_free_operation_dependencies(
+        let effect_free_operation_dependencies = effect_free_operation_dependencies(
             &declaration,
             &component_facts,
             DependencyDigestRule::Declared,
@@ -306,7 +306,7 @@ async fn author_wirings(
             let document = author_wiring::read_wiring_document(&path)
                 .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
             let wiring_hash = document.wiring_hash();
-            // This seeds only the already-proven steady-state verdict under the
+            // This seeds only the already-checked steady-state verdict under the
             // document's derived identity. The production journey owns the
             // first transition that writes a gate report.
             control

@@ -314,7 +314,7 @@ fn flip_last_hex_digit(token: &str) -> String {
     format!("{head}{replacement}")
 }
 
-async fn prove_human_environment_membership(
+async fn assert_human_environment_membership(
     admin: &Client,
     admin_url: &str,
     identity_url: &str,
@@ -643,7 +643,7 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     .await
     .expect("build route authentication");
 
-    prove_human_environment_membership(
+    assert_human_environment_membership(
         &admin,
         &admin_url,
         &identity_url,

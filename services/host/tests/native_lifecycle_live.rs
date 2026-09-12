@@ -1,4 +1,4 @@
-//! Lifecycle proof for the rebuilt host and an owned real NATS server.
+//! Lifecycle test for the rebuilt host and an owned real NATS server.
 //!
 //! The ignored test requires an absolute NATS server binary and a new evidence
 //! directory. It starts no PostgreSQL, OCI registry, operator, or guest workload.
@@ -258,7 +258,7 @@ fn host_command(
     Ok(command)
 }
 
-async fn prove_host(
+async fn assert_host_lifecycle(
     nats: &mut Child,
     nats_binary: &Path,
     nats_address: SocketAddr,
@@ -333,7 +333,7 @@ async fn prove_host(
     result
 }
 
-async fn prove_blocked_flush(nats_address: SocketAddr, evidence: &Path) -> anyhow::Result<()> {
+async fn assert_blocked_flush(nats_address: SocketAddr, evidence: &Path) -> anyhow::Result<()> {
     let ingress_port = reserve_address()?;
     let probe_port = reserve_address()?;
     let ingress_address = ingress_port.local_addr()?;
@@ -403,7 +403,7 @@ async fn prove_blocked_flush(nats_address: SocketAddr, evidence: &Path) -> anyho
 
 // Exercise a real native command-task failure through the public WAMN
 // lifecycle helpers. This case runs in the test process, not the host child.
-async fn prove_missing_first_beat(nats_address: SocketAddr, evidence: &Path) -> anyhow::Result<()> {
+async fn assert_missing_first_beat(nats_address: SocketAddr, evidence: &Path) -> anyhow::Result<()> {
     use std::sync::Arc;
 
     use wamn_runtime::lifecycle::{bounded_cleanup, watch_liveness};
@@ -440,7 +440,7 @@ async fn prove_missing_first_beat(nats_address: SocketAddr, evidence: &Path) -> 
         "the closed-client control failed for a reason other than command delivery"
     );
 
-    // A short public heartbeat interval keeps this proof bounded without a
+    // A short public heartbeat interval keeps this test bounded without a
     // zero silence budget or synthetic beat. The deployment default is 15s.
     let builder = ClusterHostBuilder::default()
         .with_host_group("lifecycle-proof")
@@ -556,10 +556,10 @@ async fn rebuilt_host_probes_signals_and_scheduler_recovery() -> anyhow::Result<
     drop(nats_port);
     let mut nats = start_nats(&nats_binary, nats_address, &evidence, "nats-initial").await?;
     let result = async {
-        prove_missing_first_beat(nats_address, &evidence).await?;
-        prove_host(&mut nats, &nats_binary, nats_address, &evidence, "TERM").await?;
-        prove_host(&mut nats, &nats_binary, nats_address, &evidence, "INT").await?;
-        prove_blocked_flush(nats_address, &evidence).await
+        assert_missing_first_beat(nats_address, &evidence).await?;
+        assert_host_lifecycle(&mut nats, &nats_binary, nats_address, &evidence, "TERM").await?;
+        assert_host_lifecycle(&mut nats, &nats_binary, nats_address, &evidence, "INT").await?;
+        assert_blocked_flush(nats_address, &evidence).await
     }
     .await;
     if nats.try_wait()?.is_none() {

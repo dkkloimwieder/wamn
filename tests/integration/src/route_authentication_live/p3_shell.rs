@@ -26,7 +26,7 @@ const PURCHASE_ORDER_ID: &str = "00000000-0000-0000-0000-000000000301";
 const PAYLOAD: &[u8] =
     br#"[{"request_id":"p3-protocol","id":"00000000-0000-0000-0000-000000000301"}]"#;
 
-pub(super) async fn prove(
+pub(super) async fn assert_p3_route(
     engine: &Engine,
     flow_http: &Component,
     routing: Arc<FlowHttpRouting>,

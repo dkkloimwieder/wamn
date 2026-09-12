@@ -446,7 +446,7 @@ def require_clean_frame(screen):
             "host diagnostics contaminated the rendered operator frame")
 
 
-def prove(session, config, edit, evidence):
+def assert_operator(session, config, edit, evidence):
     first = None
     first_started_ns = time.time_ns()
 
@@ -576,7 +576,7 @@ def main():
                                str(overlay), "--watch", "--tui", "receiving"]
         session = LiveSession(wamn, config_path, overlay, host_binary)
         stopped = False
-        prove(session, config, edit, evidence)
+        assert_operator(session, config, edit, evidence)
     except TestError as error:
         failure = str(error)
     except (Exception, KeyboardInterrupt) as error:

@@ -323,7 +323,7 @@ async fn matching_delivery_advisory(
     Ok(None)
 }
 
-async fn prove(
+async fn assert_replay_and_progress(
     document: &JourneyDocument,
     phase: &PostcommitPhase,
     project: &Client,
@@ -667,7 +667,7 @@ pub(super) async fn assert_postcommit(
     let (lock, lock_task) = connect(&materializer.project_pg_url).await?;
     let mut evidence = json!({"schema":"wamn-receiving-postcommit/v0.1", "source":phase.source_commit,
         "verdict":"fail", "invariants":["REC-EVENT-REPLAY","REC-POSTCOMMIT-PROGRESS"], "recovery_assumptions":"The owned database, broker, host, and materializer remain available. The poison lock lasts through retry exhaustion."});
-    let result = prove(
+    let result = assert_replay_and_progress(
         &document,
         phase,
         project.as_ref(),

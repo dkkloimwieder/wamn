@@ -595,7 +595,7 @@ pub(super) async fn assert_nested_session(
             "row_version": expected_replay["row_version"],
         });
         let transport = session_client::RouteTransport::new(engine, flow_http, routing, bridge, 61);
-        let result = session_client::prove(
+        let result = session_client::assert_session_client(
             fresh_only::PriorCommitTest {
                 inputs: &inputs,
                 credentials: &credentials,

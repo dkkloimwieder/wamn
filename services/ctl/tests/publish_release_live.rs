@@ -1,4 +1,4 @@
-//! Disposable-PostgreSQL proofs for package sealing at release publication.
+//! Disposable-PostgreSQL tests for package sealing at release publication.
 
 mod support;
 
@@ -172,7 +172,7 @@ async fn assert_immutable_rows(client: &Client, store: Store) {
     }
 }
 
-async fn prove_package_seal(url: &str, store: Store) {
+async fn assert_package_seal(url: &str, store: Store) {
     let installer = connect(url).await;
     install(&installer, store).await;
     seed_package_and_release(&installer).await;
@@ -270,8 +270,8 @@ async fn package_seal_and_attestation_winner_are_server_enforced() {
         return;
     };
 
-    prove_package_seal(&url, Store::Project).await;
-    prove_package_seal(&url, Store::Control).await;
+    assert_package_seal(&url, Store::Project).await;
+    assert_package_seal(&url, Store::Control).await;
 
     let release = ServingRelease {
         tenant_id: TENANT.to_owned(),

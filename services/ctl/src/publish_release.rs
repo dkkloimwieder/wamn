@@ -1772,35 +1772,35 @@ fn resolve_component_dependency<'a>(
     Ok(component)
 }
 
-/// Name the declared operation dependencies an admitted fact proves effect-free.
+/// Name the declared operation dependencies whose admitted facts show no effects.
 ///
 /// `ComponentAdmissionRequest::effect_free_operation_dependencies` is
 /// fail-closed, so a caller that names nothing leaves every dependency
-/// effectful. This is the proof a caller holding the admitted facts can supply.
+/// effectful. This is the evidence a caller holding the admitted facts can supply.
 ///
 /// One lookup answers the whole closure. A dependency's own admitted row
 /// carries the effect projection of everything that dependency reaches, because
 /// admission computed that row under this same rule, so an empty effects array
-/// is the complete proof. A dependency the facts do not resolve exactly proves
-/// nothing and stays out of the set. The exact-resolution refusal belongs to
+/// is sufficient evidence. A dependency stays out of the set if its facts do not
+/// resolve exactly. The exact-resolution refusal belongs to
 /// `resolve_component_dependency_closure`, which walks the same facts when the
 /// release is minted.
-pub fn proven_effect_free_operation_dependencies(
+pub fn effect_free_operation_dependencies(
     declaration: &wamn_catalog::ComponentDeclaration,
     component_facts: &BTreeMap<(String, String), Vec<AdmittedComponent>>,
     rule: DependencyDigestRule,
 ) -> BTreeSet<String> {
-    let mut proven = BTreeSet::new();
+    let mut dependencies = BTreeSet::new();
     for operation in declaration.operations.values() {
         for dependency in &operation.dependencies {
             if resolve_component_dependency(dependency, component_facts, rule)
                 .is_ok_and(|component| component.effects.is_empty())
             {
-                proven.insert(dependency.operation.clone());
+                dependencies.insert(dependency.operation.clone());
             }
         }
     }
-    proven
+    dependencies
 }
 
 /// Every edge is keyed by the fact it RESOLVES TO, never by the digest the
@@ -3240,7 +3240,7 @@ mod tests {
     /// The one operation dependency declared in the tree, read from the
     /// package that declares it. `client_acme_receiving` wraps
     /// `wamn_receiving`'s `record-receipt`, which is the live instance of the
-    /// defect the proven-pure set closes.
+    /// defect the effect-free dependency set closes.
     fn repository_overlay_dependency() -> (
         wamn_catalog::ComponentDeclaration,
         wamn_catalog::ComponentOperationDependency,
@@ -3279,32 +3279,32 @@ mod tests {
     }
 
     /// The case the caller wiring exists to serve. The dependency's admitted
-    /// row carries an empty effects array, so the caller proves the dependency
+    /// row carries an empty effects array, so the caller identifies the dependency as
     /// effect-free and admission keeps the effect-free case path. The
-    /// admission half of that proof is
+    /// admission half of that test is
     /// `a_wrapper_whose_whole_closure_is_effect_free_keeps_the_effect_free_case_path`
     /// in `wamn_runtime::component_admission`.
     #[test]
-    fn a_dependency_admitted_with_no_effects_is_proven_pure_and_keeps_the_effect_free_case_path() {
+    fn a_dependency_admitted_with_no_effects_keeps_the_effect_free_case_path() {
         let (declaration, dependency) = repository_overlay_dependency();
         let facts = dependency_facts(&dependency, Vec::new());
 
-        let proven = proven_effect_free_operation_dependencies(
+        let dependencies = effect_free_operation_dependencies(
             &declaration,
             &facts,
             DependencyDigestRule::Declared,
         );
 
-        assert_eq!(proven, BTreeSet::from([dependency.operation]));
+        assert_eq!(dependencies, BTreeSet::from([dependency.operation]));
     }
 
     /// The negative control, and the state of the tree today. The same
     /// declaration and the same lookup, except the dependency's admitted row
-    /// carries the effect it really holds. The caller proves nothing, so the
+    /// carries the effect it really holds. The caller returns no dependency, so the
     /// wrapper takes the dependency package into its own projection and loses
     /// the effect-free case path.
     #[test]
-    fn a_dependency_admitted_with_one_effect_is_not_proven_pure_and_loses_that_path() {
+    fn a_dependency_admitted_with_one_effect_loses_the_effect_free_case_path() {
         let (declaration, dependency) = repository_overlay_dependency();
         let facts = dependency_facts(
             &dependency,
@@ -3315,15 +3315,15 @@ mod tests {
             }],
         );
 
-        let proven = proven_effect_free_operation_dependencies(
+        let dependencies = effect_free_operation_dependencies(
             &declaration,
             &facts,
             DependencyDigestRule::Declared,
         );
 
         assert!(
-            proven.is_empty(),
-            "an effectful dependency was proven pure: {proven:?}"
+            dependencies.is_empty(),
+            "an effectful dependency was proven pure: {dependencies:?}"
         );
     }
 

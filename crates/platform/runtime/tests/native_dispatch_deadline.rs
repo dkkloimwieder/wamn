@@ -76,7 +76,7 @@ fn isolated(name: &str, case: Case) {
         .enable_all()
         .build()
         .expect("isolated Tokio runtime");
-    runtime.block_on(prove_deadline(case));
+    runtime.block_on(assert_deadline(case));
     drop(runtime);
     done.send(()).expect("stop process watchdog");
     watchdog.join().expect("join process watchdog");
@@ -234,7 +234,7 @@ async fn target(engine: &Engine, components: Vec<Component>) -> DispatchTarget {
         .expect("resolve a public native dispatch target")
 }
 
-async fn prove_deadline(case: Case) {
+async fn assert_deadline(case: Case) {
     let slots = if matches!(case, Case::LinkedStart) {
         2
     } else {
@@ -379,7 +379,7 @@ async fn native_deadline_control(
     answer: oneshot::Sender<u32>,
 ) {
     // Arm only after compilation and resolution. The observation below must
-    // also prove that the root allocated memory before this watchdog wins.
+    // also check that the root allocated memory before this watchdog wins.
     let (done, finished) = mpsc::channel();
     let watchdog = std::thread::spawn(move || {
         if finished.recv_timeout(CLEANUP_BUDGET) == Err(mpsc::RecvTimeoutError::Timeout) {

@@ -1,4 +1,4 @@
-//! Live PostgreSQL proof for the generated Receiving data-access contract.
+//! Live PostgreSQL test for the generated Receiving data-access contract.
 
 #[cfg(test)]
 mod tests {
@@ -326,7 +326,7 @@ mod tests {
             .context("apply the exact Receiving migration")?;
         select_receiving_schema(&client).await?;
 
-        prove_status_vocabulary(&client).await?;
+        assert_status_vocabulary(&client).await?;
 
         let missing_id = Uuid::from_u128(0x100);
         let unused_supplier = Uuid::from_u128(0x101);
@@ -426,7 +426,7 @@ mod tests {
             "stale update mutated the winning row"
         );
 
-        prove_record_receipt(&url, &mut client).await?;
+        assert_record_receipt(&url, &mut client).await?;
         client
             .batch_execute(OVERLAY_FIELDS_MIGRATION)
             .await
@@ -435,12 +435,12 @@ mod tests {
             .batch_execute(OVERLAY_INSPECTION_MIGRATION)
             .await
             .context("apply the exact Acme inspection migration")?;
-        prove_acme_overlay(&mut client).await?;
+        assert_acme_overlay(&mut client).await?;
 
         Ok(())
     }
 
-    async fn prove_acme_overlay(client: &mut Client) -> Result<()> {
+    async fn assert_acme_overlay(client: &mut Client) -> Result<()> {
         let purchase_order_id = Uuid::from_u128(0xa400);
         let other_purchase_order_id = Uuid::from_u128(0xa410);
         let line_id = Uuid::from_u128(0xa401);
@@ -624,7 +624,7 @@ mod tests {
         Ok(inserted)
     }
 
-    async fn prove_record_receipt(url: &str, client: &mut Client) -> Result<()> {
+    async fn assert_record_receipt(url: &str, client: &mut Client) -> Result<()> {
         let purchase_order_id = Uuid::from_u128(0x400);
         let other_purchase_order_id = Uuid::from_u128(0x410);
         let first_line_id = Uuid::from_u128(0x401);
@@ -663,7 +663,7 @@ mod tests {
             ],
         };
 
-        prove_location_delete_is_blocked(
+        assert_location_delete_is_blocked(
             url,
             client,
             purchase_order_id,
@@ -866,7 +866,7 @@ mod tests {
         .await
     }
 
-    async fn prove_location_delete_is_blocked(
+    async fn assert_location_delete_is_blocked(
         url: &str,
         client: &mut Client,
         purchase_order_id: Uuid,
@@ -1347,7 +1347,7 @@ mod tests {
             .context("select Receiving through trusted connection context")
     }
 
-    async fn prove_status_vocabulary(client: &Client) -> Result<()> {
+    async fn assert_status_vocabulary(client: &Client) -> Result<()> {
         let manifest: Manifest =
             serde_json::from_slice(MANIFEST).context("parse Receiving manifest")?;
         let statuses = manifest

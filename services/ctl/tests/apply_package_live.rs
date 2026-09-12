@@ -1,4 +1,4 @@
-//! Disposable-PostgreSQL closure proof for the exact-byte package runner.
+//! Disposable-PostgreSQL closure test for the exact-byte package runner.
 
 mod support;
 
@@ -290,7 +290,7 @@ async fn apply_for_tenant(url: &str, package: &Path, tenant: &str) -> anyhow::Re
     .await
 }
 
-async fn prove_concurrent_package_grants_share_one_carrier(url: &str) {
+async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
     const RACE_TENANT: &str = "package-runner-race";
     let alpha =
         fixture_root().with_file_name(format!("apply-package-race-alpha-{}", std::process::id()));
@@ -532,7 +532,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     );
     std::fs::remove_dir_all(&missing_exclusion).expect("remove missing-exclusion fixture");
 
-    prove_concurrent_package_grants_share_one_carrier(&url).await;
+    assert_concurrent_package_grants_share_one_carrier(&url).await;
     client
         .batch_execute(&format!(
             "INSERT INTO app_system.roles (tenant_id, name, is_system) \

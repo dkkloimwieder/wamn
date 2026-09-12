@@ -505,7 +505,7 @@ mod tests {
             .get(0)
     }
 
-    async fn prove_fresh_world(url: &str, identity: &DevActivationIdentity) {
+    async fn assert_fresh_world(url: &str, identity: &DevActivationIdentity) {
         let client = connect(url).await;
         let major: i32 = client
             .query_one(
@@ -638,7 +638,7 @@ mod tests {
         let durable_acl_before = database_acl(&admin, &durable_database).await;
         let identity = config.activation_identity().clone();
         verification_database::run(&config, |verification_url| async move {
-            prove_fresh_world(&verification_url, &identity).await;
+            assert_fresh_world(&verification_url, &identity).await;
             Ok::<_, std::convert::Infallible>(())
         })
         .await

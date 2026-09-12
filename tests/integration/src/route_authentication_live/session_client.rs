@@ -240,7 +240,7 @@ pub(super) fn assert_fresh_refusal(
     Ok(())
 }
 
-pub(super) async fn prove(
+pub(super) async fn assert_session_client(
     test: fresh_only::PriorCommitTest<'_>,
     login: &Login,
     transport: Arc<RouteTransport>,
