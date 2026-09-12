@@ -20,7 +20,6 @@ Start with the [documentation index](docs/README.md) or the [architecture overvi
 | [test-support](test-support/) | Shared test functions, fixtures, and infrastructure |
 | [deploy](deploy/) | Infrastructure, platform manifests, test Jobs, and SQL |
 | [docs](docs/README.md) | Architecture, operations, testing methods, and plans |
-| [evidence](evidence/) | Raw run data and historical results |
 
 ## Development and operations
 
