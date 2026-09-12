@@ -241,7 +241,7 @@ pub(super) fn assert_fresh_refusal(
 }
 
 pub(super) async fn prove(
-    proof: fresh_only::Proof<'_>,
+    test: fresh_only::PriorCommitTest<'_>,
     login: &Login,
     transport: Arc<RouteTransport>,
     human: &Principal,
@@ -251,10 +251,10 @@ pub(super) async fn prove(
     let client = client(
         login.credentials.clone(),
         transport.clone(),
-        &proof.inputs.route_host,
+        &test.inputs.route_host,
     );
-    let before = nested_receipt_state(proof.project).await?;
-    let expected: Value = proof.project.query_one(
+    let before = nested_receipt_state(test.project).await?;
+    let expected: Value = test.project.query_one(
         "SELECT jsonb_build_object('id', id::text, 'purchase_order_number', purchase_order_number, \
          'supplier_id', supplier_id::text, 'status', status, 'row_version', row_version::text, \
          'created_at', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), \
@@ -276,7 +276,7 @@ pub(super) async fn prove(
             "ordinary client call replayed or refreshed the warm session"
         );
         assert_kind(
-            &proof,
+            &test,
             61 + index as u64,
             "purchase_order_get",
             OPERATION,
@@ -284,20 +284,20 @@ pub(super) async fn prove(
             "session",
         )?;
     }
-    let body: Vec<Value> = serde_json::from_slice(&proof.body)?;
+    let body: Vec<Value> = serde_json::from_slice(&test.body)?;
     assert_value(
         client
             .invoke_fresh(&route(direct_path), &BTreeMap::new(), &body)
             .await,
         "session-nested-replay",
-        proof.expected_base,
+        test.expected_base,
     )?;
     anyhow::ensure!(
         transport.calls() == 3 && login.transport.calls.load(Ordering::SeqCst) == 1,
         "explicit fresh client call must send one PAT request without exchange"
     );
     assert_kind(
-        &proof,
+        &test,
         63,
         "receiving_record_receipt",
         BASE_RECORD_RECEIPT,
@@ -306,14 +306,14 @@ pub(super) async fn prove(
     )?;
 
     let expired = issue_pat(
-        proof.control,
+        test.control,
         human.id(),
         "client expired login",
         Duration::from_secs(3600),
     )
     .await?;
     anyhow::ensure!(
-        proof
+        test
             .control
             .execute(
                 "UPDATE identity.pats SET created_at = clock_timestamp() - interval '2 hours', \
@@ -326,20 +326,20 @@ pub(super) async fn prove(
     );
     refused_login(login, expired.token(), &transport).await?;
     let revoked = issue_pat(
-        proof.control,
+        test.control,
         human.id(),
         "client revoked login",
         Duration::from_secs(3600),
     )
     .await?;
-    revoke_pat(proof.control, revoked.record().prefix()).await?;
+    revoke_pat(test.control, revoked.record().prefix()).await?;
     refused_login(login, revoked.token(), &transport).await?;
 
     anyhow::ensure!(
-        nested_receipt_state(proof.project).await? == before,
+        nested_receipt_state(test.project).await? == before,
         "client GET, explicit replay, or refused login changed the existing business state"
     );
-    fresh_only::prove_prior_commit(proof).await?;
+    fresh_only::test_prior_commit(test).await?;
     anyhow::ensure!(
         login.transport.calls.load(Ordering::SeqCst) == 1,
         "nested refusal or explicit retry refreshed the session"
@@ -348,7 +348,7 @@ pub(super) async fn prove(
 }
 
 fn assert_kind(
-    proof: &fresh_only::Proof<'_>,
+    test: &fresh_only::PriorCommitTest<'_>,
     index: u64,
     wiring: &str,
     operation: &str,
@@ -356,8 +356,8 @@ fn assert_kind(
     kind: &str,
 ) -> anyhow::Result<()> {
     let (trace, _) = journey_trace(index);
-    let spans = proof.traces.spans();
-    assert_direct_route_trace(&spans, &trace, wiring, operation, digest, proof.human_id);
+    let spans = test.traces.spans();
+    assert_direct_route_trace(&spans, &trace, wiring, operation, digest, test.human_id);
     let invocations = trace_component_invocations(&spans, &trace);
     anyhow::ensure!(
         invocations.len() == 1

@@ -596,7 +596,7 @@ pub(super) async fn assert_nested_session(
         });
         let transport = session_client::RouteTransport::new(engine, flow_http, routing, bridge, 61);
         let result = session_client::prove(
-            fresh_only::Proof {
+            fresh_only::PriorCommitTest {
                 inputs: &inputs,
                 credentials: &credentials,
                 project_url: project_url.as_str(),
@@ -757,7 +757,7 @@ pub(super) async fn assert_nested_session(
             "the direct PAT replay changed the original committed result"
         );
 
-        fresh_only::prove_prior_commit(fresh_only::Proof {
+        fresh_only::test_prior_commit(fresh_only::PriorCommitTest {
             inputs: &inputs,
             credentials: &credentials,
             project_url: project_url.as_str(),
