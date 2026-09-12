@@ -992,35 +992,35 @@ mod tests {
 
     // These are observed native objects from the recorded three-host run.
     const DENIED: &str = include_str!(
-        "../../evidence/perf/2026.09/1-component-cache/journey3/cross-environment-workload.json"
+        "fixtures/workload/cross-environment-workload.json"
     );
     const EVENT: &str = include_str!(
-        "../../evidence/perf/2026.09/1-component-cache/journey3/cross-environment-event.json"
+        "fixtures/workload/cross-environment-event.json"
     );
     const DEPLOYMENT: &str = include_str!(
-        "../../evidence/perf/2026.09/1-component-cache/journey3/flow-http-deployment.json"
+        "fixtures/workload/flow-http-deployment.json"
     );
     const SLICES: &str = include_str!(
-        "../../evidence/perf/2026.09/1-component-cache/journey3/flow-http-endpointslices.json"
+        "fixtures/workload/flow-http-endpointslices.json"
     );
     const SERVICE: &str =
-        include_str!("../../evidence/perf/2026.09/1-component-cache/journey3/flow-http-service.json");
+        include_str!("fixtures/workload/flow-http-service.json");
     const WORKLOAD: &str =
-        include_str!("../../evidence/perf/2026.09/1-component-cache/journey3/flow-http-workload.json");
+        include_str!("fixtures/workload/flow-http-workload.json");
     const HOSTS: &str =
-        include_str!("../../evidence/perf/2026.09/1-component-cache/journey3/hosts.json");
+        include_str!("fixtures/workload/hosts.json");
     const PODS: &str =
-        include_str!("../../evidence/perf/2026.09/1-component-cache/journey3/host-pods.json");
+        include_str!("fixtures/workload/host-pods.json");
 
     #[test]
     fn recorded_images_require_one_runtime_digest_and_a_config_id() {
         // Both inputs are historical native output; neither is the failed RC inspection.
         let identity: Value = serde_json::from_str(include_str!(
-            "../../evidence/perf/2026.09/ctc8-15-1-identity/deployed-001/identity-node-image.json"
+            "fixtures/workload/identity-node-image.json"
         ))
         .unwrap();
         let gates: Value = serde_json::from_str(include_str!(
-            "../../evidence/perf/2026.09/ctc8-15-1-identity/deployed-001/gates-node-image.json"
+            "fixtures/workload/gates-node-image.json"
         ))
         .unwrap();
         let expected = (
