@@ -1,0 +1,20 @@
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:793:4
+    |
+793 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/schema/generator)
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-schema-control v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/schema/control)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.00s
+     Running unittests src/lib.rs (target/debug/deps/wamn_schema_control-9ed332fd56e655c0)
+
+running 1 test
+test sql::tests::package_reads_use_exact_coordinate_and_ordered_ledger ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 108 filtered out; finished in 0.00s
+
