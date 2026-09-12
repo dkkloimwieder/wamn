@@ -789,7 +789,7 @@ async fn authoring_command(
 /// Non-ledgered query adapter.
 ///
 /// `get-report` reads only the fixed control-store scope, and it is now the
-/// whole query inventory: `read-draft` collapsed with the draft concept
+/// whole query list: `read-draft` collapsed with the draft concept
 /// (wamn-0h0g.8.5.5).
 #[derive(Clone, Copy, Debug, Default)]
 struct AuthoringQueryAdapter;
@@ -864,7 +864,7 @@ const fn query_kind(query: &AuthoringQuery) -> &'static str {
 
 /// Dispatch one decoded command.
 ///
-/// Both commands in the closed contract inventory are mounted. Route selection
+/// Both commands in the closed contract are mounted. Route selection
 /// happens here, after authorization, so an untrusted presenter is refused
 /// before either handler can reveal which command it names.
 async fn dispatch_command(
@@ -881,7 +881,7 @@ async fn dispatch_command(
 /// Which handler, if any, one decoded command selects.
 ///
 /// Route selection is a PURE function of the command, split out from
-/// [`dispatch_command`] so the mounted inventory can be decided by CALLING it
+/// [`dispatch_command`] so the mounted commands can be found by CALLING it
 /// rather than by reading the dispatcher's text. `dispatch_command` has no
 /// second opinion: it matches on this answer and nothing else, so the two cannot
 /// drift (wamn-0h0g.8.5.4 — the source scan this replaced asserted a substring
@@ -1790,7 +1790,7 @@ mod tests {
         );
     }
 
-    /// The mounted inventory, decided by CALLING route selection over every
+    /// The mounted commands, found by CALLING route selection over every
     /// contract kind.
     ///
     /// This replaces a source scan that counted a substring of its own file
@@ -1828,7 +1828,7 @@ mod tests {
                 "operation": "create"
             }}
         });
-        let inventory = [
+        let command_cases = [
             (
                 AuthoringCommandKind::Gate,
                 AuthoringCommand::Gate(Gate {
@@ -1849,11 +1849,11 @@ mod tests {
                 }),
             ),
         ];
-        // Every kind the contract declares is exercised, so the inventory cannot
+        // Every kind the contract declares is exercised, so the test cases cannot
         // silently omit one. wamn-0h0g.8.5.5 collapsed five commands to two.
-        assert_eq!(inventory.len(), 2);
+        assert_eq!(command_cases.len(), 2);
 
-        let routed: Vec<_> = inventory
+        let routed: Vec<_> = command_cases
             .iter()
             .map(|(kind, command)| (*kind, format!("{:?}", command_route(command))))
             .collect();

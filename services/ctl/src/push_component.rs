@@ -118,11 +118,11 @@ const SELECT_CONTROL_COMPONENT_PROJECTION_HASH_SQL: &str = "SELECT projection_ha
        FROM catalog.component_library \
       WHERE tenant_id = $1 AND environment_instance = $2 AND package_id = $3 \
         AND package_version = $4 AND component = $5 AND interface_version = $6";
-const SELECT_REQUIREMENT_INVENTORY_SQL: &str = "SELECT store_alias, requirement_hash \
+const SELECT_REQUIREMENTS_SQL: &str = "SELECT store_alias, requirement_hash \
        FROM catalog.connection_requirements \
       WHERE tenant_id = $1 AND component_digest = $2 \
       ORDER BY store_alias COLLATE \"C\"";
-const SELECT_CONTROL_REQUIREMENT_INVENTORY_SQL: &str = "SELECT store_alias, requirement_hash \
+const SELECT_CONTROL_REQUIREMENTS_SQL: &str = "SELECT store_alias, requirement_hash \
        FROM catalog.connection_requirements \
       WHERE tenant_id = $1 AND environment_instance = $2 AND component_digest = $3 \
       ORDER BY store_alias COLLATE \"C\"";
@@ -1427,7 +1427,7 @@ async fn require_exact_verification_projection_with_client(
     }
     // The verification database is a PROJECT plane: it IS the creation being
     // verified, so it keys no environment instance (wamn-10yt.52).
-    verify_requirement_inventory(
+    verify_requirements(
         &transaction,
         &component.scope.tenant_id,
         None,
@@ -1602,7 +1602,7 @@ async fn persist_with_client(
         )
         .await? as usize;
     }
-    verify_requirement_inventory(
+    verify_requirements(
         &transaction,
         &component.scope.tenant_id,
         environment_instance.as_deref(),
@@ -1821,9 +1821,9 @@ async fn append_or_verify_requirement(
 }
 
 /// `environment_instance` scopes the read to the creation this projection is
-/// writing; without it the control plane would compare its inventory against
+/// writing; without it the control plane would compare its requirements against
 /// every creation's rows at once (wamn-10yt.52).
-async fn verify_requirement_inventory(
+async fn verify_requirements(
     transaction: &Transaction<'_>,
     tenant_id: &str,
     environment_instance: Option<&str>,
@@ -1848,7 +1848,7 @@ async fn verify_requirement_inventory(
         Some(instance) => {
             transaction
                 .query(
-                    SELECT_CONTROL_REQUIREMENT_INVENTORY_SQL,
+                    SELECT_CONTROL_REQUIREMENTS_SQL,
                     &[&tenant_id, &instance, &component_digest],
                 )
                 .await
@@ -1856,7 +1856,7 @@ async fn verify_requirement_inventory(
         None => {
             transaction
                 .query(
-                    SELECT_REQUIREMENT_INVENTORY_SQL,
+                    SELECT_REQUIREMENTS_SQL,
                     &[&tenant_id, &component_digest],
                 )
                 .await
