@@ -2,7 +2,7 @@
 
 The retained workspace sweep (tests across all root packages) failed with exit 101 at `a0e833b9398c829030a055f5c38755aebd98d358` on 2026-09-11.
 It reported 84 failed tests across 39 test targets.
-This report records the starting state for the [consolidation charter](../../../../docs/architecture/consolidation-findings.md).
+This report records the starting state for the [consolidation charter](../../../../docs/history/consolidation-findings.md).
 Bead `wamn-47wm.1` owns this measurement (`bd show wamn-47wm.1`).
 
 The run reported 2,245 test passes and six doctest passes (tests in Rust documentation).

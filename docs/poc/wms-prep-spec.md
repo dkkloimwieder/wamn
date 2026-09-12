@@ -76,7 +76,7 @@ allowlist. Replace the heuristic with declaration:
   rules are lifecycle machinery, parked on .7).
 
   **Row set superseded 2026-09-02 by measurement** (owner ruling; see
-  `docs/architecture/2a-capability-registry.md`). This line previously read
+  `docs/history/2a-capability-registry.md`). This line previously read
   `wasi:clocks/io/random/logging: ambient`; `wamn:postgres`,
   `wasmcloud:blobstore`: `effect` — six rows. The measured tenant surface is
   **seven existing plus one new**: it omitted `wamn:node` and

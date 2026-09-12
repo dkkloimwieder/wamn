@@ -2,7 +2,7 @@
 
 **Status:** owner-approved direction and constants · 2026-09-07 · implementation prerequisites remain
 **Scope:** a short-lived session credential beside PATs. Companion to
-`wamn_http_auth_proposal.md`; sequenced after its step 1.
+`../history/wamn_http_auth_proposal.md`; sequenced after its step 1.
 
 ## 1. Direction
 

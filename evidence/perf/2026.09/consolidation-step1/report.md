@@ -17,7 +17,7 @@ The code commits remove duplicate package, tier, feature, and WIT location inven
 Application builds read the named manifests, and proof builds read Cargo workspace membership.
 Each guest keeps a separate Cargo invocation.
 The build command rejects changed artifact plans before changing outputs and preserves other application outputs during an app build.
-The [charter](../../../../docs/architecture/consolidation-findings.md) retains the owner decisions.
+The [charter](../../../../docs/history/consolidation-findings.md) retains the owner decisions.
 
 | Bead | Code commit | Change |
 | --- | --- | --- |

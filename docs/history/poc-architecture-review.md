@@ -1,7 +1,7 @@
 # POC architecture review — scale, constraint, and extensibility
 
 Status: RULED 2026-09-01 · measured at `f57b4e0b` · companion to
-`component-artifact-boundary.md` · sequencing: priorities P1–P4 are
+`../architecture/component-artifact-boundary.md` · sequencing: priorities P1–P4 are
 post-slice-iv work items; triggers are recorded, not scheduled.
 
 ## 1. Scale failure points

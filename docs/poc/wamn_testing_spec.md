@@ -140,7 +140,7 @@ The owner accepted this specification and authorized Increment 1 on 2026-09-09. 
 
 [6] `docs/operations/build-and-test.md`, **Traps** (named mutation, negative-control, fixture, and distinguishing-step laws) and **[RECEIVING-MATERIALIZER-JOURNEY]**. Checked at `dfa1c3187fe8cd671688a442b23106046e502cb6`; use the maintained law entries when implementing.
 
-[7] `docs/architecture/poc-architecture-review.md`: **“Schema evolution is fresh-install-only.”** This review scopes compatibility tests to that restriction, not the older upgrade workflow.
+[7] `docs/history/poc-architecture-review.md`: **“Schema evolution is fresh-install-only.”** This review scopes compatibility tests to that restriction, not the older upgrade workflow.
 
 [8] `packages/client_acme_receiving/command/create_inspection/insert_inspection.sql`: inspection identity is `receipt_id`; the statement uses `ON CONFLICT ON CONSTRAINT quality_inspection_receipt_id_pkey DO NOTHING`. This implementation fact motivates the duplicate-delivery assertion; it is not execution evidence.
 

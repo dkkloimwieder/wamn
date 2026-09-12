@@ -196,7 +196,7 @@ wasmCloud binds it by default**.
 
 ## Spec correction, same commit
 
-`wms-prep-spec.md` §2a lists six rows: `wasi:clocks/io/random/logging` ambient,
+`../poc/wms-prep-spec.md` §2a lists six rows: `wasi:clocks/io/random/logging` ambient,
 `wamn:postgres` + `wasmcloud:blobstore` effect. **Seven-plus-one supersedes it.**
 The line is corrected in the commit that carries this document, citing the
 measurement: the spec omits `wamn:node` and `wamn:connection`, both granted

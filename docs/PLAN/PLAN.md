@@ -23,7 +23,7 @@ Hard blockers live in Beads; independent rows may run in parallel.
 | 5 | Delete the displaced flow language, guest, plans, compiler and proof mass in dependency order | `.26` |
 | 6 | Regenerate governed evidence once for the final wave, run the RC, then merge | `.15.25` and the active regeneration owner |
 | 12 | Receiving base + overlay POC — work order at `docs/poc/` | `wamn-10yt` |
-| 13 | Repository consolidation — charter at `docs/architecture/consolidation-findings.md` | `wamn-47wm` |
+| 13 | Repository consolidation — charter at `docs/history/consolidation-findings.md` | `wamn-47wm` |
 
 The surviving setup, scheduler, wire, gate, management, proof and schema work
 under `.1`, `.2`, `.5`, and `.7`–`.15` remains cross-cutting input to these rows;

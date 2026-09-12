@@ -7,7 +7,7 @@ The final workspace sweep retains 83 baseline failures and one unarmed fixture f
 Each result below names its actual source and artifacts. Git and Beads record publication status.
 
 The [implementation checkpoint](report.md) records the earlier helper proofs.
-The [B plan](../../../../docs/architecture/wamn_native_alignment_plan.md#b-replace-manual-guest-execution-including-its-duplicate-caches) retains the deletion contract and public-API boundary.
+The [B plan](../../../../docs/history/wamn_native_alignment_plan.md#b-replace-manual-guest-execution-including-its-duplicate-caches) retains the deletion contract and public-API boundary.
 The [recipe](../../../../docs/operations/build-and-test.md#native-b-native-application-loading-and-dispatch) names the owning commands and required assertions.
 
 ## Source and artifacts

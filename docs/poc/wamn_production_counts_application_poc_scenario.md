@@ -302,7 +302,7 @@ external source writes is predictable from its topic.
 consumer until a CALLING consumer appears. A WIT package a guest imports for
 something it RECEIVES rather than CALLS is machinery invented to exercise a
 template, and rule R-C refuses it on its own text
-(`docs/architecture/poc-architecture-review.md:34`). The named trigger is MQTT
+(`docs/history/poc-architecture-review.md:34`). The named trigger is MQTT
 publish FROM a component. `docs/exe-model.md:86` already lists MQTT among the
 next node-ABI consumers after blob-put, which is that same publish direction.
 

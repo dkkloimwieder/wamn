@@ -366,7 +366,7 @@ Generic. Writes `$RUN/checklist.json` and `$RUN/grade/*`.
 4. **Checks and fence reports.** The grader is not a second policy. Where the
    loop already fences a rule, the grader reports the loop's verdict (the stage
    passed or the `<kind> at <stage>` line) and runs nothing of its own:
-   - `capability-surface`: Admit's registry decision (`2a-capability-registry.md:56-68`).
+   - `capability-surface`: Admit's registry decision (`docs/history/2a-capability-registry.md:56-68`).
    - `additive-migration`: the migration validator's decision at Migrate.
    - `no-environment-data`: the admission fence per the re-specified
      `wamn-10yt.20` (host quarter and secret-shaped values; environment slugs
@@ -455,11 +455,11 @@ Authoring (the skills arm ships these):
 
 | id | name | teaches | links | verb / gate |
 |---|---|---|---|---|
-| S0 | `wamn-application-brief` | intake: from a short ask, interview to fill the application-brief skeleton (protocol §4.5); pin nouns, commands with invariants, queries, ingress, external services from the admitted interfaces only, permissions, UI screens, non-goals, exit gate; emit the brief, a draft `steps.json` from the exit gate, and a list of asks that need an unadmitted capability, flagged as platform work | protocol §4.5, `2a-capability-registry.md:56-68`, `.20` | none (produces the fixture) |
+| S0 | `wamn-application-brief` | intake: from a short ask, interview to fill the application-brief skeleton (protocol §4.5); pin nouns, commands with invariants, queries, ingress, external services from the admitted interfaces only, permissions, UI screens, non-goals, exit gate; emit the brief, a draft `steps.json` from the exit gate, and a list of asks that need an unadmitted capability, flagged as platform work | protocol §4.5, `docs/history/2a-capability-registry.md:56-68`, `.20` | none (produces the fixture) |
 | S1 | `wamn-dev-loop` | twelve stages, saved-bytes vs committed boundary, `--hold`, reading `run completed` / `<kind> at <stage>`, log locations | `dev.rs:95-106`, A0 | `wamn dev` |
 | S2 | `wamn-package-manifest` | `wamn.json`: package identity, models (`server_owned_fields`, `enum_fields`), connections, components; additive migrations; `row_version`; never hand-edit `generated/` | `docs/sqlx-data-access-spec.md` | Migrate → Generate |
 | S3 | `wamn-custom-operation` | a `custom_operations` entry (kind, permission, connection, transaction, input/result, errors, relations with lock flags, statement paths), the SQL file, the claim law | manifest schema, F14 | Gate |
-| S4 | `wamn-component-operation` | exporting an operation from a wasip2 component at the package's interface version, `wamn:node` inbound, node-error taxonomy, admitted imports, workspace membership | `docs/architecture/2a-capability-registry.md:56-68`, `wamn-node/package.wit`, F16 | Build → Admit |
+| S4 | `wamn-component-operation` | exporting an operation from a wasip2 component at the package's interface version, `wamn:node` inbound, node-error taxonomy, admitted imports, workspace membership | `docs/history/2a-capability-registry.md:56-68`, `wamn-node/package.wit`, F16 | Build → Admit |
 | S5 | `wamn-wiring-and-route` | wiring JSON, attachment JSON (`route.path`, `input-schema`, `auth-policy`), publication template ports, permission tokens (no grant step, F9) | F13, F9 | Gate → Apply |
 | S6 | `wamn-verify-route` | `--hold`, `Host` + bearer from the PAT file, the array envelope, `value` vs `error.code`, 403 shape, writing a verification section | F13 | `curl` |
 | S9 | `wamn-test-package` | the author procedure (protocol §4.6): native unit tests, wasip2 check, loop to Gate on saved bytes, commit, `--hold`, route steps incl. replay / changed-body / contention / not-found, verbatim recording; what has no verifier today | F21, F22, A0 | `cargo test`, `wamn dev`, `curl` |
