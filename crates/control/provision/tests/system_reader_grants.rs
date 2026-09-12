@@ -336,7 +336,7 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
         "DO $self$ BEGIN \
            ASSERT NOT (SELECT rolsuper OR rolbypassrls FROM pg_roles \
                         WHERE rolname = current_user), \
-             'this session is superuser or bypasses RLS and proves nothing'; \
+             'this session is superuser or bypasses RLS and establishes nothing'; \
          END $self$;",
     );
     // The REAL consuming statement, executed by the REAL credential.
@@ -391,7 +391,7 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
 }
 
 /// THE FORGERY PRIMITIVE, CLOSED AND MEASURED (`wamn-0h0g.12.67`), and the
-/// DISJOINTNESS proved live with BOTH readers provisioned at once.
+/// DISJOINTNESS checked live with BOTH readers provisioned at once.
 ///
 /// `wamn-system-db` authenticated as `wamn_system`, the owner of `identity.pats`
 /// and `identity.project_roles`, and `identity.*` has no row-level security. The
@@ -521,7 +521,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
             "DO $self$ BEGIN \
                ASSERT NOT (SELECT rolsuper OR rolbypassrls FROM pg_roles \
                             WHERE rolname = current_user), \
-                 'this session is superuser or bypasses RLS and proves nothing'; \
+                 'this session is superuser or bypasses RLS and establishes nothing'; \
              END $self$;",
         );
         // Neither reader may reach the OTHER's plane, in either direction.

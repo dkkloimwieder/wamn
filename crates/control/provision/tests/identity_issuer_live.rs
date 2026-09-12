@@ -21,8 +21,8 @@ use wamn_control_provision::{
     system_reader_generation_role,
 };
 
-const ISSUER: &str = "https://identity-issuer-proof.wamn-system.svc";
-const PASSWORD: &str = "identity-issuer-proof-password";
+const ISSUER: &str = "https://identity-issuer-test.wamn-system.svc";
+const PASSWORD: &str = "identity-issuer-test-password";
 
 fn psql(url: &str, script: &str) -> (bool, String, String) {
     let mut child = Command::new("psql")

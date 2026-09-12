@@ -160,7 +160,7 @@ pub fn ensure_app_role_sql(_password: &str) -> String {
 /// `EXISTS`-joins `effect_attempts`; the queue-depth `SELECT` reads the same
 /// pair. PostgreSQL checks privileges on every relation a statement references
 /// regardless of whether the subquery yields rows, so BOTH grants are load
-/// bearing even when the ledger is empty.
+/// bearing even when the table is empty.
 pub const DISPATCH_READER_RELATIONS: [&str; 2] = ["run_queue", "effect_attempts"];
 
 /// Catalog relations read by the surviving management-admission surface.
@@ -627,7 +627,7 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 ///   `DELETE` (PostgreSQL has no column-grain DELETE), plus COLUMN-grain
 ///   `UPDATE` over [`EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS`] — the lease and
 ///   the crash counter, never the FIFO position.
-/// * `effect_attempts`: `SELECT` only. The ledger is the effect writer's to
+/// * `effect_attempts`: `SELECT` only. The table is the effect writer's to
 ///   append to; the claim path only asks whether a row exists.
 /// * `wamn_authority.tenant_key(text)`: MEASURED, and not optional. `runs`
 ///   carries the `runs_tkey` EXPRESSION INDEX over that function, and
@@ -841,7 +841,7 @@ pub fn grant_identity_reader_surface_sql() -> String {
 ///
 /// `None` = the family's stable role carries no grant set this batch applies.
 /// The effect writer is the standing example: schema-control owns its grants
-/// because they only exist once the effect-ledger tables do, so this batch has
+/// because they only exist once the effect tables do, so this batch has
 /// nothing to converge and a caller must not assert the grant set before
 /// preparing. An admitted family lands on `None` with no edit here; a family
 /// that acquires a grant set adds it beside its builder, which is the one place

@@ -166,9 +166,9 @@ fn observation_at_record() -> RunPlaneObservation {
         "effect_attempt_dispatches",
         "effect_attempt_outcomes",
     ] {
-        obs.effect_ledger_owners
+        obs.effect_table_owners
             .insert(table.to_string(), "platform_admin".to_string());
-        // All three ledgers are at record WITHOUT the writer's append
+        // All three tables are at record WITHOUT the writer's append
         // authority — born parked, matching `deploy/sql/run-state.sql`.
         let writer_at_record: &[&str] = &["SELECT"];
         for (grantee, privileges) in [
@@ -180,11 +180,11 @@ fn observation_at_record() -> RunPlaneObservation {
                 .iter()
                 .map(|privilege| (*privilege).to_string())
                 .collect();
-            obs.effect_ledger_table_privileges
+            obs.effect_table_privileges
                 .insert(key.clone(), privileges.clone());
-            obs.effect_ledger_effective_privileges
+            obs.effect_table_effective_privileges
                 .insert(key.clone(), privileges.clone());
-            obs.effect_ledger_effective_column_privileges
+            obs.effect_table_effective_column_privileges
                 .insert(key, privileges);
         }
     }
@@ -2082,7 +2082,7 @@ fn frame_identity_cutover_is_idempotent_at_record_shape() {
 fn frame_identity_contract_drift_uses_cutover_not_generic_repairs() {
     #[expect(
         clippy::type_complexity,
-        reason = "the table-driven proof pairs each drift label with one noncapturing mutation"
+        reason = "the table-driven test pairs each drift label with one noncapturing mutation"
     )]
     // wamn-0h0g.26.3.1 (204220e8) retired the node-runs projection, so
     // `effect_attempts` is the sole frame-identity target and every case
@@ -2227,7 +2227,7 @@ fn writer_role_verification_precedes_empty_structural_cutover() {
 fn populated_writer_cutover_refusal_precedes_role_verification() {
     let mut obs = observation_at_record();
     obs.effect_writer_role = None;
-    obs.effect_ledger_rows = 1;
+    obs.effect_record_rows = 1;
     obs.tables
         .get_mut("effect_attempts")
         .expect("attempt table")
@@ -2267,7 +2267,7 @@ fn trusted_cdc_lineage_is_unchanged_by_attempt_retirement() {
 }
 
 #[test]
-fn effect_lineage_and_temporal_fks_are_repaired_on_existing_ledgers() {
+fn effect_lineage_and_temporal_fks_are_repaired_on_existing_tables() {
     let mut obs = observation_at_record();
     for (table, name) in [
         ("effect_attempt_dispatches", EFFECT_DISPATCH_ATTEMPT_FK_NAME),
@@ -2693,7 +2693,7 @@ fn the_catalog_ddl_and_the_authoring_specs_agree_on_the_author() {
                 .filter(|spec| matches!(spec.schema, AuthoringTableSchema::Catalog))
                 .count(),
         "the grant scan matched {} app grants, so its statement shape no \
-             longer matches the file and the author scan proves nothing",
+             longer matches the file and the author scan establishes nothing",
         granted_to_app.len()
     );
 }
@@ -2999,14 +2999,14 @@ fn effect_writer_run_reads_reconcile_to_exact_columns_without_table_authority() 
 fn effect_writer_acl_repair_removes_schema_table_and_column_drift() {
     let mut obs = observation_at_record();
     obs.effect_writer_schema_privileges = (true, true);
-    obs.effect_ledger_effective_privileges.insert(
+    obs.effect_table_effective_privileges.insert(
         (
             "effect_attempts".to_string(),
             SCENARIO_AUTHOR_ROLE.to_string(),
         ),
         ["SELECT".to_string()].into_iter().collect(),
     );
-    obs.effect_ledger_effective_column_privileges
+    obs.effect_table_effective_column_privileges
         .entry(("effect_attempts".to_string(), "wamn_app".to_string()))
         .or_default()
         .insert("UPDATE".to_string());
@@ -3040,7 +3040,7 @@ fn effect_writer_acl_repair_removes_schema_table_and_column_drift() {
         .expect("writer table ACL repair");
     assert!(table_action.sql.contains("REVOKE SELECT ("));
     assert!(table_action.sql.contains("has_any_column_privilege"));
-    // BORN PARKED: the attempt ledger is re-granted READ ONLY, and the block
+    // BORN PARKED: the attempt table is re-granted READ ONLY, and the block
     // refuses to see the server still report the writer holding INSERT.
     assert!(
         table_action.sql.contains(
@@ -3058,25 +3058,25 @@ fn effect_writer_acl_repair_removes_schema_table_and_column_drift() {
     ));
 }
 
-/// The convergent author, for one sibling ledger. `deploy/sql/run-state.sql`
+/// The convergent author, for one sibling table. `deploy/sql/run-state.sql`
 /// is only the BIRTH author; this builder is what an already-provisioned
 /// database converges onto, so restoring the append here would re-mint the
 /// dormant authority on every reconcile even with the DDL parked.
 #[test]
-fn dispatch_ledger_reconciles_to_a_parked_writer() {
-    assert_sibling_ledger_reconciles_parked("effect_attempt_dispatches");
+fn dispatch_table_reconciles_to_a_parked_writer() {
+    assert_sibling_table_reconciles_parked("effect_attempt_dispatches");
 }
 
 /// The same arm for the second sibling, named separately so a mutant that
 /// re-arms exactly one relation cannot hide behind the other.
 #[test]
-fn outcome_ledger_reconciles_to_a_parked_writer() {
-    assert_sibling_ledger_reconciles_parked("effect_attempt_outcomes");
+fn outcome_table_reconciles_to_a_parked_writer() {
+    assert_sibling_table_reconciles_parked("effect_attempt_outcomes");
 }
 
-fn assert_sibling_ledger_reconciles_parked(table: &str) {
+fn assert_sibling_table_reconciles_parked(table: &str) {
     let mut obs = observation_at_record();
-    obs.effect_ledger_effective_column_privileges
+    obs.effect_table_effective_column_privileges
         .entry((table.to_string(), "wamn_app".to_string()))
         .or_default()
         .insert("UPDATE".to_string());
@@ -3088,13 +3088,13 @@ fn assert_sibling_ledger_reconciles_parked(table: &str) {
             action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
                 && action.target == format!("demo.{table}")
         })
-        .expect("sibling ledger ACL repair");
+        .expect("sibling table ACL repair");
     // The re-grant is READ ONLY…
     assert!(
         action.sql.contains(&format!(
             "GRANT SELECT ON TABLE \"demo\".\"{table}\" TO wamn_effect_writer"
         )),
-        "{table}: sibling ledger is not re-granted read-only: {}",
+        "{table}: sibling table is not re-granted read-only: {}",
         action.sql
     );
     assert!(
@@ -3134,7 +3134,7 @@ fn cutover_owned_columns_are_not_named_by_later_acl_repair() {
     for column in EFFECT_FRAME_COLUMNS {
         columns.remove(*column);
     }
-    obs.effect_ledger_effective_column_privileges
+    obs.effect_table_effective_column_privileges
         .entry(("effect_attempts".to_string(), "wamn_app".to_string()))
         .or_default()
         .insert("UPDATE".to_string());

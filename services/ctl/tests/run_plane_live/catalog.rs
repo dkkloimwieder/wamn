@@ -193,7 +193,7 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
         .expect("converge the drifted project plane");
     assert!(
         !converge.is_noop(),
-        "the drift did not take — this leg would prove the fresh path only"
+        "the drift did not take — this leg would check the fresh path only"
     );
     assert!(
         converge.actions.iter().any(|action| {

@@ -446,7 +446,7 @@ impl BaseComponentDigestExpectation {
     }
 }
 
-/// The base component digest one run proved, and the pin it moved off.
+/// The base component digest one run checked, and the pin it moved off.
 ///
 /// `digest` is always the digest OBSERVED on the built component, which is the
 /// value every later stage carries. `superseded_pin` records the stale

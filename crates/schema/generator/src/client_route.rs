@@ -467,7 +467,7 @@ mod tests {
         assert!(result.output_schema.is_some());
         assert!(
             result.partial_schema.is_none(),
-            "a wiring selector alone proves no commit"
+            "a wiring selector alone reports no commit"
         );
         fixture.write("components/wms.json.in", &declaration);
         assert!(
@@ -518,7 +518,7 @@ mod tests {
                 .unwrap()
                 .partial_schema
                 .is_none(),
-            "ambiguous owners prove no commit"
+            "ambiguous owners report no commit"
         );
     }
 }

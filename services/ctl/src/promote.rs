@@ -1,8 +1,8 @@
 //! Promote one immutable format-1 release without applying package migrations.
 //!
-//! `apply-package` is the sole applier. Promotion checks that every source package
-//! coordinate, raw manifest hash, and complete ordered migration ledger already
-//! exists byte-exactly in the target before copying portable facts.
+//! `apply-package` is the sole applier. Promotion checks each source package
+//! coordinate and raw manifest hash against the target. It also requires the
+//! complete ordered migration records to match before copying portable facts.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -96,7 +96,7 @@ pub const PROMOTION_REFUSAL: &str = "promotion-refused";
 pub enum PromotionErrorKind {
     PackageNotApplied,
     PackageManifestMismatch,
-    PackageLedgerMismatch,
+    PackageMigrationRecordMismatch,
 }
 
 impl PromotionErrorKind {
@@ -104,7 +104,7 @@ impl PromotionErrorKind {
         match self {
             Self::PackageNotApplied => "package-not-applied",
             Self::PackageManifestMismatch => "package-manifest-mismatch",
-            Self::PackageLedgerMismatch => "package-ledger-mismatch",
+            Self::PackageMigrationRecordMismatch => "package-ledger-mismatch",
         }
     }
 }
@@ -502,7 +502,7 @@ async fn load_package_record(
     );
     for (index, migration) in migrations.iter().enumerate() {
         ensure!(
-            migration.ordinal == i32::try_from(index + 1).expect("ledger length fits integer"),
+            migration.ordinal == i32::try_from(index + 1).expect("record count fits integer"),
             "source package {}@{} has a migration gap at ordinal {}",
             coordinate.package_id(),
             coordinate.package_version(),
@@ -532,7 +532,7 @@ async fn load_migrations(
             ],
         )
         .await
-        .context("read complete ordered package migration ledger")?
+        .context("read complete ordered package migration records")?
         .into_iter()
         .map(|row| MigrationRecord {
             ordinal: row.get(0),
@@ -682,7 +682,7 @@ async fn promote_target(
             let package = packages
                 .iter()
                 .find(|package| package.package_id() == wiring.package_id)
-                .expect("manifest validation proved package membership");
+                .expect("manifest validation checked package membership");
             ReleaseWiringTarget {
                 package_id: wiring.package_id.clone(),
                 package_version: package.package_version().to_owned(),
@@ -812,9 +812,9 @@ fn compare_target_package(
     }
     if target.migrations != expected.migrations {
         return Err(PromotionError::new(
-            PromotionErrorKind::PackageLedgerMismatch,
+            PromotionErrorKind::PackageMigrationRecordMismatch,
             format!(
-                "{}@{} has a different complete ordered migration ledger; promote never applies migrations",
+                "{}@{} has different complete ordered migration records; promote never applies migrations",
                 coordinate.package_id(),
                 coordinate.package_version()
             ),
@@ -1042,7 +1042,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_extra_and_divergent_ordered_ledgers_refuse() {
+    fn missing_extra_and_divergent_ordered_migration_records_refuse() {
         let package = package();
         let mut missing = package.migrations.clone();
         missing.pop();
@@ -1059,8 +1059,8 @@ mod tests {
                     ..target(&package)
                 }),
             )
-            .expect_err("the complete target ledger must be byte-exact");
-            assert_eq!(error.kind(), PromotionErrorKind::PackageLedgerMismatch);
+            .expect_err("the complete target records must be byte-exact");
+            assert_eq!(error.kind(), PromotionErrorKind::PackageMigrationRecordMismatch);
         }
     }
 

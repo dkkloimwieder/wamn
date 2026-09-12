@@ -737,7 +737,7 @@ fn load_component_statement_facts(
     let metadata_bytes = read_package_owned_file(
         package_root,
         &canonical_root,
-        "package weld",
+        "package contract",
         metadata_path,
         "json",
     )?;
@@ -746,7 +746,7 @@ fn load_component_statement_facts(
             ComponentProjectionError::new(
                 ComponentProjectionErrorKind::StatementCorpusMismatch,
                 format!(
-                    "generated package weld {} is invalid: {error}",
+                    "generated package contract {} is invalid: {error}",
                     package_root.join(metadata_path).display()
                 ),
             )
@@ -760,7 +760,7 @@ fn load_component_statement_facts(
         return Err(ComponentProjectionError::new(
             ComponentProjectionErrorKind::StatementCorpusMismatch,
             format!(
-                "generated statement corpus is {observed_corpus}, but package weld records {}",
+                "generated statement corpus is {observed_corpus}, but package contract records {}",
                 metadata.application_sql_corpus_identity()
             ),
         ));
@@ -2534,17 +2534,17 @@ mod tests {
     #[tokio::test]
     async fn verification_projection_replays_refuses_drift_and_leaves_publish_project_noop() {
         let Ok(url) = std::env::var("WAMN_CTL_PG_URL") else {
-            eprintln!("skipping publication projection proof; WAMN_CTL_PG_URL is unset");
+            eprintln!("skipping publication projection test; WAMN_CTL_PG_URL is unset");
             return;
         };
         let Ok(artifact_base) = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE") else {
             eprintln!(
-                "skipping publication projection proof; WAMN_COMPONENT_ARTIFACT_BASE is unset"
+                "skipping publication projection test; WAMN_COMPONENT_ARTIFACT_BASE is unset"
             );
             return;
         };
         let Ok(registry_auth_file) = std::env::var("WAMN_REGISTRY_AUTH_FILE") else {
-            eprintln!("skipping publication projection proof; WAMN_REGISTRY_AUTH_FILE is unset");
+            eprintln!("skipping publication projection test; WAMN_REGISTRY_AUTH_FILE is unset");
             return;
         };
         let lock = OpenOptions::new()
@@ -2676,7 +2676,7 @@ mod tests {
                 ],
             )
             .await
-            .expect("seed the package root apply-package already proved");
+            .expect("seed the package root apply-package already checked");
         let incomplete =
             project_admitted_component_for_verification(&admission, verification_url.as_str())
                 .await
@@ -2684,7 +2684,7 @@ mod tests {
         assert_eq!(
             incomplete
                 .downcast_ref::<ComponentProjectionError>()
-                .expect("incomplete migration ledger is a typed refusal")
+                .expect("incomplete migration records cause a typed refusal")
                 .kind(),
             ComponentProjectionErrorKind::SourcePackageMigrationMismatch
         );
@@ -2722,11 +2722,11 @@ mod tests {
                     ],
                 )
                 .await
-                .expect("seed exact apply-package migration ledger");
+                .expect("seed exact apply-package migration records");
         }
         verify_source_package_with_client(&mut project, &component, &directory, &package_path)
             .await
-            .expect("an exact local stream and applied ledger agree");
+            .expect("an exact local stream and applied records agree");
         let mut migration_drift = directory.clone();
         migration_drift.migrations[0].bytes.push(b'\n');
         let drift = verify_source_package_with_client(
@@ -2956,7 +2956,7 @@ mod tests {
     #[tokio::test]
     async fn the_environment_instance_decides_which_run_owns_a_component_fact() {
         let Ok(url) = std::env::var("WAMN_CTL_PG_URL") else {
-            eprintln!("skipping environment-instance projection proof; WAMN_CTL_PG_URL is unset");
+            eprintln!("skipping environment-instance projection test; WAMN_CTL_PG_URL is unset");
             return;
         };
         let lock = OpenOptions::new()

@@ -218,7 +218,7 @@ fn t2_and_t4_orgs_coexist_via_org_scoped_policies() {
         },
         Project {
             org: "bigco".into(),
-            id: "ledger".into(),
+            id: "accounts".into(),
         },
     ];
     let project_envs = vec![
@@ -228,7 +228,7 @@ fn t2_and_t4_orgs_coexist_via_org_scoped_policies() {
             instance_suffix: "k3m9x2p7".into(),
         },
         ProjectEnv {
-            triple: Triple::new("bigco", "ledger", "canary"),
+            triple: Triple::new("bigco", "accounts", "canary"),
             db_secret: SecretRef::new("wamn-db-bigco-canary"),
             instance_suffix: "q80zdw41".into(),
         },
@@ -252,7 +252,7 @@ fn t2_and_t4_orgs_coexist_via_org_scoped_policies() {
         "standard: canary co-resides in prod's recovery domain (T2)"
     );
     let bigco = r
-        .resolve(&Triple::new("bigco", "ledger", "canary"))
+        .resolve(&Triple::new("bigco", "accounts", "canary"))
         .expect("resolves");
     assert_eq!(
         bigco.cluster,

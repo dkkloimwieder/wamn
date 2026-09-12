@@ -395,7 +395,7 @@ async fn assert_nested_effect_snapshot(
                 &[&TENANT, &package_id, &PACKAGE_VERSION, &FACT_FINGERPRINT],
             )
             .await
-            .expect("seed a separate package coordinate for the snapshot proof");
+            .expect("seed a separate package coordinate for the snapshot test");
         project
             .execute(
                 "INSERT INTO catalog.effective_release_packages \
@@ -439,7 +439,7 @@ async fn assert_nested_effect_snapshot(
             ],
         )
         .await
-        .expect("seed the immutable origin wiring for the SQL snapshot proof");
+        .expect("seed the immutable origin wiring for the SQL snapshot test");
 
     // This shows the SQL snapshot only. The mounted-release helper owns the
     // separate test that the origin declares a dependency on this executor.

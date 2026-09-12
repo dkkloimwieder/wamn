@@ -114,8 +114,8 @@ pub use observation_sql::{
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_dispatch_reader_schema_privileges_sql,
     select_dispatch_reader_table_privileges_sql,
-    select_effect_ledger_effective_column_privileges_sql,
-    select_effect_ledger_effective_privileges_sql, select_effect_ledger_table_privileges_sql,
+    select_effect_table_effective_column_privileges_sql,
+    select_effect_table_effective_privileges_sql, select_effect_table_privileges_sql,
     select_effect_writer_role_sql, select_effect_writer_run_column_privileges_sql,
     select_effect_writer_run_table_privileges_sql, select_effect_writer_schema_privileges_sql,
     select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
@@ -184,7 +184,7 @@ pub enum RunPlaneActionKind {
     StoredSuiteCutover,
     /// Empty-only deletion of the retired effect-disposition request/outcome plane.
     RetiredEffectDispositionCutover,
-    /// Strict empty-only installation of the coordinate-bound writer ledgers.
+    /// Strict empty-only installation of the coordinate-bound writer tables.
     EffectWriterCutover,
     /// Refuse a provisioning-owned stable writer role outside its frozen shape.
     VerifyEffectWriterRole,

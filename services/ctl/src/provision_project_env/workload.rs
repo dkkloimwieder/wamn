@@ -744,7 +744,7 @@ where
     let predecessor_role = other.as_ref().map(|_| other_role.as_str());
     // Pre-checked ONLY for a family whose stable grant set is converged
     // elsewhere (schema control owns the effect writer's, because its grants
-    // exist only once the effect-ledger tables do). A family whose grant set
+    // exist only once the effect tables do). A family whose grant set
     // THIS batch applies has nothing to assert yet on a first prepare, so the
     // condition is the absence of a stable surface, not a family name.
     if sql::stable_surface_sql(lifecycle.family).is_none()

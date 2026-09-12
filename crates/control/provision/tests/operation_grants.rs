@@ -93,7 +93,7 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
             .parse::<u32>()
             .expect("server version is numeric")
             >= 180_000,
-        "operation-grant proof requires PostgreSQL 18"
+        "operation-grant test requires PostgreSQL 18"
     );
     run(
         &url,

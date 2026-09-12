@@ -1544,7 +1544,7 @@ mod tests {
     /// Build an attachment map from the shipped one with the first
     /// attachment's route rewritten. SYNTHETIC by necessity: no shipped route
     /// is parameterized and every shipped attachment is `http`, so the two
-    /// properties below have no fixture and would otherwise go unproven —
+    /// properties below have no fixture and would otherwise go untested —
     /// mutation testing confirmed both survived without this.
     fn attachments_with_first(
         directory: &str,
@@ -1662,7 +1662,7 @@ mod tests {
         assert_eq!(first, second, "the IR is not byte-stable across two reads");
         assert!(
             !first.is_empty(),
-            "an empty IR would make the equality above prove nothing"
+            "an empty IR would make the equality above establish nothing"
         );
     }
 

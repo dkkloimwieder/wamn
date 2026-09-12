@@ -615,7 +615,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
     script.push_str(ASSERTIONS);
     // Exercise the REAL org-row builder via PREPARE/EXECUTE: two upserts of the
     // same id must collapse to ONE row (the second refreshing the placement),
-    // proving `ON CONFLICT (id) DO UPDATE`.
+    // checking `ON CONFLICT (id) DO UPDATE`.
     script.push_str(&format!(
         "PREPARE up (text,text,text) AS {upsert};\n\
          EXECUTE up('demo','pooled','wamn-pg');\n\

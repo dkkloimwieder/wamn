@@ -57,7 +57,7 @@ fn component_storage_sql_uses_component_and_effective_release_grains() {
 /// The instance-update guard refuses any update that does not advance
 /// `revision`. Activation is the one update the product issues, so its builder
 /// must carry the advance; the live round trip in wamn-ctl's
-/// bind_connection_live proves the trigger accepts it, and this pins the
+/// bind_connection_live checks the trigger accepts it, and this pins the
 /// property offline so a builder that stops advancing fails here first.
 #[test]
 fn activation_advances_the_instance_revision() {

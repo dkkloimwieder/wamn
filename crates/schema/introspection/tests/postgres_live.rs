@@ -640,7 +640,7 @@ async fn assert_additive_columns(client: &Client) {
 /// Outcome accumulator for the refusal matrix.
 ///
 /// Cases record instead of aborting so that one stale assertion cannot leave
-/// every case after it unproven while the suite still reports a single
+/// every case after it untested while the suite still reports a single
 /// failure. `ran` is the anti-deselection guard: a deleted case shows up as a
 /// count mismatch rather than as a smaller green matrix.
 #[derive(Debug)]

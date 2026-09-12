@@ -260,10 +260,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires this proof's disposable event broker via WAMN_NATIVE_C_NATS_URL"]
+    #[ignore = "requires this test's disposable event broker via WAMN_NATIVE_C_NATS_URL"]
     async fn retained_broker_advisories_report_missing_source_payloads() -> anyhow::Result<()> {
         let url = std::env::var("WAMN_NATIVE_C_NATS_URL")
-            .context("set WAMN_NATIVE_C_NATS_URL to this proof's disposable event broker")?;
+            .context("set WAMN_NATIVE_C_NATS_URL to this test's disposable event broker")?;
         let jetstream = async_nats::jetstream::new(async_nats::connect(url).await?);
         let source_name = stream_name("c-advisory", "app", "dev");
         let advisory_name = delivery_advisory_stream(&source_name);

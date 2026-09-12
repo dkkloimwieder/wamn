@@ -72,7 +72,7 @@ async fn install(client: &Client) {
                ADD COLUMN apply_effective_role name NOT NULL DEFAULT CURRENT_USER;",
         )
         .await
-        .expect("instrument the server-visible role used for trusted ledger writes");
+        .expect("instrument the server-visible role used for trusted record writes");
 }
 
 fn fixture_root() -> PathBuf {
@@ -431,7 +431,7 @@ async fn write_identity(client: &Client) -> Vec<String> {
 #[tokio::test]
 async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix() {
     let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping apply-package live proof; WAMN_CTL_PG_URL is unset");
+        eprintln!("skipping apply-package live test; WAMN_CTL_PG_URL is unset");
         return;
     };
     let client = connect(&url).await;
@@ -447,7 +447,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     rename_internal_relation(
         &distinct_identity,
         "record_receipt_command",
-        "receipt_command_ledger",
+        "receipt_command_record",
     );
     apply(&url, &distinct_identity)
         .await
@@ -459,7 +459,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         )
         .await
         .expect("read distinct internal relation identity");
-    assert_eq!(mapping.get::<_, String>(0), "receipt_command_ledger");
+    assert_eq!(mapping.get::<_, String>(0), "receipt_command_record");
     assert_eq!(mapping.get::<_, String>(1), "record_receipt_command");
     std::fs::remove_dir_all(&distinct_identity).expect("remove distinct internal-relation fixture");
     install(&client).await;
@@ -557,10 +557,10 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
                 &[&TENANT],
             )
             .await
-            .expect("read server-visible authority used for the migration ledger")
+            .expect("read server-visible authority used for the migration records")
             .get::<_, bool>(0),
         true,
-        "apply-package did not RESET ROLE before its trusted migration-ledger write"
+        "apply-package did not RESET ROLE before its trusted migration-record write"
     );
     let ownership = client
         .query_one(
@@ -1172,7 +1172,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             .await
             .unwrap()
             .get::<_, bool>(0),
-        "the DDL before the sealed ledger write rolls back with the transaction"
+        "the DDL before the sealed record write rolls back with the transaction"
     );
     assert_eq!(
         client

@@ -261,7 +261,7 @@ pub struct ApplyPackageArgs {
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub database_url: String,
 
-    /// Tenant stored with the package and migration ledger rows.
+    /// Tenant stored with the package and migration records.
     #[arg(long)]
     pub tenant: String,
 }
@@ -488,7 +488,7 @@ async fn apply(
     let applied = load_applied_package(&tx, tenant, &package_id, &package_version).await?;
     let plan = if let Some(applied) = applied.as_ref() {
         plan_package_migrations(directory, Some(applied))
-            .context("compare package bytes with immutable ledger")?
+            .context("compare package bytes with immutable records")?
     } else {
         match current_package_version(&tx, tenant, &package_id).await? {
             None => presented,
@@ -581,7 +581,7 @@ async fn apply(
     .context("register package before applying migrations")?;
     for statement in &plan.statements {
         // The planner carries exact package bytes as its parameter-free batch
-        // statements; every host-authored ledger statement has binds.
+        // statements; every host-authored record statement has binds.
         if statement.params.is_empty() {
             set_package_owner_role(&tx).await?;
             execute(&tx, statement, &coordinate_text).await?;

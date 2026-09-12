@@ -515,7 +515,7 @@ mod tests {
             .await
             .expect("read PostgreSQL major version")
             .get(0);
-        assert_eq!(major, 18, "the verification proof requires PostgreSQL 18");
+        assert_eq!(major, 18, "the verification test requires PostgreSQL 18");
         let public_connect: bool = client
             .query_one(
                 "SELECT EXISTS (\
@@ -541,7 +541,7 @@ mod tests {
                 &[],
             )
             .await
-            .expect("prove the supplied database is fresh")
+            .expect("check the supplied database is fresh")
             .get(0);
         assert_eq!(preexisting, 0, "the verification database is not fresh");
 
@@ -643,7 +643,7 @@ mod tests {
         })
         .await
         .expect("create and clean up the disposable verification database")
-        .expect("verification-world proof is infallible");
+        .expect("verification-world test is infallible");
         let durable_acl_after = database_acl(&admin, &durable_database).await;
         assert_eq!(
             durable_acl_after, durable_acl_before,

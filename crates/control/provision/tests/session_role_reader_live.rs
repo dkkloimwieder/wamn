@@ -1,6 +1,6 @@
 //! Exact session role-reader ACLs and A/B retirement on disposable PostgreSQL 18.
 //!
-//! Arm WAMN_SESSION_ROLE_READER_PG_URL naming wamn_session_role_reader_proof and
+//! Arm WAMN_SESSION_ROLE_READER_PG_URL naming wamn_session_role_reader_test and
 //! WAMN_SESSION_ROLE_READER_ALLOW_SCHEMA_RESET=1. Use a fresh owned cluster: this
 //! test resets its four project schemas and named fixture roles, and revokes
 //! the cluster's PUBLIC CONNECT floor. It never connects to a deployed database.
@@ -14,7 +14,7 @@ use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{WorkloadRoleScope, workload_generation_role};
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
 
-const DATABASE: &str = "wamn_session_role_reader_proof";
+const DATABASE: &str = "wamn_session_role_reader_test";
 const PASSWORD: &str = "session-role-reader-fixture-password";
 const FAMILY: WorkloadRoleFamily = WorkloadRoleFamily::SessionRoleReader;
 const PRINCIPAL: &str = "00000000-0000-0000-0000-000000000001";
@@ -172,7 +172,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
     assert_eq!(
         run(
             &admin,
-            "SELECT current_database() = 'wamn_session_role_reader_proof' \
+            "SELECT current_database() = 'wamn_session_role_reader_test' \
         AND current_setting('server_version_num')::int >= 180000 \
         AND current_setting('server_version_num')::int < 190000 AND rolsuper \
         FROM pg_roles WHERE rolname = current_user"

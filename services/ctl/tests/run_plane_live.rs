@@ -14,11 +14,11 @@
 //!   compatible history. The materializer catalog-head lock and immutable
 //!   lineage are exercised, then a second reconcile is a no-op.
 //! - **effect frame + writer cutovers** (wamn-0h0g.4.13/.4.9): incompatible
-//!   populated immutable ledgers refuse before DDL. Empty ledgers converge to
+//!   populated immutable tables refuse before DDL. Empty tables converge to
 //!   frame-keyed, coordinate-bound attempt/dispatch/outcome facts while retired
 //!   mutable node projection columns are removed without fabricating history.
 //! - **forced-RLS owner refusal**: a plain table owner cannot observe hidden
-//!   tenant rows, so dry-run and apply both refuse before the pointer or ledger
+//!   tenant rows, so dry-run and apply both refuse before the pointer or record
 //!   schema can be activated.
 //! - **partition-plane cutover** (wamn-0h0g.4.1): a populated but unleased
 //!   legacy queue keeps its retained row while the partition columns, owner
@@ -64,7 +64,7 @@
 //!   guest grants and membership are removed; the owner-seeded draft-safe
 //!   relation is SELECT-only to management; and guest/release-write refusals
 //!   are exercised.
-//! - **retired effect-disposition cutover**: empty parent/child ledgers are
+//! - **retired effect-disposition cutover**: empty parent/child tables are
 //!   locked and removed child-first; populated history refuses atomically with
 //!   the exact archive-or-reprovision diagnostic.
 //! - **fail_kind CHECK drift** (wamn-fqg.16): a schema whose `runs.fail_kind`
@@ -77,8 +77,8 @@ mod support;
 
 #[path = "run_plane_live/catalog.rs"]
 mod catalog;
-#[path = "run_plane_live/effect_ledgers.rs"]
-mod effect_ledgers;
+#[path = "run_plane_live/effect_tables.rs"]
+mod effect_tables;
 #[path = "run_plane_live/partition.rs"]
 mod partition;
 #[path = "run_plane_live/run_history.rs"]
@@ -97,7 +97,7 @@ use run_history::{
     persisted_literal_check_drift_leg, rerun_lineage_cutover_leg, shared_runner_legacy_leg,
 };
 
-use effect_ledgers::{
+use effect_tables::{
     effect_writer_cutover_leg, effect_writer_populated_refusal_leg, frame_identity_cutover_leg,
 };
 
@@ -826,7 +826,7 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
     );
     assert!(
         !table_exists(su, SCHEMA, "effect_attempts").await,
-        "refusal occurs before ledger activation"
+        "refusal occurs before record activation"
     );
 }
 
@@ -1972,7 +1972,7 @@ async fn retired_effect_disposition_cutover_leg(su: &Client) {
 /// Historical pre-cutover disposition hardening test, retained only as source
 /// archaeology while the replacement cutover gate above owns active coverage.
 #[allow(dead_code)]
-/// wamn-4u7p.42: repair the pre-hardening disposition ledger without replacing
+/// wamn-4u7p.42: repair the pre-hardening disposition table without replacing
 /// its table. The identity column is additive, the old wall-clock history index
 /// is recreated, helper authority/search-path definitions converge exactly, and
 /// the closed CHECK rejects the two SQL-NULL outcome shapes that previously
@@ -2011,7 +2011,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
              AS $unsafe$ BEGIN RETURN NEW; END $unsafe$;"
     ))
     .await
-    .expect("regress disposition ledger to its pre-hardening shape");
+    .expect("regress disposition table to its pre-hardening shape");
 
     let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
@@ -2199,7 +2199,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
     .await
     .expect("leave the platform-member application session");
     let fact_error = direct_fact_append.expect_err("ordinary app cannot append immutable facts");
-    assert_db_code(fact_error, "42501", "effect-ledger table-ACL refusal");
+    assert_db_code(fact_error, "42501", "effect-table ACL refusal");
     let error = direct_append.expect_err("platform membership cannot bypass the insert guard");
     assert!(
         error

@@ -97,7 +97,7 @@ async fn install(client: &Client) {
 #[tokio::test]
 async fn package_registration_union_flips_exact_tables_and_unreadable_state_refuses() {
     let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping RI live proof; WAMN_CTL_PG_URL is unset");
+        eprintln!("skipping RI live test; WAMN_CTL_PG_URL is unset");
         return;
     };
     let client = connect(&url).await;

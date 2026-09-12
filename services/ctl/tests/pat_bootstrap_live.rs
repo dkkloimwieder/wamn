@@ -32,14 +32,14 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
     let safe: bool = admin.query_one(
         "SELECT current_database()='wamn_system' AND current_setting('server_version_num')::int \
          BETWEEN 180000 AND 189999 AND rolsuper FROM pg_roles WHERE rolname=current_user", &[])
-        .await.expect("read proof preconditions").get(0);
+        .await.expect("read test preconditions").get(0);
     assert!(
         safe,
         "use only a disposable PostgreSQL 18 wamn_system administrator"
     );
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("proof clock")
+        .expect("test clock")
         .as_nanos();
     let files = Files(
         std::env::temp_dir().join(format!("wamn-pat-bootstrap-{}-{nonce}", std::process::id())),
@@ -47,7 +47,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(&files.0)
-        .expect("create private proof directory");
+        .expect("create private test directory");
     provision_journey_control(&url, admin.as_ref())
         .await
         .ok()
@@ -56,17 +56,17 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
     // fail this test even if it creates an otherwise valid PAT.
     admin
         .batch_execute(
-            "CREATE SCHEMA pat_proof; \
-         CREATE TABLE pat_proof.writers (writer name NOT NULL); \
-         CREATE FUNCTION pat_proof.record_writer() RETURNS trigger \
+            "CREATE SCHEMA pat_test; \
+         CREATE TABLE pat_test.writers (writer name NOT NULL); \
+         CREATE FUNCTION pat_test.record_writer() RETURNS trigger \
          LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$ \
-         BEGIN INSERT INTO pat_proof.writers VALUES (session_user); RETURN NEW; END $$; \
-         REVOKE ALL ON FUNCTION pat_proof.record_writer() FROM PUBLIC; \
-         CREATE TRIGGER pat_proof_writer AFTER INSERT ON identity.pats \
-         FOR EACH ROW EXECUTE FUNCTION pat_proof.record_writer();",
+         BEGIN INSERT INTO pat_test.writers VALUES (session_user); RETURN NEW; END $$; \
+         REVOKE ALL ON FUNCTION pat_test.record_writer() FROM PUBLIC; \
+         CREATE TRIGGER pat_test_writer AFTER INSERT ON identity.pats \
+         FOR EACH ROW EXECUTE FUNCTION pat_test.record_writer();",
         )
         .await
-        .expect("install proof-only writer observation");
+        .expect("install test-only writer observation");
     let route = provision_route(
         &url,
         admin.as_ref(),
@@ -78,7 +78,7 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
     .expect("mint first PATs through the native identity service");
     let writers = admin
         .query(
-            "SELECT writer::text FROM pat_proof.writers ORDER BY writer",
+            "SELECT writer::text FROM pat_test.writers ORDER BY writer",
             &[],
         )
         .await

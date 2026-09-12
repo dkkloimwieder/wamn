@@ -80,9 +80,9 @@ pub struct RowSecurityObservation {
 /// pure planner turns it into the action list.
 #[derive(Debug, Clone, Default)]
 pub struct RunPlaneObservation {
-    /// Total immutable rows across the three effect-writer ledgers that exist.
+    /// Total immutable rows across the three effect-writer tables that exist.
     /// Any nonzero value makes an incompatible structural cutover refuse.
-    pub effect_ledger_rows: i64,
+    pub effect_record_rows: i64,
     /// Persisted flow graphs that still carry retired top-level ordering keys.
     pub retired_authored_ordering_rows: i64,
     /// Host-only scenario-author role attributes, or absent when the cluster
@@ -92,14 +92,14 @@ pub struct RunPlaneObservation {
     pub effect_writer_role: Option<EffectWriterRoleObservation>,
     /// Exact direct `(USAGE-without-PUBLIC, effective-CREATE)` schema boundary.
     pub effect_writer_schema_privileges: (bool, bool),
-    /// Direct ledger grants keyed by `(table, grantee)`.
-    pub effect_ledger_table_privileges: BTreeMap<(String, String), BTreeSet<String>>,
-    /// Effective ledger grants keyed by `(table, grantee)`.
-    pub effect_ledger_effective_privileges: BTreeMap<(String, String), BTreeSet<String>>,
+    /// Direct table grants keyed by `(table, grantee)`.
+    pub effect_table_privileges: BTreeMap<(String, String), BTreeSet<String>>,
+    /// Effective table grants keyed by `(table, grantee)`.
+    pub effect_table_effective_privileges: BTreeMap<(String, String), BTreeSet<String>>,
     /// Effective column grants keyed by `(table, grantee)`.
-    pub effect_ledger_effective_column_privileges: BTreeMap<(String, String), BTreeSet<String>>,
-    /// Ledger owners keyed by table.
-    pub effect_ledger_owners: BTreeMap<String, String>,
+    pub effect_table_effective_column_privileges: BTreeMap<(String, String), BTreeSet<String>>,
+    /// Owners keyed by table.
+    pub effect_table_owners: BTreeMap<String, String>,
     /// Effective table privileges held by the writer on its two run-authority
     /// read targets. The target state is empty: only column SELECT is allowed.
     pub effect_writer_run_table_privileges: BTreeMap<String, BTreeSet<String>>,

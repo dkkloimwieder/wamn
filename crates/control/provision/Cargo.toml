@@ -66,7 +66,7 @@ url = { workspace = true }
 wamn-catalog = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
 # wamn-0h0g.8.21: `catalog.deployment_attestations` is CONTROL-plane only, so its
-# live proof belongs to this crate's portable-store gate, while the Rust binding
+# live test belongs to this crate's portable-store gate, while the Rust binding
 # for `catalog.register_deployment_attestation` belongs to the pure SQL owner.
 # A DEV edge only — nothing in this crate's production surface reaches it.
 # This test edge adds no database effects to the production builders.

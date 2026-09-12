@@ -391,7 +391,7 @@ fn validate_presented_lineages(
     for ((package_id, package_version), presented_hash) in presented {
         let recorded_hash = installed
             .get(&(package_id.clone(), package_version.clone()))
-            .expect("every presented coordinate was proved applied");
+            .expect("every presented coordinate was confirmed as applied");
         ensure!(
             recorded_hash == presented_hash,
             "package-data-access-source-drift: package={package_id}@{package_version}; recorded-sha256={recorded_hash}; presented-sha256={presented_hash}"

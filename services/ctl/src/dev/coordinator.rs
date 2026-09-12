@@ -728,7 +728,7 @@ impl ProductionDevStageRunner {
         // committed-source refusal keep answering to one definition of the
         // target, rather than each carrying its own copy of the answer.
         let durability = <Self as DevStageRunner>::target_durability(self);
-        let packages = self.packages.as_ref().expect("package_inputs proved state");
+        let packages = self.packages.as_ref().expect("package_inputs checked state");
         for base in packages.base_packages() {
             let artifact = self
                 .artifacts

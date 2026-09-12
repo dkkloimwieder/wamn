@@ -22,7 +22,7 @@
 //! REACH therefore asserts the POST-STATE ROW COUNT from a MINTED GENERATION
 //! LOGIN, never from the bare stable ACL role — which derives a NULL tenant key
 //! and matches nothing silently — and keeps a control arm
-//! ([`the_effect_writer_arm_reaches_exactly_its_four_run_plane_ledgers`]'s
+//! ([`the_effect_writer_arm_reaches_exactly_its_four_run_plane_tables`]'s
 //! outsider) that legitimately reads zero.
 //!
 //! # Hermetic, and it owns its server
@@ -756,7 +756,7 @@ fn assert_family_row(subject: WorkloadRoleFamily) {
         ),
         "true",
         "the {label} generation is not a usable unprivileged login: a superuser \
-         or BYPASSRLS probe satisfies every arm below while proving nothing"
+         or BYPASSRLS probe satisfies every arm below while establishing nothing"
     );
 
     // --- 1. THE ORDERED PAIRS THIS FAMILY IS THE SUBJECT OF -----------------
@@ -981,8 +981,8 @@ const CONTAINED_PAIRS: [(&str, &str); 7] = [
 /// before `wamn-0h0g.22.32` demoted the writer out of `wamn_platform`. The
 /// strictly-tighter clause was WITHDRAWN and is deliberately not asserted here.
 #[test]
-fn the_effect_writer_arm_reaches_exactly_its_four_run_plane_ledgers() {
-    let Some(fixture) = armed("the_effect_writer_arm_reaches_exactly_its_four_run_plane_ledgers")
+fn the_effect_writer_arm_reaches_exactly_its_four_run_plane_tables() {
+    let Some(fixture) = armed("the_effect_writer_arm_reaches_exactly_its_four_run_plane_tables")
     else {
         return;
     };
@@ -1009,22 +1009,22 @@ fn the_effect_writer_arm_reaches_exactly_its_four_run_plane_ledgers() {
             "wamn_run.runs",
         ],
         "the set of relations carrying a policy arm named for the effect-writer \
-         family is not exactly the four run-plane ledgers"
+         family is not exactly the four run-plane tables"
     );
 
     // --- MISSING: each of the four is actually READ, as the minted login -----
     let login = generation(writer);
     let as_writer = login_url(&fixture.admin, &login);
-    for ledger in [
+    for table in [
         "wamn_run.runs",
         "wamn_run.effect_attempts",
         "wamn_run.effect_attempt_dispatches",
         "wamn_run.effect_attempt_outcomes",
     ] {
         assert_eq!(
-            query(&as_writer, &format!("SELECT count(*) FROM {ledger}")),
+            query(&as_writer, &format!("SELECT count(*) FROM {table}")),
             "2",
-            "the effect-writer family reads no rows from {ledger}: its arm is \
+            "the effect-writer family reads no rows from {table}: its arm is \
              missing, and under FORCE RLS that is a SILENT lockout, not an error"
         );
     }
@@ -1497,7 +1497,7 @@ fn the_platform_group_members_are_exactly_the_derived_families() {
         "true",
         "a {PLATFORM_GROUP_ROLE} edge is not INHERIT TRUE, ADMIN FALSE, SET \
          FALSE: the edge exists and confers nothing, which is a silent lockout \
-         with a row in the catalog to prove it should not be"
+         with a row in the catalog that requires its absence"
     );
 }
 

@@ -4,10 +4,10 @@ use super::{
     WorkloadRoleFamily, platform_group_membership_sql, quote_ident, quote_literal, stable_surface_sql,
 };
 
-/// Idempotently create the stable effect-ledger ACL role as NOLOGIN.
+/// Idempotently create the stable effect-table ACL role as NOLOGIN.
 ///
 /// Table/schema grants deliberately do not live here: schema-control owns them
-/// once the effect-ledger tables exist. This builder only establishes the
+/// once the effect tables exist. This builder only establishes the
 /// cluster-global, ownership-free role identity and restrictive attributes.
 pub fn ensure_effect_writer_acl_role_sql() -> String {
     ensure_workload_acl_role_sql(WorkloadRoleFamily::EffectWriter)

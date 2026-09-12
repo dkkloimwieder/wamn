@@ -2617,7 +2617,7 @@ mod tests {
 
         assert!(
             dependencies.is_empty(),
-            "an effectful dependency was proven pure: {dependencies:?}"
+            "an effectful dependency was classified as pure: {dependencies:?}"
         );
     }
 

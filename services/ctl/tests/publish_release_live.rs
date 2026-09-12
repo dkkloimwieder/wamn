@@ -268,7 +268,7 @@ async fn assert_package_seal(url: &str, store: Store) {
 #[tokio::test]
 async fn package_seal_and_attestation_winner_are_server_enforced() {
     let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping publish-release live proof; WAMN_CTL_PG_URL is unset");
+        eprintln!("skipping publish-release live test; WAMN_CTL_PG_URL is unset");
         return;
     };
 

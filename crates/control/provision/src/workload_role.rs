@@ -220,7 +220,7 @@ impl WorkloadRoleFamily {
     ///   holds ANY row in `pg_auth_members` as a member, and a `wamn_platform`
     ///   edge is exactly such a row. The membership and the guard cannot both
     ///   hold, and the guard is the older, narrower contract. The writer reaches
-    ///   its four ledgers through PER-RELATION arms naming it directly in
+    ///   its four tables through PER-RELATION arms naming it directly in
     ///   `deploy/sql/run-state.sql` instead — not through this group.
     ///
     /// Everything else — the eight families whose credentials reach a

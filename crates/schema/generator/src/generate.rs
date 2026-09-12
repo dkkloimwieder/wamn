@@ -211,7 +211,7 @@ impl GeneratedPackageMetadata {
         let metadata: Self = serde_json::from_slice(bytes).map_err(|source| {
             GenerateError::with_source(
                 GenerateErrorKind::InvalidManifest,
-                "package-weld.json does not match the closed weld vocabulary",
+                "package-weld.json does not match the package contract",
                 source,
             )
         })?;

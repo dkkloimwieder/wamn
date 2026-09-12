@@ -289,7 +289,7 @@ async fn provisioned_reader_is_idempotent_and_connection_free_leg(su: &Client, u
         .expect("observe the active retired shared-login session")
         .get::<_, i64>(0),
         1,
-        "the session-drain proof did not establish an old shared session"
+        "the session-drain test did not establish an old shared session"
     );
     run_alone(su, &roles).await;
     run_alone(su, &sql::drain_app_role_sessions_sql()).await;
@@ -630,7 +630,7 @@ async fn cross_database_reach_is_closed_leg(su: &Client, url: &str) {
     assert!(
         refusal.contains("42501") || refusal.to_lowercase().contains("permission denied"),
         "the neighbour refused for the wrong reason (a wrong password or a \
-         missing database would prove nothing about reach): {refusal}"
+         missing database would establish nothing about reach): {refusal}"
     );
 
     for database in [DATABASE, NEIGHBOUR_DATABASE] {

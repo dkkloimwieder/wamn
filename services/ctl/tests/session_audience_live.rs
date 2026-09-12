@@ -454,7 +454,7 @@ async fn compiled_cli_publishes_bound_session_targets_and_rotates_reader_generat
     let output = std::process::Command::new("mktemp")
         .args(["-d", "/tmp/wamn-session-audience-cli.XXXXXXXX"])
         .output()
-        .expect("create proof directory");
+        .expect("create test directory");
     assert!(output.status.success());
     let directory = PathBuf::from(String::from_utf8(output.stdout).unwrap().trim());
     assert!(
@@ -467,7 +467,7 @@ async fn compiled_cli_publishes_bound_session_targets_and_rotates_reader_generat
     );
     let result = journey(&admin, &url, &directory).await;
     let cleanup = reset(&admin).await;
-    fs::remove_dir_all(&directory).expect("remove only the generated proof directory");
+    fs::remove_dir_all(&directory).expect("remove only the generated test directory");
     cleanup.expect("clean disposable session-target fixture");
-    result.expect("compiled session-target publication proof");
+    result.expect("compiled session-target publication test");
 }

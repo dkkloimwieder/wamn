@@ -337,7 +337,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         .expect("numeric PG version");
     assert!(
         version >= 180_000,
-        "credential proof requires PostgreSQL 18"
+        "credential test requires PostgreSQL 18"
     );
 
     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
@@ -606,7 +606,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         None,
     ))
     .await
-    .expect("retire A once B is proven to be serving");
+    .expect("retire A once B serves requests");
     assert_role(
         &target,
         MANAGEMENT_ADMITTER_ROLE,

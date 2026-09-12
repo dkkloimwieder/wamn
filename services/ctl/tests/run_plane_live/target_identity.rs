@@ -19,7 +19,7 @@ async fn seed_target_guard_registry(su: &Client) {
          INSERT INTO registry.project_envs \
            (org,project,env,secret_name,instance_suffix) VALUES \
            ('acme','billing','dev','wamn-db-acme--billing--dev','k3m9x2p7'), \
-           ('acme','ledger','dev','wamn-db-acme--ledger--dev','q80zdw41'), \
+           ('acme','accounts','dev','wamn-db-acme--accounts--dev','q80zdw41'), \
            ('acme','billing','prod','wamn-db-acme--billing--prod','p7c4n2v8'); \
          RESET ROLE; \
          CREATE TABLE registry.env_policies ( \
@@ -151,7 +151,7 @@ async fn reconcile_target_identity_guard_live() {
     let system_su = connect(&system_url).await;
     let primary_database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
     let sibling_project_database =
-        project_env_database_name(CLI_ORG, "ledger", CLI_ENV, "q80zdw41");
+        project_env_database_name(CLI_ORG, "accounts", CLI_ENV, "q80zdw41");
     let sibling_environment_database =
         project_env_database_name(CLI_ORG, CLI_PROJECT, "prod", "p7c4n2v8");
     let unrelated_database = "wamn-run-plane-unrelated";
@@ -203,7 +203,7 @@ async fn reconcile_target_identity_guard_live() {
         ),
         (
             "registered sibling project with primary URL",
-            "ledger",
+            "accounts",
             CLI_ENV,
             primary_url.as_str(),
             ReconcileTargetErrorKind::DatabaseTarget,

@@ -359,7 +359,7 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
     reset(su).await;
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
-        .expect("apply catalog for current single-target proof");
+        .expect("apply catalog for current single-target test");
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema()))
         .await
         .expect("apply current run-state");
@@ -434,7 +434,7 @@ async fn install_empty_incompatible_effect_writer_shape(su: &Client) {
              ADD COLUMN attempt_key text;"
     ))
     .await
-    .expect("install incompatible empty writer-ledger shape");
+    .expect("install incompatible empty writer-table shape");
 }
 
 pub(super) async fn effect_writer_cutover_leg(su: &Client) {
@@ -480,7 +480,7 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
 
     let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
-        .expect("empty writer-ledger cutover succeeds");
+        .expect("empty writer-table cutover succeeds");
     let action = plan
         .actions
         .iter()
@@ -489,7 +489,7 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
     assert_eq!(
         action.sql.matches("LOCK TABLE").count(),
         3,
-        "the three incompatible ledgers are locked"
+        "the three incompatible tables are locked"
     );
     let preflight = action
         .sql
@@ -544,7 +544,7 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
 
     let second = reconcile_run_plane::reconcile(su, &schema, true)
         .await
-        .expect("writer-ledger cutover reapply");
+        .expect("writer-table cutover reapply");
     assert!(
         !second
             .actions
@@ -577,7 +577,7 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
         action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
             && action.target == format!("{SCHEMA}.effect_attempts")
     }));
-    // THE CONVERGE PATH for the two sibling ledgers (wamn-0h0g.20.32): an append
+    // THE CONVERGE PATH for the two sibling tables (wamn-0h0g.20.32): an append
     // granted directly to the stable role on an ALREADY-PROVISIONED database is
     // drift the reconciler must REMOVE. The DDL alone cannot show this — it only
     // shows birth — so the drift above is installed on purpose.
@@ -587,7 +587,7 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
                 action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
                     && action.target == format!("{SCHEMA}.{table}")
             }),
-            "the reconciler did not plan to remove the sibling ledger append on {table}"
+            "the reconciler did not plan to remove the sibling table append on {table}"
         );
     }
     for table in ["runs", "run_queue"] {
@@ -641,20 +641,20 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
     assert!(!privileges.get::<_, bool>(3));
     // BORN PARKED (wamn-0h0g.20.30). THE SERVER'S OWN ANSWER, not the DDL text:
     // once the reconciler converges, the stable writer role holds READ on the
-    // attempt ledger and NO append — at table level or at any column. Every
+    // attempt table and NO append — at table level or at any column. Every
     // provisioned generation login inherits this role with INHERIT TRUE, so this
     // is exactly what a fresh project environment is born holding, and — because
     // the drift above was installed first — what an UPGRADED one converges to.
     assert!(
         !privileges.get::<_, bool>(4),
-        "the reconciler re-minted a LIVE append authority on a parked ledger"
+        "the reconciler re-minted a LIVE append authority on a parked table"
     );
     assert!(privileges.get::<_, bool>(5), "the writer keeps its read");
     assert!(
         !privileges.get::<_, bool>(6),
         "column-level append survived the table-level park"
     );
-    // wamn-0h0g.20.32: both sibling ledgers are parked on the same footing, and
+    // wamn-0h0g.20.32: both sibling tables are parked on the same footing, and
     // the append DIRECTLY granted to the stable role above is gone — the
     // reconciler removed it rather than re-granting it.
     assert!(
@@ -824,7 +824,7 @@ pub(super) async fn effect_writer_populated_refusal_leg(su: &Client) {
             .expect("apply current run-state for writer refusal");
         su.batch_execute("SELECT set_config('app.tenant','t1',false)")
             .await
-            .expect("prepare isolated incompatible ledger fact");
+            .expect("prepare isolated incompatible record fact");
         match populated {
             "effect_attempts" => {
                 su.batch_execute(&format!(
@@ -878,7 +878,7 @@ pub(super) async fn effect_writer_populated_refusal_leg(su: &Client) {
         let before = effect_writer_schema_snapshot(su).await;
         let error = reconcile_run_plane::reconcile(su, &schema, true)
             .await
-            .expect_err("populated incompatible writer ledger refuses");
+            .expect_err("populated incompatible writer table refuses");
         let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
         let database = postgres.as_db_error().expect("typed cutover refusal");
         assert_eq!(database.code().code(), "55000");

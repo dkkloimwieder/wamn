@@ -116,7 +116,7 @@ fn project_env_database_ownership_and_connect_are_scoped() {
             "DO $$ BEGIN \
                ASSERT (SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '{first}') \
                       <> '{DB_OWNER_ROLE}', \
-                 'the databases must start mis-owned, or the convergence proof is vacuous'; \
+                 'the databases must start mis-owned, or the convergence test is vacuous'; \
              END $$;\n"
         ),
     );
@@ -134,7 +134,7 @@ fn project_env_database_ownership_and_connect_are_scoped() {
                        aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl \
                     WHERE d.datname = '{canary}' \
                       AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT') = 1, \
-             'the sibling seed must really be in place, or the scope proof is vacuous'; \
+             'the sibling seed must really be in place, or the scope test is vacuous'; \
          END $$;\n"
         ),
     );

@@ -604,7 +604,7 @@ mod tests {
             gate_outcome(
                 "effects",
                 DevGateVerdict::Refused(GateRefusal::EffectfulComponentReached {
-                    components: vec!["payments".to_owned(), "ledger".to_owned()],
+                    components: vec!["payments".to_owned(), "accounts".to_owned()],
                 }),
             ),
             gate_outcome(
@@ -635,7 +635,7 @@ mod tests {
             r#"{"kind":"unsupported-contract-version","requested":"2","supported":"1"}"#,
             r#"{"kind":"invalid-document","detail":"missing entry"}"#,
             r#"{"kind":"invalid-test-set","detail":"no cases"}"#,
-            r#"{"kind":"effectful-component-reached","components":["payments","ledger"]}"#,
+            r#"{"kind":"effectful-component-reached","components":["payments","accounts"]}"#,
             r#"{"kind":"command-id-reuse"}"#,
         ] {
             assert!(text.contains(refusal), "missing {refusal} from:\n{text}");

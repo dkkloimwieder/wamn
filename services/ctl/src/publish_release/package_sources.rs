@@ -90,7 +90,7 @@ pub(super) fn validate_package_metadata(
         return Err(MintManifestError::new(
             MintManifestErrorKind::GeneratedPackageMetadata,
             format!(
-                "package {coordinate} manifest and generated weld disagree on the required platform policy contract; regenerate the package evidence"
+                "package {coordinate} manifest and generated package contract disagree on the required platform policy contract; regenerate the package evidence"
             ),
         ));
     }

@@ -2,7 +2,7 @@
 //!
 //! `wamn-0h0g.22.6.4`. The generic `wamn-0h0g.13.59` lifecycle is already shown
 //! live for two other families, so nothing here retests prepare, retire or
-//! abort. What is new and unproven is the pairing: the App family with TENANT
+//! abort. What is new and untested is the pairing: the App family with TENANT
 //! scope, whose role name carries the very digest
 //! `wamn_authority.tenant_key` computes. If those two disagree by one byte,
 //! every guest read refuses — and no pure test can see it, because one of the

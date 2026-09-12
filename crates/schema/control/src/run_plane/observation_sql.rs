@@ -53,8 +53,8 @@ pub fn select_effect_writer_schema_privileges_sql() -> &'static str {
        LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.nspname = $1"
 }
 
-/// Direct grants on the three immutable effect-writer ledgers.
-pub fn select_effect_ledger_table_privileges_sql() -> &'static str {
+/// Direct grants on the three immutable effect-writer tables.
+pub fn select_effect_table_privileges_sql() -> &'static str {
     "SELECT table_name, grantee, privilege_type \
        FROM information_schema.table_privileges \
       WHERE table_schema = $1 \
@@ -65,8 +65,8 @@ pub fn select_effect_ledger_table_privileges_sql() -> &'static str {
       ORDER BY table_name, grantee, privilege_type"
 }
 
-/// Effective grants and owners on the effect-writer ledger boundary.
-pub fn select_effect_ledger_effective_privileges_sql() -> &'static str {
+/// Effective grants and owners on the effect-writer table boundary.
+pub fn select_effect_table_effective_privileges_sql() -> &'static str {
     "SELECT relation.relname, actor.rolname, privilege.name, owner.rolname \
        FROM pg_catalog.pg_class AS relation \
        JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
@@ -83,8 +83,8 @@ pub fn select_effect_ledger_effective_privileges_sql() -> &'static str {
       ORDER BY relation.relname, actor.rolname, privilege.name"
 }
 
-/// Effective column grants on the effect-writer ledger boundary.
-pub fn select_effect_ledger_effective_column_privileges_sql() -> &'static str {
+/// Effective column grants on the effect-writer table boundary.
+pub fn select_effect_table_effective_column_privileges_sql() -> &'static str {
     "SELECT relation.relname, actor.rolname, privilege.name \
        FROM pg_catalog.pg_class AS relation \
        JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \

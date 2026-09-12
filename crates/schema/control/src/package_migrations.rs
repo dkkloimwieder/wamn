@@ -30,7 +30,7 @@ pub struct MigrationSource {
     pub bytes: Vec<u8>,
 }
 
-/// One immutable applied migration ledger row.
+/// One immutable applied migration record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordedMigration {
     pub ordinal: u32,
@@ -70,7 +70,7 @@ pub struct CdcExcludedRelation {
     pub table: String,
 }
 
-/// One validated pending file and its immutable ledger identity.
+/// One validated pending file and its immutable record identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingMigration {
     pub ordinal: u32,
@@ -92,7 +92,7 @@ pub struct PackageMigrationPlan {
 }
 
 impl PackageMigrationPlan {
-    /// A converged package executes no ledger or migration writes.
+    /// A converged package executes no record or migration writes.
     pub fn is_noop(&self) -> bool {
         self.statements.is_empty()
     }
@@ -618,7 +618,7 @@ fn validate_recorded_prefix(
             return Err(PackageMigrationError::new(
                 PackageMigrationErrorKind::Gap,
                 format!(
-                    "{PACKAGE_MIGRATION_GAP_REFUSAL}: recorded ledger expected ordinal {expected:04}, found {:04}",
+                    "{PACKAGE_MIGRATION_GAP_REFUSAL}: migration records expected ordinal {expected:04}, found {:04}",
                     row.ordinal
                 ),
             )

@@ -22,7 +22,7 @@ use wamn_control_provision::identity_issuer::{
 use wamn_control_provision::{CredentialGeneration, SYSTEM_SCHEMA_SQL, sql};
 use wamn_platform_identity::{PrincipalId, authenticate_pat, issue_pat};
 
-const ISSUER: &str = "https://identity-issuer-cli-proof.wamn-system.svc";
+const ISSUER: &str = "https://identity-issuer-cli-test.wamn-system.svc";
 
 #[test]
 fn compiled_identity_help_hides_administrator_environment_values() {
@@ -328,7 +328,7 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
     let id: String = admin
         .query_one(
             "INSERT INTO identity.principals (kind,subject,display_name) \
-         VALUES ('human','issuer-pat-proof','Issuer PAT proof') RETURNING id::text",
+         VALUES ('human','issuer-pat-test','Issuer PAT test') RETURNING id::text",
             &[],
         )
         .await?
@@ -338,13 +338,13 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
         let issued = issue_pat(
             issuer,
             &principal,
-            "scoped issuer proof",
+            "scoped issuer test",
             Duration::from_secs(60),
         )
         .await
         .context("issue PAT through the scoped identity credential")?;
         anyhow::ensure!(
-            issued.record().label() == "scoped issuer proof"
+            issued.record().label() == "scoped issuer test"
                 && issued.record().revoked_at().is_none(),
             "PAT issuance returned unexpected metadata"
         );
@@ -423,10 +423,10 @@ fn temporary_directory() -> anyhow::Result<PathBuf> {
         .arg("-d")
         .arg(std::env::temp_dir().join("wamn-identity-issuer-cli.XXXXXXXX"))
         .output()
-        .context("create unique identity proof directory")?;
+        .context("create unique identity test directory")?;
     anyhow::ensure!(
         output.status.success(),
-        "mktemp failed for the identity proof"
+        "mktemp failed for the identity test"
     );
     let path = PathBuf::from(String::from_utf8(output.stdout)?.trim());
     anyhow::ensure!(
@@ -434,7 +434,7 @@ fn temporary_directory() -> anyhow::Result<PathBuf> {
             && path.file_name().is_some_and(|name| name
                 .to_string_lossy()
                 .starts_with("wamn-identity-issuer-cli.")),
-        "unexpected identity proof directory"
+        "unexpected identity test directory"
     );
     Ok(path)
 }
@@ -629,15 +629,15 @@ async fn compiled_cli_publishes_rolls_back_and_retires_identity_generations() {
     ).await.expect("require PostgreSQL 18 administrator").get(0);
     assert!(
         valid,
-        "proof requires PostgreSQL 18 and a system database administrator"
+        "test requires PostgreSQL 18 and a system database administrator"
     );
     reset(&admin)
         .await
         .expect("reset disposable identity fixture");
-    let directory = temporary_directory().expect("create proof directory");
+    let directory = temporary_directory().expect("create test directory");
     let result = journey(&admin, &url, &directory).await;
     let cleanup = reset(&admin).await;
-    fs::remove_dir_all(&directory).expect("remove only the generated proof directory");
+    fs::remove_dir_all(&directory).expect("remove only the generated test directory");
     cleanup.expect("clean disposable identity fixture");
-    result.expect("compiled identity CLI lifecycle proof");
+    result.expect("compiled identity CLI lifecycle test");
 }

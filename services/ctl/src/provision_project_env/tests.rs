@@ -134,7 +134,7 @@ fn clap_guards_the_three_infallible_provisioning_identity_accesses() {
     }
 
     // wamn-hopk R5: a source-text scan counting `.expect(` calls between two
-    // function-name markers stood here. Deleted; the clap arms above prove
+    // function-name markers stood here. Deleted; the clap arms above check
     // the parser contract by invoking the parser.
 }
 
@@ -162,7 +162,7 @@ fn clap_guards_the_workload_identity_accesses_in_every_action_mode() {
     }
 
     // wamn-hopk R5: a source-text scan counting `.expect(` calls between two
-    // function-name markers stood here. Deleted; the clap arms above prove
+    // function-name markers stood here. Deleted; the clap arms above check
     // the parser contract by invoking the parser.
 }
 
@@ -208,7 +208,7 @@ fn a_reserved_or_bad_project_id_is_rejected_before_any_effect() {
 /// The target cluster is DERIVED (D18 `cluster_of`) from the org's placement +
 /// the env's policy: a dedicated org owns `<org>-<owner(env)>`, a pooled org
 /// collapses every env onto its pool. (The live routing through the DB is
-/// proven by the in-cluster gate; here we pin the pure derivation the
+/// checked by the in-cluster gate; here we pin the pure derivation the
 /// subcommand calls.)
 #[test]
 fn cluster_is_derived_by_placement_and_policy() {
@@ -381,7 +381,7 @@ fn pat_issue_flags_select_independently_and_revoke_conflicts() {
     // only where it is consumed: wamn-0h0g.12.141 scoped it to the
     // provisioning modes, so revoke-only may carry it and need not. Passing
     // it here keeps this case about the PAT flags; the exemption itself is
-    // proven by `the_credential_free_modes_parse_without_a_password`.
+    // checked by `the_credential_free_modes_parse_without_a_password`.
     let revoke = TestCli::try_parse_from([
         "test",
         "--system-database-url",
@@ -920,7 +920,7 @@ fn every_action_flag() -> Vec<String> {
 /// sixteen. A closed enum that must be appended to by hand in sixteen
 /// places is not closed; it is a checklist.
 ///
-/// The count is now ZERO, and this proves the stronger property the
+/// The count is now ZERO, and this checks the stronger property the
 /// acceptance actually asks for: NO family's flag or id is SPELLED anywhere
 /// in the implementation. A list cannot name a family it never mentions, so
 /// admitting a family cannot require an edit to any list.
@@ -998,7 +998,7 @@ fn every_family_gets_its_flags_from_the_one_derivation() {
         "the action group is three verbs per family and nothing else"
     );
     // `multiple(false)` is not readable off a `&ArgGroup`, so the
-    // one-action rule is proven where it bites, by parsing: see
+    // one-action rule is checked where it bites, by parsing: see
     // `one_action_group_excludes_every_pair_across_every_family`.
     let secrets = group(WORKLOAD_SECRET_GROUP);
     assert_eq!(secrets.get_args().count(), WorkloadRoleFamily::ALL.len());
@@ -1728,7 +1728,7 @@ fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() 
     );
 
     // One action per invocation and one Secret bound to its own prepare are
-    // now group-derived properties, proven for EVERY pair and EVERY family
+    // now group-derived properties, checked for EVERY pair and EVERY family
     // by `one_action_group_excludes_every_pair_across_every_family` and
     // `every_family_secret_is_bound_to_its_own_prepare` below. What stays
     // here is this family's own parse.

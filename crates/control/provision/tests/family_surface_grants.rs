@@ -571,7 +571,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
          ASSERT has_table_privilege(r, 'wamn_run.effect_attempts', 'SELECT'), \
            'the claim asks whether an effect attempt exists'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.effect_attempts', 'INSERT'), \
-           'the ledger is the effect writer''s to append to'; \n",
+           'the table is the effect writer''s to append to'; \n",
     );
     // COLUMN GRAIN, from the server, both ways. `has_column_privilege` answers
     // TRUE for a column reachable through a TABLE-level grant, so the FALSE arms
@@ -920,7 +920,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         ),
         "f",
         "the reading session is superuser or bypasses RLS, which satisfies every \
-         count below while proving nothing"
+         count below while establishing nothing"
     );
     for relation in sql::HTTP_ADMITTER_CATALOG_RELATIONS {
         assert_eq!(

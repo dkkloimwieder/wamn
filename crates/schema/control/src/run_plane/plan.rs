@@ -35,7 +35,7 @@ use super::schema_changes::{
     RETIRED_PARTITION_COLUMNS, RETIRED_RERUN_LINEAGE_COLUMNS,
     RETIRED_TEST_SET_REFERENCE_COLUMN, RETIRED_TEST_SET_REFERENCE_TABLES,
     child_run_cutover_needed, child_run_cutover_sql, effect_writer_cutover_owned_check,
-    effect_writer_cutover_sql, effect_writer_ledger_cutover_needed,
+    effect_writer_cutover_sql, effect_writer_table_cutover_needed,
     execution_bundle_cutover_needed, execution_bundle_cutover_sql,
     failure_detail_cutover_needed, failure_detail_cutover_sql, frame_identity_check,
     frame_identity_column, frame_identity_cutover_sql, frame_identity_cutover_targets,
@@ -287,8 +287,8 @@ $retire_run_projection_authority$;"#,
     let run_capture_privileges_drifted = run_capture_privileges_drifted(schema, obs);
     let wiring_identity_cutover_needed = has_runs && !run_wiring_identity_contract_complete(obs);
 
-    let effect_writer_ledger_cutover_needed = effect_writer_ledger_cutover_needed(schema, obs);
-    if effect_writer_ledger_cutover_needed && obs.effect_ledger_rows != 0 {
+    let effect_writer_table_cutover_needed = effect_writer_table_cutover_needed(schema, obs);
+    if effect_writer_table_cutover_needed && obs.effect_record_rows != 0 {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::EffectWriterCutover,
             target: "effect-ledgers.coordinate-writer-boundary".to_string(),
@@ -389,7 +389,7 @@ $retire_run_projection_authority$;"#,
             sql: frame_identity_cutover_sql(schema, frame_cutover_targets),
         });
     }
-    if effect_writer_ledger_cutover_needed {
+    if effect_writer_table_cutover_needed {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::EffectWriterCutover,
             target: "effect-ledgers.coordinate-writer-boundary".to_string(),
@@ -600,7 +600,7 @@ $retire_run_projection_authority$;"#,
             continue;
         }
         // BORN PARKED (owner ruling on wamn-0h0g.20.28, widened to the two sibling
-        // ledgers by wamn-0h0g.20.32). NO effect ledger's APPEND authority is part
+        // tables by wamn-0h0g.20.32). NO effect table's APPEND authority is part
         // of the record: the writer primitive is unwired, and every generation
         // login inherits this role with INHERIT TRUE. So a live INSERT on any of
         // the three is DRIFT, and this convergent step REMOVES it rather than
@@ -615,7 +615,7 @@ $retire_run_projection_authority$;"#,
                     .map(str::to_string)
                     .collect(),
                 "PUBLIC" | SCENARIO_AUTHOR_ROLE => BTreeSet::new(),
-                _ => unreachable!("closed effect-ledger grantee set"),
+                _ => unreachable!("closed effect-table grantee set"),
             }
         };
         let direct_drifted = [
@@ -626,7 +626,7 @@ $retire_run_projection_authority$;"#,
         ]
         .into_iter()
         .any(|grantee| {
-            obs.effect_ledger_table_privileges
+            obs.effect_table_privileges
                 .get(&(table.to_string(), grantee.to_string()))
                 .cloned()
                 .unwrap_or_default()
@@ -635,7 +635,7 @@ $retire_run_projection_authority$;"#,
         let effective_drifted = ["wamn_app", SCENARIO_AUTHOR_ROLE, EFFECT_WRITER_ROLE]
             .into_iter()
             .any(|grantee| {
-                obs.effect_ledger_effective_privileges
+                obs.effect_table_effective_privileges
                     .get(&(table.to_string(), grantee.to_string()))
                     .cloned()
                     .unwrap_or_default()
@@ -650,13 +650,13 @@ $retire_run_projection_authority$;"#,
                         ["SELECT", "INSERT", "UPDATE", "REFERENCES"].contains(&privilege.as_str())
                     })
                     .collect();
-                obs.effect_ledger_effective_column_privileges
+                obs.effect_table_effective_column_privileges
                     .get(&(table.to_string(), grantee.to_string()))
                     .cloned()
                     .unwrap_or_default()
                     != expected_columns
             });
-        let boundary_owned = obs.effect_ledger_owners.get(table).is_some_and(|owner| {
+        let boundary_owned = obs.effect_table_owners.get(table).is_some_and(|owner| {
             matches!(
                 owner.as_str(),
                 "wamn_app" | SCENARIO_AUTHOR_ROLE | EFFECT_WRITER_ROLE
@@ -669,7 +669,7 @@ $retire_run_projection_authority$;"#,
         let columns = obs
             .tables
             .get(table)
-            .expect("present effect ledger")
+            .expect("present effect table")
             .iter()
             .filter(|column| {
                 if table != "effect_attempts" {
@@ -678,7 +678,7 @@ $retire_run_projection_authority$;"#,
                 let frame_owned = frame_cutover_targets.effect
                     && (column.as_str() == "node_id"
                         || EFFECT_FRAME_COLUMNS.contains(&column.as_str()));
-                let writer_owned = effect_writer_ledger_cutover_needed
+                let writer_owned = effect_writer_table_cutover_needed
                     && RETIRED_EFFECT_ATTEMPT_COLUMNS.contains(&column.as_str());
                 !frame_owned && !writer_owned
             })
@@ -686,7 +686,7 @@ $retire_run_projection_authority$;"#,
             .collect::<Vec<_>>()
             .join(", ");
         // The grant and the self-check move together: whatever APPEND authority
-        // this ledger does not carry becomes a privilege the block REFUSES to see
+        // this table does not carry becomes a privilege the block REFUSES to see
         // the server still report, so a parked table shows its own denial.
         let writer_grant = writer_privileges.join(", ");
         let writer_forbidden_table = "'INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'";
@@ -702,7 +702,7 @@ $retire_run_projection_authority$;"#,
                        FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}, {EFFECT_WRITER_ROLE}; \
                      GRANT SELECT ON TABLE {qualified} TO wamn_app; \
                      GRANT {writer_grant} ON TABLE {qualified} TO {EFFECT_WRITER_ROLE}; \
-                     DO $effect_ledger_acl$ BEGIN \
+                     DO $effect_table_acl$ BEGIN \
                        IF EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
                                    WHERE pg_catalog.has_table_privilege('wamn_app', '{qualified}', privilege)) \
                           OR EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
@@ -719,7 +719,7 @@ $retire_run_projection_authority$;"#,
                        THEN RAISE EXCEPTION USING ERRCODE = '42501', \
                             MESSAGE = 'effect-ledger-effective-privilege-out-of-bounds:{table}'; \
                        END IF; \
-                     END $effect_ledger_acl$"
+                     END $effect_table_acl$"
                 ),
             });
     }
@@ -1051,7 +1051,7 @@ $retire_run_projection_authority$;"#,
                 if frame_cutover_targets.needed() && frame_identity_column(&table, col) {
                     continue;
                 }
-                if effect_writer_ledger_cutover_needed
+                if effect_writer_table_cutover_needed
                     && table == "effect_attempt_dispatches"
                     && matches!(
                         col.as_str(),
@@ -1113,7 +1113,7 @@ $retire_run_projection_authority$;"#,
                 {
                     continue;
                 }
-                if effect_writer_ledger_cutover_needed
+                if effect_writer_table_cutover_needed
                     && table == "effect_attempts"
                     && RETIRED_EFFECT_ATTEMPT_COLUMNS.contains(&col.as_str())
                 {
@@ -1209,7 +1209,7 @@ $retire_run_projection_authority$;"#,
         {
             continue;
         }
-        if effect_writer_ledger_cutover_needed
+        if effect_writer_table_cutover_needed
             && spec.table == "effect_attempt_dispatches"
             && matches!(
                 spec.name,
@@ -1255,7 +1255,7 @@ $retire_run_projection_authority$;"#,
         if obs.tables.contains_key(table)
             && record_table_names().contains(table.as_str())
             && !expected_checks.contains(&(table.as_str(), name.as_str()))
-            && !(effect_writer_ledger_cutover_needed
+            && !(effect_writer_table_cutover_needed
                 && effect_writer_cutover_owned_check(table, name))
             && !(frame_cutover_targets.includes_table(table) && frame_identity_check(table, name))
             && !(partition_plane_cutover_needed
@@ -1277,7 +1277,7 @@ $retire_run_projection_authority$;"#,
         }
     }
 
-    // 2d. The effect-ledger FKs remain exact. A missing table's canonical
+    // 2d. The effect-table FKs remain exact. A missing table's canonical
     // CREATE section carries these, so repair only observed tables.
     for (table, name, definition, sql) in [
         (
@@ -1293,7 +1293,7 @@ $retire_run_projection_authority$;"#,
             EFFECT_OUTCOME_DISPATCH_FK_SQL,
         ),
     ] {
-        if effect_writer_ledger_cutover_needed
+        if effect_writer_table_cutover_needed
             && table == "effect_attempt_dispatches"
             && obs.tables.contains_key("effect_attempts")
         {
@@ -1330,7 +1330,7 @@ $retire_run_projection_authority$;"#,
     // 2e. User triggers are explicit record objects. A missing table's section
     // may carry its trigger; triggers placed after a shared helper are separate
     // actions because the section parser deliberately stops at that helper.
-    // Present tables are repaired exactly, and immutable-ledger triggers are
+    // Present tables are repaired exactly, and immutable-row triggers are
     // never mistaken for extras.
     let trigger_specs = trigger_specs();
     let expected_triggers: BTreeSet<(&str, &str)> = trigger_specs
@@ -1369,7 +1369,7 @@ $retire_run_projection_authority$;"#,
         if record_table_names().contains(table.as_str())
             && !expected_triggers.contains(&(table.as_str(), name.as_str()))
             && name != OUTBOX_TRIGGER_NAME
-            && !(effect_writer_ledger_cutover_needed
+            && !(effect_writer_table_cutover_needed
                 && matches!(
                     (table.as_str(), name.as_str()),
                     ("effect_attempts", "effect_attempts_insert_guard")
@@ -1407,7 +1407,7 @@ $retire_run_projection_authority$;"#,
             if matches!(name.as_str(), "runs_release" | "runs_execution_bundle") {
                 continue;
             }
-            if effect_writer_ledger_cutover_needed
+            if effect_writer_table_cutover_needed
                 && matches!(
                     name.as_str(),
                     "effect_attempts_dispatch_identity_key"

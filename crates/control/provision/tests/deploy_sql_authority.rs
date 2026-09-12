@@ -386,14 +386,14 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
         "the sweep must cover exactly the 34 governed relations"
     );
 
-    // 2b. BORN PARKED (wamn-0h0g.20.30 for the attempt ledger, wamn-0h0g.20.32
+    // 2b. BORN PARKED (wamn-0h0g.20.30 for the attempt record, wamn-0h0g.20.32
     //     for its two siblings; owner ruling on wamn-0h0g.20.28). THE SERVER'S OWN
     //     ANSWER over the REAL DDL, with no reconciler in the loop:
     //     `wamn_effect_writer` — the stable ACL role every provisioned generation
-    //     LOGIN inherits with INHERIT TRUE — READS the effect ledgers and cannot
+    //     LOGIN inherits with INHERIT TRUE — READS the effect tables and cannot
     //     APPEND to any of the three, at table level or at any column. Prose
     //     calling the writer parked is not evidence; this is.
-    let writer_ledger_acl = psql(
+    let writer_table_grants = psql(
         &db_url,
         None,
         "SELECT concat_ws(' ', \
@@ -406,9 +406,9 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
              WHERE rolname='wamn_effect_writer'))",
     );
     assert_eq!(
-        writer_ledger_acl, "t f f f f t",
+        writer_table_grants, "t f f f f t",
         "the schema of record did not mint a READ-ONLY effect writer across the \
-         three effect ledgers (order: attempt SELECT, attempt INSERT, attempt \
+         three effect tables (order: attempt SELECT, attempt INSERT, attempt \
          column INSERT, dispatches INSERT, outcomes INSERT, role is unprivileged)"
     );
 
@@ -746,7 +746,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
     );
     assert_eq!(
         unprivileged, "t",
-        "a probe role that is superuser or BYPASSRLS proves nothing about RLS"
+        "a probe role that is superuser or BYPASSRLS establishes nothing about RLS"
     );
     apply(
         &db_url,
@@ -814,7 +814,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
 ///
 /// # Why this reads `pg_auth_members` and not an exit status
 ///
-/// An emitter that raises nothing has proved nothing. Both appliers succeed
+/// An emitter that raises nothing has established nothing. Both appliers succeed
 /// today and always did — the disagreement was in the POST-STATE, which is the
 /// only thing asserted below. Every arm reads the member set out of the
 /// catalog, and the role's own existence is asserted first so an empty set

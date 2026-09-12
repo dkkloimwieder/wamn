@@ -143,7 +143,7 @@ fn current_database_connect_posture_is_exactly_scoped() {
              END $contaminate$; \
              {CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
              {CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
-             DO $proof$ BEGIN \
+             DO $test$ BEGIN \
                ASSERT NOT EXISTS ( \
                  SELECT FROM pg_database database \
                  CROSS JOIN LATERAL aclexplode( \
@@ -156,7 +156,7 @@ fn current_database_connect_posture_is_exactly_scoped() {
                    COALESCE(database.datacl, acldefault('d', database.datdba))) acl \
                  WHERE database.datname = '{sibling}' \
                    AND acl.grantee = 0 AND acl.privilege_type = 'CONNECT'); \
-             END $proof$; \
+             END $test$; \
              COMMIT;"
         ),
     );
@@ -181,7 +181,7 @@ fn control_portable_store_enforces_the_current_record_on_postgres() {
 
     psql_ok(
         &url,
-        "prove the installed package/release record",
+        "check the installed package/release record",
         r#"
 SET ROLE wamn_system;
 SET app.tenant = 'tenant-a';
@@ -238,7 +238,7 @@ VALUES
 DO $immutable$ BEGIN
   BEGIN
     UPDATE catalog.package_migrations SET sha256 = 'sha256:' || repeat('d', 64);
-    ASSERT false, 'the exact-byte ledger mutated';
+    ASSERT false, 'the exact-byte record mutated';
   EXCEPTION WHEN SQLSTATE '55000' THEN NULL;
   END;
 END
@@ -258,7 +258,7 @@ VALUES ('tenant-a', 'dev', 1);
 -- wamn-10yt.52. The admitted component fact is frozen for EVERY environment,
 -- and a RECREATED environment writes its own row under its own creation rather
 -- than editing the one whose database was dropped. This replaces the
--- wamn-10yt.38 proof that the disposable marker made the fact replaceable in
+-- wamn-10yt.38 test that the disposable marker made the fact replaceable in
 -- place; that overwrite is retired and the marker decides nothing here.
 INSERT INTO catalog.component_library
   (tenant_id, environment_instance, package_id, package_version, component,
@@ -378,7 +378,7 @@ fn control_author_is_tenant_bound_and_exactly_scoped_on_postgres() {
         &database,
         wamn_control_provision::CredentialGeneration::B,
     );
-    const PASSWORD: &str = "control-author-live-proof";
+    const PASSWORD: &str = "control-author-live-test";
     let mut generations = String::new();
     for role in [&author_a, &author_b] {
         generations.push_str(
@@ -445,7 +445,7 @@ RESET ROLE;
 
     psql_ok(
         &as_role(&url, &author_a, PASSWORD),
-        "prove tenant-a author authority",
+        "check tenant-a author authority",
         &format!(
             r#"
 DO $identity$ BEGIN
@@ -519,7 +519,7 @@ $denied$;
 
     psql_ok(
         &as_role(&url, &author_b, PASSWORD),
-        "prove tenant-b author isolation",
+        "check tenant-b author isolation",
         &format!(
             r#"
 SET app.tenant = 'tenant-b';

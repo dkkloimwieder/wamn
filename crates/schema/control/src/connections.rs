@@ -159,7 +159,7 @@ pub fn insert_component_connection_requirement_sql() -> &'static str {
      ON CONFLICT DO NOTHING"
 }
 
-/// Prove an existing PROJECT-plane component requirement row is byte-identical
+/// Check an existing PROJECT-plane component requirement row is byte-identical
 /// to this one.
 ///
 /// The parameters are exactly [`insert_component_connection_requirement_sql`]'s,
@@ -188,7 +188,7 @@ pub fn insert_control_component_connection_requirement_sql() -> &'static str {
      ON CONFLICT DO NOTHING"
 }
 
-/// Prove an existing CONTROL-plane component requirement row is byte-identical
+/// Check an existing CONTROL-plane component requirement row is byte-identical
 /// to this one, WITHIN this environment instance.
 ///
 /// The parameters are exactly

@@ -158,7 +158,7 @@ pub(super) fn frame_identity_cutover_targets(
     FrameIdentityCutoverTargets {
         effect,
         dispatch,
-        restore_dispatch_fk: dispatch && !effect_writer_ledger_cutover_needed(schema, obs),
+        restore_dispatch_fk: dispatch && !effect_writer_table_cutover_needed(schema, obs),
     }
 }
 
@@ -272,8 +272,8 @@ ALTER TABLE {schema}.effect_attempts
 pub(super) fn effect_writer_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
     let target = schema;
     let schema = target.quoted();
-    let ledger_cutover_needed = effect_writer_ledger_cutover_needed(target, obs);
-    let present_ledgers: Vec<&str> = if ledger_cutover_needed {
+    let table_cutover_needed = effect_writer_table_cutover_needed(target, obs);
+    let present_tables: Vec<&str> = if table_cutover_needed {
         [
             "effect_attempts",
             "effect_attempt_dispatches",
@@ -285,7 +285,7 @@ pub(super) fn effect_writer_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneO
     } else {
         Vec::new()
     };
-    let mut sql = present_ledgers
+    let mut sql = present_tables
         .iter()
         .map(|table| {
             format!(
@@ -295,7 +295,7 @@ pub(super) fn effect_writer_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneO
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let populated = present_ledgers
+    let populated = present_tables
         .iter()
         .map(|table| format!("EXISTS (SELECT 1 FROM {schema}.{})", quote_ident(table)))
         .collect::<Vec<_>>()
@@ -319,11 +319,11 @@ $retire$;
 "#,
     ));
 
-    if !ledger_cutover_needed {
+    if !table_cutover_needed {
         return sql;
     }
 
-    for table in &present_ledgers {
+    for table in &present_tables {
         sql.push_str(&format!(
             "DROP TRIGGER IF EXISTS {} ON {schema}.{};\n",
             quote_ident(&format!("{table}_insert_guard")),
@@ -408,7 +408,7 @@ ALTER TABLE {schema}.effect_attempt_dispatches
     sql
 }
 
-pub(super) fn effect_writer_ledger_cutover_needed(schema: &BareSchemaName, obs: &RunPlaneObservation) -> bool {
+pub(super) fn effect_writer_table_cutover_needed(schema: &BareSchemaName, obs: &RunPlaneObservation) -> bool {
     let attempts_need_cutover = obs.tables.get("effect_attempts").is_some_and(|columns| {
         RETIRED_EFFECT_ATTEMPT_COLUMNS
             .iter()

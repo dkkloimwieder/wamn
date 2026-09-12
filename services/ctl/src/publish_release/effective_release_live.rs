@@ -182,7 +182,7 @@ async fn provision_control(control: &Client) {
     control
         .query_one("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
         .await
-        .expect("scope the control proof session");
+        .expect("scope the control test session");
 }
 
 async fn apply_packages(project_url: &str, inputs: &[PackageInput]) {
@@ -412,7 +412,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
         .map(|input| input.root.join("wamn.json"))
         .collect::<Vec<_>>();
     let (manifests, manifest_hashes) =
-        read_package_manifests(&manifest_paths).expect("consume exact package manifests and welds");
+        read_package_manifests(&manifest_paths).expect("consume exact package manifests and package contracts");
     let packages = inputs
         .iter()
         .map(|input| PackageCoordinate::new(input.id, input.version).unwrap())
@@ -507,7 +507,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
              DROP SCHEMA IF EXISTS catalog CASCADE;",
         )
         .await
-        .expect("clean project proof schemas");
+        .expect("clean project test schemas");
     control
         .batch_execute(
             "DROP SCHEMA IF EXISTS wamn_run CASCADE; \
@@ -518,7 +518,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
              DROP SCHEMA IF EXISTS identity CASCADE;",
         )
         .await
-        .expect("clean control proof schemas");
+        .expect("clean control test schemas");
     drop(project);
     drop(control);
     project_task.abort();

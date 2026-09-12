@@ -46,7 +46,7 @@ pub enum DefinitionKind {
 }
 
 impl DefinitionKind {
-    /// Stable catalog spelling for the ownership ledger.
+    /// Stable catalog spelling for the ownership record.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Relation => "relation",

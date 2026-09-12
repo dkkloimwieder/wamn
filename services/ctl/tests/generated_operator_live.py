@@ -287,7 +287,7 @@ class SourceEdit:
         self.path = REPOSITORY / "crates/client/tui/src/lib.rs"
         require(not self.path.is_symlink(), "native source path must not be a symlink")
         self.original = self.path.read_bytes()
-        require(MARKER not in self.original, "native source already contains a live-proof marker")
+        require(MARKER not in self.original, "native source already contains a live-test marker")
         self.addition = b"\n" + MARKER + str(uuid.uuid4()).encode() + b"\n"
         self.applied = False
 
@@ -310,7 +310,7 @@ class SourceEdit:
         require(current.count(self.addition) == 1, "native source marker changed; source restoration requires review")
         restored = current.replace(self.addition, b"", 1)
         self.path.write_bytes(restored)
-        require(restored == self.original, "preserved concurrent native edits while removing only the proof marker")
+        require(restored == self.original, "preserved concurrent native edits while removing only the test marker")
 
 
 def owned_rows(config, remove=False):
@@ -626,9 +626,9 @@ def main():
             except Exception as error:
                 failure = failure or f"evidence write failed: {type(error).__name__}"
     if failure:
-        print(f"generated operator live proof failed: {failure}", file=sys.stderr)
+        print(f"generated operator live test failed: {failure}", file=sys.stderr)
         return 1
-    print("generated operator live proof passed: live route, native restart, target reset, and terminal cleanup")
+    print("generated operator live test passed: live route, native restart, target reset, and terminal cleanup")
     return 0
 
 

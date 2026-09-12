@@ -24,12 +24,12 @@ use wamn_ctl::provision_project_env::{
 };
 use wamn_run_state::RUN_PROJECTION_WRITER_ROLE;
 
-const ORG: &str = "pg18proof";
-const PROJECT: &str = "ledger";
+const ORG: &str = "pg18test";
+const PROJECT: &str = "execution";
 const ENVIRONMENT: &str = "dev";
 const TENANT: &str = "tenant-live";
 const INSTANCE: &str = "k3m9x2p7";
-const LEDGER_SCHEMA: &str = "wamn_runner_demo";
+const RUN_SCHEMA: &str = "wamn_runner_demo";
 const APP_GENERATION_PASSWORD: &str = "effect-writer-app-probe-0123456789abcdef0123456789abcdef";
 const APP_GENERATION_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
 const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
@@ -248,7 +248,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         .expect("numeric PG version");
     assert!(
         version >= 180_000,
-        "credential proof requires PostgreSQL 18"
+        "credential test requires PostgreSQL 18"
     );
 
     catalog
@@ -401,7 +401,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
                TO wamn_run_projection_writer;",
         )
         .await
-        .expect("apply schema-control-owned ledger grants");
+        .expect("apply schema-control-owned table grants");
 
     let (url_a, expires_a) = credential_document(&secret_a, &scope);
     let (client_a, connection_a) = tokio_postgres::connect(&url_a, NoTls)
@@ -450,14 +450,14 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
     );
     let stable_acl = direct_acl_set(&target, EFFECT_WRITER_ROLE).await;
     let mut expected_stable =
-        BTreeSet::from([format!("schema:{LEDGER_SCHEMA}:{LEDGER_SCHEMA}:USAGE")]);
+        BTreeSet::from([format!("schema:{RUN_SCHEMA}:{RUN_SCHEMA}:USAGE")]);
     for table in [
         "effect_attempts",
         "effect_attempt_dispatches",
         "effect_attempt_outcomes",
     ] {
         for privilege in ["INSERT", "SELECT"] {
-            expected_stable.insert(format!("relation:{LEDGER_SCHEMA}:{table}:{privilege}"));
+            expected_stable.insert(format!("relation:{RUN_SCHEMA}:{table}:{privilege}"));
         }
     }
     for (table, columns) in [
@@ -474,18 +474,18 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         ),
     ] {
         for column in columns {
-            expected_stable.insert(format!("column:{LEDGER_SCHEMA}:{table}.{column}:SELECT"));
+            expected_stable.insert(format!("column:{RUN_SCHEMA}:{table}.{column}:SELECT"));
         }
     }
     assert_eq!(stable_acl, expected_stable);
     assert_eq!(
         direct_acl_set(&target, RUN_PROJECTION_WRITER_ROLE).await,
         BTreeSet::from([
-            format!("schema:{LEDGER_SCHEMA}:{LEDGER_SCHEMA}:USAGE"),
-            format!("relation:{LEDGER_SCHEMA}:node_runs:DELETE"),
-            format!("relation:{LEDGER_SCHEMA}:node_runs:INSERT"),
-            format!("relation:{LEDGER_SCHEMA}:node_runs:SELECT"),
-            format!("relation:{LEDGER_SCHEMA}:node_runs:UPDATE"),
+            format!("schema:{RUN_SCHEMA}:{RUN_SCHEMA}:USAGE"),
+            format!("relation:{RUN_SCHEMA}:node_runs:DELETE"),
+            format!("relation:{RUN_SCHEMA}:node_runs:INSERT"),
+            format!("relation:{RUN_SCHEMA}:node_runs:SELECT"),
+            format!("relation:{RUN_SCHEMA}:node_runs:UPDATE"),
         ])
     );
     let exact_run_reads = client_a
@@ -567,7 +567,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
                 &[&schema],
             )
             .await
-            .expect("probe non-ledger schema privilege")
+            .expect("probe unrelated schema privilege")
             .get(0);
         assert!(!allowed, "generation unexpectedly has USAGE on {schema}");
         assert!(
@@ -575,7 +575,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
                 .simple_query(&format!("SELECT * FROM {schema}.probe"))
                 .await
                 .is_err(),
-            "generation read non-ledger object in {schema}"
+            "generation read unrelated object in {schema}"
         );
     }
     target
@@ -602,7 +602,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
             &[],
         )
         .await
-        .expect("inspect ordinary App-generation ledger ACL");
+        .expect("inspect ordinary App-generation table ACL");
     assert_eq!(app_identity.get::<_, String>(0), app_role);
     assert!(app_identity.get::<_, bool>(1));
     let app_has_insert: bool = target
@@ -618,7 +618,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
     let app_insert = app_probe
         .simple_query("INSERT INTO wamn_runner_demo.effect_attempts VALUES (1)")
         .await
-        .expect_err("ordinary App generation wrote the private ledger");
+        .expect_err("ordinary App generation wrote the private table");
     assert_eq!(
         app_insert.code(),
         Some(&tokio_postgres::error::SqlState::INSUFFICIENT_PRIVILEGE)
