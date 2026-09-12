@@ -46,6 +46,7 @@ pub const EMPTY_HASH: &str =
     "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 pub const WRITER_PASSWORD: &str =
     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const EXECUTOR_PASSWORD: &str = "claim-live-executor-password";
 pub const WRITER_LATCH: i64 = 7_141_013;
 pub const PRIOR_WINNER_HASH: &str = "sha256:prior-caller-winner";
 
@@ -343,7 +344,6 @@ async fn install_executor(client: &Client, admin_url: &str) -> anyhow::Result<(S
         wamn_control_provision::CredentialGeneration::A,
     )?;
     let role_identifier = quote_identifier(&role);
-    let password = uuid::Uuid::new_v4().simple().to_string();
     let acl_role = quote_identifier(family.acl_role());
     let run_update = EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS
         .iter()
@@ -370,7 +370,7 @@ async fn install_executor(client: &Client, admin_url: &str) -> anyhow::Result<(S
              GRANT UPDATE ({run_update}) ON TABLE {SCHEMA}.runs TO {acl_role}; \
              GRANT UPDATE ({queue_update}) ON TABLE {SCHEMA}.run_queue TO {acl_role}; \
              GRANT DELETE ON TABLE {SCHEMA}.run_queue TO {acl_role};",
-            password = quote_literal(&password),
+            password = quote_literal(EXECUTOR_PASSWORD),
             membership = normalize_workload_generation_membership_sql(family, &role, true),
             database = quote_identifier(&database),
         ))
@@ -378,7 +378,7 @@ async fn install_executor(client: &Client, admin_url: &str) -> anyhow::Result<(S
     let mut url = Url::parse(admin_url)?;
     url.set_username(&role)
         .map_err(|()| anyhow::anyhow!("set executor username"))?;
-    url.set_password(Some(&password))
+    url.set_password(Some(EXECUTOR_PASSWORD))
         .map_err(|()| anyhow::anyhow!("set executor password"))?;
     url.set_fragment(None);
     Ok((
