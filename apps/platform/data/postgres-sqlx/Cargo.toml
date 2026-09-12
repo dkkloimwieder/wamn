@@ -27,7 +27,7 @@ license = "Apache-2.0"
 #
 # and `io = ["std", "futures-io", "memchr"]` is what gives `memchr` its
 # `default`, which `serde_json` links, which is how guests that never mention
-# sqlx move. So the channel is the PRESENCE of `sqlx-core` in the proof
+# sqlx move. So the channel is the PRESENCE of `sqlx-core` in the test
 # selection and absent from m1, not any declaration in this file. Removing
 # these defaults moved three of the four virtualized digests and converged
 # none. See `[GUEST-DIGEST-REPRODUCIBILITY]`.

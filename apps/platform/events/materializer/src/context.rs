@@ -61,8 +61,8 @@ pub fn derived_event_context(event: &DerivedEvent) -> Value {
 ///   column (`id`) ONLY, not `tenant_id` (the .17 design contract); or
 /// - a package application table with no `tenant_id` column.
 ///
-/// The caller may accept `Absent` only after the tenant-scoped catalog
-/// credential has proven the package's database residency. A present string
+/// The caller can accept `Absent` only after the catalog credential confirms
+/// that the package resides in the tenant database. A present string
 /// remains an additional equality guard; any other carrier is unscopable.
 pub fn row_tenant(envelope: &Envelope) -> RowTenant<'_> {
     let image: &Map<String, Value> = match envelope.op {

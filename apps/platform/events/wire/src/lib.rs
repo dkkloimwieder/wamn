@@ -63,7 +63,7 @@ pub struct Causation {
 /// author's logical deduplication operand, and the causation the host derives
 /// from the delivery it is completing. Tenant, project, and environment are
 /// copied from bound host claims so no guest or wiring field can redirect the
-/// event; package identity comes from the welded release/run/wiring source the
+/// event; package identity comes from the bound release/run/wiring source the
 /// native host emitter resolved.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

@@ -21,7 +21,7 @@
 //! passes error items through untouched. It ENRICHES each value it wrote
 //! with `stored: {container, key}` rather than replacing the payload, because
 //! the route answers with what the last node emits and a caller is owed the
-//! operation's result, not this node's receipt alone. A failed write fails
+//! operation's result, not this node's result alone. A failed write fails
 //! the emission as a whole; per-item outcome reporting is noted as future
 //! work in `docs/architecture/execution.md#results-and-effects`.
 //!

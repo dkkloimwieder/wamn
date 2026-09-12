@@ -1,6 +1,6 @@
 //! sockprobe — E13/E15 runtime raw-socket fixture (wamn-o3u6).
 //!
-//! MVP outcome: proof floor.
+//! MVP outcome: minimum test coverage.
 //!
 //! A `wasi:cli` command that ATTEMPTS each raw outbound TCP + UDP egress arm via
 //! `wasi:sockets` (reached through `std::net` on wasm32-wasip2 — the default
@@ -26,7 +26,7 @@
 //! address and the two cannot drift.
 //!
 //! The verdict for each arm is written to the file named by
-//! `SOCKPROBE_REPORT_PATH` (a mounted host-path volume — the proof report-file
+//! `SOCKPROBE_REPORT_PATH` (a mounted host-path volume — the test report-file
 //! pattern), and echoed to stderr. `denied` is the ONLY token the negative
 //! asserts on; the positive accepts stable permitted tokens — so neither
 //! assertion depends on the exact non-deny error.

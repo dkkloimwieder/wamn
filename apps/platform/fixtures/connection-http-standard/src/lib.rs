@@ -1,6 +1,6 @@
 //! Standard-node fixture importing only the typed HTTP connection capability.
 //!
-//! MVP outcome: proof floor.
+//! MVP outcome: minimum test coverage.
 
 #![no_std]
 

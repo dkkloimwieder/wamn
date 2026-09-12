@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 ///   elapsed is as false a claim as the other two, one word earlier. That
 ///   attempt is [`Self::EffectUncertain`] (owner ruling, `wamn-b2m6.3`).
 /// * A LOST RESPONSE IS NEITHER UNCERTAIN NOR DELIVERED. The far side acted and
-///   the answer proves it, so nothing is unknown. The guest received no
+///   the answer confirms it, so nothing is unknown. The guest received no
 ///   response, so nothing was delivered. That is [`Self::ResponseLost`], and it
 ///   is a word because its remedy is its own (owner ruling, `wamn-b2m6.3`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,7 +42,7 @@ pub enum EffectOutcome {
     EffectUncertain,
     /// The far side acted and its response did not arrive.
     ///
-    /// The status line and headers prove the far side acted. The body did not
+    /// The status line and headers confirm that the far side acted. The body did not
     /// reach the guest. The remedy is to RE-READ the result, never to resend
     /// the request, which is what separates this word from
     /// [`Self::EffectUncertain`].

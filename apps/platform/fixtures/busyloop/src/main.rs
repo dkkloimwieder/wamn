@@ -2,7 +2,7 @@
 //! way this component stops is an external interrupt — trapping it via an
 //! epoch deadline is exactly the wamn-4p3 acceptance demo.
 //!
-//! MVP outcome: proof floor.
+//! MVP outcome: minimum test coverage.
 
 fn main() {
     // Host WasiCtx inherits stderr only.

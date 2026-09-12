@@ -79,11 +79,11 @@ fn replay_is_a_no_op_with_base_and_overlay_registrations_applied() {
         .take()
         .expect("psql stdin")
         .write_all(script.as_bytes())
-        .expect("write reconcile proof");
+        .expect("write reconcile test");
     let output = child.wait_with_output().expect("wait for psql");
     assert!(
         output.status.success(),
-        "registration reconcile proof failed:\nstdout:\n{}\nstderr:\n{}",
+        "registration reconcile test failed:\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );

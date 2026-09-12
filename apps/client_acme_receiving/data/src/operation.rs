@@ -905,7 +905,7 @@ mod tests {
             allowed,
         );
         let result: ItemResult<()> = refused(
-            "exclusion-proof".into(),
+            "exclusion-test".into(),
             access_error(&error, "purchase_order.update", None, Some(1)),
         );
         serialized(&[result])
@@ -918,7 +918,7 @@ mod tests {
         };
         assert_eq!(
             exclusion_refusal(Some("purchase_order_allowed_exclusion"), allowed),
-            r#"[{"request_id":"exclusion-proof","error":{"code":"exclusion_violation","detail":{"constraint":"purchase_order_allowed_exclusion"}}}]"#
+            r#"[{"request_id":"exclusion-test","error":{"code":"exclusion_violation","detail":{"constraint":"purchase_order_allowed_exclusion"}}}]"#
         );
         for (constraint, allowed) in [
             (None, allowed),
@@ -930,7 +930,7 @@ mod tests {
         ] {
             assert_eq!(
                 exclusion_refusal(constraint, allowed),
-                r#"[{"request_id":"exclusion-proof","error":{"code":"internal_error","detail":{}}}]"#
+                r#"[{"request_id":"exclusion-test","error":{"code":"internal_error","detail":{}}}]"#
             );
         }
     }
@@ -951,7 +951,7 @@ mod tests {
             .expect("server constraint name");
         assert_eq!(
             exclusion_refusal(Some(constraint), UPDATE_CONSTRAINTS),
-            r#"[{"request_id":"exclusion-proof","error":{"code":"exclusion_violation","detail":{"constraint":"purchase_order_acme_quality_status_excl"}}}]"#
+            r#"[{"request_id":"exclusion-test","error":{"code":"exclusion_violation","detail":{"constraint":"purchase_order_acme_quality_status_excl"}}}]"#
         );
     }
 

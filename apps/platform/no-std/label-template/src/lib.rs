@@ -37,7 +37,7 @@ pub const TEMPLATE_IDS: [&str; 3] = ["pallet", "location", "product"];
 /// These values are PROVISIONAL. No printer or label stock has been chosen for
 /// the portfolio yet; that is a WMS application fixture decision. Geometry is
 /// stated anyway because ZPL without it is not printable, and a golden vector
-/// that cannot drive a printer proves nothing. When real stock is chosen, this
+/// that cannot drive a printer checks no printed output. When real stock is chosen, this
 /// constant and the golden vectors move together.
 const LABEL_GEOMETRY: &str = "^PW812\n^LL1218\n^MD0\n";
 

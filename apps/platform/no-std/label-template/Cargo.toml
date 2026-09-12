@@ -12,7 +12,7 @@ serde_json = { version = "1", default-features = false, features = ["alloc"] }
 # makes its `alloc` imports redundant with the std prelude and produces
 # warnings repo-lint promotes to errors. The golden vectors live in
 # `tests/golden.rs`, a separate target that links the real `no_std` rlib — so
-# the gate proves the shipped build, not a std-mode variant of it.
+# the gate tests the shipped build, not a std-mode variant of it.
 #
 # `bench = false` for the same reason `transform` sets it: `test = false` alone
 # leaves the bench unit, which `--all-targets` still builds and cargo still

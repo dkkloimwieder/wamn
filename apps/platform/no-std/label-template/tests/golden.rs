@@ -80,7 +80,7 @@ fn product_matches_its_golden_vector() {
 }
 
 /// The gate covers the whole set, so adding a template without a vector fails
-/// here rather than shipping unproven.
+/// here rather than shipping untested.
 #[test]
 fn every_template_id_has_a_golden_vector() {
     assert_eq!(TEMPLATE_IDS.len(), 3, "the template set changed size");

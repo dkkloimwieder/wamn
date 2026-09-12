@@ -10,7 +10,7 @@ use crate::condition::{CompiledCondition, ConditionOutcome, compile_condition};
 use crate::context::{RowTenant, derived_event_context, event_context, row_tenant};
 use crate::input::{derived_event_input, event_input};
 
-/// A source-event coordinate proven to match the delivered NATS identity.
+/// A source-event coordinate that matches the delivered NATS identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedSourceEventId(String);
 

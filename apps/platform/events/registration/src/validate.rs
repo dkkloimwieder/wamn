@@ -3,7 +3,7 @@
 //!
 //! Checks that a registration is well-formed and *consumable*: the schema
 //! version is compatible, it targets the catalog it was validated against, its
-//! entity resolves **by id** (the rename-proof key — so a registration can only
+//! entity resolves **by id** (the stable key, so a registration can only
 //! bind to a real catalog entity), its op set is non-empty and duplicate-free,
 //! and its [`condition`](EventRegistration::condition) is **syntactically valid
 //! JMESPath**. The expression is compiled, not evaluated — the materializer
@@ -94,7 +94,7 @@ pub fn validate(
             "registration id is empty",
         ));
     }
-    // The entity must resolve BY ID — the rename-proof key. A registration that
+    // The entity must resolve by its stable ID. A registration that
     // names no catalog entity can never be materialized (nothing on the stream
     // carries that entity segment).
     if !model_keys.contains(&reg.entity) {

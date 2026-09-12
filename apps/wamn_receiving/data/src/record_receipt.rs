@@ -632,7 +632,7 @@ async fn record_receipt_in(
         || finalized.row.row_version != Some(finished.row_version)
     {
         return Err(RecordReceiptError::internal(
-            "command ledger did not preserve the committed result",
+            "command record did not preserve the committed result",
         ));
     }
     finalized.commit().await?;
@@ -948,7 +948,7 @@ mod tests {
         }
         match with_request_id(
             &input.request_id,
-            Err(RecordReceiptError::invalid("refused for proof", "input")),
+            Err(RecordReceiptError::invalid("refused for test", "input")),
         ) {
             RecordReceiptItemOutcome::Refused { request_id, .. } => {
                 assert_eq!(request_id.as_ref(), REQUEST_ID);
