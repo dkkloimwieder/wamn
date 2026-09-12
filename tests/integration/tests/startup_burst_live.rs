@@ -49,7 +49,6 @@ pub(crate) struct Inputs {
     pub(crate) scheduler_client_tls_cert: PathBuf,
     pub(crate) scheduler_client_tls_key: PathBuf,
     pub(crate) otlp_endpoint: String,
-    #[serde(rename = "proof_id")]
     pub(crate) test_id: String,
     pub(crate) component_artifact_base: String,
     pub(crate) release_artifact_base: String,
@@ -360,7 +359,7 @@ pub(crate) async fn assert_startup(
         inputs.scheduler_nats_url != inputs.nats_url,
         "the startup test requires separate scheduler and event brokers"
     );
-    let mut result = json!({"source":inputs.source,"proof_id":inputs.test_id,
+    let mut result = json!({"source":inputs.source,"test_id":inputs.test_id,
         "native_start_limit":inputs.max_concurrent_starts,"profile":"release",
         "manifest_digest":inputs.manifest_digest,"verdict":"fail",
         "cache_scope":"Fresh host/empty private caches; native HTTP digest is first loaded by cold herd; replicas share native compile deduplication.",
@@ -454,7 +453,7 @@ pub(crate) async fn assert_startup(
         .env("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
         .env(
             "OTEL_RESOURCE_ATTRIBUTES",
-            format!("wamn.startup.proof={}", inputs.test_id),
+            format!("wamn.startup.test={}", inputs.test_id),
         )
         .env("OTEL_BSP_SCHEDULE_DELAY", "1")
         .env("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "1")

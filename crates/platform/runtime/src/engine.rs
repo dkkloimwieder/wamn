@@ -460,7 +460,7 @@ mod tests {
         let cap_bytes = 64 << 20;
         assert_ne!(
             cap_bytes, MEMORY_CAP_BYTES,
-            "the configured cap must differ from the default or this proves nothing"
+            "the configured cap must differ from the default to test the override"
         );
         let budgets = host_memory_budgets(cap_bytes, 4).expect("configured native budgets");
         let engine = build_engine_with_host_memory(&[], budgets).expect("a resized pooling engine");

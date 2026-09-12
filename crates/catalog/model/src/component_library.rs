@@ -610,7 +610,7 @@ pub fn bind_component_statement_facts(
         component
             .operations
             .get_mut(&export)
-            .expect("the exact operation-set comparison proved this export exists")
+            .expect("the exact operation-set comparison confirmed this export exists")
             .statements = operation_statements;
     }
     Ok(())
@@ -899,7 +899,7 @@ fn normalize_effects(
                         ComponentFactErrorKind::InheritedEffectInterfaces,
                         format!(
                             "inherited effect {:?} carries interfaces {interfaces:?}, and a \
-                             dependency proves none to this component",
+                             dependency declares none for this component",
                             effect.package
                         ),
                     ));

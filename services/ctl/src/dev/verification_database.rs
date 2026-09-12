@@ -805,7 +805,7 @@ mod tests {
                 &[&database.as_str()],
             )
             .await
-            .expect("query database inventory")
+            .expect("query the database list")
             .get(0)
     }
 

@@ -14,7 +14,7 @@
 //! # The three
 //!
 //! The executor's runner store carries `WAMN_POSTGRES_ID`, `WAMN_LOGGING_ID`
-//! and `CONNECTION_HTTP_ID` — gate B's retained set, and the three proved here.
+//! and `CONNECTION_HTTP_ID` — gate B's retained set, and the three tested here.
 //! `wamn_jetstream`, `flow_http_routing` and `wamn_credentials` are deliberately
 //! out of scope: the first two are not on the executor store, and the third
 //! implements no `HostPlugin` and has no WIT surface at all.

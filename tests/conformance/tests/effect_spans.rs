@@ -406,7 +406,7 @@ fn every_effect_surface_opens_the_shared_span() {
                         ImplItem::Fn(function) if function.sig.ident == name => Some(function),
                         _ => None,
                     })
-                    .expect("method set was just proved equal");
+                    .expect("method sets were just confirmed equal");
                 let calls = calls_of(&function.block);
 
                 let via_wrapper = calls.functions.intersection(&openers).next().is_some();

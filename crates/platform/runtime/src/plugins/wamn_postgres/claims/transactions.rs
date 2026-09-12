@@ -425,7 +425,7 @@ impl WamnPostgres {
         // already applied. `biased;` pins that poll order instead of leaving it
         // to `join!`'s rotation (wamn-0h0g.17.33).
         //
-        // Proven by `live_a_cold_connection_parses_inside_the_claim_transaction`,
+        // Tested by `live_a_cold_connection_parses_inside_the_claim_transaction`,
         // which fails against either the pre-fix shape or a swapped `join!`.
         if let Err(error) = self
             .warm_claim_statement(connection.connection(), authority)

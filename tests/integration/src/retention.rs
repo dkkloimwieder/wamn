@@ -261,7 +261,7 @@ async fn assert_not_super_or_bypassing(admin_url: &str, role: &str) -> anyhow::R
     if !clean {
         bail!(
             "the retention generation {role} is superuser, BYPASSRLS, cannot log in, or does not \
-             inherit — every arm below would prove nothing"
+             inherit — every arm below would test nothing"
         );
     }
     Ok(())

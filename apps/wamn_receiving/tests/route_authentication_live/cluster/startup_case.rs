@@ -426,7 +426,7 @@ async fn collect(
         .append_pair(
             "q",
             &format!(
-                "{{ resource.wamn.startup.proof = \"{identity}\" && name = \"workload_start\" }}"
+                "{{ resource.wamn.startup.test = \"{identity}\" && name = \"workload_start\" }}"
             ),
         )
         .append_pair("limit", "1000");

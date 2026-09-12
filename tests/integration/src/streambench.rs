@@ -45,7 +45,7 @@ use wamn_gate_harness::check;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
-    /// Create a fresh EVT_ stream, publish N events, prove dedupe. Leaves the
+    /// Create a fresh EVT_ stream, publish N events, test dedupe. Leaves the
     /// stream populated (the first half of the physical node-loss runbook).
     Publish,
     /// Drain the stream through a pull consumer; assert count / headers / order.

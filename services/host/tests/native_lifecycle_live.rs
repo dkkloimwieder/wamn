@@ -317,7 +317,7 @@ async fn assert_host_lifecycle(
         let remaining = SHUTDOWN_BUDGET.saturating_sub(signalled.elapsed());
         let status = timeout(remaining, host.wait()).await.context("host exceeded 70-second signal-to-exit budget")??;
         ensure!(status.success(), "host did not exit successfully after SIG{signal}: {status}");
-        fs::write(evidence.join(format!("{name}.receipt")), format!(
+        fs::write(evidence.join(format!("{name}-result.txt")), format!(
             "signal=SIG{signal}\nexit_success=true\nshutdown_ms={}\nshutdown_budget_ms={}\nstartup_starting_observed={observed_starting}\nsaturation_probe_pass=true\nrecovery_probe_pass=true\nnats_outage_seconds={}\n",
             signalled.elapsed().as_millis(), SHUTDOWN_BUDGET.as_millis(),
             if signal == "TERM" { NATS_OUTAGE.as_secs() } else { 0 },
@@ -386,7 +386,7 @@ async fn assert_blocked_flush(nats_address: SocketAddr, evidence: &Path) -> anyh
         ensure!(status.code().is_some_and(|code| code != 0), "blocked flush did not return a process error: {status}");
         let stderr = fs::read_to_string(evidence.join(format!("{name}.stderr")))?;
         ensure!(stderr.contains("telemetry flush did not complete"), "nonzero exit did not identify the bounded flush failure");
-        fs::write(evidence.join(format!("{name}.receipt")), format!(
+        fs::write(evidence.join(format!("{name}-result.txt")), format!(
             "signal=SIGTERM\nexit_code={}\nshutdown_ms={}\ntrace_export_connection_observed=true\ntrace_peer_answered=false\nflush_failure_reported=true\n",
             status.code().context("failed host has no exit code")?, signalled.elapsed().as_millis(),
         ))?;
@@ -495,7 +495,7 @@ async fn assert_missing_first_beat(nats_address: SocketAddr, evidence: &Path) ->
         "cleanup returned a different native failure: {error:#}"
     );
     fs::write(
-        evidence.join("native-missing-first-beat.receipt"),
+        evidence.join("native-missing-first-beat-result.txt"),
         format!(
             "scope=native ClusterHost and WAMN lifecycle helpers in test process\nclosed_client_subscription_failed=true\nheartbeat_interval_ms=100\nsilence_budget_ms={}\nobservation_ms={}\nnever_beat=true\ncleanup_polled_after_observer=true\nnative_subscription_error_retrieved=true\ncleanup_ms={}\ncleanup_budget_ms={}\nfull_process_unexpected_failure_proved=false\n",
             silence_budget.as_millis(),

@@ -139,7 +139,7 @@ fn session() -> String {
 ///
 /// The `EXCEPTION` arm catches `insufficient_privilege`, which is SQLSTATE 42501 —
 /// and a row-level-security rejection raises **the same** 42501. So the message is
-/// inspected too: if the refusal came from RLS, this probe has proved nothing about
+/// inspected too: if the refusal came from RLS, this test establishes nothing about
 /// the grant matrix and must fail loudly rather than pass.
 fn assert_denied(url: &str, label: &str, statement: &str) {
     let script = format!(
@@ -187,7 +187,7 @@ fn assert_permitted_to(url: &str, role: &str, label: &str, statement: &str) {
     let out = psql(url, &script);
     assert!(
         out.status.success(),
-        "non-vacuity arm {label:?} failed as {role} — the matching denial proved nothing:\
+        "non-vacuity arm {label:?} failed as {role} — the matching denial establishes nothing:\
          \n--- stderr ---\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
@@ -435,7 +435,7 @@ DO $$ DECLARE writes int; reads int; app_writes int; BEGIN
      AND (has_table_privilege('{APP_ROLE}', c.oid, 'INSERT')
        OR has_table_privilege('{APP_ROLE}', c.oid, 'UPDATE')
        OR has_table_privilege('{APP_ROLE}', c.oid, 'DELETE'));
-  ASSERT app_writes > 0, 'the write sweep matches nothing at all — it proves nothing';
+  ASSERT app_writes > 0, 'the write sweep matches nothing at all — it tests nothing';
 
   -- Exactly the two named relations, and specifically NOT the run history.
   ASSERT has_table_privilege('{DISPATCH_READER_ROLE}', '{SCHEMA}.run_queue', 'SELECT');
@@ -485,7 +485,7 @@ DO $$ DECLARE writes int; reads int; app_writes int; BEGIN
     'the generation edge is not exactly the stable role INHERIT TRUE, SET FALSE';
   -- NOINHERIT plus EXACTLY ONE membership: `wamn_platform`, which confers no
   -- grant of its own and exists only to be named by the tenant floor's permissive
-  -- arm (`wamn-0h0g.22.17`). The grant inventory above is still the whole story of
+  -- arm (`wamn-0h0g.22.17`). The grant list above is still the whole story of
   -- what this role may reach; this edge is what stops `effect_attempts` reading
   -- zero rows in silence. `INHERIT TRUE` is spelled, and MUST be: PostgreSQL 16+
   -- takes the edge's default from the member's `rolinherit`, and this role is

@@ -13,7 +13,7 @@ ratatui-core = { workspace = true }
 wamn-client = { workspace = true }
 
 [dev-dependencies]
-# TEST-ONLY. The controls are proven against the descriptors the shipped
+# TEST-ONLY. The controls are tested against the descriptors the shipped
 # contracts actually declare, not against a fixture shaped to agree. This is a
 # dev-dependency and never a production one: a terminal must not link a code
 # generator, and the production graph here is wamn-client alone.

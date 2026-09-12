@@ -24,7 +24,7 @@ git -C "$repo_root" status --porcelain --untracked-files=normal -- tools/probes/
 rustc --version --verbose >"$evidence_dir/toolchain.txt"
 sha256sum "$probe_binary" >"$evidence_dir/binary.sha256"
 sha256sum "$repo_root/Cargo.lock" "$script_dir/Cargo.toml" "$script_dir/Cargo.lock" \
-  "$script_dir/run" "$script_dir/audit-locks.awk" "$script_dir/receipt-contract" "$script_dir"/src/*.rs \
+  "$script_dir/run" "$script_dir/audit-locks.awk" "$script_dir/result-contract" "$script_dir"/src/*.rs \
   >"$evidence_dir/source.sha256"
 printf '%q\n' "$probe_binary" >"$evidence_dir/commands.log"
 status=0
@@ -47,6 +47,6 @@ if [[ $status -eq 0 ]]; then
 fi
 jq -n --argjson status "$status" \
   '{exit_code:$status,verdict:(if $status == 0 then "observed" else "failed" end),production_adoption_tested:false}' \
-  >"$evidence_dir/run-receipt.json"
+  >"$evidence_dir/run-result.json"
 printf 'NATIVE_HTTP_PROBE exit_code=%s evidence=%s\n' "$status" "$evidence_dir"
 exit "$status"

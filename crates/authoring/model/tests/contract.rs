@@ -157,7 +157,7 @@ fn command_kinds_and_operation_pairing_are_exact() {
         assert_eq!(
             schema_discriminators(&schema, definition, field),
             ["gate", "publish"],
-            "{definition} inventory drifted"
+            "{definition} variant list drifted"
         );
     }
     let kind_schema = serde_json::to_value(schemars::schema_for!(AuthoringCommandKind))

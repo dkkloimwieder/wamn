@@ -157,7 +157,7 @@ fn vendored_wasi_packages_are_registered_or_deliberately_absent() {
     let vendored = vendored_wasi_versions(&repository_root());
     assert!(
         !vendored.is_empty(),
-        "no vendored wasi WIT found; the walk is broken, so this suite proves nothing"
+        "no vendored wasi WIT found; the walk is broken, so this suite checks no WIT"
     );
     let registered: BTreeSet<&str> = CAPABILITY_REGISTRY.iter().map(|row| row.package).collect();
 

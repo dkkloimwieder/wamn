@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Exercise the wrapper's exact acceptance filter without transport or Cargo.
 set -euo pipefail
-[[ $# -eq 1 ]] || { echo 'usage: bash receipt-contract COMPLETE_STDOUT_JSONL' >&2; exit 2; }
+[[ $# -eq 1 ]] || { echo 'usage: bash result-contract COMPLETE_STDOUT_JSONL' >&2; exit 2; }
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 filter=$(sed -n '/^  jq -se /,/shape-check.log/p' "$script_dir/run" | sed '1d;$d')
-[[ -n "$filter" ]] || { echo 'the receipt filter is missing' >&2; exit 1; }
+[[ -n "$filter" ]] || { echo 'the result filter is missing' >&2; exit 1; }
 for mutation in complete missing duplicate missing_evidence error; do
   expected=1
   case "$mutation" in
@@ -16,7 +16,7 @@ for mutation in complete missing duplicate missing_evidence error; do
   esac
   actual=0
   jq -s "$rewrite" "$1" | jq -e "$filter" >/dev/null 2>&1 || actual=1
-  [[ "$actual" -eq "$expected" ]] || { echo "receipt case=$mutation result=failed"; exit 1; }
-  printf 'receipt case=%s result=pass\n' "$mutation"
+  [[ "$actual" -eq "$expected" ]] || { echo "result-contract case=$mutation result=failed"; exit 1; }
+  printf 'result-contract case=%s result=pass\n' "$mutation"
 done
-printf 'receipt result=pass cases=5\n'
+printf 'result-contract result=pass cases=5\n'

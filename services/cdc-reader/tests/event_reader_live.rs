@@ -927,7 +927,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     );
     assert_eq!(caus[&103].as_ref(), Some(&c_b), "…every row of it");
     assert_eq!(caus[&104], None, "a txn with no emit carries no causation");
-    // 105 rolled back — never on the stream (the exact count above proved it).
+    // 105 rolled back — never on the stream (the exact count above confirmed it).
 
     // --- phase E: clean shutdown --------------------------------------------
     token2.cancel();

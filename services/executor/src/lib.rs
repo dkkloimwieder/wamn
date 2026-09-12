@@ -160,7 +160,7 @@ pub struct ExecutorArgs {
     /// The manifest arrives over OCI rather than as a projected ConfigMap: a
     /// mount carries no usable binding between the bytes and the name the
     /// template asked for, while a registry is a third party the digest below
-    /// can be proven against (`crates/platform/runtime/src/release_manifest_source.rs`).
+    /// can be checked against (`crates/platform/runtime/src/release_manifest_source.rs`).
     #[arg(long, env = "WAMN_RELEASE_ARTIFACT_BASE")]
     pub release_artifact_base: String,
 

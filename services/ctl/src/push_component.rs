@@ -1862,7 +1862,7 @@ async fn verify_requirements(
                 .await
         }
     }
-    .context("read exact component connection requirement inventory")?
+    .context("read exact component connection requirements")?
     .into_iter()
     .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
     .collect::<BTreeMap<_, _>>();
@@ -1870,7 +1870,7 @@ async fn verify_requirements(
         return Err(ComponentProjectionError::new(
             ComponentProjectionErrorKind::ConnectionFactConflict,
             format!(
-                "component={component_digest} requirement inventory differs: expected={expected:?} observed={observed:?}"
+                "component={component_digest} requirements differ: expected={expected:?} observed={observed:?}"
             ),
         )
         .into());
@@ -2857,11 +2857,11 @@ mod tests {
         let transaction = control
             .transaction()
             .await
-            .expect("begin control requirement-inventory mutation");
+            .expect("begin control requirement-list mutation");
         transaction
             .query_one(CLAIM_TENANT_SQL, &[&component.scope.tenant_id])
             .await
-            .expect("claim control tenant for requirement-inventory mutation");
+            .expect("claim control tenant for requirement-list mutation");
         // This control store carries no projected environment, so its facts key
         // on the empty instance (wamn-10yt.52).
         append_or_verify_requirement(
@@ -2891,7 +2891,7 @@ mod tests {
         assert_eq!(
             extra
                 .downcast_ref::<ComponentProjectionError>()
-                .expect("extra requirement inventory is a typed refusal")
+                .expect("extra requirements return a typed refusal")
                 .kind(),
             ComponentProjectionErrorKind::ConnectionFactConflict
         );

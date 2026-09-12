@@ -277,7 +277,7 @@ SELECT selected.version, selected.effective_release_id, \
           binding_world.requirement_count, binding_world.resolved_count, \
           binding_world.binding_world_json";
 
-/// Prove that every component-grain requirement in the synchronous release
+/// Check that every component-grain requirement in the synchronous release
 /// closure has one exact usable environment binding.
 pub(crate) const RELEASE_COMPONENT_BINDINGS_READY_SQL: &str = "\
 SELECT NOT EXISTS ( \

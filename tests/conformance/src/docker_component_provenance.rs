@@ -100,7 +100,7 @@ fn every_embedded_component_comes_from_the_locked_builder() {
     actual.sort_unstable();
     let mut expected = expected.to_vec();
     expected.sort_unstable();
-    assert_eq!(actual, expected, "embedded component inventory drifted");
+    assert_eq!(actual, expected, "embedded component list drifted");
 
     // ea71c1c4 (wamn-0h0g.26.7.2) deleted the last embedded execution guest, so
     // every remaining component ships to the gates image alone. The service
@@ -223,7 +223,7 @@ fn retained_native_images_have_package_scoped_cook_and_build_stages() {
         assert_eq!(
             native_copies.len(),
             outputs.len(),
-            "{image_stage} native output inventory drifted: {native_copies:?}"
+            "{image_stage} native output list drifted: {native_copies:?}"
         );
         for output in outputs {
             assert!(

@@ -1,6 +1,6 @@
 //! `dashboard-test` ([9.9], wamn-b4e): the DEPLOYED test that the 9.9 dashboards
 //! layer stands up. There is no emission seam to drive (unlike `metricbench` →
-//! `:8889`), so this follows the `trace-test`/`apiproof` shape — assert against a
+//! `:8889`), so this follows the `trace-test` shape — assert against a
 //! running Grafana's HTTP API, not scaffolding. It shows, each a NAMED failure:
 //!
 //!   1. `GET /api/health` -> `database: ok` (Grafana + its DB are up);

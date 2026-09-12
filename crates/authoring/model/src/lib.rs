@@ -176,7 +176,7 @@ pub struct AuthoringQueryResponse {
     pub outcome: AuthoringQueryOutcome,
 }
 
-/// Complete two-command authoring inventory.
+/// Complete two-command authoring API.
 ///
 /// `gate` is spelled `gate` on the wire (wamn-0h0g.7.11). The variant name and
 /// the wire literal are the one honest name the owner ratified — one verb
@@ -202,7 +202,7 @@ pub enum AuthoringCommandKind {
     Publish,
 }
 
-/// Complete one-query authoring inventory.
+/// Complete one-query authoring API.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -407,7 +407,7 @@ pub struct GetReport {
 }
 
 #[doc(inline)]
-pub use gate_result::GateReceipt as GateResult;
+pub use gate_result::GateResult;
 
 mod gate_result {
     use super::ValidatedDraftRef;
@@ -418,7 +418,7 @@ mod gate_result {
     #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
     #[serde(rename = "GateReceipt", rename_all = "kebab-case", deny_unknown_fields)]
     #[schemars(rename = "GateReceipt", description = "Receipt for one accepted gate.")]
-    pub struct GateReceipt {
+    pub struct GateResult {
         pub report_id: String,
         pub validated_draft: ValidatedDraftRef,
     }

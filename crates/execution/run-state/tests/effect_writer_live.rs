@@ -367,7 +367,7 @@ async fn native_effect_writer_live() {
             &[],
         )
         .await
-        .expect("prove host-fixed writer tenant");
+        .expect("check the host-fixed writer tenant");
     assert_eq!(tenant_counts.get::<_, i64>(0), 1);
     assert_eq!(tenant_counts.get::<_, i64>(1), 0);
 

@@ -29,7 +29,7 @@ const RELEASE_LOAD_CONSTRUCTION: &str = "LoadedRelease::load";
 ///
 /// The second process used to be the in-process run host, reached through
 /// `load_plan_release`; `18ba72b6` deleted host plan supply and that symbol with
-/// it, so this entry named a function that existed nowhere and the guard proved
+/// it, so this entry named a function that existed nowhere and the guard checked
 /// nothing (wamn-nguw). Both surviving processes call the loaded release directly.
 const HOST_RELEASE_LOAD_SITES: [(&str, &str, &str); 2] = [
     (

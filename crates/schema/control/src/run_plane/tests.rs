@@ -1801,8 +1801,7 @@ fn empty_incompatible_effect_writer_shape_is_physically_retired() {
     assert!(!action.sql.contains("INSERT INTO "));
 }
 
-// `populated_current_ledgers_do_not_block_projection_only_cleanup` was
-// retired here: its subject was the node-runs half of the effect-writer
+// The retired populated-table cleanup test covered the node-runs half of the effect-writer
 // cutover, which wamn-0h0g.26.3.1 (204220e8) deleted along with the
 // projection. An observed `node_runs` now plans one leading `RetireNodeRuns`
 // and returns, so no effect-writer cutover can name it.

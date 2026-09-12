@@ -249,7 +249,7 @@ impl std::fmt::Display for RouterTapRecordError {
 impl std::error::Error for RouterTapRecordError {}
 
 impl RouterTapRecord {
-    /// Prove the phase and bounded-payload fields describe one possible record.
+    /// Check that the phase and bounded-payload fields describe one possible record.
     pub fn validate(&self) -> Result<(), RouterTapRecordError> {
         match (self.phase, self.outcome.as_deref()) {
             (RouterTapRecordPhase::Accepted, Some(_)) => {
@@ -314,7 +314,7 @@ pub struct RouterTapPreview<'a> {
 /// environment.
 ///
 /// The org, project and environment tokens come from the trusted bind-time
-/// claim, which [`WamnJetstream::required_derived_claim`] has already proved to
+/// claim, which [`WamnJetstream::required_derived_claim`] already confirmed to
 /// be exactly one subject token each. The wiring and delivery ids have not: the
 /// delivery id arrives over the WIT boundary from a guest, so both go through
 /// [`subject_token`] and cannot inject a separator or a wildcard. `None` when an

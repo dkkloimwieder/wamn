@@ -28,8 +28,8 @@ Detection after dispatch does not prevent an unauthorized effect.
 The `gap` verdict means that the fixture observed a missing guarantee.
 The `source-gap` verdict names an API limitation from source inspection.
 The `not-tested` verdict names work that this probe did not execute.
-The final `observed` receipt confirms that all listed experiments ran, not that native adoption is safe.
-A failed assertion or missing final receipt fails the run.
+The final `observed` result confirms that all listed experiments ran, not that native adoption is safe.
+A failed assertion or missing final result fails the run.
 
 Root coordinates the single build slot.
 Do not build this crate while another lane owns that slot.
@@ -60,7 +60,7 @@ bash tools/probes/ctc8-13-native-http/run \
 ```
 
 The wrapper writes stdout, stderr, the exit code, and the source and binary hashes to the selected directory.
-It rejects missing or repeated experiment receipts.
+It rejects missing or repeated experiment results.
 Report pass, fail, or skip with the command, source, and observed gaps.
 The diagnostic files do not require a permanent archive.
 The executable emits one JSON object per line and limits the whole fixture to ninety seconds.

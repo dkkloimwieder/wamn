@@ -714,7 +714,7 @@ pub struct LiveFixture {
 
 /// Install the schema, separate executor and effect-writer credentials, and pod identities.
 ///
-/// Both suites call this and neither may vary it: a spine that proved the queue
+/// Both suites call this with the same setup. Testing the queue
 /// against a different schema than the shelved floor would show nothing about
 /// the floor's removal.
 pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {

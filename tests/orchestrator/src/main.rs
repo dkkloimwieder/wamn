@@ -49,7 +49,7 @@ enum Command {
     IdentitySessionFixture(identity_session_test::IdentitySessionFixtureArgs),
     /// Test fresh human membership through a deployed Receiving HTTP route.
     MembershipTest(membership_test::MembershipTestArgs),
-    /// Prove the real prune-run-history verb removes only old TERMINAL runs, keeping recent and non-terminal history.
+    /// Test that the real prune-run-history verb removes only old TERMINAL runs, keeping recent and non-terminal history.
     Retention(retention::RetentionArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),

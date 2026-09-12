@@ -1804,7 +1804,7 @@ mod tests {
     /// authorization, is not decidable from route selection alone. It is pinned
     /// by `identity_is_settled_before_the_request_body_is_read` above (the
     /// refusal precedes the body read, and a command cannot be decoded — let
-    /// alone routed — before its body is read) and proved behaviourally by the
+    /// alone routed — before its body is read) and tested through the
     /// live gate, where every untrusted presenter receives the identical `403`
     /// document whichever mounted kind it names.
     #[test]

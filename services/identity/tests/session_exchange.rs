@@ -646,7 +646,7 @@ async fn original_validation_time_and_timeout(
     wait_for_blocked_issuer(system, &fixture.issuer_role).await;
     let blocked_at = unix_seconds();
     // This timeout intentionally advances age, not readiness: pg_blocking_pids
-    // already proved the request reached the real authentication read.
+    // already confirmed the request reached the real authentication read.
     assert!(
         tokio::time::timeout(Duration::from_secs(2), &mut response)
             .await
@@ -1037,7 +1037,7 @@ async fn snapshots(fixture: &Fixture) -> Vec<(String, Vec<String>)> {
         .enumerate()
     {
         let tables = database.client.query("SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('identity','registry','provisioning','app_system','catalog','wamn_run','wamn_authority') AND c.relkind='r' ORDER BY n.nspname,c.relname", &[])
-            .await.expect_redacted("fixture relation inventory");
+            .await.expect_redacted("fixture relation list");
         for table in tables {
             let schema: String = table.get(0);
             let name: String = table.get(1);

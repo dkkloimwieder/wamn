@@ -217,7 +217,7 @@ async fn execute(
     save(
         resources,
         "m2.json",
-        &json!({"status":"not_run","reason":"da58814f removed the wakeproof Job and integration harness","deferred":"wamn-0h0g.15.26"}),
+        &json!({"status":"not_run","reason":"da58814f removed the wake test Job and integration harness","deferred":"wamn-0h0g.15.26"}),
     )?;
     jobs::install_dependencies(resources).await?;
     let socket = jobs::run(resources, "socket-test", Duration::from_secs(180)).await?;

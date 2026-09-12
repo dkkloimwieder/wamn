@@ -179,7 +179,7 @@ fn setup(retained: bool, containers: &[Value]) -> TestDirectory {
             "docker.io/library/unrelated:keep\tsha256:2222222222222222222222222222222222222222222222222222222222222222\n",
         );
         fs::write(directory.path(&format!("{node}.images")), image_lines)
-            .expect("write image inventory");
+            .expect("write image list");
         fs::write(
             directory.path(&format!("{node}.cri-images.json")),
             serde_json::to_vec(&cri_images).expect("serialize CRI images"),
@@ -199,9 +199,9 @@ fn setup(retained: bool, containers: &[Value]) -> TestDirectory {
 fn add_second_selected_tag(directory: &TestDirectory) {
     for node in ["node-a", "node-b"] {
         let image_path = directory.path(&format!("{node}.images"));
-        let mut images = fs::read_to_string(&image_path).expect("read image inventory");
+        let mut images = fs::read_to_string(&image_path).expect("read image list");
         images.push_str(&format!("{SECOND_CANONICAL}\t{TARGET_DIGEST}\n"));
-        fs::write(image_path, images).expect("extend image inventory");
+        fs::write(image_path, images).expect("extend image list");
 
         let cri_path = directory.path(&format!("{node}.cri-images.json"));
         let mut cri: Value =

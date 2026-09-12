@@ -947,7 +947,7 @@ fn undeclared_concurrency_conflict_remains_uncertain_with_both_revisions_visible
             )
         ));
         let State::Uncertain { reason, .. } = submission.state() else {
-            panic!("an undeclared error cannot prove refusal");
+            panic!("an undeclared error cannot establish refusal");
         };
         assert!(reason.contains("concurrency_conflict"));
         assert!(reason.contains("expected_row_version=4, observed_row_version=7"));

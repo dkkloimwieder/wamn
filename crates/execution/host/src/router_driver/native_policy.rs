@@ -319,7 +319,7 @@ impl NativePolicy {
         );
         let operation = target
             .operation(&dependency.operation)
-            .expect("provider lookup proves operation exists");
+            .expect("provider lookup confirmed the operation exists");
         authorize_registered_operation(
             bound.caller.as_ref(),
             operation.registered_operation.as_deref(),

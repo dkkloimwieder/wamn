@@ -33,7 +33,7 @@ const HANDLER_SIGNATURE: &str =
 pub struct ComponentAdmissionRequest {
     pub declaration: ComponentDeclaration,
     pub admitted_platform_packages: BTreeSet<String>,
-    /// The declared operation dependencies the caller proved effect-free,
+    /// The declared operation dependencies the caller confirmed as effect-free,
     /// named by their exact operation import.
     ///
     /// A component's effect posture is its own imports union the posture of
@@ -217,7 +217,7 @@ pub fn validate_component_admission(
     for dependency in &byte_dependency_imports {
         let item = component_type
             .get_import(raw, dependency)
-            .expect("the component import inventory contains the dependency");
+            .expect("the component import list contains the dependency");
         if let Err(error) = validate_handler_signature(dependency, item.ty) {
             return Err(ComponentAdmissionError::new(
                 ComponentAdmissionErrorKind::OperationSignatureMismatch,
@@ -957,7 +957,7 @@ mod tests {
     }
 
     /// The negative control. The rule is a UNION, not a ban on dependencies:
-    /// an ambient own import and a dependency proved effect-free both add
+    /// an ambient own import and a dependency confirmed as effect-free both add
     /// nothing, so the wrapper keeps the effect-free case path.
     #[test]
     fn a_wrapper_whose_whole_closure_is_effect_free_keeps_the_effect_free_case_path() {

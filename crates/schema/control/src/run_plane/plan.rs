@@ -291,7 +291,7 @@ $retire_run_projection_authority$;"#,
     if effect_writer_table_cutover_needed && obs.effect_record_rows != 0 {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::EffectWriterCutover,
-            target: "effect-ledgers.coordinate-writer-boundary".to_string(),
+            target: "effect-tables.coordinate-writer-boundary".to_string(),
             sql: effect_writer_cutover_sql(schema, obs),
         });
         return plan;
@@ -392,7 +392,7 @@ $retire_run_projection_authority$;"#,
     if effect_writer_table_cutover_needed {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::EffectWriterCutover,
-            target: "effect-ledgers.coordinate-writer-boundary".to_string(),
+            target: "effect-tables.coordinate-writer-boundary".to_string(),
             sql: effect_writer_cutover_sql(schema, obs),
         });
     }

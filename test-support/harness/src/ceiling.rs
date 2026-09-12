@@ -3,7 +3,7 @@
 //! Pure planning/analysis for the ceiling measurement campaigns: the ramp
 //! controller (coarse doubling, then a bisect to the knee), the saturation
 //! classifier (p99 doubling or achieved-rate divergence), and the CSV shape the
-//! §11 provenance ledger points at. The effectful load generation (producer/
+//! §11 provenance record points at. The effectful load generation (producer/
 //! claimer tasks and DB connections) stays in the retained measurement harness
 //! that drives each campaign. The original C7 driver is archived.
 

@@ -1142,7 +1142,7 @@ mod tests {
         if std::env::var(AMBIENT_PROBE_VAR).is_ok() {
             assert!(
                 std::env::var("WAMN_PG_URL").is_ok(),
-                "the child must run WITH the ambient url set, or it proves nothing"
+                "the child must run WITH the ambient url set to test its refusal"
             );
             assert!(
                 WamnPostgresConfig::from_env().credentials.is_none(),

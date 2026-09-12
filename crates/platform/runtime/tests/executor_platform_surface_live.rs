@@ -579,7 +579,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     assert_eq!(
         wrong_database.connection_kind(),
         Some(CredentialConnectionKind::Pooled),
-        "a database refusal decided without a connection proves nothing about the server"
+        "a database refusal decided without a connection does not test the server"
     );
 
     // WRONG MEMBERSHIP. Identity and database are exact, so the only thing left

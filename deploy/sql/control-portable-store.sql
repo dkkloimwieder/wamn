@@ -446,9 +446,9 @@ GRANT SELECT, INSERT ON catalog.authoring_command_audit, wamn_run.gate_reports
 REVOKE ALL ON ALL TABLES IN SCHEMA catalog, wamn_run FROM PUBLIC;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA catalog FROM PUBLIC;
 
--- Assert the server inventory produced by this artifact. There is deliberately
+-- Assert the server objects produced by this artifact. There is deliberately
 -- no checked-in fingerprint or compatibility list to regenerate.
-DO $inventory$
+DO $objects$
 DECLARE
     catalog_tables text[];
     run_tables text[];
@@ -511,4 +511,4 @@ BEGIN
             DETAIL = unexpected;
     END IF;
 END
-$inventory$;
+$objects$;

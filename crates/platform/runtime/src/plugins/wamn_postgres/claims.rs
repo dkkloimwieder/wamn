@@ -1361,7 +1361,7 @@ impl WamnPostgres {
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         // ONE ROUND TRIP, AUTOCOMMIT. This read installs no session claim -- see
-        // the contract above -- so it is exactly the shape 3c proved needs no
+        // the contract above -- so it is exactly the shape that case 3c confirmed needs no
         // transaction, and the BEGIN/COMMIT around it were ceremony: 0.662 ms of
         // every authenticated request, against a 0.740 ms read. The
         // statement_timeout it used to SET per request is pool-uniform and now

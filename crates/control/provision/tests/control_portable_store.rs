@@ -200,7 +200,7 @@ BEGIN
     'effective_release_heads', 'effective_release_packages',
     'effective_releases', 'package_migrations', 'packages',
     'tenant_environments'
-  ]::text[], format('catalog inventory drifted: %s', catalog_tables);
+  ]::text[], format('catalog table list drifted: %s', catalog_tables);
   SELECT array_agg(tablename ORDER BY tablename) INTO run_tables
     FROM pg_tables WHERE schemaname = 'wamn_run';
   ASSERT run_tables = ARRAY['gate_reports']::text[];

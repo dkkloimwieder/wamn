@@ -121,7 +121,7 @@ if ! workloads_json=$("$kubectl_executable" --context "$context" get \
 fi
 if ! jq -e '.items | type == "array"' >/dev/null <<<"$pods_json" ||
    ! jq -e '.items | type == "array"' >/dev/null <<<"$workloads_json"; then
-  echo "Kubernetes returned invalid inventory JSON" >&2
+  echo "Kubernetes returned invalid JSON for the workload list" >&2
   exit 1
 fi
 
@@ -216,7 +216,7 @@ for node in "${nodes[@]}"; do
   fi
   if ! jq -e '.images | type == "array"' "$cri_images" >/dev/null ||
      ! jq -e '.containers | type == "array"' "$cri_containers" >/dev/null; then
-    echo "kind node $node returned invalid CRI inventory JSON" >&2
+    echo "kind node $node returned invalid JSON for the CRI image or container list" >&2
     exit 1
   fi
   awk 'NR > 1 && $3 ~ /^sha256:[0-9a-f]{64}$/ {print $1 "\t" $3}' \
@@ -241,7 +241,7 @@ for node in "${nodes[@]}"; do
     fi
     if [[ ! "$target_digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
        [[ ! "$config_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-      printf 'BLOCKED node=%s reference=%s reason=inconsistent-image-inventory\n' \
+      printf 'BLOCKED node=%s reference=%s reason=inconsistent-image-list\n' \
         "$node" "$image" | tee -a "$blockers" >&2
       continue
     fi

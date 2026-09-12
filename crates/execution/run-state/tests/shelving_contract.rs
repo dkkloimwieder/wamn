@@ -1,10 +1,9 @@
 //! The shelving contract, as a test (wamn-0h0g.19.7, wamn-0h0g.20.5 §2).
 //!
-//! The earlier execution model promised that the premium durable tier,
-//! when sold, "slots in at path 3's claim (classifier + ledger re-enabled per
-//! class) WITH ZERO CHANGES TO PATHS 1-2". Prose cannot hold that: once the
-//! crash floor is behind a class gate, "we preserved the contract" becomes
-//! unfalsifiable the moment anyone forgets it.
+//! Adding the premium durable tier must preserve paths 1 and 2.
+//! Its classifier and effect tables belong at path 3's claim, per class.
+//! The dependency assertion below protects that boundary while the durable
+//! tier remains behind its class gate.
 //!
 //! WHAT PATHS 1-2 ARE, in code. Path 1 is hot HTTP routes: the routing plugin
 //! resolves an attachment and the router walks the wiring inline on pooled

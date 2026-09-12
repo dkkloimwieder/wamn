@@ -653,7 +653,7 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     )
     .await
     .expect(
-        "prove human environment membership through the production CLI and route authentication",
+        "test human environment membership through the production CLI and route authentication",
     );
 
     let mut router_admissions = 0;

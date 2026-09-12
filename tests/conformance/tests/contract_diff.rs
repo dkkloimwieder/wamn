@@ -7,7 +7,7 @@
 //! failure. It shows NOTHING about whether the guards those legs name are
 //! green, and it cannot: no real Cargo runs here.
 //!
-//! Guard health is proved by running the leg targets for real, which is what
+//! Guard health is tested by running the leg targets for real, which is what
 //! `tools/contract-diff run` does and what this file never does:
 //!   * `-p wamn-authoring-model --test contract`
 //!   * `-p wamn-runtime --test flow_http_routing_wit_coherence`

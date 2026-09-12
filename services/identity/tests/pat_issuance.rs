@@ -702,7 +702,7 @@ async fn public_routes(endpoint: &str, client: &reqwest::Client) {
 
 async fn snapshots(system: &Client, exclude_pats: bool) -> Vec<Vec<String>> {
     let tables = system.query("SELECT n.nspname,c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname IN ('identity','registry','provisioning') AND c.relkind='r' AND NOT ($1 AND n.nspname='identity' AND c.relname='pats') ORDER BY n.nspname,c.relname", &[&exclude_pats])
-        .await.expect_redacted("fixture relation inventory");
+        .await.expect_redacted("fixture relation list");
     let mut snapshots = Vec::new();
     for table in tables {
         let schema: String = table.get(0);

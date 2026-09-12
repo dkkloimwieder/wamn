@@ -384,7 +384,7 @@ mod tests {
     // Live carrier spelling (wamn-10yt.31)
     //
     // Four of the WIT `sql-value` variants carry a typed PostgreSQL value as
-    // text. A test that compares them to a hand-typed literal proves only that
+    // text. A test that compares them to a hand-typed literal shows only that
     // someone typed the literal to match. These two tests compare each carrier
     // to its own canonicalizer instead: PostgreSQL's output function for every
     // lexical-preserving type, and `canonical_timestamptz` for the one type

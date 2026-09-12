@@ -36,7 +36,7 @@ fn same_seed_yields_byte_identical_streams() {
         );
         assert!(
             !first.is_empty(),
-            "{} produced an empty stream, so equality proves nothing",
+            "{} produced an empty stream, so equality tests nothing",
             kind.as_str()
         );
     }

@@ -80,7 +80,7 @@ fn the_emitted_contract_names_the_two_cases_the_live_tests_execute() -> Result<(
     );
     ensure!(
         contract.law == claim_law::LAW,
-        "the emitted contract proves {}, not {}",
+        "the emitted contract establishes {}, not {}",
         contract.law,
         claim_law::LAW
     );

@@ -633,7 +633,7 @@ async fn open_session(
     // default, so the reader must opt in for `drain` to see them.
     .with_messages(true);
     let mut stream = LogicalReplicationStream::new(&url, cfg).await?;
-    // No ensure_replication_slot: the preflight proved existence; creating
+    // No ensure_replication_slot: the preflight confirmed existence; creating
     // here would turn a dropped slot into a SILENT gap.
     stream.start(None).await?;
     Ok(stream.into_stream(token))

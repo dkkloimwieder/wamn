@@ -181,7 +181,7 @@ pub(crate) async fn send(host: &Host, call: &Call) -> Result<Reply> {
     let connection = parts
         .headers
         .get("x-probe-connection")
-        .context("fixture connection receipt is missing")?
+        .context("fixture connection header is missing")?
         .to_str()?
         .parse()?;
     Ok(Reply {

@@ -42,7 +42,7 @@
 //! plane already owns.
 //!
 //! What *is* load-bearing survives, and it is stronger than a name check: the
-//! canonical round-trip proves the mounted bytes are well-formed manifest content
+//! canonical round-trip confirms the mounted bytes are well-formed manifest content
 //! whose identity is computable. Corruption, truncation, or hand-editing either
 //! fails the parse or shifts the digest — and a shifted digest is not a
 //! masquerade, it is a correct name for different content, carried honestly into
@@ -169,7 +169,7 @@ impl LoadedRelease {
     /// `origin` names that carrier in refusals — a mount path, or the OCI
     /// reference a
     /// [`ReleaseManifestSource`](crate::release_manifest_source::ReleaseManifestSource)
-    /// proved the bytes against. It takes no part in verification: identity
+    /// checked the bytes against. It takes no part in verification: identity
     /// still comes only out of the bytes.
     pub fn load_canonical_bytes(bytes: &[u8], origin: &str) -> Result<Self, ReleaseLoadError> {
         let (manifest, manifest_digest) =

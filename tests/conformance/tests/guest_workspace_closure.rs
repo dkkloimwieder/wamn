@@ -157,7 +157,7 @@ fn one_commit_built_in_two_checkouts_yields_identical_guest_digests() {
     let second = virtualized_digests(Path::new(&b));
     assert!(
         !first.is_empty(),
-        "{a} holds no virtualized guest artifacts, so this proves nothing"
+        "{a} holds no virtualized guest artifacts, so this compares no guest artifacts"
     );
     assert_eq!(
         first, second,
@@ -186,7 +186,7 @@ fn artifact_plan_digests(path: &Path, expected_profile: &str) -> BTreeMap<String
         plan.get("profile").and_then(serde_json::Value::as_str),
         Some(expected_profile),
         "{} is not the {expected_profile} artifact plan; comparing a profile against itself \
-         proves nothing, which is exactly how this defect stayed invisible (wamn-10yt.61)",
+         does not test both profiles, which is exactly how this defect stayed invisible (wamn-10yt.61)",
         path.display()
     );
     let artifacts = plan

@@ -1,6 +1,6 @@
 //! `wamn dev up`: the product command stands up its own environment.
 //!
-//! `[WAMN-DEV-LIVE]` proved the twelve-stage loop long before anyone could
+//! `[WAMN-DEV-LIVE]` tested the twelve-stage loop long before anyone could
 //! start it: every value the strict configuration needs was minted inside the
 //! test and thrown away with it, so the loop was testable and not startable
 //! (wamn-10yt.10.30). This subcommand runs the same standup module the live

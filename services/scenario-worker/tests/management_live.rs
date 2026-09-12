@@ -1686,7 +1686,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(
         stored_wiring_count(&project).await,
         0,
-        "a wiring row existed, so this proves the steady state and not the first transition"
+        "a wiring row existed, so this tests the steady state and not the first transition"
     );
 
     // The result names the report identity the judgment DERIVED from the

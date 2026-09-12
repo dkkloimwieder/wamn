@@ -242,7 +242,7 @@ const SHARED_PORTABLE_RELATIONS: [&str; 5] = [
 /// These two used to sit in [`SHARED_PORTABLE_RELATIONS`], where
 /// `assert_eq!(control_shared_fingerprints, project_shared_fingerprints,
 /// "control copies drifted from the still-authoritative project column/constraint
-/// shapes")` proved their control and project copies IDENTICAL in every column
+/// shapes")` required their control and project copies to be IDENTICAL in every column
 /// (number, name, type, nullability, default) and every non-trigger constraint.
 /// That equality is GONE for these two relations and is not asserted anywhere
 /// else. The control copies key by `environment_instance` and the project copies

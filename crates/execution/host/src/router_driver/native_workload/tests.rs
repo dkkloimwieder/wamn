@@ -35,7 +35,7 @@ fn component(name: &str, export: &str, import: Option<&str>, value: u32) -> Nati
     .expect("valid scalar loader fixture");
     let imports: Vec<String> = import.into_iter().map(str::to_owned).collect();
     let imports_fingerprint = wamn_execution_contract::canonical_json_sha256(
-        &serde_json::to_value(&imports).expect("import inventory serializes"),
+        &serde_json::to_value(&imports).expect("import list serializes"),
     );
     NativeComponent {
         fact: AdmittedComponent {
