@@ -1,0 +1,103 @@
+{
+  "source_inspected": "d3c6788c6c4d3b5ccea2f0371b37f0548a7ac65f",
+  "failures": [
+    {
+      "identity": [
+        "wamn-runtime",
+        "--lib",
+        "plugins::wamn_jetstream::tests::live_generic_guest_cannot_write_the_provisioned_tap_stream"
+      ],
+      "commit": "e02ad16bb5fcc049a304c0132b86f6a50f1442d8",
+      "reason": "Removed with the custom guest API. Missing-input failure removal does not establish native authority behavior."
+    },
+    {
+      "identity": [
+        "wamn-runtime",
+        "--test wiring_doorbell_live",
+        "a_pointer_flip_makes_the_cache_serve_the_new_active_version"
+      ],
+      "commit": "a33e5709cd7ee613552aed195e939e5bf6caf82a",
+      "reason": "Removed with the unused mutable Active selection and PostgreSQL listener. Missing-input failure removal does not establish a passing test."
+    }
+  ],
+  "skips": [
+    {
+      "identity": [
+        "unittests src/lib.rs",
+        "plugins::wamn_jetstream::tests::live_publish_dedupe_bind_fetch_ack"
+      ],
+      "commit": "e02ad16bb5fcc049a304c0132b86f6a50f1442d8",
+      "reason": "Removed with custom delivery/settlement. The previously explicit skip did not execute live work."
+    }
+  ],
+  "other_source_test_definition_changes": [
+    {
+      "path": "crates/catalog/model/src/wiring_activation.rs",
+      "commit": "a33e5709cd7ee613552aed195e939e5bf6caf82a",
+      "before_sha256": "f1a4ea9c2451713eefc0c76d4b4087dee3d996790e8cc98a95dbba48a06a9b6d",
+      "after_sha256": "4606cd7d8250b007ea4ff72b6713f10dcd5a0489d2a35b10e431f3c62ed1d6db",
+      "removed_test_definitions": [
+        "the_env_hot_read_takes_no_row_lock_and_so_needs_no_write_grant",
+        "the_env_hot_read_requires_exact_package_membership",
+        "the_notice_shape_is_exactly_the_payload_the_ddl_builds"
+      ],
+      "added_test_definitions": [],
+      "interpretation": "Source names only; reconcile with the completed test run. Renamed or removed cases are not repair evidence."
+    },
+    {
+      "path": "crates/execution/router/tests/resolution.rs",
+      "commit": "a33e5709cd7ee613552aed195e939e5bf6caf82a",
+      "before_sha256": "7aa6242d92e7c9f235265f4d7772f43dba90f100ed2c00c0f1a25ce23788c1fd",
+      "after_sha256": "00efba3c0cb00ad59ab89c7809232080635e40867468b9bc53bb3e2a0294646a",
+      "removed_test_definitions": [
+        "environments_do_not_share_a_pointer",
+        "invalidate_sends_the_next_lookup_back_to_the_store",
+        "a_resolution_in_flight_across_an_invalidation_cannot_install_its_stale_pointer",
+        "a_resolution_in_flight_across_a_reconnect_cannot_install_its_stale_pointer",
+        "invalidate_keeps_the_graphs_so_a_rollback_flip_is_a_hit",
+        "a_flip_forward_resolves_the_new_version_and_leaves_the_old_resident",
+        "invalidate_all_drops_every_pointer_because_a_reconnect_knows_of_no_flip",
+        "invalidate_all_keeps_the_graphs_so_the_re_read_recompiles_nothing",
+        "an_evicted_entry_leaves_behind_no_pointer"
+      ],
+      "added_test_definitions": [
+        "environments_do_not_share_an_entry",
+        "repeated_resolution_shares_the_resident_graph",
+        "distinct_versions_remain_resident",
+        "an_evicted_version_misses"
+      ],
+      "interpretation": "Source names only; reconcile with the completed test run. Renamed or removed cases are not repair evidence."
+    },
+    {
+      "path": "crates/platform/runtime/src/wiring_doorbell.rs",
+      "commit": "a33e5709cd7ee613552aed195e939e5bf6caf82a",
+      "before_sha256": "a119f752ef55287ec3f612ac8260ea857d59bc1467eba0f56b8b2a9f10683de7",
+      "after_sha256": null,
+      "removed_test_definitions": [
+        "a_flip_invalidates_exactly_the_pointer_it_names",
+        "a_flip_invalidates_the_coordinate_across_resident_release_scopes",
+        "the_next_delivery_serves_the_new_version_and_a_rollback_is_a_hit",
+        "a_resolution_in_flight_across_a_doorbell_ring_cannot_reinstall_the_stale_pointer",
+        "another_tenants_or_packages_flip_leaves_this_process_alone",
+        "a_flip_in_another_environment_does_not_touch_this_one",
+        "taking_a_wiring_dark_invalidates_like_any_other_flip",
+        "an_unreadable_payload_drops_the_whole_cache_rather_than_guessing",
+        "the_subscriber_reads_the_ddls_kebab_case_keys_and_only_those",
+        "a_reconnect_drops_every_pointer_because_the_gap_is_unknowable"
+      ],
+      "added_test_definitions": [],
+      "interpretation": "Source names only; reconcile with the completed test run. Renamed or removed cases are not repair evidence."
+    },
+    {
+      "path": "crates/platform/runtime/tests/wiring_doorbell_live.rs",
+      "commit": "a33e5709cd7ee613552aed195e939e5bf6caf82a",
+      "before_sha256": "b49d0848e0cd9895ba5ed5b4c3f943aeaebaebbe49045e780278e55142322471",
+      "after_sha256": null,
+      "removed_test_definitions": [
+        "a_pointer_flip_makes_the_cache_serve_the_new_active_version"
+      ],
+      "added_test_definitions": [],
+      "interpretation": "Source names only; reconcile with the completed test run. Renamed or removed cases are not repair evidence."
+    }
+  ]
+}

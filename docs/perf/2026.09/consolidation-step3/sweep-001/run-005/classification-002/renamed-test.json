@@ -1,0 +1,26 @@
+{
+  "commit": "709aacbad1a36b189b2ae48dd353072abb854120",
+  "path": "apps/wamn_wms/tests/cluster.rs",
+  "previous_identity": [
+    "wamn-wms-tests",
+    "--lib",
+    "cluster::restarted_wms_host_retains_compiled_code_and_bounded_request_overhead"
+  ],
+  "current_identity": [
+    "wamn-wms-tests",
+    "--lib",
+    "cluster::restarted_wms_host_retains_compiled_code_and_serves_requests"
+  ],
+  "previous_result": "FAILED",
+  "current_result": "FAILED",
+  "cause": {
+    "failure_signatures": [
+      "Error: the WMS cluster case requires a clean source tree"
+    ],
+    "referenced_arming_inputs": [],
+    "causal_lines": [
+      "Error: the WMS cluster case requires a clean source tree"
+    ]
+  },
+  "interpretation": "The name changed. The test still refuses an unclean source tree before live work. This is not a pass."
+}

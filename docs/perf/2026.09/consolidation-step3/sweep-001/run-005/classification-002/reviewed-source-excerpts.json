@@ -1,0 +1,290 @@
+{
+  "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs:491": {
+    "path": "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs",
+    "source": "7f93f9cb6a26ea8c534372fc88e09432fce4aee2",
+    "sha256": "eaa13ad223500c5fd983990f64ddb8b1ce4e6aa5ea8c153fb775e380647e8ed4",
+    "start_line": 483,
+    "end_line": 499,
+    "lines": [
+      {
+        "line": 483,
+        "text": "    );"
+      },
+      {
+        "line": 484,
+        "text": "    if let Some(trace) = trace {"
+      },
+      {
+        "line": 485,
+        "text": "        trace.assert_parentage(&fixture, caller);"
+      },
+      {
+        "line": 486,
+        "text": "    }"
+      },
+      {
+        "line": 487,
+        "text": "    println!(\"authenticated-native-case={scenario:?} result=pass\");"
+      },
+      {
+        "line": 488,
+        "text": "}"
+      },
+      {
+        "line": 489,
+        "text": ""
+      },
+      {
+        "line": 490,
+        "text": "async fn prove() -> anyhow::Result<()> {"
+      },
+      {
+        "line": 491,
+        "text": "    let admin_url = std::env::var(URL_ENV).with_context(|| {"
+      },
+      {
+        "line": 492,
+        "text": "        format!(\"set {URL_ENV} to this proof's fresh disposable PostgreSQL 18 server\")"
+      },
+      {
+        "line": 493,
+        "text": "    })?;"
+      },
+      {
+        "line": 494,
+        "text": "    let (mut server, route) = authentication_fixture(&admin_url).await?;"
+      },
+      {
+        "line": 495,
+        "text": "    let parent_only = authenticated(&route, false).await;"
+      },
+      {
+        "line": 496,
+        "text": "    let permitted = authenticated(&route, true).await;"
+      },
+      {
+        "line": 497,
+        "text": "    for scenario in SCENARIOS {"
+      },
+      {
+        "line": 498,
+        "text": "        prove_case("
+      },
+      {
+        "line": 499,
+        "text": "            scenario,"
+      }
+    ]
+  },
+  "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs:38": {
+    "path": "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs",
+    "source": "7f93f9cb6a26ea8c534372fc88e09432fce4aee2",
+    "sha256": "eaa13ad223500c5fd983990f64ddb8b1ce4e6aa5ea8c153fb775e380647e8ed4",
+    "start_line": 30,
+    "end_line": 46,
+    "lines": [
+      {
+        "line": 30,
+        "text": "#[path = \"../../../../../../platform/runtime/tests/support/session_fixture.rs\"]"
+      },
+      {
+        "line": 31,
+        "text": "#[expect("
+      },
+      {
+        "line": 32,
+        "text": "    dead_code,"
+      },
+      {
+        "line": 33,
+        "text": "    reason = \"The shared issuer fixture also serves cache-expiry proofs.\""
+      },
+      {
+        "line": 34,
+        "text": ")]"
+      },
+      {
+        "line": 35,
+        "text": "mod session_fixture;"
+      },
+      {
+        "line": 36,
+        "text": "use session_fixture::{ORG, Server, claims, header, signed};"
+      },
+      {
+        "line": 37,
+        "text": ""
+      },
+      {
+        "line": 38,
+        "text": "const URL_ENV: &str = \"WAMN_NATIVE_B_AUTH_PG_URL\";"
+      },
+      {
+        "line": 39,
+        "text": "const PROJECT: &str = \"proof\";"
+      },
+      {
+        "line": 40,
+        "text": "const TENANT: &str = \"tenant-a\";"
+      },
+      {
+        "line": 41,
+        "text": "const ENVIRONMENT: &str = \"proof\";"
+      },
+      {
+        "line": 42,
+        "text": "const AUDIENCE: &str = \"urn:wamn:project-env:org-a:proof:proof:native-b\";"
+      },
+      {
+        "line": 43,
+        "text": "const ATTACHMENT: &str = \"native-proof-http\";"
+      },
+      {
+        "line": 44,
+        "text": "const PASSWORD: &str = \"native-b-disposable-proof-only\";"
+      },
+      {
+        "line": 45,
+        "text": "const TEST_NAME: &str = \"native_authenticated_nested_authority_and_lifecycle\";"
+      },
+      {
+        "line": 46,
+        "text": ""
+      }
+    ]
+  },
+  "apps/wamn_receiving/tests/route_authentication_live/cluster.rs:479": {
+    "path": "apps/wamn_receiving/tests/route_authentication_live/cluster.rs",
+    "source": "7f93f9cb6a26ea8c534372fc88e09432fce4aee2",
+    "sha256": "4038dc7eb88fcd31bbc92d70b479e6d9cc48cefa840bab8cef8169e67b43d1f4",
+    "start_line": 471,
+    "end_line": 487,
+    "lines": [
+      {
+        "line": 471,
+        "text": ""
+      },
+      {
+        "line": 472,
+        "text": "async fn apply(cluster: &Resources, path: &Path) -> anyhow::Result<()> {"
+      },
+      {
+        "line": 473,
+        "text": "    checked(kubectl(cluster).args([\"apply\", \"-f\"]).arg(path)).await?;"
+      },
+      {
+        "line": 474,
+        "text": "    Ok(())"
+      },
+      {
+        "line": 475,
+        "text": "}"
+      },
+      {
+        "line": 476,
+        "text": ""
+      },
+      {
+        "line": 477,
+        "text": "async fn evidence_directory() -> anyhow::Result<PathBuf> {"
+      },
+      {
+        "line": 478,
+        "text": "    let path = PathBuf::from(std::env::var_os(\"WAMN_RECEIVING_EVIDENCE_DIR\").context("
+      },
+      {
+        "line": 479,
+        "text": "        \"WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf\","
+      },
+      {
+        "line": 480,
+        "text": "    )?);"
+      },
+      {
+        "line": 481,
+        "text": "    ensure!("
+      },
+      {
+        "line": 482,
+        "text": "        path.is_absolute() && !path.exists(),"
+      },
+      {
+        "line": 483,
+        "text": "        \"Receiving evidence must use a new absolute directory\""
+      },
+      {
+        "line": 484,
+        "text": "    );"
+      },
+      {
+        "line": 485,
+        "text": "    let parent = path"
+      },
+      {
+        "line": 486,
+        "text": "        .parent()"
+      },
+      {
+        "line": 487,
+        "text": "        .context(\"Receiving evidence has a parent\")?"
+      }
+    ]
+  },
+  "apps/wamn_wms/tests/cluster.rs:729": {
+    "path": "apps/wamn_wms/tests/cluster.rs",
+    "source": "7f93f9cb6a26ea8c534372fc88e09432fce4aee2",
+    "sha256": "f29c632756e991ba1e9b5adedf668e088dcb696172b64713f83835d09be2947f",
+    "start_line": 721,
+    "end_line": 732,
+    "lines": [
+      {
+        "line": 721,
+        "text": "        \"--\","
+      },
+      {
+        "line": 722,
+        "text": "        \".\","
+      },
+      {
+        "line": 723,
+        "text": "        \":(exclude).beads/issues.jsonl\","
+      },
+      {
+        "line": 724,
+        "text": "        \":(exclude).beads/interactions.jsonl\","
+      },
+      {
+        "line": 725,
+        "text": "    ]))"
+      },
+      {
+        "line": 726,
+        "text": "    .await?;"
+      },
+      {
+        "line": 727,
+        "text": "    ensure!("
+      },
+      {
+        "line": 728,
+        "text": "        status.is_empty(),"
+      },
+      {
+        "line": 729,
+        "text": "        \"the WMS cluster case requires a clean source tree\""
+      },
+      {
+        "line": 730,
+        "text": "    );"
+      },
+      {
+        "line": 731,
+        "text": "    Ok(())"
+      },
+      {
+        "line": 732,
+        "text": "}"
+      }
+    ]
+  }
+}

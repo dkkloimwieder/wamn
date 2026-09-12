@@ -1,0 +1,19 @@
+{
+  "source": "7f93f9cb6a26ea8c534372fc88e09432fce4aee2",
+  "publication_base": "7f93f9cb6a26ea8c534372fc88e09432fce4aee2",
+  "scope": "Completed retained workspace run005, source checks, and full named failure and explicit skip classification.",
+  "original_record_count": 15,
+  "original_record_bytes": 2547393,
+  "original_bytes_and_filesystem_modes_unchanged": true,
+  "original_git_modes": "100644 for all 15 captured files",
+  "original_comparison": "copied-originals.json",
+  "final_report": "classification-002/report.md",
+  "review_script_matches_executed_hash": true,
+  "authored_report_edit_after_classification": {
+    "old": "The [starting baseline comparison](../reduction-001/baseline-comparison.json) retains every original failure and cause.",
+    "new": "The [starting baseline comparison](../reduction-001/baseline-comparison.json) lists the original failures and current differences.",
+    "reason": "Clarify that the baseline comparison preserves records and records differences. It does not claim every old failure still exists.",
+    "counts_and_causes_changed": false
+  },
+  "limits": "No live inputs were armed. Failed cases, explicit skips, removals, and the approved failed-test rename are not passing live results."
+}

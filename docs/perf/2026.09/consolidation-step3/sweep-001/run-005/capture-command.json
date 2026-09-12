@@ -1,0 +1,7 @@
+[
+  "python3",
+  "-B",
+  "docs/perf/2026.09/consolidation-step3/sweep-001/tools/capture.py",
+  "7f93f9cb6a26ea8c534372fc88e09432fce4aee2",
+  "run-005"
+]
