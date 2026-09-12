@@ -30,6 +30,14 @@ Establish whether a failure occurred before commit, after commit with a lost res
 A timeout alone does not establish that boundary.
 For rollback, observe an intermediate write before forcing failure and then inspect the final business state.
 
+## Runtime claim coverage
+
+The [standard claim test](../../crates/platform/runtime/tests/production_claim_live.rs) exercises claims with a declared executor credential.
+The [durable claim test](../../crates/platform/runtime/tests/production_claim_durable_live.rs) stops at `executor-platform-authority-required` before its first effect attempt.
+Its assertions about effect order, final caller responses, retries, and fixed release records remain unexecuted.
+The fixture keeps writer and executor credentials separate.
+Beads `wamn-0h0g.10.15` owns the unresolved effect-writer consumer and permission decision.
+
 ## Contention
 
 Use separate real connections for competing transactions.
