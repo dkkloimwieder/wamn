@@ -887,6 +887,7 @@ struct WatchRoots {
     component_build_roots: Box<[PathBuf]>,
     native_build_roots: Box<[PathBuf]>,
     native_build_files: BTreeSet<PathBuf>,
+    configuration_files: BTreeSet<PathBuf>,
     watch_generated_native: bool,
     git_metadata: BTreeSet<PathBuf>,
     excluded: BTreeSet<PathBuf>,
@@ -938,6 +939,7 @@ impl WatchRoots {
             component_build_roots: component_build_roots.into_boxed_slice(),
             native_build_roots: Box::new([]),
             native_build_files: BTreeSet::new(),
+            configuration_files: BTreeSet::new(),
             watch_generated_native: false,
             git_metadata: git.metadata_paths().iter().cloned().collect(),
             excluded: BTreeSet::new(),
@@ -1006,9 +1008,10 @@ impl WatchRoots {
         Ok(())
     }
 
-    fn native_file_or_parent(&self, path: &Path) -> bool {
+    fn exact_file_or_parent(&self, path: &Path) -> bool {
         self.native_build_files
             .iter()
+            .chain(&self.configuration_files)
             .any(|file| file == path || file.starts_with(path))
     }
 
@@ -1056,7 +1059,7 @@ impl WatchRoots {
             .iter()
             .any(|root| path == root || path.starts_with(root))
             .then_some(DevStage::Build);
-        let native_stage = (self.native_file_or_parent(path)
+        let native_stage = (self.exact_file_or_parent(path)
             || self
                 .native_build_roots
                 .iter()
@@ -1234,7 +1237,7 @@ impl FilesystemInvalidationSource {
         for parent in metadata_parents {
             source.add_directory(&parent)?;
         }
-        source.add_native_file_parents()?;
+        source.add_exact_file_parents()?;
         Ok(source)
     }
 
@@ -1263,14 +1266,40 @@ impl FilesystemInvalidationSource {
         for directory in directories {
             self.add_tree(&directory).await?;
         }
-        self.add_native_file_parents()
+        self.add_exact_file_parents()
     }
 
-    fn add_native_file_parents(&mut self) -> Result<(), FilesystemInvalidationError> {
+    /// Watch explicitly configured local files, including files outside Git.
+    pub(super) fn replace_configuration_files(
+        &mut self,
+        files: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<(), FilesystemInvalidationError> {
+        let files = files
+            .into_iter()
+            .map(|path| {
+                if !path.is_absolute()
+                    || path.components().any(|part| part == Component::ParentDir)
+                    || path.is_dir()
+                {
+                    return Err(FilesystemInvalidationError::new(
+                        FilesystemInvalidationErrorKind::ComponentRoot,
+                        &path,
+                        "local configuration input must name an exact absolute file",
+                    ));
+                }
+                Ok(path)
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        self.roots.configuration_files = files;
+        self.add_exact_file_parents()
+    }
+
+    fn add_exact_file_parents(&mut self) -> Result<(), FilesystemInvalidationError> {
         let files = self
             .roots
             .native_build_files
             .iter()
+            .chain(&self.roots.configuration_files)
             .cloned()
             .collect::<Vec<_>>();
         for parent in metadata_watch_directories(&files) {
@@ -1414,8 +1443,8 @@ impl FilesystemInvalidationSource {
                 if self.roots.owns_recursive_path(path) || self.roots.is_git_metadata(path) {
                     self.add_tree(path).await?;
                 }
-                if self.roots.native_file_or_parent(path) {
-                    self.add_native_file_parents()?;
+                if self.roots.exact_file_or_parent(path) {
+                    self.add_exact_file_parents()?;
                 }
             }
             self.roots.refresh_manifest(path);
@@ -1878,6 +1907,55 @@ mod tests {
             .await
             .expect("manifest event arrived")
             .expect("read manifest event")
+            .expect("watch remains open");
+        assert!(has_rerun(
+            &collect_batch(first, &mut source),
+            DevStage::Migrate,
+            DevSourceState::Dirty
+        ));
+
+        let configuration = TempRepository::new();
+        let privilege = configuration.root.join("privileges.sql");
+        fs::write(&privilege, "SELECT 1;\n").expect("write external configuration");
+        fs::create_dir_all(configuration.root.join("unrelated/nested"))
+            .expect("create unrelated configuration siblings");
+        source
+            .replace_native_inputs([], [privilege.clone()])
+            .await
+            .expect_err("native inputs still require the originating worktree");
+        source
+            .replace_configuration_files([privilege.clone()])
+            .expect("watch the explicit external configuration file");
+        assert!(
+            !source
+                .watched_directories
+                .values()
+                .any(|path| { path.starts_with(configuration.root.join("unrelated")) })
+        );
+        assert_eq!(source.roots.stage(&privilege), Some(DevStage::Build));
+        assert_eq!(
+            source.roots.stage(&configuration.root.join("other.sql")),
+            None
+        );
+
+        let replacement = configuration.root.join("replacement.sql");
+        fs::write(&replacement, "SELECT 2;\n").expect("write replacement configuration");
+        fs::rename(&replacement, &privilege).expect("replace configured file atomically");
+        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
+            .await
+            .expect("configuration replacement arrived")
+            .expect("read configuration replacement")
+            .expect("watch remains open");
+        assert!(has_rerun(
+            &collect_batch(first, &mut source),
+            DevStage::Migrate,
+            DevSourceState::Dirty
+        ));
+        fs::remove_file(&privilege).expect("remove configured file");
+        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
+            .await
+            .expect("configuration removal arrived")
+            .expect("read configuration removal")
             .expect("watch remains open");
         assert!(has_rerun(
             &collect_batch(first, &mut source),

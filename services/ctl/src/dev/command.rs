@@ -174,11 +174,13 @@ impl DevInvalidationSource for NativeInvalidations {
         // a missing native manifest before this refresh needs it.
         let packages = super::native_tui::operator_packages(&self.package_roots)
             .map_err(|source| CommandInvalidationError::new("read native package names", source))?;
-        if packages.iter().all(|package| package.manifest_path.is_file()) {
+        if packages
+            .iter()
+            .all(|package| package.manifest_path.is_file())
+        {
             match super::native_tui::native_dependency_roots(&self.repository_root, &packages).await
             {
-                Ok(mut inputs) => {
-                    inputs.files.extend(local_configuration_files(&self.config));
+                Ok(inputs) => {
                     self.filesystem
                         .replace_native_inputs(inputs.directories, inputs.files)
                         .await
@@ -191,6 +193,11 @@ impl DevInvalidationSource for NativeInvalidations {
                 }
             }
         }
+        self.filesystem
+            .replace_configuration_files(local_configuration_files(&self.config))
+            .map_err(|source| {
+                CommandInvalidationError::new("watch local configuration files", source)
+            })?;
         self.filesystem
             .next()
             .await
@@ -561,7 +568,7 @@ async fn run_watch_command(
     let component_roots =
         component_build_watch_roots(git.repository_root(), &package_roots).await?;
     let repository_root = git.repository_root().to_owned();
-    let mut native_files = [
+    let native_files = [
         "Cargo.toml",
         "Cargo.lock",
         ".cargo/config",
@@ -571,7 +578,6 @@ async fn run_watch_command(
     ]
     .map(|file| repository_root.join(file))
     .to_vec();
-    native_files.extend(local_configuration_files(config));
     let mut filesystem = FilesystemInvalidationSource::with_native_inputs(
         package_roots.clone(),
         component_roots,
@@ -581,6 +587,9 @@ async fn run_watch_command(
     )
     .await
     .context("watch package, component and native client inputs")?;
+    filesystem
+        .replace_configuration_files(local_configuration_files(config))
+        .context("watch local configuration files")?;
     runner.configure_generated_native_outputs(
         filesystem
             .watch_generated_native_outputs()
