@@ -22,7 +22,7 @@ fn attribute<'a>(span: &'a SpanData, key: &str) -> Option<&'a str> {
     })
 }
 
-pub(super) struct TraceProof {
+pub(super) struct TraceCapture {
     provider: SdkTracerProvider,
     exporter: InMemorySpanExporter,
     incoming: SpanContext,
@@ -30,7 +30,7 @@ pub(super) struct TraceProof {
     pub(super) dispatcher: tracing::Dispatch,
 }
 
-impl TraceProof {
+impl TraceCapture {
     pub(super) fn new(fixture: &Fixture, caller: &AuthenticatedCaller) -> Self {
         let exporter = InMemorySpanExporter::default();
         let provider = SdkTracerProvider::builder()

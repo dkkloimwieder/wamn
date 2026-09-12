@@ -23,14 +23,14 @@ use wamn_runtime::plugins::wamn_postgres::{
 use wamn_runtime::release_manifest::LoadedRelease;
 use wamn_runtime::session_verifier::SessionVerifier;
 
-use super::trace::TraceProof;
+use super::trace::TraceCapture;
 use super::{BUDGET, CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, ROOT};
 use super::{OperationRefusal, OperationRefusalKind, invoke_native};
 
 #[path = "../../../../../../platform/runtime/tests/support/session_fixture.rs"]
 #[expect(
     dead_code,
-    reason = "The shared issuer fixture also serves cache-expiry proofs."
+    reason = "The shared issuer fixture also serves cache-expiry tests."
 )]
 mod session_fixture;
 use session_fixture::{ORG, Server, claims, header, signed};
@@ -287,7 +287,7 @@ async fn prove_case(scenario: Scenario, caller: &AuthenticatedCaller) {
     )
     .await;
     let target = fixture.target().await;
-    let trace = (scenario == Scenario::Success).then(|| TraceProof::new(&fixture, caller));
+    let trace = (scenario == Scenario::Success).then(|| TraceCapture::new(&fixture, caller));
     let deadline = Instant::now()
         + if matches!(
             scenario,
