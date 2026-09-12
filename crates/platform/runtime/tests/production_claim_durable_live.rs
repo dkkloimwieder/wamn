@@ -98,7 +98,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     admin
         .query_one("SELECT pg_advisory_lock($1)", &[&WRITER_LATCH])
         .await?;
-    let writer_task = {
+    let mut writer_task = {
         let writer = fixture.writer.clone();
         tokio::spawn(async move {
             writer
@@ -106,7 +106,14 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
                 .await
         })
     };
-    wait_for_advisory_wait(admin, None, Some(&writer_role)).await?;
+    tokio::select! {
+        waiting = wait_for_advisory_wait(admin, None, Some(&writer_role)) => waiting?,
+        finished = &mut writer_task => {
+            finished.context("join effect writer before advisory wait")?
+                .context("effect writer refused before advisory wait")?;
+            anyhow::bail!("effect writer completed without waiting on the advisory lock");
+        }
+    }
     admin
         .execute(
             &format!(
