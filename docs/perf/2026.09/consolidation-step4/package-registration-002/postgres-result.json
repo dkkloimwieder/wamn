@@ -1,0 +1,19 @@
+{
+  "argv": [
+    "pg_virtualenv",
+    "-t",
+    "-v",
+    "18",
+    "python3",
+    "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/package-registration-002/postgres-run.py",
+    "inside",
+    "apply-package",
+    "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/apply_package_live-67de4b48497f81a9",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+  "started": "2026-09-12T01:26:26.217430+00:00",
+  "elapsed_seconds": 4.396663271007128,
+  "exit": 0,
+  "temporary_cluster_removed": true
+}

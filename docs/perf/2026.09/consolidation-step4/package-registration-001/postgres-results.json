@@ -1,0 +1,93 @@
+[
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_ctl-2529f5b20a18a95c",
+      "apply_package::tests",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T01:23:18.380994+00:00",
+    "elapsed_seconds": 0.00778659904608503,
+    "exit": 0
+  },
+  {
+    "argv": [
+      "pg_virtualenv",
+      "-t",
+      "-v",
+      "18",
+      "/usr/bin/python3",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/package-registration-001/postgres-run.py",
+      "inside",
+      "registration",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_ctl-2529f5b20a18a95c",
+      "apply_package::registration_tests::registration_serializes_replay_conflicts_successors_and_rollback",
+      "--exact",
+      "--ignored",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T01:23:18.389068+00:00",
+    "elapsed_seconds": 4.5198188700014725,
+    "exit": 0,
+    "temporary_cluster_removed": true
+  },
+  {
+    "argv": [
+      "pg_virtualenv",
+      "-t",
+      "-v",
+      "18",
+      "/usr/bin/python3",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/package-registration-001/postgres-run.py",
+      "inside",
+      "apply-package",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/apply_package_live-67de4b48497f81a9",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T01:23:22.909191+00:00",
+    "elapsed_seconds": 3.9407420170027763,
+    "exit": 101,
+    "temporary_cluster_removed": true
+  },
+  {
+    "argv": [
+      "pg_virtualenv",
+      "-t",
+      "-v",
+      "18",
+      "/usr/bin/python3",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/package-registration-001/postgres-run.py",
+      "inside",
+      "publish-release",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/publish_release_live-2fe8541b650b6d1a",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T01:23:26.850269+00:00",
+    "elapsed_seconds": 3.9990595130366273,
+    "exit": 0,
+    "temporary_cluster_removed": true
+  },
+  {
+    "argv": [
+      "pg_virtualenv",
+      "-t",
+      "-v",
+      "18",
+      "/usr/bin/python3",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/package-registration-001/postgres-run.py",
+      "inside",
+      "portable-store",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/control_portable_store-91bd5977c2a33dec",
+      "control_",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T01:23:30.849670+00:00",
+    "elapsed_seconds": 3.548899764951784,
+    "exit": 0,
+    "temporary_cluster_removed": true
+  }
+]

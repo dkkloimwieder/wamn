@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/control_portable_store-91bd5977c2a33dec",
+    "control_",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+  "started": "2026-09-12T01:23:33.730373+00:00",
+  "elapsed_seconds": 0.4293829559464939,
+  "exit": 0,
+  "postgres": {
+    "version": "18.6 (Ubuntu 18.6-1.pgdg26.04+2)",
+    "configuration_root": "/tmp/pg_virtualenv.CW6zr0/postgresql",
+    "port": "5432"
+  }
+}

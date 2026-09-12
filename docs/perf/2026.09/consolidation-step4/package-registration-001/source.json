@@ -1,0 +1,41 @@
+{
+  "head": "510e4fbf22d8ab321ef3cff1eabc69cf487a3cce",
+  "files": {
+    "crates/control/provision/tests/control_portable_store.rs": {
+      "sha256": "2c6b74a2f18da3264e39bc56f412da8bdbd741f337cc4df2f5bf44f3d1fe29e8",
+      "mode": "0o664"
+    },
+    "crates/schema/control/src/lib.rs": {
+      "sha256": "76c1242cafbf0530cf8367977b87f075afe9aab9d648da784dda36b067b58ec4",
+      "mode": "0o664"
+    },
+    "crates/schema/control/src/package_migrations.rs": {
+      "sha256": "4c0b6fe3cbcd18aa1f9dea9e67cac90bb08f09f9b6d219d45e7a6ce660af6783",
+      "mode": "0o664"
+    },
+    "deploy/sql/catalog-schema.sql": {
+      "sha256": "69d91617d000c3589d687add0841b68b0f2dcf611c508a93c82f3f0380859606",
+      "mode": "0o664"
+    },
+    "deploy/sql/control-portable-store.sql": {
+      "sha256": "9632533fd49bc7e13fe3f3399847d95f306d0c06c031b45a73307ad55fba4ae2",
+      "mode": "0o664"
+    },
+    "services/ctl/src/apply_package.rs": {
+      "sha256": "779afd45531322afef2fc84ae42643470aadb37bf2184faf6a8ea5e3f20f1676",
+      "mode": "0o664"
+    },
+    "services/ctl/src/push_component.rs": {
+      "sha256": "4cbad3d775196b2ee0324f93118f9e0cb3e3c6439b09871c7cf7e12438cdd0a5",
+      "mode": "0o664"
+    },
+    "services/ctl/tests/publish_release_live.rs": {
+      "sha256": "04606b54212f32165eb87d433074e0202709c42551cc17a33ed693c617a742f8",
+      "mode": "0o664"
+    },
+    "services/ctl/src/apply_package/registration_tests.rs": {
+      "sha256": "677e1852fde22e2498edd35980a46bff3c6f991deb8ab8b16e9a50eb633a83c0",
+      "mode": "0o664"
+    }
+  }
+}

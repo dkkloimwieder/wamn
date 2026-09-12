@@ -1,0 +1,41 @@
+{
+  "source_commit": "ac2e3649a9c316c65de2ead70b326fd9b8ca5796",
+  "test_correction_commit": "33a6b60a514b124a5e4e71de872ad2f0fda4fd10",
+  "source_files_match_test_capture": true,
+  "postgres_cleanup": [
+    {
+      "record": "docs/perf/2026.09/consolidation-step4/package-registration-001/registration.json",
+      "configuration_root": "/tmp/pg_virtualenv.8t67aK/postgresql",
+      "absent": true
+    },
+    {
+      "record": "docs/perf/2026.09/consolidation-step4/package-registration-001/apply-package.json",
+      "configuration_root": "/tmp/pg_virtualenv.4Vwbx0/postgresql",
+      "absent": true
+    },
+    {
+      "record": "docs/perf/2026.09/consolidation-step4/package-registration-001/publish-release.json",
+      "configuration_root": "/tmp/pg_virtualenv.eNVonD/postgresql",
+      "absent": true
+    },
+    {
+      "record": "docs/perf/2026.09/consolidation-step4/package-registration-001/portable-store.json",
+      "configuration_root": "/tmp/pg_virtualenv.CW6zr0/postgresql",
+      "absent": true
+    },
+    {
+      "record": "docs/perf/2026.09/consolidation-step4/package-registration-002/apply-package.json",
+      "configuration_root": "/tmp/pg_virtualenv.VLuSB3/postgresql",
+      "absent": true
+    }
+  ],
+  "credential_scan": {
+    "patterns": [
+      "private_key",
+      "credential_url",
+      "bearer_header"
+    ],
+    "matches": []
+  },
+  "scope": "Owned isolated target and fresh PostgreSQL only; no workspace sweep or live application cluster."
+}

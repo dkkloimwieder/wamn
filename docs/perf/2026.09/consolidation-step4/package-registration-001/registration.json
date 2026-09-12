@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_ctl-2529f5b20a18a95c",
+    "apply_package::registration_tests::registration_serializes_replay_conflicts_successors_and_rollback",
+    "--exact",
+    "--ignored",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+  "started": "2026-09-12T01:23:21.557007+00:00",
+  "elapsed_seconds": 1.1231796279898845,
+  "exit": 0,
+  "postgres": {
+    "version": "18.6 (Ubuntu 18.6-1.pgdg26.04+2)",
+    "configuration_root": "/tmp/pg_virtualenv.8t67aK/postgresql",
+    "port": "5432"
+  }
+}

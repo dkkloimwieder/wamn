@@ -1,0 +1,51 @@
+[
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-control",
+      "--lib",
+      "package_migrations::tests",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T01:13:36.967543+00:00",
+    "elapsed_seconds": 44.02065354801016,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-ctl",
+      "--lib",
+      "--test",
+      "apply_package_live",
+      "--test",
+      "publish_release_live",
+      "--no-run",
+      "--message-format=json-render-diagnostics"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T01:14:20.988418+00:00",
+    "elapsed_seconds": 426.0727592789917,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  }
+]
