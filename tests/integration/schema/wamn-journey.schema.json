@@ -132,7 +132,7 @@
       "type": "string"
     },
     "fresh_only_packages": {
-      "description": "Copied package sources for the dedicated fresh-only proof. The initial phase creates this directory before any package admission.",
+      "description": "Copied package sources for the dedicated fresh-only test. The initial phase creates this directory before any package admission.",
       "type": [
         "string",
         "null"
@@ -164,7 +164,7 @@
           "type": "null"
         }
       ],
-      "description": "Fresh-install proof with unchanged overlay artifacts."
+      "description": "Fresh-install test with unchanged overlay artifacts."
     },
     "postcommit": {
       "anyOf": [
@@ -175,7 +175,7 @@
           "type": "null"
         }
       ],
-      "description": "Released materializer replay and retry proof."
+      "description": "Released materializer replay and retry test."
     },
     "registry_auth_file": {
       "type": "string"
