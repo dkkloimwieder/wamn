@@ -38,7 +38,7 @@ sys.modules[MODULE.name] = receiving
 sys.dont_write_bytecode = True
 MODULE.loader.exec_module(receiving)
 terminal = receiving.terminal
-require, ProofError = terminal.require, terminal.ProofError
+require, TestError = terminal.require, terminal.TestError
 
 STARTUP_TIMEOUT = 600.0
 UI_TIMEOUT = 20.0
@@ -577,7 +577,7 @@ def main():
         session = LiveSession(wamn, config_path, overlay, host_binary)
         stopped = False
         prove(session, config, edit, evidence)
-    except ProofError as error:
+    except TestError as error:
         failure = str(error)
     except (Exception, KeyboardInterrupt) as error:
         failure = type(error).__name__
@@ -590,21 +590,21 @@ def main():
                 session.close()
                 stopped = True
             except Exception as error:
-                detail = str(error) if isinstance(error, ProofError) else type(error).__name__
+                detail = str(error) if isinstance(error, TestError) else type(error).__name__
                 failure = failure or f"process cleanup failed: {detail}"
         if session and stopped and config:
             try:
                 owned_rows(config, remove=True)
                 evidence["owned_rows_removed"] = True
             except Exception as error:
-                detail = str(error) if isinstance(error, ProofError) else type(error).__name__
+                detail = str(error) if isinstance(error, TestError) else type(error).__name__
                 failure = failure or f"owned Receiving row cleanup failed: {detail}"
         if edit and stopped:
             try:
                 edit.restore()
                 evidence["source_restored"] = True
             except Exception as error:
-                detail = str(error) if isinstance(error, ProofError) else type(error).__name__
+                detail = str(error) if isinstance(error, TestError) else type(error).__name__
                 failure = failure or f"source restoration failed: {detail}"
         elif edit and edit.applied:
             evidence["source_restored"] = False

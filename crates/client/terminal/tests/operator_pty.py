@@ -25,13 +25,13 @@ CHILD_SETUP = (
 )
 
 
-class ProofError(Exception):
+class TestError(Exception):
     """A failure message that contains no captured credentials or environment."""
 
 
 def require(condition, message):
     if not condition:
-        raise ProofError(message)
+        raise TestError(message)
 
 
 class Display:

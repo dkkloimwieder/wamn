@@ -25,7 +25,7 @@ TERMINAL_SPEC = importlib.util.spec_from_file_location("receiving_terminal", TER
 terminal = importlib.util.module_from_spec(TERMINAL_SPEC)
 sys.modules[TERMINAL_SPEC.name] = terminal
 TERMINAL_SPEC.loader.exec_module(terminal)
-require, ProofError = terminal.require, terminal.ProofError
+require, TestError = terminal.require, terminal.TestError
 
 TIMEOUT = 15.0
 HOST = "receiving-pty.localhost"
@@ -284,7 +284,7 @@ def main():
         binary = args.binary.resolve(strict=True)
         require(binary.is_file() and os.access(binary, os.X_OK), "--binary must name an executable file")
         prove(binary, Path(__file__).resolve().parents[3])
-    except ProofError as error:
+    except TestError as error:
         print(f"operator PTY proof failed: {error}", file=sys.stderr)
         return 1
     except (Exception, KeyboardInterrupt) as error:
