@@ -34,7 +34,7 @@ pub(super) async fn components_and_tools(
         })
         .unwrap_or_else(|| repository.join("target"));
     let mut guests = Command::new(repository.join("tools/build-components"));
-    guests.arg("proof");
+    guests.arg("all");
     run_build(
         &mut guests,
         repository,

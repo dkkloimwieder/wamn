@@ -15,7 +15,7 @@ pub(super) async fn build(
     generated_terminal: bool,
 ) -> anyhow::Result<()> {
     let mut guests = Command::new(repository.join("tools/build-components"));
-    guests.arg("proof");
+    guests.arg("all");
     prepare(&mut guests, repository, target);
     run(&mut guests, evidence, "guests").await?;
 

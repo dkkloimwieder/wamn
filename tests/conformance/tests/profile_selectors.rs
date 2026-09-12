@@ -338,7 +338,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
         write_fake_metadata(&metadata_directory, &root.join(manifest), &output.stdout);
     }
 
-    for profile in ["app", "proof"] {
+    for profile in ["app", "all"] {
         let app = root.join("apps/wamn_receiving");
         let application_arguments = if profile == "app" { vec![app] } else { vec![] };
         let selected = if profile == "app" {
@@ -533,7 +533,7 @@ fn component_build_requires_declared_app_crates_and_accepts_new_cargo_members() 
         .expect("application path must be UTF-8");
     for arguments in [
         vec!["app", new_app],
-        vec!["proof"],
+        vec!["all"],
         vec!["build-only", "app", new_app],
         vec!["watch-roots", "app", new_app],
     ] {
@@ -580,11 +580,11 @@ fn component_build_requires_declared_app_crates_and_accepts_new_cargo_members() 
     }));
 
     fs::remove_file(new_manifest).expect("failed to remove package declaration");
-    let proof = run(&["proof"]);
+    let all = run(&["all"]);
     assert_eq!(
-        proof.status.code(),
+        all.status.code(),
         Some(23),
-        "proof must build new Cargo members"
+        "all must build new Cargo members"
     );
     assert!(captured_invocations(&capture).iter().any(|invocation| {
         invocation
@@ -706,7 +706,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
         .env("WAMN_FAKE_BUILD_STATUS", "0")
         .env("WAMN_FAKE_VIRTUALIZER_STATUS", "0")
-        .arg("proof")
+        .arg("all")
         .output()
         .expect("failed to execute component virtualization profile");
     assert!(
@@ -824,7 +824,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
     assert!(!app_outputs.is_empty());
     assert!(
         app_outputs.len() < normalized_outputs.len(),
-        "app must select fewer artifacts than proof"
+        "app must select fewer artifacts than all"
     );
     assert!(
         normalized_outputs.iter().all(|path| {
@@ -877,7 +877,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
         .env("WAMN_FAKE_BUILD_STATUS", "0")
         .env("WAMN_FAKE_VIRTUALIZER_STATUS", "29")
-        .args(["build-only", "proof"])
+        .args(["build-only", "all"])
         .output()
         .expect("failed to execute build-only component profile");
     assert!(
@@ -912,7 +912,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
 
     let artifact_plan: Value = serde_json::from_slice(&build_only.stdout)
         .expect("build-only stdout must be one machine-readable artifact plan");
-    assert_eq!(artifact_plan["profile"], "proof");
+    assert_eq!(artifact_plan["profile"], "all");
     assert_eq!(artifact_plan["applications"], serde_json::json!([]));
     let build_plan = artifact_plan["build"]
         .as_array()
@@ -1097,7 +1097,7 @@ fn component_build_normalizes_only_declared_artifacts_to_separate_outputs() {
         .env("WAMN_FAKE_METADATA_DIRECTORY", &metadata_directory)
         .env("WAMN_FAKE_BUILD_STATUS", "0")
         .env("WAMN_FAKE_VIRTUALIZER_STATUS", "29")
-        .arg("proof")
+        .arg("all")
         .output()
         .expect("failed to execute refusing component virtualization profile");
     assert_eq!(failed.status.code(), Some(29));
@@ -1140,12 +1140,12 @@ fn unknown_selector_modes_refuse_before_cargo() {
         (
             COMPONENT_TOOL,
             vec!["unknown"],
-            "expected app APP_DIRECTORY... or proof",
+            "expected app APP_DIRECTORY... or all",
         ),
         (
             COMPONENT_TOOL,
             vec!["m1"],
-            "expected app APP_DIRECTORY... or proof",
+            "expected app APP_DIRECTORY... or all",
         ),
         (
             COMPONENT_TOOL,
@@ -1154,8 +1154,8 @@ fn unknown_selector_modes_refuse_before_cargo() {
         ),
         (
             COMPONENT_TOOL,
-            vec!["proof", "extra"],
-            "proof takes no application directories",
+            vec!["all", "extra"],
+            "all takes no application directories",
         ),
     ] {
         let capture = scratch.join(format!("{} capture", tool.replace('/', "-")));

@@ -168,9 +168,9 @@ fn one_commit_built_in_two_checkouts_yields_identical_guest_digests() {
 }
 
 /// Artifact plans printed by `tools/build-components build-only app APP_DIRECTORY...`
-/// and `tools/build-components build-only proof`.
+/// and `tools/build-components build-only all`.
 const PROFILE_APP_PLAN_ENV: &str = "WAMN_DIGEST_PROFILE_APP_PLAN";
-const PROFILE_PROOF_PLAN_ENV: &str = "WAMN_DIGEST_PROFILE_PROOF_PLAN";
+const PROFILE_ALL_PLAN_ENV: &str = "WAMN_DIGEST_PROFILE_ALL_PLAN";
 
 /// `package -> sha256` from one artifact plan, refusing a plan for another profile.
 ///
@@ -214,48 +214,48 @@ fn artifact_plan_digests(path: &Path, expected_profile: &str) -> BTreeMap<String
     digests
 }
 
-/// One commit must produce the same guest bytes for application and proof selections.
+/// One commit must produce the same guest bytes for the application and all selections.
 ///
 /// `[GUEST-DIGEST-REPRODUCIBILITY]` in `docs/operations/build-and-test.md` builds
 /// the same tree with both selections and supplies their artifact plans.
-/// The application selection names declared guests. The proof selection includes
+/// The application selection names declared guests. The all selection includes
 /// every workspace guest. Each guest uses its own Cargo invocation to keep its
 /// features independent of other selected packages.
-/// This test compares shared packages and refuses missing proof artifacts.
+/// This test compares shared packages and refuses missing artifacts from the all selection.
 #[test]
 #[ignore = "requires one commit built under both profiles by [GUEST-DIGEST-REPRODUCIBILITY]"]
 fn one_commit_built_under_two_profiles_yields_identical_guest_digests() {
     let app_plan = std::env::var(PROFILE_APP_PLAN_ENV)
         .unwrap_or_else(|_| panic!("{PROFILE_APP_PLAN_ENV} must name the app artifact plan"));
-    let proof_plan = std::env::var(PROFILE_PROOF_PLAN_ENV)
-        .unwrap_or_else(|_| panic!("{PROFILE_PROOF_PLAN_ENV} must name the proof artifact plan"));
+    let all_plan = std::env::var(PROFILE_ALL_PLAN_ENV)
+        .unwrap_or_else(|_| panic!("{PROFILE_ALL_PLAN_ENV} must name the all artifact plan"));
     assert_ne!(
-        app_plan, proof_plan,
+        app_plan, all_plan,
         "the two artifact plans must come from different profile builds"
     );
 
     let app = artifact_plan_digests(Path::new(&app_plan), "app");
-    let proof = artifact_plan_digests(Path::new(&proof_plan), "proof");
+    let all = artifact_plan_digests(Path::new(&all_plan), "all");
     assert!(
         !app.is_empty(),
-        "{app_plan} declares no artifacts, so this proves nothing"
+        "{app_plan} declares no artifacts to compare"
     );
 
     let mut drifted = Vec::new();
     for (package, digest) in &app {
-        let Some(other) = proof.get(package) else {
+        let Some(other) = all.get(package) else {
             panic!(
-                "the proof profile does not declare {package}, which app does; the proof \
+                "the all selection does not include {package}, which app does; the all \
                  selection is meant to be the wider one"
             );
         };
         if other != digest {
-            drifted.push(format!("{package}: app {digest} != proof {other}"));
+            drifted.push(format!("{package}: app {digest} != all {other}"));
         }
     }
     assert!(
         drifted.is_empty(),
-        "the same commit produced different guest bytes under the app and proof component \
+        "the same commit produced different guest bytes under the app and all component \
          profiles, so a component digest is a claim about WHICH PROFILE built it and a pin \
          minted under one profile cannot be reproduced under the other (wamn-10yt.61). The \
          cause is a feature the two selections resolve differently: diff the `features` field \

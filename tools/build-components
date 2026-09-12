@@ -2,9 +2,9 @@
 set -euo pipefail
 
 readonly WAMN_USAGE='usage:
-  tools/build-components app APP_DIRECTORY... | proof
-  tools/build-components build-only app APP_DIRECTORY... | proof
-  tools/build-components watch-roots app APP_DIRECTORY... | proof
+  tools/build-components app APP_DIRECTORY... | all
+  tools/build-components build-only app APP_DIRECTORY... | all
+  tools/build-components watch-roots app APP_DIRECTORY... | all
   tools/build-components virtualize-only ARTIFACT_PLAN'
 
 wamn_fail() {
@@ -48,12 +48,12 @@ if [[ "$WAMN_MODE" != virtualize-only ]]; then
         }
       done
       ;;
-    proof)
-      (($# == 1)) || wamn_usage_error 'proof takes no application directories'
-      WAMN_PROFILE='proof'
+    all)
+      (($# == 1)) || wamn_usage_error 'all takes no application directories'
+      WAMN_PROFILE='all'
       ;;
     *)
-      wamn_usage_error 'expected app APP_DIRECTORY... or proof'
+      wamn_usage_error 'expected app APP_DIRECTORY... or all'
       ;;
   esac
 fi
@@ -83,7 +83,7 @@ if [[ "$WAMN_MODE" == virtualize-only ]]; then
       select(length == 1)
       | .[0]
       | select(exact_keys(["applications", "build", "profile", "virtualization"]))
-      | select(.profile == "app" or .profile == "proof")
+      | select(.profile == "app" or .profile == "all")
       | select(.applications | type == "array")
       | select(all(.applications[]; type == "string" and startswith("/")))
       | select(if .profile == "app" then (.applications | length > 0)
@@ -134,7 +134,7 @@ readonly WAMN_MANIFEST_LIST="$(printf '%s\n' "${WAMN_MANIFESTS[@]}" | jq -Rn '[i
 readonly WAMN_APPLICATION_LIST="$(printf '%s\n' "${WAMN_APPLICATIONS[@]}" | jq -Rn '[inputs | select(length > 0)]')"
 
 # Application manifests declare the components that need virtualization.
-# Proof builds select every Cargo member and read all application declarations.
+# The all argument selects every Cargo member and reads all application declarations.
 declare -a WAMN_APPLICATION_MANIFESTS=()
 if [[ "$WAMN_PROFILE" == app ]]; then
   for application in "${WAMN_APPLICATIONS[@]}"; do
@@ -194,7 +194,7 @@ WAMN_PLAN="$(
      | .value as $metadata
      | $metadata.packages[]
      | select(.id as $id | $metadata.workspace_members | index($id) != null)
-     | select($profile == "proof" or (.name as $name | $package_components | index($name) != null))
+     | select($profile == "all" or (.name as $name | $package_components | index($name) != null))
      | {manifest: $manifests[$index], packages: [.name]}]
     | sort_by(.manifest, .packages[0])
     | select(length > 0)
@@ -414,7 +414,7 @@ wamn_virtualize() {
   count="$(jq -r '.virtualization.artifacts | length' <<<"$artifact_plan")"
 
   # Clear outputs only after the full plan and every raw digest are valid.
-  # App builds own only their selected files. Proof owns the full directory.
+  # App builds own only their selected files. The all argument owns the full directory.
   while IFS= read -r output; do
     directory="$(dirname -- "$output")"
     [[ -n "$directory" && "$directory" != / \
@@ -424,7 +424,7 @@ wamn_virtualize() {
     directories["$directory"]=1
   done < <(jq -r '.virtualization.artifacts[].output' <<<"$artifact_plan")
   for directory in "${!directories[@]}"; do
-    if [[ "$WAMN_PROFILE" == proof ]]; then
+    if [[ "$WAMN_PROFILE" == all ]]; then
       rm -rf -- "$directory"
     fi
     mkdir -p -- "$directory"

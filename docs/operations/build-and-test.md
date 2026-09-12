@@ -87,7 +87,7 @@ Pass each app directory that the caller needs, including the resolved base apps 
 The tool reads each app manifest to select its components.
 Cargo builds their dependencies, including generated data libraries.
 
-For a proof build, run `tools/build-components proof`.
+To build every guest, run `tools/build-components all`.
 The tool selects all guest workspace members from Cargo metadata.
 Both commands build release artifacts and apply the fixed virtualization profile.
 Each guest gets one Cargo invocation, regardless of the caller.
@@ -500,7 +500,7 @@ An application component also needs its declaration in the app manifest.
 No copied package count, role list, tier, or build profile needs an update.
 
 `tools/build-components app APP_DIRECTORY...` reads the named app manifests and resolves their components through Cargo metadata.
-`tools/build-components proof` selects all members in the guest workspaces.
+`tools/build-components all` selects all members in the guest workspaces.
 The fixed virtualization policy still applies to its declared platform artifacts and to application components.
 These declarations control artifact transformation, not workspace membership.
 Generated operator crates remain native workspace members.
@@ -853,8 +853,8 @@ effective_release_cleanup() {
 }
 trap effective_release_cleanup EXIT
 
-# Each guest gets one Cargo invocation, so proof selection preserves its digest.
-tools/build-components proof
+# Each guest gets one Cargo invocation to preserve its digest.
+tools/build-components all
 test "$(sha256sum "$EFFECTIVE_RELEASE_BASE_COMPONENT" | cut -d ' ' -f 1)" = \
   "$EFFECTIVE_RELEASE_BASE_DIGEST"
 cargo build --manifest-path apps/Cargo.toml --locked --offline \
@@ -1105,7 +1105,7 @@ router/ingress path.
 
 ```bash
 set -euo pipefail
-tools/build-components proof
+tools/build-components all
 
 STD_VIRT_REPOSITORY_ROOT="$(pwd -P)"
 STD_VIRT_DIRECTORY="$STD_VIRT_REPOSITORY_ROOT/apps/target/virtualized/std-empty-environment"
@@ -3224,7 +3224,7 @@ for side in a b; do
   (
     cd "$GUEST_REPRO_SCRATCH/$side/tree"
     CARGO_TARGET_DIR="$GUEST_REPRO_SCRATCH/$side/target" RUSTC_WRAPPER= \
-      ./tools/build-components build-only proof \
+      ./tools/build-components build-only all \
       > "$GUEST_REPRO_EVIDENCE/$side-plan.json" \
       2> "$GUEST_REPRO_EVIDENCE/$side-build.log"
     CARGO_TARGET_DIR="$GUEST_REPRO_SCRATCH/$side/target" RUSTC_WRAPPER= \
@@ -3273,13 +3273,13 @@ CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/app" RUSTC_WRAPPER= \
   ./tools/build-components build-only app apps/wamn_receiving \
   > "$GUEST_PROFILE_EVIDENCE/app.json" \
   2> "$GUEST_PROFILE_EVIDENCE/app-build.log"
-CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/proof" RUSTC_WRAPPER= \
-  ./tools/build-components build-only proof \
-  > "$GUEST_PROFILE_EVIDENCE/proof.json" \
-  2> "$GUEST_PROFILE_EVIDENCE/proof-build.log"
+CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/all" RUSTC_WRAPPER= \
+  ./tools/build-components build-only all \
+  > "$GUEST_PROFILE_EVIDENCE/all.json" \
+  2> "$GUEST_PROFILE_EVIDENCE/all-build.log"
 CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/test-target" \
 WAMN_DIGEST_PROFILE_APP_PLAN="$GUEST_PROFILE_EVIDENCE/app.json" \
-WAMN_DIGEST_PROFILE_PROOF_PLAN="$GUEST_PROFILE_EVIDENCE/proof.json" \
+WAMN_DIGEST_PROFILE_ALL_PLAN="$GUEST_PROFILE_EVIDENCE/all.json" \
   cargo test --locked --offline -p wamn-proof-conformance --test guest_workspace_closure \
   one_commit_built_under_two_profiles_yields_identical_guest_digests \
   -- --include-ignored --exact --nocapture \
@@ -3493,7 +3493,7 @@ receiving_route_cleanup() {
 trap receiving_route_cleanup EXIT
 
 CARGO_TARGET_DIR="$RECEIVING_ROUTE_SCRATCH/target" \
-  "$RECEIVING_ROUTE_ROOT/tools/build-components" proof
+  "$RECEIVING_ROUTE_ROOT/tools/build-components" all
 RECEIVING_ROUTE_COMPONENTS="$RECEIVING_ROUTE_SCRATCH/target/virtualized/std-empty-environment"
 # `cc4b407f` moved every guest to the release profile. It left this path
 # behind, so the `test -s` below has refused since 2026-09-04.

@@ -129,7 +129,7 @@ cargo build -p wamn-host -p wamn-ctl -p wamn-identity -p wamn-dispatcher \
 
 # Build and virtualize the declared proof guests.
 # The tool isolates the P3 HTTP shell and the no_std workspace.
-tools/build-components proof
+tools/build-components all
 ```
 
 The product binary starts its own disposable environment. `wamn dev up`
