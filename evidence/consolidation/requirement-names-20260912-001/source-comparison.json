@@ -1,0 +1,61 @@
+{
+  "base": "f17bdbcb85787641c331a32d344432462fd8b080",
+  "files": [
+    {
+      "path": "services/ctl/src/push_component.rs",
+      "code_unchanged_except_declared_names": true,
+      "literal_count": 509,
+      "literals_sha256": "d5a87b7ea017c7f2d5ba305dd9fffec0cc30bf282f9d987ec03030955ae8bd8c",
+      "name_changes": [
+        [
+          "SELECT_REQUIREMENT_INVENTORY_SQL",
+          "SELECT_REQUIREMENTS_SQL"
+        ],
+        [
+          "SELECT_CONTROL_REQUIREMENT_INVENTORY_SQL",
+          "SELECT_CONTROL_REQUIREMENTS_SQL"
+        ],
+        [
+          "verify_requirement_inventory",
+          "verify_requirements"
+        ],
+        [
+          "verify_requirement_inventory",
+          "verify_requirements"
+        ],
+        [
+          "verify_requirement_inventory",
+          "verify_requirements"
+        ],
+        [
+          "SELECT_CONTROL_REQUIREMENT_INVENTORY_SQL",
+          "SELECT_CONTROL_REQUIREMENTS_SQL"
+        ],
+        [
+          "SELECT_REQUIREMENT_INVENTORY_SQL",
+          "SELECT_REQUIREMENTS_SQL"
+        ]
+      ]
+    },
+    {
+      "path": "services/scenario-worker/src/management.rs",
+      "code_unchanged_except_declared_names": true,
+      "literal_count": 265,
+      "literals_sha256": "49f3c6cfc3d09c1e7d9c76d8d32846abd163e9c4bfee71ea4368db3a97461a5d",
+      "name_changes": [
+        [
+          "inventory",
+          "command_cases"
+        ],
+        [
+          "inventory",
+          "command_cases"
+        ],
+        [
+          "inventory",
+          "command_cases"
+        ]
+      ]
+    }
+  ]
+}

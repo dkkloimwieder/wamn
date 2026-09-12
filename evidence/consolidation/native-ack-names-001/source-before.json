@@ -1,0 +1,14 @@
+{
+  "head": "9597b25fee86ff0caeb29c9ee6925fd500d12be5",
+  "files": {
+    "services/cdc-reader/src/lib.rs": {
+      "sha256": "8835168b9cd86411b9f300bdea6bed9d9aac5b375d14552471fbd3198e92e9a8",
+      "mode": "0o664"
+    },
+    "tests/integration/src/trusted_http_route.rs": {
+      "sha256": "0e8ffb6ff6abb76e815539b0157960f0c3a4dec943ae2a7380c0acc473adb1d4",
+      "mode": "0o664"
+    }
+  },
+  "status": " M services/cdc-reader/src/lib.rs\n M tests/integration/src/trusted_http_route.rs\n"
+}

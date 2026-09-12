@@ -1,0 +1,25 @@
+The wamn gate suite over reusable platform and domain libraries
+
+Usage: wamn-gates [OPTIONS] <COMMAND>
+
+Commands:
+  rc                        Run the RC bootstrap and native socket and trace tests on an owned cluster
+  agent-pilot-run           Select an existing pilot action and its recorded run
+  agent-pilot-grade         Select the existing live, replay, placement, or contract grading mode
+  host-session-proof        Prove session acceptance and removed-key refusal on two deployed hosts
+  identity-jwks             Prove public JWKS and cache evidence through deployed identity HTTPS
+  identity-session          Prove fresh PAT exchange and signed environment claims through HTTPS
+  identity-session-fixture  Mint private credentials only inside an explicitly armed disposable fixture
+  membershipproof           Prove fresh human membership through a deployed Receiving HTTP route
+  retention                 Prove the real prune-run-history verb removes only old TERMINAL runs, keeping recent and non-terminal history
+  readerbench               Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
+  serve-echo                Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
+  socketguard               Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
+  traceproof                Run the 9.2 trace-inject gate: prove the host stamps `traceparent` on both the P2 and P3 outbound surfaces, read back from serve-echo
+  dashproof                 Run the 9.9 dashboards gate: assert a deployed Grafana's health, its datasources, and the static plus per-tenant folders and dashboards
+  help                      Print this message or the help of the given subcommand(s)
+
+Options:
+      --log-level <LOG_LEVEL>  Log level (the Jobs pass this before the subcommand) [default: info]
+  -h, --help                   Print help
+  -V, --version                Print version

@@ -1,0 +1,52 @@
+diff --git a/crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs b/crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs
+index 4ff5bb29..2171bb29 100644
+--- a/crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs
++++ b/crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs
+@@ -23,14 +23,14 @@ use wamn_runtime::plugins::wamn_postgres::{
+ use wamn_runtime::release_manifest::LoadedRelease;
+ use wamn_runtime::session_verifier::SessionVerifier;
+ 
+-use super::trace::TraceProof;
++use super::trace::TraceCapture;
+ use super::{BUDGET, CHILD, CHILD_MARKER, CLEANUP, Case, Fixture, ROOT};
+ use super::{OperationRefusal, OperationRefusalKind, invoke_native};
+ 
+ #[path = "../../../../../../platform/runtime/tests/support/session_fixture.rs"]
+ #[expect(
+     dead_code,
+-    reason = "The shared issuer fixture also serves cache-expiry proofs."
++    reason = "The shared issuer fixture also serves cache-expiry tests."
+ )]
+ mod session_fixture;
+ use session_fixture::{ORG, Server, claims, header, signed};
+@@ -287,7 +287,7 @@ async fn prove_case(scenario: Scenario, caller: &AuthenticatedCaller) {
+     )
+     .await;
+     let target = fixture.target().await;
+-    let trace = (scenario == Scenario::Success).then(|| TraceProof::new(&fixture, caller));
++    let trace = (scenario == Scenario::Success).then(|| TraceCapture::new(&fixture, caller));
+     let deadline = Instant::now()
+         + if matches!(
+             scenario,
+diff --git a/crates/execution/host/src/router_driver/native_policy/tests/trace.rs b/crates/execution/host/src/router_driver/native_policy/tests/trace.rs
+index 79b622c2..a8e184da 100644
+--- a/crates/execution/host/src/router_driver/native_policy/tests/trace.rs
++++ b/crates/execution/host/src/router_driver/native_policy/tests/trace.rs
+@@ -22,7 +22,7 @@ fn attribute<'a>(span: &'a SpanData, key: &str) -> Option<&'a str> {
+     })
+ }
+ 
+-pub(super) struct TraceProof {
++pub(super) struct TraceCapture {
+     provider: SdkTracerProvider,
+     exporter: InMemorySpanExporter,
+     incoming: SpanContext,
+@@ -30,7 +30,7 @@ pub(super) struct TraceProof {
+     pub(super) dispatcher: tracing::Dispatch,
+ }
+ 
+-impl TraceProof {
++impl TraceCapture {
+     pub(super) fn new(fixture: &Fixture, caller: &AuthenticatedCaller) -> Self {
+         let exporter = InMemorySpanExporter::default();
+         let provider = SdkTracerProvider::builder()

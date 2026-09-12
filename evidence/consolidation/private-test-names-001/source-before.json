@@ -1,0 +1,18 @@
+{
+  "head": "f17bdbcb85787641c331a32d344432462fd8b080",
+  "files": {
+    "crates/execution/host/src/router_driver/native_policy/tests.rs": {
+      "sha256": "e2721bb399d453801a59673affb79114619fbd9cebf999c4a8456913212e231b",
+      "mode": "0o664"
+    },
+    "services/scenario-worker/tests/management_live.rs": {
+      "sha256": "9bb3dbbf75bbe7f202756db92458dbb3552ed52ba65fcd8cc537ca2c6de76c20",
+      "mode": "0o664"
+    },
+    "tests/integration/src/trusted_http_route.rs": {
+      "sha256": "653512ea7cd4f4310a12b02b0a67a865098ba4b8ba6ac9fe616e7e43f1d808e7",
+      "mode": "0o664"
+    }
+  },
+  "status": " M crates/execution/host/src/router_driver/native_policy/tests.rs\n M services/scenario-worker/tests/management_live.rs\n M tests/integration/src/trusted_http_route.rs\n"
+}

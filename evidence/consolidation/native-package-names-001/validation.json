@@ -1,0 +1,181 @@
+{
+  "all_selected_tests_passed": false,
+  "binaries": {
+    "instantiate-bench": {
+      "mode": "0o775",
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/target/debug/instantiate-bench",
+      "sha256": "8129096a7dddd0b12069b763fce6ca6e687b93f091722de28d1b88fc624e214c",
+      "size": 225347656
+    },
+    "wamn-dev-env": {
+      "mode": "0o775",
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/target/debug/wamn-dev-env",
+      "sha256": "11b29a4ac9dbf32b865d53e6ce8c862f4b616b87d8703c977437b6a857a778ed",
+      "size": 153859544
+    },
+    "wamn-gates": {
+      "mode": "0o775",
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/target/debug/wamn-gates",
+      "sha256": "2ef112af699d210e45c99e97b95445f854904c1f8eefa95d7753a5055703ee64",
+      "size": 282115568
+    },
+    "wamn-throughput": {
+      "mode": "0o775",
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/target/debug/wamn-throughput",
+      "sha256": "4504eae67206efe1849d70b94463cc6cd4481757ba53585cb23e842385ce31fb",
+      "size": 143436632
+    }
+  },
+  "commands": [
+    {
+      "argv": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-conformance-tests",
+        "--test",
+        "kubernetes_gate_runner",
+        "--",
+        "--nocapture"
+      ],
+      "command_file": "focused-001/commands.json",
+      "command_index": 1,
+      "exit_code": 0,
+      "seconds": 274.05203495704336,
+      "test_summaries": [
+        "ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.21s"
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-system-tests",
+        "--test",
+        "deploy_platform_inventory",
+        "--",
+        "--nocapture"
+      ],
+      "command_file": "focused-001/commands.json",
+      "command_index": 2,
+      "exit_code": 101,
+      "seconds": 183.100260281004,
+      "test_summaries": [
+        "FAILED. 8 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.27s"
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-integration-tests",
+        "--lib",
+        "agent_pilot::",
+        "--",
+        "--nocapture"
+      ],
+      "command_file": "focused-002/commands.json",
+      "command_index": 1,
+      "exit_code": 0,
+      "seconds": 137.52931379701477,
+      "test_summaries": [
+        "ok. 40 passed; 0 failed; 0 ignored; 0 measured; 56 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::cluster::measurement::tests::",
+        "--",
+        "--nocapture"
+      ],
+      "command_file": "focused-002/commands.json",
+      "command_index": 2,
+      "exit_code": 0,
+      "seconds": 45.19915978005156,
+      "test_summaries": [
+        "ok. 7 passed; 0 failed; 0 ignored; 0 measured; 60 filtered out; finished in 0.01s"
+      ]
+    },
+    {
+      "argv": [
+        "cargo",
+        "+1.98.0",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "wamn-integration-tests",
+        "--bin",
+        "wamn-dev-env",
+        "--bin",
+        "wamn-throughput",
+        "--bin",
+        "instantiate-bench",
+        "-p",
+        "wamn-gates",
+        "--bin",
+        "wamn-gates"
+      ],
+      "command_file": "focused-002/commands.json",
+      "command_index": 3,
+      "exit_code": 0,
+      "seconds": 51.02689290099079,
+      "test_summaries": []
+    },
+    {
+      "argv": [
+        "target/debug/wamn-gates",
+        "--help"
+      ],
+      "command_file": "focused-002/commands.json",
+      "command_index": 4,
+      "exit_code": 0,
+      "seconds": 0.006594505975954235,
+      "test_summaries": []
+    },
+    {
+      "argv": [
+        "target/debug/wamn-dev-env",
+        "--help"
+      ],
+      "command_file": "focused-002/commands.json",
+      "command_index": 5,
+      "exit_code": 0,
+      "seconds": 0.004195437009911984,
+      "test_summaries": []
+    },
+    {
+      "argv": [
+        "target/debug/wamn-throughput",
+        "--help"
+      ],
+      "command_file": "focused-002/commands.json",
+      "command_index": 6,
+      "exit_code": 0,
+      "seconds": 0.002590216987300664,
+      "test_summaries": []
+    }
+  ],
+  "live_services_started": false,
+  "retained_failure": "system-failure.json",
+  "source_unchanged": true
+}

@@ -1,0 +1,77 @@
+{
+  "base_source": "44efee1093084b42369d8abd2b91f9121a62852c",
+  "cause": "The existing WMS values file names a Secret that the retained test does not accept as declared or externally supplied.",
+  "command_file": "focused-001/commands.json",
+  "current_sha256": {
+    "deploy/platform/values-host-wms-pat.yaml": "12e61bddac9d2328c6aeb1ea8cdf830ac90b2c159674805c4c8401449b385758",
+    "tests/system/tests/deploy_platform_inventory.rs": "9eea6d272ddc9e166cbb674c63fd362f862cfc9e106bff321776b009e3cbcd07"
+  },
+  "deployment_bytes_equal": true,
+  "identity": "every_mounted_secret_is_declared_here_or_named_a_prerequisite",
+  "limit": "The current failure matches the saved stage 3 identity and cause. The baseline test was not rerun.",
+  "retained_failure": {
+    "exact_cause_present_in_current_stderr": true,
+    "path": "docs/perf/2026.09/consolidation-step3/sweep-001/run-006/classification-002/classified-failures.json",
+    "row": {
+      "cargo_target": "--test deploy_platform_inventory",
+      "cause": "deploy/platform mounts Secrets it neither declares nor names as a prerequisite: [(\"wamn-object-store-credentials-acme--wms--dev\", {\"values-host-wms-pat.yaml\"})]",
+      "classification": "deployment_prerequisite_declaration_mismatch",
+      "diagnostic_end_log_line": 2922,
+      "diagnostic_start_log_line": 2918,
+      "failure_list_log_line": 2935,
+      "name": "every_mounted_secret_is_declared_here_or_named_a_prerequisite",
+      "normalized_cause": {
+        "causal_lines": [
+          "deploy/platform mounts Secrets it neither declares nor names as a prerequisite: [(\"wamn-object-store-credentials-acme--wms--dev\", {\"values-host-wms-pat.yaml\"})]"
+        ],
+        "failure_signatures": [
+          "Rust panic"
+        ],
+        "referenced_arming_inputs": []
+      },
+      "package": "wamn-proof-system",
+      "prior_classification_record": "../../run-005/classification-002/classified-failures.json",
+      "prior_source": "7f93f9cb6a26ea8c534372fc88e09432fce4aee2",
+      "raw_diagnostics": [
+        {
+          "log_line": 2918,
+          "text": ""
+        },
+        {
+          "log_line": 2919,
+          "text": "thread 'every_mounted_secret_is_declared_here_or_named_a_prerequisite' (1435917) panicked at tests/system/tests/deploy_platform_inventory.rs:1133:5:"
+        },
+        {
+          "log_line": 2920,
+          "text": "deploy/platform mounts Secrets it neither declares nor names as a prerequisite: [(\"wamn-object-store-credentials-acme--wms--dev\", {\"values-host-wms-pat.yaml\"})]"
+        },
+        {
+          "log_line": 2921,
+          "text": "note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace"
+        },
+        {
+          "log_line": 2922,
+          "text": "FAILED"
+        }
+      ],
+      "required_inputs": [],
+      "run5_comparison": "Exact identity and normalized diagnostic match.",
+      "source_evidence": "tests/system/tests/deploy_platform_inventory.rs:1133",
+      "step2_cause": "deploy/platform mounts Secrets it neither declares nor names as a prerequisite: [(\"wamn-object-store-credentials-acme--wms--dev\", {\"values-host-wms-pat.yaml\"})]",
+      "step2_classification": "deployment_prerequisite_declaration_mismatch",
+      "step2_comparison": "exact normalized diagnostic match",
+      "verified_source_paths": [
+        "tests/system/tests/deploy_platform_inventory.rs"
+      ]
+    },
+    "sha256": "d4899d9ce5b257b0cdcf947a58e5dec5558c76bcc692953eff8ac7e49ff6e906"
+  },
+  "secret": "wamn-object-store-credentials-acme--wms--dev",
+  "source_lines": {
+    "deploy/platform/values-host-wms-pat.yaml": 124,
+    "tests/system/tests/deploy_platform_inventory.rs": 1133
+  },
+  "stderr": "focused-001/command-2.stderr",
+  "stdout": "focused-001/command-2.stdout",
+  "test_equal_after_two_package_tokens_in_doc_comments": true
+}

@@ -1,0 +1,232 @@
+{
+  "base": "cc82d0ed5d0b6ff9a74e9492e67d065e9c5eb1e0",
+  "mapping": {
+    "base": "cc82d0ed5d0b6ff9a74e9492e67d065e9c5eb1e0",
+    "moves": {
+      "tests/integration/src/membershipproof.rs": "tests/integration/src/membership_test.rs",
+      "tests/integration/src/dashproof.rs": "tests/integration/src/dashboard_test.rs",
+      "tests/integration/src/host_session_proof.rs": "tests/integration/src/host_session_test.rs",
+      "tests/integration/src/identity_keys_proof.rs": "tests/integration/src/identity_keys_test.rs",
+      "tests/integration/src/identity_session_proof.rs": "tests/integration/src/identity_session_test.rs",
+      "tests/system/src/traceproof.rs": "tests/system/src/trace_test.rs"
+    },
+    "identifiers": {
+      "membershipproof": "membership_test",
+      "dashproof": "dashboard_test",
+      "host_session_proof": "host_session_test",
+      "identity_keys_proof": "identity_keys_test",
+      "identity_session_proof": "identity_session_test",
+      "traceproof": "trace_test",
+      "MembershipProofArgs": "MembershipTestArgs",
+      "DashproofArgs": "DashboardTestArgs",
+      "HostSessionProofArgs": "HostSessionTestArgs",
+      "IdentityKeysProofArgs": "IdentityKeysTestArgs",
+      "IdentitySessionProofArgs": "IdentitySessionTestArgs",
+      "TraceproofArgs": "TraceTestArgs",
+      "Membershipproof": "MembershipTest",
+      "Dashproof": "DashboardTest",
+      "HostSessionProof": "HostSessionTest",
+      "IdentityJwks": "IdentityKeysTest",
+      "IdentitySession": "IdentitySessionTest",
+      "Traceproof": "TraceTest",
+      "PROOF_TIMEOUT": "TEST_TIMEOUT",
+      "ProofCommand": "TestCommand",
+      "proof": "args",
+      "host_request_budgets_outlive_key_fetches_and_fit_the_proof": "host_request_budgets_outlive_key_fetches_and_fit_the_test"
+    },
+    "rust_files": [
+      "tests/integration/src/membership_test.rs",
+      "tests/integration/src/dashboard_test.rs",
+      "tests/integration/src/host_session_test.rs",
+      "tests/integration/src/identity_keys_test.rs",
+      "tests/integration/src/identity_session_test.rs",
+      "tests/system/src/trace_test.rs",
+      "tests/integration/src/lib.rs",
+      "tests/system/src/lib.rs",
+      "tests/orchestrator/src/main.rs",
+      "apps/wamn_receiving/tests/route_authentication_live/cluster/measurement.rs"
+    ]
+  },
+  "files": [
+    {
+      "old_path": "tests/integration/src/membershipproof.rs",
+      "new_path": "tests/integration/src/membership_test.rs",
+      "old_sha256": "781c88aa67e7c17605cf70b0a8c800881cb602eac6e380f892b91b942e9b4a0d",
+      "new_sha256": "02a04e251cd23d99ad6919b5ab4ae886d273284c0eabf6933e7f5870e2b3d47c",
+      "tokens_equal_after_identifier_mapping": true,
+      "all_existing_literals_unchanged": true,
+      "comments_unchanged": true,
+      "old_test_names": [
+        "benchmark_pat_file_is_private_and_never_overwrites",
+        "permission_uses_the_generated_canonical_operation_grant",
+        "argument_diagnostics_do_not_disclose_database_credentials",
+        "success_requires_the_correlated_seeded_record"
+      ],
+      "new_test_names": [
+        "benchmark_pat_file_is_private_and_never_overwrites",
+        "permission_uses_the_generated_canonical_operation_grant",
+        "argument_diagnostics_do_not_disclose_database_credentials",
+        "success_requires_the_correlated_seeded_record"
+      ],
+      "old_git_mode": "100644",
+      "new_git_mode": "100644"
+    },
+    {
+      "old_path": "tests/integration/src/dashproof.rs",
+      "new_path": "tests/integration/src/dashboard_test.rs",
+      "old_sha256": "0036943be9297567d0a7924927629fc06c897e2121f883309069e90c007af268",
+      "new_sha256": "c29ae4154f24bc5ed6f783cbfdece96070758f07257193e07d6f82c6818d2381",
+      "tokens_equal_after_identifier_mapping": true,
+      "all_existing_literals_unchanged": true,
+      "comments_unchanged": true,
+      "old_test_names": [],
+      "new_test_names": [],
+      "old_git_mode": "100644",
+      "new_git_mode": "100644"
+    },
+    {
+      "old_path": "tests/integration/src/host_session_proof.rs",
+      "new_path": "tests/integration/src/host_session_test.rs",
+      "old_sha256": "c31d18c9788eaa89cb7b417d769acbce97572d0a61bf5231bdebd0ecb0236f37",
+      "new_sha256": "bfbfa311ec60bfd31c1dd9277acd4dd0b307ea0f1d1bc9995826ce94f0ff159a",
+      "tokens_equal_after_identifier_mapping": true,
+      "all_existing_literals_unchanged": true,
+      "comments_unchanged": true,
+      "old_test_names": [
+        "host_request_budgets_outlive_key_fetches_and_fit_the_proof",
+        "endpoint_pair_requires_distinct_origins_and_the_exact_route",
+        "jwks_availability_is_an_explicit_boolean_argument"
+      ],
+      "new_test_names": [
+        "host_request_budgets_outlive_key_fetches_and_fit_the_test",
+        "endpoint_pair_requires_distinct_origins_and_the_exact_route",
+        "jwks_availability_is_an_explicit_boolean_argument"
+      ],
+      "old_git_mode": "100644",
+      "new_git_mode": "100644"
+    },
+    {
+      "old_path": "tests/integration/src/identity_keys_proof.rs",
+      "new_path": "tests/integration/src/identity_keys_test.rs",
+      "old_sha256": "8ac93de02f87246617601b96a499be6f56449257001143eccf58277a9bb44d3f",
+      "new_sha256": "ec01617e0dc4609fc3c8993735f28095bd8881d14924b5a6d2ae90317a191627",
+      "tokens_equal_after_identifier_mapping": true,
+      "all_existing_literals_unchanged": true,
+      "comments_unchanged": true,
+      "old_test_names": [],
+      "new_test_names": [],
+      "old_git_mode": "100644",
+      "new_git_mode": "100644"
+    },
+    {
+      "old_path": "tests/integration/src/identity_session_proof.rs",
+      "new_path": "tests/integration/src/identity_session_test.rs",
+      "old_sha256": "dd72a924bf76c626c93428e3449b0c4e4770475697b11c208ac150f863a2d1ca",
+      "new_sha256": "89d6577f6e5f0824b46814485622fb7fecf69c801e35618301b7c9454ecd2040",
+      "tokens_equal_after_identifier_mapping": true,
+      "all_existing_literals_unchanged": true,
+      "comments_unchanged": true,
+      "old_test_names": [
+        "observer_cases_require_exact_fields_unique_safe_names_and_explicit_status",
+        "success_response_accepts_only_the_exact_three_field_shape",
+        "header_receipts_refuse_missing_wrong_and_duplicate_values"
+      ],
+      "new_test_names": [
+        "observer_cases_require_exact_fields_unique_safe_names_and_explicit_status",
+        "success_response_accepts_only_the_exact_three_field_shape",
+        "header_receipts_refuse_missing_wrong_and_duplicate_values"
+      ],
+      "old_git_mode": "100644",
+      "new_git_mode": "100644"
+    },
+    {
+      "old_path": "tests/system/src/traceproof.rs",
+      "new_path": "tests/system/src/trace_test.rs",
+      "old_sha256": "fbadedd7e35385ab3c1e9b4ba54b78838d4dcf83f15e8fc6fb759de05d5412f0",
+      "new_sha256": "552e7fb32db81d594383ae4244a8cd561d73e0e06c5679b011fd3917bb81fa6c",
+      "tokens_equal_after_identifier_mapping": true,
+      "all_existing_literals_unchanged": true,
+      "comments_unchanged": true,
+      "old_test_names": [
+        "the_effect_span_injects_a_child_of_the_controlled_parent",
+        "http_get_returns_content_length_body_without_waiting_for_close",
+        "w3c_fields_split_a_traceparent",
+        "header_of_is_case_insensitive"
+      ],
+      "new_test_names": [
+        "the_effect_span_injects_a_child_of_the_controlled_parent",
+        "http_get_returns_content_length_body_without_waiting_for_close",
+        "w3c_fields_split_a_traceparent",
+        "header_of_is_case_insensitive"
+      ],
+      "old_git_mode": "100644",
+      "new_git_mode": "100644"
+    },
+    {
+      "old_path": "tests/integration/src/lib.rs",
+      "new_path": "tests/integration/src/lib.rs",
+      "old_sha256": "09b564d3cb4f773443f804691fc091ee74bdb68d37c0af205817224c9dc554b1",
+      "new_sha256": "2c43bfaf276c0d10a115074af29aa6b0266363c0e4b128f1ce4678416494a926",
+      "tokens_equal_after_identifier_mapping": true,
+      "all_existing_literals_unchanged": true,
+      "comments_unchanged": true,
+      "old_test_names": [],
+      "new_test_names": []
+    },
+    {
+      "old_path": "tests/system/src/lib.rs",
+      "new_path": "tests/system/src/lib.rs",
+      "old_sha256": "058ba0e1dca570dee27f5271f2af73c1f5f3653c979d5b1284db79b196f21651",
+      "new_sha256": "854047d548ae192ec8f30fc47d0c66a1cec393f2fc48fddef0bf0ff6c4eaaee4",
+      "tokens_equal_after_identifier_mapping": true,
+      "all_existing_literals_unchanged": true,
+      "comments_unchanged": true,
+      "old_test_names": [],
+      "new_test_names": []
+    },
+    {
+      "old_path": "tests/orchestrator/src/main.rs",
+      "new_path": "tests/orchestrator/src/main.rs",
+      "old_sha256": "18356fcb937b521d51038356316aeafdf19a67e6f9738642a13cca98d0f45a55",
+      "new_sha256": "c696cd6cec185c3345292d71bd8938e4351d59c219e96e307d4b9722f3f836f4",
+      "tokens_equal_after_identifier_mapping": true,
+      "all_existing_literals_unchanged": true,
+      "comments_unchanged": true,
+      "old_test_names": [],
+      "new_test_names": []
+    },
+    {
+      "old_path": "apps/wamn_receiving/tests/route_authentication_live/cluster/measurement.rs",
+      "new_path": "apps/wamn_receiving/tests/route_authentication_live/cluster/measurement.rs",
+      "old_sha256": "64bb4ebe9cd671e63090da39ff53174e5a94796c97145c22298c9d7fe3a11987",
+      "new_sha256": "9b33deeb4aea2bdfb27f73bc9ec76267516cfb26ea999d88382dd80d9f3632b7",
+      "tokens_equal_after_identifier_mapping": true,
+      "all_existing_literals_unchanged": true,
+      "comments_unchanged": true,
+      "old_test_names": [
+        "throughput_jobs_keep_the_selected_http_fields_and_private_pat_reference",
+        "throughput_postgres_job_keeps_the_statement_and_runs_its_output_script",
+        "fresh_runs_keep_three_pairs_with_the_second_pair_reversed",
+        "overhead_limit_uses_five_sample_median",
+        "throughput_statement_retains_the_generated_read_and_refuses_missing_substitutions",
+        "startup_request_keeps_the_recovery_limit_and_purchase_order_identity",
+        "restarting_a_replaced_or_unready_pod_does_not_pass"
+      ],
+      "new_test_names": [
+        "throughput_jobs_keep_the_selected_http_fields_and_private_pat_reference",
+        "throughput_postgres_job_keeps_the_statement_and_runs_its_output_script",
+        "fresh_runs_keep_three_pairs_with_the_second_pair_reversed",
+        "overhead_limit_uses_five_sample_median",
+        "throughput_statement_retains_the_generated_read_and_refuses_missing_substitutions",
+        "startup_request_keeps_the_recovery_limit_and_purchase_order_identity",
+        "restarting_a_replaced_or_unready_pod_does_not_pass"
+      ]
+    }
+  ],
+  "only_added_literals": [
+    "membershipproof",
+    "traceproof",
+    "dashproof"
+  ],
+  "added_literal_purpose": "Preserve existing derived Clap command names."
+}

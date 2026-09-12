@@ -1,0 +1,10 @@
+Prove fresh PAT exchange and signed environment claims through HTTPS
+
+Usage: wamn-gates identity-session [OPTIONS] --issuer <ISSUER> --ca-file <CA_FILE> --cases-file <CASES_FILE>
+
+Options:
+      --issuer <ISSUER>          [env: WAMN_IDENTITY_ISSUER=]
+      --log-level <LOG_LEVEL>    Log level (the Jobs pass this before the subcommand) [default: info]
+      --ca-file <CA_FILE>        [env: WAMN_IDENTITY_CA_FILE=]
+      --cases-file <CASES_FILE>  [env: WAMN_IDENTITY_SESSION_CASES_FILE=]
+  -h, --help                     Print help

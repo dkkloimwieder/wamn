@@ -1,0 +1,41 @@
+{
+  "source": "c4d95d24b95a5f9ee3d4c5ba870547c8ffbd9559",
+  "inputs": {
+    "wamn_receiving": {
+      "manifest": {
+        "path": "apps/wamn_receiving/wamn.json",
+        "sha256": "b8899211b46b05a2eb6ee59c6dee8cd816763b1914c6b36c5435e16158136d6b"
+      },
+      "overlay": {
+        "path": "apps/wamn_receiving/generated/platform-policy/data-access.json",
+        "sha256": "a6ea7c3b7166cc1d470486dd0081384f0766690f65f73952b8c35158ab06abca",
+        "bytes": 2436
+      },
+      "regenerated_sha256": "a6ea7c3b7166cc1d470486dd0081384f0766690f65f73952b8c35158ab06abca"
+    },
+    "wamn_wms": {
+      "manifest": {
+        "path": "apps/wamn_wms/wamn.json",
+        "sha256": "a76fef7ca4c2c2cdedf64b21ea0f7ae3f1ca996e613c630a859b052b2c043d58"
+      },
+      "overlay": {
+        "path": "apps/wamn_wms/generated/platform-policy/data-access.json",
+        "sha256": "cce8426236ec5e6c794cd9975def116f57861c0e50a5080e610991aaae114f51",
+        "bytes": 3224
+      },
+      "regenerated_sha256": "cce8426236ec5e6c794cd9975def116f57861c0e50a5080e610991aaae114f51"
+    },
+    "client_acme_receiving": {
+      "manifest": {
+        "path": "apps/client_acme_receiving/wamn.json",
+        "sha256": "6a792228e3a182d4ce72fc14f1b4e401d33be95001f403cbf58ae23485f04ecc"
+      },
+      "overlay": {
+        "path": "apps/client_acme_receiving/generated/platform-policy/data-access.json",
+        "sha256": "c01bd8acde922ee8066ae9c73749222e32837df4d43c66221ea40e80c4074a0d",
+        "bytes": 2226
+      },
+      "regenerated_sha256": "c01bd8acde922ee8066ae9c73749222e32837df4d43c66221ea40e80c4074a0d"
+    }
+  }
+}

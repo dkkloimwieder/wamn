@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/wamn-gates",
+    "traceproof",
+    "--help"
+  ],
+  "elapsed_seconds": 0.01014878903515637,
+  "ended_utc": "2026-09-12T03:14:39.511190+00:00",
+  "exit_code": 0,
+  "name": "help-traceproof",
+  "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+  "started_utc": "2026-09-12T03:14:39.501061+00:00",
+  "stderr": {
+    "bytes": 0,
+    "mode": "0o664",
+    "path": "help-traceproof.stderr",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stdout": {
+    "bytes": 555,
+    "mode": "0o664",
+    "path": "help-traceproof.stdout",
+    "sha256": "72a9f0b7c6c1f2b38b22d5b14415b5a6b7232d54b1199b44dca1c5f74d73dcf2"
+  }
+}

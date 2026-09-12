@@ -1,0 +1,367 @@
+diff --git a/crates/execution/host/src/router_driver/native_policy/tests.rs b/crates/execution/host/src/router_driver/native_policy/tests.rs
+index 44740e6f..5e3e6552 100644
+--- a/crates/execution/host/src/router_driver/native_policy/tests.rs
++++ b/crates/execution/host/src/router_driver/native_policy/tests.rs
+@@ -1,5 +1,5 @@
+-//! Native mechanism proofs use the real node ABI and a test-only observation import.
+-//! Authenticated nested cases use the explicitly armed local PostgreSQL proof below.
++//! Native mechanism tests use the real node ABI and a test-only observation import.
++//! Authenticated nested cases use the explicitly armed local PostgreSQL test below.
+ 
+ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+ use std::process::Command;
+@@ -654,7 +654,7 @@ impl Fixture {
+     }
+ }
+ 
+-async fn prove(case: Case) {
++async fn run_case(case: Case) {
+     let fixture = Fixture::new(case).await;
+     let target = fixture.target().await;
+     assert!(
+@@ -755,17 +755,17 @@ async fn prove(case: Case) {
+ }
+ 
+ fn isolated(name: &str, case: Case) {
+-    isolated_proof(name, prove(case));
++    run_isolated_test(name, run_case(case));
+ }
+ 
+-fn isolated_proof(name: &str, proof: impl std::future::Future<Output = ()>) {
++fn run_isolated_test(name: &str, test: impl std::future::Future<Output = ()>) {
+     let full_name = format!("router_driver::native_policy::tests::{name}");
+     if std::env::var(CHILD_MARKER).as_deref() != Ok(name) {
+         let output = Command::new(std::env::current_exe().expect("test executable"))
+             .args(["--exact", &full_name, "--nocapture"])
+             .env(CHILD_MARKER, name)
+             .output()
+-            .expect("start isolated native policy proof");
++            .expect("start isolated native policy test");
+         assert!(
+             output.status.success(),
+             "{full_name}: {}\n{}\n{}",
+@@ -775,14 +775,14 @@ fn isolated_proof(name: &str, proof: impl std::future::Future<Output = ()>) {
+         );
+         assert!(
+             String::from_utf8_lossy(&output.stdout).contains("1 passed"),
+-            "subprocess must execute the named proof"
++            "subprocess must execute the named test"
+         );
+         return;
+     }
+     let (done, finished) = mpsc::channel();
+     let watchdog = std::thread::spawn(move || {
+         if finished.recv_timeout(Duration::from_secs(60)) == Err(mpsc::RecvTimeoutError::Timeout) {
+-            eprintln!("native policy proof exceeded its process watchdog");
++            eprintln!("native policy test exceeded its process watchdog");
+             std::process::exit(124);
+         }
+     });
+@@ -791,7 +791,7 @@ fn isolated_proof(name: &str, proof: impl std::future::Future<Output = ()>) {
+         .enable_all()
+         .build()
+         .expect("isolated native runtime");
+-    runtime.block_on(proof);
++    runtime.block_on(test);
+     drop(runtime);
+     done.send(()).expect("finish watchdog");
+     watchdog.join().expect("join watchdog");
+@@ -850,7 +850,7 @@ async fn native_application_cancelled_resolution_clears_partial_bindings() {
+         .lock()
+         .expect("pause policy lock")
+         .clone()
+-        .expect("binding policy receipt");
++        .expect("binding policy result");
+     assert!(!policy.bindings.read().expect("bindings lock").is_empty());
+     assert!(
+         policy.traces.is_empty(),
+@@ -975,7 +975,7 @@ async fn prove_call_owner() {
+ 
+ #[test]
+ fn native_application_call_retains_owner_until_guest_cancellation() {
+-    isolated_proof(
++    run_isolated_test(
+         "native_application_call_retains_owner_until_guest_cancellation",
+         prove_call_owner(),
+     );
+diff --git a/services/scenario-worker/tests/management_live.rs b/services/scenario-worker/tests/management_live.rs
+index 29a51bc9..78401b00 100644
+--- a/services/scenario-worker/tests/management_live.rs
++++ b/services/scenario-worker/tests/management_live.rs
+@@ -131,7 +131,7 @@ fn derived_hash(document: &serde_json::Value) -> String {
+ /// The one candidate wiring `gate` is exercised against.
+ ///
+ /// The wiring hash is the WHOLE identity (wamn-0h0g.8.5.6): it is the key the
+-/// accepted gate's report is stored under, the report id the receipt hands back,
++/// accepted gate's report is stored under, the report id the result returns,
+ /// and what `get-report` resolves. There is no second identifier to derive,
+ /// choose, or mismatch -- the column that used to carry one is gone.
+ const CANDIDATE_PACKAGE: &str = "candidate_package";
+@@ -670,7 +670,7 @@ async fn seed_effectful_unreleased_candidate(project: &Client) -> anyhow::Result
+ 
+ /// How many wiring rows the project plane holds.
+ ///
+-/// The first-transition proof reads this: an EMPTY `catalog.wirings` must still
++/// The first-transition test reads this: an EMPTY `catalog.wirings` must still
+ /// reach a green report, which is precisely what the deadlock made impossible.
+ async fn stored_wiring_count(project: &Client) -> i64 {
+     project
+@@ -1003,7 +1003,7 @@ async fn authoring_durable_counts(admin: &Client) -> Vec<i64> {
+ /// The stored report for one wiring hash, read straight out of the control
+ /// store rather than through the query surface.
+ ///
+-/// The two proofs it separates: that the gate WROTE a row, and that `get-report`
++/// The two tests it separates: that the gate WROTE a row, and that `get-report`
+ /// can RESOLVE it. A test that only read the query surface could not tell a
+ /// write that never happened from a read path that cannot find it.
+ async fn stored_gate_report(
+@@ -1058,7 +1058,7 @@ async fn empty_case_store_requirement_needs_no_runtime_binding_world(
+     assert_eq!(
+         effectful_candidate_runtime_state(project).await,
+         (true, false, false),
+-        "the proof fixture gained a fabricated release or binding world"
++        "the test fixture gained a fabricated release or binding world"
+     );
+     let mut document = candidate_graph(EFFECTFUL_WIRING, EFFECTFUL_COMPONENT, EFFECTFUL_OPERATION);
+     document["cases"] = serde_json::json!([]);
+@@ -1102,7 +1102,7 @@ async fn nonempty_case_store_requirement_refuses_effect_posture(
+     assert_eq!(
+         effectful_candidate_runtime_state(project).await,
+         (true, false, false),
+-        "the proof fixture gained a fabricated release or binding world"
++        "the test fixture gained a fabricated release or binding world"
+     );
+     let document = candidate_graph(EFFECTFUL_WIRING, EFFECTFUL_COMPONENT, EFFECTFUL_OPERATION);
+     let response = post(
+@@ -1134,14 +1134,14 @@ async fn nonempty_case_store_requirement_refuses_effect_posture(
+ }
+ 
+ #[derive(Clone, Copy)]
+-enum ConnectionGateProof {
++enum ConnectionGateCase {
+     EmptyCases,
+     NonemptyCases,
+ }
+ 
+-async fn run_connection_gate_proof(proof: ConnectionGateProof) {
++async fn run_connection_gate_case(case: ConnectionGateCase) {
+     let Ok(url) = std::env::var("WAMN_PLATFORM_IDENTITY_PG_URL") else {
+-        eprintln!("skipping live connection Gate proof (set WAMN_PLATFORM_IDENTITY_PG_URL to run)");
++        eprintln!("skipping live connection Gate test (set WAMN_PLATFORM_IDENTITY_PG_URL to run)");
+         return;
+     };
+     let _serial = LIVE_GATE_SERIAL.lock().await;
+@@ -1162,8 +1162,8 @@ async fn run_connection_gate_proof(proof: ConnectionGateProof) {
+     .expect("admit the connection Gate principal");
+     let surface = start_management_surface(&url).await;
+ 
+-    match proof {
+-        ConnectionGateProof::EmptyCases => {
++    match case {
++        ConnectionGateCase::EmptyCases => {
+             empty_case_store_requirement_needs_no_runtime_binding_world(
+                 &admin,
+                 &project,
+@@ -1171,7 +1171,7 @@ async fn run_connection_gate_proof(proof: ConnectionGateProof) {
+             )
+             .await;
+         }
+-        ConnectionGateProof::NonemptyCases => {
++        ConnectionGateCase::NonemptyCases => {
+             nonempty_case_store_requirement_refuses_effect_posture(
+                 &admin,
+                 &project,
+@@ -1188,12 +1188,12 @@ async fn run_connection_gate_proof(proof: ConnectionGateProof) {
+ 
+ #[tokio::test]
+ async fn empty_case_connection_component_without_release_or_binding_reports_zero_cases() {
+-    run_connection_gate_proof(ConnectionGateProof::EmptyCases).await;
++    run_connection_gate_case(ConnectionGateCase::EmptyCases).await;
+ }
+ 
+ #[tokio::test]
+ async fn nonempty_case_connection_component_without_release_or_binding_refuses_effect_posture() {
+-    run_connection_gate_proof(ConnectionGateProof::NonemptyCases).await;
++    run_connection_gate_case(ConnectionGateCase::NonemptyCases).await;
+ }
+ 
+ /// The external Gate retains one deployment-pinned endpoint while `wamn dev`
+@@ -1219,7 +1219,7 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
+         .expect("provision the first verification database");
+     let principal = admitted_human(&admin, "reconnect@example.com", PROJECT, "project-author")
+         .await
+-        .expect("admit the reconnect proof principal");
++        .expect("admit the reconnect test principal");
+     let surface = start_management_surface(&url).await;
+ 
+     let before = post(
+@@ -1689,7 +1689,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
+         "a wiring row existed, so this proves the steady state and not the first transition"
+     );
+ 
+-    // The receipt names the report identity the judgment DERIVED from the
++    // The result names the report identity the judgment DERIVED from the
+     // submitted bytes, not one the caller chose -- the command carries no hash
+     // at all now. Report id and validated-draft id are the SAME string, which is
+     // the whole of wamn-0h0g.8.5.6 visible on the wire.
+@@ -1705,7 +1705,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
+                 },
+             },
+         }),
+-        "the test-set receipt drifted: {}",
++        "the test-set result drifted: {}",
+         accepted.body
+     );
+ 
+@@ -1752,7 +1752,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
+     // accepted judgment is not free of consequence: the control store gains one
+     // immutable report keyed by the candidate's wiring hash.
+     //
+-    // Asserted at the STORE first, so a receipt that merely echoes a hash back
++    // Asserted at the STORE first, so a result that merely echoes a hash back
+     // cannot pass for a persisted report.
+     let stored = stored_gate_report(&admin, &candidate_hash)
+         .await
+@@ -1811,7 +1811,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
+     );
+ 
+     // ---- an exact retry converges on the same judgment ---------------------
+-    // The same command id replays the stored receipt.
++    // The same command id replays the stored result.
+     let replay = post(
+         "/authoring",
+         Some(alice.token()),
+@@ -1895,7 +1895,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
+     );
+     assert_eq!(project_queue_count(&project).await, 0);
+ 
+-    // Zero cases remove only execution proof. The Gate still validates the
++    // Zero cases remove only execution testing. The Gate still validates the
+     // document against the exact package's admitted component facts; a missing
+     // operation cannot disappear through the posture queries' joins and mint a
+     // green report.
+@@ -1948,7 +1948,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
+     // reaches a component whose admitted effects projection is non-empty is
+     // refused TYPED and executes nothing.
+     //
+-    // This is the behavioural proof, not a source scan. The SAME unreleased
++    // This is the behavior test, not a source scan. The SAME unreleased
+     // connection-bearing component accepted above now carries cases, so its
+     // admitted effect posture becomes the exact refusing predicate.
+     let runs_before_effectful = project_case_runs(&project).await;
+@@ -2161,7 +2161,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
+         Some(("0123456789abcdef".to_owned(), None, false))
+     );
+ 
+-    // An exact retry replays its stored receipt and converges on the one row.
++    // An exact retry replays its stored result and converges on the one row.
+     let publish_ledger_count = ledger_rows(&admin).await.len();
+     let replayed_publish = post(
+         "/authoring",
+diff --git a/tests/integration/src/trusted_http_route.rs b/tests/integration/src/trusted_http_route.rs
+index d8ea7f38..039d94a9 100644
+--- a/tests/integration/src/trusted_http_route.rs
++++ b/tests/integration/src/trusted_http_route.rs
+@@ -1,6 +1,6 @@
+ //! One router-invoked `wamn:node` guest performing a real trusted HTTP effect.
+ //!
+-//! Shared proof support: it seeds exactly the facts
++//! Shared test support: it seeds exactly the facts
+ //! `ConnectionHttp::send` reads — a component-grain
+ //! `catalog.connection_requirements` row, an `active`/`valid`
+ //! `catalog.connection_bindings` row over an `enabled`
+@@ -100,7 +100,7 @@ pub struct RouteOptions {
+     pub path_and_query: String,
+ }
+ 
+-/// One live driver over the seeded closure, plus the identities a proof needs
++/// One live driver over the seeded closure, plus the identities a test needs
+ /// to address it.
+ pub struct TrustedHttpRoute {
+     pub driver: Arc<RouterDriver>,
+@@ -1221,7 +1221,7 @@ mod tests {
+         let config: tokio_postgres::Config = system_url.parse()?;
+         anyhow::ensure!(
+             config.get_dbname() == Some("wamnsystem"),
+-            "nested proof needs separate /wamnsystem"
++            "nested test needs separate /wamnsystem"
+         );
+         let (system, task) = tokio_postgres::connect(system_url, NoTls).await?;
+         let task = tokio::spawn(task);
+@@ -1231,7 +1231,7 @@ mod tests {
+             .get(0);
+         anyhow::ensure!(
+             version.parse::<u32>()? / 10_000 == 18,
+-            "nested identity proof requires PostgreSQL 18"
++            "nested identity test requires PostgreSQL 18"
+         );
+         wamn_ctl::dev::environment::reset_control_store(&system).await?;
+         system.execute("INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ($1, 'pooled', 'http-reuse-proof')", &[&TENANT]).await?;
+@@ -1571,12 +1571,12 @@ mod tests {
+             std::env::var("WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET").as_deref() == Ok("1"),
+             "set WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET=1 for the disposable database"
+         );
+-        tokio::time::timeout(Duration::from_secs(180), pooling_proof())
++        tokio::time::timeout(Duration::from_secs(180), test_connection_reuse())
+             .await
+-            .context("real HTTP guest pooling proof exceeded 180 seconds")?
++            .context("real HTTP guest connection reuse test exceeded 180 seconds")?
+     }
+ 
+-    async fn pooling_proof() -> anyhow::Result<()> {
++    async fn test_connection_reuse() -> anyhow::Result<()> {
+         let database_url = std::env::var("WAMN_HTTP_REUSE_PG_URL")
+             .context("set WAMN_HTTP_REUSE_PG_URL to fresh disposable PostgreSQL 18")?;
+         let artifact_base = std::env::var("WAMN_HTTP_REUSE_ARTIFACT_BASE")
+@@ -1591,7 +1591,7 @@ mod tests {
+             .get(0);
+         anyhow::ensure!(
+             version.parse::<u32>()? / 10_000 == 18,
+-            "proof requires PostgreSQL 18"
++            "test requires PostgreSQL 18"
+         );
+         let mut origin = origin().await?;
+         let credentials = WamnCredentials::from_projects(HashMap::from([(
+@@ -1788,12 +1788,12 @@ mod tests {
+             std::env::var("WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET").as_deref() == Ok("1"),
+             "set WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET=1 for both disposable databases"
+         );
+-        tokio::time::timeout(Duration::from_secs(180), nested_authority_proof())
++        tokio::time::timeout(Duration::from_secs(180), test_nested_authority())
+             .await
+-            .context("real nested HTTP authority proof exceeded 180 seconds")?
++            .context("real nested HTTP authority test exceeded 180 seconds")?
+     }
+ 
+-    async fn nested_authority_proof() -> anyhow::Result<()> {
++    async fn test_nested_authority() -> anyhow::Result<()> {
+         let database_url = std::env::var("WAMN_HTTP_REUSE_PG_URL")
+             .context("set WAMN_HTTP_REUSE_PG_URL to fresh disposable PostgreSQL 18")?;
+         let system_url = std::env::var("WAMN_HTTP_REUSE_SYSTEM_PG_URL")
+@@ -1803,7 +1803,7 @@ mod tests {
+             project_config
+                 .get_dbname()
+                 .is_some_and(|name| name != "wamnsystem"),
+-            "project proof must not install tenant schemas into wamnsystem"
++            "project test must not install tenant schemas into wamnsystem"
+         );
+         let (admin, connection) = tokio_postgres::connect(&database_url, NoTls).await?;
+         let connection = tokio::spawn(connection);
+@@ -1813,7 +1813,7 @@ mod tests {
+             .get(0);
+         anyhow::ensure!(
+             version.parse::<u32>()? / 10_000 == 18,
+-            "nested proof requires PostgreSQL 18"
++            "nested test requires PostgreSQL 18"
+         );
+         let exporter = InMemorySpanExporterBuilder::new().build();
+         let provider = SdkTracerProvider::builder()
+@@ -1851,7 +1851,7 @@ mod tests {
+             .context("release lacks its exact nested wiring")?;
+         assert_ne!(
+             parent.package_id, wiring.package_id,
+-            "proof must distinguish the wiring owner from its root component package"
++            "test must distinguish the wiring owner from its root component package"
+         );
+         let caller = originating_caller(&system_url, &route, postgres).await?;
+         let mut connection_id = None;

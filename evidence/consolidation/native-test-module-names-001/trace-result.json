@@ -1,0 +1,33 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-system-tests",
+    "--lib",
+    "trace_test::",
+    "--",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 5.398004201997537,
+  "ended_utc": "2026-09-12T03:12:57.176091+00:00",
+  "exit_code": 0,
+  "name": "trace",
+  "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+  "started_utc": "2026-09-12T03:12:51.778110+00:00",
+  "stderr": {
+    "bytes": 5582,
+    "mode": "0o664",
+    "path": "trace.stderr",
+    "sha256": "5fa4ac06d3b3233decc49d618d69806f6dfbde73abd8dc0e62108f3a08fcb2eb"
+  },
+  "stdout": {
+    "bytes": 418,
+    "mode": "0o664",
+    "path": "trace.stdout",
+    "sha256": "202741a8992546ea9fe5cc0f5c30c1d15e1f58334294d3a6f253ccee0f56537f"
+  }
+}

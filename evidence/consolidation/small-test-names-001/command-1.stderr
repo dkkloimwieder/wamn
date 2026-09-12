@@ -1,0 +1,12 @@
+   Compiling serde_core v1.0.229
+   Compiling syn v2.0.119
+   Compiling syn v3.0.4
+   Compiling serde v1.0.229
+   Compiling serde_derive_internals v0.29.1
+   Compiling serde_json v1.0.151
+   Compiling serde_derive v1.0.229
+   Compiling schemars_derive v0.8.22
+   Compiling schemars v0.8.22
+   Compiling wamn-authoring-model v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-wiring-20260912/crates/authoring/model)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.22s
+     Running tests/contract.rs (target/debug/deps/contract-c96c4b23b16c02b5)

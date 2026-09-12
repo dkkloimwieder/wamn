@@ -1,0 +1,185 @@
+[
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "build",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-control-provision",
+      "--lib",
+      "--message-format=json-render-diagnostics"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:56:31.511425+00:00",
+    "elapsed_seconds": 0.9103195469942875,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "rustc",
+      "+1.98.0",
+      "--edition=2024",
+      "/tmp/consolidation-role-grants-after.rs",
+      "-o",
+      "/tmp/consolidation-role-grants-after",
+      "-L",
+      "dependency=/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps",
+      "--extern",
+      "wamn_control_provision=/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/libwamn_control_provision.rlib"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:56:32.424250+00:00",
+    "elapsed_seconds": 0.43738646199926734,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "/tmp/consolidation-role-grants-after"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:56:32.862060+00:00",
+    "elapsed_seconds": 0.002632546005770564,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-control-provision",
+      "--lib",
+      "sql::tests",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:56:32.865672+00:00",
+    "elapsed_seconds": 11.549015616998076,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-ctl",
+      "--lib",
+      "provision_project_env::tests",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:56:44.415022+00:00",
+    "elapsed_seconds": 45.030423193995375,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-control-provision",
+      "--test",
+      "identity_issuer_live",
+      "--test",
+      "session_role_reader_live",
+      "--test",
+      "system_reader_grants",
+      "--test",
+      "family_surface_grants",
+      "--no-run",
+      "--message-format=json-render-diagnostics"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:57:29.445754+00:00",
+    "elapsed_seconds": 2.707198303018231,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-ctl",
+      "--test",
+      "identity_issuer_live",
+      "--test",
+      "management_admitter_generation_live",
+      "--test",
+      "effect_writer_generation_live",
+      "--no-run",
+      "--message-format=json-render-diagnostics"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:57:32.153327+00:00",
+    "elapsed_seconds": 24.781269097002223,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-ctl",
+      "--test",
+      "identity_issuer_live",
+      "compiled_identity_help_hides_administrator_environment_values",
+      "--",
+      "--exact",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:57:56.934949+00:00",
+    "elapsed_seconds": 0.5985788179677911,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  }
+]

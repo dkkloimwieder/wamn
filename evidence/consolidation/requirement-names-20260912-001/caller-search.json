@@ -1,0 +1,18 @@
+{
+  "argv": [
+    "rg",
+    "-n",
+    "verify_requirement_inventory|SELECT_REQUIREMENT_INVENTORY_SQL|SELECT_CONTROL_REQUIREMENT_INVENTORY_SQL",
+    "services",
+    "crates",
+    "apps",
+    "tests",
+    "test-support",
+    "tools"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+  "exit": 1,
+  "stdout": "",
+  "stderr": "",
+  "meaning": "No former helper identifiers remain in maintained callers."
+}

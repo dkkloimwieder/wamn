@@ -1,0 +1,44 @@
+{
+  "finding": "wamn-47wm.5.5",
+  "base": "9597b25fee86ff0caeb29c9ee6925fd500d12be5",
+  "source_snapshot": "source.json",
+  "source_unchanged_during_commands": true,
+  "ordinary_tests": [
+    {
+      "log": "sql-tests.log",
+      "passed": 40,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 100
+    },
+    {
+      "log": "ctl-tests.log",
+      "passed": 37,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 246
+    },
+    {
+      "log": "identity-help.log",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "filtered": 1
+    }
+  ],
+  "ordinary_total_passed": 78,
+  "compiled_live_targets": 7,
+  "database_cases_unexecuted": 10,
+  "database_cases_status": "Compile only; no database or cluster services started.",
+  "commands": "commands.json",
+  "sql_comparison": "sql-comparison.json",
+  "source_comparison": "source-comparison.json",
+  "independent_review": {
+    "agent": "tracker_scope",
+    "read_only": true,
+    "finding": "No defect found. SQL, labels, authority branches, grant tuples, refusal conditions, and current callers reviewed."
+  },
+  "source_commit": "6b3cf72650d1f37e1804e956e675e0825c71d1f5",
+  "committed_sources_match_tested_bytes": true,
+  "source_worktree_clean_after_commit": true
+}

@@ -1,0 +1,53 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-receiving-tests",
+    "--lib",
+    "route_authentication_live::fresh_only::",
+    "--",
+    "--nocapture"
+  ],
+  "cases": [
+    {
+      "name": "route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc",
+      "status": "ignored, requires WAMN_TENANT_KEY_PG_URL on a fresh disposable PostgreSQL 18 server"
+    },
+    {
+      "name": "route_authentication_live::fresh_only::execution_tests::prior_commit_diagnostic_redacts_fixture_credentials",
+      "status": "ok"
+    },
+    {
+      "name": "route_authentication_live::fresh_only::execution_tests::counter_parent_executes_sql_then_forwards_the_exact_nested_call",
+      "status": "ok"
+    },
+    {
+      "name": "route_authentication_live::fresh_only::counter_parent_has_the_real_node_and_nested_operation_abi",
+      "status": "ok"
+    }
+  ],
+  "compiled_test_binary": {
+    "mode": "0o775",
+    "path": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/target/debug/deps/wamn_receiving_tests-5f75009d786f4b31",
+    "sha256": "9553258e379f4c48dbf08c996c2a8657c66a88ad2b051798804629b65a2e40ef",
+    "size": 497434256
+  },
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+  "environment": {
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_TARGET_DIR": null,
+    "RUSTC_WRAPPER": ""
+  },
+  "exit_code": 0,
+  "finished_at": "2026-09-12T03:05:04.354850+00:00",
+  "live_postgres_case_executed": false,
+  "seconds": 85.33040737797273,
+  "session_scenarios_executed": false,
+  "source_unchanged": true,
+  "started_at": "2026-09-12T03:03:39.024410+00:00",
+  "test_summary": "ok. 3 passed; 0 failed; 1 ignored; 0 measured; 63 filtered out; finished in 0.07s"
+}

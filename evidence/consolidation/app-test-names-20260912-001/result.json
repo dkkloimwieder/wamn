@@ -1,0 +1,117 @@
+{
+  "source_commit": "09443c5a67294744317c66675022ac8e5ade635d",
+  "parent_commit": "54e1d3850af7612f1bbe39268db4a881d2b43395",
+  "branch": "work/consolidation-app-test-names-20260912",
+  "status": "pass",
+  "source_files": [
+    {
+      "path": "apps/wamn_receiving/tests/postcommit.rs",
+      "tested_sha256": "b596742566304a12f611115fb744975a5113919340848dbb95558ac7171c85e0",
+      "committed_blob_matches": true,
+      "working_file_mode": "0o664"
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/dev.rs",
+      "tested_sha256": "678d1baceb8eda7e161eb017fc42ccfe4110b692b429cbb3b55353a05221dcb5",
+      "committed_blob_matches": true,
+      "working_file_mode": "0o664"
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/materializer.rs",
+      "tested_sha256": "6f0ac08878b28c9985240b324c34daee86baf806cb7c74aaa384ae89fbf6e031",
+      "committed_blob_matches": true,
+      "working_file_mode": "0o664"
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live.rs",
+      "tested_sha256": "f7dc1c60bf414b87db7e018d62e3a1e730b2c89b499b195731b2eab6e45c9cef",
+      "committed_blob_matches": true,
+      "working_file_mode": "0o664"
+    },
+    {
+      "path": "apps/wamn_receiving/tests/receiving_command_histories_live.rs",
+      "tested_sha256": "77a0033297c88bc6251af2a11103a3e019e05b82338eafc5c7579d0eacda12cb",
+      "committed_blob_matches": true,
+      "working_file_mode": "0o664"
+    },
+    {
+      "path": "apps/client_acme_receiving/tests/overlay_compatibility.rs",
+      "tested_sha256": "c40eca8628548a8771b641f17f2389782ca4eda4e6b2505148cb693019d1af64",
+      "committed_blob_matches": true,
+      "working_file_mode": "0o664"
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/cluster/startup_case.rs",
+      "tested_sha256": "7663e482b0c549029b0a777a78a5e9106b2a34c46541b0d38e629c98b9da3bc0",
+      "committed_blob_matches": true,
+      "working_file_mode": "0o664"
+    },
+    {
+      "path": "tests/integration/tests/startup_burst_live.rs",
+      "tested_sha256": "c66f93287eeb8983c7733bc4943560739e83b2b279cd235da70c5618a8f83b0f",
+      "committed_blob_matches": true,
+      "working_file_mode": "0o664"
+    }
+  ],
+  "caller_artifacts": [
+    {
+      "name": "receiving_command_histories_live",
+      "kind": [
+        "test"
+      ],
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/receiving_command_histories_live-29d33031c17a4509",
+      "sha256": "b3d6483feb713fce1eeb6037591fcba99f75703d131509843a6d94fbb2d69567",
+      "bytes": 50206680
+    },
+    {
+      "name": "wamn_integration_tests",
+      "kind": [
+        "lib"
+      ],
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_integration_tests-e1125e2b0e290887",
+      "sha256": "4f7752b3c9b09559e392b684960c7cb13a4db84a749ff97f836008ee99185afa",
+      "bytes": 453792576
+    },
+    {
+      "name": "startup_burst_live",
+      "kind": [
+        "test"
+      ],
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/startup_burst_live-3ac9d993d153533f",
+      "sha256": "bd2542286ff7532e2914f1c9e012e7b5ef08887f3398c22d33dacfe1f5d66659",
+      "bytes": 139536312
+    },
+    {
+      "name": "wamn_receiving_tests",
+      "kind": [
+        "lib"
+      ],
+      "path": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_receiving_tests-5f75009d786f4b31",
+      "sha256": "66130e696bb136db96927a932b20524b8668c0c22c52d30d584c405634c446f5",
+      "bytes": 497439296
+    }
+  ],
+  "command_count": 7,
+  "all_command_exits_zero": true,
+  "ordinary_tests": {
+    "passed": 8,
+    "failed": 0,
+    "ignored": 0,
+    "filtered_out": 65
+  },
+  "boundary_comparison": {
+    "input_cases": 7,
+    "diagnostic_cases": 3,
+    "before_after_bytes_equal": true,
+    "sha256": "1dd8b4444e374c1179f15ab02d33cc2a57e7efb6e4301e00c66f329bb18a16ee"
+  },
+  "source_string_comparison": {
+    "existing_unchanged": 1887,
+    "format_capture_renamed_with_binding": 1,
+    "explicit_serde_field_name_added": 1
+  },
+  "live_cases_executed": false,
+  "services_started": false,
+  "independent_review": "No concrete defect; intended identifier substitutions, explicit Serde mapping and matched format capture only. Physical fields, metadata paths, trace keys and output fields unchanged.",
+  "working_tree_clean": true
+}

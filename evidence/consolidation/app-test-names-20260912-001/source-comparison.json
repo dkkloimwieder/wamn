@@ -1,0 +1,76 @@
+{
+  "base": "54e1d3850af7612f1bbe39268db4a881d2b43395",
+  "files": [
+    {
+      "path": "apps/wamn_receiving/tests/postcommit.rs",
+      "code_unchanged_except_declared_names_and_serde_attribute": true,
+      "unchanged_literals": 266,
+      "unchanged_literals_sha256": "12fa28eaaea3a4c568abce97d24dc6fd24be3b8a3d9c16c9fd7d4cde854f494d",
+      "literal_template_exceptions": [],
+      "added_attributes": []
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/dev.rs",
+      "code_unchanged_except_declared_names_and_serde_attribute": true,
+      "unchanged_literals": 128,
+      "unchanged_literals_sha256": "0ea67338f95b16aa2a9557bf68ae2174b149cc887ee6d0219a8b365b1603c205",
+      "literal_template_exceptions": [
+        {
+          "before": "\"wamn dev returned the wrong product receipt: {receipts:?}; stdout={stdout:?}\"",
+          "after": "\"wamn dev returned the wrong product receipt: {results:?}; stdout={stdout:?}\""
+        }
+      ],
+      "added_attributes": []
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/materializer.rs",
+      "code_unchanged_except_declared_names_and_serde_attribute": true,
+      "unchanged_literals": 44,
+      "unchanged_literals_sha256": "db3fd1a1fb8a583af32fe964f6c18b87cad7ad01fbf6cb60cec847e5b2d67b06",
+      "literal_template_exceptions": [],
+      "added_attributes": []
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live.rs",
+      "code_unchanged_except_declared_names_and_serde_attribute": true,
+      "unchanged_literals": 101,
+      "unchanged_literals_sha256": "185076fa6e10cdbdebcf7ce27eb436ccfb2727be03b79db00be26ad0c85a6eb0",
+      "literal_template_exceptions": [],
+      "added_attributes": []
+    },
+    {
+      "path": "apps/wamn_receiving/tests/receiving_command_histories_live.rs",
+      "code_unchanged_except_declared_names_and_serde_attribute": true,
+      "unchanged_literals": 366,
+      "unchanged_literals_sha256": "2dcb8a0da2869fd35173a7075b80e643fba4e864e4164cf7fb768697b7c3214f",
+      "literal_template_exceptions": [],
+      "added_attributes": []
+    },
+    {
+      "path": "apps/client_acme_receiving/tests/overlay_compatibility.rs",
+      "code_unchanged_except_declared_names_and_serde_attribute": true,
+      "unchanged_literals": 291,
+      "unchanged_literals_sha256": "ba73238f254a3b45e076e458f529910aa9eac9882028ab8694d0bfc31b630871",
+      "literal_template_exceptions": [],
+      "added_attributes": []
+    },
+    {
+      "path": "apps/wamn_receiving/tests/route_authentication_live/cluster/startup_case.rs",
+      "code_unchanged_except_declared_names_and_serde_attribute": true,
+      "unchanged_literals": 462,
+      "unchanged_literals_sha256": "8d3fcf8f4c83801881060265e30b8c37194c49365516c8f8c015db06cc307bc7",
+      "literal_template_exceptions": [],
+      "added_attributes": []
+    },
+    {
+      "path": "tests/integration/tests/startup_burst_live.rs",
+      "code_unchanged_except_declared_names_and_serde_attribute": true,
+      "unchanged_literals": 229,
+      "unchanged_literals_sha256": "cf215adc3fde874cc40ffdab65e74a4d80a9a6f98684870c9863b7acc8a32a20",
+      "literal_template_exceptions": [],
+      "added_attributes": [
+        "#[serde(rename = \"proof_id\")]"
+      ]
+    }
+  ]
+}

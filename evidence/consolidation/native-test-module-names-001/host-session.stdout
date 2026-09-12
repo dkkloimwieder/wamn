@@ -1,0 +1,8 @@
+
+running 3 tests
+test host_session_test::tests::host_request_budgets_outlive_key_fetches_and_fit_the_test ... ok
+test host_session_test::tests::endpoint_pair_requires_distinct_origins_and_the_exact_route ... ok
+test host_session_test::tests::jwks_availability_is_an_explicit_boolean_argument ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 93 filtered out; finished in 0.00s
+

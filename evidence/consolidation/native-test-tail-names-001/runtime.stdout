@@ -1,0 +1,52 @@
+
+running 47 tests
+test plugins::connection_http::tests::a_lost_response_never_reads_as_effect_uncertain ... ok
+test plugins::connection_http::tests::a_wiring_failure_names_the_refused_effect_and_not_the_command ... ok
+test plugins::connection_http::tests::a_timeout_never_reads_as_a_refusal_before_dispatch ... ok
+test plugins::connection_http::tests::a_transport_failure_in_flight_never_reads_as_a_timeout ... ok
+test plugins::connection_http::tests::a_valid_http_snapshot_is_refused_against_another_capabilitys_descriptor ... ok
+test plugins::connection_http::tests::component_grain_snapshot_refuses_each_missing_authority_layer ... ok
+test plugins::connection_http::tests::guest_headers_cannot_spoof_the_host_owned_idempotency_key ... ok
+test plugins::connection_http::tests::a_guest_supplied_traceparent_is_not_overwritten ... ok
+test plugins::connection_http::tests::release_closure_requires_the_exact_component_and_wiring_version_hash ... ok
+test plugins::connection_http::tests::released_nested_effects_require_the_exact_operation_dependency_path ... ok
+test plugins::connection_http::tests::the_effect_span_is_injected_onto_the_outbound_request ... ok
+test plugins::connection_http::tests::the_pinned_contract_literal_matches_the_descriptor ... ok
+test plugins::connection_http::tests::the_two_details_that_dispatched_nothing_are_refused_before_dispatch ... ok
+test plugins::connection_http::tests::an_unbound_component_records_the_wiring_keys_empty ... ok
+test plugins::connection_http::tests::two_calls_to_the_same_capability_from_different_wirings_record_distinguishable_spans ... ok
+test plugins::connection_http::tests::an_effect_span_names_its_originating_wiring_position_and_executing_package ... ok
+test plugins::effect_span::tests::a_responded_backend_refusal_is_failed_evidence ... ok
+test plugins::effect_span::tests::a_dropped_unsettled_guard_contributes_one_cancelled_attempt ... ok
+test plugins::effect_span::tests::an_answer_that_never_reached_the_guest_records_response_lost ... ok
+test plugins::effect_span::tests::an_attempt_with_no_recorded_outcome_records_effect_uncertain ... ok
+test plugins::connection_http::tests::revoked_invocation_refuses_send_and_can_be_rebound ... ok
+test plugins::effect_span::tests::an_effect_the_far_side_answered_records_responded ... ok
+test plugins::effect_span::tests::an_effect_abandoned_before_it_settled_records_cancelled ... ok
+test plugins::effect_span::tests::an_effect_the_platform_declined_records_refused_before_dispatch ... ok
+test plugins::effect_span::tests::one_failure_survives_successes_but_never_another_failure ... ok
+test plugins::wamn_blobstore::plugin::tests::a_blobstore_effect_span_names_the_invocation_it_was_raised_under ... ok
+test plugins::connection_http::tests::bound_http_failure_evidence_uses_the_existing_classifier_and_resets_on_rebind ... ok
+test plugins::effect_span::tests::no_outcome_word_claims_a_command_was_undone ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_cannot_retarget_its_frozen_origin ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_closure_carries_its_own_coordinates ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_closure_handed_a_manifest_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_from_another_wiring_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_closure_with_no_frozen_binding_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_that_disagrees_with_the_frozen_binding_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_that_matches_the_frozen_binding_is_admitted ... ok
+test plugins::wamn_blobstore::plugin::tests::a_manifest_for_another_tenant_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_manifest_without_the_invoked_package_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_resolves_through_the_mounted_manifest ... ok
+test plugins::effect_span::tests::an_effect_whose_deadline_elapsed_records_timeout ... ok
+test plugins::wamn_blobstore::plugin::tests::a_nested_blobstore_effect_requires_its_roots_dependency_grant ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_the_manifest_carries_is_admitted ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_the_manifest_does_not_carry_refuses ... ok
+test plugins::wamn_blobstore::plugin::tests::a_released_closure_without_a_manifest_refuses ... ok
+test plugins::connection_http::tests::a_timed_out_effect_span_carries_the_timeout_outcome ... ok
+test plugins::connection_http::tests::an_effect_span_names_the_executing_component_and_the_node_operation ... ok
+test plugins::connection_http::tests::two_effects_under_different_node_operations_of_one_component_record_distinguishable_spans ... ok
+test component_admission::tests::operation_dependencies_refuse_missing_extra_and_mismatch ... ok
+
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 265 filtered out; finished in 0.13s
+

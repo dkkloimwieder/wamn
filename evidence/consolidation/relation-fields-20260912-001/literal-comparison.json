@@ -1,0 +1,60 @@
+{
+  "files": [
+    {
+      "path": "crates/schema/generator/src/data_access.rs",
+      "string_literals": 65,
+      "changed_literals": [
+        {
+          "before": "\"generated data-access contribution does not match its welded package manifest\"",
+          "after": "\"generated data-access contribution does not match its recorded package manifest\""
+        },
+        {
+          "before": "\"live installed-set relation inventory repeats a relation\"",
+          "after": "\"live installed-set relation list repeats a relation\""
+        },
+        {
+          "before": "\"installed data-access schema has no ordinary relation inventory\"",
+          "after": "\"installed data-access schema has no ordinary relations\""
+        },
+        {
+          "before": "\"live data-access relation inventory repeats a relation\"",
+          "after": "\"live data-access relation list repeats a relation\""
+        },
+        {
+          "before": "\"application schema has no ordinary relation inventory\"",
+          "after": "\"application schema has no ordinary relations\""
+        },
+        {
+          "before": "\"live data-access relation inventory is invalid\"",
+          "after": "\"live data-access relation fields are invalid\""
+        }
+      ]
+    },
+    {
+      "path": "crates/schema/generator/src/lib.rs",
+      "string_literals": 0,
+      "changed_literals": []
+    },
+    {
+      "path": "services/ctl/src/reconcile_package_data_access.rs",
+      "string_literals": 188,
+      "changed_literals": [
+        {
+          "before": "\"read live package relation inventory\"",
+          "after": "\"read live package relation fields\""
+        }
+      ]
+    },
+    {
+      "path": "apps/wamn_receiving/tests/receiving_data_access.rs",
+      "string_literals": 338,
+      "changed_literals": []
+    }
+  ],
+  "ctl_query": {
+    "bytes": 835,
+    "sha256": "20e29bc49c7fa3ed1467668b5459149a81970001f0c6edd3d80c26f43984d201",
+    "query_and_arguments_unchanged": true
+  },
+  "physical_app_literals_unchanged": true
+}

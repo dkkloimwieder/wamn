@@ -1,0 +1,485 @@
+{
+  "source": "4dbe6222d9cfd2301960204622e471cf36401b5c",
+  "base": "54e1d3850af7612f1bbe39268db4a881d2b43395",
+  "commands": 3,
+  "all_exit_codes_zero": true,
+  "tests": [
+    {
+      "name": "runtime",
+      "binaries": 1,
+      "passed": 47,
+      "failed": 0,
+      "ignored": 0,
+      "cases": [
+        {
+          "name": "plugins::connection_http::tests::a_lost_response_never_reads_as_effect_uncertain",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::a_wiring_failure_names_the_refused_effect_and_not_the_command",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::a_timeout_never_reads_as_a_refusal_before_dispatch",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::a_transport_failure_in_flight_never_reads_as_a_timeout",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::a_valid_http_snapshot_is_refused_against_another_capabilitys_descriptor",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::component_grain_snapshot_refuses_each_missing_authority_layer",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::guest_headers_cannot_spoof_the_host_owned_idempotency_key",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::a_guest_supplied_traceparent_is_not_overwritten",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::release_closure_requires_the_exact_component_and_wiring_version_hash",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::released_nested_effects_require_the_exact_operation_dependency_path",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::the_effect_span_is_injected_onto_the_outbound_request",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::the_pinned_contract_literal_matches_the_descriptor",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::the_two_details_that_dispatched_nothing_are_refused_before_dispatch",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::an_unbound_component_records_the_wiring_keys_empty",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::two_calls_to_the_same_capability_from_different_wirings_record_distinguishable_spans",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::an_effect_span_names_its_originating_wiring_position_and_executing_package",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::effect_span::tests::a_responded_backend_refusal_is_failed_evidence",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::effect_span::tests::a_dropped_unsettled_guard_contributes_one_cancelled_attempt",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::effect_span::tests::an_answer_that_never_reached_the_guest_records_response_lost",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::effect_span::tests::an_attempt_with_no_recorded_outcome_records_effect_uncertain",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::revoked_invocation_refuses_send_and_can_be_rebound",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::effect_span::tests::an_effect_the_far_side_answered_records_responded",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::effect_span::tests::an_effect_abandoned_before_it_settled_records_cancelled",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::effect_span::tests::an_effect_the_platform_declined_records_refused_before_dispatch",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::effect_span::tests::one_failure_survives_successes_but_never_another_failure",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_blobstore_effect_span_names_the_invocation_it_was_raised_under",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::bound_http_failure_evidence_uses_the_existing_classifier_and_resets_on_rebind",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::effect_span::tests::no_outcome_word_claims_a_command_was_undone",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_candidate_cannot_retarget_its_frozen_origin",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_candidate_closure_carries_its_own_coordinates",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_candidate_closure_handed_a_manifest_refuses",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_from_another_wiring_refuses",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_candidate_closure_with_no_frozen_binding_refuses",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_that_disagrees_with_the_frozen_binding_refuses",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_candidate_snapshot_that_matches_the_frozen_binding_is_admitted",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_manifest_for_another_tenant_refuses",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_manifest_without_the_invoked_package_refuses",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_released_closure_resolves_through_the_mounted_manifest",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::effect_span::tests::an_effect_whose_deadline_elapsed_records_timeout",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_nested_blobstore_effect_requires_its_roots_dependency_grant",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_released_closure_the_manifest_carries_is_admitted",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_released_closure_the_manifest_does_not_carry_refuses",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::wamn_blobstore::plugin::tests::a_released_closure_without_a_manifest_refuses",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::a_timed_out_effect_span_carries_the_timeout_outcome",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::an_effect_span_names_the_executing_component_and_the_node_operation",
+          "result": "ok"
+        },
+        {
+          "name": "plugins::connection_http::tests::two_effects_under_different_node_operations_of_one_component_record_distinguishable_spans",
+          "result": "ok"
+        },
+        {
+          "name": "component_admission::tests::operation_dependencies_refuse_missing_extra_and_mismatch",
+          "result": "ok"
+        }
+      ]
+    },
+    {
+      "name": "conformance",
+      "binaries": 4,
+      "passed": 59,
+      "failed": 0,
+      "ignored": 0,
+      "cases": [
+        {
+          "name": "contract_diff_dry_run_prints_the_complete_plan_without_cargo",
+          "result": "ok"
+        },
+        {
+          "name": "contract_diff_runs_the_exact_owner_tests_from_any_directory",
+          "result": "ok"
+        },
+        {
+          "name": "contract_diff_stops_at_each_first_failed_leg",
+          "result": "ok"
+        },
+        {
+          "name": "causation_gates_are_required_with_complete_coverage",
+          "result": "ok"
+        },
+        {
+          "name": "d19_is_owned_by_the_receiving_materializer_journey",
+          "result": "ok"
+        },
+        {
+          "name": "d24_is_retained_by_the_api_publish_recipe",
+          "result": "ok"
+        },
+        {
+          "name": "rejects_decorative_required_gate_mutant",
+          "result": "ok"
+        },
+        {
+          "name": "canonical_registry_covers_every_live_gate_source",
+          "result": "ok"
+        },
+        {
+          "name": "rejects_duplicate_decision_ownership_mutant",
+          "result": "ok"
+        },
+        {
+          "name": "rejects_parked_gate_without_coverage_note_mutant",
+          "result": "ok"
+        },
+        {
+          "name": "rejects_removed_decision_mapping_mutant",
+          "result": "ok"
+        },
+        {
+          "name": "rejects_unregistered_manifest_mutant",
+          "result": "ok"
+        },
+        {
+          "name": "rejects_solely_parked_decision_support_mutant",
+          "result": "ok"
+        },
+        {
+          "name": "rejects_retired_primary_without_live_support_mutant",
+          "result": "ok"
+        },
+        {
+          "name": "gate_evidence_terminology_has_no_legacy_aliases",
+          "result": "ok"
+        },
+        {
+          "name": "empty_cluster_list_is_refused_before_mutation",
+          "result": "ok"
+        },
+        {
+          "name": "malformed_workload_list_fails_closed",
+          "result": "ok"
+        },
+        {
+          "name": "malformed_cri_container_list_fails_closed",
+          "result": "ok"
+        },
+        {
+          "name": "kubernetes_workload_reference_is_a_hard_blocker",
+          "result": "ok"
+        },
+        {
+          "name": "dry_run_plans_every_node_without_mutation",
+          "result": "ok"
+        },
+        {
+          "name": "protected_and_shared_tags_are_refused_before_mutation",
+          "result": "ok"
+        },
+        {
+          "name": "apply_removes_selected_tags_and_internal_aliases_only",
+          "result": "ok"
+        },
+        {
+          "name": "apply_removes_an_entire_explicitly_selected_multi_tag_group",
+          "result": "ok"
+        },
+        {
+          "name": "same_config_container_from_unselected_tag_is_not_removed",
+          "result": "ok"
+        },
+        {
+          "name": "live_running_and_unattributed_containers_are_hard_blockers",
+          "result": "ok"
+        },
+        {
+          "name": "verification_failure_is_reported_after_all_nodes_are_attempted",
+          "result": "ok"
+        },
+        {
+          "name": "alias_removal_failure_preserves_selected_tag_for_retry",
+          "result": "ok"
+        },
+        {
+          "name": "orphaned_container_removal_requires_separate_authorization",
+          "result": "ok"
+        },
+        {
+          "name": "english_prose_context_is_not_an_update",
+          "result": "ok"
+        },
+        {
+          "name": "external_authority_classes_are_excluded",
+          "result": "ok"
+        },
+        {
+          "name": "grant_privilege_list_is_not_a_write",
+          "result": "ok"
+        },
+        {
+          "name": "host_owned_production_claim_authority_is_explicit_and_bounded",
+          "result": "ok"
+        },
+        {
+          "name": "control_authoring_state_ownership_is_explicit_and_bounded",
+          "result": "ok"
+        },
+        {
+          "name": "interpolated_set_clause_still_inventories_the_update",
+          "result": "ok"
+        },
+        {
+          "name": "hyphenated_error_message_literal_is_not_an_update",
+          "result": "ok"
+        },
+        {
+          "name": "an_active_relation_cannot_hold_a_forwarding_address",
+          "result": "ok"
+        },
+        {
+          "name": "effect_ledger_lifecycle_is_run_state_owned",
+          "result": "ok"
+        },
+        {
+          "name": "conflicting_second_migration_owner_is_rejected",
+          "result": "ok"
+        },
+        {
+          "name": "durability_policy_projection_ownership_is_explicit_and_bounded",
+          "result": "ok"
+        },
+        {
+          "name": "lowercase_undeclared_writer_is_rejected",
+          "result": "ok"
+        },
+        {
+          "name": "plpgsql_trigger_operation_literal_is_not_an_update",
+          "result": "ok"
+        },
+        {
+          "name": "quoted_privilege_name_probe_is_not_a_write",
+          "result": "ok"
+        },
+        {
+          "name": "a_retired_relation_may_have_no_static_writer_when_it_names_its_successor",
+          "result": "ok"
+        },
+        {
+          "name": "producer_side_direct_run_admission_is_rejected",
+          "result": "ok"
+        },
+        {
+          "name": "missing_scan_exclusion_path_is_rejected",
+          "result": "ok"
+        },
+        {
+          "name": "row_lock_clause_is_not_an_update",
+          "result": "ok"
+        },
+        {
+          "name": "retired_relation_cannot_regain_a_static_writer",
+          "result": "ok"
+        },
+        {
+          "name": "the_generic_copy_channel_declares_why_it_authors_nothing",
+          "result": "ok"
+        },
+        {
+          "name": "trigger_event_declarations_are_not_inventoried_as_writes",
+          "result": "ok"
+        },
+        {
+          "name": "retired_relation_cannot_supersede_itself",
+          "result": "ok"
+        },
+        {
+          "name": "retired_relation_with_an_unregistered_successor_is_rejected",
+          "result": "ok"
+        },
+        {
+          "name": "unregistered_canonical_table_is_rejected",
+          "result": "ok"
+        },
+        {
+          "name": "the_retired_population_is_pinned_by_the_decay_clause",
+          "result": "ok"
+        },
+        {
+          "name": "retired_relation_cannot_forward_across_planes",
+          "result": "ok"
+        },
+        {
+          "name": "retired_relation_without_a_successor_is_rejected",
+          "result": "ok"
+        },
+        {
+          "name": "undeclared_writer_is_rejected",
+          "result": "ok"
+        },
+        {
+          "name": "unqualified_writer_requires_declared_source_context",
+          "result": "ok"
+        },
+        {
+          "name": "app_role_and_app_user_id_have_no_production_reader_while_the_claim_escape_is_open",
+          "result": "ok"
+        },
+        {
+          "name": "repository_state_ownership_manifest_is_complete",
+          "result": "ok"
+        }
+      ]
+    },
+    {
+      "name": "deadline",
+      "binaries": 1,
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "cases": [
+        {
+          "name": "deadline_test::tests::vanilla_epoch_ticker_interrupts_without_poisoning_the_engine",
+          "result": "ok"
+        }
+      ]
+    }
+  ],
+  "passed": 107,
+  "failed": 0,
+  "ignored": 0,
+  "source_stability": {
+    "all_tracked_bytes_modes_unchanged": true,
+    "changed_paths": [],
+    "head_after": "4dbe6222d9cfd2301960204622e471cf36401b5c",
+    "head_before": "4dbe6222d9cfd2301960204622e471cf36401b5c",
+    "head_unchanged": true,
+    "tracked_count": 31648
+  },
+  "preserved": [
+    "All existing Rust literals",
+    "All assertion tokens after identifier mapping",
+    "SPIN_MODULE bytes",
+    "Serde field proof_tier",
+    "Serde variant partial-proof",
+    "All CLI, result, and Job identities"
+  ],
+  "new_named_test_functions": false,
+  "live_inputs": "unset",
+  "services_started": false
+}

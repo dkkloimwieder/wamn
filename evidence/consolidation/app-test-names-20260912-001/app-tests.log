@@ -1,0 +1,11 @@
+
+running 6 tests
+test route_authentication_live::cluster::startup_case::tests::preserves_tempo_trace_id_normalization_and_refusals ... ok
+test route_authentication_live::cluster::startup_case::tests::scheduler_patch_selects_the_certificate_volume_and_refuses_changed_ownership ... ok
+test route_authentication_live::overlay_compatibility::required_contract_observation_refuses_changed_consumed_fields_and_constraints ... ok
+test route_authentication_live::cluster::startup_case::tests::rejects_missing_duplicate_and_nonpositive_start_spans ... ok
+test route_authentication_live::cluster::startup_case::tests::requires_queued_demand_beyond_the_declared_limit_and_live_warm_route ... ok
+test route_authentication_live::cluster::startup_case::tests::requires_progress_inside_measured_overlapping_starts ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 61 filtered out; finished in 0.00s
+

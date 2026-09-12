@@ -1,0 +1,389 @@
+[
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-integration-tests",
+      "--lib",
+      "membership_test::",
+      "--",
+      "--nocapture"
+    ],
+    "elapsed_seconds": 358.90509627596475,
+    "ended_utc": "2026-09-12T03:12:50.169669+00:00",
+    "exit_code": 0,
+    "name": "membership",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:06:51.264567+00:00",
+    "stderr": {
+      "bytes": 14469,
+      "mode": "0o664",
+      "path": "membership.stderr",
+      "sha256": "759b4778cbb4761528992b72629e16a65288dc8545ac6b524aeadab0b36db34b"
+    },
+    "stdout": {
+      "bytes": 469,
+      "mode": "0o664",
+      "path": "membership.stdout",
+      "sha256": "fa25576862e185b06277a129be9cd014b9f08132ce77af55d8dd5a4400a12aae"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-integration-tests",
+      "--lib",
+      "host_session_test::",
+      "--",
+      "--nocapture"
+    ],
+    "elapsed_seconds": 0.8606957700103521,
+    "ended_utc": "2026-09-12T03:12:51.030957+00:00",
+    "exit_code": 0,
+    "name": "host-session",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:12:50.170271+00:00",
+    "stderr": {
+      "bytes": 8805,
+      "mode": "0o664",
+      "path": "host-session.stderr",
+      "sha256": "b32dbccd145f9189e6e1e837b10842a12e8d6aaa01b2aa1540187818d652a920"
+    },
+    "stdout": {
+      "bytes": 396,
+      "mode": "0o664",
+      "path": "host-session.stdout",
+      "sha256": "43791f03afbc16b9b152c9f923d1c055b8d2b88ba464c862a5d2887f7580d385"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-integration-tests",
+      "--lib",
+      "identity_session_test::",
+      "--",
+      "--nocapture"
+    ],
+    "elapsed_seconds": 0.7456394110340625,
+    "ended_utc": "2026-09-12T03:12:51.777283+00:00",
+    "exit_code": 0,
+    "name": "identity-session",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:12:51.031655+00:00",
+    "stderr": {
+      "bytes": 8805,
+      "mode": "0o664",
+      "path": "identity-session.stderr",
+      "sha256": "9febaa9657758fa0859404a05a4ed72aab10c50df7b9b711edce909ff0544b19"
+    },
+    "stdout": {
+      "bytes": 430,
+      "mode": "0o664",
+      "path": "identity-session.stdout",
+      "sha256": "f29a5514ddd401a5fb0d951dfd72f5c91a0e01e158025c130a017a87129dc710"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-system-tests",
+      "--lib",
+      "trace_test::",
+      "--",
+      "--nocapture"
+    ],
+    "elapsed_seconds": 5.398004201997537,
+    "ended_utc": "2026-09-12T03:12:57.176091+00:00",
+    "exit_code": 0,
+    "name": "trace",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:12:51.778110+00:00",
+    "stderr": {
+      "bytes": 5582,
+      "mode": "0o664",
+      "path": "trace.stderr",
+      "sha256": "5fa4ac06d3b3233decc49d618d69806f6dfbde73abd8dc0e62108f3a08fcb2eb"
+    },
+    "stdout": {
+      "bytes": 418,
+      "mode": "0o664",
+      "path": "trace.stdout",
+      "sha256": "202741a8992546ea9fe5cc0f5c30c1d15e1f58334294d3a6f253ccee0f56537f"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "build",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-gates",
+      "--bin",
+      "wamn-gates"
+    ],
+    "elapsed_seconds": 102.25004040001659,
+    "ended_utc": "2026-09-12T03:14:39.427102+00:00",
+    "exit_code": 0,
+    "name": "orchestrator-build",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:12:57.177079+00:00",
+    "stderr": {
+      "bytes": 10552,
+      "mode": "0o664",
+      "path": "orchestrator-build.stderr",
+      "sha256": "d07fad98ab84fb8d859c908f3519f9edb7b65c75010783f00f984db74e466440"
+    },
+    "stdout": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "orchestrator-build.stdout",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/wamn-gates",
+      "--help"
+    ],
+    "elapsed_seconds": 0.010802853968925774,
+    "ended_utc": "2026-09-12T03:14:39.439818+00:00",
+    "exit_code": 0,
+    "name": "help-root",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:14:39.429050+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "help-root.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 2053,
+      "mode": "0o664",
+      "path": "help-root.stdout",
+      "sha256": "80f7a7a56adc9c2068ee012d53dffd09a600e97164cc81923ea1479625203167"
+    }
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/wamn-gates",
+      "membershipproof",
+      "--help"
+    ],
+    "elapsed_seconds": 0.011049124994315207,
+    "ended_utc": "2026-09-12T03:14:39.454273+00:00",
+    "exit_code": 0,
+    "name": "help-membershipproof",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:14:39.443232+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "help-membershipproof.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 1442,
+      "mode": "0o664",
+      "path": "help-membershipproof.stdout",
+      "sha256": "216821caae5a61d3c492afae5e723bc6c836a2836a608303f6a762106c98a853"
+    }
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/wamn-gates",
+      "dashproof",
+      "--help"
+    ],
+    "elapsed_seconds": 0.011220683983992785,
+    "ended_utc": "2026-09-12T03:14:39.466596+00:00",
+    "exit_code": 0,
+    "name": "help-dashproof",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:14:39.455401+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "help-dashproof.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 1301,
+      "mode": "0o664",
+      "path": "help-dashproof.stdout",
+      "sha256": "664e9d7116a2a80803559108b0b761b089b32349d54f0132f8934c4d2711433f"
+    }
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/wamn-gates",
+      "host-session-proof",
+      "--help"
+    ],
+    "elapsed_seconds": 0.008881699002813548,
+    "ended_utc": "2026-09-12T03:14:39.476247+00:00",
+    "exit_code": 0,
+    "name": "help-host-session-proof",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:14:39.467377+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "help-host-session-proof.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 808,
+      "mode": "0o664",
+      "path": "help-host-session-proof.stdout",
+      "sha256": "23534a146e6c55a557e63bfdfaf9cd0a7e1c05aa53e091b5369a9f5d5805cac9"
+    }
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/wamn-gates",
+      "identity-jwks",
+      "--help"
+    ],
+    "elapsed_seconds": 0.009463023976422846,
+    "ended_utc": "2026-09-12T03:14:39.486679+00:00",
+    "exit_code": 0,
+    "name": "help-identity-jwks",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:14:39.477223+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "help-identity-jwks.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 833,
+      "mode": "0o664",
+      "path": "help-identity-jwks.stdout",
+      "sha256": "211c5e41a447bb8abca818e3413b72d3e514565ec087576cae095a8ba38bf148"
+    }
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/wamn-gates",
+      "identity-session",
+      "--help"
+    ],
+    "elapsed_seconds": 0.012551866006106138,
+    "ended_utc": "2026-09-12T03:14:39.500043+00:00",
+    "exit_code": 0,
+    "name": "help-identity-session",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:14:39.487507+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "help-identity-session.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 534,
+      "mode": "0o664",
+      "path": "help-identity-session.stdout",
+      "sha256": "c94a1b863ddd9394571d72de150fead4a0bf9b36b916576f821df82820385db9"
+    }
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/wamn-gates",
+      "traceproof",
+      "--help"
+    ],
+    "elapsed_seconds": 0.01014878903515637,
+    "ended_utc": "2026-09-12T03:14:39.511190+00:00",
+    "exit_code": 0,
+    "name": "help-traceproof",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:14:39.501061+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "help-traceproof.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 555,
+      "mode": "0o664",
+      "path": "help-traceproof.stdout",
+      "sha256": "72a9f0b7c6c1f2b38b22d5b14415b5a6b7232d54b1199b44dca1c5f74d73dcf2"
+    }
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/wamn-gates",
+      "serve-echo",
+      "--help"
+    ],
+    "elapsed_seconds": 0.010763211990706623,
+    "ended_utc": "2026-09-12T03:14:39.523784+00:00",
+    "exit_code": 0,
+    "name": "help-serve-echo",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:14:39.513024+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "help-serve-echo.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 331,
+      "mode": "0o664",
+      "path": "help-serve-echo.stdout",
+      "sha256": "5684bd76a2ee048c6d4f8a9f68960ce3f04ed36169f0bdd7f53879c0056935b4"
+    }
+  },
+  {
+    "argv": [
+      "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/wamn-gates",
+      "identity-session-fixture",
+      "--help"
+    ],
+    "elapsed_seconds": 0.010072314005810767,
+    "ended_utc": "2026-09-12T03:14:39.535038+00:00",
+    "exit_code": 0,
+    "name": "help-identity-session-fixture",
+    "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+    "started_utc": "2026-09-12T03:14:39.524977+00:00",
+    "stderr": {
+      "bytes": 0,
+      "mode": "0o664",
+      "path": "help-identity-session-fixture.stderr",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout": {
+      "bytes": 332,
+      "mode": "0o664",
+      "path": "help-identity-session-fixture.stdout",
+      "sha256": "d3ffcb102f3aa83be8263e32ac7142962aea1eade1cc97c4ec612688d98f8a57"
+    }
+  }
+]

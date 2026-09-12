@@ -1,0 +1,490 @@
+{
+  "all_source_edits_are_exact_package_token_replacements": true,
+  "base_source": "44efee1093084b42369d8abd2b91f9121a62852c",
+  "changes": [
+    {
+      "after": "wamn-conformance-tests",
+      "after_targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "name": "wamn_conformance_tests"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "capability_registry"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "chart_seam_governance"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "component_export_index"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "contract_diff"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "cranelift_dev"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "dispatcher_boundary"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "effect_spans"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "gate_registry"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "guest_workspace_closure"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "instance_suffix_ownership"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "kind_gate_image_remove"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "kubernetes_gate_runner"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "profile_selectors"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "protected_relations"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "replica_identity_authority"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "repo_lint"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "state_ownership"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "wasmcloud_release_check"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "wasmtime_source_identity"
+        }
+      ],
+      "before": "wamn-proof-conformance",
+      "before_targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "name": "wamn_proof_conformance"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "capability_registry"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "chart_seam_governance"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "component_export_index"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "contract_diff"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "cranelift_dev"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "dispatcher_boundary"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "effect_spans"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "gate_registry"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "guest_workspace_closure"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "instance_suffix_ownership"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "kind_gate_image_remove"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "kubernetes_gate_runner"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "profile_selectors"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "protected_relations"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "replica_identity_authority"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "repo_lint"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "state_ownership"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "wasmcloud_release_check"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "wasmtime_source_identity"
+        }
+      ],
+      "manifest_path": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/tests/conformance/Cargo.toml"
+    },
+    {
+      "after": "wamn-integration-tests",
+      "after_targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "name": "wamn_integration_tests"
+        },
+        {
+          "kind": [
+            "bin"
+          ],
+          "name": "instantiate-bench"
+        },
+        {
+          "kind": [
+            "bin"
+          ],
+          "name": "wamn-dev-env"
+        },
+        {
+          "kind": [
+            "bin"
+          ],
+          "name": "wamn-throughput"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "startup_burst_live"
+        }
+      ],
+      "before": "wamn-proof-integration",
+      "before_targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "name": "wamn_proof_integration"
+        },
+        {
+          "kind": [
+            "bin"
+          ],
+          "name": "instantiate-bench"
+        },
+        {
+          "kind": [
+            "bin"
+          ],
+          "name": "wamn-dev-env"
+        },
+        {
+          "kind": [
+            "bin"
+          ],
+          "name": "wamn-throughput"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "startup_burst_live"
+        }
+      ],
+      "manifest_path": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/tests/integration/Cargo.toml"
+    },
+    {
+      "after": "wamn-system-tests",
+      "after_targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "name": "wamn_system_tests"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "deploy_platform_inventory"
+        },
+        {
+          "kind": [
+            "custom-build"
+          ],
+          "name": "build-script-build"
+        }
+      ],
+      "before": "wamn-proof-system",
+      "before_targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "name": "wamn_proof_system"
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "name": "deploy_platform_inventory"
+        },
+        {
+          "kind": [
+            "custom-build"
+          ],
+          "name": "build-script-build"
+        }
+      ],
+      "manifest_path": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/tests/system/Cargo.toml"
+    }
+  ],
+  "files": [
+    {
+      "after_sha256": "3e7b408614554c7f1f56f365687ae04c33ff81542de43d03f28ea33360118a17",
+      "before_sha256": "21d9d0bc597a6ae817a6eba25e069dd2be3f2754bffc7b4919c063a4c25040d6",
+      "mode": "0o664",
+      "path": "Cargo.lock"
+    },
+    {
+      "after_sha256": "89eec736219f3a411625cb7a3a7c9f4c9cebfd690d2accf283f5722e732a4fd0",
+      "before_sha256": "9debc97018fa2f6b19a300da57a32c2d763c6fbc6a3a078ae22e128f5fd81230",
+      "mode": "0o664",
+      "path": "Cargo.toml"
+    },
+    {
+      "after_sha256": "4f436c1cb494d797b3578a089fd042894e9a3e35a96eaa8b7d978e2a138bdc75",
+      "before_sha256": "156194981e130b18427047672b9f12f26fe9eb87f3291aa81ef4359ab100affa",
+      "mode": "0o664",
+      "path": "apps/wamn_receiving/tests/Cargo.toml"
+    },
+    {
+      "after_sha256": "64bb4ebe9cd671e63090da39ff53174e5a94796c97145c22298c9d7fe3a11987",
+      "before_sha256": "881fbab677e6460501830678196668d56379bbc4abb0d31686f5142becff4f22",
+      "mode": "0o664",
+      "path": "apps/wamn_receiving/tests/route_authentication_live/cluster/measurement.rs"
+    },
+    {
+      "after_sha256": "c93be10b9dab1220332f9f8ad9d8d0ad5451f22c591a40e23ac5750b45164246",
+      "before_sha256": "a23bc300bd63793dee7499f00cfc1c292449629e5bcb45ce110d79b5503a8373",
+      "mode": "0o664",
+      "path": "deploy/README.md"
+    },
+    {
+      "after_sha256": "bf4d4757f99abf30da6d5597dc82e704585e69ce768634a7db493066bc09c433",
+      "before_sha256": "3a9989818bbee231b9a18ef3f80949c8081c166772107d826240a9b101f5ac11",
+      "mode": "0o664",
+      "path": "docs/operations/build-and-test.md"
+    },
+    {
+      "after_sha256": "4ae1c1b7b33e73f6b09a016b762f894776d085179772d18263a5e9c0e46562ed",
+      "before_sha256": "a3daa8fb4b9c3b0c1ccae79ef7b8bb3b6e926f6a3603e22064f66fb2c9b408e4",
+      "mode": "0o664",
+      "path": "docs/poc/agent-authoring-tooling-spec.md"
+    },
+    {
+      "after_sha256": "d78f288496a38aede54c3dd4e3ad444b85fac3c4d2e767540a9d771333fd1b82",
+      "before_sha256": "d05874302a30245efebaf1e6b580bea7742f2355cfebf25f5dd6b76762635fff",
+      "mode": "0o664",
+      "path": "tests/conformance/Cargo.toml"
+    },
+    {
+      "after_sha256": "935b6d5f3bdb229ca2de54ba1a3d7e158bbe704d0edb6e67cc21a9f3a8d37e68",
+      "before_sha256": "a8cce56c1b9035bfdf5519fb4a89d4fd097741a9148d39f53f6cb43fffd8050a",
+      "mode": "0o664",
+      "path": "tests/conformance/tests/kubernetes_gate_runner.rs"
+    },
+    {
+      "after_sha256": "eae5a97bc0779dd6b3b7b01eefb8c283423f6f2dc95df4af561258b469cba78f",
+      "before_sha256": "b4d90e85c1d9f54f9a3c611e83e7afd7beb235bb2ac01c795f7da6f691d3f16f",
+      "mode": "0o664",
+      "path": "tests/integration/Cargo.toml"
+    },
+    {
+      "after_sha256": "b67b5f8863948a012f135ef80ebb2ae4e92345a7e280d640b5975c967ab3848c",
+      "before_sha256": "f2f886a0872254a9b36bfcfd54d9ce50673a00cbacfee8feaddf0db15b34c5b6",
+      "mode": "0o664",
+      "path": "tests/integration/src/agent_pilot/runner.rs"
+    },
+    {
+      "after_sha256": "17e0f65e885a9f5d9f025f13ee6e40d0347f67e9e529ce8c578a0b9ed6aa7e56",
+      "before_sha256": "e5e5e1612cce92e384374879df6ca1b75ecb689f0fe7f731188cf685fdaf9900",
+      "mode": "0o664",
+      "path": "tests/integration/src/bin/instantiate-bench.rs"
+    },
+    {
+      "after_sha256": "032389c36ab266bc6ca624b57eb7df7354a030e4edfc08bef94bb44dbf5c3452",
+      "before_sha256": "35ebdbfd74f52b3f6654a4b11a08c3438901b152ba46429984f43ac7b3b82348",
+      "mode": "0o664",
+      "path": "tests/integration/src/bin/wamn-throughput.rs"
+    },
+    {
+      "after_sha256": "a18d126c3de2b64e968dffc07c87c5c4c06aa7fb4dc6d41d567619f4495be644",
+      "before_sha256": "15407807dd1c89c2e5a6745016ec83e67c91a4577cd10251595e9fd840c88408",
+      "mode": "0o664",
+      "path": "tests/orchestrator/Cargo.toml"
+    },
+    {
+      "after_sha256": "18356fcb937b521d51038356316aeafdf19a67e6f9738642a13cca98d0f45a55",
+      "before_sha256": "cd33ba390a398b881523d7d90095aee0d6548af3587071105ee1ee2a0f53586f",
+      "mode": "0o664",
+      "path": "tests/orchestrator/src/main.rs"
+    },
+    {
+      "after_sha256": "81be30b066eb5349cb479c370812fa8441b8fe06ada354e403e3ab8e4624e2c4",
+      "before_sha256": "b2a0f1db6459ef841eb95f7e3f1af6ec217e6b9add297138c0545c7d86b6ddde",
+      "mode": "0o664",
+      "path": "tests/system/Cargo.toml"
+    },
+    {
+      "after_sha256": "9eea6d272ddc9e166cbb674c63fd362f862cfc9e106bff321776b009e3cbcd07",
+      "before_sha256": "ca6d42c1135411fba307cd3da4509671baef298088eac02e69b532a0451d8f7c",
+      "mode": "0o664",
+      "path": "tests/system/tests/deploy_platform_inventory.rs"
+    },
+    {
+      "after_sha256": "84c65a60d6334be58783c663664f8bdc744a5ed922ca7ff933fc42509167368d",
+      "before_sha256": "e4109bd6296af6a39f02a4310f3e4b95ad340c3ed6e562941d22a00b5ad903f6",
+      "mode": "0o664",
+      "path": "docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh"
+    },
+    {
+      "after_sha256": "6b3cc411e3c145bf559386689af9dcfc866dc7f84cc563a0cdbe4c27f40c3f75",
+      "before_sha256": "e19f697768789a26e8ced938fb76fec9e8fea093c6b237fa234147a51eec9bca",
+      "mode": "0o664",
+      "path": "docs/perf/2026.09/effects-response/tools/cross_profile.py"
+    }
+  ],
+  "lock_equal_except_three_package_names": true,
+  "metadata_array_comparison": "Package, dependency, and member lists sorted by their existing identities.",
+  "metadata_equal_except_package_and_implicit_library_names": true,
+  "package_count_unchanged": true,
+  "workspace_packages": 43
+}

@@ -1,0 +1,33 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-integration-tests",
+    "--lib",
+    "host_session_test::",
+    "--",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 0.8606957700103521,
+  "ended_utc": "2026-09-12T03:12:51.030957+00:00",
+  "exit_code": 0,
+  "name": "host-session",
+  "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+  "started_utc": "2026-09-12T03:12:50.170271+00:00",
+  "stderr": {
+    "bytes": 8805,
+    "mode": "0o664",
+    "path": "host-session.stderr",
+    "sha256": "b32dbccd145f9189e6e1e837b10842a12e8d6aaa01b2aa1540187818d652a920"
+  },
+  "stdout": {
+    "bytes": 396,
+    "mode": "0o664",
+    "path": "host-session.stdout",
+    "sha256": "43791f03afbc16b9b152c9f923d1c055b8d2b88ba464c862a5d2887f7580d385"
+  }
+}

@@ -1,0 +1,68 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-execution-host",
+    "--lib",
+    "router_driver::native_policy::tests::",
+    "--",
+    "--nocapture"
+  ],
+  "authenticated_case_executed": false,
+  "cases": [
+    {
+      "name": "router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle",
+      "status": "ignored, requires WAMN_NATIVE_B_AUTH_PG_URL naming this proof's fresh disposable PostgreSQL 18 server"
+    },
+    {
+      "name": "router_driver::native_policy::tests::native_application_cancelled_resolution_clears_partial_bindings",
+      "status": "ok"
+    },
+    {
+      "name": "router_driver::native_policy::tests::native_node_success_revokes_invocation_authority",
+      "status": "ok"
+    },
+    {
+      "name": "router_driver::native_policy::tests::native_application_call_retains_owner_until_guest_cancellation",
+      "status": "ok"
+    },
+    {
+      "name": "router_driver::native_policy::tests::native_node_execution_obeys_enclosing_deadline",
+      "status": "ok"
+    },
+    {
+      "name": "router_driver::native_policy::tests::native_node_initialization_has_no_authority_and_obeys_deadline",
+      "status": "ok"
+    },
+    {
+      "name": "router_driver::native_policy::tests::native_nested_permission_refusal_revokes_invocation_authority",
+      "status": "ok"
+    },
+    {
+      "name": "router_driver::native_policy::tests::native_node_cancellation_revokes_invocation_authority",
+      "status": "ok"
+    }
+  ],
+  "compiled_test_binary": {
+    "mode": "0o775",
+    "path": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/target/debug/deps/wamn_execution_host-f05f952ca287686b",
+    "sha256": "d2bf17da052caed9a6fda319b1645d875e436bc67adecdd93b1d212536f2205e",
+    "size": 382867840
+  },
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+  "environment": {
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_TARGET_DIR": null,
+    "RUSTC_WRAPPER": ""
+  },
+  "exit_code": 0,
+  "finished_at": "2026-09-12T02:57:09.372776+00:00",
+  "seconds": 107.57471791602438,
+  "source_unchanged": true,
+  "started_at": "2026-09-12T02:55:21.798012+00:00",
+  "test_summary": "ok. 7 passed; 0 failed; 1 ignored; 0 measured; 45 filtered out; finished in 0.70s"
+}

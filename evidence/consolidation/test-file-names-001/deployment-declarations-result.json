@@ -1,0 +1,33 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-system-tests",
+    "--test",
+    "deployment_declarations",
+    "--",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 112.5117374319816,
+  "ended_utc": "2026-09-12T02:50:32.639776+00:00",
+  "exit_code": 101,
+  "name": "deployment-declarations",
+  "source": "cc82d0ed5d0b6ff9a74e9492e67d065e9c5eb1e0",
+  "started_utc": "2026-09-12T02:48:40.128054+00:00",
+  "stderr": {
+    "bytes": 6921,
+    "mode": "0o664",
+    "path": "deployment-declarations.stderr",
+    "sha256": "c298c177c726d20d7f23ab22f42f23c2f29f2309fb7c9f4bbfd9f01892cfcb0e"
+  },
+  "stdout": {
+    "bytes": 865,
+    "mode": "0o664",
+    "path": "deployment-declarations.stdout",
+    "sha256": "b2c1908c1e49d65f652748022d32f117a5c1d7ae0632ce4f09f345320c01ece3"
+  }
+}

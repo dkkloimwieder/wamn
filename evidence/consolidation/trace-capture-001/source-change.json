@@ -1,0 +1,29 @@
+{
+  "authenticated_case_expected_to_be_ignored": "router_driver::native_policy::tests::authenticated::native_authenticated_nested_authority_and_lifecycle",
+  "base_source": "29bfbb326759643dc1ef0df56c881617d8cb6939",
+  "comment_change": {
+    "context": "dead_code lint rationale",
+    "new": "The shared issuer fixture also serves cache-expiry tests.",
+    "old": "The shared issuer fixture also serves cache-expiry proofs.",
+    "path": "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs"
+  },
+  "files": [
+    {
+      "after_sha256": "b8baa06885ebd20d5685d891b88f36a8bc4c9c4a623684064f417c31c97e494a",
+      "before_sha256": "f2e32b5fbc67a5899c801e7dc5a321dffef603ae0c5a671ffce1616910131375",
+      "path": "crates/execution/host/src/router_driver/native_policy/tests/trace.rs",
+      "replacements": 2
+    },
+    {
+      "after_sha256": "47b532477701c610db99f84ff4390f2f46b29e2b21f172ec3b41c3e4d471ed5a",
+      "before_sha256": "3b9c0d55ef1df5fdffbb7b4c49bcd5129bb6a9475d082a929e286055e6ef4bf1",
+      "path": "crates/execution/host/src/router_driver/native_policy/tests/authenticated.rs",
+      "replacements": 2
+    }
+  ],
+  "new_identifier": "TraceCapture",
+  "old_identifier": "TraceProof",
+  "only_requested_identifier_and_comment_substitutions": true,
+  "required_live_input": "WAMN_NATIVE_B_AUTH_PG_URL",
+  "source_commit": "f38a82b41a29d388891ce2594b14e3bc267de1e3"
+}

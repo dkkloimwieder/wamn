@@ -1,0 +1,382 @@
+   Compiling boon v0.6.1
+   Compiling wasmtime-environ v47.0.4
+   Compiling cranelift-codegen v0.134.4
+   Compiling postgres-types v0.2.14
+   Compiling tokio-postgres v0.7.18
+   Compiling tower-http v0.6.11
+   Compiling reqwest v0.13.4
+   Compiling opentelemetry v0.31.0
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:800:4
+    |
+800 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling cranelift-frontend v0.134.4
+   Compiling wasmtime-internal-unwinder v47.0.4
+   Compiling cranelift-native v0.134.4
+   Compiling wasmtime-internal-cranelift v47.0.4
+   Compiling wasmtime-internal-cache v47.0.4
+   Compiling wasmtime-internal-fiber v47.0.4
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/schema/introspection)
+   Compiling wasmtime v47.0.4
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/schema/generator)
+   Compiling async-nats v0.49.1
+   Compiling ratatui-core v0.1.2
+   Compiling opentelemetry_sdk v0.31.0
+   Compiling wiggle v47.0.4
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/execution/run-state)
+   Compiling wasmtime-wasi-io v47.0.4
+   Compiling wit-parser v0.253.0
+   Compiling oci-client v0.17.0
+   Compiling wit-component v0.253.0
+   Compiling wasmtime-wasi v47.0.4
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/control/provision)
+   Compiling opentelemetry-proto v0.31.0
+   Compiling wit-parser v0.254.0
+   Compiling opentelemetry-http v0.31.0
+   Compiling ratatui-widgets v0.3.2
+   Compiling redis v0.27.6
+   Compiling opentelemetry-otlp v0.31.1
+   Compiling wit-component v0.254.0
+   Compiling wasmtime-wasi-http v47.0.4
+   Compiling ratatui-crossterm v0.1.2
+   Compiling oci-wasm v0.6.0
+   Compiling tracing-opentelemetry v0.32.1
+   Compiling opentelemetry-appender-tracing v0.31.1
+   Compiling wamn-client v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/client/core)
+   Compiling object_store v0.14.1
+   Compiling wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)
+   Compiling wamn-client-tui v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/client/tui)
+   Compiling ratatui v0.30.2
+   Compiling deadpool-postgres v0.14.2
+   Compiling wamn-router v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/execution/router)
+   Compiling wamn-platform-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/identity/platform)
+   Compiling wamn-client-terminal v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/client/terminal)
+   Compiling wamn-authoring-model v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/authoring/model)
+   Compiling wamn-schema-control v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/schema/control)
+   Compiling bit-vec v0.8.0
+   Compiling bit-set v0.8.0
+   Compiling sqlx-core v0.9.0
+   Compiling pg_walstream v0.8.0 (https://github.com/dkkloimwieder/pg-walstream?rev=0b007cd627bb913d4b159c705a106b6d4152c91a#0b007cd6)
+   Compiling rand_xorshift v0.4.0
+   Compiling unarray v0.1.4
+   Compiling proptest v1.11.0
+   Compiling sqlx-postgres v0.9.0
+   Compiling wamn-test-infrastructure v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/test-support/infrastructure)
+   Compiling wamn-runtime v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/platform/runtime)
+warning: the item `Future` is imported redundantly
+ --> crates/platform/runtime/src/connection_authority.rs:3:5
+  |
+3 | use std::future::Future;
+  |     ^^^^^^^^^^^^^^^^^^^
+  |
+ --> /rustc/88d9e12ae178fab0fb5cc050a94da85685d449ea/library/std/src/prelude/mod.rs:166:12
+  |
+  = note: the item `Future` is already defined here
+  |
+  = note: requested on the command line with `-W redundant-imports`
+
+warning: constant `HTTP_CONTRACT` is never used
+  --> crates/platform/runtime/src/plugins/connection_http.rs:56:7
+   |
+56 | const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";
+   |       ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/connection_http.rs:131:1
+    |
+131 | / pub struct ConnectionHttp {
+132 | |     postgres: Arc<WamnPostgres>,
+133 | |     transport: Arc<HttpTransport>,
+134 | |     vault: Arc<WamnCredentials>,
+...   |
+151 | |     invocations: std::sync::RwLock<HashMap<String, ConnectionInvocation>>,
+152 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> crates/platform/runtime/src/plugins/wamn_credentials.rs:27:1
+   |
+27 | / pub struct WamnCredentials {
+28 | |     /// Whether ANY backing source was configured. Distinguishes `unavailable`
+29 | |     /// (no source — retryable) from `not-found` (source present, name absent —
+30 | |     /// config-shaped).
+...  |
+33 | |     projects: HashMap<String, HashMap<String, String>>,
+34 | | }
+   | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_jetstream.rs:507:1
+    |
+507 | / pub struct WamnJetstream {
+508 | |     nats_url: Option<String>,
+509 | |     stream_replicas: Option<usize>,
+510 | |     dup_window_secs: Option<u64>,
+...   |
+536 | |     release: Option<Arc<ReleaseManifestWeld>>,
+537 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:213:1
+    |
+213 | / pub struct Capture {
+214 | |     records: std::sync::Mutex<Vec<CapturedRec>>,
+215 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_logging.rs:235:1
+    |
+235 | / pub struct WamnLogging {
+236 | |     /// component id → host-trusted {tenant, project}.
+237 | |     claims: std::sync::RwLock<HashMap<String, Claim>>,
+238 | |     /// Bounded front queue; `try_send` keeps `log()` non-blocking.
+...   |
+243 | |     _drain: tokio::task::JoinHandle<()>,
+244 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:51:1
+    |
+ 51 | / pub struct WamnPostgres {
+ 52 | |     /// Resolves a project id → its database connection + policy.
+ 53 | |     provider: Arc<dyn CredentialProvider>,
+ 54 | |     /// Guest-visible project pools, built lazily and never shared with host-owned
+...   |
+114 | |     pub(super) bind_counters: super::BindCounters,
+115 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:248:1
+    |
+248 | / pub struct StaticCredentialProvider {
+249 | |     projects: HashMap<String, ProjectConfig>,
+250 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/pool.rs:423:1
+    |
+423 | / pub struct K8sSecretProvider {
+424 | |     pub namespace: String,
+425 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:99:1
+    |
+ 99 | / pub struct PgTransaction {
+100 | |     state: SharedTxnState,
+101 | |     destroyed: Arc<AtomicU64>,
+102 | |     cursor_seq: u32,
+103 | |     /// Row limit of the project this transaction's connection belongs to.
+104 | |     row_limit: u64,
+105 | | }
+    | |_^
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> crates/platform/runtime/src/plugins/wamn_postgres/resources.rs:145:1
+    |
+145 | / pub struct PgCursor {
+146 | |     state: SharedTxnState,
+147 | |     destroyed: Arc<AtomicU64>,
+148 | |     name: String,
+149 | | }
+    | |_^
+
+warning: `wamn-runtime` (lib) generated 12 warnings
+   Compiling wamn-ctl v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/services/ctl)
+warning: function `run_once_stages` is never used
+   --> services/ctl/src/dev.rs:604:10
+    |
+604 | async fn run_once_stages<R>(
+    |          ^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `verify_source_package_with_client` is never used
+    --> services/ctl/src/push_component.rs:1301:10
+     |
+1301 | async fn verify_source_package_with_client(
+     |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+   Compiling wamn-scenario-worker v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/services/scenario-worker)
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> services/scenario-worker/src/authoring.rs:218:1
+    |
+218 | / pub struct InternalAuthoringBackend {
+219 | |     authority: InternalDevAdmin,
+220 | |     client: Client,
+221 | |     connection_task: tokio::task::JoinHandle<()>,
+222 | |     tenant_id: Box<str>,
+223 | |     source_schema: BareSchemaName,
+224 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> services/scenario-worker/src/store/admission.rs:316:1
+    |
+316 | / pub struct AdmissionSurface {
+317 | |     /// The explicit credential and exact server-side predicates are retained so
+318 | |     /// every replacement physical connection is checked identically.
+319 | |     probe: CredentialExactnessProbe,
+...   |
+322 | |     tenant_id: Box<str>,
+323 | | }
+    | |_^
+
+warning: `wamn-scenario-worker` (lib) generated 2 warnings
+   Compiling wamn-gate-harness v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/test-support/harness)
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+  --> test-support/harness/src/ceiling.rs:72:1
+   |
+72 | / pub struct Ramp {
+73 | |     tolerance: f64,
+74 | |     max_levels: usize,
+75 | |     levels: Vec<LevelStats>,
+...  |
+82 | |     retrying: bool,
+83 | | }
+   | |_^
+   |
+   = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: `wamn-gate-harness` (lib) generated 1 warning
+   Compiling wamn-execution-host v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/execution/host)
+warning: `wamn-ctl` (lib) generated 2 warnings
+   Compiling wamn-generated-receiving-tui v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/apps/wamn_receiving/generated/receiving-tui)
+   Compiling wast v252.0.0
+   Compiling wamn-proof-integration v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/tests/integration)
+warning: unused import: `anyhow::Context as _`
+  --> tests/integration/src/agent_pilot/runner/process.rs:10:5
+   |
+10 | use anyhow::Context as _;
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wat v1.252.0
+   Compiling wamn-receiving-tui v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/apps/wamn_receiving/ui)
+   Compiling sqlx v0.9.0
+   Compiling wamn-cdc-reader v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/services/cdc-reader)
+warning: function `models` is never used
+  --> tests/integration/src/measurement_schema.rs:25:8
+   |
+25 | pub fn models(schema: &str) -> Vec<ManagedModel> {
+   |        ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `release` is never read
+   --> tests/integration/src/trusted_http_route.rs:110:16
+    |
+105 | pub struct TrustedHttpRoute {
+    |            ---------------- field in this struct
+...
+110 |     pub(crate) release: Arc<ReleaseManifestWeld>,
+    |                ^^^^^^^
+
+   Compiling wamn-receiving-tests v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/apps/wamn_receiving/tests)
+warning: type does not implement `std::fmt::Debug`; consider adding `#[derive(Debug)]` or a manual implementation
+   --> tests/integration/src/trusted_http_route.rs:105:1
+    |
+105 | / pub struct TrustedHttpRoute {
+106 | |     pub driver: Arc<RouterDriver>,
+107 | |     /// The same welded release the driver authorizes. Callers that exercise a
+108 | |     /// release-owned ingress plugin must share this exact weld rather than mint
+...   |
+116 | |     pub wiring_hash: String,
+117 | | }
+    | |_^
+    |
+    = note: requested on the command line with `-W missing-debug-implementations`
+
+warning: `wamn-proof-integration` (lib) generated 4 warnings (run `cargo fix --lib -p wamn-proof-integration` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 01s
+     Running generation.rs (target/debug/deps/generation-56d2dffed1051d38)
+
+running 33 tests
+test a_command_that_declares_no_idempotence_refuses_and_names_all_three_remedies ... ok
+test a_lineless_command_canonicalizes_without_a_line_profile ... ok
+test a_line_profile_and_a_line_input_must_agree ... ok
+test an_inherited_command_that_writes_its_own_row_is_told_to_declare_a_claim ... ok
+test a_command_riding_a_base_claim_carries_its_one_contract_test ... ok
+test a_state_idempotent_command_carries_the_relation_its_version_guards ... ok
+test command_privilege_mismatch_reports_returning_reads_and_declared_writes ... ok
+test claim_finalization_requires_one_returned_row ... ok
+test command_privilege_mismatch_reports_for_update_lock_and_declared_value ... ok
+test an_authored_command_carries_the_two_claim_contract_tests ... ok
+test command_privilege_declarations_match_sql_effects_and_row_locks ... ok
+test an_authored_claim_is_refused_unless_every_identity_comes_from_it ... ok
+test exclusion_owners_reject_undeclared_owners ... ok
+test custom_operation_kinds_visibility_permissions_and_registration_are_closed ... ok
+test dependency_composition_may_add_one_declared_post_call_projection ... ok
+test exclusion_owners_reject_unknown_constraints ... ok
+test custom_statement_declarations_drive_both_siblings_without_domain_tables ... ok
+test additive_unused_column_on_consumed_relation_preserves_required_contract ... ok
+test custom_operation_ir_references_require_declared_fields_and_named_constraints ... ok
+test each_declared_idempotence_value_admits_only_its_own_shape ... ok
+test exclusion_owners_accept_the_package_and_a_declared_base ... ok
+test fresh_only_refuses_private_operations_and_non_boolean_flags ... ok
+test generic_custom_operation_kinds_emit_typed_contracts_and_sql_siblings ... ok
+test overlay_vocabulary_is_exact_at_dependency_definition_and_operation_grain ... ok
+test overlay_vocabulary_refuses_ranges_opaque_digests_and_unknown_definitions ... ok
+test shipped_receiving_manifest_and_authored_corpus_generate_without_drift ... ok
+test generic_custom_operation_path_preserves_shipped_receiving_bytes ... ok
+test fresh_only_public_operations_emit_policy_and_false_preserves_contract_bytes ... ok
+test ownership_only_model_generates_without_fabricated_crud ... ok
+test operation_error_details_are_required_closed_and_exact ... ok
+test the_two_line_members_are_declared_together ... ok
+test shipped_command_source_map_parity_and_bind_fixtures_align_structurally ... ok
+test internal_relation_cdc_exclusion_is_closed_and_not_a_model ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/generation.rs (target/debug/deps/generation-b5aecdc09894ad3e)
+
+running 27 tests
+test corpus_hash_uses_sorted_unambiguous_framing ... ok
+test custom_sql_generated_rust_symbols_are_unique_before_emission ... ok
+test component_grouping_defaults_one_group_and_refuses_invalid_splits ... ok
+test explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields ... ok
+test a_generated_operation_names_an_exclusion_violation_with_its_constraint ... ok
+test duplicate_filters_and_schema_qualified_authored_sql_refuse ... ok
+test a_model_identity_the_claim_does_not_mint_refuses ... ok
+test generated_create_pins_and_grants_its_claim_relation ... ok
+test generated_create_refuses_a_claim_that_does_not_pre_generate_identity ... ok
+test generated_create_replay_writes_nothing ... ok
+test generated_metadata_has_one_strict_canonical_reader ... ok
+test generated_create_takes_every_identity_from_the_claim ... ok
+test generated_create_contracts_publish_the_claim_and_its_refusal ... ok
+test idempotency_conflict_is_closed_to_the_create ... ok
+test generated_operations_ship_a_result_contract_with_closed_domains ... ok
+test every_generated_create_carries_the_two_claim_contract_tests ... ok
+test shared_operation_vocabulary_refuses_permission_identity_drift ... ok
+test shared_operation_vocabulary_refuses_noncanonical_coordinates ... ok
+test generation_is_byte_stable_and_emits_both_projection_siblings ... ok
+test operation_identity_errors_and_constraint_names_are_closed ... ok
+test mutation_contract_refuses_server_owned_and_nonnullable_null ... ok
+test only_a_create_carries_claim_contract_tests ... ok
+test metadata_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables ... ok
+test ordered_filters_and_query_variants_remain_structural_and_finite ... ok
+test strict_manifest_and_ir_references_fail_loudly ... ok
+test update_returning_names_only_the_declared_model_columns ... ok
+test wamn_accessors_are_structurally_derived_from_operations_and_ir ... ok
+
+test result: ok. 27 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

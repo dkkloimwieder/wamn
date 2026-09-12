@@ -1,0 +1,59 @@
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:800:4
+    |
+800 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/schema/generator)
+   Compiling wamn-schema-control v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/schema/control)
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/control/provision)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11.49s
+     Running unittests src/lib.rs (target/debug/deps/wamn_control_provision-aca4bdbba9cd0b90)
+
+running 40 tests
+test sql::tests::control_author_retire_commits_authority_removal_before_termination ... ok
+test sql::tests::control_author_acl_role_is_nologin_and_hardens_on_replay ... ok
+test sql::tests::database_owner_converges_to_the_title_role ... ok
+test sql::tests::control_author_prepare_has_only_control_connect_and_one_membership ... ok
+test sql::tests::cdc_teardown_builders_are_guarded ... ok
+test sql::tests::ensure_app_role_is_a_passwordless_nologin_acl_role ... ok
+test sql::tests::db_owner_role_is_nologin_title_only_and_hardens_on_replay ... ok
+test sql::tests::app_role_drain_is_native_bounded_and_residue_refusing ... ok
+test sql::tests::dispatch_reader_read_surface_is_exactly_two_selects_and_narrows ... ok
+test sql::tests::database_ddl_quotes_the_hyphenated_name ... ok
+test sql::tests::database_exists_is_parameterized ... ok
+test sql::tests::generation_cluster_probes_are_read_only_and_scope_locked ... ok
+test sql::tests::generation_grants_cover_cluster_and_database_object_classes ... ok
+test sql::tests::generation_retire_commits_authority_removal_before_session_termination ... ok
+test sql::tests::grant_connect_on_database_targets_an_arbitrary_db_name ... ok
+test sql::tests::grant_connect_revokes_public_then_grants_app_role ... ok
+test sql::tests::generation_prepare_has_only_login_membership_and_project_connect ... ok
+test sql::tests::generation_state_probe_is_read_only_and_parameterized ... ok
+test sql::tests::named_database_ddl_targets_an_arbitrary_db_name_and_the_wrappers_delegate ... ok
+test sql::tests::publication_covers_the_schema_and_is_idempotent ... ok
+test sql::tests::failover_slot_uses_the_sql_function_form_with_failover_true ... ok
+test sql::tests::replication_role_is_replication_login_and_otherwise_least_privilege ... ok
+test sql::tests::replication_grants_cover_connect_usage_and_only_the_classification_maps ... ok
+test sql::tests::the_dispatch_reader_is_a_connection_free_stable_acl_role ... ok
+test sql::tests::management_admitter_prepare_uses_the_generic_generation_lifecycle ... ok
+test sql::tests::the_http_admitter_surface_adds_only_fresh_operation_permission_reads ... ok
+test sql::tests::tenant_mapping_upsert_converges_but_never_repoints_a_tenant ... ok
+test sql::tests::management_admitter_surface_is_current_column_exact_and_convergent ... ok
+test sql::tests::the_identity_reader_grants_no_insert_and_no_update ... ok
+test sql::tests::the_platform_installs_btree_gist_and_nothing_else ... ok
+test sql::tests::the_executor_platform_surface_is_column_exact_on_every_write ... ok
+test sql::tests::the_registry_reader_grants_exactly_one_select_and_revokes_the_whole_plane ... ok
+test sql::tests::the_management_surface_grants_the_one_execute_its_tkey_index_needs ... ok
+test sql::tests::the_registry_reader_is_never_granted_anything_on_the_identity_plane ... ok
+test sql::tests::the_identity_reader_grants_exactly_four_selects_and_revokes_the_whole_plane ... ok
+test sql::tests::the_two_control_reader_grant_sets_are_disjoint ... ok
+test sql::tests::writer_acl_roles_are_stable_nologin_and_own_no_grants_here ... ok
+test sql::tests::the_dispatch_reader_connect_builder_revokes_and_never_grants ... ok
+test sql::tests::the_identity_reader_prepare_carries_its_grant_set_and_only_control_connect ... ok
+test sql::tests::the_registry_reader_prepare_carries_its_grant_set_and_only_control_connect ... ok
+
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 100 filtered out; finished in 0.00s
+

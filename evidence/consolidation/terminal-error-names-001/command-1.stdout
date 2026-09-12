@@ -1,0 +1,11 @@
+usage: operator_pty.py [-h] --binary BINARY
+
+Drive the composed Receiving operator through a real PTY and disposable HTTP
+fixture. Run: python3 apps/wamn_receiving/tests/operator_pty.py --binary
+/path/to/wamn-receiving Uses only the Python standard library. It does not
+build or contact a platform.
+
+options:
+  -h, --help       show this help message and exit
+  --binary BINARY  built composed Receiving operator executable (wamn-
+                   receiving)

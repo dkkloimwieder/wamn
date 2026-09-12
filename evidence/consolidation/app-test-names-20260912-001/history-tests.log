@@ -1,0 +1,7 @@
+
+running 2 tests
+test shrinking_preserves_the_original_business_property_and_outcome ... ok
+test infrastructure_failure_cannot_replace_a_business_counterexample ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+

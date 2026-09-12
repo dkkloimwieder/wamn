@@ -1,0 +1,17 @@
+{
+  "wamn_receiving": {
+    "bytes": 2436,
+    "sha256": "a6ea7c3b7166cc1d470486dd0081384f0766690f65f73952b8c35158ab06abca",
+    "matches_base_and_checked_in": true
+  },
+  "wamn_wms": {
+    "bytes": 3224,
+    "sha256": "cce8426236ec5e6c794cd9975def116f57861c0e50a5080e610991aaae114f51",
+    "matches_base_and_checked_in": true
+  },
+  "client_acme_receiving": {
+    "bytes": 2226,
+    "sha256": "c01bd8acde922ee8066ae9c73749222e32837df4d43c66221ea40e80c4074a0d",
+    "matches_base_and_checked_in": true
+  }
+}

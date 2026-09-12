@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "rg",
+    "-l",
+    "role_database_acl_inventory_sql|verify_role_acl_inventory|acl_inventory_sql|expected_executor_inventory|generation_acl_inventory_covers_cluster_and_database_object_classes|the_registry_reader_acl_inventory_is_exact_and_never_reaches_identity|the_identity_reader_acl_inventory_is_exact_and_never_grants_a_write|the_http_admitter_permission_inventory_requires_fresh_reads_and_refuses_writes|session_reader_acl_inventory_refuses_missing_and_wider_grants|materializer_acl_inventory_is_exactly_the_two_production_reads|stable_acl_inventory_accepts_only_the_complete_writer_schema_set|stable_acl_inventory_refuses_an_object_kind_outside_the_writer_set|management_acl_inventory_is_exact_and_required_in_the_target_database|verify_dispatch_reader_acl_role_inventory|verify_system_reader_acl_role_inventory|verify_event_materializer_acl_role_inventory|verify_http_admitter_acl_role_inventory|verify_effect_writer_acl_role_inventory|verify_executor_platform_acl_role_inventory|verify_session_role_reader_acl_role_inventory|verify_retention_acl_role_inventory|verify_management_admitter_acl_role_inventory",
+    "apps",
+    "crates",
+    "services",
+    "tests",
+    "test-support",
+    "tools",
+    "docs/operations",
+    "docs/architecture",
+    "--glob",
+    "*.rs",
+    "--glob",
+    "*.py",
+    "--glob",
+    "*.sh",
+    "--glob",
+    "*.md"
+  ],
+  "exit": 1,
+  "remaining_old_names": []
+}

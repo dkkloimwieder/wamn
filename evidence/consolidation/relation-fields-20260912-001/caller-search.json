@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "rg",
+    "-l",
+    "DataAccessRelationInventory|derive_data_access_overlay_from_inventory|relation_inventory",
+    "apps",
+    "crates",
+    "services",
+    "tests",
+    "test-support",
+    "tools",
+    "docs/operations",
+    "docs/architecture",
+    "--glob",
+    "*.rs",
+    "--glob",
+    "*.py",
+    "--glob",
+    "*.sh",
+    "--glob",
+    "*.md"
+  ],
+  "exit": 1,
+  "old_native_callers": []
+}

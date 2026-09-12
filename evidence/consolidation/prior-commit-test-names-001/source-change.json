@@ -1,0 +1,106 @@
+{
+  "base_source": "a6e6e93cfefa9b1d23906208808e2018ea193299",
+  "caller_scope": "qualified type and function names only",
+  "changes": {
+    "Proof": "PriorCommitTest",
+    "proof": "test",
+    "prove_prior_commit": "test_prior_commit"
+  },
+  "client_local_scope": "prove and assert_kind functions only",
+  "files": [
+    {
+      "after_sha256": "f8da02c63b9fc3ce7822043eb854aabb9377e6a4aab73b3d81809d014e10524f",
+      "before_sha256": "281b09791d3b62699ee19352659eaa2c2db7a86a804865141ae71dfb6130bc17",
+      "new_identifier_counts": {
+        "PriorCommitTest": 9,
+        "test": 99,
+        "test_prior_commit": 1
+      },
+      "old_identifier_counts": {
+        "Proof": 9,
+        "proof": 93,
+        "prove_prior_commit": 1
+      },
+      "path": "tests/integration/src/route_authentication_live/fresh_only.rs",
+      "remaining_old_token_counts": {
+        "Proof": 0,
+        "proof": 0,
+        "prove_prior_commit": 0
+      }
+    },
+    {
+      "after_sha256": "91dc12a265ee440aaa3bf63c1f09c358cfced63b14801453f869040c2879859b",
+      "before_sha256": "7534a51739c18fcc3b9020bf4ebd42de767ef5a67e792215bbf052c80a3ae405",
+      "new_identifier_counts": {
+        "PriorCommitTest": 2,
+        "test": 19,
+        "test_prior_commit": 1
+      },
+      "old_identifier_counts": {
+        "Proof": 2,
+        "proof": 19,
+        "prove_prior_commit": 1
+      },
+      "path": "tests/integration/src/route_authentication_live/session_client.rs",
+      "remaining_old_token_counts": {
+        "Proof": 0,
+        "proof": 2,
+        "prove_prior_commit": 0
+      }
+    },
+    {
+      "after_sha256": "55378e32fa7cf9c573481dbaed0e918da4a13d56ed8d765985eb2b3d94557f00",
+      "before_sha256": "c48130b90ce85bf2ced8eb6be5d0ba4933105fd2d41924fe865aba8bdcd9a5af",
+      "new_identifier_counts": {
+        "PriorCommitTest": 2,
+        "test": 8,
+        "test_prior_commit": 1
+      },
+      "old_identifier_counts": {
+        "Proof": 2,
+        "proof": 16,
+        "prove_prior_commit": 1
+      },
+      "path": "apps/wamn_receiving/tests/route_authentication_live/sessions.rs",
+      "remaining_old_token_counts": {
+        "Proof": 0,
+        "proof": 16,
+        "prove_prior_commit": 0
+      }
+    }
+  ],
+  "helper_comment_changes": 1,
+  "helper_literal_changes": [
+    {
+      "new": "WAMN_TENANT_KEY_PG_URL must arm this disposable test",
+      "old": "WAMN_TENANT_KEY_PG_URL must arm this disposable proof"
+    },
+    {
+      "new": "invalid tenant-key test administrator URL",
+      "old": "invalid tenant-key proof administrator URL"
+    },
+    {
+      "new": "tenant-key test requires a fresh postgres database without session options",
+      "old": "tenant-key proof requires a fresh postgres database without session options"
+    },
+    {
+      "new": "connect tenant-key test administrator",
+      "old": "connect tenant-key proof administrator"
+    },
+    {
+      "new": "tenant-key test requires a fresh PostgreSQL 18 superuser server",
+      "old": "tenant-key proof requires a fresh PostgreSQL 18 superuser server"
+    },
+    {
+      "new": "connect tenant-key test database",
+      "old": "connect tenant-key proof database"
+    },
+    {
+      "context": "Debug struct label",
+      "new": "PriorCommitTest",
+      "old": "Proof"
+    }
+  ],
+  "ordinary_test_names_changed": false,
+  "source_commit": "f6e610f0b08621486ec9260d6fb5964cc5f3e39a"
+}

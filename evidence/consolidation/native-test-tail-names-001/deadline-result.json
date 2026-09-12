@@ -1,0 +1,33 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-system-tests",
+    "--lib",
+    "deadline_test::",
+    "--",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 16.727574364980683,
+  "ended_utc": "2026-09-12T03:29:32.169562+00:00",
+  "exit_code": 0,
+  "name": "deadline",
+  "source": "4dbe6222d9cfd2301960204622e471cf36401b5c",
+  "started_utc": "2026-09-12T03:29:15.441998+00:00",
+  "stderr": {
+    "bytes": 5990,
+    "mode": "0o664",
+    "path": "deadline.stderr",
+    "sha256": "469cf1bc05b28eb7e80a141caf22ecd51e19cb69451900857918653a354cfd13"
+  },
+  "stdout": {
+    "bytes": 207,
+    "mode": "0o664",
+    "path": "deadline.stdout",
+    "sha256": "9afa2a7467bbc50d705578c0fe0f005941c4f73b2b1ecc6c14a959278e307157"
+  }
+}

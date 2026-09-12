@@ -1,0 +1,125 @@
+[
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-integration-tests",
+      "--lib",
+      "agent_pilot::",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 137.52931379701477,
+    "source_head": "44efee1093084b42369d8abd2b91f9121a62852c"
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-receiving-tests",
+      "--lib",
+      "route_authentication_live::cluster::measurement::tests::",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 45.19915978005156,
+    "source_head": "44efee1093084b42369d8abd2b91f9121a62852c"
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "build",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-integration-tests",
+      "--bin",
+      "wamn-dev-env",
+      "--bin",
+      "wamn-throughput",
+      "--bin",
+      "instantiate-bench",
+      "-p",
+      "wamn-gates",
+      "--bin",
+      "wamn-gates"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 51.02689290099079,
+    "source_head": "44efee1093084b42369d8abd2b91f9121a62852c"
+  },
+  {
+    "argv": [
+      "target/debug/wamn-gates",
+      "--help"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 0.006594505975954235,
+    "source_head": "44efee1093084b42369d8abd2b91f9121a62852c"
+  },
+  {
+    "argv": [
+      "target/debug/wamn-dev-env",
+      "--help"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 0.004195437009911984,
+    "source_head": "44efee1093084b42369d8abd2b91f9121a62852c"
+  },
+  {
+    "argv": [
+      "target/debug/wamn-throughput",
+      "--help"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 0.002590216987300664,
+    "source_head": "44efee1093084b42369d8abd2b91f9121a62852c"
+  }
+]

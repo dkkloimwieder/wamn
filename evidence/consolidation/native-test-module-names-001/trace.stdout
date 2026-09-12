@@ -1,0 +1,9 @@
+
+running 4 tests
+test trace_test::tests::header_of_is_case_insensitive ... ok
+test trace_test::tests::w3c_fields_split_a_traceparent ... ok
+test trace_test::tests::the_effect_span_injects_a_child_of_the_controlled_parent ... ok
+test trace_test::tests::http_get_returns_content_length_body_without_waiting_for_close ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+

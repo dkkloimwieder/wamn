@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-conformance-tests",
+    "--test",
+    "state_ownership",
+    "--test",
+    "contract_diff",
+    "--test",
+    "kind_gate_image_remove",
+    "--test",
+    "gate_registry",
+    "--",
+    "--nocapture"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912",
+  "source": "4dbe6222d9cfd2301960204622e471cf36401b5c"
+}

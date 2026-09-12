@@ -1,0 +1,33 @@
+{
+  "argv": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-integration-tests",
+    "--lib",
+    "identity_session_test::",
+    "--",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 0.7456394110340625,
+  "ended_utc": "2026-09-12T03:12:51.777283+00:00",
+  "exit_code": 0,
+  "name": "identity-session",
+  "source": "58163a39c5e91671112f4e36bf9c298483f787cb",
+  "started_utc": "2026-09-12T03:12:51.031655+00:00",
+  "stderr": {
+    "bytes": 8805,
+    "mode": "0o664",
+    "path": "identity-session.stderr",
+    "sha256": "9febaa9657758fa0859404a05a4ed72aab10c50df7b9b711edce909ff0544b19"
+  },
+  "stdout": {
+    "bytes": 430,
+    "mode": "0o664",
+    "path": "identity-session.stdout",
+    "sha256": "f29a5514ddd401a5fb0d951dfd72f5c91a0e01e158025c130a017a87129dc710"
+  }
+}

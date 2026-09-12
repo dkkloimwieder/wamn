@@ -1,0 +1,21 @@
+Run the 9.9 dashboards gate: assert a deployed Grafana's health, its datasources, and the static plus per-tenant folders and dashboards
+
+Usage: wamn-gates dashproof [OPTIONS] --grafana-url <GRAFANA_URL>
+
+Options:
+      --grafana-url <GRAFANA_URL>
+          Grafana base URL, e.g. http://grafana:3000
+      --log-level <LOG_LEVEL>
+          Log level (the Jobs pass this before the subcommand) [default: info]
+      --user <USER>
+          Grafana admin user (Basic auth). Env GF_SECURITY_ADMIN_USER [env: GF_SECURITY_ADMIN_USER=] [default: admin]
+      --password <PASSWORD>
+          Grafana admin password (Basic auth). Env GF_SECURITY_ADMIN_PASSWORD [env: GF_SECURITY_ADMIN_PASSWORD=] [default: admin]
+      --local
+          Soft-skip Tempo/Loki datasource health (their backends may be absent in a local docker run). Default OFF — in-cluster all three are HARD
+      --expect-tenant <EXPECT_TENANT>
+          Expect this org's per-tenant folder + dashboard (repeatable). Additive to the orgs read from --system-database-url
+      --system-database-url <SYSTEM_DATABASE_URL>
+          Superuser Postgres URL to the T1 system DB — enumerate `registry.orgs` so EVERY provisioned org's folder is asserted. Env WAMN_SYSTEM_ADMIN_URL [env: WAMN_SYSTEM_ADMIN_URL=]
+  -h, --help
+          Print help

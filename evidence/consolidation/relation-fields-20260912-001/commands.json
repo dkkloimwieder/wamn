@@ -1,0 +1,182 @@
+[
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "build",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--lib",
+      "--message-format=json-render-diagnostics"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:38:43.910446+00:00",
+    "elapsed_seconds": 2.5653758760308847,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "rustc",
+      "+1.98.0",
+      "--edition=2024",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/relation-fields-001/after-probe.rs",
+      "-o",
+      "/tmp/consolidation-relation-fields-after",
+      "-L",
+      "dependency=/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps",
+      "--extern",
+      "wamn_schema_generator=/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/libwamn_schema_generator.rlib"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:38:46.477459+00:00",
+    "elapsed_seconds": 0.28590460296254605,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "/tmp/consolidation-relation-fields-after",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/apps/wamn_receiving/wamn.json",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/apps/wamn_receiving/generated/platform-policy/data-access.json",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/relation-fields-001/wamn_receiving-after.json"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:38:46.763591+00:00",
+    "elapsed_seconds": 0.0027694390155375004,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "/tmp/consolidation-relation-fields-after",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/apps/wamn_wms/wamn.json",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/apps/wamn_wms/generated/platform-policy/data-access.json",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/relation-fields-001/wamn_wms-after.json"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:38:46.766640+00:00",
+    "elapsed_seconds": 0.0034704190329648554,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "/tmp/consolidation-relation-fields-after",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/apps/client_acme_receiving/wamn.json",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/apps/client_acme_receiving/generated/platform-policy/data-access.json",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/relation-fields-001/client_acme_receiving-after.json"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:38:46.770360+00:00",
+    "elapsed_seconds": 0.001953615981619805,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-receiving-tests",
+      "-p",
+      "wamn-schema-generator",
+      "--test",
+      "generation",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:38:46.772643+00:00",
+    "elapsed_seconds": 181.29402155597927,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-ctl",
+      "--lib",
+      "reconcile_package_data_access::tests",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:41:48.067087+00:00",
+    "elapsed_seconds": 40.423109372961335,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-receiving-tests",
+      "--lib",
+      "--no-run",
+      "--message-format=json-render-diagnostics"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:42:28.490696+00:00",
+    "elapsed_seconds": 34.77303537802072,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  },
+  {
+    "argv": [
+      "pg_virtualenv",
+      "-t",
+      "-v",
+      "18",
+      "python3",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/docs/perf/2026.09/consolidation-step4/relation-fields-001/postgres-run.py",
+      "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/target/debug/deps/wamn_receiving_tests-58e5237397428436"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "started": "2026-09-12T02:43:04.124721+00:00",
+    "elapsed_seconds": 3.3361647599958815,
+    "exit": 0,
+    "environment": {
+      "RUSTC_WRAPPER": "",
+      "CARGO_BUILD_JOBS": "2"
+    }
+  }
+]

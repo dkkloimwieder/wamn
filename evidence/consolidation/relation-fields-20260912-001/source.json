@@ -1,0 +1,21 @@
+{
+  "head": "c4d95d24b95a5f9ee3d4c5ba870547c8ffbd9559",
+  "files": {
+    "crates/schema/generator/src/data_access.rs": {
+      "sha256": "1ee4139e7a936fcbf4a45180abe668a52e03b7aaf12abaf52d2baaf7f0022a6f",
+      "mode": "0o664"
+    },
+    "crates/schema/generator/src/lib.rs": {
+      "sha256": "dc8312fb10c22cd338e0844998432e082ffcbef62cb2229b8b32b950ea03264c",
+      "mode": "0o664"
+    },
+    "services/ctl/src/reconcile_package_data_access.rs": {
+      "sha256": "39107924e8f39c50b2ca873a0495b42e32b454437b65c2452237b95e143ac9cd",
+      "mode": "0o664"
+    },
+    "apps/wamn_receiving/tests/receiving_data_access.rs": {
+      "sha256": "c8892a70064f2bacd596e125839fc19b0cb63a7951775a8d4a938d49cb667b27",
+      "mode": "0o664"
+    }
+  }
+}

@@ -1,0 +1,55 @@
+   Compiling serde v1.0.229
+   Compiling aws-lc-rs v1.18.0
+   Compiling smallvec v1.15.2
+   Compiling bytes v1.12.1
+   Compiling tokio v1.53.1
+   Compiling icu_normalizer v2.3.0
+   Compiling chrono v0.4.45
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling url v2.5.8
+   Compiling postgres-protocol v0.6.12
+   Compiling tokio-util v0.7.19
+   Compiling futures-macro v0.3.34
+   Compiling rustls v0.23.43
+   Compiling rustls-webpki v0.103.15
+   Compiling futures-util v0.3.34
+   Compiling schemars v0.8.22
+   Compiling parking_lot_core v0.9.12
+   Compiling tracing v0.1.44
+   Compiling parking_lot v0.12.5
+   Compiling wamn-execution-contract v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-wiring-20260912/apps/platform/execution/contract)
+   Compiling postgres-types v0.2.14
+   Compiling boon v0.6.1
+   Compiling tokio-rustls v0.26.4
+   Compiling tokio-postgres v0.7.18
+   Compiling wamn-event-wire v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-wiring-20260912/apps/platform/events/wire)
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-wiring-20260912/crates/catalog/model)
+   Compiling wamn-schema-introspection v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-wiring-20260912/crates/schema/introspection)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:800:4
+    |
+800 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling tryhard v0.5.2
+   Compiling tokio-stream v0.1.19
+   Compiling serde_nanos v0.1.4
+   Compiling wamn-run-state v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-wiring-20260912/crates/execution/run-state)
+warning: `wamn-catalog` (lib) generated 1 warning
+   Compiling clap_builder v4.6.6
+   Compiling clap_derive v4.6.4
+   Compiling async-nats v0.49.1
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-wiring-20260912/crates/schema/generator)
+   Compiling wamn-control-registry v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-wiring-20260912/crates/control/registry)
+   Compiling webpki-roots v1.0.9
+   Compiling tracing-subscriber v0.3.23
+   Compiling pg_walstream v0.8.0 (https://github.com/dkkloimwieder/pg-walstream?rev=0b007cd627bb913d4b159c705a106b6d4152c91a#0b007cd6)
+   Compiling wamn-control-provision v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-wiring-20260912/crates/control/provision)
+   Compiling clap v4.6.6
+   Compiling wamn-cdc-reader v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-wiring-20260912/services/cdc-reader)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 57.20s
+     Running unittests src/lib.rs (target/debug/deps/wamn_cdc_reader-174cafe7c7ae1fbc)
+WAMN_E1_NATS_URL unset — skipping E1 live JetStream gate
