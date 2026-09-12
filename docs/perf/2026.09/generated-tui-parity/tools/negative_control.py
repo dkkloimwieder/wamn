@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the Receiving wire test detects lost numeric scale, then restore the source."""
+"""The Receiving wire test must detect lost numeric scale. Restore the source afterward."""
 import argparse
 import hashlib
 import json

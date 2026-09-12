@@ -302,7 +302,7 @@ def main():
         result.update(drive(session, relay, db, evidence, ids, args.mode))
         result["passed"] = True
     except (Exception, KeyboardInterrupt) as error:
-        safe_types = (support.ProofError, helper.ProofError) if helper is not None else (support.ProofError,)
+        safe_types = (support.TestError, helper.TestError) if helper is not None else (support.TestError,)
         result["error"] = str(error) if isinstance(error, safe_types) else type(error).__name__
     finally:
         if session is not None:
@@ -330,7 +330,7 @@ def main():
         if evidence is not None:
             evidence.json("result.json", result)
             evidence.sums()
-    print("WMS live PTY proof " + ("passed" if result["passed"] else "failed"))
+    print("WMS live PTY test " + ("passed" if result["passed"] else "failed"))
     return 0 if result["passed"] else 1
 
 

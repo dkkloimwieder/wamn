@@ -4,7 +4,7 @@
 Supply the operator PAT and target PostgreSQL URL through private files.
 The driver seeds unique rows, runs the real binary, and removes its owned rows.
 It imports the existing PTY driver without starting that driver's HTTP fixture.
-Database counts prove committed effects, not the number of HTTP attempts.
+Database counts show committed effects. They do not count HTTP attempts.
 """
 
 import argparse
@@ -26,7 +26,7 @@ SUPPORT_PATH = Path(__file__).resolve().parents[5] / "crates/client/terminal/tes
 SUPPORT_SPEC = importlib.util.spec_from_file_location("receiving_live_support", SUPPORT_PATH)
 support = importlib.util.module_from_spec(SUPPORT_SPEC)
 SUPPORT_SPEC.loader.exec_module(support)
-ProofError, require = support.ProofError, support.require
+TestError, require = support.TestError, support.require
 load_terminal, Evidence, Database = support.load_terminal, support.Evidence, support.Database
 
 
@@ -54,7 +54,7 @@ COMMIT;""")
     FROM receiving.location) AS location WHERE id = '{ids.dock2}'),
   'location_count', (SELECT count(*) FROM receiving.location));""", parse=True)
     require(navigation["first_order"] == ids.order, "owned order is not first under the default query sort")
-    require(navigation["location_count"] <= 100, "live proof needs at most 100 locations")
+    require(navigation["location_count"] <= 100, "live test needs at most 100 locations")
     return navigation
 
 
@@ -255,7 +255,7 @@ def main():
         result.update(drive(session, db, evidence, ids, prefix, navigation))
         result["passed"] = True
     except (Exception, KeyboardInterrupt) as error:
-        safe_types = (ProofError, helper.ProofError) if helper is not None else (ProofError,)
+        safe_types = (TestError, helper.TestError) if helper is not None else (TestError,)
         result["error"] = str(error) if isinstance(error, safe_types) else type(error).__name__
     finally:
         if session is not None:
@@ -277,7 +277,7 @@ def main():
         if evidence is not None:
             evidence.json("result.json", result)
             evidence.sums()
-    print("Receiving live PTY proof " + ("passed" if result["passed"] else "failed"))
+    print("Receiving live PTY test " + ("passed" if result["passed"] else "failed"))
     return 0 if result["passed"] else 1
 
 

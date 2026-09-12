@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove the WMS wire test detects an altered read revision, then restore the source."""
+"""The WMS wire test must detect an altered read revision. Restore the source afterward."""
 import argparse
 import hashlib
 import json

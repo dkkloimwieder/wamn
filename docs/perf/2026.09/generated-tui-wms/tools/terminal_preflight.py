@@ -2,7 +2,7 @@
 """Exercise the WMS terminal driver against HTTP and database fixtures.
 
 This preflight drives the actual example binary through both response modes.
-It does not prove platform execution, database commits, or object-store writes.
+It does not test platform execution, database commits, or object-store writes.
 """
 
 import argparse
@@ -121,7 +121,7 @@ def run_mode(driver, tree, binary, directory, mode, failure, timeout):
         driver.require(not fixture.errors, "the HTTP fixture reported an error")
         result["passed"] = True
     except (Exception, KeyboardInterrupt) as error:
-        safe_types = (driver.support.ProofError, helper.ProofError)
+        safe_types = (driver.support.TestError, helper.TestError)
         result["error"] = str(error) if isinstance(error, safe_types) else type(error).__name__
     finally:
         if session is not None:

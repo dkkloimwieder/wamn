@@ -11,7 +11,7 @@ nested=0
 case "$test_name" in
     trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority) ;;
     trusted_http_route::tests::nested_http_authorizes_child_and_preserves_original_caller) nested=1 ;;
-    *) fail 'name one of the two trusted_http_route::tests live proofs exactly' ;;
+    *) fail 'name one of the two trusted_http_route::tests live tests exactly' ;;
 esac
 
 for tool in docker psql curl openssl rg timeout sha256sum git readlink; do
@@ -20,7 +20,7 @@ done
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 source_tree=$(git -C "$script_dir" rev-parse --show-toplevel)
 cd -- "$source_tree"
-[[ -f tests/integration/src/trusted_http_route.rs ]] || fail 'integration proof source is absent'
+[[ -f tests/integration/src/trusted_http_route.rs ]] || fail 'integration test source is absent'
 
 # An explicit binary is useful when a debug target has several Cargo hashes.
 # Otherwise require exactly one executable, not the newest or an arbitrary one.
@@ -68,7 +68,7 @@ remove_owned() {
     local id=$1 expected_name=$2 actual
     [[ -n "$id" ]] || return 0
     [[ "$id" =~ ^[0-9a-f]{64}$ ]] || return 1
-    actual=$(docker inspect --format '{{.Name}}|{{index .Config.Labels "wamn.proof.run"}}' "$id") || return 1
+    actual=$(docker inspect --format '{{.Name}}|{{index .Config.Labels "wamn.test.run"}}' "$id") || return 1
     [[ "$actual" == "/$expected_name|$run_name" ]] || {
         printf 'refuse cleanup: container identity changed: %s\n' "$expected_name" >&2
         return 1
@@ -106,9 +106,9 @@ trap 'exit 143' TERM
 openssl rand -hex 24 > "$private_dir/password"
 read -r task_password < "$private_dir/password"
 printf 'POSTGRES_PASSWORD=%s\nPOSTGRES_DB=http_reuse\n' "$task_password" > "$private_dir/postgres.env"
-pg_id=$(docker create --pull=never --name "$pg_name" --label "wamn.proof.run=$run_name" \
+pg_id=$(docker create --pull=never --name "$pg_name" --label "wamn.test.run=$run_name" \
     --env-file "$private_dir/postgres.env" -p 127.0.0.1::5432 postgres:18)
-registry_id=$(docker create --pull=never --name "$registry_name" --label "wamn.proof.run=$run_name" \
+registry_id=$(docker create --pull=never --name "$registry_name" --label "wamn.test.run=$run_name" \
     -p 127.0.0.1::5000 registry:2)
 for id in "$pg_id" "$registry_id"; do
     [[ "$id" =~ ^[0-9a-f]{64}$ ]] || fail 'Docker returned an invalid container identity'
@@ -127,7 +127,7 @@ registry_address=$(docker port "$registry_id" 5000/tcp)
 pg_port=${BASH_REMATCH[1]}
 [[ "$registry_address" =~ ^127\.0\.0\.1:[0-9]+$ ]] || fail 'registry did not bind one loopback port'
 
-# Only fixture startup retries. The proof and its HTTP mutations run once.
+# Only fixture startup retries. The test and its HTTP mutations run once.
 ready=0
 for attempt in {1..40}; do
     if PGPASSWORD="$task_password" PGCONNECT_TIMEOUT=1 psql -X -w -h 127.0.0.1 \

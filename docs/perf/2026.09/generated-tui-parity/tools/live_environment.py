@@ -27,7 +27,7 @@ SERVICES = (
 )
 
 
-class ProofFailure(RuntimeError):
+class TestFailure(RuntimeError):
     pass
 
 
@@ -35,7 +35,7 @@ def arguments():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tree", type=Path, required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
-    parser.add_argument("--proof-timeout", type=int, default=3600)
+    parser.add_argument("--test-timeout", type=int, default=3600)
     return parser.parse_args()
 
 
@@ -53,11 +53,11 @@ def wait_until(label, check, timeout, alive=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if alive is not None and alive.poll() is not None:
-            raise ProofFailure(f"{label}: owned process exited before readiness")
+            raise TestFailure(f"{label}: owned process exited before readiness")
         if check():
             return
         time.sleep(0.5)
-    raise ProofFailure(f"{label}: timed out")
+    raise TestFailure(f"{label}: timed out")
 
 
 def reserve_port():
@@ -106,9 +106,9 @@ class OwnedRun:
             status = child.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
             self.stop(child)
-            raise ProofFailure(f"{name}: timed out") from None
+            raise TestFailure(f"{name}: timed out") from None
         if status != 0:
-            raise ProofFailure(f"{name}: exit {status}; see private stage log")
+            raise TestFailure(f"{name}: exit {status}; see private stage log")
         return child
 
     @staticmethod
@@ -149,23 +149,23 @@ def main():
     os.umask(0o077)
     tree = args.tree.resolve()
     target = tree / "target"
-    proof = tree / "docs/perf/2026.09/generated-tui-parity/tools/receiving_pty.py"
+    driver_path = tree / "docs/perf/2026.09/generated-tui-parity/tools/receiving_pty.py"
     evidence = args.evidence_dir.resolve()
     evidence.mkdir(parents=True, exist_ok=False)
     compose_file = tree / "test-support/infrastructure/std-virtualization.compose.yaml"
-    for required in (proof, compose_file, tree / "apps/wamn_receiving/wamn.json", tree / "apps/client_acme_receiving/wamn.json"):
+    for required in (driver_path, compose_file, tree / "apps/wamn_receiving/wamn.json", tree / "apps/client_acme_receiving/wamn.json"):
         if not required.is_file():
-            raise ProofFailure(f"required source is absent: {required}")
+            raise TestFailure(f"required source is absent: {required}")
     for name in ("wamn", "wamn-identity", "wamn-host", "wamn-scenario-worker", "wamn-receiving"):
         if not os.access(target / "debug" / name, os.X_OK):
-            raise ProofFailure(f"required native artifact is absent: {name}")
+            raise TestFailure(f"required native artifact is absent: {name}")
     for command in ("docker", "cargo", "psql"):
         if shutil.which(command) is None:
-            raise ProofFailure(f"required executable is absent: {command}")
+            raise TestFailure(f"required executable is absent: {command}")
 
     scratch = Path(tempfile.mkdtemp(prefix="wamn-receiving-parity-live-", dir="/tmp"))
     scratch.chmod(0o700)
-    print(f"Private live-proof scratch: {scratch}", flush=True)
+    print(f"Private live test scratch: {scratch}", flush=True)
     project = "wamn-receiving-parity-" + secrets.token_hex(8)
     username = project
     temporary_container = project + "-htpasswd"
@@ -204,7 +204,7 @@ def main():
     redactions = set()
 
     def interrupted(signum, _frame):
-        raise ProofFailure(f"orchestrator interrupted by signal {signum}")
+        raise TestFailure(f"orchestrator interrupted by signal {signum}")
 
     previous_signals = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGINT, signal.SIGTERM)}
     try:
@@ -212,7 +212,7 @@ def main():
         owned.run("build-http-route", ["cargo", "build", "--manifest-path", tree / "apps/Cargo.toml", "-p", "http-route", "--target", "wasm32-wasip2", "--locked", "--offline"], timeout=1800, environment=guest_environment)
         guest = tree / "apps/target/wasm32-wasip2/debug/http_route.wasm"
         if not guest.is_file() or guest.stat().st_size == 0:
-            raise ProofFailure("http-route guest artifact is absent")
+            raise TestFailure("http-route guest artifact is absent")
         artifacts = [guest, *(target / "debug" / name for name in
                               ("wamn", "wamn-identity", "wamn-host", "wamn-scenario-worker", "wamn-receiving"))]
         (evidence / "artifacts.json").write_text(json.dumps({
@@ -233,7 +233,7 @@ def main():
         owned.run("postgres-ready", compose + ["exec", "-T", "-e", "PGPASSWORD=probe", "receiving-route-postgres", "psql", "-h", "127.0.0.1", "-U", "postgres", "-Atqc", "select 1"])
         owned.run("create-system-database", compose + ["exec", "-T", "-e", "PGPASSWORD=probe", "receiving-route-postgres", "psql", "-h", "127.0.0.1", "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", "CREATE DATABASE wamn_system"])
         if http_status(f"http://{authority}/v2/") != 401:
-            raise ProofFailure("registry does not enforce authentication")
+            raise TestFailure("registry does not enforce authentication")
         docker_auth = scratch / "docker"
         docker_auth.mkdir()
         (docker_auth / "config.json").write_bytes(auth.read_bytes())
@@ -273,7 +273,7 @@ def main():
                                              "--overlay-root", tree / "apps/client_acme_receiving", "--hold"])
         served = re.compile(r"^run served: (\S+) host=(\S+) target_instance=(\S+)$", re.MULTILINE)
         wait_until("served activation", lambda: served.search((scratch / "dev-run.log").read_text(errors="replace")),
-                   args.proof_timeout, alive=loop)
+                   args.test_timeout, alive=loop)
         binding = served.search((scratch / "dev-run.log").read_text(errors="replace")).groups()
         document = json.loads(config.read_text())
         target_url = scratch / "target-database-url"
@@ -281,14 +281,14 @@ def main():
         operator_pat = scratch / "operator-pat"
         operator_pat.write_text(document["operator_bearer_token"])
         (evidence / "binding.json").write_text(json.dumps(dict(zip(["url", "host", "target_instance"], binding)), indent=2) + "\n")
-        proof_command = [sys.executable, proof, "--binary", target / "debug/wamn-receiving",
+        driver_command = [sys.executable, driver_path, "--binary", target / "debug/wamn-receiving",
                          "--endpoint", binding[0], "--host", binding[1], "--target-instance", binding[2],
                          "--operator-pat-file", operator_pat,
                          "--target-postgres-url-file", target_url, "--evidence-dir", evidence / "client"]
-        owned.run("receiving-composition-live", proof_command, timeout=180)
+        owned.run("receiving-composition-live", driver_command, timeout=180)
         success = True
     except BaseException as error:
-        failure = type(error).__name__
+        failure = "ProofFailure" if type(error) is TestFailure else type(error).__name__
         with (scratch / "orchestrator-error.log").open("w") as output:
             traceback.print_exc(file=output)
         raise
@@ -344,16 +344,16 @@ def main():
         result = {"passed": success, "failure": failure, "project": project,
                   "elapsed_seconds": round(time.monotonic() - started, 3), "private_scratch": str(scratch)}
         (evidence / "result.json").write_text(json.dumps(result, indent=2) + "\n")
-        print(f"Retained live-proof evidence: {evidence}", flush=True)
+        print(f"Retained live test evidence: {evidence}", flush=True)
     if not success:
-        raise ProofFailure("live proof or owned cleanup failed")
-    print("Disposable Receiving composition live proof passed.", flush=True)
+        raise TestFailure("live test or owned cleanup failed")
+    print("Disposable Receiving composition live test passed.", flush=True)
 
 
 if __name__ == "__main__":
     try:
         main()
-    except ProofFailure as error:
+    except TestFailure as error:
         print(str(error), file=sys.stderr)
         raise SystemExit(1) from None
     except Exception as error:
