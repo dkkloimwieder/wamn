@@ -18,9 +18,9 @@ use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 use wamn_run_state::{
-    BeginEffectAttempt, CredentialGeneration, EffectWriterClient, EffectWriterCredentialScope,
-    EffectWriterCredentialValidity, EffectWriterScope, effect_writer_credential,
-    effect_writer_generation_role,
+    AuthorityClass, BeginEffectAttempt, CredentialGeneration, EffectWriterClient,
+    EffectWriterCredentialScope, EffectWriterCredentialValidity, EffectWriterScope,
+    effect_writer_credential, effect_writer_generation_role,
 };
 use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ProductionClaimResult, WamnPostgres, WamnPostgresConfig,
@@ -317,6 +317,74 @@ pub async fn install_effect_writer(
     .await
     .map_err(anyhow::Error::new)?;
     Ok((writer, role))
+}
+
+/// Mint the executor generation separately from the fixture's administrator and effect writer.
+async fn install_executor(client: &Client, admin_url: &str) -> anyhow::Result<(String, String)> {
+    use wamn_control_provision::sql::{
+        EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS, EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS,
+        normalize_workload_generation_membership_sql,
+    };
+    use wamn_control_provision::{WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role};
+
+    let database: String = client
+        .query_one("SELECT current_database()::text", &[])
+        .await?
+        .get(0);
+    let family = WorkloadRoleFamily::ExecutorPlatform;
+    let role = workload_generation_role(
+        family,
+        WorkloadRoleScope::ProjectEnvironment {
+            org: "claim-live-org",
+            project: "claim-live-project",
+            environment: ENVIRONMENT,
+            database: &database,
+        },
+        wamn_control_provision::CredentialGeneration::A,
+    )?;
+    let role_identifier = quote_identifier(&role);
+    let password = uuid::Uuid::new_v4().simple().to_string();
+    let acl_role = quote_identifier(family.acl_role());
+    let run_update = EXECUTOR_PLATFORM_RUN_UPDATE_COLUMNS
+        .iter()
+        .map(|column| quote_identifier(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let queue_update = EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS
+        .iter()
+        .map(|column| quote_identifier(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    // The fixture has only the catalog relations the claim query reads. Keep
+    // its executor writes at the production column grain and grant no INSERT.
+    client
+        .batch_execute(&format!(
+            "CREATE ROLE {role_identifier} LOGIN PASSWORD {password} \
+               NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
+             {membership} \
+             GRANT CONNECT ON DATABASE {database} TO {role_identifier}; \
+             GRANT USAGE ON SCHEMA {SCHEMA}, catalog TO {acl_role}; \
+             GRANT SELECT ON TABLE {SCHEMA}.runs, {SCHEMA}.run_queue, \
+               {SCHEMA}.effect_attempts, catalog.connection_bindings, \
+               catalog.connection_instances, catalog.connection_generations TO {acl_role}; \
+             GRANT UPDATE ({run_update}) ON TABLE {SCHEMA}.runs TO {acl_role}; \
+             GRANT UPDATE ({queue_update}) ON TABLE {SCHEMA}.run_queue TO {acl_role}; \
+             GRANT DELETE ON TABLE {SCHEMA}.run_queue TO {acl_role};",
+            password = quote_literal(&password),
+            membership = normalize_workload_generation_membership_sql(family, &role, true),
+            database = quote_identifier(&database),
+        ))
+        .await?;
+    let mut url = Url::parse(admin_url)?;
+    url.set_username(&role)
+        .map_err(|()| anyhow::anyhow!("set executor username"))?;
+    url.set_password(Some(&password))
+        .map_err(|()| anyhow::anyhow!("set executor password"))?;
+    url.set_fragment(None);
+    Ok((
+        url_with_application_name(url.as_str(), RUNTIME_APPLICATION_NAME)?,
+        role,
+    ))
 }
 
 pub fn url_with_application_name(url: &str, name: &str) -> anyhow::Result<String> {
@@ -641,9 +709,10 @@ pub struct LiveFixture {
     pub plugin: Arc<WamnPostgres>,
     pub writer: EffectWriterClient,
     pub writer_role: String,
+    executor_role: String,
 }
 
-/// Install the schema, the private effect writer, and the pod identities.
+/// Install the schema, separate executor and effect-writer credentials, and pod identities.
 ///
 /// Both suites call this and neither may vary it: a spine that proved the queue
 /// against a different schema than the shelved floor would show nothing about
@@ -652,10 +721,12 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
     let admin = connect(url).await?;
     install_schema(&admin).await?;
     let (writer, writer_role) = install_effect_writer(&admin, url).await?;
-    let runtime_url = url_with_application_name(url, RUNTIME_APPLICATION_NAME)?;
+    let (runtime_url, executor_role) = install_executor(&admin, url).await?;
 
     let plugin = Arc::new(WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(runtime_url)),
+        credentials: Some(
+            ClassCredentials::default().with_class(AuthorityClass::ExecutorPlatform, runtime_url),
+        ),
         guest_pool_max_size: 8,
         platform_pool_max_size: 8,
         wait_timeout_ms: 5_000,
@@ -684,20 +755,41 @@ pub async fn install_fixture(url: &str) -> anyhow::Result<LiveFixture> {
         plugin,
         writer,
         writer_role,
+        executor_role,
     })
 }
 
-/// Drop the fixture schemas and defuse the generation role the suite minted.
+/// Drop the fixture schemas and retire the two generation roles the suite minted.
 pub async fn teardown(fixture: LiveFixture) -> anyhow::Result<()> {
     let LiveFixture {
         admin,
         plugin,
         writer,
         writer_role,
-        ..
+        executor_role,
     } = fixture;
     drop(plugin);
     drop(writer);
+    let database: String = admin
+        .query_one("SELECT current_database()::text", &[])
+        .await?
+        .get(0);
+    admin
+        .batch_execute(
+            &wamn_control_provision::sql::retire_workload_generation_sql(
+                wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform,
+                &database,
+                &executor_role,
+            ),
+        )
+        .await?;
+    admin
+        .batch_execute(
+            &wamn_control_provision::sql::terminate_workload_generation_sessions_sql(
+                &executor_role,
+            ),
+        )
+        .await?;
     let writer_role = quote_identifier(&writer_role);
     admin
         .batch_execute(&format!(
