@@ -203,7 +203,7 @@ variable.
 
 #### Accepted testing amendment (2026-09-09)
 
-The owner accepted [WAMN platform and application testing](../poc/wamn_testing_spec.md) and authorized Receiving Increment 1 under `wamn-10yt.77`.
+The owner accepted [WAMN platform and application testing](../../../../docs/history/wamn_testing_spec.md) and authorized Receiving Increment 1 under `wamn-10yt.77`.
 Application testing proceeds without the complete deterministic simulation framework. Beads and executed test results own completion.
 
 Application briefs own fixtures, expected outcomes, and invariant IDs. Each invariant records its rule, affected state, observation boundary, enforcing code or constraint, and named tests.

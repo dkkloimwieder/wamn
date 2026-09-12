@@ -1,6 +1,6 @@
 # Database tests
 
-Follow [test database isolation](../operations/running-tests.md) before setup, execution, or cleanup.
+Follow [test database isolation](../operations/running-tests.md#test-database-isolation) before setup, execution, or cleanup.
 This page defines the assertions at the database boundary.
 
 ## SQL and runtime behavior
