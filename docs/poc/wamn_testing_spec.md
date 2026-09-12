@@ -134,7 +134,7 @@ The owner accepted this specification and authorized Increment 1 on 2026-09-09. 
 
 [3] `docs/poc/wamn_receiving_layered_application_poc_scenario.md`, §§2, 6–8, 13: Receiving, layering, BFF limits, and private `quality.create_inspection`. Older upgrade walkthroughs are not authorized by this spec; [7] governs the lifecycle scope.
 
-[4] `docs/experiments/agent-authoring/protocol.md`, §§4.5–5; `docs/poc/agent-authoring-tooling-spec.md`, V3–V4: invariant ownership, traceability, behavioral and mutation checks.
+[4] `docs/operations/agent-pilot.md`, §§4.5–5; `docs/poc/agent-authoring-tooling-spec.md`, V3–V4: invariant ownership, traceability, behavioral and mutation checks.
 
 [5] Generated operator TUI specification, rev 4, P2 and §4, plus its review clarification — evidence-based outcomes, captured intent, and route-specific replay safety.
 

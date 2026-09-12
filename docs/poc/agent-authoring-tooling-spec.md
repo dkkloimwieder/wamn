@@ -6,7 +6,7 @@ without one is a design choice and says so.
 
 Scope: the tools that let a coding agent author a wamn package and let us measure
 it. This document knows no application. Tasks are fixtures that satisfy the
-interface in A6; they live in the protocol (`docs/experiments/agent-authoring/protocol.md`).
+interface in A6; they live in the protocol (`docs/operations/agent-pilot.md`).
 
 ---
 
@@ -57,7 +57,7 @@ dependency. Nothing seeds a database (F20) → grading drives routes.
 - Exit codes: 0 ok · 2 usage · 10 environment · 20 driver · 30 grading · 40
   teardown residue. Every script: `set -euo pipefail`, `umask 077`, an EXIT trap
   that always attempts teardown.
-- No version suffixes. Run directories are snapshots on the `docs/perf/2026.09`
+- No version suffixes. Run directories are snapshots on the `evidence/perf/2026.09`
   pattern; the protocol is the only living document.
 
 ---
@@ -410,7 +410,7 @@ Fills protocol §10 from `run.json`, `verbs.jsonl`, `driver.json`,
 `checklist.json`, `skills.json`, and `$RUN/human.json` (`{Q3, Q7, Q8, Q9,
 Q10.activated, Q11, E1..E7}`; the grader tags activation from the transcript per
 S8 until B5 measures it); exits 30 on any `null`.
-Writes `docs/experiments/agent-authoring/<nnn>-<agent>-<task>.md` and the raw
+Writes `evidence/experiments/agent-authoring/<nnn>-<agent>-<task>.md` and the raw
 directory beside it minus `env/` and `worktree/`.
 
 Exit gate: the first report regenerates byte-for-byte from the raw directory.
@@ -623,7 +623,7 @@ is what makes lanes safe, not the number of agents.
 | lane | items | files | conflicts |
 |---|---|---|---|
 | L-hold | A0 as `.10.33` | `services/ctl/src/dev/command.rs`, one live test | `.10.32` edits the same file: sequenced after it, same integrator |
-| L-pilot | A1, A3, A4, A5, A6 (schema and validation), A7, A8, S7, S8 | `tools/agent-pilot-*`, `docs/experiments/agent-authoring/` | none; all new files |
+| L-pilot | A1, A3, A4, A5, A6 (schema and validation), A7, A8, S7, S8 | `tools/agent-pilot-*`, `evidence/experiments/agent-authoring/` | none; all new files |
 | L-rules | the four rule paragraphs (B1 prerequisite) | `docs/exe-model.md` | owner prose; lands whenever |
 | L-runs | the protocol's runs | evidence directories only | serial on one machine; never with a cluster journey |
 

@@ -136,7 +136,7 @@ inventories or reconstructing a chain of historical rulings.
 
 This document is the charter for the consolidation wave and the record of why the tree changes shape.
 Beads owns the implementation plan under `wamn-47wm` (`PLAN-13`).
-The [starting baseline](../perf/2026.09/consolidation-baseline/report.md) belongs to `wamn-47wm.1`.
+The [starting baseline](../../evidence/perf/2026.09/consolidation-baseline/report.md) belongs to `wamn-47wm.1`.
 The measurements above remain the dated review at `79879412`.
 The starting sweep measures the integrated tree at `a0e833b9398c829030a055f5c38755aebd98d358`.
 
@@ -188,7 +188,7 @@ The native workspace remains at the repository root with `apps/` excluded from a
 Keep explicit native application members and their native workspace ownership.
 Prove byte identity for all guests across two checkouts, including the app/proof comparison.
 Remint the affected pins in the same move commit and name the path change as the cause.
-The [layout probe](../perf/2026.09/consolidation-step2/member-probe-002/results.json) demonstrates why external guest workspace members cannot establish this property.
+The [layout probe](../../evidence/perf/2026.09/consolidation-step2/member-probe-002/results.json) demonstrates why external guest workspace members cannot establish this property.
 
 The materializer is platform infrastructure.
 Native C uses a platform-owned named NATS binding for it.
@@ -215,4 +215,4 @@ When the current architecture overview exists, move this charter to `docs/histor
 Keep the historical evidence and the reasons for the change.
 Beads and git continue to own completion status.
 
-The [step 1 result](../perf/2026.09/consolidation-step1/report.md) records the retained sweep after inventory deletion.
+The [step 1 result](../../evidence/perf/2026.09/consolidation-step1/report.md) records the retained sweep after inventory deletion.

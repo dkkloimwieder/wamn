@@ -46,7 +46,7 @@ done
 unfilled="$(jq -r '[to_entries[] | select(.value == null) | .key] | join(", ")' "$DIR/human.json")"
 [[ -z "$unfilled" ]] || die "human.json leaves these unfilled: $unfilled" "$EX_GRADE"
 
-OUT="$TREE/docs/experiments/agent-authoring"
+OUT="$TREE/evidence/experiments/agent-authoring"
 mkdir -p "$OUT/$RUN_ID"
 
 # The raw directory travels, minus the two things that must not: env holds

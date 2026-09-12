@@ -476,7 +476,7 @@ async fn apply(cluster: &Resources, path: &Path) -> anyhow::Result<()> {
 
 async fn evidence_directory() -> anyhow::Result<PathBuf> {
     let path = PathBuf::from(std::env::var_os("WAMN_RECEIVING_EVIDENCE_DIR").context(
-        "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository docs/perf",
+        "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository evidence",
     )?);
     ensure!(
         path.is_absolute() && !path.exists(),
@@ -498,11 +498,11 @@ async fn evidence_directory() -> anyhow::Result<PathBuf> {
     let results_root = common
         .parent()
         .context("the Git directory has a repository parent")?
-        .join("docs/perf")
+        .join("evidence")
         .canonicalize()?;
     ensure!(
         parent.starts_with(&results_root),
-        "Receiving evidence must be under the main repository docs/perf"
+        "Receiving evidence must be under the main repository evidence"
     );
     Ok(parent.join(
         path.file_name()

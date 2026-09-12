@@ -120,7 +120,7 @@ fn unrelated_performance_record_in_worktree_is_accepted() {
     cut(&root);
     let record = root
         .path()
-        .join("run/worktree/docs/perf/unrelated-test/result.json");
+        .join("run/worktree/evidence/perf/unrelated-test/result.json");
     directory(record.parent().unwrap()).unwrap();
     fs::write(&record, "{\"passed\":true}\n").unwrap();
     check(&root, Path::new("/separate-pilot-grading")).unwrap();

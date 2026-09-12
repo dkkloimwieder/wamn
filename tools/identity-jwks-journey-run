@@ -8,7 +8,7 @@ usage() {
     'usage: identity-jwks-journey-run [--apply] [--session-exchange] --evidence-dir DIR' \
     'Without --apply, print the plan without building or creating resources.' \
     '--session-exchange adds the session test after all five unconfigured JWKS stages.' \
-    'DIR must be new and under docs/perf/ in this worktree or its shared checkout.' \
+    'DIR must be new and under evidence/perf/ in this worktree or its shared checkout.' \
     'The run creates and removes its own named kind cluster and image tags.' \
     'No existing cluster, database, ingress, or production trust root is used.' >&2
 }
@@ -55,8 +55,8 @@ source_pathspecs=(. ':(exclude).beads/issues.jsonl' ':(exclude).beads/interactio
 if [[ -n "$evidence_dir" ]]; then
   [[ ! -e "$evidence_dir" && ! -L "$evidence_dir" ]] || fail 'evidence directory already exists'
   evidence_dir=$(realpath -m -- "$evidence_dir")
-  [[ ( "$evidence_dir" == "$repo_root"/docs/perf/* || "$evidence_dir" == "$shared_root"/docs/perf/* ) && ! -e "$evidence_dir" ]] \
-    || fail 'evidence must be a new docs/perf directory in the source or shared checkout'
+  [[ ( "$evidence_dir" == "$repo_root"/evidence/perf/* || "$evidence_dir" == "$shared_root"/evidence/perf/* ) && ! -e "$evidence_dir" ]] \
+    || fail 'evidence must be a new evidence/perf directory in the source or shared checkout'
   if [[ "$evidence_dir" == "$repo_root"/* ]]; then
     source_pathspecs+=(":(exclude,literal)${evidence_dir#"$repo_root"/}")
   fi

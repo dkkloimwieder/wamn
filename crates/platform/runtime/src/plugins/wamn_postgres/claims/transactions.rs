@@ -351,7 +351,7 @@ impl WamnPostgres {
         // takes a row lock, so BEGIN and COMMIT are ceremony around a read.
         // Measured cost of that ceremony: bind_claims 0.45-0.89 ms plus a
         // COMMIT of 2.1-3.8 ms, around a 0.6 ms statement
-        // (docs/perf/2026.09/3b-pipeline.md).
+        // (evidence/perf/2026.09/3b-pipeline.md).
         //
         // A read carrying a per-caller claim keeps the transaction: a
         // session-scoped app.role or app.user_id would outlive the request and
@@ -412,7 +412,7 @@ impl WamnPostgres {
         // neither the `search_path` nor the `app.role` / `app.user_id` the
         // claims install. Awaiting the claims outright fixed the order and cost
         // the round trip the flight saved -- bind_claims at 0.45-0.89 ms plus a
-        // wakeup, against a 0.6 ms statement (docs/perf/2026.09/3a-instrument.md).
+        // wakeup, against a 0.6 ms statement (evidence/perf/2026.09/3a-instrument.md).
         //
         // Parsing the claim statement FIRST deletes the await that let it
         // happen, and deletes it for a COLD connection too, which is why this

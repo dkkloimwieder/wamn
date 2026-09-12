@@ -462,7 +462,7 @@ impl Run {
     async fn reclaim(&self) -> anyhow::Result<()> {
         let promoted = self
             .tree
-            .join("docs/experiments/agent-authoring")
+            .join("evidence/experiments/agent-authoring")
             .join(&self.key)
             .join("run.json");
         if !promoted.metadata().is_ok_and(|metadata| metadata.len() > 0) {

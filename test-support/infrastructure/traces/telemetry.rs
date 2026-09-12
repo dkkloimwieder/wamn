@@ -381,7 +381,7 @@ pub async fn collect(
 mod tests {
     use super::*;
     const TRACE: &str = include_str!(
-        "../../../docs/perf/2026.09/receiving-postcommit/timeout-terminal-001/live/journey/telemetry/update-001.json"
+        "../../../evidence/perf/2026.09/receiving-postcommit/timeout-terminal-001/live/journey/telemetry/update-001.json"
     );
     const ID: &str = "655833bf599cf31d4f5422f6e06c7347";
 

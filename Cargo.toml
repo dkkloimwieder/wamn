@@ -103,7 +103,7 @@ wash-runtime = { git = "https://github.com/wasmCloud/wasmCloud", rev = "68ebece9
 # Without it Cranelift compiles every component on one core: receiving took
 # 24,383 ms on an 8-core box against 27,250 ms under a 2-core pod cap -- a ratio
 # of 1.12, because core count cannot matter when one core does the work
-# (wamn-0h0g.17.22, docs/perf/2026.09/4-instantiate.md). It adds rayon and
+# (wamn-0h0g.17.22, evidence/perf/2026.09/4-instantiate.md). It adds rayon and
 # nothing else. default-features stays false: that is the shared-wasmtime-family
 # constraint above, and naming one feature does not weaken it.
 wasmtime = { version = "47.0.4", default-features = false, features = ["cache", "parallel-compilation"] }

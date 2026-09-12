@@ -143,7 +143,7 @@ Replace `tools/fork-sync-check` with `tools/wasmcloud-release-check`, updating i
 
 | Follow-on | Boundary for subsequent work |
 |---|---|
-| **P3 HTTP cutover** | Reuse `wamn-0h0g.17.26` and `docs/perf/2026.09/p3-probe.md`. Port the actual shell, authority handling, bounded body streaming, P2-specific harnesses and manifests; prove one P3 artifact through both in-process and cluster paths. Preserve fresh stores. No P2 compatibility track unless a real consumer requires it. |
+| **P3 HTTP cutover** | Reuse `wamn-0h0g.17.26` and `evidence/perf/2026.09/p3-probe.md`. Port the actual shell, authority handling, bounded body streaming, P2-specific harnesses and manifests; prove one P3 artifact through both in-process and cluster paths. Preserve fresh stores. No P2 compatibility track unless a real consumer requires it. |
 | **Native `DispatchTarget` / `GuestCall`** | Probe one real node and its WAMN authority/context before replacing manual lifecycle code. No runtime rewrite inside dependency adaptation. |
 | **HTTP transport pooling** | Continue the filed authority-preserving probe. P3, warm stores and outbound connection pooling are independent choices. |
 | **Plugin bindings, native NATS, warm reuse** | Evaluate under existing owners when needed. Do not enable new tenant imports/providers, replace the run/lease model, or enable persistent guest state during this cutover. |
@@ -180,7 +180,7 @@ Paths below are relative to the pinned repositories. They identify the basis for
 - **[S5] Embedding/lifecycle:** upstream `crates/wash-runtime/src/washlet/mod.rs` and observability modules; changes #5522, #5524, #5525, #5534 and #5542.
 - **[S6] HTTP:** upstream `crates/wash-runtime/src/host/http.rs`: `Router`, `RouteError`, `Ingress`, routing error branch and missing-workload-handle branch. Historical API comparison: the same path at peeled v2.8.0 commit `5c4ec4a3d008b3f401d9e763515f434deebc9936` already exposes `Router` and `Unavailable → 503`.
 - **[S7] Health/deployment:** upstream `crates/wash-runtime/src/host/probes.rs`, `runtime-operator/internal/controller/runtime/workload_route_controller.go`; changes #5502, #5530 and #5536. Do not substitute the earlier probe PR's intended traffic behavior for the tagged routing implementation.
-- **[S8] P3:** WAMN `docs/perf/2026.09/p3-probe.md`, `components/ingress/http-route/src/guest.rs`, and the current journey publication recipes.
+- **[S8] P3:** WAMN `evidence/perf/2026.09/p3-probe.md`, `components/ingress/http-route/src/guest.rs`, and the current journey publication recipes.
 - **[S9] Optional native dispatch:** upstream `crates/wash-runtime/src/engine/dispatch.rs`, change #5545.
 - **[S10] Registry lineage:** WAMN root `Cargo.toml`, `crates/platform/component-virtualizer/Cargo.toml`, `docs/architecture/2a-capability-registry.md`, and native-alignment ledger row 5. At [S1], WASI-Virt is separately pinned to `448f6df8f688cee5d6995e96b1ffc31f9bf00742`; adapter SHA-256 `28eff8a2255812b440fbad2784a5a87660321e667331c17fb9a95f29caa85632`.
 - **[S11] Events RBAC:** upstream [S3] `charts/runtime-operator/templates/operator/{clusterrole,workload-namespace-role,role}.yaml`; WAMN native-alignment ledger row 8. These tagged templates grant core-group Events only; render and test the actual deployment before changing the overlay.

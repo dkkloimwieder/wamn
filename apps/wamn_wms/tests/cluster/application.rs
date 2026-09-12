@@ -302,7 +302,7 @@ pub(super) async fn generated_terminal(
     let output = evidence.join(format!("generated-tui-{mode}"));
     super::deployment::checked(
         Command::new("python3")
-            .arg(repository.join("docs/perf/2026.09/generated-tui-wms/tools/wms_pty.py"))
+            .arg(repository.join("apps/wamn_wms/tests/wms_pty.py"))
             .arg("--binary")
             .arg(target.join("debug/examples/wms_move"))
             .arg("--operator-pat-file")

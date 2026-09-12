@@ -12,7 +12,7 @@ delivers to, not a pull consumer the guest drives. Sections 0, 5, 6, 12 and 13
 carry the change. The rulings are recorded on `wamn-7tva.1` and `wamn-7tva.2`.
 
 Structure follows the application-brief skeleton in
-`docs/experiments/agent-authoring/protocol.md` section 4.5 (`:162-195`). Scope
+`docs/operations/agent-pilot.md` section 4.5 (`:162-195`). Scope
 is fixed by `docs/poc/poc-application-portfolio.md` row 2 (`:13`) and its
 build-order entry 2 (`:27-28`). This document does not widen that scope. Shape
 follows `docs/poc/wamn_wms_application_poc_scenario.md`.
@@ -87,12 +87,12 @@ ruling exists.** Shapes are shared across apps. Tables are not
 (`docs/poc/poc-application-portfolio.md:45-49`).
 
 Columns, types and indexes stay open to the author
-(`docs/experiments/agent-authoring/protocol.md:174`).
+(`docs/operations/agent-pilot.md:174`).
 
 ## 3. Commands, and the invariants a grader names
 
 Two commands. Every invariant carries an id. Grader steps name it by that id
-(`docs/experiments/agent-authoring/protocol.md:184-186`).
+(`docs/operations/agent-pilot.md:184-186`).
 
 ### `work_order.dispatch`
 
@@ -146,7 +146,7 @@ There is no invariant capping accumulated quantity against a work order target.
 Over-production is real. A refusal there is an invented business rule.
 
 SQL, locking and error mapping stay open to the author
-(`docs/experiments/agent-authoring/protocol.md:175`).
+(`docs/operations/agent-pilot.md:175`).
 
 ## 4. Queries
 
@@ -173,7 +173,7 @@ corpus entry (`docs/poc/poc-application-portfolio.md:13`). `count.rollup` is
 that entry.
 
 Keyset shape and projections stay open to the author
-(`docs/experiments/agent-authoring/protocol.md:176`).
+(`docs/operations/agent-pilot.md:176`).
 
 ## 5. Ingress
 
@@ -309,7 +309,7 @@ next node-ABI consumers after blob-put, which is that same publish direction.
 ## 6. External services
 
 Only from the admitted list
-(`docs/experiments/agent-authoring/protocol.md:178`).
+(`docs/operations/agent-pilot.md:178`).
 
 | service | used for | status in the tree |
 |---|---|---|
@@ -333,7 +333,7 @@ The `wamn:jetstream` registry row and the MQTT seam were the third and fourth
 asks of this draft. The owner refused both on 2026-09-07.
 
 Binding names stay open to the author
-(`docs/experiments/agent-authoring/protocol.md:178`).
+(`docs/operations/agent-pilot.md:178`).
 
 ## 7. Permissions
 
@@ -346,7 +346,7 @@ Nothing is per user. Per-user row scope arrives in app 4
 (`docs/poc/poc-application-portfolio.md:15`).
 
 Tokens stay open to the author
-(`docs/experiments/agent-authoring/protocol.md:179`). A driver mints a personal
+(`docs/operations/agent-pilot.md:179`). A driver mints a personal
 access token with `wamn_platform_identity::issue_pat`. A driver never
 hand-assembles one (`test-support/simulator/src/emit.rs:70-72`).
 
@@ -354,7 +354,7 @@ hand-assembles one (`test-support/simulator/src/emit.rs:70-72`).
 
 **None.** A brief that names screens requires UI. A brief that names none does
 not, and a headless package is a valid application
-(`docs/experiments/agent-authoring/protocol.md:167-169`). The exit gate names a
+(`docs/operations/agent-pilot.md:167-169`). The exit gate names a
 rate, a rollup and a DLQ. It names no screen. WMS ruled the same way for the
 same reason (`docs/poc/wamn_wms_application_poc_scenario.md:47-49`).
 
@@ -468,7 +468,7 @@ materializer, which is the only reason its synthetic sequence numbers work
 One external ingress message per machine reading. It is published to a subject
 inside an ingress namespace. That namespace is none of `evt.*`, `dlq.*` or
 `tap.*`. The exact prefix is a binding at deploy, so it is not written here
-(`docs/experiments/agent-authoring/protocol.md:187-188`).
+(`docs/operations/agent-pilot.md:187-188`).
 
 Envelope fields. **This is a proposal. There is no external ingress schema in
 the tree.**
@@ -538,4 +538,4 @@ body. It is not a JetStream concern. The sink publishes one message per event.
 
 One further platform gap is already known and is not app 2's to fix. Authored
 SQL has no generic verifier in the authoring loop, so `count.rollup` is proven
-at runtime (`docs/experiments/agent-authoring/protocol.md:212`).
+at runtime (`docs/operations/agent-pilot.md:212`).

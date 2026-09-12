@@ -422,11 +422,11 @@ Historical test counts describe their recorded source revisions, not a new test 
 [plan]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/docs/architecture/wamn_native_alignment_plan.md
 [model]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/docs/exe-model.md
 [ledger]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/docs/architecture/native-alignment-ledger.md
-[b-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/docs/perf/2026.09/native-b-dispatch/report.md
+[b-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/evidence/perf/2026.09/native-b-dispatch/report.md
 [up-resolver]: https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/engine/workload.rs#L1158
 [up-dispatch]: https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/engine/dispatch.rs#L759
 [up-pool]: https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/engine/instance_pool.rs
-[c-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/docs/perf/2026.09/native-c-nats/report.md
+[c-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/evidence/perf/2026.09/native-c-nats/report.md
 [up-nats-wit]: https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/wit/nats/wit/world.wit#L219
 [up-nats-mod]: https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/plugin/wasmcloud_nats/mod.rs#L8
 [up-nats-plugin]: https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/plugin/wasmcloud_nats/plugin.rs#L43
@@ -437,8 +437,8 @@ Historical test counts describe their recorded source revisions, not a new test 
 [up-pg]: https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/plugin/wasmcloud_postgres/multiplexed.rs#L48
 [up-pg-async]: https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/plugin/wasmcloud_postgres/async_p3.rs
 [wamn-pg]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/crates/platform/runtime/src/plugins/wamn_postgres/resources.rs#L34
-[d-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/docs/perf/2026.09/ctc8-13-native-http/report.md
+[d-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/evidence/perf/2026.09/ctc8-13-native-http/report.md
 [up-http]: https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/host/http_client.rs
-[a-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/docs/perf/2026.09/native-a-descriptor/report.md
-[p3-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/docs/perf/2026.09/p3-http-cutover/report.md
-[cutover-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/docs/perf/2026.09/wasmcloud-2-9-cutover/report.md
+[a-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/evidence/perf/2026.09/native-a-descriptor/report.md
+[p3-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/evidence/perf/2026.09/p3-http-cutover/report.md
+[cutover-report]: https://github.com/dkkloimwieder/wamn/blob/a48f7af827bb835b619eb8aa24db745916d24824/evidence/perf/2026.09/wasmcloud-2-9-cutover/report.md

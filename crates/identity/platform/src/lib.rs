@@ -793,7 +793,7 @@ pub async fn revoke_project_env_membership(
 /// identity reader is a bare `Client`), so each read cost a Parse+Describe round
 /// trip before its Bind+Execute. The PAT and project-role reads were measured
 /// at 1.184 ms and 0.709 ms per request against a 0.30 ms single round trip: see
-/// `docs/perf/2026.09/2a-auth-instrument.md`.
+/// `evidence/perf/2026.09/2a-auth-instrument.md`.
 ///
 /// Holding the `Statement` handle moves that Parse to process start. The
 /// handle is bound to the connection it was prepared on, so this type must

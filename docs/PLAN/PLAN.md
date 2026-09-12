@@ -32,13 +32,13 @@ it is not a separate architecture.
 HTTP transport reuse continues independently under `wamn-ctc8.16`, the native-alignment plan's D work.
 The owner retains WAMN's pinned-address transport with bounded reuse and excludes an upstream patch.
 Serialize its shared host, executor, and driver edits with native-dispatch work.
-Its [report](../perf/2026.09/ctc8-16-http-reuse/README.md) records correctness evidence without a performance claim.
+Its [report](../../evidence/perf/2026.09/ctc8-16-http-reuse/README.md) records correctness evidence without a performance claim.
 The origin/executor authorization correction under `wamn-ctc8.33` follows pooling immediately.
 
-The reviewed [native C source checkpoint](../perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json) is owned by `wamn-0ct2.7`.
+The reviewed [native C source checkpoint](../../evidence/perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json) is owned by `wamn-0ct2.7`.
 It replaces custom materializer delivery and settlement with the platform-owned native `events` binding and scoped broker credentials.
 Registration checks, drift refusal, derived publishing, and the separate scheduler doorbell remain.
-The [native delivery and retention test](../perf/2026.09/native-c-advisories/scoped-native-007/README.md) at `b0a3f045` passed after observed connection closure and redelivery of the same unacknowledged sequence.
+The [native delivery and retention test](../../evidence/perf/2026.09/native-c-advisories/scoped-native-007/README.md) at `b0a3f045` passed after observed connection closure and redelivery of the same unacknowledged sequence.
 With 65 payloads of 1,047,552 bytes, pulls stayed below 4,194,304 bytes and stopped at 64 pending acknowledgements.
 Delivery resumed after acknowledgement, and real source expiry left the termination advisory readable with its source payload unavailable.
 Application correctness and the integrated retained workspace test run remain pending under `wamn-0ct2.7`.

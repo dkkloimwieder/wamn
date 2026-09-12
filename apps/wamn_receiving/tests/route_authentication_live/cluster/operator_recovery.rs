@@ -825,7 +825,7 @@ impl Recovery<'_> {
             .cluster
             .resources
             .repository
-            .join("docs/perf/2026.09/wasmcloud-2-9-cutover");
+            .join("evidence/perf/2026.09/wasmcloud-2-9-cutover");
         let records: Value = serde_json::from_slice(&fs::read(
             source.join("deployment-crds-001/crd-inventory.json"),
         )?)?;
@@ -1163,7 +1163,7 @@ pub(super) async fn assert_recovery(cluster: &ReceivingCluster) -> anyhow::Resul
     );
     let image: Value =
         serde_json::from_slice(&fs::read(resources.repository.join(
-            "docs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-image.json",
+            "evidence/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/distributed-image.json",
         ))?)?;
     let mut digests = vec![text(&image, "/digest")?];
     for platform in array(&image, "/platforms")?
@@ -1356,7 +1356,7 @@ mod tests {
 
     fn retained_root() -> anyhow::Result<PathBuf> {
         Ok(crate::route_authentication_live::repository_root()?
-            .join("docs/perf/2026.09/wasmcloud-2-9-cutover"))
+            .join("evidence/perf/2026.09/wasmcloud-2-9-cutover"))
     }
     fn read(path: &Path) -> anyhow::Result<Value> {
         Ok(serde_json::from_slice(&fs::read(path)?)?)

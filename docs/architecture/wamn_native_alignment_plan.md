@@ -43,7 +43,7 @@ Allocator reuse, compiled-artifact reuse, HTTP connection reuse, and live guest-
 
 **Acceptance:** a subprocess starts with a deliberately low soft limit and known hard limit; the native helper's effective result is observed and derived ceilings use it. Cover inability to raise the limit according to the helper's supported behavior. Do not alter the test runner's own limit or require elevated privileges.
 
-A's [descriptor proof](../perf/2026.09/native-a-descriptor/report.md) records the service startup calls and isolated subprocess results under `wamn-0ct2.1`.
+A's [descriptor proof](../../evidence/perf/2026.09/native-a-descriptor/report.md) records the service startup calls and isolated subprocess results under `wamn-0ct2.1`.
 
 ### B. Replace manual guest execution, including its duplicate caches
 
@@ -96,9 +96,9 @@ The shared `invocation_trace` carrier restores the host span and subscriber for 
 Native policy binds it under the existing invocation scope after initialization and revokes it with that scope.
 It supplies telemetry context only, with no guest interface, configuration, or authority rule.
 Other host paths retain ambient tracing, and guest logging retains its separate trace-context contract.
-The [main authenticated proof](../perf/2026.09/native-b-adoption/production-authenticated-main-001/output.log) passes all six scenarios at the production source, including exact invocation and host-observation parentage.
-The [host tests](../perf/2026.09/native-b-adoption/production-host-tests-003/output.log) pass 52 cases with zero failures and one filtered authenticated test.
-The [deployed Receiving proof](../perf/2026.09/native-b-adoption/production-receiving-002/receiving-correctness-journey.receipt) passes at that production source.
+The [main authenticated proof](../../evidence/perf/2026.09/native-b-adoption/production-authenticated-main-001/output.log) passes all six scenarios at the production source, including exact invocation and host-observation parentage.
+The [host tests](../../evidence/perf/2026.09/native-b-adoption/production-host-tests-003/output.log) pass 52 cases with zero failures and one filtered authenticated test.
+The [deployed Receiving proof](../../evidence/perf/2026.09/native-b-adoption/production-receiving-002/receiving-correctness-journey.receipt) passes at that production source.
 Its prerequisite covers 13 PAT routes and eight P3 protocol cases. The deployed receipts cover 19 histories, 129 steps, and seven boundaries.
 
 An outer absolute timeout encloses native dispatch and its response. Nested deadlines cannot exceed that bound.
@@ -112,12 +112,12 @@ These mechanisms add no cleanup worker, private API access, or second compilatio
 
 **Stop condition:** a required context, candidate or loading boundary cannot be represented through public APIs. Record the exact obstacle before expanding the adapter. Do not copy internals or preserve duplicate machinery merely to report native adoption.
 
-B's [public dispatch checkpoint](../perf/2026.09/native-b-dispatch/report.md) tests the deadline and exact component selection boundaries.
+B's [public dispatch checkpoint](../../evidence/perf/2026.09/native-b-dispatch/report.md) tests the deadline and exact component selection boundaries.
 The historical checkpoint records a valid stop against the former per-dependency selection contract.
 The accepted trade above supersedes that contract. Admission rejects ambiguous imported providers before native resolution.
 The original failed experiment remains failed and does not block this approved substitution.
 The completed production implementation satisfies the deletion contract for released, nested, and candidate calls.
-The [production report](../perf/2026.09/native-b-adoption/production-report.md) records exact identities, executed correctness proofs, historical failures, and workspace limits.
+The [production report](../../evidence/perf/2026.09/native-b-adoption/production-report.md) records exact identities, executed correctness proofs, historical failures, and workspace limits.
 The completed substitution does not enable warm reuse.
 
 #### B2. Warm reuse after B with its policy amendment
@@ -136,7 +136,7 @@ Palette or other components without this evidence keep `poolSize` unset/zero. Th
 
 ### C. Re-evaluate `wamn:jetstream` against native NATS
 
-The reviewed [source checkpoint of 2026-09-11](../perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json), owned by `wamn-0ct2.7`, supersedes the payload dead-letter and adapter alternatives below.
+The reviewed [source checkpoint of 2026-09-11](../../evidence/perf/2026.09/native-c-advisories/source-checkpoint-001/handoff.json), owned by `wamn-0ct2.7`, supersedes the payload dead-letter and adapter alternatives below.
 It uses the platform-owned native `events` binding, private host configuration, scoped broker credentials, and retained exhaustion and termination advisories.
 Registration checks, drift refusal, derived publishing and the separate scheduler doorbell remain.
 The earlier `.4` report and `.6` alternative retain their historical context.
@@ -164,7 +164,7 @@ An idempotent inspection result is not a platform-wide exactly-once claim. Keep 
 **Stop condition:** identify any release, metadata, acknowledgement or authority requirement the public interface cannot preserve. Keep the necessary WAMN portion and document why; do not widen grants or rewrite the event architecture to claim adoption.
 
 Owner ruling, 2026-09-10: C can proceed ahead of B because their ordering protects shared-file edits, not a technical dependency.
-The [C source checkpoint](../perf/2026.09/native-c-nats/report.md) reaches the public message-handle stop condition under `wamn-0ct2.4`.
+The [C source checkpoint](../../evidence/perf/2026.09/native-c-nats/report.md) reaches the public message-handle stop condition under `wamn-0ct2.4`.
 The owner retains registration checks and dead-letter construction in the Rust host.
 Deferred decision `wamn-0ct2.6` owns a trusted adapter component after the upstream binding surface stabilizes and the message handle becomes public.
 The capability registry can make that adapter the sole native NATS importer, but policy placement and bypass resistance require a separate decision and proof.
@@ -182,7 +182,7 @@ Its public API does not accept WAMN's approved peer before dispatch.
 The historical probe is not an executed 2.9 adoption proof. [S10, S11]
 
 Reusable clients live above the invocation-local plugin and store lifetime.
-The [HTTP report](../perf/2026.09/ctc8-16-http-reuse/README.md) records the limits, exact commands, and proof gaps.
+The [HTTP report](../../evidence/perf/2026.09/ctc8-16-http-reuse/README.md) records the limits, exact commands, and proof gaps.
 Standard WASI HTTP remains a separate interface option.
 Revisit native adoption only when its public API preserves the approved peer, isolation, aggregate limits, and existing effect outcomes.
 
@@ -272,7 +272,7 @@ The owner approved five children: A, B, B2, C and F. B2 includes the ledger amen
 Original review/evidence links retain `41ba0334`; S4 and S15/S19 use the amendment-check tip `c32aeed9`. Runtime source links pin upstream `68ebece9`; the PR link identifies its merged change. Recommendations and acceptance conditions are proposed, not claims of implementation.
 
 - **S1 — Adopted boundaries:** [native-alignment ledger](https://github.com/dkkloimwieder/wamn/blob/41ba0334510c4e8bc8420d4c0d3cff15acd34a7b/docs/architecture/native-alignment-ledger.md).
-- **S2 — Executed evidence and remaining gaps:** [2.9 cutover report](https://github.com/dkkloimwieder/wamn/blob/41ba0334510c4e8bc8420d4c0d3cff15acd34a7b/docs/perf/2026.09/wasmcloud-2-9-cutover/report.md).
+- **S2 — Executed evidence and remaining gaps:** [2.9 cutover report](https://github.com/dkkloimwieder/wamn/blob/41ba0334510c4e8bc8420d4c0d3cff15acd34a7b/evidence/perf/2026.09/wasmcloud-2-9-cutover/report.md).
 - **S3 — Actual embedding:** [WAMN host](https://github.com/dkkloimwieder/wamn/blob/41ba0334510c4e8bc8420d4c0d3cff15acd34a7b/services/host/src/host.rs) and [shared engine](https://github.com/dkkloimwieder/wamn/blob/41ba0334510c4e8bc8420d4c0d3cff15acd34a7b/crates/platform/runtime/src/engine.rs).
 - **S4 — Manual application execution:** [router driver](https://github.com/dkkloimwieder/wamn/blob/c32aeed9569a28b60fb42fe5ae51b8f220be8334/crates/execution/host/src/router_driver.rs), especially `prepare_released_operation_components`, `instantiate_prepared`, `NestedOperationHost` and `NodeInstance::run`.
 - **S5 — Descriptor setup:** [upstream host CLI](https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash/src/cli/host.rs) and [public quota helper](https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/host/quota.rs).
@@ -280,7 +280,7 @@ Original review/evidence links retain `41ba0334`; S4 and S15/S19 use the amendme
 - **S7 — 2.9 capabilities:** [official release article source](https://github.com/wasmCloud/wasmcloud.com/blob/9d4756a287c734d43a0d4f5e01622ecdaa4d907e/blog/2026-09-08-wasmcloud-2.9.0/index.mdx) and [native NATS module](https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/plugin/wasmcloud_nats/mod.rs).
 - **S8 — WAMN delivery policy:** [JetStream plugin](https://github.com/dkkloimwieder/wamn/blob/41ba0334510c4e8bc8420d4c0d3cff15acd34a7b/crates/platform/runtime/src/plugins/wamn_jetstream.rs).
 - **S9 — 2.8 capabilities and messaging limits:** [official release article source](https://github.com/wasmCloud/wasmcloud.com/blob/9d4756a287c734d43a0d4f5e01622ecdaa4d907e/blog/2026-08-26-wasmcloud-2.8.0/index.mdx).
-- **S10 — HTTP probe and owner:** [native HTTP report](https://github.com/dkkloimwieder/wamn/blob/41ba0334510c4e8bc8420d4c0d3cff15acd34a7b/docs/perf/2026.09/ctc8-13-native-http/report.md).
+- **S10 — HTTP probe and owner:** [native HTTP report](https://github.com/dkkloimwieder/wamn/blob/41ba0334510c4e8bc8420d4c0d3cff15acd34a7b/evidence/perf/2026.09/ctc8-13-native-http/report.md).
 - **S11 — HTTP implementations:** [WAMN connection HTTP](https://github.com/dkkloimwieder/wamn/blob/41ba0334510c4e8bc8420d4c0d3cff15acd34a7b/crates/platform/runtime/src/plugins/connection_http.rs) and [upstream pooled client](https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/host/http_client.rs).
 - **S12 — P3 scope:** [shipped HTTP guest](https://github.com/dkkloimwieder/wamn/blob/41ba0334510c4e8bc8420d4c0d3cff15acd34a7b/components/ingress/http-route/src/guest.rs) and [cutover charter §7](https://github.com/dkkloimwieder/wamn/blob/41ba0334510c4e8bc8420d4c0d3cff15acd34a7b/docs/wamn_wasmcloud_2_9_cutover.md#7-follow-ons-not-prerequisites).
 - **S13 — Native PostgreSQL capability:** [upstream plugin](https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/crates/wash-runtime/src/plugin/wasmcloud_postgres/mod.rs).

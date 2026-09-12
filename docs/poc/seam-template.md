@@ -361,7 +361,7 @@ without a measurable gate is not built
 - **Which verbs to refuse.** Step 3 records refusals. It does not choose them.
 - **Bindings at deploy.** No host, no URL, no environment name and no secret
   belongs in any artifact this template produces. Those are bindings at deploy
-  (`docs/experiments/agent-authoring/protocol.md:187-188`).
+  (`docs/operations/agent-pilot.md:187-188`).
 
 ## 5. Known gaps in this template
 

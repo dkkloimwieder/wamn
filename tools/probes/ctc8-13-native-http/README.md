@@ -56,7 +56,7 @@ Run the wrapper with the built executable and a new evidence directory:
 ```bash
 bash tools/probes/ctc8-13-native-http/run \
   tools/probes/ctc8-13-native-http/target/debug/ctc8-13-native-http \
-  docs/perf/2026.09/ctc8-13-native-http/run-local-001
+  evidence/perf/2026.09/ctc8-13-native-http/run-local-001
 ```
 
 The wrapper retains stdout, stderr, the exit code, and the source and binary hashes.

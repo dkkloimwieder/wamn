@@ -48,5 +48,5 @@ The two-component case uses separate stores with the same workload identity;
 it does not impersonate the production nested invocation driver.
 
 Raw commands, exit codes, observations, and retained gaps belong in
-`docs/perf/2026.09/ctc8-14-wasi-http/`. Pooling, rotation, aggregate quotas, and
+`evidence/perf/2026.09/ctc8-14-wasi-http/`. Pooling, rotation, aggregate quotas, and
 the blobstore path belong to `wamn-ctc8.13`; P3 guest adoption remains separate.

@@ -112,7 +112,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         repository.join(target)
     };
     let evidence = PathBuf::from(std::env::var_os("WAMN_WMS_EVIDENCE_DIR").context(
-        "set WAMN_WMS_EVIDENCE_DIR to a new directory under the main repository docs/perf",
+        "set WAMN_WMS_EVIDENCE_DIR to a new directory under the main repository evidence",
     )?);
     ensure!(
         evidence.is_absolute(),
@@ -132,11 +132,11 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     let results_root = common
         .parent()
         .context("the Git directory has a repository parent")?
-        .join("docs/perf")
+        .join("evidence")
         .canonicalize()?;
     ensure!(
         parent.starts_with(&results_root),
-        "the WMS result directory must be under the main repository docs/perf"
+        "the WMS result directory must be under the main repository evidence"
     );
     let evidence = parent.join(
         evidence

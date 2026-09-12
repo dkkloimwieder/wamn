@@ -30,7 +30,7 @@ pub struct RcArgs {
     /// Create the declared environment and run its native tests.
     #[arg(long)]
     pub apply: bool,
-    /// New result directory under the main repository's docs/perf directory.
+    /// New result directory under the main repository's evidence directory.
     #[arg(long, required_if_eq("apply", "true"))]
     pub evidence_dir: Option<PathBuf>,
 }

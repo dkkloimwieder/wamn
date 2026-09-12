@@ -1123,7 +1123,7 @@ The [model](../../tests/integration/tests/receiving_history/model.rs) supplies i
 The [database helper](../../tests/integration/tests/receiving_history/database.rs) reads coherent snapshots and observes actual guest waits.
 These assertions remain unexecuted at this amendment. Their presence in source does not establish a pass.
 
-[Execution evidence, 2026-09-10: The [Receiving report](../perf/2026.09/receiving-correctness/report.md) records three explicit histories, 16 generated histories, and seven boundary cases passing after exact source restoration.
+[Execution evidence, 2026-09-10: The [Receiving report](../../evidence/perf/2026.09/receiving-correctness/report.md) records three explicit histories, 16 generated histories, and seven boundary cases passing after exact source restoration.
 The business defect failed at the expected refusal assertion and reproduced on a fresh fixture.
 The SQL control survived with the original line locks and quantity constraints enabled.
 Bead `wamn-10yt.77` owns the combined workspace and integration results.]

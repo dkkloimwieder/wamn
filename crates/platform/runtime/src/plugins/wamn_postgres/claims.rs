@@ -1366,7 +1366,7 @@ impl WamnPostgres {
         // every authenticated request, against a 0.740 ms read. The
         // statement_timeout it used to SET per request is pool-uniform and now
         // rides the pool's post_create hook. Measured in
-        // docs/perf/2026.09/2a-auth-instrument.md.
+        // evidence/perf/2026.09/2a-auth-instrument.md.
         //
         // prepare_cached, not a bare &str: deadpool caches the parse per
         // connection, so the Parse round trip is paid once per connection rather

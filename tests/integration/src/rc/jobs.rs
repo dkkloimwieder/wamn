@@ -413,11 +413,11 @@ mod tests {
     fn native_completion_accepts_the_recorded_config_image_id() {
         // This historical Pod ran the gates image without a repository digest.
         let observed: Value = serde_json::from_str(include_str!(
-            "../../../../docs/perf/2026.09/ctc8-15-1-identity/deployed-001/identity-jwks-published-a-pods.json"
+            "../../../../evidence/perf/2026.09/ctc8-15-1-identity/deployed-001/identity-jwks-published-a-pods.json"
         ))
         .unwrap();
         let image: Value = serde_json::from_str(include_str!(
-            "../../../../docs/perf/2026.09/ctc8-15-1-identity/deployed-001/gates-node-image.json"
+            "../../../../evidence/perf/2026.09/ctc8-15-1-identity/deployed-001/gates-node-image.json"
         ))
         .unwrap();
         let image_id = &observed["items"][0]["status"]["containerStatuses"][0]["imageID"];

@@ -136,7 +136,7 @@ This is a proposal, not an implementation report. Auth and benchmark source chec
 
 [3] PostgreSQL 18 documentation, section 5.10, Schemas: a client connection accesses one database. Cross-database access requires an additional mechanism.
 
-[4] `docs/perf/2026.09/7-release-host.md`, phase table and Method: historical timings, existing throughput commands, and evidence layout. The proposed optimized timings have not been measured.
+[4] `evidence/perf/2026.09/7-release-host.md`, phase table and Method: historical timings, existing throughput commands, and evidence layout. The proposed optimized timings have not been measured.
 
 [5] Runtime `crates/wash-runtime/src/host/http.rs` and `host/http_client.rs`: `OutgoingHandler`, `DefaultOutgoingHandler`, `WorkloadClients`, connector behavior, lifecycle, and quotas. WAMN `docs/architecture/native-alignment-ledger.md`: transport versus guest reuse.
 

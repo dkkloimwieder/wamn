@@ -10,7 +10,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd -- "$script_dir/../../.." && pwd)
 evidence_dir=$(realpath -m -- "$2")
 case "$evidence_dir" in
-  "$repo_root"/docs/perf/2026.09/ctc8-13-native-http/*) ;;
+  "$repo_root"/evidence/perf/2026.09/ctc8-13-native-http/*) ;;
   *) echo 'evidence must stay in this worktree native-probe directory' >&2; exit 2 ;;
 esac
 [[ -x "$probe_binary" && ! -e "$evidence_dir" ]] || {

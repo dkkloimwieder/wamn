@@ -73,8 +73,8 @@ pub(super) async fn prepare(
         .context("evidence directory has a parent")?
         .canonicalize()?;
     ensure!(
-        parent.starts_with(root.join("docs/perf").canonicalize()?),
-        "RC evidence must be under the main repository docs/perf"
+        parent.starts_with(root.join("evidence").canonicalize()?),
+        "RC evidence must be under the main repository evidence"
     );
     let evidence = parent.join(
         evidence

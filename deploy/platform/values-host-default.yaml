@@ -274,7 +274,7 @@ runtime:
           # WHY 6 AND NOT 2. instantiate_async for one component is 313 us on
           # bare metal and 1.30 ms under the old 2-core cap -- 4.2x, on an
           # 8-core box, for the identical call. Every absolute millisecond in
-          # docs/perf/2026.09 carried that factor. Six leaves two cores for the
+          # evidence/perf/2026.09 carried that factor. Six leaves two cores for the
           # kind nodes and the databases sharing the machine.
           #
           # THIS IS THE JOURNEY'S DEVELOPMENT OVERLAY, NOT A PRODUCTION LIMIT.

@@ -148,7 +148,7 @@ Use chart `2.9.0` with WAMN images built from the direct upstream pin
 `68ebece9c537f8bb4b5c9999f274ec68d60f35a9`.
 Complete the build and source gates in `docs/operations/build-and-test.md` before this procedure.
 The source tree and distributed chart are separate inputs. The render and public image metadata
-receipts live in `docs/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/`.
+receipts live in `evidence/perf/2026.09/wasmcloud-2-9-cutover/deployment-001/`.
 Those receipts create no cluster resources and prove no running image identity.
 
 This is a direct stop/start cutover with one active runtime version per environment.
@@ -186,13 +186,13 @@ The application release rollout procedure below remains separate from this runti
 3. Apply the pinned chart's CustomResourceDefinitions (CRDs), which define Kubernetes resource schemas, before upgrading the operator.
    Helm installs missing CRDs from `crds/`, but [does not upgrade existing CRDs](https://helm.sh/docs/chart_best_practices/custom_resource_definitions/).
    The earlier `deployment-001/operator.json` render contains no CRDs.
-   Set `CRD_EVIDENCE` to a new directory under the repository's `docs/perf/` tree.
+   Set `CRD_EVIDENCE` to a new directory under the repository's `evidence/perf/` tree.
    During fixed-source proofs, keep evidence outside the build worktree.
    Save the downloaded inputs, commands, exits, and installed schemas there.
    If apply reports field ownership conflicts, stop and inspect those owners before continuing.
 
    ```bash
-   : "${CRD_EVIDENCE:?set a fresh repository docs/perf evidence directory}"
+   : "${CRD_EVIDENCE:?set a fresh repository evidence/perf evidence directory}"
    mkdir -- "$CRD_EVIDENCE"
    CRD_CHART="$CRD_EVIDENCE/runtime-operator-2.9.0.tgz"
    capture_crd_command() {
@@ -228,7 +228,7 @@ The application release rollout procedure below remains separate from this runti
    The upstream [install target](https://github.com/wasmCloud/wasmCloud/blob/68ebece9c537f8bb4b5c9999f274ec68d60f35a9/runtime-operator/Makefile#L155) also uses server-side apply, but includes `--force-conflicts`.
    This procedure leaves conflicts visible and does not enable the gateway.
 
-   The source and distributed CRD hashes are in `docs/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/`.
+   The source and distributed CRD hashes are in `evidence/perf/2026.09/wasmcloud-2-9-cutover/deployment-crds-001/`.
    Those read-only receipts prove no installed schema identity.
 
    Host and Artifact CRD files match 2.8 byte-for-byte.

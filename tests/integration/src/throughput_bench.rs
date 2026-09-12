@@ -658,7 +658,7 @@ pub fn build_report(evidence_dir: &Path) -> anyhow::Result<Report> {
 }
 
 impl Report {
-    /// The report's tables, in the `docs/perf/2026.09` format.
+    /// The report's tables, in the `evidence/perf/2026.09` format.
     pub fn render_markdown(&self) -> String {
         use std::fmt::Write as _;
         let mut out = String::new();
