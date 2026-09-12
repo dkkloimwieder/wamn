@@ -23,6 +23,9 @@
 # Human org-user membership remains owned by the identity epic and Slice v; it
 # is not fabricated as deployment configuration here.
 #
+# Supply the external labels-store credentials before applying this overlay.
+# Follow docs/operations/deployment.md#wms-object-store-credentials.
+#
 # Replace the zero digest with `wamn-ctl print-release-env` output before
 # applying. A nonexistent digest makes startup refuse rather than serving an
 # unintended release.

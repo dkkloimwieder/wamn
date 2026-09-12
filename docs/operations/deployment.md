@@ -24,6 +24,14 @@ Keep registry, database, and broker credentials outside committed files.
 Supply real values for example Secrets and release placeholders before applying them.
 Certificate subjects must match the endpoint names that their clients verify.
 
+### WMS object-store credentials
+
+Before applying the WMS overlay, create `wamn-object-store-credentials-acme--wms--dev` in the host namespace.
+Store the host credential map under its `credentials.json` key.
+The map uses project `wms` and connection handle `labels-store`, with the object-store credential JSON encoded as that handle's string value.
+The [WMS cluster setup](../../apps/wamn_wms/tests/cluster/deployment.rs) creates this Secret for its tests.
+Production deployment supplies its own credentials through the same Secret contract.
+
 ## Deployment ordering
 
 Build and exercise the exact selected source and artifacts before publication.

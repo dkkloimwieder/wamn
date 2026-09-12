@@ -48,7 +48,7 @@ const RETIRED_IMAGE_MARKERS: [&str; 4] = ["wamn-gates", "node-host", "serve-node
 /// Externally supplied Secrets and ConfigMaps with their provisioning owner.
 /// Mounted names must be declared by a platform manifest or allowed here.
 /// A Certificate declares its `spec.secretName` output, which cert-manager writes.
-const EXTERNAL_PREREQUISITES: [(&str, &str); 5] = [
+const EXTERNAL_PREREQUISITES: [(&str, &str); 6] = [
     (
         IDENTITY_TLS_SECRET,
         "operator-configured serving certificate from the existing issuer/CA",
@@ -73,6 +73,10 @@ const EXTERNAL_PREREQUISITES: [(&str, &str); 5] = [
     (
         "wamn-materializer-nats",
         "Receiving/WMS journey bootstrap: native materializer broker credential and binding",
+    ),
+    (
+        "wamn-object-store-credentials-acme--wms--dev",
+        "WMS deployment operator; cluster tests use install_application_secrets in apps/wamn_wms/tests/cluster/deployment.rs",
     ),
 ];
 
