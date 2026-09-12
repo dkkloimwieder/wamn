@@ -1,7 +1,0 @@
-{
-  "name": "family-surfaces",
-  "test_exit_code": 101,
-  "cleanup": true,
-  "container_id": "d2cfb4ecc91c07376171aae8798cd9c9bee10dba401ac4b778711e407a730494",
-  "test_summary": "test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.45s"
-}

@@ -1,5 +1,0 @@
-1. byte identity, both arms
-  ok    arms differ only in replicas: host-base.yaml
-  ok    arms differ only in replicas: host-overlay.yaml
-  ok    normal arm renders 3
-  ok    measure arm renders 0

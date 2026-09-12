@@ -1,9 +1,0 @@
-{
-  "argv": [
-    "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912/target/debug/wamn-gates",
-    "dashproof",
-    "--help"
-  ],
-  "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-20260912",
-  "source": "58163a39c5e91671112f4e36bf9c298483f787cb"
-}

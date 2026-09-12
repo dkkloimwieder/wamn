@@ -1,1 +1,0 @@
-[{"name":"wamn","namespace":"wamn-system","revision":"1","updated":"2026-09-09 22:07:55.075163383 -0400 EDT","status":"deployed","chart":"runtime-operator-2.9.0","app_version":"2.9.0"},{"name":"wamn-host","namespace":"wamn-wms-journey","revision":"1","updated":"2026-09-09 22:08:49.842562883 -0400 EDT","status":"deployed","chart":"runtime-operator-2.9.0","app_version":"2.9.0"}]

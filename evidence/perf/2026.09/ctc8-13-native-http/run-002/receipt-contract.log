@@ -1,6 +1,0 @@
-receipt case=complete result=pass
-receipt case=missing result=pass
-receipt case=duplicate result=pass
-receipt case=missing_evidence result=pass
-receipt case=error result=pass
-receipt result=pass cases=5

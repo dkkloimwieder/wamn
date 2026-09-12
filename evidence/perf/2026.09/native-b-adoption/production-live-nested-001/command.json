@@ -1,1 +1,0 @@
-["env", "WAMN_HTTP_REUSE_TEST_BINARY=/home/kaalin/.cache/wamn-lanes/native-b-adoption-20260910/target/debug/deps/wamn_proof_integration-64b648fb55077e98", "bash", "docs/perf/2026.09/ctc8-16-http-reuse/tools/live.sh", "trusted_http_route::tests::nested_http_authorizes_child_and_preserves_original_caller"]

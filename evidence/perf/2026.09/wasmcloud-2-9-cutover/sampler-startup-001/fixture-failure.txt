@@ -1,1 +1,0 @@
-The initial synthetic API omitted named Pod GET responses. The positive control timed out on pods/sampler. No production command or timeout was changed. Corrected fixture is sampler-startup-002.

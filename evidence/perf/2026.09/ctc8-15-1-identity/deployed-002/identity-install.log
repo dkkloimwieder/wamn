@@ -1,8 +1,0 @@
-Release "wamn-identity" does not exist. Installing it now.
-NAME: wamn-identity
-LAST DEPLOYED: Tue Sep  8 11:44:32 2026
-NAMESPACE: wamn-identity-jwks
-STATUS: deployed
-REVISION: 1
-DESCRIPTION: Install complete
-TEST SUITE: None

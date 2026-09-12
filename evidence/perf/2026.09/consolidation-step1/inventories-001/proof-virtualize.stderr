@@ -1,6 +1,0 @@
-build-components: proof selects 24 component packages across 24 Cargo invocations
-build-components: proof normalizes 4 declared artifacts with profile std-empty-environment
-build-components: normalized blob-put -> /tmp/inventory selector smoke i92phwgx/components-Cargo.toml/virtualized/std-empty-environment/blob_put.wasm
-build-components: normalized client-acme-receiving -> /tmp/inventory selector smoke i92phwgx/components-Cargo.toml/virtualized/std-empty-environment/client_acme_receiving.wasm
-build-components: normalized receiving -> /tmp/inventory selector smoke i92phwgx/components-Cargo.toml/virtualized/std-empty-environment/receiving.wasm
-build-components: normalized wms -> /tmp/inventory selector smoke i92phwgx/components-Cargo.toml/virtualized/std-empty-environment/wms.wasm

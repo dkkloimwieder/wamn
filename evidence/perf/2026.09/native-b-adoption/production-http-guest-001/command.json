@@ -1,1 +1,0 @@
-["cargo", "build", "--manifest-path", "components/no-std/Cargo.toml", "-p", "http-request", "--target", "wasm32-wasip2", "--locked", "--offline"]

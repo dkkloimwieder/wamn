@@ -1,8 +1,0 @@
-{
-  "debug": true,
-  "head": "52ac90a6400e4b955a90d3f97733c0c5be8a5418",
-  "jobs": 2,
-  "source_digest": "ac8e854480a90e7bd41b88d9afbf57e3f3c4688b854cfab53cc7c193a971ebfc",
-  "target_directory": "/home/kaalin/dev/wamn/target",
-  "tracked_files_excluding_beads": 26498
-}

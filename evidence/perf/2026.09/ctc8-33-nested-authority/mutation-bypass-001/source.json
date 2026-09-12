@@ -1,6 +1,0 @@
-{
-  "changed_source_sha256": {
-    "crates/platform/runtime/src/plugins/connection_http.rs": "1b74ad8bf632309ae470f0f13c926694815858ae288b8c6bf99e454fbd93c796"
-  },
-  "head": "e502c99609b95774b699398eb12a2b63f790a05c"
-}

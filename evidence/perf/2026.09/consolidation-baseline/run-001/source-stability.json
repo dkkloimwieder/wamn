@@ -1,6 +1,0 @@
-{
-  "same_head": true,
-  "changed_tracked_inputs_except_beads": [],
-  "tracked_input_count": 25832,
-  "scope": "Tracked bytes and modes except Beads; raw before/after status retains untracked inputs. The tree was not clean and no clean-source claim is made."
-}

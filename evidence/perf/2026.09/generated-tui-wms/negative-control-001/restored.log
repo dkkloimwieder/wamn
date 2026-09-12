@@ -1,9 +1,0 @@
-   Compiling wamn-client-terminal v0.1.0 (/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/crates/client/terminal)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.58s
-     Running unittests examples/wms_move.rs (target/debug/examples/wms_move-9a11c666d3345090)
-
-running 1 test
-test tests::the_bound_move_sends_exact_bytes_and_displays_the_label_key ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.02s
-

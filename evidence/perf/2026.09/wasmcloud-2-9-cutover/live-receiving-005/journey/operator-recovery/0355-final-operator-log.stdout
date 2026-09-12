@@ -1,5 +1,0 @@
-2026-09-09T16:34:07Z	INFO	setup	starting manager
-2026-09-09T16:34:07Z	INFO	controller-runtime.metrics	Starting metrics server
-2026-09-09T16:34:07Z	INFO	starting server	{"name": "health probe", "addr": "[::]:8082"}
-2026-09-09T16:34:07Z	INFO	controller-runtime.metrics	Serving metrics server	{"bindAddress": ":8081", "secure": false}
-I0909 16:34:07.663330       1 leaderelection.go:258] "Attempting to acquire leader lease..." lock="wamn-system/d34db3ef.wasmcloud.dev"

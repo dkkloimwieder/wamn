@@ -1,6 +1,0 @@
-{
-  "operation": "provision-org",
-  "passed": true,
-  "port": 32995,
-  "substrate": "postgresql-18"
-}

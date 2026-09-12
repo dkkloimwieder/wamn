@@ -1,9 +1,0 @@
-{
-  "server_version": "18.6 (Ubuntu 18.6-1.pgdg26.04+2)",
-  "server_version_num": "180006",
-  "database": "postgres",
-  "data_directory": "/tmp/pg_virtualenv.lxipvR/data/18/regress",
-  "port": "5432",
-  "configuration_root": "/tmp/pg_virtualenv.lxipvR/postgresql",
-  "server_pid": 2648039
-}

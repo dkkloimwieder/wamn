@@ -1,1 +1,0 @@
-Linux 7.0.0-31-generic x86_64 GNU/Linux

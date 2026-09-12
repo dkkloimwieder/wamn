@@ -1,4 +1,0 @@
-{
-  "failure": "IO error: invalid peer certificate: UnknownIssuer: invalid peer certificate: UnknownIssuer",
-  "verdict": "fail"
-}

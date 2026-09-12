@@ -1,1 +1,0 @@
-PASS suite=audience-cli tests=2 ignored=0 named-live-witness=compiled_cli_publishes_bound_session_targets_and_rotates_reader_generations

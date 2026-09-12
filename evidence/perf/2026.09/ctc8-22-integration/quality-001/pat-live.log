@@ -1,9 +1,0 @@
-   Compiling wamn-platform-identity v0.1.0 (/home/kaalin/.cache/wamn-lanes/ctc8-auth-integration-20260908/crates/identity/platform)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.01s
-     Running tests/pat_live.rs (target/debug/deps/pat_live-e67cccd737606d13)
-
-running 1 test
-test platform_pat_round_trip_on_postgres ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
-

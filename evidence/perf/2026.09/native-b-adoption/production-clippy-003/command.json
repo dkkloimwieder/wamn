@@ -1,1 +1,0 @@
-["env", "RUSTC_WRAPPER=", "cargo", "clippy", "--locked", "--offline", "-p", "wamn-execution-host", "-p", "wamn-proof-integration", "--all-targets"]

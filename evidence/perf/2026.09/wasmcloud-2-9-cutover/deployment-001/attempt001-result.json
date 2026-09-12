@@ -1,4 +1,0 @@
-{
-  "exit": 1,
-  "failure": "AssertionError at overlay namespace check: capture script used __ENV_NAMESPACE__ instead of existing __ENVIRONMENT_NAMESPACE__; all Helm commands exited0. Fixed capture and the new runbook substitution before rerun."
-}

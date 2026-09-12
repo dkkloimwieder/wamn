@@ -1,7 +1,0 @@
-
-running 2 tests
-test tests::no_statement_lets_the_caller_choose_the_tenant ... ok
-test tests::the_only_pointer_write_carries_both_the_hash_and_the_enabled_flag ... ok
-
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-

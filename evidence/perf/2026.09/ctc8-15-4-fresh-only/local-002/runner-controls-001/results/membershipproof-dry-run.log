@@ -1,6 +1,0 @@
-Receiving cluster journey dry-run (no mutation)
-  source: aed88333f441c09d5052c1a53a8046f9ea114495
-  cluster/context: wamn-receiving-journey / kind-wamn-receiving-journey
-  namespace: wamn-receiving-journey
-  route host: receiving.localhost (setup overlay only)
-  order: Dockerfile host + gates -> production mint/attest -> operator 2.9.0 -> deployed HTTP membershipproof Job -> exact teardown

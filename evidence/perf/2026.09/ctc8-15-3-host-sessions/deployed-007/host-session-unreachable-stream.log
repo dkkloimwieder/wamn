@@ -1,2 +1,0 @@
-HOST_SESSION_WARM hosts=2
-HOST_SESSION_PROOF result=pass hosts=2 jwks_available=false

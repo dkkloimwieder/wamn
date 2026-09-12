@@ -1,1 +1,0 @@
-["cargo", "test", "-p", "wamn-runtime", "--features", "wasm_component_model_implements", "--lib", "--test", "native_dispatch_binding", "--test", "native_dispatch_deadline", "--locked", "--offline", "--no-fail-fast", "--", "--nocapture", "--test-threads=1"]

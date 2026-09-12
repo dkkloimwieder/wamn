@@ -1,9 +1,0 @@
-{
-  "argv": [
-    "docker",
-    "rm",
-    "-fv",
-    "b55a7f7fad92b2e1d02832168ee68e4b83fefa250f32f8ecdabed39f512eb325"
-  ],
-  "exit_code": 0
-}

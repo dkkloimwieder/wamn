@@ -1,9 +1,0 @@
-{
-  "cluster": "wamn-rc",
-  "containers": [
-    "wamn-rc-postgres",
-    "wamn-rc-nats"
-  ],
-  "images": "exact",
-  "passed": true
-}

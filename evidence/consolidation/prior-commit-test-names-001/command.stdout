@@ -1,9 +1,0 @@
-
-running 4 tests
-test route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc ... ignored, requires WAMN_TENANT_KEY_PG_URL on a fresh disposable PostgreSQL 18 server
-test route_authentication_live::fresh_only::execution_tests::prior_commit_diagnostic_redacts_fixture_credentials ... ok
-test route_authentication_live::fresh_only::execution_tests::counter_parent_executes_sql_then_forwards_the_exact_nested_call ... ok
-test route_authentication_live::fresh_only::counter_parent_has_the_real_node_and_nested_operation_abi ... ok
-
-test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 63 filtered out; finished in 0.07s
-

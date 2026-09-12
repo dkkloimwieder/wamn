@@ -1,7 +1,0 @@
-{
-  "head": "c28f651bfb557922b979ce6525dd83586cfa844d",
-  "executor_sha256": "3ac2fa332c2e5a670abb9edc5d22a4eaeffae43e8357277170a0f6ebbcad2099",
-  "started": "2026-09-09T15:56:26.753001+00:00",
-  "finding": "wamn-0h0g.2.7.6",
-  "reproduction": "live-receiving-002/journey/executor-lifecycle.json"
-}

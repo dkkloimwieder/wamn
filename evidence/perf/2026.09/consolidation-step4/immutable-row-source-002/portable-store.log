@@ -1,7 +1,0 @@
-
-running 2 tests
-test control_portable_store_enforces_the_current_record_on_postgres ... ok
-test control_author_is_tenant_bound_and_exactly_scoped_on_postgres ... ok
-
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.26s
-

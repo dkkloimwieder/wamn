@@ -1,7 +1,0 @@
-{
-  "result": "pass",
-  "mapped_select_one": true,
-  "postgres_server_version_num": 180006,
-  "base_only": true,
-  "source_migration_sha256": "46f703e4e9bc83001bbd6293cd3aea6b01dad4feb3a5458d88ef1308ac37d16a"
-}

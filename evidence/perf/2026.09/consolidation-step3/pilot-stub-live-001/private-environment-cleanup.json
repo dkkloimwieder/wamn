@@ -1,9 +1,0 @@
-{
-  "observed_utc": "2026-09-11T22:38:17.172739+00:00",
-  "removed_directory": "/home/kaalin/.cache/wamn-lanes/consolidation-pilot-stub-20260911/wamn-pilot/runs/901s-stub-dock-appointments/env",
-  "removed_file_count": 15,
-  "private_environment_absent": true,
-  "private_run_records_retained": true,
-  "prepared_worktree_retained": true,
-  "scope": "Only the completed run901s environment directory was removed after log review."
-}

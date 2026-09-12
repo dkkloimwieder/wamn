@@ -1,9 +1,0 @@
-{
-  "utc": "2026-09-09T22:23:10.012845+00:00",
-  "path": "docs/perf/2026.09/wasmcloud-2-9-cutover/performance-2-9-002/run.sh",
-  "before_mode": "0o755",
-  "after_mode": "0o644",
-  "unchanged_blob": "c6c440a27a10414faa701bc27cd3862970097b90",
-  "reason": "The first preflight matched contents but omitted file mode. The first merge refused this sole mode mismatch. Align the saved evidence launcher to the candidate mode.",
-  "protected_files_unchanged": true
-}

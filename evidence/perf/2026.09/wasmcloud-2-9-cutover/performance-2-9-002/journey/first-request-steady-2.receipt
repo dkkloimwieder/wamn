@@ -1,1 +1,0 @@
-verdict=pass phase=steady-2 status=200 first_byte_ms=3.892 total_ms=4.101 recovery_seconds=0 ceiling_seconds=120

@@ -1,7 +1,0 @@
-{
-  "transport": "owned-nodeport",
-  "endpoint": "http://172.28.0.5:31682",
-  "host": "receiving.localhost",
-  "update_http_status": "200",
-  "receipt_http_status": "200"
-}

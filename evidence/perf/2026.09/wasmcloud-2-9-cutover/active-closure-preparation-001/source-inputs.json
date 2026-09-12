@@ -1,9 +1,0 @@
-{
-  "source_commit": "ab0467f415dfd6b31e70323ec6ca049d5d2a5298",
-  "source_file": "/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs",
-  "source_sha256": "abc83c224d88a2e34cfe1c59a6d2e48f1d564d08316525f7b38cb235605538a9",
-  "proposal_sha256": "0e7ebecad2d7965cf33ca8d167279050733263997c80194b068cc69af4bb142a",
-  "proposed_source_sha256": "73f5c1c1b90509065b913b651a47f4212cf44f81e0c07fb74439ac38b94c7dfb",
-  "scope": "Only ACTIVE_WIRING_SQL is changed; no tests, decoders, grants, fixture operations or other SQL constants are changed.",
-  "executed": "Preparation only. No compiler, Cargo, PostgreSQL, OCI or live execution."
-}

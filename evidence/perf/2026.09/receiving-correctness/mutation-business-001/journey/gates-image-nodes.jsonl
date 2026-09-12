@@ -1,3 +1,0 @@
-{"node":"wamn-receiving-correctness-control-plane","runtime_digest":"sha256:6e0e7dab1378cc59ca6e47aadd41bc40a53b36229abac5dd5f39b7e0223d572d","config_id":"sha256:fb22173362514f43fd188fdb86cd7a63a0e761a4539b348c64681e0630dbd093"}
-{"node":"wamn-receiving-correctness-worker","runtime_digest":"sha256:6e0e7dab1378cc59ca6e47aadd41bc40a53b36229abac5dd5f39b7e0223d572d","config_id":"sha256:fb22173362514f43fd188fdb86cd7a63a0e761a4539b348c64681e0630dbd093"}
-{"node":"wamn-receiving-correctness-worker2","runtime_digest":"sha256:6e0e7dab1378cc59ca6e47aadd41bc40a53b36229abac5dd5f39b7e0223d572d","config_id":"sha256:fb22173362514f43fd188fdb86cd7a63a0e761a4539b348c64681e0630dbd093"}

@@ -1,9 +1,0 @@
-{
-  "source": "/home/kaalin/.cache/wamn-lanes/receiving-update-projection-20260910/target",
-  "destination": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target",
-  "own_active_jobs": 0,
-  "exclusive_transfer": true,
-  "next_build": "Cargo freshness checks in .78 own target",
-  "git_published": "ccd3ac401f7be09ddca39d43b727dfa092297db5",
-  "dolt_verified": "3e96ceb69696f203fcf495b89818fb108bd0b56e"
-}

@@ -1,7 +1,0 @@
-Receiving cluster journey dry-run (no mutation)
-  source: 6b91d423bcb350321099c3e26e5f46c7aae515c2
-  cluster/context: wamn-receiving-correctness / kind-wamn-receiving-correctness
-  namespace: wamn-receiving-correctness
-  route host: receiving.localhost (setup overlay only)
-  order: compile correctness proof -> Dockerfile host + gates -> production admission + release -> deployed HTTP command histories, rollback, replay, authorization, and contention -> exact teardown
-  correctness: 16 generated histories with seed 7701, explicit histories, and seven boundary cases. No performance measurement.

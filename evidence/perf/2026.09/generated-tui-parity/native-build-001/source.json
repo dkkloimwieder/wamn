@@ -1,9 +1,0 @@
-{
-  "changed_source_sha256": {
-    "Cargo.lock": "f397ad5ef07b4b7ccb96bef87e2fbb1f8754a94620c7ad49020c9de445a34dbd",
-    "crates/client/receiving/Cargo.toml": "5a08a55c40fe95ab32217527ca1d5656bb29ffaa7358396c1c9eb5d3db931f93",
-    "crates/client/receiving/src/main.rs": "091e33f4f308c5a613c305714d324bf39e17a863f8fcbbbfc71e134c0f6851d2",
-    "docs/operations/build-and-test.md": "2376694881b1cafa5e6ae571baf3a0422577316015ad79dc013544cf2803dcc6"
-  },
-  "head": "c0ac2cf67ff689ea4b06d417ba6442799bcc6377"
-}

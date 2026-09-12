@@ -1,7 +1,0 @@
-
-running 2 tests
-test materialize::tests::wrapper_and_split_paths_are_identical_without_reintrospection ... ok
-test materialize::tests::regeneration_keeps_the_declared_operator_and_does_not_restore_a_generated_main ... ok
-
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 50 filtered out; finished in 0.08s
-

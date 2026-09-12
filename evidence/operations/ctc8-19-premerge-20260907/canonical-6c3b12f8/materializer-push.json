@@ -1,7 +1,0 @@
-
-{
-  "success": true,
-  "url": "172.28.0.9:5000/wamn/materializer:receiving-6c3b12f851b8-774777-release",
-  "digest": "sha256:7fa984976b8a479166458889f48e02845e359ba0d070c56c448e6c8651512a97",
-  "tag": "receiving-6c3b12f851b8-774777-release"
-}

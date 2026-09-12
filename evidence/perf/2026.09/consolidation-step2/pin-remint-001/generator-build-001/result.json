@@ -1,8 +1,0 @@
-{
-  "binary": "/home/kaalin/.cache/wamn-lanes/consolidation-apps-final-20260911/target/debug/examples/materialize_package",
-  "binary_bytes": 46316592,
-  "binary_sha256": "218d76d62417bf48d5b560e0ba94e7feaa7b4427719c338940f2c126eb328cb2",
-  "elapsed_seconds": 116.902,
-  "exit_code": 0,
-  "source_unchanged": true
-}

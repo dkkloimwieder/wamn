@@ -1,1 +1,0 @@
-tools/receiving-cluster-journey-run --apply --fresh-auth-bench --evidence-dir /home/kaalin/dev/wamn/docs/perf/2026.09/wasmcloud-2-9-cutover/performance-2-9-001/journey

@@ -1,7 +1,0 @@
-Traceback (most recent call last):
-  File "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/docs/perf/2026.09/generated-tui-parity/tools/live_environment.py", line 286, in main
-    owned.run("receiving-composition-live", proof_command, timeout=180)
-    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908/docs/perf/2026.09/generated-tui-parity/tools/live_environment.py", line 111, in run
-    raise ProofFailure(f"{name}: exit {status}; see private stage log")
-ProofFailure: receiving-composition-live: exit 1; see private stage log

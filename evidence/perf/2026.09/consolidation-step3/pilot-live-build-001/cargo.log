@@ -1,3 +1,0 @@
-error: no bin target named `wamn-gates` in `wamn-proof-integration` package
-help: available bin in `wamn-gates` package:
-    wamn-gates

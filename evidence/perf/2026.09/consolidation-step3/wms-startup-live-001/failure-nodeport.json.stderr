@@ -1,2 +1,0 @@
-Error from server (NotFound): services "flow-http-nodeport" not found
-Error from server (NotFound): endpointslices.discovery.k8s.io "flow-http-nodeport" not found

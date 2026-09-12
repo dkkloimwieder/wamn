@@ -1,7 +1,0 @@
-{
-  "source": "0388e3bc98d231f1e69538e613ec33689c041653",
-  "observed_artifacts": [],
-  "scope": "Comparison of retained artifact hashes only. Equal m1 restoration does not resolve cross-profile digest differences or prove the failed invocation.",
-  "comparison_available": false,
-  "reason": "The default components workspace target had no retained input artifacts before this first proof build. Receiving explicitly builds guests under the root target directory. These distinct target paths do not establish an m1/proof byte comparison."
-}

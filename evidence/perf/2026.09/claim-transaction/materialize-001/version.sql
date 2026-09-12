@@ -1,1 +1,0 @@
-SHOW server_version_num;

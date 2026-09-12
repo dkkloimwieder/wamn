@@ -1,6 +1,0 @@
-{
-  "changed_source_sha256": {
-    "components/application/client-acme-receiving/src/lib.rs": "ed5a21a372f1db6fa0e387703446f9742e1cd00327288e14dc7a6b7d9beab23d"
-  },
-  "head": "36c3b12c4ce6c2d0303b0f1b1e6d60168bcb7472"
-}

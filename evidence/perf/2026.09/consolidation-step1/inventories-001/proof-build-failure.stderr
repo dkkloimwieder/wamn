@@ -1,2 +1,0 @@
-build-components: proof selects 24 component packages across 24 Cargo invocations
-build-components: FAIL: components/Cargo.toml (exit 23)

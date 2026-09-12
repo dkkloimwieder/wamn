@@ -1,5 +1,0 @@
-2026-09-09T21:47:14Z	ERROR	setup	unable to create runtime operator	{"error": "transport error: dial tcp 10.96.167.147:4222: i/o timeout"}
-main.main
-	/workspace/runtime-operator/cmd/main.go:313
-runtime.main
-	/usr/local/go/src/runtime/proc.go:290

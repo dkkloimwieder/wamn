@@ -1,1 +1,0 @@
-At 8759198e, six Receiving cases pass and the generated pgbench-output case fails. Its local executable matches the sample-output glob, so the test reads its own program. This is a fixture path defect. All three WMS cases pass, including the existing immediate, delayed, and failed retry sequences. The failed run remains unchanged.

@@ -1,9 +1,0 @@
-   Compiling wamn-client-acme-receiving-data-access v0.1.0 (/home/kaalin/.cache/wamn-lanes/exclusion-constraints-20260910/components/data/client-acme-receiving-data)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.46s
-     Running unittests src/lib.rs (components/target/debug/deps/wamn_client_acme_receiving_data_access-bb4581547d4a6d1a)
-
-running 1 test
-test operation::tests::generated_update_exclusion_from_postgres ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out; finished in 0.00s
-

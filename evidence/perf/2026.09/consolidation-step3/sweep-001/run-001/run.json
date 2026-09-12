@@ -1,8 +1,0 @@
-{
-  "elapsed_seconds": 533.769,
-  "ended_utc": "2026-09-11T20:59:51.256053+00:00",
-  "exit_code": 101,
-  "source_head": "5ef028880f4c83283ae344008bbb298adbd88003",
-  "started_utc": "2026-09-11T20:50:52.680156+00:00",
-  "workspace_log_sha256": "756a56ffb7b550370daccc4a7deeabfb80dc9ab4d35ef52eb47eca53595a9570"
-}

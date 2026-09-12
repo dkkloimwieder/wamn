@@ -1,4 +1,0 @@
-2026-09-10T00:25:44Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-15-4-fresh-only-20260909/target RUSTC_WRAPPER= /home/kaalin/.cache/wamn-lanes/ctc8-15-4-fresh-only-20260909/tools/build-components m1 
-2026-09-10T00:27:13Z env CARGO_TARGET_DIR=/home/kaalin/.cache/wamn-lanes/ctc8-15-4-fresh-only-20260909/target RUSTC_WRAPPER= cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker -p wamn-executor 
-2026-09-10T00:28:29Z docker build --platform=linux/amd64 --provenance=false --file /home/kaalin/.cache/wamn-lanes/ctc8-15-4-fresh-only-20260909/Dockerfile --target host --tag wamn-host:receiving-aed88333f441-19531-release --label wamn.dev/source-head=aed88333f441c09d5052c1a53a8046f9ea114495 --label wamn.dev/build-profile=release /home/kaalin/.cache/wamn-lanes/ctc8-15-4-fresh-only-20260909 
-2026-09-10T00:28:32Z rm -rf -- /tmp/tmp.GgOp1eG4tS 

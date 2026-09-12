@@ -1,3 +1,0 @@
-build-components: app selects 1 component packages across 1 Cargo invocations
-build-components: app normalizes 1 declared artifacts with profile std-empty-environment
-build-components: virtualization failed for receiving with profile std-empty-environment

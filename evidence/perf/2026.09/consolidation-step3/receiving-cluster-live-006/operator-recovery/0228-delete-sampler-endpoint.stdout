@@ -1,2 +1,0 @@
-service "receiving-operator-recovery" deleted from wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a namespace
-endpointslice.discovery.k8s.io "receiving-operator-recovery" deleted from wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a namespace

@@ -1,8 +1,0 @@
-Creating new PostgreSQL cluster 18/regress ...
-*** /tmp/pg_virtualenv.4Vwbx0/log/postgresql-18-regress.log (last 100 lines) ***
-2026-09-11 21:23:23.548 EDT [1544825] LOG:  starting PostgreSQL 18.6 (Ubuntu 18.6-1.pgdg26.04+2) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 15.2.0-16ubuntu1) 15.2.0, 64-bit
-2026-09-11 21:23:23.549 EDT [1544825] LOG:  listening on IPv4 address "127.0.0.1", port 5432
-2026-09-11 21:23:23.549 EDT [1544825] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
-2026-09-11 21:23:23.551 EDT [1544831] LOG:  database system was shut down at 2026-09-11 21:23:23 EDT
-2026-09-11 21:23:23.553 EDT [1544825] LOG:  database system is ready to accept connections
-Dropping cluster 18/regress ...

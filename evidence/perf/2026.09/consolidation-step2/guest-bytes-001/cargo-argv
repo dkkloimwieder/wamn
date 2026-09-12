@@ -1,3 +1,0 @@
-#!/usr/bin/env python3
-import os,sys
-os.execv(sys.executable, [sys.executable, '/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step2/guest-bytes-001/capture.py', "--cargo", *sys.argv[1:]])

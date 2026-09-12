@@ -1,9 +1,0 @@
-{
-  "head": "cc729d9eafebc6d459921785e7f15971e113cef9",
-  "grader_source_commit": "e107cd897084828ba70cb5042682b9076e6e777e",
-  "binary": {
-    "sha256": "d34f90211d439c4e7f4b198c597ff2878d917d0f19e6702273ef1b2dfaf68cae",
-    "bytes": 281795424,
-    "mode": 509
-  }
-}

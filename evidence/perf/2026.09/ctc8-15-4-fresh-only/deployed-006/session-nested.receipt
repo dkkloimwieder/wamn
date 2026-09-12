@@ -1,1 +1,0 @@
-HOST_FRESH_ONLY_NESTED result=pass session=refused pat=accepted direct_session=refused direct_pat=accepted role_revocation=refused membership_revocation=refused committed_state=unchanged fixture_release=3 manifest_format=1

@@ -1,5 +1,0 @@
-{
-  "commit": "e137e2c86642e03a1b6626b27fddb25d8ae3ebdf",
-  "path": "services/dispatcher/tests/read_authority.rs",
-  "validation": "rustfmt and exact database-body comparison; executable observations pending warm compile"
-}

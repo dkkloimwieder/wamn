@@ -1,1 +1,0 @@
-verdict=pass phase=human-1 http_total_ms=9.351 auth_ms=4.111 resolve_ms=0.014 pull_ms=0.000 compile_ms=0.000 linker_setup_ms=0.114 link_ms=0.101 instantiate_ms=0.116 executor_platform_acquire_ms=0.000 callable_http_acquire_ms=0.023 guest_sql_acquire_ms=0.029 sql_ms=0.258 guest_db_call_ms=0.896

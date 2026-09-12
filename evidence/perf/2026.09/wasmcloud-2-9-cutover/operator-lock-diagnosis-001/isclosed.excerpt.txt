@@ -1,3 +1,0 @@
-nc.mu.RLock()
-	defer nc.mu.RUnlock()
-	return nc.isClosed()

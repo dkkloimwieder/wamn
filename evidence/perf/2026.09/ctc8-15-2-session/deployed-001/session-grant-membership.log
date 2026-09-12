@@ -1,2 +1,0 @@
-Defaulted container "provisioner" out of: provisioner, wait-postgres (init)
-membership granted principal_id=e00011ba-b82a-40e7-b5ca-aef6f3ab96d9 org=acme project=shared env=dev

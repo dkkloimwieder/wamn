@@ -1,1 +1,0 @@
-cargo build --locked -p wamn-ctl -p wamn-cdc-reader -p wamn-scenario-worker

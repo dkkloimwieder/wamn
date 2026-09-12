@@ -1,1 +1,0 @@
-verdict=pass phase=cold status=200 first_byte_ms=21.448 total_ms=21.709 recovery_seconds=1 ceiling_seconds=120

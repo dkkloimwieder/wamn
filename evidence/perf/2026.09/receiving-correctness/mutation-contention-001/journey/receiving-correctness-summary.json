@@ -1,7 +1,0 @@
-{
-  "boundary_cases": 7,
-  "case": "summary",
-  "explicit_histories": 3,
-  "generated_cases": 16,
-  "result": "pass"
-}

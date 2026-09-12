@@ -1,7 +1,0 @@
-{
-  "CARGO_BUILD_JOBS": "2",
-  "CARGO_TARGET_DIR": "unset; own default target",
-  "KUBECONFIG": "/dev/null",
-  "RUSTC_WRAPPER": null,
-  "source_worktree": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911"
-}

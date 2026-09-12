@@ -1,9 +1,0 @@
-{
-  "command": [
-    "bash",
-    "tools/journey-trace-proof"
-  ],
-  "exit_code": 0,
-  "elapsed_seconds": 0.4014517779578455,
-  "changed_during_run": []
-}

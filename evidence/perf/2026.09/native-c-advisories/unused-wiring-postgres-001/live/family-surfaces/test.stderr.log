@@ -1,6 +1,0 @@
-
-thread 'the_event_materializer_role_holds_exactly_its_two_catalog_reads' (136702) panicked at crates/control/provision/tests/family_surface_grants.rs:302:5:
-assertion `left == right` failed
-  left: ""
- right: "receiving@1.0.0"
-note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

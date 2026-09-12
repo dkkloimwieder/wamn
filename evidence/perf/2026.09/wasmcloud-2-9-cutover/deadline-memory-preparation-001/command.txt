@@ -1,1 +1,0 @@
-cargo test -p wamn-runtime --lib --locked --offline engine::tests::dropping_a_store_after_epoch_interruption_releases_its_memory -- --exact --nocapture --test-threads=1

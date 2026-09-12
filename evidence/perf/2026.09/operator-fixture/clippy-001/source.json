@@ -1,6 +1,0 @@
-{
-  "changed_source_sha256": {
-    "services/ctl/src/dev/operator.rs": "e3e234f164e02663eec957cf52d59a7f0a93c9ffeccfa62d770390210e6f4316"
-  },
-  "head": "b214506aa6cda434202e22d22941ff19390c37c8"
-}

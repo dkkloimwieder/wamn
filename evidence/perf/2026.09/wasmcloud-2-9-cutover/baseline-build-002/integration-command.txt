@@ -1,1 +1,0 @@
-cargo test --locked --offline -p wamn-proof-integration --lib --no-run

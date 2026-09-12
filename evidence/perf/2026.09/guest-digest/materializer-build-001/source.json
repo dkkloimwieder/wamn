@@ -1,8 +1,0 @@
-{
-  "changed_source_sha256": {
-    "docs/operations/build-and-test.md": "1ecd79c6235f5c6ac605ea1c26affcc07b90ea946757031c625190401e36d54e",
-    "tests/conformance/tests/profile_selectors.rs": "eb32633968f974cc8b3539b082a324ed657c0f10f415d84f6cd8bef2e5fac254",
-    "tools/build-components": "52e76bd30329d357c5ed2a0855f46e5ff561f96db415d1ad196a2c7ed7f9692d"
-  },
-  "head": "a48f7af827bb835b619eb8aa24db745916d24824"
-}

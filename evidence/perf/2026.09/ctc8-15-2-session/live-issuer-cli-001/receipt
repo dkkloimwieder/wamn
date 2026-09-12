@@ -1,1 +1,0 @@
-PASS suite=issuer-cli tests=2 ignored=0 named-live-witness=compiled_cli_publishes_rolls_back_and_retires_identity_generations

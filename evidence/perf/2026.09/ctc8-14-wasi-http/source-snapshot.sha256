@@ -1,9 +1,0 @@
-306fd52e74fca6746e12acc750f232de15e71da917756a1270d74c91f5eb7368  tools/probes/ctc8-14-wasi-http/.gitignore
-90e3f3c2c6da822dac7c4968bf5f67a45857c8ad38852cfddf668bcb37a4b8ed  tools/probes/ctc8-14-wasi-http/Cargo.toml
-b1113a960615ece0e73a561f2294b39555dbc95a846a552b9d78ea21d89f45e3  tools/probes/ctc8-14-wasi-http/Cargo.lock
-7d7f39e17922c57d1498610d7d4a9f6b53c6d57088ec5fc8decdc410244d8fcb  tools/probes/ctc8-14-wasi-http/guest/Cargo.toml
-55ec81f5f90f0a785107fc5e00ce39274d36e9aee2ca8c1e636c06c855fd4e2f  tools/probes/ctc8-14-wasi-http/guest/src/main.rs
-04d2b8010eafe29e2151b26c9625e14032cacb3b51eb3afad41ce2e1c8e1c012  tools/probes/ctc8-14-wasi-http/host/Cargo.toml
-33d5d4c4292df87c775fd5b40f85e2ef1cdb343ebf1394ef0383799d5a4814bf  tools/probes/ctc8-14-wasi-http/host/src/main.rs
-2a44dab6bfe439aded861f2e10f41e4c0c787b40e6b151a0533bdd58a40c215c  tools/probes/ctc8-14-wasi-http/host/src/hook.rs
-d19b60a717567cf074903d94c970757b064499e52f3c0f537d8a1fe1be4849e0  tools/probes/ctc8-14-wasi-http/host/src/server.rs

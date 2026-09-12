@@ -1,2 +1,0 @@
-InvalidManifest: package-weld.json does not match the closed weld vocabulary
-invalid type: null, expected struct PackageWeld at line 1 column 4

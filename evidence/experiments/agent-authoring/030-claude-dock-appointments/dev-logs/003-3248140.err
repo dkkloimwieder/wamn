@@ -1,6 +1,0 @@
-Error: dev-stage-failed at generate: dev-stage-owner-failed while materialize generated package: generate package artifacts
-
-Caused by:
-    0: dev-stage-owner-failed while materialize generated package: generate package artifacts
-    1: generate package artifacts
-    2: InvalidOperation: appointment.book receiving.book_appointment_command privilege declaration does not match verified SQL reads, writes, and row locks

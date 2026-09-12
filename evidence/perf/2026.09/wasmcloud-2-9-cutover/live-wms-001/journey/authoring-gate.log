@@ -1,4 +1,0 @@
-2026-09-09T17:14:19.789946Z  INFO control authoring credential accepted database="postgres" role="wamn_control_author_8b9a22a2ff73cd988b040d6c0eb5a6959759f81e_a" generation="a"
-2026-09-09T17:14:19.851632Z  INFO management admission credential accepted database="wamn-db-acme--wms--dev--vzl7hvk1" role="wamn_mgmt_admitter_cc04a01684f9edff85c2c840c5f3f699e0a4ec43_a" generation="a"
-2026-09-09T17:14:19.914972Z  INFO project admission database connection ready endpoint=postgresql://172.28.0.8:5432/wamn-db-acme--wms--dev--vzl7hvk1 attempt=1
-2026-09-09T17:14:19.915079Z  INFO management authoring surface listening address=127.0.0.1:18080

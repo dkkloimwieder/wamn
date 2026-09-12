@@ -1,1 +1,0 @@
-No extraction regression is established. [Replay](retained-on-new.json) also fails. Native B `6feb01ac` removed its instantiate span. [Cache comparison](review.json) remains unexecuted. Owner decision remains pending.

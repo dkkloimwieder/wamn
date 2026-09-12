@@ -1,8 +1,0 @@
-Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
-
-Usage: wamn-gates serve-echo [OPTIONS]
-
-Options:
-      --log-level <LOG_LEVEL>  Log level (the Jobs pass this before the subcommand) [default: info]
-      --port <PORT>            Port to listen on [default: 8091]
-  -h, --help                   Print help

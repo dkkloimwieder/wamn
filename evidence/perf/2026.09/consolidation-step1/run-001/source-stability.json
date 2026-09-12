@@ -1,7 +1,0 @@
-{
-  "same_head": true,
-  "changed_tracked_inputs_except_beads": [],
-  "before_tracked_count": 25838,
-  "after_tracked_count": 25838,
-  "scope": "Tracked file bytes and lstat modes except .beads; full raw before/after Git status records untracked paths. No clean-tree claim."
-}

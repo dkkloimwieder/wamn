@@ -1,9 +1,0 @@
-{
-  "address": "127.0.0.1",
-  "data": "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-pg-002-20260912/data",
-  "database": "postgres",
-  "port": 36579,
-  "scope": "fresh owned PostgreSQL server",
-  "socket_directory": "/home/kaalin/.cache/wamn-lanes/consolidation-postgres-claims-pg-002-20260912",
-  "version": "postgres (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg26.04+2)"
-}

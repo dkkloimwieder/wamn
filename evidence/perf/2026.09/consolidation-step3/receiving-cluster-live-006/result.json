@@ -1,6 +1,0 @@
-{
-  "cluster": "wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
-  "failure": "startup refusal must identify the observed container start",
-  "passed": false,
-  "source": "fb6c2b2e28fbcb90a8a373672a60e2397488cae5"
-}

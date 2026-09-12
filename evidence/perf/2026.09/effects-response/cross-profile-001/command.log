@@ -1,3 +1,0 @@
-m1: exit 0
-proof: exit 0
-cross-profile assertion: exit 101

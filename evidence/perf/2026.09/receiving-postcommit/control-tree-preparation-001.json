@@ -1,9 +1,0 @@
-{
-  "path": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-controls-20260910",
-  "branch": "lane/receiving-postcommit-controls-20260910",
-  "source": "72142cf353da2e39afdb17bbfc153dd9d8ee1790",
-  "clean": true,
-  "mutations_applied": false,
-  "builds_started": false,
-  "scope": "Prepare separate inactive source only. Full passing unmutated pair remains required before controls."
-}

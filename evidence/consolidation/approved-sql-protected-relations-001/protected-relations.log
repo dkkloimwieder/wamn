@@ -1,2 +1,0 @@
-error: target `protected_relations_live` in package `wamn-ctl` requires the features: `ops`
-Consider enabling them by passing, e.g., `--features="ops"`

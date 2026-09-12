@@ -1,7 +1,0 @@
-
-running 2 tests
-test trusted_http_route::tests::nested_http_authorizes_child_and_preserves_original_caller ... ignored, requires fresh project PostgreSQL, separate fresh wamnsystem, OCI registry, and actual HTTP guest
-test trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority ... ignored, requires fresh PostgreSQL, throwaway OCI registry, and actual http-request guest
-
-test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 94 filtered out; finished in 0.00s
-

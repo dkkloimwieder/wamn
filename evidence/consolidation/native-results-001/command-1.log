@@ -1,3 +1,0 @@
-   Compiling wamn-authoring-model v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912/crates/authoring/model)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.34s
-     Running `target/debug/examples/print-authoring-surface-schema`

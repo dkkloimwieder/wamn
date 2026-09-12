@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-error-contract/tools/constraint-controls.py", line 45, in <module>
-    assert original_generated.count(anchor) == 1, name
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-AssertionError: UNIQUE

@@ -1,4 +1,0 @@
-wash-runtime v2.9.0 (https://github.com/wasmCloud/wasmCloud?rev=68ebece9c537f8bb4b5c9999f274ec68d60f35a9#68ebece9)
-└── wash-runtime feature "oci"
-    └── ctc8-14-wasi-http-probe v0.0.0 (/home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909/tools/probes/ctc8-14-wasi-http/host)
-        └── ctc8-14-wasi-http-probe feature "default" (command-line)

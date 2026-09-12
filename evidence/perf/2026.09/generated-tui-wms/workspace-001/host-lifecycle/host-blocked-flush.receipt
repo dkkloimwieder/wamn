@@ -1,6 +1,0 @@
-signal=SIGTERM
-exit_code=1
-shutdown_ms=7006
-trace_export_connection_observed=true
-trace_peer_answered=false
-flush_failure_reported=true

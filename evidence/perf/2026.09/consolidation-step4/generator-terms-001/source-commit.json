@@ -1,8 +1,0 @@
-{
-  "mechanical_rename_commit": "e7976eaffe1043af852013449ac9286c33447931",
-  "parent": "daae50fe83ba85bb921a8be82b0e6fa566cde0e2",
-  "committed_files_match_tested_rename": true,
-  "test_commit": "80d9af2a7c71a51834eff8e1f9c133ecbd6df4e1",
-  "test_source_sha256": "be885fdf1045e713bed6923cbbe0244ec04d0bfcea4e0ea70236ad1215dc27ed",
-  "committed_test_matches_executed_case": true
-}

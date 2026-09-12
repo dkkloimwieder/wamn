@@ -1,7 +1,0 @@
-
-running 2 tests
-test command_kinds_and_operation_pairing_are_exact ... ok
-test query_kinds_and_operation_pairing_are_exact ... ok
-
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 0.00s
-

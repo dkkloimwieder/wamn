@@ -1,8 +1,0 @@
-{
-  "argv": [
-    "bash",
-    "-c",
-    "cargo test --locked --offline -p wamn-schema-generator --test tui_emitter -- --include-ignored && cargo clippy --locked --offline -p wamn-client-terminal -p wamn-client-tui -p wamn-receiving-tui --all-targets --no-deps -- -D warnings && cargo build --locked --offline -p wamn-ctl --bin wamn && cargo build --locked --offline -p wamn-host -p wamn-scenario-worker -p wamn-receiving-tui --bins"
-  ],
-  "cwd": "/home/kaalin/.cache/wamn-lanes/generated-tui-20260908"
-}

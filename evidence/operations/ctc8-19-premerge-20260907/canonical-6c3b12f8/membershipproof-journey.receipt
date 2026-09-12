@@ -1,1 +1,0 @@
-RECEIVING MEMBERSHIP PROOF PASS source=6c3b12f851b86c417161d07cf18b1d4ed8109aa0 namespace=wamn-receiving-journey rerun=human-membership-http,production-ctl,exact-cleanup

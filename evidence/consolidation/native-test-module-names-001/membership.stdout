@@ -1,9 +1,0 @@
-
-running 4 tests
-test membership_test::tests::permission_uses_the_generated_canonical_operation_grant ... ok
-test membership_test::tests::benchmark_pat_file_is_private_and_never_overwrites ... ok
-test membership_test::tests::success_requires_the_correlated_seeded_record ... ok
-test membership_test::tests::argument_diagnostics_do_not_disclose_database_credentials ... ok
-
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 92 filtered out; finished in 0.00s
-

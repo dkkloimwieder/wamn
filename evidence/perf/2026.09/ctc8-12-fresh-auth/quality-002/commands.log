@@ -1,7 +1,0 @@
-cargo test -p wamn-platform-identity --lib --locked --offline -- --include-ignored 
-env WAMN_PLATFORM_IDENTITY_PG_URL=postgresql://postgres:probe@127.0.0.1:32788/postgres cargo test -p wamn-platform-identity --test identity_live --locked --offline -- --include-ignored --nocapture --test-threads=1 
-env WAMN_PLATFORM_IDENTITY_PG_URL=postgresql://postgres:probe@127.0.0.1:32789/postgres cargo test -p wamn-platform-identity --test pat_live --locked --offline -- --include-ignored --nocapture --test-threads=1 
-env WAMN_ROUTE_AUTH_PG18_URL=postgresql://postgres:probe@127.0.0.1:32790/postgres cargo test -p wamn-proof-integration --lib --locked --offline route_authentication_live::production_route_caller_authentication_and_operation_authorization -- --ignored --exact --nocapture --test-threads=1 
-cargo test -p wamn-execution-host --lib --locked --offline router_driver::tests::nested_permission_denial_survives_the_real_component_boundary -- --exact --include-ignored 
-cargo test -p wamn-runtime --lib --locked --offline plugins::connection_http::tests:: -- --include-ignored 
-cargo test -p wamn-runtime --lib --locked --offline plugins::wamn_blobstore::plugin::tests:: -- --include-ignored 

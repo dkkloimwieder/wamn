@@ -1,8 +1,0 @@
-{
-  "changed_source_sha256": {
-    "tests/integration/Cargo.toml": "ad018d9091c9413614b0543b93d86c807a5a9ef4472af361f2f195cf24f2a7dd",
-    "tests/integration/src/route_authentication_live/overlay_compatibility.rs": "4c84c8efdd5e59b93d0f0f93b663df2ecee3698cdb1bedd70dff63987c8cc554",
-    "tools/receiving-postcommit-proof": "c32093a20269315469c626c776482aa663c97f48bcb3c73b23149fcf8493eab4"
-  },
-  "head": "cd9074cef4a9845ea47800a51fe07f01503d4b6c"
-}

@@ -1,4 +1,0 @@
-2026-09-10T21:58:05.855039Z  INFO tokio_postgres::connection: NOTICE: extension "btree_gist" already exists, skipping
-2026-09-10T21:58:05.855275Z  INFO tokio_postgres::connection: NOTICE: schema "receiving" already exists, skipping
-2026-09-10T21:58:05.869727Z  INFO tokio_postgres::connection: NOTICE: relation "wamn_entities" already exists, skipping
-2026-09-10T21:58:05.869979Z  INFO tokio_postgres::connection: NOTICE: relation "wamn_cdc_exclusions" already exists, skipping

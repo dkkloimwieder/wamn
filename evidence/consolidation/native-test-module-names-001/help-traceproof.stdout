@@ -1,9 +1,0 @@
-Run the 9.2 trace-inject gate: prove the host stamps `traceparent` on both the P2 and P3 outbound surfaces, read back from serve-echo
-
-Usage: wamn-gates traceproof [OPTIONS] --upstream <UPSTREAM>
-
-Options:
-      --log-level <LOG_LEVEL>      Log level (the Jobs pass this before the subcommand) [default: info]
-      --upstream <UPSTREAM>        Reflecting upstream in a separate process/pod
-      --result-file <RESULT_FILE>  Write the completed assertions as JSON, including to a Kubernetes termination file
-  -h, --help                       Print help

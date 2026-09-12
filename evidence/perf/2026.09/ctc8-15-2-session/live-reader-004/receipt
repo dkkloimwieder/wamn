@@ -1,1 +1,0 @@
-PASS suite=reader tests=1 ignored=0 named-live-witness=dedicated_session_reader_columns_and_generations_execute_on_postgres

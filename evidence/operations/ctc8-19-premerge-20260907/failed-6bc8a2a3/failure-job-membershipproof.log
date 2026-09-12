@@ -1,2 +1,0 @@
-MEMBERSHIP_PROOF case=absent_membership status=401 result=pass
-Error: membership case granted: status=403, expected=200

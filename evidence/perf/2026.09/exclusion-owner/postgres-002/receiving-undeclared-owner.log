@@ -1,4 +1,0 @@
-Error: generate package artifacts
-
-Caused by:
-    InvalidModel: purchase_order.purchase_order_supplier_id_excl owner undeclared_package is not the package or a declared base

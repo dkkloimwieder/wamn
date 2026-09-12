@@ -1,1 +1,0 @@
-{"document":"response","body":{"schema-version":"0.1","command-id":"gate-wamn_wms-inventory_merge","outcome":{"status":"completed","value":{"command":"gate","result":{"report-id":"sha256:679dd5e4bd8e71fd32e7ee259dc401dfad1b9792ac0734ed5a5e8157262882d7","validated-draft":{"validated-draft-id":"sha256:679dd5e4bd8e71fd32e7ee259dc401dfad1b9792ac0734ed5a5e8157262882d7"}}}}}}

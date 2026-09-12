@@ -1,9 +1,0 @@
-{
-  "after_sha256": "a5d57d92fa065a611ede3715137c6bdc4c21ae94f15f8dacf4309659b4840ff5",
-  "before_sha256": "a5d57d92fa065a611ede3715137c6bdc4c21ae94f15f8dacf4309659b4840ff5",
-  "bytes_and_modes_unchanged": true,
-  "head_after": "c4ef9db4a9214e44a18aefc0b69d520952b52cb0",
-  "head_before": "c4ef9db4a9214e44a18aefc0b69d520952b52cb0",
-  "head_unchanged": true,
-  "tracked_files": 26613
-}

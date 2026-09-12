@@ -1,5 +1,0 @@
-Traceback (most recent call last):
-  File "/home/kaalin/.cache/wamn-lanes/consolidation-stage3-sweep002-results-20260911/docs/perf/2026.09/consolidation-step3/sweep-001/run-002/review-classification.py", line 91, in <module>
-    assert len(found) == 1
-           ^^^^^^^^^^^^^^^
-AssertionError

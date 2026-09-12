@@ -1,2 +1,0 @@
-IDENTITY_SESSION case=membership-revoked result=pass
-IDENTITY_SESSION result=pass cases=1 host_admission=not_proven

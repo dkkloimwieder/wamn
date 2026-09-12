@@ -1,1 +1,0 @@
-["cargo", "test", "-p", "wamn-execution-host", "--lib", "--locked", "--offline", "--target-dir", "target", "--", "--include-ignored", "--nocapture", "--test-threads=1", "--skip", "native_authenticated_nested_authority_and_lifecycle"]

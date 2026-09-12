@@ -1,5 +1,0 @@
-["+1.97.0", "build", "--locked", "--release", "--target", "wasm32-wasip2", "-p", "http-route"]
-["+1.97.0", "build", "--locked", "--release", "--target", "wasm32-wasip2", "-p", "materializer"]
-["+1.97.0", "build", "--locked", "--release", "--target", "wasm32-wasip2", "-p", "busyloop"]
-["+1.97.0", "build", "--locked", "--release", "--target", "wasm32-wasip2", "-p", "connection-http-standard"]
-["+1.97.0", "build", "--locked", "--release", "--target", "wasm32-wasip2", "-p", "sockprobe"]

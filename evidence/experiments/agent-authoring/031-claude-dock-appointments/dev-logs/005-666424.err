@@ -1,5 +1,0 @@
-Error: dev-stage-failed at admit: dev-stage-owner-failed while project admission into the environment: component-projection-refused (component-fact-conflict): wamn_dock@1.0.0 component=dock interface-version=0.1.0 collides with different admitted facts
-
-Caused by:
-    0: dev-stage-owner-failed while project admission into the environment: component-projection-refused (component-fact-conflict): wamn_dock@1.0.0 component=dock interface-version=0.1.0 collides with different admitted facts
-    1: component-projection-refused (component-fact-conflict): wamn_dock@1.0.0 component=dock interface-version=0.1.0 collides with different admitted facts

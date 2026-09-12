@@ -1,1 +1,0 @@
-metrics: The collector does not yet expose enough guest_invocation_duration_count samples

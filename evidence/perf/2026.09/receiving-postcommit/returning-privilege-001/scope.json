@@ -1,7 +1,0 @@
-{
-  "candidate": "Fresh base copy changes only initial purchase_order DDL by adding nullable overlay_compatibility_note text. Base generated SQL/policy and overlay artifacts remain the shipped bytes.",
-  "grant_source": "Existing production wamn-ctl apply-package and reconcile-package-data-access, with binary and input SHA256 values retained in source.json.",
-  "distinguishing_control": "Only RETURNING model.* changes to the original declared field list. The additive database, role, and grants remain identical.",
-  "finding_scope": "Wildcard RETURNING introduces a SELECT requirement for the added undeclared column under this exact retained corpus and grant set.",
-  "limit": "This does not establish that every fully regenerated additive base B fails. The accepted compatibility proof fixes overlay O artifacts and does not require unchanged base components or policy."
-}

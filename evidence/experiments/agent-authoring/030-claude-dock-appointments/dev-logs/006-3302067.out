@@ -1,8 +1,0 @@
-applied dock@1.0.0: 1 migration(s)
-applied dock@1.0.0: 1 migration(s)
-projected sha256:e8c691e22503680b541a061b673995a7e978cc84a398bab6fd4812f675ef5602 (source-project: already converged; control: changed)
-sha256:e8c691e22503680b541a061b673995a7e978cc84a398bab6fd4812f675ef5602
-sha256:189252903d1f1a30f66561a84066aad53f1a6368d4819c3c94cf355b37bb5276
-sha256:189252903d1f1a30f66561a84066aad53f1a6368d4819c3c94cf355b37bb5276
-run completed: migrate,introspect,generate,build,virtualize,apply,acl,admit,gate,publish,release,activate
-run served: http://127.0.0.1:45541 host=receiving.localhost

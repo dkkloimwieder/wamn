@@ -1,2 +1,0 @@
-psql: error: connection to server on socket "/var/run/postgresql/.s.PGSQL.5435" failed: No such file or directory
-	Is the server running locally and accepting connections on that socket?

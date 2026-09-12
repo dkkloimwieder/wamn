@@ -1,1 +1,0 @@
-cargo test -p wamn-runtime --lib --locked --offline a_serving_host_ -- --include-ignored --nocapture --test-threads=1

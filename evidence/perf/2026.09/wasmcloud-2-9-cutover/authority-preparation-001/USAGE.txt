@@ -1,8 +1,0 @@
-Run only after the active Receiving owner releases machine execution, from the exact clean source chosen by root:
-
-python3 /tmp/wamn-cutover-authority-prepared/run-authority.py --repo /home/kaalin/.cache/wamn-lanes/wasmcloud-2-9-20260909 --source FULL_40_CHARACTER_COMMIT --evidence-dir /tmp/wamn-cutover-authority-live-001
-
-The evidence directory must be new and outside the chosen checkout; summary.json and per-case JSON retain commands, source, explicit arming, exact test counts, artifact digest, exit status, and owned-container cleanup.
-The wrapper runs 16 cases from ten groups, expects 43 tests, continues after test failure, and stops after setup or cleanup failure; each of the seven guest-claim cases gets a fresh PostgreSQL 18 server.
-Raw logs stay in private/ with mode 0600 and that directory must not be published; redacted copies preserve only Rust test protocol lines, while arbitrary diagnostics remain private.
-The unchanged tenant-key, tenant-floor, and family-denial tests pass disposable credentials to their own psql children; the new wrapper passes no credentials in its Docker, psql, or Cargo arguments, and performs no test or source edits.

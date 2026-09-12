@@ -1,3 +1,0 @@
-Error from server (BadRequest): previous terminated container "host" in pod "hostgroup-default-6988444c4b-7dfhx" not found
-Error from server (NotFound): services "flow-http-nodeport" not found
-Error from server (NotFound): endpointslices.discovery.k8s.io "flow-http-nodeport" not found

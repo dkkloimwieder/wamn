@@ -1,1 +1,0 @@
-{"class":"one","fields":[{"path":"appointment_id","type":"uuid","nullable":false,"values":[]},{"path":"status","type":"text","nullable":false,"values":["scheduled","arrived","departed"]}]}

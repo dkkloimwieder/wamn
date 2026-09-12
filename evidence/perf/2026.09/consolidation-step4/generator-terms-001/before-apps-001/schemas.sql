@@ -1,2 +1,0 @@
-CREATE SCHEMA receiving;
-CREATE SCHEMA wms;

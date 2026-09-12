@@ -1,7 +1,0 @@
-{
-  "changed_source_sha256": {
-    "components/data/receiving-data/src/error.rs": "0876a302b76a90c1323f2749119292139ad05644aff2ad1f4558fdfe3e1fa304",
-    "packages/receiving/generated/wamn/purchase_order.rs": "4572a75ae4247a50911ff82e2faaa96671633374bc0d3b23709aa09bf847deec"
-  },
-  "head": "0cdb9af37e065af305c089e9035526384ae24844"
-}

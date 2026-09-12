@@ -1,9 +1,0 @@
-[
-  "cargo",
-  "clippy",
-  "-p",
-  "wamn-proof-integration",
-  "--lib",
-  "--locked",
-  "--offline"
-]

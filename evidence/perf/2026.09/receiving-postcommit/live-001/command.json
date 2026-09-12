@@ -1,9 +1,0 @@
-{
-  "argv": [
-    "tools/receiving-postcommit-proof",
-    "--apply",
-    "--evidence-dir",
-    "/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/live-001/pair"
-  ],
-  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910"
-}

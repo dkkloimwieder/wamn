@@ -1,7 +1,0 @@
-{
-  "result": "pass",
-  "source_commit": "0673f3f54f2db1250c6b023a11d7dc5877a944da",
-  "source_unchanged": true,
-  "pure_tests_passed": 5,
-  "live_test_ignored_and_unproven": "production_receiving_command_histories"
-}

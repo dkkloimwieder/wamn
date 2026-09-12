@@ -1,2 +1,0 @@
-psql:/home/kaalin/dev/wamn/docs/perf/2026.09/receiving-postcommit/returning-privilege-001/additive-overlay-wildcard.sql:41: ERROR:  42501: permission denied for table purchase_order
-LOCATION:  aclcheck_error, aclchk.c:2793

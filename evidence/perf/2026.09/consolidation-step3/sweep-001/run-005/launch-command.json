@@ -1,6 +1,0 @@
-[
-  "python3",
-  "docs/perf/2026.09/generated-tui-integration/tools/workspace.py",
-  "--evidence-dir",
-  "docs/perf/2026.09/consolidation-step3/sweep-001/run-005"
-]

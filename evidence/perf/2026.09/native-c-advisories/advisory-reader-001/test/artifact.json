@@ -1,6 +1,0 @@
-{
-  "path": "/home/kaalin/.cache/wamn-lanes/native-c-advisories-20260910/target/debug/deps/wamn_ctl-cccd1b9045024236",
-  "sha256": "ff21f41ad0922b57dfb5937ff5cf250290533b70dbea8ce9cb0f6a7002f4fe46",
-  "bytes": 315135640,
-  "test": "event_advisories::tests::retained_broker_advisories_report_missing_source_payloads"
-}

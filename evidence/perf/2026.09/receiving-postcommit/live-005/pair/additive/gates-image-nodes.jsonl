@@ -1,3 +1,0 @@
-{"node":"wamn-receiving-postcommit-control-plane","runtime_digest":"sha256:2692179cfdcfcd0f4e1d18415b4fad0513f654b5715262349871fc224aa9e61c","config_id":"sha256:f985b80b9af2ac3d8db636255877348c11a4c1dbd4088a1d0c38e4f90bc99fee"}
-{"node":"wamn-receiving-postcommit-worker","runtime_digest":"sha256:2692179cfdcfcd0f4e1d18415b4fad0513f654b5715262349871fc224aa9e61c","config_id":"sha256:f985b80b9af2ac3d8db636255877348c11a4c1dbd4088a1d0c38e4f90bc99fee"}
-{"node":"wamn-receiving-postcommit-worker2","runtime_digest":"sha256:2692179cfdcfcd0f4e1d18415b4fad0513f654b5715262349871fc224aa9e61c","config_id":"sha256:f985b80b9af2ac3d8db636255877348c11a4c1dbd4088a1d0c38e4f90bc99fee"}

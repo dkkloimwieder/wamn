@@ -1,8 +1,0 @@
-IDENTITY_JWKS case=configuration_https result=pass
-IDENTITY_JWKS case=public_set result=pass
-IDENTITY_JWKS case=issuer_binding result=pass
-IDENTITY_JWKS case=unknown_kid result=pass
-IDENTITY_JWKS case=wrong_ca result=pass
-IDENTITY_JWKS case=plaintext result=pass
-IDENTITY_JWKS case=absent_authority_routes result=pass
-IDENTITY_JWKS result=pass expected_keys=0 token_admission=not_proven expiry_outage=not_proven

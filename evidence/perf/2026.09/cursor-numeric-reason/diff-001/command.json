@@ -1,8 +1,0 @@
-{
-  "argv": [
-    "git",
-    "diff",
-    "--check"
-  ],
-  "cwd": "/home/kaalin/.cache/wamn-lanes/cursor-numeric-reason-20260910"
-}

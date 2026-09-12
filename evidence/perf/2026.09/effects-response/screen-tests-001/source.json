@@ -1,6 +1,0 @@
-{
-  "changed_source_sha256": {
-    "crates/client/tui/tests/screen.rs": "7beeb9175cb11aded314dea3d0ccc4667526ee140369dde27834df3923131ceb"
-  },
-  "head": "fafdce0e6a7e7387a2d41b763468ec175d3df1d3"
-}

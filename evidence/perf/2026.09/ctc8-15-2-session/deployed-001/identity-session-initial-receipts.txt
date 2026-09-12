@@ -1,5 +1,0 @@
-IDENTITY_SESSION case=human-dev result=pass
-IDENTITY_SESSION case=human-prod-no-membership result=pass
-IDENTITY_SESSION case=human-wrong-org result=pass
-IDENTITY_SESSION case=service-pat result=pass
-IDENTITY_SESSION result=pass cases=4 host_admission=not_proven

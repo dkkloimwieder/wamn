@@ -1,1 +1,0 @@
-cargo test -p wamn-runtime --lib --locked --offline an_explicit_project_credential_refuses_a_second_source -- --include-ignored --nocapture --test-threads=1

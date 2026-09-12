@@ -1,1 +1,0 @@
-PASS suite=exchange tests=1 ignored=0 named-live-witness=session_exchange_uses_fresh_scoped_authority_without_session_state

@@ -1,9 +1,0 @@
-{
-  "head": "26fdd3eda8e194730a016bf933f2917a6120c05b",
-  "status": " M deploy/platform/executor.yaml\n M services/ctl/src/dev/activation.rs\n",
-  "files": {
-    "services/ctl/src/dev/activation.rs": "05ecd631b417c7edba7d49d902c41edec13cf7bbea12f933926c77a60c7ae0db",
-    "deploy/platform/executor.yaml": "c9cf546928bbb6ecf81084cea93b50aa94fa26332012bec1fc854d3826f5d886",
-    "Cargo.lock": "716052ad25802313f4b0ea08135c11e5289f0d824414bb4ffd696a23b6038e4a"
-  }
-}

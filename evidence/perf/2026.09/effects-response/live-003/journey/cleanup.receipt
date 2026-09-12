@@ -1,1 +1,0 @@
-verdict=pass cluster=wamn-wms-journey containers=wamn-wms-pg18-f14be496bd31-337249,wamn-wms-registry-f14be496bd31-337249,wamn-wms-nats-f14be496bd31-337249,wamn-wms-minio-f14be496bd31-337249 reader_pid=348724 image=wamn-host:wms-f14be496bd31-337249-debug

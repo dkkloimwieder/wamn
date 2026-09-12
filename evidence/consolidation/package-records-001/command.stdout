@@ -1,9 +1,0 @@
-
-running 4 tests
-test promote::tests::exact_target_record_unlocks_only_portable_fact_copy ... ok
-test promote::tests::missing_extra_and_divergent_ordered_ledgers_refuse ... ok
-test promote::tests::manifest_and_predecessor_identity_must_both_match ... ok
-test promote::tests::absent_target_package_refuses_with_apply_package_remedy ... ok
-
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 279 filtered out; finished in 0.00s
-

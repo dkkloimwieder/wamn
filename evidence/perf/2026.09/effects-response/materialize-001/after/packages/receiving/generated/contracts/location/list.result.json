@@ -1,1 +1,0 @@
-{"class":"bounded_list","fields":[{"path":"id","type":"uuid","nullable":false,"values":[]},{"path":"location_code","type":"text","nullable":false,"values":[]}]}

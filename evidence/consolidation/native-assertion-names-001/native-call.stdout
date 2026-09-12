@@ -1,9 +1,0 @@
-
-running 4 tests
-test router_driver::native_call::tests::native_readiness_refuses_a_trapping_initializer ... ok
-test router_driver::native_call::tests::native_readiness_initializes_without_running_the_handler ... ok
-test router_driver::native_policy::tests::native_application_call_retains_owner_until_guest_cancellation ... ok
-test router_driver::native_call::tests::native_readiness_bounds_initialization_and_returns_memory ... ok
-
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 49 filtered out; finished in 0.34s
-

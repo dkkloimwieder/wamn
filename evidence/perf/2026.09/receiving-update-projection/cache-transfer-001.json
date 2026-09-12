@@ -1,7 +1,0 @@
-{
-  "from": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-20260910/target",
-  "to": "/home/kaalin/.cache/wamn-lanes/receiving-update-projection-20260910/target",
-  "source_worktree": "95dc61c1fe2d1ec624f899aa89a63da5c72abe0d",
-  "target_worktree": "b8c527975028931386cf11849a8e6144e9f14848",
-  "ownership": "Only .81 builds use this target while .78 is inactive. Cargo determines freshness."
-}

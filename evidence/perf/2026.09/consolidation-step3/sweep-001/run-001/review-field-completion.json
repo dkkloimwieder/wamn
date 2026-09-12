@@ -1,7 +1,0 @@
-{
-  "completed_utc": "2026-09-11T21:12:48.144589+00:00",
-  "change": "Apply the completed source-review resolutions to inherited comparison fields. All raw diagnostics, causes, counts, and skips stay unchanged. The review script now emits these fields directly.",
-  "classified_failures_before_sha256": "4169f9c0f48e9bb15af95c57c4716ceca0b83956c52532107ff63dbf9415c731",
-  "classified_failures_after_sha256": "1c0deb42c9441ccbb20a579950d32326b0cbb2738969ffc651c070a39dd3d66b",
-  "completed_script_sha256": "99f001d6daa571962b6ceb210e5f8c0b994765e02db1b4bb24d1b287ed03e919"
-}

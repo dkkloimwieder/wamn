@@ -1,6 +1,0 @@
-{
-  "base": "0388e3bc98d231f1e69538e613ec33689c041653",
-  "patch_sha256": "33e3cf4c5e22ba93376e8568cc34f06e62ef2e9cefbdedc39f9da5038d946572",
-  "clean_source": false,
-  "scope": "Scoped compilation and lint for the fixture correction, not a live proof."
-}

@@ -1,7 +1,0 @@
-{
-  "observed_component": "sha256:6e4f41b6b4bbeba4e08d19a527a57312794fd337624ec490a9874bd5e3a84548",
-  "prepared_component_matches": true,
-  "overlay_file_count": 81,
-  "stage": "installed-schema-observed",
-  "control_verdict": "pending live retry assertion"
-}

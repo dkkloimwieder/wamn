@@ -1,9 +1,0 @@
-{
-  "source_file": "crates/platform/runtime/src/plugins/wamn_postgres/wiring_resolution.rs",
-  "blob_identity": {
-    "dfa1c318": "e9b58228ef78389166d2a960ec5b7011003863a2",
-    "ab0467f415dfd6b31e70323ec6ca049d5d2a5298": "e9b58228ef78389166d2a960ec5b7011003863a2"
-  },
-  "decoder_expansion_commit": "1efc3b2c818c49ee2d7be38ca7d9b2445fe61b0b",
-  "claim": "Read-only git evidence; no baseline live rerun."
-}

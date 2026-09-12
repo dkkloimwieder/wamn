@@ -1,5 +1,0 @@
-{
-  "container": "labels",
-  "endpoint": "http://172.28.0.17:9000",
-  "prefix": "wms/"
-}
