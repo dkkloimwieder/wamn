@@ -798,7 +798,7 @@ fn quoted_column_list(columns: &[&str]) -> String {
 ///
 /// Run connected to the project-environment database as a principal owning both
 /// schemas (the database owner or the cluster superuser), AFTER
-/// `deploy/sql/catalog-schema.sql` and the run-plane files have been applied —
+/// `wamn_catalog::CATALOG_SCHEMA_SQL` and the run-plane files have been applied —
 /// the `REVOKE`/`GRANT` name relations that must already exist.
 pub fn grant_http_admitter_surface_sql(schema: &str) -> String {
     let role = quote_ident(HTTP_ADMITTER_ROLE);

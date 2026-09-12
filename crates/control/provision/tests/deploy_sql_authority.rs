@@ -35,7 +35,7 @@ use wamn_control_provision::workload_role::{
 };
 
 const POSTGRES_INIT: &str = include_str!("../../../../deploy/sql/postgres-init.sql");
-const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
+const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const RUN_STATE: &str = include_str!("../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
@@ -197,7 +197,7 @@ fn psql(url: &str, database: Option<&str>, script: &str) -> String {
 /// Apply one file the way its own header says it must be applied.
 ///
 /// `postgres-init.sql` carries `CREATE DATABASE` and `\connect`, so it cannot
-/// run inside a transaction; `catalog-schema.sql` owns its own `BEGIN`. Neither
+/// run inside a transaction; `CATALOG_SCHEMA` owns its own `BEGIN`. Neither
 /// tolerates `psql -1`.
 fn apply(url: &str, sql: &str) {
     let out = Command::new("psql")

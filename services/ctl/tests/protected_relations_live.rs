@@ -25,8 +25,7 @@ const MANIFEST_PATH: &str = "architecture/state-owners.json";
 const TABLE_PATH: &str = "architecture/protected-writes.json";
 const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
 const OPS_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/ops-schema.sql");
-const CONTROL_PORTABLE_STORE_SQL: &str =
-    include_str!("../../../deploy/sql/control-portable-store.sql");
+const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");

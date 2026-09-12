@@ -120,8 +120,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         .get(0);
 
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
-    let catalog_ddl = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
-        .context("read catalog DDL")?;
+    let catalog_ddl = wamn_catalog::CATALOG_SCHEMA_SQL;
     let run_state_ddl = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
         .context("read run-state DDL")?;
     let run_queue_ddl = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))

@@ -77,7 +77,7 @@ async fn install(admin: &Client, database: &str, generation: &str) -> anyhow::Re
         )
         .await?;
     admin
-        .batch_execute(include_str!("../../../../deploy/sql/catalog-schema.sql"))
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await?;
     admin
         .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))

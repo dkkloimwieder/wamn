@@ -35,3 +35,6 @@ wamn-control-provision = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+wamn-catalog = { workspace = true }

@@ -3490,7 +3490,7 @@ async fn project_tenant_environment(
         anyhow::ensure!(
             !disposable,
             "a disposable project-env needs catalog.tenant_environments: apply \
-             deploy/sql/control-portable-store.sql to the system database first"
+             wamn_control_provision::CONTROL_PORTABLE_STORE_SQL to the system database first"
         );
         return Ok(());
     }

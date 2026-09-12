@@ -39,7 +39,7 @@
 //!    `partition-key` key are stripped (a legacy document fails parse after
 //!    the owning surface is removed).
 //! 5. **From-zero restore** — an empty database plans the full set, including
-//!    `deploy/sql/catalog-schema.sql` (the `catalog` metadata schema the
+//!    `wamn_catalog::CATALOG_SCHEMA_SQL` (the `catalog` metadata schema the
 //!    registration storage and the RI reconcile read).
 //! 6. **Exact CHECK + trigger convergence** — every record-table CHECK is
 //!    compared in PostgreSQL's canonical form; missing/drifted checks are added
@@ -61,6 +61,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use wamn_catalog::CATALOG_SCHEMA_SQL;
 use wamn_pg_core::{Identifier, InvalidIdentifier};
 
 /// The schema of record, compiled in — the same sources provisioning applies
@@ -68,7 +69,6 @@ use wamn_pg_core::{Identifier, InvalidIdentifier};
 /// stand-in drift guard pins.
 const RUN_STATE_SQL: &str = include_str!("../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql");
-const CATALOG_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 
 const RUNS_ADMISSION_SCOPE_CHECK_DEF: &str =
     "CHECK (package_id <> ''::text AND effective_release_id > 0 AND environment <> ''::text)";
@@ -2181,7 +2181,7 @@ pub enum RunPlaneActionKind {
     DropLegacyTrigger,
     /// Drop the legacy `wamn_outbox_event()` function (after its triggers).
     DropLegacyFunction,
-    /// Apply the whole `catalog-schema.sql` (the `catalog` schema is absent).
+    /// Apply the complete catalog bootstrap when the `catalog` schema is absent.
     EnsureCatalogSchema,
     /// Create a missing `catalog` table from its record section.
     CreateCatalogTable,
@@ -4745,7 +4745,7 @@ fn table_section(src: &str, qualifier: &str, table: &str) -> String {
         if t == "-- BEGIN POST-TABLE CONSTRAINTS" {
             break;
         }
-        // catalog-schema.sql closes its own transaction (wamn-jnms). That
+        // CATALOG_SCHEMA_SQL closes its own transaction (wamn-jnms). That
         // terminator belongs to the file, not to the last table, and a repair
         // action that carried it would commit the caller's batch early.
         if t == "COMMIT;" {

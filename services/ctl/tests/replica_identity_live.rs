@@ -6,7 +6,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_ctl::reconcile_replica_identity::reconcile;
 use wamn_schema_control::ManagedModel;
 
-const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const PACKAGE_ID: &str = "ri_package";
 const OWNER_PACKAGE_ID: &str = "client_overlay";
 

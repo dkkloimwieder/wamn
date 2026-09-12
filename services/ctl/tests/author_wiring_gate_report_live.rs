@@ -84,7 +84,7 @@ const PACKAGE_VERSION: &str = "1.0.0";
 const COMPONENT: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
-const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const CATALOG_SCHEMA_SQL: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 
 async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {

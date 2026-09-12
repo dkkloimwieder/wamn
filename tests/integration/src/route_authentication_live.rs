@@ -79,7 +79,7 @@ async fn permission_write_identity(project: &Client) -> anyhow::Result<Vec<Strin
 
 async fn install_project_and_reconcile(project: &Client, project_url: &str) -> anyhow::Result<()> {
     project
-        .batch_execute(include_str!("../../../deploy/sql/catalog-schema.sql"))
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await
         .context("install catalog schema")?;
     project

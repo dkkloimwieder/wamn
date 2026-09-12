@@ -312,7 +312,8 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     // The run-plane schema, applied as the cluster superuser exactly as the
     // reconciler does.
     let project_url = with_database(&url, &database);
-    for ddl in ["catalog-schema.sql", "run-state.sql", "run-queue.sql"] {
+    run_ok(&project_url, wamn_catalog::CATALOG_SCHEMA_SQL);
+    for ddl in ["run-state.sql", "run-queue.sql"] {
         let path = format!("{root}/deploy/sql/{ddl}");
         let body = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path}: {e}"));
         run_ok(&project_url, &body);

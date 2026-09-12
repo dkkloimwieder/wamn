@@ -2600,7 +2600,7 @@ mod tests {
         let mut project = connect(&project_config).await;
         let mut control = connect(&control_config).await;
         project
-            .batch_execute(include_str!("../../../deploy/sql/catalog-schema.sql"))
+            .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
             .await
             .expect("install production project catalog");
         control
@@ -2612,9 +2612,7 @@ mod tests {
             .await
             .expect("install production control system schema");
         control
-            .batch_execute(include_str!(
-                "../../../deploy/sql/control-portable-store.sql"
-            ))
+            .batch_execute(wamn_control_provision::CONTROL_PORTABLE_STORE_SQL)
             .await
             .expect("install production portable control store");
         control
@@ -3010,9 +3008,7 @@ mod tests {
             .await
             .expect("install production control system schema");
         control
-            .batch_execute(include_str!(
-                "../../../deploy/sql/control-portable-store.sql"
-            ))
+            .batch_execute(wamn_control_provision::CONTROL_PORTABLE_STORE_SQL)
             .await
             .expect("install production portable control store");
         control

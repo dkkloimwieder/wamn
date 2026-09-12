@@ -201,7 +201,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             CREATE ROLE wamn_control_author NOLOGIN; CREATE ROLE wamn_effect_writer NOLOGIN;",
         );
         for artifact in [
-            include_str!("../../../../deploy/sql/catalog-schema.sql"),
+            wamn_catalog::CATALOG_SCHEMA_SQL,
             include_str!("../../../../deploy/sql/run-state.sql"),
             include_str!("../../../../deploy/sql/run-queue.sql"),
             include_str!("../../../../deploy/sql/app-schema.sql"),

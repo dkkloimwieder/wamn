@@ -488,8 +488,7 @@ async fn provision_project(
         .await
         .context("ensure the cluster-global plane roles")?;
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let catalog = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
-        .context("read the catalog DDL")?;
+    let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
         .context("read the run-state DDL")?;
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))

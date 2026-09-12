@@ -115,9 +115,7 @@ fn hash(letter: char) -> String {
 }
 
 fn preamble(database: &str, app_generation: &str) -> String {
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
-    let catalog = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
-        .expect("read catalog DDL");
+    let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
     let prepare_app = sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::App,
         database,

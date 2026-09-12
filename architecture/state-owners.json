@@ -150,6 +150,16 @@
       "scope": "production-control-database-portable-store"
     },
     {
+      "path": "deploy/sql/catalog-schema-prefix.sql",
+      "kind": "ddl",
+      "scope": "production-project-database"
+    },
+    {
+      "path": "deploy/sql/control-portable-store-prefix.sql",
+      "kind": "ddl",
+      "scope": "production-control-database-portable-store"
+    },
+    {
       "path": "deploy/sql/catalog-schema.sql",
       "kind": "ddl",
       "scope": "production-project-database"
@@ -177,6 +187,12 @@
     }
   ],
   "excluded_sources": [
+    {
+      "path": "deploy/sql/reject-immutable-row-change.sql",
+      "source_class": "shared-integrity-function",
+      "reason": "Shared function body in both complete bootstraps, with no table declarations.",
+      "expected_objects": []
+    },
     {
       "path": "deploy/sql/postgres-init.sql",
       "source_class": "gate-fixture-stand-in",

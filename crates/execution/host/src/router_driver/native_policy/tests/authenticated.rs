@@ -92,10 +92,7 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
         )
         .await?;
     admin
-        .batch_execute(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../deploy/sql/catalog-schema.sql"
-        )))
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await?;
     admin
         .batch_execute(include_str!(concat!(

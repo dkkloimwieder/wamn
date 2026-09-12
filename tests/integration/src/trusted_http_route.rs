@@ -88,7 +88,7 @@ const GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 #[derive(Debug, Clone)]
 pub struct RouteOptions {
     /// Superuser URL of a throwaway PostgreSQL database. Its `catalog` schema
-    /// is dropped and reinstalled from `deploy/sql/catalog-schema.sql`.
+    /// is dropped and reinstalled from `wamn_catalog::CATALOG_SCHEMA_SQL`.
     pub database_url: String,
     /// `<registry>/<repository>` base of a throwaway plain-HTTP OCI registry.
     pub artifact_base: String,
@@ -443,13 +443,10 @@ async fn seed_with_client(
     release: &ReleaseManifestWeld,
     additional_wiring: Option<(&AdmittedComponent, &[WiringDocument])>,
 ) -> anyhow::Result<ClassCredentials> {
-    // `catalog-schema.sql` applies whole only on a fresh install, and its
-    // migration blocks take an ACCESS EXCLUSIVE lock — so it must arrive as ONE
-    // implicit transaction, which `batch_execute` gives it and psql without
-    // `--single-transaction` does not.
+    // The complete catalog bootstrap includes its own transaction and applies
+    // only to a fresh database. Submit that complete string as one batch.
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
-    let schema = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
-        .context("read the catalog DDL")?;
+    let schema = wamn_catalog::CATALOG_SCHEMA_SQL;
     let app_schema = std::fs::read_to_string(format!("{root}/deploy/sql/app-schema.sql"))
         .context("read the application authorization DDL")?;
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))

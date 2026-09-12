@@ -557,7 +557,7 @@ async fn render_database_acl(admin: &Client, database: &str) -> anyhow::Result<S
 
 pub async fn install_journey_platform_floor(project: &Client) -> anyhow::Result<()> {
     project
-        .batch_execute(include_str!("../../../../deploy/sql/catalog-schema.sql"))
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await
         .context("install the catalog schema")?;
     project

@@ -64,6 +64,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
+/// Complete catalog bootstrap for a fresh project database, including its transaction.
+pub const CATALOG_SCHEMA_SQL: &str = concat!(
+    include_str!("../../../../deploy/sql/catalog-schema-prefix.sql"),
+    include_str!("../../../../deploy/sql/reject-immutable-row-change.sql"),
+    include_str!("../../../../deploy/sql/catalog-schema.sql"),
+);
+
 const HASH_PREFIX: &str = "sha256:";
 const HASH_HEX_LEN: usize = 64;
 const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v0.1";

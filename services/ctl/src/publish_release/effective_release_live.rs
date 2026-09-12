@@ -26,7 +26,7 @@ const PROJECT_URL_ENV: &str = "WAMN_EFFECTIVE_RELEASE_PROJECT_PG_URL";
 const CONTROL_URL_ENV: &str = "WAMN_EFFECTIVE_RELEASE_CONTROL_PG_URL";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
-const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
+const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 const BASE_WIRINGS: [&str; 8] = [
     "location_list",

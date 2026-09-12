@@ -35,6 +35,7 @@ wamn-scheduler = { workspace = true }
 wamn-control-registry = { workspace = true }
 
 [dev-dependencies]
+wamn-catalog = { workspace = true }
 # tests/read_authority.rs drives the REAL provisioning builders that mint the
 # dispatcher's scoped reader role, so the live gate cannot drift from the SQL
 # production actually applies. Dev-only: the shipped binary links no provisioner.

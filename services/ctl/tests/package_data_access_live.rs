@@ -12,7 +12,7 @@ use wamn_control_provision::{
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
 
-const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const OVERLAY_EVIDENCE_PATH: &str = "generated/platform-policy/data-access.json";
 const TENANT: &str = "package-data-access-live";

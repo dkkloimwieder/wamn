@@ -9,8 +9,8 @@ use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{EffectiveReleaseId, ManifestDigest, PackageCoordinate, ServingRelease};
 use wamn_ctl::publish_release::{DeploymentCoordinate, attest_deployment};
 
-const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
-const CONTROL_STORE: &str = include_str!("../../../deploy/sql/control-portable-store.sql");
+const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
+const CONTROL_STORE: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 const TENANT: &str = "publish-release-live";
 const INSERT_MIGRATION_SQL: &str = "\
 INSERT INTO catalog.package_migrations (\

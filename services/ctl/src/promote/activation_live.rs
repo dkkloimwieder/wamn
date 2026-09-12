@@ -56,7 +56,7 @@ async fn fresh_catalog(client: &Client) {
         .await
         .expect("prepare fresh catalog");
     client
-        .batch_execute(include_str!("../../../../deploy/sql/catalog-schema.sql"))
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await
         .expect("install catalog");
     client

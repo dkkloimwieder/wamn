@@ -43,7 +43,7 @@ use wamn_control_registry::sql::{
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
 
 const SYSTEM_SCHEMA: &str = include_str!("../../../deploy/sql/system-schema.sql");
-const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const DB: &str = "wamn_reader_live";
 const ORG: &str = "rl0";
 const PROJECT: &str = "app";
@@ -384,7 +384,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .expect("apply deploy/sql/system-schema.sql");
     sys.batch_execute(CATALOG_SCHEMA)
         .await
-        .expect("apply deploy/sql/catalog-schema.sql (the package/effective-release store)");
+        .expect("apply the complete catalog bootstrap (the package/effective-release store)");
     // The registration read's own credential, minted through the REAL builders
     // now that `registry.event_readers` exists (`wamn-0h0g.12.116`). The grant
     // batch also runs inside `prepare_workload_generation_sql`; applying it

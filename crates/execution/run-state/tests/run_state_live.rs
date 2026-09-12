@@ -82,8 +82,7 @@ fn run_state_live() {
     let url = std::env::var("WAMN_RUN_STORE_PG_URL")
         .expect("set WAMN_RUN_STORE_PG_URL to the throwaway superuser database");
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
-    let catalog = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
-        .expect("read catalog DDL");
+    let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
         .expect("read run-state DDL");
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))

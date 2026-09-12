@@ -1192,7 +1192,7 @@ async fn setup() -> Fixture {
         url.set_path(&format!("/{}", target.connection().database()));
         let environment = connect(url.as_str()).await;
         for schema in [
-            include_str!("../../../deploy/sql/catalog-schema.sql"),
+            wamn_catalog::CATALOG_SCHEMA_SQL,
             include_str!("../../../deploy/sql/run-state.sql"),
             include_str!("../../../deploy/sql/run-queue.sql"),
             include_str!("../../../deploy/sql/app-schema.sql"),

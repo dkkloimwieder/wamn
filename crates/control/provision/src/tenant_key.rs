@@ -177,7 +177,7 @@ fn derivations_template(database_literal: &str, database_octets: &str, owner: &s
 ///
 /// Idempotent by construction (`CREATE OR REPLACE`, `IF NOT EXISTS`), which is
 /// what lets it converge on `wamn-0h0g.11.49`'s path for existing databases
-/// while `catalog-schema.sql` carries fresh installs. Idempotence is not the
+/// while `wamn_catalog::CATALOG_SCHEMA_SQL` carries fresh installs. Idempotence is not the
 /// proof, though: the converge arm asserts POST-STATE — the definition digest,
 /// the volatility and parallel-safety flags read from `pg_proc`, and exact
 /// grants.
@@ -194,7 +194,7 @@ pub fn authority_derivations_sql(database: &str) -> String {
 
 /// The same DDL for a database whose name is NOT known at authoring time.
 ///
-/// `catalog-schema.sql` and `app-schema.sql` are static files applied to
+/// `CATALOG_SCHEMA_SQL` and `app-schema.sql` contain static SQL applied to
 /// project-environment databases named per project and environment, so neither
 /// can carry the literal [`authority_derivations_sql`] needs. The database
 /// cannot simply be read at call time either: `current_database()` is `STABLE`,

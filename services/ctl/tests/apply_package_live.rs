@@ -10,7 +10,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::operation_grants::{OPERATION_GRANT_LOCK_SQL, operation_grant_tokens};
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 
-const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const TENANT: &str = "package-runner-live";
 

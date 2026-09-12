@@ -150,8 +150,11 @@ pub use workload_role::{
 pub const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/system-schema.sql");
 
 /// Dormant portable-store extension, applied after [`SYSTEM_SCHEMA_SQL`].
-pub const CONTROL_PORTABLE_STORE_SQL: &str =
-    include_str!("../../../../deploy/sql/control-portable-store.sql");
+pub const CONTROL_PORTABLE_STORE_SQL: &str = concat!(
+    include_str!("../../../../deploy/sql/control-portable-store-prefix.sql"),
+    include_str!("../../../../deploy/sql/reject-immutable-row-change.sql"),
+    include_str!("../../../../deploy/sql/control-portable-store.sql"),
+);
 
 /// Ordered fresh-control bootstrap record. Keeping the portable extension in
 /// this composition prevents a caller from provisioning the legacy registry

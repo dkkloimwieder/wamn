@@ -169,7 +169,7 @@ const PACKAGE_ID: &str = measurement_schema::PACKAGE_ID;
 
 // The shipped DDL + retained receiving catalog, compiled in (drift-proof).
 const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
-const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const CATALOG_SQL: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 /// A delete-only registration on `entity` — exactly what drives the l5i9.31
 /// reconcile to REPLICA IDENTITY FULL for that entity's table (the ri axis
 /// flips through the REAL machinery, not a hand ALTER).

@@ -61,14 +61,8 @@ async fn registration_serializes_replay_conflicts_successors_and_rollback() {
     let hash = format!("sha256:{}", "a".repeat(64));
     let other_hash = format!("sha256:{}", "b".repeat(64));
     for (control, schema) in [
-        (
-            false,
-            include_str!("../../../../deploy/sql/catalog-schema.sql"),
-        ),
-        (
-            true,
-            include_str!("../../../../deploy/sql/control-portable-store.sql"),
-        ),
+        (false, wamn_catalog::CATALOG_SCHEMA_SQL),
+        (true, wamn_control_provision::CONTROL_PORTABLE_STORE_SQL),
     ] {
         admin.batch_execute("DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS wamn_run CASCADE; DROP SCHEMA IF EXISTS wamn_authority CASCADE;").await.unwrap();
         if control {

@@ -151,7 +151,7 @@ async fn native_effect_writer_live() {
         .await
         .expect("prepare ordinary App generation");
     admin
-        .batch_execute(include_str!("../../../../deploy/sql/catalog-schema.sql"))
+        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await
         .expect("apply catalog schema");
     admin
