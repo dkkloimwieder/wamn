@@ -145,37 +145,6 @@ GRANT EXECUTE ON FUNCTION "wamn_authority".current_tenant_key() TO "wamn_app";$w
 END
 $wamn_authority_bootstrap$;
 
--- Producer roles cannot name `runs.durability_class` in their INSERT grants.
--- This invoker-rights trigger therefore performs the only admission-time
--- selection, from the project-local projection below.
-CREATE FUNCTION wamn_run.pin_run_durability_class()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    projected_environment text;
-    projected_class text;
-BEGIN
-    SELECT policy.expected_environment, policy.durability_class
-      INTO projected_environment, projected_class
-      FROM wamn_run.environment_policies AS policy
-     WHERE policy.tenant_id = NEW.tenant_id;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'environment-policy-not-converged';
-    END IF;
-    IF NEW.environment IS DISTINCT FROM projected_environment THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'environment-policy-environment-mismatch';
-    END IF;
-    NEW.durability_class := projected_class;
-    RETURN NEW;
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.pin_run_durability_class() FROM PUBLIC;
-
 -- Effect attempt, dispatch, and outcome facts are immutable even for their
 -- owning role; retention requires a future explicit ledger protocol.
 CREATE FUNCTION wamn_run.reject_immutable_effect_fact_change()
@@ -540,10 +509,6 @@ CREATE POLICY runs_effect_writer ON wamn_run.runs
     WITH CHECK (true);
 CREATE INDEX runs_tkey
     ON wamn_run.runs ((wamn_authority.tenant_key(tenant_id)));
-
-CREATE TRIGGER runs_pin_durability_class
-BEFORE INSERT ON wamn_run.runs
-FOR EACH ROW EXECUTE FUNCTION wamn_run.pin_run_durability_class();
 
 CREATE TRIGGER runs_event_lineage_immutable
 BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth

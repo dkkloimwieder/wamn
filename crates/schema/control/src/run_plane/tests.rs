@@ -2827,12 +2827,8 @@ fn missing_helpers_and_record_triggers_are_repaired() {
             .iter()
             .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
             .count(),
-        6
+        5
     );
-    assert!(plan.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::RepairHelperFunction
-            && action.target == "pin_run_durability_class"
-    }));
     let terminal_delete_guard = plan
         .actions
         .iter()
@@ -2852,10 +2848,6 @@ fn missing_helpers_and_record_triggers_are_repaired() {
     );
     assert!(!terminal_delete_guard.sql.contains("effect-uncertain"));
     assert!(!terminal_delete_guard.sql.contains("SECURITY DEFINER"));
-    assert!(plan.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::RepairTrigger
-            && action.target == "runs.runs_pin_durability_class"
-    }));
     assert!(plan.actions.iter().any(|action| {
         action.kind == RunPlaneActionKind::RepairTrigger
             && action.target == "runs.runs_event_lineage_immutable"

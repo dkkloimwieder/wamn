@@ -198,10 +198,7 @@ fn run_state_sql_matches_the_model() {
         "capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'"
     ));
     assert!(sql.contains("OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode"));
-    // The durability-class carrier (wamn-0h0g.20.1): CHECK-frozen literals and
-    // a fail-closed policy projection under the same admission pin. Producer
-    // statements still cannot name the carrier; the local policy trigger is
-    // its only admission-time writer.
+    // The retained class has fixed literals and cannot change after insertion.
     assert!(sql.contains("durability_class text NOT NULL DEFAULT 'standard'"));
     assert!(sql.contains("CONSTRAINT runs_durability_class_check"));
     assert!(sql.contains("CHECK (durability_class IN ('standard', 'durable'))"));
@@ -227,14 +224,6 @@ fn run_state_sql_matches_the_model() {
     assert!(sql.contains(
         "CREATE INDEX environment_policies_tkey\n    ON wamn_run.environment_policies ((wamn_authority.tenant_key(tenant_id)))"
     ));
-    assert!(sql.contains("CREATE FUNCTION wamn_run.pin_run_durability_class()"));
-    assert!(sql.contains("WHERE policy.tenant_id = NEW.tenant_id"));
-    assert!(sql.contains("IF NOT FOUND THEN"));
-    assert!(sql.contains("MESSAGE = 'environment-policy-not-converged'"));
-    assert!(sql.contains("NEW.environment IS DISTINCT FROM projected_environment"));
-    assert!(sql.contains("MESSAGE = 'environment-policy-environment-mismatch'"));
-    assert!(!sql.contains("NEW.durability_class := COALESCE"));
-    assert!(sql.contains("CREATE TRIGGER runs_pin_durability_class\nBEFORE INSERT"));
     assert!(sql.contains("GRANT SELECT ON TABLE wamn_run.environment_policies TO wamn_app"));
     assert!(!sql.contains("GRANT INSERT ON TABLE wamn_run.environment_policies TO wamn_app"));
     // RIDER 1 of the ruling: an unnamed column's transition arm silently never

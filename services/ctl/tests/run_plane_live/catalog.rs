@@ -141,7 +141,7 @@ async fn authoring_privileges_at_record_plan_no_repair_live() {
 /// schema it is about to converge.
 async fn install_control_plane_residency(su: &Client) {
     let declaration = CONTROL_PORTABLE_STORE_SQL
-        .split_once("CREATE TABLE IF NOT EXISTS wamn_run.gate_reports (")
+        .split_once("CREATE TABLE wamn_run.gate_reports (")
         .expect("the control portable store declares the gate-report relation")
         .1
         .split_once("\n);")

@@ -511,8 +511,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
     },
 ];
 
-const PIN_RUN_DURABILITY_CLASS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.pin_run_durability_class()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nDECLARE\n    projected_environment text;\n    projected_class text;\nBEGIN\n    SELECT policy.expected_environment, policy.durability_class\n      INTO projected_environment, projected_class\n      FROM wamn_run.environment_policies AS policy\n     WHERE policy.tenant_id = NEW.tenant_id;\n    IF NOT FOUND THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'environment-policy-not-converged';\n    END IF;\n    IF NEW.environment IS DISTINCT FROM projected_environment THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'environment-policy-environment-mismatch';\n    END IF;\n    NEW.durability_class := projected_class;\n    RETURN NEW;\nEND\n$function$\n";
-
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
 const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.flow_id IS DISTINCT FROM OLD.flow_id\n       OR NEW.flow_version IS DISTINCT FROM OLD.flow_version\n       OR NEW.package_id IS DISTINCT FROM OLD.package_id\n       OR NEW.effective_release_id IS DISTINCT FROM OLD.effective_release_id\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode\n       OR NEW.durability_class IS DISTINCT FROM OLD.durability_class\n       OR NEW.wiring_id IS DISTINCT FROM OLD.wiring_id\n       OR NEW.wiring_version IS DISTINCT FROM OLD.wiring_version\n       OR NEW.wiring_hash IS DISTINCT FROM OLD.wiring_hash\n       OR NEW.binding_world_json IS DISTINCT FROM OLD.binding_world_json THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.manifest_digest IS NULL THEN\n            IF NEW.status NOT IN ('dispatched', 'running')\n               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect\n                           WHERE effect.tenant_id = OLD.tenant_id\n                             AND effect.run_id = OLD.run_id\n                             AND OLD.durability_class = 'durable') THEN\n                RAISE EXCEPTION USING\n                    ERRCODE = '55000',\n                    MESSAGE = 'run-release-record-immutable';\n            END IF;\n        ELSIF NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE = 'run-release-record-immutable';\n        END IF;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
@@ -524,36 +522,7 @@ const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTIO
 const REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_operator_run_action_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'operator-run-action-immutable';\nEND\n$function$\n";
 
 const RUNS_EVENT_LINEAGE_TRIGGER_DEF: &str = "CREATE TRIGGER runs_event_lineage_immutable BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable()";
-const RUNS_PIN_DURABILITY_CLASS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_pin_durability_class BEFORE INSERT ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.pin_run_durability_class()";
 const RUNS_TERMINAL_DELETE_ONLY_TRIGGER_DEF: &str = "CREATE TRIGGER runs_terminal_delete_only BEFORE DELETE ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_terminal_run_delete()";
-
-const PIN_RUN_DURABILITY_CLASS_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.pin_run_durability_class()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    projected_environment text;
-    projected_class text;
-BEGIN
-    SELECT policy.expected_environment, policy.durability_class
-      INTO projected_environment, projected_class
-      FROM wamn_run.environment_policies AS policy
-     WHERE policy.tenant_id = NEW.tenant_id;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'environment-policy-not-converged';
-    END IF;
-    IF NEW.environment IS DISTINCT FROM projected_environment THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'environment-policy-environment-mismatch';
-    END IF;
-    NEW.durability_class := projected_class;
-    RETURN NEW;
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.pin_run_durability_class() FROM PUBLIC;"#;
 
 const GUARD_EVENT_LINEAGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()
 RETURNS trigger
@@ -654,9 +623,6 @@ const RUNS_EVENT_LINEAGE_TRIGGER_SQL: &str = "CREATE TRIGGER runs_event_lineage_
     BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth \
     ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
     wamn_run.guard_event_lineage_immutable();";
-const RUNS_PIN_DURABILITY_CLASS_TRIGGER_SQL: &str = "CREATE TRIGGER \
-    runs_pin_durability_class BEFORE INSERT ON wamn_run.runs FOR EACH ROW \
-    EXECUTE FUNCTION wamn_run.pin_run_durability_class();";
 const RUNS_TERMINAL_DELETE_ONLY_TRIGGER_SQL: &str = "CREATE TRIGGER \
     runs_terminal_delete_only BEFORE DELETE ON wamn_run.runs FOR EACH ROW \
     EXECUTE FUNCTION wamn_run.guard_terminal_run_delete();";
@@ -691,11 +657,6 @@ fn borrowed_helper_spec(
 
 fn helper_specs() -> Vec<HelperSpec> {
     vec![
-        borrowed_helper_spec(
-            "pin_run_durability_class",
-            PIN_RUN_DURABILITY_CLASS_DEF,
-            PIN_RUN_DURABILITY_CLASS_SQL,
-        ),
         borrowed_helper_spec(
             "guard_event_lineage_immutable",
             GUARD_EVENT_LINEAGE_DEF,
@@ -734,12 +695,6 @@ struct TriggerSpec {
 
 fn trigger_specs() -> Vec<TriggerSpec> {
     let mut specs = vec![
-        TriggerSpec {
-            table: "runs".to_string(),
-            name: "runs_pin_durability_class".to_string(),
-            definition: RUNS_PIN_DURABILITY_CLASS_TRIGGER_DEF.to_string(),
-            sql: RUNS_PIN_DURABILITY_CLASS_TRIGGER_SQL.to_string(),
-        },
         TriggerSpec {
             table: "runs".to_string(),
             name: "runs_event_lineage_immutable".to_string(),
@@ -3764,7 +3719,6 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
      JOIN pg_namespace n ON n.oid = p.pronamespace \
      WHERE n.nspname = $1 \
        AND p.proname IN ('lock_catalog_head', \
-                         'pin_run_durability_class', \
                          'guard_event_lineage_immutable', \
                          'reject_immutable_effect_fact_change', \
                          'reject_immutable_operator_run_action_change', \

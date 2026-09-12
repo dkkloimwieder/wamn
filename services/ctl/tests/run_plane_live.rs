@@ -1132,11 +1132,11 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
-            environment) \
-         VALUES ('t1','r-policy-durable','f',1,'cat',1,'dev')"
+            environment,durability_class) \
+         VALUES ('t1','r-policy-durable','f',1,'cat',1,'dev','durable')"
     ))
     .await
-    .expect("admit a run under the projected durable policy");
+    .expect("seed an explicitly durable run");
 
     system_su
         .batch_execute(
@@ -1184,11 +1184,11 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id, \
-            environment) \
-         VALUES ('t1','r-policy-standard','f',1,'cat',1,'dev')"
+            environment,durability_class) \
+         VALUES ('t1','r-policy-standard','f',1,'cat',1,'dev','standard')"
     ))
     .await
-    .expect("admit a run under the changed standard policy");
+    .expect("seed an explicitly standard run");
     let classes: Vec<(String, String)> = su
         .query(
             &format!(
@@ -1208,7 +1208,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
             ("r-policy-durable".to_string(), "durable".to_string()),
             ("r-policy-standard".to_string(), "standard".to_string()),
         ],
-        "policy changes affect future admissions without rewriting existing runs"
+        "policy changes must not rewrite stored run classes"
     );
 
     // Retained column drift closed, partition residue removed, and defaults
