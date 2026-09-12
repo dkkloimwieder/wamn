@@ -26,8 +26,8 @@
 //! so a palette node applies itself to EACH ITEM'S VALUE and passes error
 //! items through untouched; its ports declare `{"type": "array"}`,
 //! byte-identical to the entry's, which is what the gate's digest rule
-//! compares. Alternatives noted for future exploration in
-//! `docs/exe-model.md`: a router fan-out delivering items one at a time, and
+//! compares. `docs/architecture/execution.md#results-and-effects` records
+//! the current limit. Earlier alternatives were router fan-out per item and
 //! per-item outcome reporting for nodes whose work can fail per item.
 //!
 //! `template_id` is a **wiring parameter**, not an input field. Template choice

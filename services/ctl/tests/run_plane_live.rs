@@ -3,7 +3,7 @@
 //! REAL Postgres in every starting state the bead's manifestations recorded.
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a
-//! throwaway Postgres (recipe: docs/operations/build-and-test.md [RUN-PLANE-RECONCILE]);
+//! throwaway Postgres (recipe: docs/operations/running-tests.md#live-prerequisites-and-troubleshooting [RUN-PLANE-RECONCILE]);
 //! skipped cleanly when unset. The legs run sequentially under the main test
 //! entry (they share the `catalog` schema and the `wamn_app` role); the
 //! execution-pin cutover has one separate test entry:
@@ -919,9 +919,9 @@ async fn mint_guest_generation(su: &Client, url: &str, tenant: &str) -> (String,
 ///
 /// Every other generation leg in this file builds its role by hand with a bare
 /// `GRANT wamn_effect_writer TO <generation>`, which PostgreSQL 16+ defaults to
-/// `SET TRUE`. The prepare path emits `SET FALSE` — the tighter posture
-/// `docs/exe-model.md` names "rotating login generations with no `SET ROLE`
-/// escape" — so the edge production actually carries never reached this check,
+/// `SET TRUE`. The prepare path emits `SET FALSE`.
+/// See `docs/architecture/data-access.md#schema-and-definition-ownership`.
+/// The edge production actually carries never reached this check,
 /// and `generation_role_contract_violation_sql` was left demanding the opposite
 /// of what the provisioner writes (`358f6792` flipped the provisioner and its
 /// own check without flipping the reconciler). This leg mints the generation

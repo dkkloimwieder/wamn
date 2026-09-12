@@ -109,12 +109,13 @@ Almost all code here is Rust — consult the `rust-guidelines` skill when writin
 ## Repository structure
 
 Read [README.md](README.md) to locate applications, workspaces, services, libraries, and tests.
-Read [docs/exe-model.md](docs/exe-model.md) for the current architecture and its contracts.
+Read [docs/architecture/overview.md](docs/architecture/overview.md) for the current architecture and its contracts.
 Use Beads and Git for work status.
 
 ## Build and test
 
-Use [docs/operations/build-and-test.md](docs/operations/build-and-test.md) for commands, required inputs, result storage, and cleanup.
+Use [running tests](docs/operations/running-tests.md) for test commands, required inputs, result storage, and cleanup.
+Read [building](docs/operations/building.md) for artifact commands and [deployment](docs/operations/deployment.md) for deployed environments.
 Build debug artifacts by default with `cargo build` or `cargo test`.
 Use `--release` only when the selected test needs release artifacts.
 The deployed tests use the Docker image targets `--target host` and `--target gates`.

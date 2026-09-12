@@ -7,8 +7,8 @@
 #
 # [wamn-k9ea] RE-AIMED 2026-08-26. This gate previously proved the same property
 # on wash-runtime's P2 and P3 wasi:http HostHandler surfaces. That injection was
-# fork patch g2br.4, which docs/architecture/native-alignment-ledger.md Part 2
-# records as Dropped at the vanilla v2.8.0 sync — WAMN's real outbound-effect
+# fork patch g2br.4, dropped at the vanilla v2.8.0 sync.
+# docs/architecture/native-alignment.md links that earlier record. WAMN's real outbound-effect
 # path is wamn:connection/http, which injects the active span context itself,
 # and the wasi:http egress surface has no WAMN production call site. The gate
 # was re-aimed rather than retired because every surviving proof of the live

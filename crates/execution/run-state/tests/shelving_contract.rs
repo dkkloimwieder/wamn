@@ -1,6 +1,6 @@
 //! The shelving contract, as a test (wamn-0h0g.19.7, wamn-0h0g.20.5 §2).
 //!
-//! `docs/exe-model.md` "The boundary" promises that the premium durable tier,
+//! The earlier execution model promised that the premium durable tier,
 //! when sold, "slots in at path 3's claim (classifier + ledger re-enabled per
 //! class) WITH ZERO CHANGES TO PATHS 1-2". Prose cannot hold that: once the
 //! crash floor is behind a class gate, "we preserved the contract" becomes

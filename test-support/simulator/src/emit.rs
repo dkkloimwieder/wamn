@@ -2,9 +2,9 @@
 //!
 //! The trait is the seam; exactly one target is implemented.
 //!
-//! **There is deliberately no JetStream sink.** `docs/poc/wms-prep-spec.md` §1a
-//! holds it at trait-only until app 2 defines the external ingress contract,
-//! and the platform would refuse a fabricated one anyway: post-`.4.5` identity
+//! There is no JetStream sink. `docs/testing/deterministic.md#event-traffic`
+//! retains delivery through real routes without fabricated internal events.
+//! The platform refuses fabricated envelopes because post-`.4.5` identity
 //! rules (`wamn_materializer`'s `verified_source_event_id` /
 //! `verified_derived_source_event_id`) derive an envelope's identity from a
 //! real WAL LSN or a host-side digest, so a simulator cannot manufacture an
@@ -51,7 +51,7 @@ pub trait EmissionTarget {
 
 /// Drives a published route over HTTP with the array envelope and a PAT.
 ///
-/// The protocol structure here is not an API contract (`wms-prep-spec.md` §1a):
+/// The protocol follows `docs/testing/deterministic.md#event-traffic`:
 /// it mirrors the guest-side envelope authority and the header recipe the
 /// route-authentication test uses, and it is expected to move when they do.
 /// It is a fresh client rather than a lift of

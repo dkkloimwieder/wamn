@@ -7,7 +7,7 @@
 //! `#[panic_handler]` (E0152, duplicate lang item `panic_impl`), which is why
 //! both existing guests set `test = false` and `bench = false` (wamn-6i30).
 //! This crate supplies no panic handler, so it can carry the golden vectors
-//! that `docs/poc/wms-prep-spec.md` §1b names as the unit gate.
+//! for `docs/architecture/components.md#shared-label-renderer`.
 //!
 //! The template set is **closed**: three templates, no authoring machinery.
 //! Template authoring is demand-gated — an application that needs a fourth

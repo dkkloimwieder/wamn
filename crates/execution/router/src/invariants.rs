@@ -1,5 +1,5 @@
-//! WALK-1..6 as plain functions over an observed walk — D8a, Part D rung 4 of
-//! `docs/poc/deterministic-testing-spec.md`.
+//! WALK-1..6 as plain functions over an observed walk, originally D8a.
+//! Current scope: `docs/testing/deterministic.md#existing-boundaries`.
 //!
 //! No cargo feature and no flag: these are ordinary library functions the walk
 //! simulator and any other driver call after every `apply`. Wiring them into the

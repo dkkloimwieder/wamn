@@ -3,7 +3,7 @@
 //! # The law this crate exists under
 //!
 //! **Simulators drive real routes and consumers. They never write the
-//! database.** That is `docs/poc/poc-application-portfolio.md`'s rule for every
+//! database.** That is `docs/testing/deterministic.md#event-traffic`'s rule for every
 //! portfolio driver, and it is restated here because this crate's nearest
 //! neighbour breaks it on purpose: [`wamn_gate_harness`] seeds Postgres
 //! directly (`scope_session`, `seed_flow_version`) so that gates can stand up a

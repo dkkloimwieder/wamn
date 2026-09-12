@@ -1181,8 +1181,8 @@ async fn publish_and_verify(
     // itself from `WasmConfig` and tags the layer `WASM_LAYER_MEDIA_TYPE`; this
     // artifact carries the platform's own `component_artifact_layout`, whose
     // config blob is the admitted-component fact `pull_verified` verifies again
-    // below. Routing through that API would discard the admitted fact. See standing
-    // trigger 5 in `docs/architecture/native-alignment-ledger.md`
+    // below. Routing through that API would discard the admitted fact. See
+    // `docs/architecture/native-alignment.md#retained-wamn-implementations`
     // (`wamn-kdhw`).
     let client = OciClient::new(ClientConfig {
         protocol,

@@ -8,11 +8,10 @@
 //! the authored SQL means, and the lexer must recover exactly that meaning from
 //! any rendering of it.
 //!
-//! Nothing in this file depends on the test harness. The Phase 3 libFuzzer
-//! target (D6b in `docs/poc/deterministic-testing-spec.md`) reuses it as its
-//! input grammar by swapping the `Arbitrary` implementations below for
-//! `arbitrary::Arbitrary` derives; the AST, the renderer, and the expectation
-//! carry over unchanged.
+//! Nothing in this file depends on the test harness. The deferred libFuzzer
+//! target can reuse this input grammar by replacing `Arbitrary` with
+//! `arbitrary::Arbitrary`. The AST, renderer, and expected result can stay.
+//! `docs/plan/delivery.md#conditional-extensions` retains that proposal.
 
 use std::collections::{BTreeMap, BTreeSet};
 

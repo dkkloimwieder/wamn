@@ -4,11 +4,11 @@ use serde::{Deserialize, Serialize};
 
 /// What the platform says happened to one effect.
 ///
-/// Six words, and never a seventh. `docs/exe-model.md` rules the set under "The
-/// three effect contracts". Each word claims only what the platform knows, and
-/// the four claims it must never make are written here because the tree made
-/// all four before `wamn-b2m6.3`, when every failure rendered as the single
-/// word "refused":
+/// Six words, and never a seventh. See
+/// `docs/architecture/execution.md#results-and-effects` for the effect rules.
+/// Each word claims only what the platform knows.
+/// Before `wamn-b2m6.3`, the tree made these four invalid claims when every failure rendered as "refused".
+/// These claims must never recur:
 ///
 /// * A TIMEOUT IS NOT A ROLLBACK. The platform sent the request and got no
 ///   answer. What the far side did with that request is unknown, so
@@ -37,8 +37,8 @@ pub enum EffectOutcome {
     /// The platform sent an attempt and recorded no outcome for it.
     ///
     /// The same state the premium durable shelf contract in
-    /// `docs/exe-model.md` names, spelled the same way so the two do not drift
-    /// into separate vocabularies for one fact.
+    /// `docs/architecture/execution.md#results-and-effects` describes.
+    /// The two use one vocabulary for this fact.
     EffectUncertain,
     /// The far side acted and its response did not arrive.
     ///

@@ -1,7 +1,7 @@
 //! Live test that the standard guest virtualization stage removes ambient
 //! environment access without hiding guest traps from the serving boundary.
 //!
-//! Gate recipe: `[STD-GUEST-VIRTUALIZATION]` in `docs/operations/build-and-test.md`.
+//! Gate recipe: `[STD-GUEST-VIRTUALIZATION]` in `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting`.
 
 #[cfg(test)]
 mod tests {

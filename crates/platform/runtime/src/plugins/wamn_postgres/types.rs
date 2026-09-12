@@ -201,7 +201,7 @@ impl<'a> tokio_postgres::types::FromSql<'a> for SqlCell {
 
 /// Spell a PostgreSQL `timestamptz` the one way the platform spells it: UTC
 /// RFC 3339 with exactly six fractional digits and a `Z` offset.
-/// `docs/architecture/application-naming.md` rules this form and every writer
+/// `docs/architecture/data-access.md#canonical-values-and-sql-names` rules this form and every writer
 /// already emits it. This read path is the single emitter, so nothing below it
 /// gets to decide the spelling by omission.
 fn canonical_timestamptz(value: DateTime<Utc>) -> String {
@@ -339,7 +339,7 @@ mod tests {
     /// The live carrier tests compare each read-back value to its
     /// canonicalizer, so this test is the one place that pins the
     /// canonicalizer itself to the spelling
-    /// `docs/architecture/application-naming.md` rules.
+    /// `docs/architecture/data-access.md#canonical-values-and-sql-names` rules.
     #[test]
     fn the_timestamptz_canonicalizer_spells_utc_rfc3339_with_six_fractional_digits_and_a_z() {
         for (parsed, spelled) in [

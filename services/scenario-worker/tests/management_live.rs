@@ -35,7 +35,7 @@
 //! properties those sections carried survive on the mounted gate below, which
 //! reaches the ledger under two distinct principals.
 //!
-//! The recipe in `docs/operations/build-and-test.md` supplies one disposable database.
+//! The recipe in `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting` supplies one disposable database.
 
 use std::time::{Duration, SystemTime};
 
@@ -1288,7 +1288,7 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
 // LOUD, not silent (wamn-61d0). This returned early when the variable was
 // unset, so a default `cargo test` reported `ok. 1 passed ... 0.00s` for a
 // test that executed nothing — the self-skipping false green
-// `docs/operations/build-and-test.md` names. `#[ignore]` makes its absence
+// `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting` names. `#[ignore]` makes its absence
 // VISIBLE in the default run, and the `expect` below makes an explicit run
 // without the database fail loudly instead of passing vacuously. A test that
 // cannot tell "passed" from "never ran" is not evidence.

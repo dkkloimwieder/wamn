@@ -2,7 +2,7 @@
 //!
 //! The separately built WASI command uses SQLx's generic API, while this host
 //! supplies the production `wamn:postgres` plugin and a real PostgreSQL 18
-//! identity. See `docs/operations/build-and-test.md` for the arming recipe.
+//! identity. See `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting` for the arming recipe.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

@@ -160,9 +160,9 @@ spec:
     - key encipherment
 ---
 # [15.45] Transitional only: this PVC prevents restart loss while the current
-# registry carries re-derivable OCI projections. docs/exe-model.md retires the
-# plan-shaped publication surface; this claim does not retain it or replace a
-# future reconciler.
+# registry carries re-derivable OCI projections. The current release contract
+# is in docs/architecture/overview.md#release-identity. This claim does not
+# restore the retired publication path or replace a future reconciler.
 #
 # What this removes is exactly one failure: restart-loses-everything. It does NOT
 # make the registry available (one replica, one ReadWriteOnce volume), and it

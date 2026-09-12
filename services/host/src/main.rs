@@ -11,7 +11,7 @@
 //! (SR9); this artifact ships none of them.
 //!
 //! The test suite lives in the separate
-//! `wamn-gates` binary (docs/operations/build-and-test.md); this artifact ships
+//! `wamn-gates` binary (docs/operations/building.md); this artifact ships
 //! none of it.
 
 use std::str::FromStr as _;

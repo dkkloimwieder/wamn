@@ -4,8 +4,8 @@ WAMN provides application data, component execution, and generated operator inte
 Applications declare their data and operations in `wamn.json`.
 Rust owns platform behavior, and PostgreSQL stores its durable state.
 
-Read the [architecture overview](docs/exe-model.md) for the current ownership and security rules.
-The [build and test instructions](docs/operations/build-and-test.md) contain the complete workspace test command and live test inputs.
+Read the [architecture overview](docs/architecture/overview.md) for the current ownership and security rules.
+The [test instructions](docs/operations/running-tests.md) contain the complete workspace test command and live test inputs.
 Beads and Git record work status.
 
 ## Repository
@@ -40,7 +40,7 @@ tools/build-components app apps/wamn_receiving
 `wamn` provides `dev`, `dev up`, and `ui scaffold`.
 The separate `wamn-ctl-ops` binary requires the `ops` feature.
 `tools/build-components all` builds every guest with one Cargo invocation per guest.
-For parallel work, use a separate worktree and target directory as described in the runbook.
+For parallel work, use a separate worktree and target directory as described in [building](docs/operations/building.md#isolated-worktrees).
 
 ## Test and develop
 
@@ -60,8 +60,8 @@ tools/contract-diff run
 The [Receiving README](apps/wamn_receiving/README.md) lists its data, SQLx, and terminal tests.
 The [WMS README](apps/wamn_wms/README.md) identifies its example and application tests.
 The [Acme README](apps/client_acme_receiving/README.md) lists its overlay SQLx test.
-The runbook covers [the full sweep](docs/operations/build-and-test.md#the-full-sweep) and [the developer session](docs/operations/build-and-test.md#wamn-dev-environment-developer-session).
+Read [the full sweep](docs/operations/running-tests.md#the-full-sweep) and [the developer session](docs/operations/development-loop.md#wamn-dev-environment-developer-session) for their commands.
 
 Do not use the frozen `kind-wamn` cluster as a test fixture.
 Use the app tests or native RC command to create and clean up their own clusters.
-Read [deployment instructions](deploy/README.md) before changing a deployed environment.
+Read [deployment instructions](docs/operations/deployment.md) before changing a deployed environment.

@@ -1,7 +1,7 @@
 //! The wiring document — the typed graph a tenant authors over the palette.
 //!
 //! A wiring is the composition artifact of the component-palette model
-//! (`docs/exe-model.md`, R1/R3): nodes name `(component, interface-version)`
+//! (`docs/architecture/execution.md#results-and-effects`): nodes name `(component, interface-version)`
 //! from the palette, edges connect declared ports, node parameters bind
 //! declared params, and the in-draft `cases` array rides the document. It is
 //! *data, not code* — versioned, gated against one environment effective

@@ -218,7 +218,7 @@ impl ReleaseManifestSource {
     /// components — not this artifact's
     /// `application/vnd.wamn.release-manifest.v1+json` layer over an empty
     /// config. See standing trigger 5 in
-    /// `docs/architecture/native-alignment-ledger.md` (`wamn-kdhw`).
+    /// `docs/architecture/native-alignment.md#retained-wamn-implementations` (`wamn-kdhw`).
     pub fn with_ca_paths(mut self, paths: &[PathBuf]) -> Result<Self, ReleaseManifestFetchError> {
         if paths.is_empty() {
             return Ok(self);

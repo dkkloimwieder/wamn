@@ -5,7 +5,7 @@
 //! `WAMN_SESSION_ISSUER` and `WAMN_SESSION_AUDIENCE` optionally select session
 //! login. Configure both or neither. Login completes before terminal entry.
 //!
-//! The `[RECEIVING-TUI]` recipe in `docs/operations/build-and-test.md` supplies
+//! The developer session in `docs/operations/development-loop.md` supplies
 //! the launch commands and interaction keys.
 
 use std::error::Error;

@@ -10,8 +10,8 @@
 //! is no WAMN raw-socket opt-in. `AllowedIPNameLookups`, `allowed_hosts`, and
 //! the vanilla address-range defaults remain runtime policy layers; none grants
 //! publication authority. See
-//! `docs/architecture/native-alignment-ledger.md` for the authoritative branch,
-//! revision, and patch dispositions.
+//! `docs/architecture/native-alignment.md` for current upstream ownership
+//! and retained differences.
 //!
 //! This module is that enforcement: a single structural rule — reject a
 //! component that imports any interface of the `wasi:sockets` package — reusable
@@ -123,7 +123,7 @@ pub struct CapabilityRow {
 /// `0.2.12`, the raw build imports `0.2.9`, and the virtualized artifact that
 /// admission actually sees imports `0.2.12` — the virtualizer rewrites it. Those
 /// rows are pinned to the WASI-Virt revision and adapter digest of
-/// `docs/architecture/native-alignment-ledger.md` row 5, and a bump there
+/// `docs/architecture/native-alignment.md`, and a bump there
 /// without a matching edit here would silently refuse every std guest.
 /// `capability_registry_wasi_rows_match_the_pinned_adapter` in the conformance
 /// suite is what makes that fail at the gate instead.

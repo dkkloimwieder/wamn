@@ -391,7 +391,7 @@ pub async fn publish_release_manifest(
 /// JSON. This path also needs `HttpsExcept` for a single insecure registry and
 /// `OciErrorCode::ManifestUnknown` discrimination for the exact-retry probe,
 /// neither of which survives that API. See standing trigger 5 in
-/// `docs/architecture/native-alignment-ledger.md` (`wamn-kdhw`).
+/// `docs/architecture/native-alignment.md#retained-wamn-implementations` (`wamn-kdhw`).
 fn registry_client(registry: &str, insecure_registry: bool) -> OciClient {
     let protocol = if insecure_registry {
         ClientProtocol::HttpsExcept(vec![registry.to_owned()])

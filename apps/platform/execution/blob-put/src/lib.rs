@@ -23,7 +23,7 @@
 //! the route answers with what the last node emits and a caller is owed the
 //! operation's result, not this node's receipt alone. A failed write fails
 //! the emission as a whole; per-item outcome reporting is noted as future
-//! work in `docs/exe-model.md`, beside the router fan-out alternative.
+//! work in `docs/architecture/execution.md#results-and-effects`.
 //!
 //! # Why the container is not named here
 //!

@@ -72,7 +72,7 @@ impl ComponentArtifactSourceConfig {
     /// `WASM_LAYER_MEDIA_TYPE` + `WasmConfig` and cannot carry this artifact's
     /// platform-owned layer and config blob — the config blob being the very
     /// admission fact [`ComponentArtifactSource::pull_verified`] checks again. See
-    /// standing trigger 5 in `docs/architecture/native-alignment-ledger.md`
+    /// `docs/architecture/native-alignment.md#retained-wamn-implementations`
     /// (`wamn-kdhw`) for the exit condition; do not "fix" this by routing the
     /// pull through `pull_component`.
     ///

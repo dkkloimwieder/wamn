@@ -176,7 +176,7 @@ fn retired_configurable_publish_policy_stays_deleted() {
         "crates/control/registry/src",
         "deploy/sql/system-schema.sql",
         "crates/authoring/model/src",
-        "docs/exe-model.md",
+        "docs/architecture/overview.md",
     ] {
         collect_source_text(&root.join(path), &mut text);
     }

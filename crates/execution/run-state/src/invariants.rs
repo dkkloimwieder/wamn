@@ -1,5 +1,5 @@
-//! RUN-* as plain functions over the pure queue decision — D8a, Part D rung 4
-//! of `docs/poc/deterministic-testing-spec.md`.
+//! RUN-* as plain functions over the pure queue decision, originally D8a.
+//! Current scope: `docs/testing/deterministic.md#existing-boundaries`.
 //!
 //! No cargo feature and no flag: ordinary library functions the pure decision
 //! tests call after every step. Wiring them into the pilot executor as tripwires

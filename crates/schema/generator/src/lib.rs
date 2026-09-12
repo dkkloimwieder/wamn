@@ -6,7 +6,7 @@
 //! or environment access.
 //!
 //! Generated identifiers follow
-//! `docs/architecture/application-naming.md`. Migration introspection owns
+//! `docs/architecture/naming.md`. Migration introspection owns
 //! schema-to-IR normalization; that IR is generation's only structural input.
 //!
 //! Migrations author PostgreSQL schema selection. Generated and authored query

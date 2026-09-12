@@ -54,7 +54,7 @@
 //!
 //! Needs: `--admin-database-url` (SUPERUSER, path `/postgres`, on a
 //! `wal_level=logical` PG) + `--nats-url` (JetStream). Recipe:
-//! docs/operations/build-and-test.md [EVT-C-CDC].
+//! docs/operations/running-tests.md#live-prerequisites-and-troubleshooting [EVT-C-CDC].
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

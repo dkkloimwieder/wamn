@@ -1,10 +1,10 @@
 //! The closed profile set.
 //!
-//! Two profiles ship now, per `docs/poc/wms-prep-spec.md` §1a. Both describe
-//! WMS traffic, and the WMS package does not exist yet (`packages/` holds only
-//! `receiving` and `client_acme_receiving`), so today they are provable as
-//! *streams* — the determinism gate — rather than end to end. Adding a third
-//! profile is demand-gated: an app that needs one brings it.
+//! Two profiles describe WMS traffic. Their deterministic byte contract is in
+//! `docs/testing/deterministic.md#event-traffic`.
+//! The WMS package did not exist when these profiles were introduced.
+//! Their stream tests do not establish application execution.
+//! A third profile needs an application requirement.
 
 use serde_json::{Value, json};
 

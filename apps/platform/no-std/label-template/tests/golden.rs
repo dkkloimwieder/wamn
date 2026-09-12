@@ -1,5 +1,5 @@
-//! Golden ZPL vectors for all three templates — the unit gate named by
-//! `docs/poc/wms-prep-spec.md` §1b.
+//! Golden ZPL vectors for all three templates from
+//! `docs/architecture/components.md#shared-label-renderer`.
 //!
 //! These are frozen literals, matching the repository's established golden
 //! shape. A change to any rendered byte must be a deliberate edit here, not a

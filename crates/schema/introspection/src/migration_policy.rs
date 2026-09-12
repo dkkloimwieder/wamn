@@ -1,6 +1,6 @@
 //! Pre-apply validation for package-owned PostgreSQL migration artifacts.
 //!
-//! `docs/architecture/application-naming.md` owns schema selection: migrations
+//! `docs/architecture/data-access.md#schema-and-definition-ownership` owns schema selection: migrations
 //! author it and therefore require qualified DDL, while SQL corpora inherit the
 //! host-selected `search_path` and refuse qualified references. This is the same
 //! boundary frozen in `wamn:postgres@0.1.0`, where the host selects the schema

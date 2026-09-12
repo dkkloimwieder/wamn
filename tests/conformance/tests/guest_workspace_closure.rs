@@ -136,7 +136,7 @@ fn virtualized_digests(directory: &Path) -> Vec<(String, String)> {
 
 /// THE PROPERTY THE RELOCATION EXISTS FOR: one commit, two checkouts, one digest.
 ///
-/// Armed by `[GUEST-DIGEST-REPRODUCIBILITY]` in `docs/operations/build-and-test.md`,
+/// Armed through `docs/operations/building.md#guest-artifact-comparisons`,
 /// which builds the guests in two worktrees of the same commit and points this
 /// test at both artifact directories. Ignored by default because it costs two
 /// full guest builds; the structural guards above run every time and are what
@@ -216,7 +216,7 @@ fn artifact_plan_digests(path: &Path, expected_profile: &str) -> BTreeMap<String
 
 /// One commit must produce the same guest bytes for the application and all selections.
 ///
-/// `[GUEST-DIGEST-REPRODUCIBILITY]` in `docs/operations/build-and-test.md` builds
+/// `docs/operations/building.md#guest-artifact-comparisons` builds
 /// the same tree with both selections and supplies their artifact plans.
 /// The application selection names declared guests. The all selection includes
 /// every workspace guest. Each guest uses its own Cargo invocation to keep its

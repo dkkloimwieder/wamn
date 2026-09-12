@@ -19,8 +19,8 @@
 //! --workspace` also runs them. The third is NOT a root workspace member at
 //! all — `http-route` lives in `apps/platform/`, and no root sweep reaches it.
 //! `tools/contract-diff run` is therefore the only runner of record for leg 3,
-//! and `docs/operations/build-and-test.md` now records it in the sweep of
-//! record (wamn-0h0g.15.138). Do not read this file's green as covering it.
+//! and `docs/operations/running-tests.md#the-full-sweep` records its separate
+//! command. Do not read this file's green as covering it (wamn-0h0g.15.138).
 //!
 //! The third leg was written here as `-p flow-http` until wamn-0h0g.15.138. No
 //! package by that name exists in either workspace, so anyone following this

@@ -25,8 +25,8 @@
 //!
 //! RE-AIMED 2026-08-26 (`wamn-k9ea`). This gate previously drove wash-runtime's
 //! P2 and P3 `wasi:http` host surfaces. That injection WAS fork patch `g2br.4`,
-//! which `docs/architecture/native-alignment-ledger.md` records as **Dropped**
-//! at the v2.8.0 sync: WAMN's real outbound-effect path is
+//! which was dropped at the v2.8.0 sync. The earlier record is linked from
+//! `docs/architecture/native-alignment.md`. WAMN's real outbound-effect path is
 //! `wamn:connection/http`, which injects the active span context itself, and the
 //! `wasi:http` egress surface has no WAMN production call site. The two
 //! host-surface arms were that drop's untaken test tail. The gate keeps a

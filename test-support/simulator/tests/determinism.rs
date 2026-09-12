@@ -1,8 +1,7 @@
 //! The determinism gate: a profile plus a count is a total function to bytes.
 //!
-//! `docs/poc/wms-prep-spec.md` §1a: "Same seed = byte-identical stream
-//! (canonical JSON via the existing shared canonicalization — no new
-//! serializer)."
+//! `docs/testing/deterministic.md#event-traffic` defines the seeded byte contract.
+//! Canonical JSON uses the existing shared canonicalizer.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;

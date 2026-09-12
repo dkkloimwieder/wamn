@@ -227,8 +227,8 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
 ///
 /// The membership edge term is `SET FALSE`, not `SET TRUE`: `INHERIT TRUE, SET
 /// FALSE` gives the login generation the stable ACL role's privileges while
-/// denying it `SET ROLE` to BECOME that role — the "rotating login generations
-/// with no `SET ROLE` escape" of `docs/exe-model.md`, and the posture that keeps
+/// denying it `SET ROLE` to BECOME that role. This follows
+/// `docs/architecture/data-access.md#schema-and-definition-ownership` and keeps
 /// `current_user` an honest RLS input. `wamn-0h0g.12.178`: this predicate was
 /// authored against the `SET TRUE` grant of `f0d18024`; `358f6792` tightened the
 /// provisioner's grant, its state probe, and its own violation check to `SET

@@ -93,7 +93,7 @@ ratatui-core = { version = "0.1.2", default-features = false, features = ["std"]
 ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
 crossterm = { version = "0.29", default-features = false, features = ["event-stream", "events"] }
 # Direct upstream v2.9.0, with zero patches. Source identity and evidence
-# are recorded in docs/architecture/native-alignment-ledger.md.
+# are recorded in docs/architecture/native-alignment.md.
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.
 # wamn and wash-runtime resolve one crates.io Wasmtime 47.0.x family from the
 # shared 47.0.4 requirement; enforce that source identity in conformance.
@@ -159,8 +159,8 @@ oci-client = { version = "0.17", default-features = false, features = ["rustls-t
 # (one TLS stack, smallest footprint) is what selects 0.14.1.
 # `default-features = false` keeps every other backend (gcp, azure, http) out.
 object_store = { version = "0.14.1", default-features = false, features = ["aws"] }
-# Phase 0 of docs/poc/deterministic-testing-spec.md. Property tests and
-# shrinking on the stable pin, in the normal sweep. `std` only; the
+# docs/testing/unit-and-property.md covers property tests and
+# shrinking on the stable pin. `std` only; the
 # `fork`/`timeout` features pull `rusty-fork` and are not used.
 proptest = { version = "1.11", default-features = false, features = ["std", "bit-set"] }
 rand_core = "0.10"
