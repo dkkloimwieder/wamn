@@ -1734,8 +1734,41 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
     let admin_url = std::env::var("WAMN_POOL_LIFECYCLE_PG_URL")
         .expect("set WAMN_POOL_LIFECYCLE_PG_URL to a disposable PostgreSQL database");
     let url = live_guest_url(&admin_url, LIVE_TENANT).await;
+    let database = live_database(&admin_url);
+    let family = wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform;
+    let role = wamn_control_provision::workload_generation_role(
+        family,
+        wamn_control_provision::WorkloadRoleScope::ProjectEnvironment {
+            org: "claims-test",
+            project: DEFAULT_PROJECT,
+            environment: "lifecycle",
+            database: &database,
+        },
+        wamn_control_provision::CredentialGeneration::A,
+    )
+    .expect("derive the executor generation");
+    let role_ident = wamn_pg_core::quote_ident(&role);
+    let admin = connect_raw(&admin_url).await;
+    admin
+        .batch_execute(&format!(
+            "DO $$ BEGIN \
+               BEGIN CREATE ROLE {role_ident} LOGIN PASSWORD 'live-platform' \
+                 NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
+               EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END; \
+             END $$; {}",
+            wamn_control_provision::sql::normalize_workload_generation_membership_sql(
+                family, &role, true,
+            ),
+        ))
+        .await
+        .expect("ensure the live executor generation");
+    let executor_url = database_url_for_role(&admin_url, &role, "live-platform");
     let postgres = WamnPostgres::new(WamnPostgresConfig {
-        credentials: Some(ClassCredentials::every_class(url)),
+        credentials: Some(
+            ClassCredentials::default()
+                .with_class(AuthorityClass::GuestSql, url)
+                .with_class(AuthorityClass::ExecutorPlatform, executor_url),
+        ),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
         wait_timeout_ms: 250,
