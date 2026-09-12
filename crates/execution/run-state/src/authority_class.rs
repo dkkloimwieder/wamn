@@ -23,6 +23,14 @@
 
 use std::fmt;
 
+/// Read the current operation user's membership in the bound ACL role.
+///
+/// A missing role returns false. This query grants no authority.
+pub const CURRENT_USER_ROLE_MEMBERSHIP_SQL: &str = "SELECT EXISTS ( \
+    SELECT 1 FROM pg_catalog.pg_roles AS authority \
+     WHERE authority.rolname = $1 \
+       AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER'))";
+
 /// Which authority a trusted caller acts under when it selects a credential.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AuthorityClass {

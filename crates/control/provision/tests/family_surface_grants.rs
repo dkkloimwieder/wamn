@@ -429,7 +429,6 @@ fn expected_executor_grants() -> Vec<String> {
     rows.push("relation|wamn_run|run_queue|SELECT".to_owned());
     rows.push("relation|wamn_run|runs|SELECT".to_owned());
     rows.push("routine|wamn_authority|tenant_key|EXECUTE".to_owned());
-    rows.push("routine|wamn_run|require_executor_platform_authority|EXECUTE".to_owned());
     rows.push("schema|catalog|catalog|USAGE".to_owned());
     rows.push("schema|wamn_run|wamn_run|USAGE".to_owned());
     rows.sort();
@@ -476,13 +475,6 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
 
     // --- 1. THE WHOLE ACL, BY EQUALITY --------------------------------------
     //
-    // This is also the ONLY place the `require_executor_platform_authority`
-    // EXECUTE is testable. `deploy/sql/run-state.sql` never revokes PUBLIC on
-    // that guard, so `has_function_privilege` answers TRUE for every role in the
-    // cluster and a probe over it would pass with the grant deleted. The
-    // `routine|wamn_run|require_executor_platform_authority|EXECUTE` row below
-    // comes from `pg_proc.proacl` and names this family explicitly, so deleting
-    // the grant fails HERE.
     assert_eq!(
         load_role_grants(&admin, stable),
         expected_executor_grants(),
@@ -757,29 +749,6 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
         "the callable-HTTP admitter's aclexplode grants are not exactly USAGE \
          on catalog and app_system plus the ten SELECTs its host reads"
     );
-    // MEASURED, and the reason the probe block below cannot assert a NEGATIVE
-    // for `require_executor_platform_authority`: `deploy/sql/run-state.sql`
-    // creates the two `require_*_authority` guards and never revokes PUBLIC, so
-    // `has_function_privilege` answers TRUE for every role in the cluster. The
-    // Exact grant equality above shows that this family holds no EXPLICIT
-    // routine grant; if PUBLIC is ever revoked, this assertion fails and the
-    // negative becomes assertable.
-    assert_eq!(
-        query(
-            &admin,
-            "SELECT proacl IS NULL OR EXISTS ( \
-               SELECT 1 FROM aclexplode(proacl) x WHERE x.grantee = 0 \
-                 AND x.privilege_type = 'EXECUTE') \
-               FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
-              WHERE n.nspname = 'wamn_run' \
-                AND p.proname = 'require_executor_platform_authority'"
-        ),
-        "t",
-        "PUBLIC no longer holds EXECUTE on the executor guard: the surface's \
-         explicit grant is now load bearing, and this family's lack of one is \
-         assertable through has_function_privilege"
-    );
-
     // Convergence, same as the executor arm: a run-plane privilege handed to
     // this family out of band is REMOVED by a re-apply, not merely unmentioned.
     run_admin(

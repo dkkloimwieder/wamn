@@ -49,16 +49,9 @@ fn app_preamble(app_login: &str) -> String {
 
 /// The generation login the fenced transitions actually run as.
 ///
-/// `FENCED_PREFIX` and `grant_production_claim_sql` both open with
-/// `require_executor_platform_authority()`, which raises `42501` unless
-/// `CURRENT_USER` is a MEMBER of `wamn_executor_platform`; and `wamn_app` holds
-/// only `SELECT, DELETE` on `wamn_run.runs` plus a column-scoped `SELECT` on
-/// `wamn_run.run_queue`. A transition driven under [`app_preamble`] is
-/// therefore refused twice over — at the grant, before the authority guard ever
-/// evaluates — and cannot reach the semantics under test. The App generation's
-/// tenant comes from `current_user`; the executor statements below retain their
-/// host-injected `app.tenant` input because those statements key their own queue
-/// predicates from it.
+/// The runtime checks executor membership before these statements run.
+/// This test exercises SQL locks and fences with the production executor grants.
+/// The host-injected tenant still selects each statement's queue rows.
 ///
 /// A MINTED GENERATION, NOT THE BARE ACL ROLE (`wamn-0h0g.22.31`). The stable
 /// role is `NOLOGIN` and nothing in production ever authenticates as it — the

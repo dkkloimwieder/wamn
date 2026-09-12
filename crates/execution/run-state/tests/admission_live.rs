@@ -4,6 +4,7 @@ use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
 use wamn_control_provision::{WorkloadRoleFamily, sql};
+use wamn_run_state::authority_class::CURRENT_USER_ROLE_MEMBERSHIP_SQL;
 use wamn_run_state::queue::select_production_claim_sql;
 
 const EXECUTOR_LOGIN: &str = "wamn_matrix_executor_login";
@@ -43,20 +44,6 @@ fn success(url: &str, script: &str) -> String {
     String::from_utf8(output.stdout).expect("psql stdout is UTF-8")
 }
 
-fn assert_refusal(url: &str, script: &str, message: &str) {
-    let output = psql(url, &format!("\\set VERBOSITY verbose\n{script}"));
-    assert!(
-        !output.status.success(),
-        "cross-class statement was admitted"
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("42501"), "SQLSTATE drifted:\n{stderr}");
-    assert!(
-        stderr.contains(message),
-        "refusal literal drifted:\n{stderr}"
-    );
-}
-
 fn assert_sqlstate(url: &str, script: &str, state: &str, message: &str) {
     let output = psql(url, &format!("\\set VERBOSITY verbose\n{script}"));
     assert!(!output.status.success(), "statement was admitted");
@@ -80,15 +67,7 @@ fn surviving_authority_matrix_live() {
         .trim()
         .to_string();
     let access_floor = sql::grant_connect_on_database_sql(&database);
-    // BOTH authorities are minted by the PRODUCTION builder, not by hand
-    // (`wamn-0h0g.22.9`). A hand-rolled `CREATE ROLE` + bare `GRANT` reaches the
-    // `require_executor_platform_authority()` check but NOT the tenant floor:
-    // `wamn-0h0g.22.17` narrowed `runs_tenant` `TO wamn_app` and admits every
-    // other family through one permissive arm `TO wamn_platform`, so a principal
-    // outside that group is DEFAULT-DENIED with no error and the claim reads
-    // zero rows. Measured on PostgreSQL 18.6 against the real files, connected
-    // as this login asserted NOT (rolsuper OR rolbypassrls): hand-rolled shape
-    // 0 rows, `prepare_workload_generation_sql` shape 1 row.
+    // The production role builders retain the platform RLS membership.
     let executor_provision = sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::ExecutorPlatform,
         &database,
@@ -323,8 +302,6 @@ result_json,state_json,status,terminal_reason,updated_at', \
            ASSERT NOT pg_catalog.has_schema_privilege( \
                     'wamn_executor_platform', 'catalog', 'CREATE'); \
            ASSERT pg_catalog.has_function_privilege('wamn_executor_platform', \
-                    'wamn_run.require_executor_platform_authority()', 'EXECUTE'); \
-           ASSERT pg_catalog.has_function_privilege('wamn_executor_platform', \
                     'wamn_authority.tenant_key(text)', 'EXECUTE'); \
            ASSERT NOT pg_catalog.has_schema_privilege( \
                     'wamn_executor_platform', 'wamn_authority', 'USAGE'); \
@@ -339,8 +316,8 @@ result_json,state_json,status,terminal_reason,updated_at', \
         &format!(
             "BEGIN; SET LOCAL ROLE {EXECUTOR_LOGIN}; SET LOCAL app.tenant='t1'; \
              SET LOCAL search_path=wamn_run,catalog,public; \
-             SELECT current_user; PREPARE matrix_claim(text,text) AS {claim}; \
-             EXECUTE matrix_claim('cat','dev'); ROLLBACK;"
+             SELECT current_user; PREPARE matrix_claim(text[],text) AS {claim}; \
+             EXECUTE matrix_claim(ARRAY['cat'],'dev'); ROLLBACK;"
         ),
     );
     assert!(claimed.contains(EXECUTOR_LOGIN));
@@ -366,22 +343,6 @@ result_json,state_json,status,terminal_reason,updated_at', \
         "run-admission-pin-immutable",
     );
 
-    // Every ordered cross-class attempt reaches the exact current_user guard.
-    assert_refusal(
-        &url,
-        &format!(
-            "BEGIN; \
-             GRANT USAGE ON SCHEMA wamn_run, catalog TO {MANAGEMENT_LOGIN}; \
-             GRANT SELECT, INSERT, UPDATE, DELETE \
-               ON ALL TABLES IN SCHEMA catalog, wamn_run TO {MANAGEMENT_LOGIN}; \
-             SET LOCAL ROLE {MANAGEMENT_LOGIN}; SET LOCAL app.tenant='t1'; \
-             SET LOCAL search_path=wamn_run,catalog,public; \
-             PREPARE wrong_claim(text,text) AS {claim}; \
-             EXECUTE wrong_claim('cat','dev');"
-        ),
-        "executor-platform-authority-required",
-    );
-
     success(
         &url,
         "DO $$ BEGIN \
@@ -389,23 +350,33 @@ result_json,state_json,status,terminal_reason,updated_at', \
              WHERE pg_catalog.has_table_privilege('wamn_app','wamn_run.run_queue',p)); \
          END $$;",
     );
-    // The management-admitter row is distinct from every author/guest writer.
-    // `wamn_app` is the guest SQL principal; neither it nor the host-side
-    // author/effect roles can cross either surviving run-queue authority guard.
+    // Broad table grants do not confer executor membership.
+    success(
+        &url,
+        &format!(
+            "GRANT USAGE ON SCHEMA wamn_run, catalog TO {MANAGEMENT_LOGIN}; \
+             GRANT SELECT, INSERT, UPDATE, DELETE \
+               ON ALL TABLES IN SCHEMA catalog, wamn_run TO {MANAGEMENT_LOGIN};"
+        ),
+    );
     for denied_role in [
+        MANAGEMENT_LOGIN,
         "wamn_app",
         "wamn_control_author",
         "wamn_scenario_author",
         "wamn_effect_writer",
     ] {
-        assert_refusal(
-            &url,
-            &format!(
-                "BEGIN; SET LOCAL ROLE {denied_role}; \
-                 SELECT wamn_run.require_executor_platform_authority();"
+        assert_eq!(
+            success(
+                &url,
+                &format!(
+                    "BEGIN; SET LOCAL ROLE {denied_role}; \
+                     PREPARE authority_membership(text) AS {CURRENT_USER_ROLE_MEMBERSHIP_SQL}; \
+                     EXECUTE authority_membership('wamn_executor_platform'); ROLLBACK;"
+                ),
             ),
-            "executor-platform-authority-required",
+            "f\n",
+            "{denied_role} must not hold executor membership"
         );
-
     }
 }

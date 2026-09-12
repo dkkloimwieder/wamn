@@ -145,30 +145,6 @@ GRANT EXECUTE ON FUNCTION "wamn_authority".current_tenant_key() TO "wamn_app";$w
 END
 $wamn_authority_bootstrap$;
 
--- Closed run-queue operation classes are database facts derived from the
--- authenticated current_user. These assertion functions are ordinary
--- SECURITY INVOKER functions: they confer no authority, and their only effect
--- is the stable typed refusal embedded by each role-specific statement.
-CREATE FUNCTION wamn_run.require_executor_platform_authority()
-RETURNS boolean
-LANGUAGE plpgsql
-SECURITY INVOKER
-AS $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1
-          FROM pg_catalog.pg_roles AS authority
-         WHERE authority.rolname = 'wamn_executor_platform'
-           AND pg_catalog.pg_has_role(CURRENT_USER, authority.oid, 'MEMBER')
-    ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '42501',
-            MESSAGE = 'executor-platform-authority-required';
-    END IF;
-    RETURN true;
-END
-$$;
-
 -- Producer roles cannot name `runs.durability_class` in their INSERT grants.
 -- This invoker-rights trigger therefore performs the only admission-time
 -- selection, from the project-local projection below.

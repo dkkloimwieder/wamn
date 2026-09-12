@@ -237,6 +237,17 @@ async fn native_effect_writer_live() {
         .get(0);
     assert!(retained_session);
 
+    let refused = writer
+        .begin_attempt(attempt("sha256:writer-input"))
+        .await
+        .expect_err("the effect-writer role alone must not enter executor effect-intent work");
+    assert_eq!(refused.kind(), EffectWriterErrorKind::Credential);
+    assert!(refused.to_string().contains("executor-platform-authority-required"));
+    assert_eq!(
+        admin.query_one("SELECT count(*) FROM wamn_run.effect_attempts", &[])
+            .await.expect("count refused attempts").get::<_, i64>(0),
+        0
+    );
     let (first, second) = tokio::join!(
         writer.begin_attempt(attempt("sha256:writer-input")),
         writer.begin_attempt(attempt("sha256:writer-input")),

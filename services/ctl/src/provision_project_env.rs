@@ -2568,12 +2568,6 @@ fn verify_executor_platform_grants(
         ),
         (
             "routine".to_string(),
-            "wamn_run".to_string(),
-            "require_executor_platform_authority".to_string(),
-            "EXECUTE".to_string(),
-        ),
-        (
-            "routine".to_string(),
             "wamn_authority".to_string(),
             "tenant_key".to_string(),
             "EXECUTE".to_string(),

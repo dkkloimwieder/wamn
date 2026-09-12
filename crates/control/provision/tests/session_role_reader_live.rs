@@ -299,7 +299,6 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
                 "DELETE FROM app_system.user_roles",
                 "TRUNCATE app_system.users CASCADE",
                 "SELECT wamn_authority.tenant_key('fixture-a')",
-                "SELECT wamn_run.require_executor_platform_authority()",
                 "SET ROLE wamn_platform",
                 "SET ROLE wamn_session_role_reader",
             ] {

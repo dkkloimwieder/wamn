@@ -12,14 +12,10 @@ use serde_json::Value;
 use crate::RunStatus;
 
 pub(crate) const FENCED_PREFIX: &str = "\
-WITH operation_authority AS MATERIALIZED ( \
-    SELECT require_executor_platform_authority() AS allowed \
-), \
-input AS ( \
+WITH input AS ( \
     SELECT NULLIF(current_setting('app.tenant', true), '')::text AS tenant_id, \
            $1::text AS target_run_id, $2::text AS authority_run_id, \
            $3::text AS lease_owner, $4::bigint AS lease_generation \
-      FROM operation_authority WHERE operation_authority.allowed \
 ), \
 locked_run AS MATERIALIZED ( \
     SELECT r.* FROM runs AS r, input AS i \
@@ -345,11 +341,6 @@ mod tests {
     #[test]
     fn transitions_are_queue_joined_and_generation_fenced() {
         for sql in [release_caller_sql(), terminalize_sql()] {
-            assert_eq!(
-                sql.matches("require_executor_platform_authority()").count(),
-                1,
-                "{sql}"
-            );
             assert!(sql.contains("locked_queue AS MATERIALIZED"), "{sql}");
             assert!(
                 sql.contains("q.lease_owner IS DISTINCT FROM i.lease_owner"),

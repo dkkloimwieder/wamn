@@ -9,6 +9,7 @@
 
 use std::time::SystemTime;
 
+use crate::authority_class::{AuthorityClass, CURRENT_USER_ROLE_MEMBERSHIP_SQL};
 use crate::effect_writer_credential::{
     EffectWriterCredentialScope, parse_effect_writer_credential, validate_effect_writer_credential,
 };
@@ -278,6 +279,26 @@ impl EffectWriterClient {
                 EffectWriterError::new(EffectWriterErrorKind::Storage, "bind ledger authority")
                     .with_source(source)
             })?;
+        let membership = transaction
+            .query_one(
+                CURRENT_USER_ROLE_MEMBERSHIP_SQL,
+                &[&AuthorityClass::ExecutorPlatform.acl_role()],
+            )
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "read executor authority")
+                    .with_source(source)
+            })?;
+        let allowed: bool = membership.try_get(0).map_err(|source| {
+            EffectWriterError::new(EffectWriterErrorKind::Storage, "decode executor authority")
+                .with_source(source)
+        })?;
+        if !allowed {
+            return Err(EffectWriterError::new(
+                EffectWriterErrorKind::Credential,
+                "executor-platform-authority-required",
+            ));
+        }
         let params: [&(dyn tokio_postgres::types::ToSql + Sync); 20] = [
             &self.tenant_id,
             &attempt.run_id,

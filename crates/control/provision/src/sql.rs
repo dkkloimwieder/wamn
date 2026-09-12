@@ -611,12 +611,6 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 ///   the crash counter, never the FIFO position.
 /// * `effect_attempts`: `SELECT` only. The ledger is the effect writer's to
 ///   append to; the claim path only asks whether a row exists.
-/// * `wamn_run.require_executor_platform_authority()`: every one of the ten
-///   run-plane statements opens with it. `deploy/sql/run-state.sql` leaves
-///   PUBLIC's default EXECUTE in place today, so this grant changes no answer
-///   yet — it is what keeps the family reaching its own guard the day PUBLIC is
-///   revoked, and it is the only reason the guard is not silently PUBLIC
-///   authority in the denial matrix.
 /// * `wamn_authority.tenant_key(text)`: MEASURED, and not optional. `runs`
 ///   carries the `runs_tkey` EXPRESSION INDEX over that function, and
 ///   PostgreSQL evaluates an index expression while forming the new index entry
@@ -657,9 +651,7 @@ pub fn grant_executor_platform_surface_sql(schema: &str) -> String {
          GRANT UPDATE ({run_update}) ON TABLE {schema}.\"runs\" TO {role}; \
          GRANT SELECT, DELETE ON TABLE {schema}.\"run_queue\" TO {role}; \
          GRANT UPDATE ({queue_update}) ON TABLE {schema}.\"run_queue\" TO {role}; \
-         GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role}; \
-         GRANT EXECUTE ON FUNCTION \
-           {schema}.\"require_executor_platform_authority\"() TO {role};"
+         GRANT SELECT ON TABLE {schema}.\"effect_attempts\" TO {role};"
     ));
     // `runs` carries `runs_tkey`, so the column-exact UPDATE above is dead
     // without this on every write that changes an indexed column.
@@ -1286,14 +1278,11 @@ mod tests {
              \"attempts\") ON TABLE \"wamn_run\".\"run_queue\" TO \"wamn_executor_platform\"; \
              GRANT SELECT ON TABLE \"wamn_run\".\"effect_attempts\" \
              TO \"wamn_executor_platform\"; \
-             GRANT EXECUTE ON FUNCTION \
-             \"wamn_run\".\"require_executor_platform_authority\"() \
-             TO \"wamn_executor_platform\"; \
              GRANT EXECUTE ON FUNCTION \"wamn_authority\".tenant_key(text) \
              TO \"wamn_executor_platform\";",
             "the executor-platform grant set moved: it is TABLE SELECT where a \
              fence reads r.*/q.*, COLUMN UPDATE everywhere it writes, DELETE only \
-             on the queue, and exactly two function grants"
+             on the queue, and only the tenant-key function grant"
         );
         // The admission pins, the frozen wiring identity and the authoritative
         // input are UNREACHABLE by this family. Named literally, because they are

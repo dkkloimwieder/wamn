@@ -6,6 +6,7 @@ use deadpool_postgres::Object;
 use tokio_postgres::Row;
 use tokio_postgres::types::FromSql;
 use wamn_router::{FailureKind as RouterFailureKind, Outcome, Verdict, WalkStatus};
+use wamn_run_state::authority_class::CURRENT_USER_ROLE_MEMBERSHIP_SQL;
 use wamn_run_state::queue::{
     ProductionClaimClass, advance_claim_attempts_sql, classify_production_claim,
     clear_pre_effect_state_sql, grant_production_claim_sql, renew_production_lease_sql,
@@ -25,7 +26,7 @@ use super::{CandidateBindingWorld, ReleaseIdentity, WamnPostgres};
 /// Stable category for a production-claim failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProductionClaimErrorKind {
-    /// Required host-injected identity was absent.
+    /// Required host identity or database role authority was absent.
     Identity,
     /// The admitted run has no complete, valid frozen wiring identity.
     WiringIdentity,
@@ -856,6 +857,27 @@ async fn finish_queue_transaction<T>(
     }
 }
 
+async fn require_executor_authority(
+    connection: &Object,
+) -> Result<(), ProductionClaimError> {
+    let row = connection
+        .query_one(
+            CURRENT_USER_ROLE_MEMBERSHIP_SQL,
+            &[&AuthorityClass::ExecutorPlatform.acl_role()],
+        )
+        .await
+        .map_err(|error| storage("read executor authority", error))?;
+    let allowed: bool = row_value(&row, 0, "executor authority membership")?;
+    if !allowed {
+        return Err(ProductionClaimError::new(
+            ProductionClaimErrorKind::Identity,
+            "check executor authority",
+            "executor-platform-authority-required",
+        ));
+    }
+    Ok(())
+}
+
 async fn renew_in_transaction(
     connection: &Object,
     run_id: &str,
@@ -863,6 +885,7 @@ async fn renew_in_transaction(
     lease_generation: i64,
     lease_ttl_ms: i64,
 ) -> Result<ProductionLeaseRenewal, ProductionClaimError> {
+    require_executor_authority(connection).await?;
     let sql = renew_production_lease_sql();
     let statement = connection
         .prepare_cached(&sql)
@@ -889,6 +912,7 @@ async fn complete_in_transaction(
     lease_generation: i64,
     completion: &ProductionCompletion,
 ) -> Result<ProductionCompletionResult, ProductionClaimError> {
+    require_executor_authority(connection).await?;
     if let Some(caller) = completion.caller.as_ref() {
         let body_json = serde_json::to_string(&caller.body).map_err(|error| {
             ProductionClaimError::new(
@@ -1074,6 +1098,7 @@ async fn claim_in_transaction(
     lease_ttl_ms: i64,
     release: Option<&ReleaseIdentity>,
 ) -> Result<ClaimTurn, ProductionClaimError> {
+    require_executor_authority(connection).await?;
     let select_sql = select_production_claim_sql();
     let select = connection
         .prepare_cached(&select_sql)
@@ -1233,6 +1258,7 @@ async fn reap_in_transaction(
     environment: &str,
     grace_ms: i64,
 ) -> Result<ProductionReapResult, ProductionClaimError> {
+    require_executor_authority(connection).await?;
     let select_sql = select_exhausted_production_sql();
     let select = connection
         .prepare_cached(&select_sql)
@@ -1624,6 +1650,92 @@ fn storage(operation: &'static str, error: tokio_postgres::Error) -> ProductionC
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires a disposable PostgreSQL 18 URL in WAMN_PRODUCTION_CLAIM_PG_URL"]
+    async fn executor_authority_uses_current_user_for_each_operation() -> anyhow::Result<()> {
+        let config: tokio_postgres::Config =
+            std::env::var("WAMN_PRODUCTION_CLAIM_PG_URL")?.parse()?;
+        let pool = deadpool_postgres::Pool::builder(deadpool_postgres::Manager::new(
+            config,
+            tokio_postgres::NoTls,
+        ))
+        .max_size(1)
+        .build()?;
+        let connection = pool.get().await?;
+        connection.batch_execute("BEGIN").await?;
+        connection
+            .batch_execute(
+                "DO $roles$ DECLARE role_name text; BEGIN \
+                   FOREACH role_name IN ARRAY ARRAY[ \
+                     'wamn_executor_platform', 'wamn_management_admitter', \
+                     'wamn_app', 'wamn_control_author', 'wamn_scenario_author', \
+                     'wamn_effect_writer', 'wamn_executor_authority_test' \
+                   ] LOOP \
+                     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
+                       EXECUTE format('CREATE ROLE %I NOSUPERUSER NOBYPASSRLS', role_name); \
+                     END IF; \
+                   END LOOP; \
+                 END $roles$; \
+                 GRANT wamn_executor_platform TO wamn_executor_authority_test; \
+                 SET LOCAL ROLE wamn_executor_authority_test;",
+            )
+            .await?;
+        require_executor_authority(&connection).await?;
+        let users = connection
+            .query_one("SELECT CURRENT_USER::text, SESSION_USER::text", &[])
+            .await?;
+        assert_eq!(users.get::<_, String>(0), "wamn_executor_authority_test");
+        assert_ne!(users.get::<_, String>(0), users.get::<_, String>(1));
+
+        let packages = ["authority-test".to_string()];
+        let completion = ProductionCompletion::completed(serde_json::Value::Null, None);
+        for role in [
+            "wamn_management_admitter",
+            "wamn_app",
+            "wamn_control_author",
+            "wamn_scenario_author",
+            "wamn_effect_writer",
+        ] {
+            connection
+                .batch_execute(&format!("SET LOCAL ROLE {role}"))
+                .await?;
+            for result in [
+                claim_in_transaction(&connection, "runner", &packages, "test", 1000, None)
+                    .await
+                    .map(|_| ()),
+                reap_in_transaction(&connection, &packages, "test", 0)
+                    .await
+                    .map(|_| ()),
+                renew_in_transaction(&connection, "run", "runner", 1, 1000)
+                    .await
+                    .map(|_| ()),
+                complete_in_transaction(&connection, "run", "runner", 1, &completion)
+                    .await
+                    .map(|_| ()),
+            ] {
+                let error = result.expect_err("a different role must not enter executor work");
+                assert_eq!(error.kind(), ProductionClaimErrorKind::Identity);
+                assert_eq!(error.operation(), "check executor authority");
+                assert!(error.to_string().contains("executor-platform-authority-required"));
+            }
+            assert_eq!(connection.query_one("SELECT 1", &[]).await?.get::<_, i32>(0), 1);
+        }
+        connection.batch_execute("RESET ROLE; SAVEPOINT missing_role").await?;
+        connection
+            .batch_execute(&format!(
+                "ALTER ROLE wamn_executor_platform RENAME TO wamn_authority_missing_{}",
+                std::process::id()
+            ))
+            .await?;
+        let missing = require_executor_authority(&connection)
+            .await
+            .expect_err("an absent role must return the native refusal");
+        assert_eq!(missing.kind(), ProductionClaimErrorKind::Identity);
+        assert!(missing.to_string().contains("executor-platform-authority-required"));
+        connection.batch_execute("ROLLBACK TO missing_role; ROLLBACK").await?;
+        Ok(())
+    }
 
     #[test]
     fn missing_and_corrupt_wiring_identity_are_dedicated_stable_refusals() {

@@ -37,18 +37,14 @@ use crate::{RunStatus, sql as run_sql};
 /// because the tenant shares a project database.
 pub fn select_production_claim_sql() -> String {
     format!(
-        "WITH authority AS MATERIALIZED ( \
-             SELECT require_executor_platform_authority() AS allowed \
-         ), \
-         candidate AS MATERIALIZED ( \
+        "WITH candidate AS MATERIALIZED ( \
              SELECT q.tenant_id, q.run_id, \
                     q.lease_expires_at IS NOT NULL AS had_prior_lease \
                FROM run_queue AS q \
                JOIN runs AS selected_run \
                  ON selected_run.tenant_id = q.tenant_id \
                 AND selected_run.run_id = q.run_id \
-              WHERE (SELECT allowed FROM authority) \
-                AND q.tenant_id = current_setting('app.tenant', true) \
+              WHERE q.tenant_id = current_setting('app.tenant', true) \
                 AND selected_run.package_id = ANY($1::text[]) \
                 AND selected_run.environment = $2 \
                 AND q.available_at <= now() \
@@ -93,17 +89,13 @@ pub fn select_production_claim_sql() -> String {
 /// under READ COMMITTED it receives a fresh snapshot after any lock wait, so an
 /// effect attempt committed before classification cannot be missed.
 ///
-/// The caller applies the durability-class gate; the statement itself is still
-/// authority-gated because only the executor claim/reap lifecycle consumes it.
+/// The Rust operation checks executor membership before it reads these facts.
 pub fn select_claim_effect_attempt_sql() -> String {
-    "WITH authority AS MATERIALIZED ( \
-         SELECT require_executor_platform_authority() AS allowed \
-     ) \
-     SELECT EXISTS ( \
+    "SELECT EXISTS ( \
          SELECT 1 FROM effect_attempts AS effect \
           WHERE effect.tenant_id = current_setting('app.tenant', true) \
             AND effect.run_id = $1 \
-     ) FROM authority WHERE authority.allowed"
+     )"
         .to_string()
 }
 
@@ -114,15 +106,11 @@ pub fn select_claim_effect_attempt_sql() -> String {
 /// must be its own statement: the following effect-evidence query needs a fresh
 /// READ COMMITTED snapshot after any wait on a concurrent writer.
 pub fn serialize_effect_intent_sql() -> String {
-    "WITH authority AS MATERIALIZED ( \
-         SELECT require_executor_platform_authority() AS allowed \
-     ) \
-     SELECT pg_catalog.pg_advisory_xact_lock( \
+    "SELECT pg_catalog.pg_advisory_xact_lock( \
          pg_catalog.hashtextextended( \
              pg_catalog.current_setting('app.tenant', true) \
                  || E'\\x1f' || $1::text, \
-             0::bigint)) \
-       FROM authority WHERE authority.allowed"
+             0::bigint))"
         .to_string()
 }
 
@@ -138,13 +126,9 @@ pub fn serialize_effect_intent_sql() -> String {
 /// statement, so no effect was ever attributed to the digest being cleared.
 ///
 pub fn clear_pre_effect_state_sql() -> String {
-    "WITH authority AS MATERIALIZED ( \
-         SELECT require_executor_platform_authority() AS allowed \
-     ) \
-     UPDATE runs \
+    "UPDATE runs \
         SET state_json = NULL, manifest_digest = NULL \
-      WHERE (SELECT allowed FROM authority) \
-        AND tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
+      WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
       RETURNING run_id"
         .to_string()
 }
@@ -163,14 +147,10 @@ pub fn clear_pre_effect_state_sql() -> String {
 /// (queue-parked) row does not. Reading `q.lease_expires_at` before the grant
 /// overwrites it is what keeps that identical to the fused statement it left.
 pub fn advance_claim_attempts_sql() -> String {
-    "WITH authority AS MATERIALIZED ( \
-         SELECT require_executor_platform_authority() AS allowed \
-     ) \
-     UPDATE run_queue AS q \
+    "UPDATE run_queue AS q \
         SET attempts = q.attempts \
             + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
-      WHERE (SELECT allowed FROM authority) \
-        AND q.tenant_id = current_setting('app.tenant', true) \
+      WHERE q.tenant_id = current_setting('app.tenant', true) \
         AND q.run_id = $1 \
       RETURNING q.attempts"
         .to_string()
@@ -194,17 +174,13 @@ pub fn advance_claim_attempts_sql() -> String {
 /// the record too; `dispatched` still becomes `running` and `running` stays put.
 pub fn grant_production_claim_sql() -> String {
     format!(
-        "WITH authority AS MATERIALIZED ( \
-             SELECT require_executor_platform_authority() AS allowed \
-         ), \
-         leased AS ( \
+        "WITH leased AS ( \
              UPDATE run_queue AS q \
                 SET lease_owner = $2, \
                     lease_expires_at = statement_timestamp() \
                         + ($3::bigint * interval '1 millisecond'), \
                     lease_generation = q.lease_generation + 1 \
-              WHERE (SELECT allowed FROM authority) \
-                AND q.tenant_id = current_setting('app.tenant', true) \
+              WHERE q.tenant_id = current_setting('app.tenant', true) \
                 AND q.run_id = $1 \
               RETURNING q.tenant_id, q.run_id, q.lease_generation \
          ), \
@@ -232,14 +208,10 @@ pub fn grant_production_claim_sql() -> String {
 /// milliseconds. A missing row is the complete fence-lost result: the caller
 /// must stop the in-flight router walk without another run-store access.
 pub fn renew_production_lease_sql() -> String {
-    "WITH authority AS MATERIALIZED ( \
-         SELECT require_executor_platform_authority() AS allowed \
-     ) \
-     UPDATE run_queue AS q \
+    "UPDATE run_queue AS q \
         SET lease_expires_at = statement_timestamp() \
             + ($4::bigint * interval '1 millisecond') \
-      WHERE (SELECT allowed FROM authority) \
-        AND q.tenant_id = current_setting('app.tenant', true) \
+      WHERE q.tenant_id = current_setting('app.tenant', true) \
         AND q.run_id = $1 \
         AND q.lease_owner = $2 \
         AND q.lease_generation = $3 \
@@ -256,10 +228,7 @@ pub fn renew_production_lease_sql() -> String {
 /// preserved exactly.
 pub fn terminalize_effect_uncertain_claim_sql() -> String {
     format!(
-        "WITH authority AS MATERIALIZED ( \
-             SELECT require_executor_platform_authority() AS allowed \
-         ), \
-         updated AS ( \
+        "WITH updated AS ( \
              UPDATE runs AS r \
                 SET status = '{uncertain}', fail_kind = '{uncertain}', \
                     caller_outcome_kind = CASE \
@@ -281,8 +250,7 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
                         WHEN {unreleased_attached} THEN now() \
                         ELSE r.caller_released_at END, \
                     updated_at = now() \
-              WHERE (SELECT allowed FROM authority) \
-                AND r.tenant_id = current_setting('app.tenant', true) \
+              WHERE r.tenant_id = current_setting('app.tenant', true) \
                 AND r.run_id = $1 \
               RETURNING r.tenant_id, r.run_id, r.status \
          ), \
@@ -311,19 +279,15 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
 /// already joined and locked here.
 pub fn select_exhausted_production_sql() -> String {
     format!(
-        "WITH authority AS MATERIALIZED ( \
-             SELECT require_executor_platform_authority() AS allowed \
-         ) \
-         SELECT q.tenant_id, q.run_id, selected_run.status, \
+        "SELECT q.tenant_id, q.run_id, selected_run.status, \
                 selected_run.flow_id, selected_run.flow_version, \
                 selected_run.durability_class, selected_run.wiring_id, \
                 selected_run.wiring_version \
-           FROM authority CROSS JOIN run_queue AS q \
+           FROM run_queue AS q \
            JOIN runs AS selected_run \
              ON selected_run.tenant_id = q.tenant_id \
             AND selected_run.run_id = q.run_id \
-          WHERE authority.allowed \
-            AND q.tenant_id = current_setting('app.tenant', true) \
+          WHERE q.tenant_id = current_setting('app.tenant', true) \
             AND selected_run.package_id = ANY($2::text[]) \
             AND selected_run.environment = $3 \
                 AND q.lease_expires_at IS NOT NULL \
@@ -348,10 +312,7 @@ pub fn select_exhausted_production_sql() -> String {
 /// because it has no durable caller row for reconciliation to observe.
 pub fn terminalize_exhausted_production_sql() -> String {
     format!(
-        "WITH authority AS MATERIALIZED ( \
-             SELECT require_executor_platform_authority() AS allowed \
-         ), \
-         updated AS ( \
+        "WITH updated AS ( \
             UPDATE runs AS r \
             SET status = '{infra}', \
                 result_json = CASE \
@@ -376,8 +337,7 @@ pub fn terminalize_exhausted_production_sql() -> String {
                     WHEN {unreleased_attached} THEN now() \
                     ELSE r.caller_released_at END, \
                 updated_at = now() \
-           WHERE (SELECT allowed FROM authority) \
-             AND r.tenant_id = current_setting('app.tenant', true) \
+           WHERE r.tenant_id = current_setting('app.tenant', true) \
              AND r.run_id = $1 \
              AND r.status IN ('{dispatched}', '{running}') \
            RETURNING r.tenant_id, r.run_id, r.status \
@@ -439,45 +399,6 @@ pub fn parked_due_sql(limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn every_executor_operation_has_exactly_one_class_guard() {
-        for (name, sql) in [
-            ("select-production-claim", select_production_claim_sql()),
-            (
-                "select-claim-effect-attempt",
-                select_claim_effect_attempt_sql(),
-            ),
-            ("serialize-effect-intent", serialize_effect_intent_sql()),
-            ("clear-pre-effect-state", clear_pre_effect_state_sql()),
-            ("advance-claim-attempts", advance_claim_attempts_sql()),
-            ("grant-production-claim", grant_production_claim_sql()),
-            ("renew-production-lease", renew_production_lease_sql()),
-            (
-                "terminalize-effect-uncertain",
-                terminalize_effect_uncertain_claim_sql(),
-            ),
-            (
-                "select-exhausted-production",
-                select_exhausted_production_sql(),
-            ),
-            (
-                "terminalize-exhausted-production",
-                terminalize_exhausted_production_sql(),
-            ),
-        ] {
-            assert_eq!(
-                sql.matches("require_executor_platform_authority()").count(),
-                1,
-                "{name} must carry exactly one executor-platform guard"
-            );
-        }
-    }
-
-    #[test]
-    fn dispatcher_wake_scan_is_not_an_executor_operation() {
-        assert!(!parked_due_sql(1).contains("require_executor_platform_authority"));
-    }
 
     #[test]
     fn production_turns_filter_one_global_fifo_by_the_release_package_set() {

@@ -141,10 +141,9 @@ const MATRIX_PRIVILEGES: [&str; 4] = ["SELECT", "INSERT", "UPDATE", "DELETE"];
 /// The authority-bearing routines. `catalog`'s two trigger functions are
 /// deliberately absent: they are invoker-rights triggers, not a family's
 /// authority.
-const MATRIX_ROUTINES: [&str; 3] = [
+const MATRIX_ROUTINES: [&str; 2] = [
     "wamn_authority.current_tenant_key()",
     "wamn_authority.tenant_key(text)",
-    "wamn_run.require_executor_platform_authority()",
 ];
 
 /// One family's REACH over [`MATRIX_RELATIONS`] and [`MATRIX_ROUTINES`], spelled
@@ -261,7 +260,6 @@ const MATRIX: [FamilyReach; 10] = [
         ],
         routines: &[
             "wamn_authority.tenant_key(text)",
-            "wamn_run.require_executor_platform_authority()",
         ],
     },
     FamilyReach {
@@ -1384,31 +1382,22 @@ fn the_authority_derivations_match_their_pinned_definition_digest() {
     }
 }
 
-/// The executor guard is PUBLIC EXECUTE today, which is why the routine
-/// half of the matrix reads `aclexplode` and not `has_function_privilege`.
-///
-/// Recorded as a measured fact rather than assumed, so that revoking PUBLIC —
-/// which would make `has_function_privilege` discriminating and is a change this
-/// gate is not the owner of — is a deliberate edit here.
+/// The authority derivations are not executable through PUBLIC.
 #[test]
-fn the_run_plane_guards_are_still_public_execute() {
-    let Some(fixture) = armed("the_run_plane_guards_are_still_public_execute") else {
+fn authority_derivations_are_not_public_execute() {
+    let Some(fixture) = armed("authority_derivations_are_not_public_execute") else {
         return;
     };
     assert_eq!(
         query(
             &fixture.db_url,
             "SELECT has_function_privilege('public', \
-               'wamn_run.require_executor_platform_authority()', 'EXECUTE')::text || ' ' || \
-             has_function_privilege('public', \
                'wamn_authority.tenant_key(text)', 'EXECUTE')::text || ' ' || \
              has_function_privilege('public', \
                'wamn_authority.current_tenant_key()', 'EXECUTE')::text",
         ),
-        "true false false",
-        "PUBLIC's EXECUTE on the run-plane guards or on the authority \
-         derivations moved; the routine arms of this matrix are built on the \
-         first pair being PUBLIC and the second pair not being"
+        "false false",
+        "PUBLIC must not execute the authority derivations"
     );
 }
 
