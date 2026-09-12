@@ -1,0 +1,156 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-daab1f529cd24f3391208b0500e2b342",
+            "hostId": "8602039b-39a1-4c71-9401-f18aaf6f9e40",
+            "hostname": "10.244.2.5",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-12T00:47:17Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "happy-button-5189",
+                "namespace": "wamn-system",
+                "resourceVersion": "2357",
+                "uid": "267a8375-5ffe-4fff-b825-331b1f03e11e"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-12T00:50:27Z",
+                        "message": "context deadline exceeded",
+                        "reason": "Reconcile",
+                        "status": "False",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-12T00:51:05Z",
+                        "message": "status unknown: host has not reported recently, but the operator has not been hearing the fleet for 1m0s",
+                        "reason": "Reconcile",
+                        "status": "Unknown",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-12T00:53:03Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "5.035971",
+                "systemMemoryFree": 3742068736,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-daab1f529cd24f3391208b0500e2b342",
+            "hostId": "ccc1edb8-3671-4423-8b50-ce4b4a68830b",
+            "hostname": "10.244.1.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-12T00:47:17Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "nosy-metal-7482",
+                "namespace": "wamn-system",
+                "resourceVersion": "2352",
+                "uid": "e491a38b-5f74-4363-87b1-94f2d67ea929"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-12T00:50:33Z",
+                        "message": "context deadline exceeded",
+                        "reason": "Reconcile",
+                        "status": "False",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-12T00:51:12Z",
+                        "message": "status unknown: host has not reported recently, but the operator has not been hearing the fleet for 1m0s",
+                        "reason": "Reconcile",
+                        "status": "Unknown",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-12T00:53:02Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "5.4678006",
+                "systemMemoryFree": 3742068736,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0",
+                "workloadCount": 1
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-daab1f529cd24f3391208b0500e2b342",
+            "hostId": "4c4be377-c603-4e64-b876-c200eddf91a5",
+            "hostname": "10.244.2.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-12T00:47:17Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "roasted-clover-3693",
+                "namespace": "wamn-system",
+                "resourceVersion": "2367",
+                "uid": "5c51086c-da85-4f4d-88d6-f15de340b5d9"
+            },
+            "status": {
+                "componentCount": 1,
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-12T00:50:40Z",
+                        "message": "context deadline exceeded",
+                        "reason": "Reconcile",
+                        "status": "False",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-12T00:51:18Z",
+                        "message": "status unknown: host has not reported recently, but the operator has not been hearing the fleet for 1m0s",
+                        "reason": "Reconcile",
+                        "status": "Unknown",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-12T00:53:08Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "5.1456914",
+                "systemMemoryFree": 3741839360,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0",
+                "workloadCount": 1
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

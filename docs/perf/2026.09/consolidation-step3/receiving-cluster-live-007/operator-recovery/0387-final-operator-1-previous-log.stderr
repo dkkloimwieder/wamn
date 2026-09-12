@@ -1,0 +1,1 @@
+error: error from server (NotFound): pods "runtime-operator-6dd4b8b57f-4llpq" not found in namespace "wamn-system"

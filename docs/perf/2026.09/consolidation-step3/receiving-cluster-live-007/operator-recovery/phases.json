@@ -1,0 +1,73 @@
+{
+  "initial": {
+    "exact_200_after_readiness": {
+      "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:45:52.551000Z\"}}]",
+      "content_type": "application/json",
+      "origin": "http://172.28.0.6:31176",
+      "result": "serving",
+      "seconds": 0.003224576,
+      "status": 200,
+      "timestamp": 1789174134,
+      "transport_failure": null
+    },
+    "readiness_observed": 1789174129.932492,
+    "ready_and_serving_after_seconds": 10.76684284210205,
+    "started": 1789174124.451389,
+    "workload_uids": [
+      "4d4a5344-b9da-4ad4-8e55-99405aaeed4d",
+      "88bf6a9a-911b-4a72-abda-65e7fbd791ed",
+      "a021671f-62bf-44e8-afaa-7cecc539c7ec"
+    ]
+  },
+  "operator-restart": {
+    "exact_200_after_readiness": {
+      "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:45:52.551000Z\"}}]",
+      "content_type": "application/json",
+      "origin": "http://172.28.0.6:31176",
+      "result": "serving",
+      "seconds": 0.004522724,
+      "status": 200,
+      "timestamp": 1789174464,
+      "transport_failure": null
+    },
+    "readiness_observed": 1789174462.064079,
+    "ready_and_serving_after_seconds": 34.5738480091095,
+    "started": 1789174432.965117,
+    "workload_uids": [
+      "0cf1cc2f-6de2-45f1-a871-12514edf89be",
+      "4d4a5344-b9da-4ad4-8e55-99405aaeed4d",
+      "d344c099-f785-4d4f-af9c-f5c7cbb9e224"
+    ]
+  },
+  "scheduler-recovery": {
+    "exact_200_after_readiness": {
+      "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:45:52.551000Z\"}}]",
+      "content_type": "application/json",
+      "origin": "http://172.28.0.6:31176",
+      "result": "serving",
+      "seconds": 0.002592862,
+      "status": 200,
+      "timestamp": 1789174429,
+      "transport_failure": null
+    },
+    "readiness_observed": 1789174427.425089,
+    "ready_and_serving_after_seconds": 63.459463119506836,
+    "started": 1789174369.402036,
+    "workload_uids": [
+      "0cf1cc2f-6de2-45f1-a871-12514edf89be",
+      "4d4a5344-b9da-4ad4-8e55-99405aaeed4d",
+      "d344c099-f785-4d4f-af9c-f5c7cbb9e224"
+    ]
+  },
+  "scheduler-stopped": {
+    "actual_seconds": 153.310297683,
+    "ended": 1789174369.402036,
+    "fleet_guard_host_uids": [
+      "267a8375-5ffe-4fff-b825-331b1f03e11e",
+      "5c51086c-da85-4f4d-88d6-f15de340b5d9",
+      "e491a38b-5f74-4363-87b1-94f2d67ea929"
+    ],
+    "required_seconds": 150,
+    "started": 1789174216.091749
+  }
+}

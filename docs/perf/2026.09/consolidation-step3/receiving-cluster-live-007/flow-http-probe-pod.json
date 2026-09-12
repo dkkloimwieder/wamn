@@ -1,0 +1,238 @@
+{
+  "apiVersion": "v1",
+  "items": [
+    {
+      "apiVersion": "v1",
+      "kind": "Pod",
+      "metadata": {
+        "creationTimestamp": "2026-09-12T00:47:24Z",
+        "generateName": "flow-http-reachability-",
+        "generation": 1,
+        "labels": {
+          "batch.kubernetes.io/controller-uid": "6636dd63-6314-4379-b045-436cdbb326a3",
+          "batch.kubernetes.io/job-name": "flow-http-reachability",
+          "controller-uid": "6636dd63-6314-4379-b045-436cdbb326a3",
+          "job-name": "flow-http-reachability"
+        },
+        "name": "flow-http-reachability-rq7gf",
+        "namespace": "wamn-receiving-daab1f529cd24f3391208b0500e2b342",
+        "ownerReferences": [
+          {
+            "apiVersion": "batch/v1",
+            "blockOwnerDeletion": true,
+            "controller": true,
+            "kind": "Job",
+            "name": "flow-http-reachability",
+            "uid": "6636dd63-6314-4379-b045-436cdbb326a3"
+          }
+        ],
+        "resourceVersion": "1350",
+        "uid": "041a0ef0-b514-44a5-b66f-a506d59c3060"
+      },
+      "spec": {
+        "containers": [
+          {
+            "args": [
+              "transport=$(curl --silent --show-error --connect-timeout 5 --max-time 15 --output /tmp/body --write-out '{\"status\":%{http_code},\"content_type\":\"%{content_type}\"}' --header \"Host: $ROUTE_HOST\" \"http://flow-http.$NAMESPACE.svc.cluster.local/no-such-route\")\nbody_hex=$(od -An -v -tx1 /tmp/body | tr -d ' \\n')\nprintf '{\"transport\":%s,\"body_hex\":\"%s\"}\\n' \"$transport\" \"$body_hex\" >/dev/termination-log\n"
+            ],
+            "command": [
+              "/bin/sh",
+              "-ec"
+            ],
+            "env": [
+              {
+                "name": "ROUTE_HOST",
+                "value": "receiving.localhost"
+              },
+              {
+                "name": "NAMESPACE",
+                "value": "wamn-receiving-daab1f529cd24f3391208b0500e2b342"
+              }
+            ],
+            "image": "wamn-host:wamn-receiving-daab1f529cd24f3391208b0500e2b342",
+            "imagePullPolicy": "Never",
+            "name": "probe",
+            "resources": {},
+            "terminationMessagePath": "/dev/termination-log",
+            "terminationMessagePolicy": "File",
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-k9tf5",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "dnsPolicy": "ClusterFirst",
+        "enableServiceLinks": true,
+        "nodeName": "wamn-receiving-daab1f529cd24f3391208b0500e2b342-worker2",
+        "preemptionPolicy": "PreemptLowerPriority",
+        "priority": 0,
+        "restartPolicy": "Never",
+        "schedulerName": "default-scheduler",
+        "securityContext": {},
+        "serviceAccount": "default",
+        "serviceAccountName": "default",
+        "terminationGracePeriodSeconds": 30,
+        "tolerations": [
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/not-ready",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          },
+          {
+            "effect": "NoExecute",
+            "key": "node.kubernetes.io/unreachable",
+            "operator": "Exists",
+            "tolerationSeconds": 300
+          }
+        ],
+        "volumes": [
+          {
+            "name": "kube-api-access-k9tf5",
+            "projected": {
+              "defaultMode": 420,
+              "sources": [
+                {
+                  "serviceAccountToken": {
+                    "expirationSeconds": 3607,
+                    "path": "token"
+                  }
+                },
+                {
+                  "configMap": {
+                    "items": [
+                      {
+                        "key": "ca.crt",
+                        "path": "ca.crt"
+                      }
+                    ],
+                    "name": "kube-root-ca.crt"
+                  }
+                },
+                {
+                  "downwardAPI": {
+                    "items": [
+                      {
+                        "fieldRef": {
+                          "apiVersion": "v1",
+                          "fieldPath": "metadata.namespace"
+                        },
+                        "path": "namespace"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-12T00:47:26Z",
+            "observedGeneration": 1,
+            "status": "False",
+            "type": "PodReadyToStartContainers"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-12T00:47:24Z",
+            "observedGeneration": 1,
+            "reason": "PodCompleted",
+            "status": "True",
+            "type": "Initialized"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-12T00:47:25Z",
+            "observedGeneration": 1,
+            "reason": "PodCompleted",
+            "status": "False",
+            "type": "Ready"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-12T00:47:25Z",
+            "observedGeneration": 1,
+            "reason": "PodCompleted",
+            "status": "False",
+            "type": "ContainersReady"
+          },
+          {
+            "lastProbeTime": null,
+            "lastTransitionTime": "2026-09-12T00:47:24Z",
+            "observedGeneration": 1,
+            "status": "True",
+            "type": "PodScheduled"
+          }
+        ],
+        "containerStatuses": [
+          {
+            "containerID": "containerd://f1cdad2f7c6fdc5ebd92c68ba36ba5f101aa3ac565b576b20145a3fe092ae652",
+            "image": "docker.io/library/wamn-host:wamn-receiving-daab1f529cd24f3391208b0500e2b342",
+            "imageID": "docker.io/library/import-2026-09-12@sha256:af266413cb4df6218a7d048a4b90c5a6ef302c1130950a7cfcbfa7ae0640d05b",
+            "lastState": {},
+            "name": "probe",
+            "ready": false,
+            "resources": {},
+            "restartCount": 0,
+            "started": false,
+            "state": {
+              "terminated": {
+                "containerID": "containerd://f1cdad2f7c6fdc5ebd92c68ba36ba5f101aa3ac565b576b20145a3fe092ae652",
+                "exitCode": 0,
+                "finishedAt": "2026-09-12T00:47:25Z",
+                "message": "{\"transport\":{\"status\":404,\"content_type\":\"application/json\"},\"body_hex\":\"7b226572726f72223a7b22636f6465223a22726f7574652d6e6f742d666f756e64227d7d\"}\n",
+                "reason": "Completed",
+                "startedAt": "2026-09-12T00:47:25Z"
+              }
+            },
+            "user": {
+              "linux": {
+                "gid": 0,
+                "supplementalGroups": [
+                  0
+                ],
+                "uid": 0
+              }
+            },
+            "volumeMounts": [
+              {
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "name": "kube-api-access-k9tf5",
+                "readOnly": true,
+                "recursiveReadOnly": "Disabled"
+              }
+            ]
+          }
+        ],
+        "hostIP": "172.28.0.5",
+        "hostIPs": [
+          {
+            "ip": "172.28.0.5"
+          }
+        ],
+        "observedGeneration": 1,
+        "phase": "Succeeded",
+        "podIP": "10.244.1.7",
+        "podIPs": [
+          {
+            "ip": "10.244.1.7"
+          }
+        ],
+        "qosClass": "BestEffort",
+        "resources": {},
+        "startTime": "2026-09-12T00:47:24Z"
+      }
+    }
+  ],
+  "kind": "List",
+  "metadata": {
+    "resourceVersion": ""
+  }
+}

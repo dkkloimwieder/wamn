@@ -1,0 +1,143 @@
+{
+  "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+  "kind": "WorkloadDeployment",
+  "metadata": {
+    "annotations": {
+      "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"runtime.wasmcloud.dev/v1alpha1\",\"kind\":\"WorkloadDeployment\",\"metadata\":{\"annotations\":{},\"name\":\"receiving-materializer\",\"namespace\":\"wamn-receiving-daab1f529cd24f3391208b0500e2b342\"},\"spec\":{\"replicas\":1,\"template\":{\"spec\":{\"environment\":\"wamn-receiving-daab1f529cd24f3391208b0500e2b342\",\"hostInterfaces\":[{\"interfaces\":[\"types\",\"client\"],\"namespace\":\"wamn\",\"package\":\"postgres\",\"version\":\"0.1.0\"},{\"interfaces\":[\"types\",\"registration\"],\"namespace\":\"wamn\",\"package\":\"jetstream\",\"version\":\"0.1.0\"},{\"interfaces\":[\"types\",\"jetstream\"],\"name\":\"events\",\"namespace\":\"wasmcloud\",\"package\":\"nats\",\"version\":\"0.1.0\"},{\"interfaces\":[\"routing\"],\"namespace\":\"wamn\",\"package\":\"flow-http-routing\",\"version\":\"0.1.0\"},{\"interfaces\":[\"delivery\"],\"namespace\":\"wamn\",\"package\":\"router-delivery\",\"version\":\"0.1.0\"}],\"hostSelector\":{\"hostgroup\":\"default\"},\"service\":{\"image\":\"172.28.0.9:5000/wamn/materializer@sha256:549e456b4b14d1e148f2515b3b3d311ab6589e2df0d8f799e9dc02c5f641b7ce\",\"imagePullPolicy\":\"Always\",\"localResources\":{\"allowedIpNameLookups\":[],\"config\":{\"wamn.environment\":\"dev\",\"wamn.postgres.authority\":\"event-materializer\",\"wamn.project\":\"receiving\",\"wamn.tenant\":\"receiving-route-auth\"},\"environment\":{\"config\":{\"WAMN_MAT_ENV\":\"dev\",\"WAMN_MAT_FETCH_MS\":\"500\",\"WAMN_MAT_MAX_DELIVER\":\"5\",\"WAMN_MAT_ORG\":\"acme\",\"WAMN_MAT_PROJECT\":\"receiving\",\"WAMN_MAT_STREAM\":\"EVT_4_acme_9_receiving_3_dev\",\"WAMN_MAT_SWEEP_MS\":\"500\",\"WAMN_MAT_TENANT\":\"receiving-route-auth\"}}},\"maxRestarts\":5}}}}}\n"
+    },
+    "creationTimestamp": "2026-09-12T00:47:27Z",
+    "generation": 1,
+    "name": "receiving-materializer",
+    "namespace": "wamn-receiving-daab1f529cd24f3391208b0500e2b342",
+    "resourceVersion": "1378",
+    "uid": "a0b1a178-ce77-4fec-b5c4-978b841441ff"
+  },
+  "spec": {
+    "deployPolicy": "RollingUpdate",
+    "replicas": 1,
+    "template": {
+      "spec": {
+        "environment": "wamn-receiving-daab1f529cd24f3391208b0500e2b342",
+        "hostInterfaces": [
+          {
+            "interfaces": [
+              "types",
+              "client"
+            ],
+            "namespace": "wamn",
+            "package": "postgres",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "types",
+              "registration"
+            ],
+            "namespace": "wamn",
+            "package": "jetstream",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "types",
+              "jetstream"
+            ],
+            "name": "events",
+            "namespace": "wasmcloud",
+            "package": "nats",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "routing"
+            ],
+            "namespace": "wamn",
+            "package": "flow-http-routing",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "delivery"
+            ],
+            "namespace": "wamn",
+            "package": "router-delivery",
+            "version": "0.1.0"
+          }
+        ],
+        "hostSelector": {
+          "hostgroup": "default"
+        },
+        "service": {
+          "image": "172.28.0.9:5000/wamn/materializer@sha256:549e456b4b14d1e148f2515b3b3d311ab6589e2df0d8f799e9dc02c5f641b7ce",
+          "imagePullPolicy": "Always",
+          "localResources": {
+            "allowedIpNameLookups": [],
+            "config": {
+              "wamn.environment": "dev",
+              "wamn.postgres.authority": "event-materializer",
+              "wamn.project": "receiving",
+              "wamn.tenant": "receiving-route-auth"
+            },
+            "environment": {
+              "config": {
+                "WAMN_MAT_ENV": "dev",
+                "WAMN_MAT_FETCH_MS": "500",
+                "WAMN_MAT_MAX_DELIVER": "5",
+                "WAMN_MAT_ORG": "acme",
+                "WAMN_MAT_PROJECT": "receiving",
+                "WAMN_MAT_STREAM": "EVT_4_acme_9_receiving_3_dev",
+                "WAMN_MAT_SWEEP_MS": "500",
+                "WAMN_MAT_TENANT": "receiving-route-auth"
+              }
+            }
+          },
+          "maxRestarts": 5
+        }
+      }
+    }
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-09-12T00:47:27Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Artifact"
+      },
+      {
+        "lastTransitionTime": "2026-09-12T00:47:28Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Sync"
+      },
+      {
+        "lastTransitionTime": "2026-09-12T00:47:28Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Deploy"
+      },
+      {
+        "lastTransitionTime": "2026-09-12T00:47:28Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Scale"
+      },
+      {
+        "lastTransitionTime": "2026-09-12T00:47:28Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Ready"
+      }
+    ],
+    "currentReplicaSet": {
+      "name": "receiving-materializer-5f7bddcf97"
+    },
+    "currentReplicas": 1,
+    "replicas": {
+      "current": 1,
+      "expected": 1,
+      "ready": 1
+    },
+    "selector": "runtime.wasmcloud.dev/workload-deployment=receiving-materializer"
+  }
+}

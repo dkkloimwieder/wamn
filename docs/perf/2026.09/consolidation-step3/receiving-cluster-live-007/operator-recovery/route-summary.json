@@ -1,0 +1,8 @@
+{
+  "classifications": {
+    "serving": 69
+  },
+  "non_success": [],
+  "origin": "owned-nodeport",
+  "sample_interval_seconds": 5
+}
