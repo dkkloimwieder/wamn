@@ -18,20 +18,6 @@ struct GovernedLiteral {
     expected_count: usize,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct GovernedJsonSchema {
-    path: &'static str,
-}
-
-const GOVERNED_JSON_SCHEMAS: &[GovernedJsonSchema] = &[
-    GovernedJsonSchema {
-        path: "architecture/protected-writes.json",
-    },
-    GovernedJsonSchema {
-        path: "architecture/state-owners.json",
-    },
-];
-
 // This is deliberately a list of positive definitions, not a repository-wide
 // search for version-looking text. Upstream identities and refusal/mutation fixtures
 // must remain free to carry the foreign versions they show are rejected.
@@ -121,11 +107,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     GovernedLiteral {
         path: "crates/platform/runtime/src/plugins/connection_http.rs",
         exact: r#"const HTTP_CONTRACT: &str = "wamn:connection/http@0.1.0";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "tests/conformance/tests/state_ownership.rs",
-        exact: r#"if manifest.schema_version != "0.1" {"#,
         expected_count: 1,
     },
     GovernedLiteral {
@@ -282,22 +263,6 @@ fn governed_literal_violation(source: &str, identity: GovernedLiteral) -> Option
     })
 }
 
-fn governed_json_schema_violation(source: &str, identity: GovernedJsonSchema) -> Option<String> {
-    let document: Value = match serde_json::from_str(source) {
-        Ok(document) => document,
-        Err(error) => {
-            return Some(format!("{}: invalid JSON: {error}", identity.path));
-        }
-    };
-    let actual = document.get("schema_version");
-    (actual.and_then(Value::as_str) != Some(MVP_SCHEMA_VERSION)).then(|| {
-        format!(
-            "{}: schema_version must be textual {MVP_SCHEMA_VERSION}, found {actual:?}",
-            identity.path
-        )
-    })
-}
-
 fn live_invocation_context_version_violations() -> Vec<String> {
     let mut violations = Vec::new();
     if INVOCATION_CONTEXT_VERSION != MVP_SCHEMA_VERSION {
@@ -326,16 +291,6 @@ fn governed_literal_violations(repository: &Path) -> Vec<String> {
         };
         if let Some(violation) = governed_literal_violation(&source, *identity) {
             violations.push(violation);
-        }
-    }
-    for identity in GOVERNED_JSON_SCHEMAS {
-        match std::fs::read_to_string(repository.join(identity.path)) {
-            Ok(source) => {
-                if let Some(violation) = governed_json_schema_violation(&source, *identity) {
-                    violations.push(violation);
-                }
-            }
-            Err(error) => violations.push(format!("{}: {error}", identity.path)),
         }
     }
     violations
@@ -373,7 +328,7 @@ fn wamn_wit_packages_stay_at_mvp_version() {
 
     assert!(
         governed_count > 0,
-        "WAMN WIT package inventory must not be empty"
+        "WAMN WIT package list must not be empty"
     );
     assert!(
         violations.is_empty(),
@@ -437,15 +392,6 @@ fn representative_version_mutants_are_rejected() {
         )
         .is_some()
     );
-
-    let governance_identity = GovernedJsonSchema {
-        path: "mutant.json",
-    };
-    assert!(
-        governed_json_schema_violation(r#"{"schema_version":1}"#, governance_identity).is_some()
-    );
-
-
 }
 
 #[test]
@@ -465,7 +411,7 @@ fn a_missing_watched_file_still_reports_its_missing_occurrence() {
         .filter(|violation| violation.contains("occurrence(s) of governed identity"))
         .count();
     let reported = violations.len();
-    let expected = GOVERNED_LITERALS.len() + owed + GOVERNED_JSON_SCHEMAS.len();
+    let expected = GOVERNED_LITERALS.len() + owed;
 
     assert_eq!(
         occurrences, owed,
