@@ -7,9 +7,9 @@ license.workspace = true
 
 [dependencies]
 wamn-runtime = { workspace = true }
-wamn-proof-conformance = { workspace = true }
-wamn-proof-integration = { workspace = true }
-wamn-proof-system = { workspace = true }
+wamn-conformance-tests = { workspace = true }
+wamn-integration-tests = { workspace = true }
+wamn-system-tests = { workspace = true }
 wash-runtime = { workspace = true }
 anyhow = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

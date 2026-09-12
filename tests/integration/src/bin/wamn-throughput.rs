@@ -5,14 +5,14 @@
 //!   wamn-throughput schema
 //!
 //! The load itself is oha and pgbench in pods; see
-//! `wamn_proof_integration::throughput_bench` and
+//! `wamn_integration_tests::throughput_bench` and
 //! `tools/receiving-cluster-journey-run --throughput`.
 
 use std::path::PathBuf;
 
 use anyhow::Context as _;
 use clap::{Parser, Subcommand};
-use wamn_proof_integration::throughput_bench;
+use wamn_integration_tests::throughput_bench;
 
 #[derive(Parser)]
 #[command(about = "PostgreSQL counter samples and the report for the throughput bench")]

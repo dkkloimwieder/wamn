@@ -490,7 +490,7 @@ passed, 1 failed, 77 ignored, no compile errors.** The same one failure, still
 ## Conformance
 
 ```bash
-cargo test -p wamn-proof-conformance --no-fail-fast
+cargo test -p wamn-conformance-tests --no-fail-fast
 ```
 
 Cargo owns workspace membership and dependencies.
@@ -516,7 +516,7 @@ runs the targeted `-p` selection its own change touches. Running the whole
 conformance package inside every lane costs a full build per lane and
 re-measures artifacts other lanes are still moving.
 
-Verify the package name before trusting `-p`: it is **`wamn-proof-conformance`**.
+Verify the package name before trusting `-p`: it is **`wamn-conformance-tests`**.
 A nonexistent name *errors* and greps as zero failures.
 
 Generated package contracts and projections have a package-local gate:
@@ -537,7 +537,7 @@ receipt and handler redelivery. Native verification selects the schema through
 trusted connection context rather than changing the corpus bytes:
 
 ```bash
-cargo test -p wamn-proof-integration \
+cargo test -p wamn-integration-tests \
   acme_overlay_publication --locked --offline
 
 # Exact cross-package closure and the real Component Model call boundary.
@@ -896,14 +896,14 @@ trap - EXIT
 ```
 
 The `deploy/platform` bill of materials (`wamn-0h0g.10.5`) is a static
-structural proof of the same kind, but it lives in `wamn-proof-system` — it
+structural proof of the same kind, but it lives in `wamn-system-tests` — it
 belongs beside the conformance guards. It was kept out of that package only so
 it would not collide with `wamn-0h0g.12.10`'s retained-manifest reconcile; that
 reconcile has landed, so the relocation is unblocked and needs its own bead.
 Measured 6 passed / 0 failed on the `w65-deploy` branch, base `2179f9c7`:
 
 ```bash
-cargo test -p wamn-proof-system --test deploy_platform_inventory
+cargo test -p wamn-system-tests --test deploy_platform_inventory
 ```
 
 ### Known red
@@ -1116,7 +1116,7 @@ cargo run -p wamn-component-virtualizer --locked --offline -- \
 
 WAMN_STD_VIRTUALIZATION_COMPONENT_WASM="$STD_VIRT_DIRECTORY/std_virtualization_probe.wasm" \
 WAMN_STD_VIRTUALIZATION_RECEIVING_DIRECTORY="$STD_VIRT_DIRECTORY" \
-  cargo test -p wamn-proof-integration --lib --locked --offline \
+  cargo test -p wamn-integration-tests --lib --locked --offline \
   virtualized_std_guest::tests::virtualized_artifacts_have_exact_imports_and_receiving_exports \
   -- --ignored --exact --nocapture
 
@@ -1140,7 +1140,7 @@ WAMN_STD_VIRTUALIZATION_PG_URL="$STD_VIRT_PG_URL" \
 WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE="127.0.0.1:${STD_VIRT_REGISTRY_PORT}/wamn/std-proof" \
 WAMN_STD_VIRTUALIZATION_COMPONENT_WASM="$STD_VIRT_DIRECTORY/std_virtualization_probe.wasm" \
 WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM="$STD_VIRT_REPOSITORY_ROOT/apps/target/wasm32-wasip2/release/http_route.wasm" \
-  cargo test -p wamn-proof-integration --lib --locked --offline \
+  cargo test -p wamn-integration-tests --lib --locked --offline \
   virtualized_std_guest::tests::virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal \
   -- --ignored --exact --nocapture --test-threads=1
 
@@ -1193,7 +1193,7 @@ for CLAIM_LAW_ATTEMPT in {1..60}; do
 done
 
 WAMN_CLAIM_LAW_PG_URL="postgresql://postgres:probe@127.0.0.1:${CLAIM_LAW_PG_PORT}/wamn_claim_law" \
-  cargo test -p wamn-proof-integration --lib --locked --offline \
+  cargo test -p wamn-integration-tests --lib --locked --offline \
   claim_law_live:: -- --ignored --nocapture
 
 claim_law_cleanup
@@ -1295,7 +1295,7 @@ plus `all` (which excludes `switchover`). It needs a superuser
 JetStream `--nats-url`.
 
 **No runnable invocation is recorded here.**
-`cdcbench` is a `pub mod` of `wamn-proof-integration`, which has a **lib target
+`cdcbench` is a `pub mod` of `wamn-integration-tests`, which has a **lib target
 only** (`cargo metadata`), and the `wamn-gates` binary
 (`tests/orchestrator/src/main.rs`) exposes exactly six subcommands —
 `retention`, `readerbench`, `serve-echo`, `socketguard`, `traceproof`, and
@@ -1537,7 +1537,7 @@ gateway, and the Events overlay's namespace and operator identity. It creates no
 cluster object.
 
 ```bash
-cargo test -p wamn-proof-conformance --test chart_seam_governance \
+cargo test -p wamn-conformance-tests --test chart_seam_governance \
   receiving_pat_overlay_renders_a_complete_scoped_host \
   -- --ignored --exact --nocapture
 ```
@@ -1559,7 +1559,7 @@ docker run -d --name wamn-route-auth-pg -e POSTGRES_PASSWORD=probe \
   -p 127.0.0.1:5439:5432 postgres:18
 until psql postgres://postgres:probe@localhost:5439/postgres -Atqc 'select 1'; do :; done
 WAMN_ROUTE_AUTH_PG18_URL=postgres://postgres:probe@localhost:5439/postgres \
-  cargo test -p wamn-proof-integration --lib --locked \
+  cargo test -p wamn-integration-tests --lib --locked \
   route_authentication_live::production_route_caller_authentication_and_operation_authorization \
   -- --ignored --exact --nocapture --test-threads=1
 docker rm -f wamn-route-auth-pg # BY EXPLICIT NAME. Never prune.
@@ -1948,7 +1948,7 @@ cargo test --locked --offline -p wamn-identity --test pat_issuance \
   operator_ca_configuration_refuses_missing_or_malformed_roots
 cargo test --locked --offline -p wamn-ctl --lib pat_client
 cargo test --locked --offline -p wamn-control-provision --lib identity_issuer
-cargo test --locked --offline -p wamn-proof-system --test deploy_platform_inventory
+cargo test --locked --offline -p wamn-system-tests --test deploy_platform_inventory
 ```
 
 Use a separate, fresh PostgreSQL 18 server for each live command below.
@@ -2025,8 +2025,8 @@ cargo test --locked --offline -p wamn-ctl --lib session_reader
 cargo test --locked --offline -p wamn-ctl --test session_audience_live \
   compiled_session_reader_refuses_invalid_tenants_before_io
 cargo test --locked --offline -p wamn-identity --lib
-cargo test --locked --offline -p wamn-proof-integration --lib identity_session_proof::tests
-cargo test --locked --offline -p wamn-proof-system --test deploy_platform_inventory
+cargo test --locked --offline -p wamn-integration-tests --lib identity_session_proof::tests
+cargo test --locked --offline -p wamn-system-tests --test deploy_platform_inventory
 ```
 
 The chart check requires Helm.
@@ -3113,7 +3113,7 @@ Build the native entrypoint and run its ordinary tests:
 
 ```bash
 cargo build -p wamn-gates --bin wamn-gates --locked --offline
-cargo test -p wamn-proof-integration --lib --locked --offline \
+cargo test -p wamn-integration-tests --lib --locked --offline \
   agent_pilot:: -- --nocapture
 ```
 
@@ -3235,7 +3235,7 @@ done
 CARGO_TARGET_DIR="$GUEST_REPRO_SCRATCH/test-target" \
 WAMN_DIGEST_REPRO_A="$GUEST_REPRO_SCRATCH/a/target/virtualized/std-empty-environment" \
 WAMN_DIGEST_REPRO_B="$GUEST_REPRO_SCRATCH/b/target/virtualized/std-empty-environment" \
-  cargo test --locked --offline -p wamn-proof-conformance --test guest_workspace_closure \
+  cargo test --locked --offline -p wamn-conformance-tests --test guest_workspace_closure \
   one_commit_built_in_two_checkouts_yields_identical_guest_digests \
   -- --include-ignored --exact --nocapture \
   > "$GUEST_REPRO_EVIDENCE/gate.log" 2>&1
@@ -3280,7 +3280,7 @@ CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/all" RUSTC_WRAPPER= \
 CARGO_TARGET_DIR="$GUEST_PROFILE_SCRATCH/test-target" \
 WAMN_DIGEST_PROFILE_APP_PLAN="$GUEST_PROFILE_EVIDENCE/app.json" \
 WAMN_DIGEST_PROFILE_ALL_PLAN="$GUEST_PROFILE_EVIDENCE/all.json" \
-  cargo test --locked --offline -p wamn-proof-conformance --test guest_workspace_closure \
+  cargo test --locked --offline -p wamn-conformance-tests --test guest_workspace_closure \
   one_commit_built_under_two_profiles_yields_identical_guest_digests \
   -- --include-ignored --exact --nocapture \
   > "$GUEST_PROFILE_EVIDENCE/gate.log" 2>&1
@@ -3395,7 +3395,7 @@ Set `evidence_file` to a new path, then run the exact live test while the dispos
 
 ```bash
 WAMN_RECEIVING_CORRECTNESS_DOCUMENT=/absolute/private/fixture.json \
-  cargo test --locked --offline -p wamn-proof-integration \
+  cargo test --locked --offline -p wamn-integration-tests \
   --test receiving_command_histories_live production_receiving_command_histories \
   -- --exact --include-ignored --nocapture
 ```
@@ -3848,7 +3848,7 @@ Run the ordinary Rust tests before a cluster run.
 
 ```bash
 cargo test -p wamn-test-infrastructure --lib --locked --offline -- --nocapture
-cargo test -p wamn-proof-integration --lib --locked --offline journey_ -- --nocapture
+cargo test -p wamn-integration-tests --lib --locked --offline journey_ -- --nocapture
 cargo test -p wamn-receiving-tests --lib --locked --offline \
   route_authentication_live::cluster::measurement::tests -- --nocapture
 cargo test -p wamn-wms-tests --lib --locked --offline cluster::startup::tests -- --nocapture
@@ -3972,7 +3972,7 @@ a ceiling ratchets later, on a landing.
 
 ```bash
 WAMN_THROUGHPUT_EVIDENCE_DIR=/absolute/path/to/main/docs/perf/2026.09/receiving-throughput/new-run/throughput \
-  cargo test -p wamn-proof-integration --lib --locked --offline \
+  cargo test -p wamn-integration-tests --lib --locked --offline \
   throughput_bench_live::tests::every_layer_ran_the_whole_sweep_and_its_knee_is_recorded \
   -- --ignored --exact --nocapture
 ```
@@ -4017,7 +4017,7 @@ These commands test correctness, not throughput.
 Run the scope guard tests:
 
 ```bash
-cargo test --locked --offline -p wamn-proof-conformance --test repo_lint -- --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-conformance-tests --test repo_lint -- --nocapture --test-threads=1
 ```
 
 These tests exercise the real guard with unsafe source mutations and fake Cargo steps.
@@ -4039,7 +4039,7 @@ Build the affected libraries and the shared SQL proof:
 
 ```bash
 cargo test --locked --offline -p wamn-runtime -p wamn-execution-host \
-  -p wamn-proof-integration -p wamn-ctl --lib --test bind_connection_live --no-run
+  -p wamn-integration-tests -p wamn-ctl --lib --test bind_connection_live --no-run
 ```
 
 Run each live proof with a fresh PostgreSQL 18 server and OCI registry:
@@ -4086,7 +4086,7 @@ These have no section tag; the file's own doc comment is the recipe of record.
 | `services/ctl/tests/apply_package_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --test apply_package_live` |
 | `services/ctl/tests/protected_relations_live.rs` | `WAMN_CTL_PG_URL` | `cargo test -p wamn-ctl --features ops --test protected_relations_live -- --ignored` |
 | `services/ctl/tests/author_wiring_gate_report_live.rs` | `WAMN_AUTHOR_WIRING_PROJECT_PG_URL` **and** `WAMN_AUTHOR_WIRING_CONTROL_PG_URL` | `cargo test -p wamn-ctl --test author_wiring_gate_report_live -- --ignored` |
-| `tests/integration/src/route_authentication_live.rs` | `WAMN_ROUTE_AUTH_PG18_URL` | `cargo test -p wamn-proof-integration --lib route_authentication_live::production_route_caller_authentication_and_operation_authorization -- --ignored --exact --nocapture --test-threads=1` |
+| `tests/integration/src/route_authentication_live.rs` | `WAMN_ROUTE_AUTH_PG18_URL` | `cargo test -p wamn-integration-tests --lib route_authentication_live::production_route_caller_authentication_and_operation_authorization -- --ignored --exact --nocapture --test-threads=1` |
 | `services/scenario-worker/tests/management_live.rs` | `WAMN_PLATFORM_IDENTITY_PG_URL` | `cargo test -p wamn-scenario-worker --test management_live` |
 | `crates/execution/run-state/tests/effect_writer_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --features native --test effect_writer_live -- --ignored` |
 | `crates/execution/run-state/tests/run_state_live.rs` | `WAMN_RUN_STORE_PG_URL` | `cargo test -p wamn-run-state --test run_state_live -- --include-ignored` |
@@ -4888,7 +4888,7 @@ help: a package with a similar name exists: `wamn-router`      # exit 101
 
 Names that do **not** exist: `wamn-runner`, `wamn-test-fixtures`, `wamn-flow`,
 `flow-http`. The current names: the orchestrator package is **`wamn-gates`**,
-conformance is **`wamn-proof-conformance`**, the node contract is
+conformance is **`wamn-conformance-tests`**, the node contract is
 **`wamn-execution-contract`**, the HTTP ingress guest is **`http-route`**.
 `cargo metadata --no-deps` is the cheap way to confirm one.
 

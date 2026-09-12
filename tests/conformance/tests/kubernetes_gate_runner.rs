@@ -6,7 +6,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
-use wamn_proof_conformance::kubernetes_gate_verdict::{Expectation, Verdict, parse_verdict_record};
+use wamn_conformance_tests::kubernetes_gate_verdict::{Expectation, Verdict, parse_verdict_record};
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 

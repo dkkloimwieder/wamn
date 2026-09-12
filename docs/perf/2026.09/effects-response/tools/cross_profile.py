@@ -36,7 +36,7 @@ if status == 0:
     env = os.environ.copy()
     env.update(WAMN_DIGEST_PROFILE_APP_PLAN=str(evidence / 'app.json'),
                WAMN_DIGEST_PROFILE_ALL_PLAN=str(evidence / 'all.json'))
-    command = ['cargo', 'test', '-p', 'wamn-proof-conformance', '--test',
+    command = ['cargo', 'test', '-p', 'wamn-conformance-tests', '--test',
                'guest_workspace_closure', '--locked', '--offline',
                'one_commit_built_under_two_profiles_yields_identical_guest_digests',
                '--', '--include-ignored', '--exact', '--nocapture']

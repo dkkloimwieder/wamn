@@ -9,7 +9,7 @@
 //! and times `instantiate_async` alone, with compilation and pre-instantiation
 //! already done, which is exactly the state the router is in when it calls it.
 //!
-//! Run: cargo run -p wamn-proof-integration --bin instantiate-bench -- <wasm>...
+//! Run: cargo run -p wamn-integration-tests --bin instantiate-bench -- <wasm>...
 
 use std::time::Instant;
 

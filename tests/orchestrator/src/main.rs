@@ -9,13 +9,13 @@
 
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
-use wamn_proof_conformance::socketguard;
-use wamn_proof_integration::agent_pilot;
-use wamn_proof_integration::{
+use wamn_conformance_tests::socketguard;
+use wamn_integration_tests::agent_pilot;
+use wamn_integration_tests::{
     dashproof, host_session_proof, identity_keys_proof, identity_session_proof, membershipproof,
     readerbench, rc, retention,
 };
-use wamn_proof_system::traceproof;
+use wamn_system_tests::traceproof;
 
 use std::str::FromStr as _;
 

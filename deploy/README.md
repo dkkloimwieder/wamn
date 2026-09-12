@@ -39,7 +39,7 @@ list cannot drift apart silently. Do not restate the inventory here — one
 carrier, and this is not it. Run it with:
 
 ```bash
-cargo test -p wamn-proof-system --test deploy_platform_inventory
+cargo test -p wamn-system-tests --test deploy_platform_inventory
 ```
 
 The proof also records what the tier MOUNTS but does not DECLARE. Three

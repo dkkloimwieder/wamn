@@ -5857,9 +5857,9 @@ dependencies = [
  "clap",
  "tokio",
  "tracing",
- "wamn-proof-conformance",
- "wamn-proof-integration",
- "wamn-proof-system",
+ "wamn-conformance-tests",
+ "wamn-integration-tests",
+ "wamn-system-tests",
  "wamn-runtime",
  "wash-runtime",
 ]
@@ -5981,7 +5981,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-proof-conformance"
+name = "wamn-conformance-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6017,7 +6017,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-proof-integration"
+name = "wamn-integration-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6077,7 +6077,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-proof-system"
+name = "wamn-system-tests"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -6140,7 +6140,7 @@ dependencies = [
  "wamn-execution-host",
  "wamn-gate-harness",
  "wamn-platform-identity",
- "wamn-proof-integration",
+ "wamn-integration-tests",
  "wamn-receiving-tui",
  "wamn-run-state",
  "wamn-runtime",

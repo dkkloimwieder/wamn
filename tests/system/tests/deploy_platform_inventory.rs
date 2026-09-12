@@ -18,9 +18,9 @@
 //!
 //! PLACEMENT, RECORDED SO IT CAN BE MOVED IN ONE STEP. This belongs in
 //! `tests/conformance` beside the other static structural guards. It sits in
-//! `wamn-proof-system` because `wamn-0h0g.12.10` owns the conformance retained-
+//! `wamn-system-tests` because `wamn-0h0g.12.10` owns the conformance retained-
 //! manifest inventory and reconciles it against THIS table; landing both in one
-//! package would have made the two edits collide. `wamn-proof-system` is the
+//! package would have made the two edits collide. `wamn-system-tests` is the
 //! black-box tier over deployed surfaces, which a deployment manifest is.
 
 use std::collections::{BTreeMap, BTreeSet};

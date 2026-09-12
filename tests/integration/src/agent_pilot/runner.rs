@@ -816,7 +816,7 @@ impl Run {
             ("Cargo.toml", vec!["-p", "wamn-scenario-worker"]),
             (
                 "Cargo.toml",
-                vec!["-p", "wamn-proof-integration", "--bin", "wamn-dev-env"],
+                vec!["-p", "wamn-integration-tests", "--bin", "wamn-dev-env"],
             ),
             (
                 "apps/Cargo.toml",

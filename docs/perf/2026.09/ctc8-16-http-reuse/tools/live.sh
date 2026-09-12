@@ -30,14 +30,14 @@ if [[ -z "$test_binary" ]]; then
     [[ -d "$target_dir/debug/deps" ]] || fail 'build the integration test binary before this runner'
     candidates=()
     while IFS= read -r candidate; do
-        [[ ${candidate##*/} =~ ^wamn_proof_integration-[0-9a-f]+$ && -x "$candidate" ]] || continue
+        [[ ${candidate##*/} =~ ^wamn_integration_tests-[0-9a-f]+$ && -x "$candidate" ]] || continue
         candidates+=("$candidate")
-    done < <(rg --files --hidden --no-ignore "$target_dir/debug/deps" -g 'wamn_proof_integration-*')
+    done < <(rg --files --hidden --no-ignore "$target_dir/debug/deps" -g 'wamn_integration_tests-*')
     [[ ${#candidates[@]} == 1 ]] || fail 'set WAMN_HTTP_REUSE_TEST_BINARY to the exact built integration test binary'
     test_binary=${candidates[0]}
 fi
 test_binary=$(readlink -f -- "$test_binary")
-[[ -f "$test_binary" && -x "$test_binary" && "$test_binary" == */debug/deps/wamn_proof_integration-* ]] ||
+[[ -f "$test_binary" && -x "$test_binary" && "$test_binary" == */debug/deps/wamn_integration_tests-* ]] ||
     fail 'WAMN_HTTP_REUSE_TEST_BINARY must name the built debug integration libtest binary'
 
 component_wasm=${WAMN_HTTP_REUSE_COMPONENT_WASM:-}

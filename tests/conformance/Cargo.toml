@@ -1,5 +1,5 @@
 [package]
-name = "wamn-proof-conformance"
+name = "wamn-conformance-tests"
 description = "Repository conformance proofs for component, wire, schema, and artifact contracts"
 version.workspace = true
 edition.workspace = true

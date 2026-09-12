@@ -10,7 +10,7 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
-use wamn_proof_integration::throughput_bench::{self, LayerSpec, StepSpec, ThroughputIndex};
+use wamn_integration_tests::throughput_bench::{self, LayerSpec, StepSpec, ThroughputIndex};
 use wamn_test_infrastructure::traces::{TraceDocument, request_trace_is_complete};
 
 use super::resources::checked;
@@ -820,8 +820,8 @@ async fn human_runs(
     let resources = &state.resources;
     let human_pat = resources.work.join("throughput-human-pat");
     let human_secret = "wamn-throughput-human";
-    wamn_proof_integration::membershipproof::run(
-        wamn_proof_integration::membershipproof::MembershipProofArgs {
+    wamn_integration_tests::membershipproof::run(
+        wamn_integration_tests::membershipproof::MembershipProofArgs {
             system_database_url: state.inputs.system_pg_url.clone(),
             project_database_url: project_database_url.to_owned(),
             endpoint_url: format!("http://flow-http.{}.svc.cluster.local", resources.name),
