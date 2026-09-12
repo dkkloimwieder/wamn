@@ -1,0 +1,24 @@
+[
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "build",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 5.430145838006865,
+    "source_head": "daae50fe83ba85bb921a8be82b0e6fa566cde0e2"
+  }
+]

@@ -1,0 +1,12 @@
+   Compiling wamn-catalog v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/crates/catalog/model)
+warning: function `canonical_serialized` is never used
+   --> crates/catalog/model/src/lib.rs:793:4
+    |
+793 | fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
+    |    ^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+   Compiling wamn-schema-generator v0.1.0 (/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912/crates/schema/generator)
+warning: `wamn-catalog` (lib) generated 1 warning
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.40s

@@ -1,0 +1,122 @@
+{
+  "all_other_string_literals_unchanged": true,
+  "changed_comments": {
+    "Canonical immutable package weld emitted as `generated/package-weld.json`.": "Canonical immutable package metadata emitted as `generated/package-weld.json`.",
+    "Canonical package weld also present in the generated file set.": "Canonical metadata included in the generated file set.",
+    "Deterministically generated package artifacts and their weld.": "Generated package files and their metadata.",
+    "Explicit generator and toolchain facts embedded in every package weld.": "Generator and toolchain facts in each generated package.",
+    "Parse the exact canonical generated weld, refusing alternate spellings.": "Parse the canonical generated metadata and refuse alternate spellings."
+  },
+  "error_kind_literal_unchanged": true,
+  "files": [
+    {
+      "after_sha256": "c092de3ff48d0275920d942a17d44c84b0e44ae1806654146647bd181346bcf6",
+      "before_sha256": "17cdb8a54cf33ab585bf161640695ed650639b1b2b6ddd9ad1a65860a5702f4f",
+      "literal_additions": [
+        "PackageWeld",
+        "struct PackageWeld"
+      ],
+      "literal_changes": [
+        {
+          "after": "\"generated package metadata always serializes\"",
+          "before": "\"a package weld always serializes\""
+        }
+      ],
+      "literal_count": 39,
+      "path": "crates/schema/generator/src/generate.rs"
+    },
+    {
+      "after_sha256": "e0f0ae30f32964c1048d0a1a77d62678fc5f15c27c2f00a4408fb1eae247ae65",
+      "before_sha256": "42f8c9d028c0a2792c2af2bb040f921046e569637f2d0c0f2548e9f3d0277987",
+      "literal_changes": [],
+      "literal_count": 0,
+      "path": "crates/schema/generator/src/lib.rs"
+    },
+    {
+      "after_sha256": "a8c74b111201a14d591ce1d712bba035664196da451357a178311fc7bbff4472",
+      "before_sha256": "292fc176f5479edfe1e44303bbd0b7ef1068fcccb9fe5daab80db0ceb3691c7b",
+      "literal_changes": [
+        {
+          "after": "\"the generated package carries its metadata\"",
+          "before": "\"the generated package carries its weld\""
+        }
+      ],
+      "literal_count": 1076,
+      "path": "crates/schema/generator/tests/generation.rs"
+    },
+    {
+      "after_sha256": "ccd2d61e2f945288614488a4101fed8f15703773a04777cc05cff08b68464734",
+      "before_sha256": "a78f90ae53bb071b4db8eea2afc56730b9956aafd8e6e7214aaec98110b9c021",
+      "literal_changes": [],
+      "literal_count": 1337,
+      "path": "apps/wamn_receiving/tests/generation.rs"
+    },
+    {
+      "after_sha256": "944cb6d9cfd5c5ceaae3e23474485e5da7bac13612dd6bfd22a724267b53a0e1",
+      "before_sha256": "7472d72cf7163bcb9d1d6e20cbf68e9773f347c3fe2bdc40b9fa33d47a026bab",
+      "literal_changes": [
+        {
+          "after": "\"the Receiving metadata is canonical\"",
+          "before": "\"the Receiving weld is canonical\""
+        },
+        {
+          "after": "\"the Receiving manifest and metadata carry one satisfied policy fact\"",
+          "before": "\"the Receiving manifest and weld carry one satisfied policy fact\""
+        },
+        {
+          "after": "\"unsatisfied generated metadata cannot enter a release\"",
+          "before": "\"an unsatisfied generated weld cannot enter a release\""
+        },
+        {
+          "after": "\"metadata cannot restate the manifest policy requirement\"",
+          "before": "\"a weld cannot restate the manifest policy requirement\""
+        }
+      ],
+      "literal_count": 618,
+      "path": "services/ctl/src/publish_release.rs"
+    },
+    {
+      "after_sha256": "cbf5690d50c50d9250cbb581149d6a33dd425333b4eb0802d69f17058775db46",
+      "before_sha256": "5250ff2e14fa53f2ee1f71f565565db6d37410e3c6968fab0cc743996fd8811d",
+      "literal_changes": [
+        {
+          "after": "\"unsatisfied package metadata must refuse release mint\"",
+          "before": "\"an unsatisfied package weld must refuse release mint\""
+        }
+      ],
+      "literal_count": 114,
+      "path": "services/ctl/src/publish_release/effective_release_live.rs"
+    },
+    {
+      "after_sha256": "c2fef6d8b927f4fee2bafe0b6d961c4f5b962a3c1ae6ce2f0b8f320c7c76d677",
+      "before_sha256": "4cbad3d775196b2ee0324f93118f9e0cb3e3c6439b09871c7cf7e12438cdd0a5",
+      "literal_changes": [
+        {
+          "after": "\"generated operation contracts and package metadata agree\"",
+          "before": "\"generated operation contracts and package weld agree\""
+        }
+      ],
+      "literal_count": 512,
+      "path": "services/ctl/src/push_component.rs"
+    }
+  ],
+  "renamed_identifiers": {
+    "PackageWeld": "GeneratedPackageMetadata",
+    "additive_weld": "additive_metadata",
+    "base_weld": "base_metadata",
+    "generated_weld_has_one_strict_canonical_reader": "generated_metadata_has_one_strict_canonical_reader",
+    "mismatched_weld": "mismatched_metadata",
+    "prove_typed_weld_refusal": "assert_typed_metadata_refusal",
+    "release_mint_consumes_the_package_owned_weld_and_refuses_unsatisfied_policy": "release_mint_consumes_package_metadata_and_refuses_unsatisfied_policy",
+    "unsatisfied_weld": "unsatisfied_metadata",
+    "validate_package_weld": "validate_package_metadata",
+    "weld": "metadata",
+    "weld_bytes": "metadata_bytes",
+    "weld_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables": "metadata_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables",
+    "weld_path": "metadata_path"
+  },
+  "serde_expected_type_text_unchanged": true,
+  "serde_type_name_unchanged": true,
+  "serialized_fields_unchanged": true,
+  "source_base": "daae50fe83ba85bb921a8be82b0e6fa566cde0e2"
+}

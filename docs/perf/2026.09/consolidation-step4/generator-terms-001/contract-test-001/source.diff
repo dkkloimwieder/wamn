@@ -1,0 +1,18 @@
+diff --git a/crates/schema/generator/tests/generation.rs b/crates/schema/generator/tests/generation.rs
+index 138eb54d..e9890582 100644
+--- a/crates/schema/generator/tests/generation.rs
++++ b/crates/schema/generator/tests/generation.rs
+@@ -764,6 +764,13 @@ fn generated_metadata_has_one_strict_canonical_reader() {
+         package.metadata()
+     );
+ 
++    let wrong_type = GeneratedPackageMetadata::from_slice(b"null").unwrap_err();
++    assert_eq!(wrong_type.kind(), GenerateErrorKind::InvalidManifest);
++    assert_eq!(
++        std::error::Error::source(&wrong_type).unwrap().to_string(),
++        "invalid type: null, expected struct PackageWeld at line 1 column 4"
++    );
++
+     let mut alternate = bytes.to_vec();
+     alternate.push(b'\n');
+     assert_eq!(

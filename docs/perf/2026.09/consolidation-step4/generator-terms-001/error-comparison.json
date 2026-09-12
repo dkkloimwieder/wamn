@@ -1,0 +1,22 @@
+{
+  "equal": true,
+  "bytes": 144,
+  "sha256": "e9da7864a71497760baaf9473df27a20df793ed634a108f354fb2ad03800238a",
+  "before": "error-before-001/command-3.stdout",
+  "after": "error-after-001/command-3.stdout",
+  "owned_program_cleanup": [
+    {
+      "path": "/tmp/consolidation-generator-error-before-20260912",
+      "sha256": "6255a950c9053a9c8f2af67f269a1347ad77be30d144696824d11ba69030e08b",
+      "bytes": 17987056,
+      "removed": true
+    },
+    {
+      "path": "/tmp/consolidation-generator-error-after-20260912",
+      "sha256": "d084d09e5e0cfebb342a3f6c3f506ad3a8ab7e34755010b1d4c519b1467823b5",
+      "bytes": 17987432,
+      "removed": true
+    }
+  ],
+  "original_generator_library_source_files_matching_baseline": 19
+}

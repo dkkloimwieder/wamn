@@ -1,0 +1,146 @@
+[
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--test",
+      "generation",
+      "--test",
+      "parity",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 3.5262022350216284,
+    "source_head": "daae50fe83ba85bb921a8be82b0e6fa566cde0e2"
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--lib",
+      "materialize::tests::",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 5.099694811040536,
+    "source_head": "daae50fe83ba85bb921a8be82b0e6fa566cde0e2"
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-receiving-tests",
+      "--test",
+      "generation",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 42.482295969035476,
+    "source_head": "daae50fe83ba85bb921a8be82b0e6fa566cde0e2"
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-ctl",
+      "--lib",
+      "release_mint_consumes_package_metadata_and_refuses_unsatisfied_policy",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 205.96609904401703,
+    "source_head": "daae50fe83ba85bb921a8be82b0e6fa566cde0e2"
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-ctl",
+      "--lib",
+      "package_evidence_binds_exact_sql_to_each_manifest_operation",
+      "--",
+      "--nocapture"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 0.521559929009527,
+    "source_head": "daae50fe83ba85bb921a8be82b0e6fa566cde0e2"
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "build",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-schema-generator",
+      "--example",
+      "materialize_package"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-generator-20260912",
+    "environment": {
+      "CARGO_BUILD_JOBS": "2",
+      "CARGO_TARGET_DIR": null,
+      "RUSTC_WRAPPER": ""
+    },
+    "exit_code": 0,
+    "seconds": 0.6385806140024215,
+    "source_head": "daae50fe83ba85bb921a8be82b0e6fa566cde0e2"
+  }
+]
