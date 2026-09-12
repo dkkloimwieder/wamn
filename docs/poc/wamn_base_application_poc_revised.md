@@ -51,7 +51,7 @@
 
 ### 2.1 Package versus module
 
-A **package** is the WAMN application ownership, compatibility, and version boundary. A **module** or **domain** is only source-code and operation organization inside a package and is not part of the public package identity.
+[Application naming law](../architecture/application-naming.md#package-and-operation-identity) defines package, module, and operation identity.
 
 Use **package**, unqualified, only for that WAMN application boundary. Other packaging concepts are named explicitly:
 
@@ -64,13 +64,7 @@ TypeScript/npm package  # generated frontend distribution artifact
 
 A client overlay may contain several modules/domains and several component artifacts without becoming several client overlay packages. A separately built UI or generated npm distribution likewise does not create another WAMN application package.
 
-Canonical operation identity:
-
-```text
-<package-id-kebab>:<module-kebab>/<action-kebab>@<package-version>
-```
-
-Examples:
+Package-scoped operation examples:
 
 ```text
 wamn-receiving:purchase-order/get@1.1.0
@@ -93,24 +87,9 @@ A client overlay consumes a base operation through a dependency alias plus **con
 
 ### 2.2 Local operation convention
 
-Local operations use one of two forms:
+[Application naming law](../architecture/application-naming.md#package-and-operation-identity) defines local operation forms, generated CRUD actions, and custom action spelling.
 
-```text
-<data_model>.<crud_action>
-<domain>.<custom_action>
-```
-
-The closed generated CRUD action set is:
-
-```text
-get
-query
-create
-update
-delete
-```
-
-Custom actions use singular `verb_noun` names:
+Application action examples:
 
 ```text
 receiving.record_receipt
@@ -144,7 +123,9 @@ is absent from the transport-independent package declarations in `wamn.json`.
 
 ### 2.3 Technical naming
 
-WAMN-owned wire and schema identifiers use singular `snake_case`:
+[Application naming law](../architecture/application-naming.md#technical-identifiers) defines technical identifier and generated type spelling.
+
+Application identifier examples:
 
 ```text
 purchase_order
@@ -153,14 +134,12 @@ receiving.record_receipt
 /acme/purchase_order/get
 ```
 
-This applies to data model, operation, package-local identifier, route segment, event identifier, JSON property, SQL relation/field, and generated function name. Generated language types may follow language convention:
+Generated application type examples:
 
 ```text
 purchase_order  → PurchaseOrder
 record_receipt  → ReceivingRecordReceiptInput
 ```
-
-Hyphenated WAMN technical identifiers are not used. Third-party protocol fields may retain their required external spelling.
 
 ### 2.4 Array-shaped invocation
 

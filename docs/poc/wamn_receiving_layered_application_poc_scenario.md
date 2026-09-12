@@ -8,7 +8,9 @@
 
 ### Singular identifiers and `snake_case`
 
-Every wire-level technical identifier uses a **singular noun** and **`snake_case`**:
+[Application naming law](../architecture/application-naming.md#technical-identifiers) defines technical identifier and generated type spelling.
+
+Application identifier examples:
 
 ```text
 purchase_order
@@ -17,20 +19,18 @@ receiving.record_receipt
 /acme/purchase_order/get
 ```
 
-This applies to data model, operation, route segment, event, package-local identifier, JSON property, SQL relation, and generated function name. Collection behavior is represented by an array or by an action such as `query`, never by pluralizing the data model.
+Collection behavior is represented by an array or by an action such as `query`, never by pluralizing the data model.
 
-Generated language type names may follow language convention while remaining derived from singular identifiers:
+Generated application type examples:
 
 ```text
 purchase_order     → PurchaseOrder
 record_receipt     → ReceivingRecordReceiptInput
 ```
 
-Hyphenated technical identifiers are not used.
-
 ### Package, module, and operation
 
-A **package** is the WAMN application ownership, version, and compatibility boundary. A **module** or **domain** is only source-code and operation organization inside a package and is not part of the public package identity.
+[Application naming law](../architecture/application-naming.md#package-and-operation-identity) defines package, module, and operation identity, including local forms and action spelling.
 
 Use **package**, unqualified, only for that WAMN application boundary. Other identities are named explicitly:
 
@@ -43,30 +43,7 @@ Rust module or application domain
 
 The POC has one platform package and one client overlay package. `receiving`, `quality`, and `integration` may be separate domains and component artifacts inside `client_acme_receiving`; they are not independently versioned client overlay packages.
 
-Canonical operation identity:
-
-```text
-<package-id-kebab>:<module-kebab>/<action-kebab>@<package-version>
-```
-
-Local operation forms:
-
-```text
-<data_model>.<crud_action>
-<domain>.<custom_action>
-```
-
-The closed generated CRUD action set is:
-
-```text
-get
-query
-create
-update
-delete
-```
-
-A custom action uses a singular `verb_noun` name:
+Application action examples:
 
 ```text
 receiving.record_receipt
