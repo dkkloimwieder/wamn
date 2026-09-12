@@ -1,0 +1,125 @@
+{
+  "files": [
+    {
+      "path": "capture-command.json",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/capture-command.json",
+      "bytes": 153,
+      "sha256": "a5d5feaf69350dc73d8566cb66c4e99ec7bc5d44acb8694fa8d7f48423aae883",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "capture.py",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/capture.py",
+      "bytes": 5291,
+      "sha256": "1ac718452c9ecc0117f20db351e78ce0dd71c1e7358d1bdfbb9a3f7288b1c885",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "command.json",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/command.json",
+      "bytes": 271,
+      "sha256": "29fde9e07c0e413dd2845d9fa1219e53517996ac1f80252d06faec397423b820",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "environment-names.json",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/environment-names.json",
+      "bytes": 4032,
+      "sha256": "fc29a49024305595c997988e6b14c71601fdc1f94eefcf201a619a08127b53fd",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "exit-code.txt",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/exit-code.txt",
+      "bytes": 4,
+      "sha256": "39b8dc3fc8b44765c8e6f1adee04c5b465e555ab791cc42d0d9e810d5b64297c",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "launch-command.json",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/launch-command.json",
+      "bytes": 165,
+      "sha256": "33816e26e637aaf431faf802b5a64d1db73cfae7b3934626a0ef6b995df3de93",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "mapping-archives.json",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/mapping-archives.json",
+      "bytes": 657,
+      "sha256": "bdb7329d1aaba31b641b731a61852eaeaf86f9f23d9d2ee95f904c766fde3b09",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "run.json",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/run.json",
+      "bytes": 312,
+      "sha256": "bcffed86866454d18721389679d2094643df576633495ea6516201411086532f",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "source-after.json.gz",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/source-after.json.gz",
+      "bytes": 1107643,
+      "sha256": "44b949364617de7a00f76e05f1f699439d4423797b50839c111ac11232f2823a",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "source-before.json.gz",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/source-before.json.gz",
+      "bytes": 1107643,
+      "sha256": "44b949364617de7a00f76e05f1f699439d4423797b50839c111ac11232f2823a",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "source-stability.json",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/source-stability.json",
+      "bytes": 409,
+      "sha256": "e76e0491f70826ad97a2529bbd812c0815f3b42e17b52903116dbe2c6588483c",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "source.txt",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/source.txt",
+      "bytes": 41,
+      "sha256": "17776eb0861480da4c27c55887e85a717568b17e9123d5754f74c7546263e5e7",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "status-after.txt",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/status-after.txt",
+      "bytes": 18753,
+      "sha256": "6f25bc5e5733a105976df6c0fc5dc0a1759bcf6b0ff7793697d19b505ec5a2f7",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "status-before.txt",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/status-before.txt",
+      "bytes": 16653,
+      "sha256": "86e023ccd6d4f85075622fa913f534329c695db48d0b083ed6bf4855c097f4c3",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    },
+    {
+      "path": "workspace.log",
+      "source_path": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/sweep-001/run-006/workspace.log",
+      "bytes": 312633,
+      "sha256": "a5c5d1d678964601dff0ef71896d75ab05abf62a239559f1e69df0642d68b573",
+      "filesystem_mode": "0o664",
+      "git_mode": "100644"
+    }
+  ],
+  "original_bytes_and_modes_unchanged": true
+}

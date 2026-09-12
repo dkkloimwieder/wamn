@@ -1,0 +1,624 @@
+{
+  "result_differences": [
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-proof-conformance",
+        "--lib",
+        "version_identity::wamn_wit_packages_stay_at_mvp_version"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "receiving_data_access::tests::generated_update_ignores_ungranted_additive_columns"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::command_histories::production_receiving_command_histories"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::dev::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::materializer::production_materializer_consumes_the_causal_receipt_exactly_once"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::overlay_compatibility::installed_contract_observer_preserves_acls_and_refuses_changed_requirements"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::routes::production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::routes::production_two_package_release_serves_all_thirteen_pat_routes"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::sessions::production_nested_fresh_only_requires_pat_and_observes_revocation"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::sessions::production_nested_session_call_preserves_original_caller"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::sessions::production_receiving_session_host_fixture"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::sessions::production_session_client_login_and_fresh_selection"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--lib",
+        "route_authentication_live::startup_burst::production_http_start_burst_keeps_native_host_progress"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-receiving-tests",
+        "--test receiving_command_histories_live",
+        "production_receiving_command_histories"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-wms-tests",
+        "--lib",
+        "wms_runtime_live::committed_move_survives_label_store_failure"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-wms-tests",
+        "--lib",
+        "wms_runtime_live::contention_and_replay_through_the_composed_route"
+      ]
+    },
+    {
+      "kind": "current_failure_cause",
+      "identity": [
+        "wamn-wms-tests",
+        "--lib",
+        "wms_runtime_live::the_remaining_operations_serve_their_released_routes"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "receiving_data_access::tests::generated_update_ignores_ungranted_additive_columns"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::overlay_compatibility::installed_contract_observer_preserves_acls_and_refuses_changed_requirements"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_nested_fresh_only_requires_pat_and_observes_revocation"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_nested_session_call_preserves_original_caller"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_receiving_session_host_fixture"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_session_client_login_and_fresh_selection"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::committed_move_survives_label_store_failure"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::contention_and_replay_through_the_composed_route"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::the_remaining_operations_serve_their_released_routes"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "baseline",
+      "identity": [
+        "wamn-proof-integration",
+        "--test receiving_command_histories_live",
+        "production_receiving_command_histories"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "receiving_data_access::tests::generated_update_ignores_ungranted_additive_columns"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::overlay_compatibility::installed_contract_observer_preserves_acls_and_refuses_changed_requirements"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_nested_fresh_only_requires_pat_and_observes_revocation"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_nested_session_call_preserves_original_caller"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_receiving_session_host_fixture"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_session_client_login_and_fresh_selection"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::committed_move_survives_label_store_failure"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::contention_and_replay_through_the_composed_route"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::the_remaining_operations_serve_their_released_routes"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step1",
+      "identity": [
+        "wamn-proof-integration",
+        "--test receiving_command_histories_live",
+        "production_receiving_command_histories"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "receiving_data_access::tests::enum_and_optimistic_update_outcomes_hold_on_postgres_18"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "receiving_data_access::tests::generated_update_ignores_ungranted_additive_columns"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::fresh_only::execution_tests::counter_uses_login_tenant_without_a_guest_guc"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::overlay_compatibility::installed_contract_observer_preserves_acls_and_refuses_changed_requirements"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::postcommit::production_materializer_preserves_replay_and_progress"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::product_dev_command_owns_the_clean_twelve_stage_receipt_and_cleanup"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_materializer_consumes_the_causal_receipt_exactly_once"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_nested_fresh_only_requires_pat_and_observes_revocation"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_nested_session_call_preserves_original_caller"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_receiving_session_host_fixture"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_session_client_login_and_fresh_selection"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "route_authentication_live::production_two_package_release_serves_all_thirteen_pat_routes"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::committed_move_survives_label_store_failure"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::contention_and_replay_through_the_composed_route"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--lib",
+        "wms_runtime_live::the_remaining_operations_serve_their_released_routes"
+      ]
+    },
+    {
+      "kind": "absent_failure",
+      "reference": "step2",
+      "identity": [
+        "wamn-proof-integration",
+        "--test receiving_command_histories_live",
+        "production_receiving_command_histories"
+      ]
+    }
+  ],
+  "parser_entries": []
+}

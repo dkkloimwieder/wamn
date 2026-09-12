@@ -1,0 +1,42 @@
+{
+  "source": "ed16ee43f6486ee6f4961d64d6f1db99b23731f3",
+  "exit_code": 101,
+  "counts": {
+    "test_targets": 193,
+    "test_nonempty_targets": 174,
+    "test_empty_targets": 19,
+    "test_failed_targets": 40,
+    "test_reported_passed": 2340,
+    "test_failed": 101,
+    "test_ignored": 0,
+    "test_measured": 0,
+    "test_filtered_out": 2,
+    "test_explicit_self_skip_count": 84,
+    "test_reported_passes_after_excluding_explicit_self_skips": 2256,
+    "doctest_targets": 39,
+    "doctest_nonempty_targets": 6,
+    "doctest_empty_targets": 33,
+    "doctest_failed_targets": 0,
+    "doctest_reported_passed": 6,
+    "doctest_failed": 0,
+    "doctest_ignored": 0,
+    "doctest_measured": 0,
+    "doctest_filtered_out": 0,
+    "doctest_explicit_self_skip_count": 0,
+    "doctest_reported_passes_after_excluding_explicit_self_skips": 6
+  },
+  "classification_counts": {
+    "missing_live_or_artifact_input": 74,
+    "requires_current_cause_review": 20,
+    "unavailable_kubernetes_discovery": 1,
+    "deployment_prerequisite_declaration_mismatch": 1,
+    "setup_refusal": 5
+  },
+  "pending_review_entries": 71,
+  "unresolved_parser_entries": [],
+  "classification_complete": false,
+  "source_stable": true,
+  "tracked_files": 29958,
+  "log_sha256": "a5c5d1d678964601dff0ef71896d75ab05abf62a239559f1e69df0642d68b573",
+  "report_sha256": "a1f2f65c42aa3f1c5b5be68737118e34459084a8cf282663acab5337128fe6b0"
+}

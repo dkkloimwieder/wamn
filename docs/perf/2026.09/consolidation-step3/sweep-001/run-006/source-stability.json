@@ -1,0 +1,10 @@
+{
+  "after_sha256": "49926bdefd483cb4413bec3dcc3d4755a252ba83089b8907a950c1887d86c2f7",
+  "before_sha256": "49926bdefd483cb4413bec3dcc3d4755a252ba83089b8907a950c1887d86c2f7",
+  "bytes_and_modes_unchanged": true,
+  "changed_paths": [],
+  "head_after": "ed16ee43f6486ee6f4961d64d6f1db99b23731f3",
+  "head_before": "ed16ee43f6486ee6f4961d64d6f1db99b23731f3",
+  "head_unchanged": true,
+  "tracked_files": 29958
+}

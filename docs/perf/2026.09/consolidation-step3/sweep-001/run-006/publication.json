@@ -1,0 +1,13 @@
+{
+  "source": "ed16ee43f6486ee6f4961d64d6f1db99b23731f3",
+  "publication_base": "ed16ee43f6486ee6f4961d64d6f1db99b23731f3",
+  "scope": "Completed retained workspace run006, source checks, and full named failure and explicit skip classification.",
+  "original_record_count": 15,
+  "original_record_bytes": 2574660,
+  "original_bytes_and_filesystem_modes_unchanged": true,
+  "original_git_modes": "100644 for all 15 captured files",
+  "original_comparison": "copied-originals.json",
+  "final_report": "classification-002/report.md",
+  "classification_scripts_match_executed_hashes": true,
+  "limits": "No live inputs were armed. Failed cases, explicit skips, removals, and the earlier approved failed-test rename are not passing live results."
+}
