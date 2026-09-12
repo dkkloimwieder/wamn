@@ -163,7 +163,7 @@ async fn inactive(admin: &Client, generation: CredentialGeneration) -> anyhow::R
 async fn stable_acl(admin: &Client) -> anyhow::Result<Vec<String>> {
     Ok(admin
         .query(
-            sql::role_database_acl_inventory_sql(),
+            sql::role_database_grants_sql(),
             &[&IDENTITY_ISSUER_ROLE],
         )
         .await?

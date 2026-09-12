@@ -1203,23 +1203,23 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
 /// (`wamn-0h0g.12.116`).
 ///
 /// The exact set passes; the same set widened onto the identity plane, or
-/// widened with a write privilege, does not. The empty inventory is required
+/// widened with a write privilege, does not. The empty grant set is required
 /// in the control database and required to be empty everywhere else.
 #[test]
-fn the_registry_reader_acl_inventory_is_exact_and_never_reaches_identity() {
+fn the_registry_reader_grants_are_exact_and_never_reach_identity() {
     let exact = vec![
         role_acl("schema", "registry", "registry", "USAGE"),
         role_acl("relation", "registry", "event_readers", "SELECT"),
     ];
-    let verify = |inventory: &[RoleAcl], database: &str| {
-        verify_system_reader_acl_role_inventory(
+    let verify = |grants: &[RoleAcl], database: &str| {
+        verify_system_reader_grants(
             SystemReader::Registry,
             "registry",
             &sql::REGISTRY_READER_RELATIONS,
             WorkloadRoleFamily::RegistryReader.acl_role(),
             database,
             "wamn_system",
-            inventory,
+            grants,
         )
     };
     verify(&exact, "wamn_system").unwrap();
@@ -1246,7 +1246,7 @@ fn the_registry_reader_acl_inventory_is_exact_and_never_reaches_identity() {
 
     // A missing grant set in the control database is a failure; nothing at
     // all in any OTHER database is the required state.
-    verify(&[], "wamn_system").expect_err("an empty control-database inventory passed");
+    verify(&[], "wamn_system").expect_err("an empty control-database grant set passed");
     verify(&[], "some_project_db").unwrap();
     let error = verify(&exact, "some_project_db")
         .expect_err("the reader holds its grant set in a database that is not the control one");
@@ -1266,7 +1266,7 @@ fn the_registry_reader_acl_inventory_is_exact_and_never_reaches_identity() {
 /// against the server's own `aclexplode` answer for EQUALITY, so a role that
 /// drifts a fourth time fails provisioning instead of being converged around.
 #[test]
-fn the_identity_reader_acl_inventory_is_exact_and_never_grants_a_write() {
+fn the_identity_reader_grants_are_exact_and_never_allow_a_write() {
     let exact = vec![
         role_acl("schema", "identity", "identity", "USAGE"),
         role_acl("relation", "identity", "pats", "SELECT"),
@@ -1274,15 +1274,15 @@ fn the_identity_reader_acl_inventory_is_exact_and_never_grants_a_write() {
         role_acl("relation", "identity", "project_env_memberships", "SELECT"),
         role_acl("relation", "identity", "project_roles", "SELECT"),
     ];
-    let verify = |inventory: &[RoleAcl], database: &str| {
-        verify_system_reader_acl_role_inventory(
+    let verify = |grants: &[RoleAcl], database: &str| {
+        verify_system_reader_grants(
             SystemReader::Identity,
             "identity",
             &sql::IDENTITY_READER_RELATIONS,
             WorkloadRoleFamily::IdentityReader.acl_role(),
             database,
             "wamn_system",
-            inventory,
+            grants,
         )
     };
     verify(&exact, "wamn_system").unwrap();
@@ -1312,12 +1312,12 @@ fn the_identity_reader_acl_inventory_is_exact_and_never_grants_a_write() {
             "refused for the wrong reason: {error}"
         );
     }
-    verify(&[], "wamn_system").expect_err("an empty control-database inventory passed");
+    verify(&[], "wamn_system").expect_err("an empty control-database grant set passed");
     verify(&[], "some_project_db").unwrap();
 }
 
 #[test]
-fn the_http_admitter_permission_inventory_requires_fresh_reads_and_refuses_writes() {
+fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
     let mut exact = vec![
         role_acl("schema", "app_system", "app_system", "USAGE"),
         role_acl("schema", "catalog", "catalog", "USAGE"),
@@ -1328,12 +1328,12 @@ fn the_http_admitter_permission_inventory_requires_fresh_reads_and_refuses_write
     for relation in sql::HTTP_ADMITTER_CATALOG_RELATIONS {
         exact.push(role_acl("relation", "catalog", relation, "SELECT"));
     }
-    let verify = |inventory: &[RoleAcl]| {
-        verify_http_admitter_acl_role_inventory(
+    let verify = |grants: &[RoleAcl]| {
+        verify_http_admitter_grants(
             WorkloadRoleFamily::HttpAdmitter.acl_role(),
             "project_db",
             "project_db",
-            inventory,
+            grants,
         )
     };
     verify(&exact).expect("the fresh permission reads have their exact grant set");
@@ -1396,7 +1396,7 @@ fn role_acl(kind: &str, schema: &str, object: &str, privilege: &str) -> RoleAcl 
 }
 
 #[test]
-fn session_reader_acl_inventory_refuses_missing_and_wider_grants() {
+fn session_reader_requires_exact_grants() {
     let mut exact = vec![role_acl("schema", "app_system", "app_system", "USAGE")];
     for column in [
         "users.tenant_id",
@@ -1409,7 +1409,7 @@ fn session_reader_acl_inventory_refuses_missing_and_wider_grants() {
         exact.push(role_acl("column", "app_system", column, "SELECT"));
     }
     let verify = |rows: &[RoleAcl]| {
-        verify_session_role_reader_acl_role_inventory(
+        verify_session_role_reader_grants(
             "wamn_session_role_reader",
             "project-db",
             "project-db",
@@ -1437,7 +1437,7 @@ fn session_reader_acl_inventory_refuses_missing_and_wider_grants() {
     grantable[0].grantable = true;
     assert!(verify(&grantable).is_err());
     assert!(
-        verify_session_role_reader_acl_role_inventory(
+        verify_session_role_reader_grants(
             "wamn_session_role_reader",
             "other-db",
             "project-db",
@@ -1448,13 +1448,13 @@ fn session_reader_acl_inventory_refuses_missing_and_wider_grants() {
 }
 
 #[test]
-fn materializer_acl_inventory_is_exactly_the_two_production_reads() {
+fn materializer_grants_cover_exactly_the_two_production_reads() {
     let mut exact = vec![role_acl("schema", "catalog", "catalog", "USAGE")];
     for relation in sql::EVENT_MATERIALIZER_CATALOG_RELATIONS {
         exact.push(role_acl("relation", "catalog", relation, "SELECT"));
     }
     assert!(
-        verify_event_materializer_acl_role_inventory(
+        verify_event_materializer_grants(
             "wamn_event_materializer",
             "wamn",
             "wamn",
@@ -1466,7 +1466,7 @@ fn materializer_acl_inventory_is_exactly_the_two_production_reads() {
     let mut widened = exact.clone();
     widened.push(role_acl("relation", "catalog", "packages", "INSERT"));
     assert!(
-        verify_event_materializer_acl_role_inventory(
+        verify_event_materializer_grants(
             "wamn_event_materializer",
             "wamn",
             "wamn",
@@ -1475,7 +1475,7 @@ fn materializer_acl_inventory_is_exactly_the_two_production_reads() {
         .is_err()
     );
     assert!(
-        verify_event_materializer_acl_role_inventory(
+        verify_event_materializer_grants(
             "wamn_event_materializer",
             "wamn",
             "wamn",
@@ -1486,7 +1486,7 @@ fn materializer_acl_inventory_is_exactly_the_two_production_reads() {
 }
 
 #[test]
-fn stable_acl_inventory_accepts_only_the_complete_writer_schema_set() {
+fn stable_writer_grants_require_the_complete_schema_set() {
     let schema = "wamn_runner_demo";
     let mut exact = vec![role_acl("schema", schema, schema, "USAGE")];
     for table in [
@@ -1519,18 +1519,18 @@ fn stable_acl_inventory_accepts_only_the_complete_writer_schema_set() {
             ));
         }
     }
-    verify_effect_writer_acl_role_inventory(EFFECT_WRITER_ROLE, "project_db", &exact).unwrap();
+    verify_effect_writer_grants(EFFECT_WRITER_ROLE, "project_db", &exact).unwrap();
 
     let mut partial = exact.clone();
     partial.pop();
     assert!(
-        verify_effect_writer_acl_role_inventory(EFFECT_WRITER_ROLE, "project_db", &partial)
+        verify_effect_writer_grants(EFFECT_WRITER_ROLE, "project_db", &partial)
             .is_err()
     );
     let mut unrelated = exact;
     unrelated.push(role_acl("relation", schema, "other_table", "SELECT"));
     assert!(
-        verify_effect_writer_acl_role_inventory(EFFECT_WRITER_ROLE, "project_db", &unrelated)
+        verify_effect_writer_grants(EFFECT_WRITER_ROLE, "project_db", &unrelated)
             .is_err()
     );
 
@@ -1544,13 +1544,13 @@ fn stable_acl_inventory_accepts_only_the_complete_writer_schema_set() {
         reserved.push(role_acl("relation", "app", table, "INSERT"));
     }
     assert!(
-        verify_effect_writer_acl_role_inventory(EFFECT_WRITER_ROLE, "project_db", &reserved)
+        verify_effect_writer_grants(EFFECT_WRITER_ROLE, "project_db", &reserved)
             .is_err()
     );
 }
 
 #[test]
-fn stable_acl_inventory_refuses_an_object_kind_outside_the_writer_set() {
+fn stable_writer_grants_refuse_unrelated_object_kinds() {
     // The kind filter is this guard's first refusal, and the complete-set test
     // above cannot observe it: every fixture there is a schema, relation or
     // column, so admitting one further kind left that test green under the
@@ -1559,7 +1559,7 @@ fn stable_acl_inventory_refuses_an_object_kind_outside_the_writer_set() {
     // stable role must never hold one. Asserting the named refusal is the
     // load-bearing part: a widened kind set still fails, but on the exact
     // grant set instead, and would leave the filter unverified again.
-    let error = verify_effect_writer_acl_role_inventory(
+    let error = verify_effect_writer_grants(
         EFFECT_WRITER_ROLE,
         "project_db",
         &[role_acl("database", "project_db", "project_db", "CONNECT")],
@@ -1574,7 +1574,7 @@ fn stable_acl_inventory_refuses_an_object_kind_outside_the_writer_set() {
 }
 
 #[test]
-fn management_acl_inventory_is_exact_and_required_in_the_target_database() {
+fn management_grants_are_exact_and_required_in_the_target_database() {
     let mut exact = vec![
         role_acl("schema", "catalog", "catalog", "USAGE"),
         role_acl("schema", "wamn_run", "wamn_run", "USAGE"),
@@ -1623,7 +1623,7 @@ fn management_acl_inventory_is_exact_and_required_in_the_target_database() {
             ));
         }
     }
-    verify_management_admitter_acl_role_inventory(
+    verify_management_admitter_grants(
         MANAGEMENT_ADMITTER_ROLE,
         "project_db",
         "project_db",
@@ -1639,7 +1639,7 @@ fn management_acl_inventory_is_exact_and_required_in_the_target_database() {
         "UPDATE",
     ));
     assert!(
-        verify_management_admitter_acl_role_inventory(
+        verify_management_admitter_grants(
             MANAGEMENT_ADMITTER_ROLE,
             "project_db",
             "project_db",
@@ -1648,7 +1648,7 @@ fn management_acl_inventory_is_exact_and_required_in_the_target_database() {
         .is_err()
     );
     assert!(
-        verify_management_admitter_acl_role_inventory(
+        verify_management_admitter_grants(
             MANAGEMENT_ADMITTER_ROLE,
             "project_db",
             "project_db",
@@ -1656,7 +1656,7 @@ fn management_acl_inventory_is_exact_and_required_in_the_target_database() {
         )
         .is_err()
     );
-    verify_management_admitter_acl_role_inventory(
+    verify_management_admitter_grants(
         MANAGEMENT_ADMITTER_ROLE,
         "unprovisioned_db",
         "project_db",

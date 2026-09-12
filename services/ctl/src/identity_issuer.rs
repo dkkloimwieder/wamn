@@ -245,7 +245,7 @@ async fn exact_grants(
     expected: Grants,
 ) -> anyhow::Result<()> {
     let rows = client
-        .query(sql::role_database_acl_inventory_sql(), &[&role])
+        .query(sql::role_database_grants_sql(), &[&role])
         .await?;
     let schemas: BTreeSet<_> = std::iter::once("identity")
         .chain(

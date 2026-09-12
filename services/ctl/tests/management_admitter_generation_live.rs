@@ -227,9 +227,9 @@ async fn await_zero_sessions(admin: &Client, role: &str) {
 
 async fn direct_acl_set(admin: &Client, role: &str) -> BTreeSet<String> {
     admin
-        .query(sql::role_database_acl_inventory_sql(), &[&role])
+        .query(sql::role_database_grants_sql(), &[&role])
         .await
-        .expect("read direct ACL inventory")
+        .expect("read direct grants")
         .into_iter()
         .map(|row| {
             format!(

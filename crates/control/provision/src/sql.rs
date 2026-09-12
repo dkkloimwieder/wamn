@@ -52,7 +52,7 @@ pub fn ensure_app_acl_role_sql() -> String {
 /// Drain sessions authenticated as the retired shared [`APP_ROLE`].
 ///
 /// Apply only after [`ensure_app_acl_role_sql`] has committed. PostgreSQL's
-/// native timeout bounds each termination wait; the final inventory turns a
+/// native timeout bounds each termination wait; the final session list turns a
 /// refused or timed-out termination into a hard failure instead of silently
 /// returning with an old credential session alive.
 pub fn drain_app_role_sessions_sql() -> String {
@@ -1086,7 +1086,7 @@ pub fn grant_registry_reader_surface_sql() -> String {
 /// SELECT-only -> +INSERT -> +INSERT,UPDATE out of band THREE times.
 /// `services/scenario-worker`'s
 /// `only_the_mounted_kinds_have_a_route_and_the_rest_answer_a_bare_501` decides
-/// the mounted inventory by CALLING route selection, so a re-mounted session
+/// the mounted route list by CALLING route selection, so a re-mounted session
 /// route changes an answer that test reads. The write privilege such a route
 /// would need is pinned separately by
 /// `the_identity_reader_grants_no_insert_and_no_update`, so the fourth drift
@@ -1404,8 +1404,8 @@ pub fn non_template_databases_sql() -> &'static str {
     "SELECT datname::text FROM pg_database WHERE NOT datistemplate ORDER BY datname::text"
 }
 
-/// Read-only direct ACL inventory for one role in the connected database.
-pub fn role_database_acl_inventory_sql() -> &'static str {
+/// Read-only direct grants for one role in the connected database.
+pub fn role_database_grants_sql() -> &'static str {
     "WITH wanted AS (SELECT oid FROM pg_roles WHERE rolname = $1), acl AS ( \
        SELECT 'database'::text AS object_kind, d.datname::text AS schema_name, \
               d.datname::text AS object_name, x.privilege_type::text, x.is_grantable \
@@ -2748,8 +2748,8 @@ mod tests {
     }
 
     #[test]
-    fn generation_acl_inventory_covers_cluster_and_database_object_classes() {
-        let sql = role_database_acl_inventory_sql();
+    fn generation_grants_cover_cluster_and_database_object_classes() {
+        let sql = role_database_grants_sql();
         for catalog in [
             "pg_database",
             "pg_namespace",

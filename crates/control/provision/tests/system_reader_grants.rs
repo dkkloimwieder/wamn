@@ -145,7 +145,7 @@ fn apply_system_schema(admin_url: &str) {
 /// The whole ACL the named role holds in this database, as the server reports
 /// it through `aclexplode` — relation, column, schema and database entries
 /// alike, so a grant of any grain lands in the comparison.
-fn acl_inventory_sql(role: &str) -> String {
+fn role_grants_sql(role: &str) -> String {
     format!(
         "SELECT kind || '|' || sch || '|' || obj || '|' || priv || '|' || grantable FROM ( \
            SELECT 'relation' AS kind, n.nspname::text AS sch, c.relname::text AS obj, \
@@ -175,9 +175,9 @@ fn acl_inventory_sql(role: &str) -> String {
     )
 }
 
-fn inventory(admin_url: &str, role: &str) -> Vec<String> {
-    let (ok, out, err) = psql_tuples(admin_url, &acl_inventory_sql(role));
-    assert!(ok, "read the ACL inventory for {role}:\n{err}");
+fn load_role_grants(admin_url: &str, role: &str) -> Vec<String> {
+    let (ok, out, err) = psql_tuples(admin_url, &role_grants_sql(role));
+    assert!(ok, "read the direct grants for {role}:\n{err}");
     out.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
@@ -265,18 +265,18 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
 
     // --- the server's answer about the STABLE role's whole ACL --------------
     assert_eq!(
-        inventory(&admin_url, stable),
+        load_role_grants(&admin_url, stable),
         vec![
             "relation|registry|event_readers|SELECT|false".to_owned(),
             "schema|registry|registry|USAGE|false".to_owned(),
         ],
-        "the stable registry-reader role's aclexplode inventory is not exactly \
+        "the stable registry-reader role's aclexplode grants are not exactly \
          USAGE on registry plus SELECT on registry.event_readers"
     );
     // The generation itself holds only CONNECT, directly: its read authority is
     // inherited, so a direct table grant here would be a second, unmanaged path.
     assert_eq!(
-        inventory(&admin_url, &role),
+        load_role_grants(&admin_url, &role),
         vec![format!("database||{database}|CONNECT|false")],
         "the registry-reader generation carries a direct grant beyond CONNECT"
     );
@@ -449,7 +449,7 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
 
     // --- the server's answer about the identity reader's whole ACL ----------
     assert_eq!(
-        inventory(&admin_url, WorkloadRoleFamily::IdentityReader.acl_role()),
+        load_role_grants(&admin_url, WorkloadRoleFamily::IdentityReader.acl_role()),
         vec![
             "relation|identity|pats|SELECT|false".to_owned(),
             "relation|identity|principals|SELECT|false".to_owned(),
@@ -457,13 +457,13 @@ fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_o
             "relation|identity|project_roles|SELECT|false".to_owned(),
             "schema|identity|identity|USAGE|false".to_owned(),
         ],
-        "the stable identity-reader role's aclexplode inventory is not exactly \
+        "the stable identity-reader role's aclexplode grants are not exactly \
          USAGE on identity plus SELECT on the four relations it reads"
     );
     // The registry reader is untouched by the identity reader's convergence —
     // neither batch may narrow or widen the other.
     assert_eq!(
-        inventory(&admin_url, WorkloadRoleFamily::RegistryReader.acl_role()),
+        load_role_grants(&admin_url, WorkloadRoleFamily::RegistryReader.acl_role()),
         vec![
             "relation|registry|event_readers|SELECT|false".to_owned(),
             "schema|registry|registry|USAGE|false".to_owned(),

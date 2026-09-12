@@ -14,7 +14,7 @@ use wamn_control_provision::identity_issuer::{
 };
 use wamn_control_provision::sql::{
     prepare_workload_generation_sql, revoke_public_connect_floor_sql,
-    role_database_acl_inventory_sql, terminate_workload_generation_sessions_sql,
+    role_database_grants_sql, terminate_workload_generation_sessions_sql,
 };
 use wamn_control_provision::{
     CredentialGeneration, SYSTEM_SCHEMA_SQL, SystemReader, WorkloadRoleFamily,
@@ -191,7 +191,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
             &admin,
             &format!(
                 "PREPARE issuer_acl(text) AS {}; EXECUTE issuer_acl('wamn_identity_issuer');",
-                role_database_acl_inventory_sql()
+                role_database_grants_sql()
             ),
         );
         assert_eq!(

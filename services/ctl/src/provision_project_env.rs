@@ -321,7 +321,7 @@ pub struct WorkloadGenerationAction {
 ///
 /// [`clap::Args`] is implemented by hand rather than derived because the flag
 /// SET is a function of the family set: `#[derive(Args)]` can only name fields
-/// that were typed out, which is exactly the hand-maintained inventory this
+/// that were typed out, which is exactly the hand-maintained list this
 /// replaces. Mutual exclusion is one [`clap::ArgGroup`] per concern, so
 /// admitting a family joins its flags to those groups by construction.
 #[derive(Debug, Default, Clone)]
@@ -1098,7 +1098,7 @@ async fn converge_stable_workload_memberships(
             "{} stable-role generation member is not an exact active credential",
             lifecycle.label()
         );
-        verify_role_acl_inventory(
+        verify_role_grants(
             admin_config,
             &role,
             RoleAclExpectation::Generation { database },
@@ -1434,9 +1434,9 @@ where
     } else {
         RoleAclExpectation::None
     };
-    verify_role_acl_inventory(admin_config, &role, desired_acl).await?;
+    verify_role_grants(admin_config, &role, desired_acl).await?;
     if other.is_some() {
-        verify_role_acl_inventory(
+        verify_role_grants(
             admin_config,
             &other_role,
             RoleAclExpectation::Generation { database },
@@ -1459,7 +1459,7 @@ where
         .await?
         .is_some()
     {
-        verify_role_acl_inventory(
+        verify_role_grants(
             admin_config,
             lifecycle.family.acl_role(),
             RoleAclExpectation::StableGrantSet {
@@ -1533,7 +1533,7 @@ where
             "prepared {} generation VALID UNTIL does not match credential expires-at",
             lifecycle.label()
         );
-        verify_role_acl_inventory(
+        verify_role_grants(
             admin_config,
             &role,
             RoleAclExpectation::Generation { database },
@@ -1598,7 +1598,7 @@ async fn rollback_prepared_workload_generation(
         "rolled-back {} generation did not converge to inactive",
         lifecycle.label()
     );
-    verify_role_acl_inventory(admin_config, role, RoleAclExpectation::None).await
+    verify_role_grants(admin_config, role, RoleAclExpectation::None).await
 }
 
 async fn retire_workload_generation(
@@ -1655,13 +1655,13 @@ async fn retire_workload_generation(
         "replacement {} generation has no verified live private-pool session",
         lifecycle.label()
     );
-    verify_role_acl_inventory(
+    verify_role_grants(
         admin_config,
         &old_role,
         RoleAclExpectation::Generation { database },
     )
     .await?;
-    verify_role_acl_inventory(
+    verify_role_grants(
         admin_config,
         &replacement_role,
         RoleAclExpectation::Generation { database },
@@ -1731,7 +1731,7 @@ async fn abort_workload_generation(
         "published or in-use {} generation cannot be aborted",
         lifecycle.label()
     );
-    verify_role_acl_inventory(
+    verify_role_grants(
         admin_config,
         &role,
         RoleAclExpectation::Generation { database },
@@ -1772,7 +1772,7 @@ async fn abort_workload_generation(
         "aborted {} generation did not converge to inactive",
         lifecycle.label()
     );
-    verify_role_acl_inventory(admin_config, &role, RoleAclExpectation::None).await?;
+    verify_role_grants(admin_config, &role, RoleAclExpectation::None).await?;
     drop(admin);
     let _ = admin_task.await;
     Ok(())
@@ -1989,7 +1989,7 @@ async fn verify_stable_workload_role(
         lifecycle.label()
     );
     if let Some(grant_set) = stable_grant_set(lifecycle.family) {
-        verify_role_acl_inventory(
+        verify_role_grants(
             admin_config,
             role,
             RoleAclExpectation::StableGrantSet {
@@ -2051,63 +2051,63 @@ impl StableGrantSet {
         role: &str,
         database: &str,
         required_database: &str,
-        inventory: &[RoleAcl],
+        grants: &[RoleAcl],
     ) -> anyhow::Result<()> {
         match self {
             Self::EffectWriter => {
-                verify_effect_writer_acl_role_inventory(role, database, inventory)
+                verify_effect_writer_grants(role, database, grants)
             }
-            Self::ManagementAdmitter => verify_management_admitter_acl_role_inventory(
+            Self::ManagementAdmitter => verify_management_admitter_grants(
                 role,
                 database,
                 required_database,
-                inventory,
+                grants,
             ),
-            Self::RegistryReader => verify_system_reader_acl_role_inventory(
+            Self::RegistryReader => verify_system_reader_grants(
                 SystemReader::Registry,
                 "registry",
                 &sql::REGISTRY_READER_RELATIONS,
                 role,
                 database,
                 required_database,
-                inventory,
+                grants,
             ),
-            Self::IdentityReader => verify_system_reader_acl_role_inventory(
+            Self::IdentityReader => verify_system_reader_grants(
                 SystemReader::Identity,
                 "identity",
                 &sql::IDENTITY_READER_RELATIONS,
                 role,
                 database,
                 required_database,
-                inventory,
+                grants,
             ),
-            Self::SessionRoleReader => verify_session_role_reader_acl_role_inventory(
+            Self::SessionRoleReader => verify_session_role_reader_grants(
                 role,
                 database,
                 required_database,
-                inventory,
+                grants,
             ),
-            Self::Retention => verify_retention_acl_role_inventory(role, database, inventory),
+            Self::Retention => verify_retention_grants(role, database, grants),
             Self::DispatchReader => {
-                verify_dispatch_reader_acl_role_inventory(role, database, inventory)
+                verify_dispatch_reader_grants(role, database, grants)
             }
-            Self::ExecutorPlatform => verify_executor_platform_acl_role_inventory(
+            Self::ExecutorPlatform => verify_executor_platform_grants(
                 role,
                 database,
                 required_database,
-                inventory,
+                grants,
             ),
-            Self::HttpAdmitter => verify_http_admitter_acl_role_inventory(
+            Self::HttpAdmitter => verify_http_admitter_grants(
                 role,
                 database,
                 required_database,
-                inventory,
+                grants,
             ),
-            Self::EventMaterializer => verify_event_materializer_acl_role_inventory(
+            Self::EventMaterializer => verify_event_materializer_grants(
                 role,
                 database,
                 required_database,
-                inventory,
+                grants,
             ),
         }
     }
@@ -2125,16 +2125,16 @@ enum RoleAclExpectation<'a> {
     },
 }
 
-async fn verify_role_acl_inventory(
+async fn verify_role_grants(
     admin_config: &PgConfig,
     role: &str,
     expectation: RoleAclExpectation<'_>,
 ) -> anyhow::Result<()> {
-    let (catalog, catalog_task) = connect_config(admin_config, "role ACL inventory").await?;
+    let (catalog, catalog_task) = connect_config(admin_config, "role grants").await?;
     let databases: Vec<String> = catalog
         .query(sql::non_template_databases_sql(), &[])
         .await
-        .context("list databases for role ACL inventory")?
+        .context("list databases for role grants")?
         .into_iter()
         .map(|row| row.get(0))
         .collect();
@@ -2146,12 +2146,12 @@ async fn verify_role_acl_inventory(
     for database in databases {
         let mut config = admin_config.clone();
         config.dbname(&database);
-        let (client, task) = connect_config(&config, "cross-database role ACL inventory").await?;
+        let (client, task) = connect_config(&config, "cross-database role grants").await?;
         let rows = client
-            .query(sql::role_database_acl_inventory_sql(), &[&role])
+            .query(sql::role_database_grants_sql(), &[&role])
             .await
-            .with_context(|| format!("read role ACL inventory in database {database:?}"))?;
-        let inventory: Vec<RoleAcl> = rows
+            .with_context(|| format!("read role grants in database {database:?}"))?;
+        let grants: Vec<RoleAcl> = rows
             .into_iter()
             .map(|row| RoleAcl {
                 object_kind: row.get("object_kind"),
@@ -2161,7 +2161,7 @@ async fn verify_role_acl_inventory(
                 grantable: row.get("is_grantable"),
             })
             .collect();
-        for acl in &inventory {
+        for acl in &grants {
             anyhow::ensure!(
                 !acl.grantable,
                 "role {role:?} may grant {} on {} {}.{} in database {database:?}",
@@ -2176,10 +2176,10 @@ async fn verify_role_acl_inventory(
                 grant_set,
                 required_database,
             } => {
-                grant_set.verify(role, &database, required_database, &inventory)?;
+                grant_set.verify(role, &database, required_database, &grants)?;
             }
             expectation => {
-                for acl in &inventory {
+                for acl in &grants {
                     let allowed = match expectation {
                         RoleAclExpectation::None => false,
                         RoleAclExpectation::Generation { database: expected } => {
@@ -2218,13 +2218,13 @@ struct RoleAcl {
     grantable: bool,
 }
 
-fn verify_effect_writer_acl_role_inventory(
+fn verify_effect_writer_grants(
     role: &str,
     database: &str,
-    inventory: &[RoleAcl],
+    grants: &[RoleAcl],
 ) -> anyhow::Result<()> {
     let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
-    for acl in inventory {
+    for acl in grants {
         anyhow::ensure!(
             matches!(acl.object_kind.as_str(), "schema" | "relation" | "column"),
             "stable role {role:?} carries non-writer {} ACL in database {database:?}",
@@ -2311,13 +2311,13 @@ fn verify_effect_writer_acl_role_inventory(
 /// between a retention credential and every tenant's run payloads. A
 /// `("relation", "runs", "SELECT")` entry appearing here is that regression, and
 /// it fails as an unexpected member of the exact set.
-fn verify_retention_acl_role_inventory(
+fn verify_retention_grants(
     role: &str,
     database: &str,
-    inventory: &[RoleAcl],
+    grants: &[RoleAcl],
 ) -> anyhow::Result<()> {
     let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
-    for acl in inventory {
+    for acl in grants {
         anyhow::ensure!(
             matches!(acl.object_kind.as_str(), "schema" | "relation" | "column"),
             "stable role {role:?} carries non-retention {} ACL in database {database:?}",
@@ -2373,13 +2373,13 @@ fn verify_retention_acl_role_inventory(
 /// generation now inherits everything this role holds in every database the
 /// role has grants in — and until this bead the family had no denial matrix at
 /// all, because it had no generations to guard.
-fn verify_dispatch_reader_acl_role_inventory(
+fn verify_dispatch_reader_grants(
     role: &str,
     database: &str,
-    inventory: &[RoleAcl],
+    grants: &[RoleAcl],
 ) -> anyhow::Result<()> {
     let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
-    for acl in inventory {
+    for acl in grants {
         anyhow::ensure!(
             matches!(acl.object_kind.as_str(), "schema" | "relation" | "column"),
             "stable role {role:?} carries non-reader {} ACL in database {database:?}",
@@ -2425,13 +2425,13 @@ fn verify_dispatch_reader_acl_role_inventory(
 /// it, and the verb reports a COUNT rather than a list.
 const RETENTION_RUN_READ_COLUMNS: [&str; 3] = ["tenant_id", "status", "created_at"];
 
-fn verify_management_admitter_acl_role_inventory(
+fn verify_management_admitter_grants(
     role: &str,
     database: &str,
     required_database: &str,
-    inventory: &[RoleAcl],
+    grants: &[RoleAcl],
 ) -> anyhow::Result<()> {
-    if inventory.is_empty() {
+    if grants.is_empty() {
         anyhow::ensure!(
             database != required_database,
             "stable role {role:?} has no management-admission ACL in required database {database:?}"
@@ -2439,7 +2439,7 @@ fn verify_management_admitter_acl_role_inventory(
         return Ok(());
     }
 
-    let actual = inventory
+    let actual = grants
         .iter()
         .map(|acl| {
             (
@@ -2535,9 +2535,9 @@ fn verify_management_admitter_acl_role_inventory(
     Ok(())
 }
 
-/// The `aclexplode` inventory as `(kind, schema, object, privilege)` tuples.
-fn acl_tuples(inventory: &[RoleAcl]) -> BTreeSet<(String, String, String, String)> {
-    inventory
+/// The `aclexplode` grants as `(kind, schema, object, privilege)` tuples.
+fn acl_tuples(grants: &[RoleAcl]) -> BTreeSet<(String, String, String, String)> {
+    grants
         .iter()
         .map(|acl| {
             (
@@ -2551,13 +2551,13 @@ fn acl_tuples(inventory: &[RoleAcl]) -> BTreeSet<(String, String, String, String
 }
 
 /// Check the reader's two column-scoped reads and no other direct grants.
-fn verify_session_role_reader_acl_role_inventory(
+fn verify_session_role_reader_grants(
     role: &str,
     database: &str,
     required_database: &str,
-    inventory: &[RoleAcl],
+    grants: &[RoleAcl],
 ) -> anyhow::Result<()> {
-    if inventory.is_empty() {
+    if grants.is_empty() {
         anyhow::ensure!(
             database != required_database,
             "stable role {role:?} has no session-role reader ACL in required database {database:?}"
@@ -2584,7 +2584,7 @@ fn verify_session_role_reader_acl_role_inventory(
         }
     }
     anyhow::ensure!(
-        inventory.iter().all(|acl| !acl.grantable) && acl_tuples(inventory) == expected,
+        grants.iter().all(|acl| !acl.grantable) && acl_tuples(grants) == expected,
         "stable role {role:?} ACLs in database {database:?} are not the exact session-role reader grant set"
     );
     Ok(())
@@ -2600,29 +2600,29 @@ fn verify_session_role_reader_acl_role_inventory(
 /// The `routine` rows are part of the matrix, not an exemption. The surface
 /// grants two function EXECUTEs — its own authority guard and the tenant-key
 /// derivation the `runs_tkey` expression index makes load bearing — and
-/// `sql::role_database_acl_inventory_sql` reports routine ACLs, so omitting
+/// `sql::role_database_grants_sql` reports routine ACLs, so omitting
 /// them here would refuse a correctly converged role. (The management-admitter
 /// matrix above carries its own `routine` row since `wamn-0h0g.22.38`; the
 /// omission this note used to record as a defect is fixed, and a routine row
 /// is the convention for both families rather than an exemption for one.)
 ///
-/// An empty inventory is acceptable only OUTSIDE the target database: the
+/// An empty grant set is acceptable only OUTSIDE the target database: the
 /// project-environment database must carry the grant set, and this role must
 /// hold nothing anywhere else on the cluster.
-fn verify_executor_platform_acl_role_inventory(
+fn verify_executor_platform_grants(
     role: &str,
     database: &str,
     required_database: &str,
-    inventory: &[RoleAcl],
+    grants: &[RoleAcl],
 ) -> anyhow::Result<()> {
-    if inventory.is_empty() {
+    if grants.is_empty() {
         anyhow::ensure!(
             database != required_database,
             "stable role {role:?} has no executor-platform ACL in required database {database:?}"
         );
         return Ok(());
     }
-    let actual = acl_tuples(inventory);
+    let actual = acl_tuples(grants);
     let mut expected = BTreeSet::from([
         (
             "schema".to_string(),
@@ -2712,20 +2712,20 @@ fn verify_executor_platform_acl_role_inventory(
 /// asserted by equality for the same reason the two T1 readers' is. A `wamn_run`
 /// schema `USAGE` alone would fail here, which is what stops this credential
 /// being quietly reused for admission work.
-fn verify_http_admitter_acl_role_inventory(
+fn verify_http_admitter_grants(
     role: &str,
     database: &str,
     required_database: &str,
-    inventory: &[RoleAcl],
+    grants: &[RoleAcl],
 ) -> anyhow::Result<()> {
-    if inventory.is_empty() {
+    if grants.is_empty() {
         anyhow::ensure!(
             database != required_database,
             "stable role {role:?} has no callable-HTTP admitter ACL in required database {database:?}"
         );
         return Ok(());
     }
-    let actual = acl_tuples(inventory);
+    let actual = acl_tuples(grants);
     let mut expected = BTreeSet::from([
         (
             "schema".to_string(),
@@ -2774,20 +2774,20 @@ fn verify_http_admitter_acl_role_inventory(
 }
 
 /// Exact two-table catalog read surface of the event materializer.
-fn verify_event_materializer_acl_role_inventory(
+fn verify_event_materializer_grants(
     role: &str,
     database: &str,
     required_database: &str,
-    inventory: &[RoleAcl],
+    grants: &[RoleAcl],
 ) -> anyhow::Result<()> {
-    if inventory.is_empty() {
+    if grants.is_empty() {
         anyhow::ensure!(
             database != required_database,
             "stable role {role:?} has no event-materializer ACL in required database {database:?}"
         );
         return Ok(());
     }
-    let actual = acl_tuples(inventory);
+    let actual = acl_tuples(grants);
     let mut expected = BTreeSet::from([(
         "schema".to_string(),
         "catalog".to_string(),
@@ -2818,32 +2818,32 @@ fn verify_event_materializer_acl_role_inventory(
 /// two families exist to prevent; an added `INSERT` or `UPDATE` fails here for
 /// the same reason.
 ///
-/// An empty inventory is only acceptable in a database that is not the target:
+/// An empty grant set is only acceptable in a database that is not the target:
 /// the control database MUST carry the grant set, and every other database in
 /// the cluster must carry nothing at all.
-fn verify_system_reader_acl_role_inventory(
+fn verify_system_reader_grants(
     reader: SystemReader,
     schema: &str,
     relations: &[&str],
     role: &str,
     database: &str,
     required_database: &str,
-    inventory: &[RoleAcl],
+    grants: &[RoleAcl],
 ) -> anyhow::Result<()> {
     if database != required_database {
         anyhow::ensure!(
-            inventory.is_empty(),
+            grants.is_empty(),
             "stable role {role:?} carries a {reader} ACL in database {database:?}, \
              which is not the control database"
         );
         return Ok(());
     }
     anyhow::ensure!(
-        !inventory.is_empty(),
+        !grants.is_empty(),
         "stable role {role:?} has no {reader} ACL in required database {database:?}"
     );
 
-    let actual = inventory
+    let actual = grants
         .iter()
         .map(|acl| {
             (

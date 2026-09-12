@@ -136,7 +136,7 @@ fn assert_surface(admin: &str) {
         admin,
         &format!(
             "PREPARE reader_acl(text) AS {}; EXECUTE reader_acl('wamn_session_role_reader');",
-            sql::role_database_acl_inventory_sql()
+            sql::role_database_grants_sql()
         ),
     );
     assert_eq!(

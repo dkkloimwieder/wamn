@@ -18,7 +18,7 @@
 //! # The column-exactness arm
 //!
 //! `wamn_run.runs` is UPDATEd by SIX distinct executor statements and the grant
-//! is the UNION of the columns they write, so the ACL inventory alone could pass
+//! is the UNION of the columns they write, so the direct grants alone could pass
 //! a column list that is exact but unusable. The last arm therefore connects as
 //! the generation and asserts the POST-STATE both ways: a granted column moves
 //! the row, an ungranted one raises `42501` AND leaves the row unmoved. Under
@@ -256,9 +256,9 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
         "relation|catalog|packages|SELECT".to_owned(),
         "schema|catalog|catalog|USAGE".to_owned(),
     ];
-    assert_eq!(inventory(&admin, stable), expected);
+    assert_eq!(load_role_grants(&admin, stable), expected);
     assert_eq!(
-        inventory(&admin, &login),
+        load_role_grants(&admin, &login),
         vec![format!("database||{database}|CONNECT")],
         "the materializer generation carries a direct grant beyond CONNECT"
     );
@@ -279,7 +279,7 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
         &surface,
     );
     assert_eq!(
-        inventory(&admin, stable),
+        load_role_grants(&admin, stable),
         expected,
         "an adjacent catalog or run-plane grant survived convergence"
     );
@@ -334,7 +334,7 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
 /// The whole ACL the named role holds in this database, as the server reports
 /// it — relation, column, schema and ROUTINE entries alike, so a grant of any
 /// grain lands in the comparison.
-fn inventory(admin_url: &str, role: &str) -> Vec<String> {
+fn load_role_grants(admin_url: &str, role: &str) -> Vec<String> {
     query(
         admin_url,
         &format!(
@@ -377,14 +377,14 @@ fn inventory(admin_url: &str, role: &str) -> Vec<String> {
     .collect()
 }
 
-/// The expected inventory, spelled OUT rather than derived from the builder.
+/// These expected grants use explicit values instead of the builder.
 ///
-/// Deriving it from `sql::EXECUTOR_PLATFORM_*` would move both sides together
+/// Deriving them from `sql::EXECUTOR_PLATFORM_*` would move both sides together
 /// when a column is added, which is the tautology this branch has paid for
 /// before. The relation and column names are the ones read out of the six
 /// `UPDATE runs` statements and the four wiring-resolution `SELECT`s; if one of
 /// those statements changes, this list has to change with it, deliberately.
-fn expected_executor_inventory() -> Vec<String> {
+fn expected_executor_grants() -> Vec<String> {
     let mut rows: Vec<String> = Vec::new();
     for column in [
         "caller_http_status",
@@ -484,15 +484,15 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     // comes from `pg_proc.proacl` and names this family explicitly, so deleting
     // the grant fails HERE.
     assert_eq!(
-        inventory(&admin, stable),
-        expected_executor_inventory(),
-        "the stable executor-platform role's aclexplode inventory is not the \
+        load_role_grants(&admin, stable),
+        expected_executor_grants(),
+        "the stable executor-platform role's aclexplode grants are not the \
          exact measured claim surface"
     );
     // The generation itself holds only CONNECT, directly: its authority is
     // INHERITED, so a direct grant here would be a second, unmanaged path.
     assert_eq!(
-        inventory(&admin, &login),
+        load_role_grants(&admin, &login),
         vec![format!("database||{database}|CONNECT")],
         "the executor-platform generation carries a direct grant beyond CONNECT"
     );
@@ -513,8 +513,8 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
     );
     run_admin(&admin, "re-converge after the widening", &surface);
     assert_eq!(
-        inventory(&admin, stable),
-        expected_executor_inventory(),
+        load_role_grants(&admin, stable),
+        expected_executor_grants(),
         "the surface ADDS but does not NARROW: a hand-granted table, column and \
          routine privilege survived a re-apply"
     );
@@ -709,7 +709,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
 /// THE CALLABLE-HTTP ADMITTER SURFACE, AS THE SERVER SEES IT.
 ///
 /// Seven catalog relations, three fresh permission relations, and no run plane
-/// — asserted by EQUALITY over the whole inventory, so acquiring any adjacent
+/// — asserted by EQUALITY over the complete grant set, so acquiring any adjacent
 /// authority fails here rather than at the next incident.
 #[test]
 fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
@@ -752,16 +752,16 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     expected.push("schema|catalog|catalog|USAGE".to_owned());
     expected.sort();
     assert_eq!(
-        inventory(&admin, stable),
+        load_role_grants(&admin, stable),
         expected,
-        "the callable-HTTP admitter's aclexplode inventory is not exactly USAGE \
+        "the callable-HTTP admitter's aclexplode grants are not exactly USAGE \
          on catalog and app_system plus the ten SELECTs its host reads"
     );
     // MEASURED, and the reason the probe block below cannot assert a NEGATIVE
     // for `require_executor_platform_authority`: `deploy/sql/run-state.sql`
     // creates the two `require_*_authority` guards and never revokes PUBLIC, so
     // `has_function_privilege` answers TRUE for every role in the cluster. The
-    // inventory equality above is what proves this family holds no EXPLICIT
+    // Exact grant equality above shows that this family holds no EXPLICIT
     // routine grant; if PUBLIC is ever revoked, this assertion fails and the
     // negative becomes assertable.
     assert_eq!(
@@ -794,7 +794,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
     );
     run_admin(&admin, "re-converge after the widening", &surface);
     assert_eq!(
-        inventory(&admin, stable),
+        load_role_grants(&admin, stable),
         expected,
         "a hand-granted adjacent privilege survived a re-apply: this credential \
          must never read role definitions or perform admission or claim work"
