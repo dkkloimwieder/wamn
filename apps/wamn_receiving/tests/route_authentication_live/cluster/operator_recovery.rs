@@ -201,8 +201,22 @@ fn supervised_restart(
             !previous.ready && !scheduler_address.is_empty(),
             "startup refusal requires an unready operator and the recorded scheduler address"
         );
+        // A waiting snapshot retains the stopped container in its last termination.
+        let observed_start = previous.state.pointer("/running/startedAt").or_else(|| {
+            previous
+                .state
+                .get("waiting")
+                .filter(|waiting| waiting.is_object())
+                .and(previous.termination.as_ref())
+                .filter(|stopped| {
+                    previous.container_id.as_deref().is_some_and(|id| {
+                        !id.is_empty() && stopped["containerID"].as_str() == Some(id)
+                    })
+                })
+                .and_then(|stopped| stopped.get("startedAt"))
+        });
         ensure!(
-            termination["startedAt"] == previous.state["running"]["startedAt"],
+            observed_start.is_some_and(|started| started == &termination["startedAt"]),
             "startup refusal must identify the observed container start"
         );
         let started = timestamp(text(termination, "/startedAt")?)?;
@@ -1482,6 +1496,58 @@ mod tests {
         }
         println!(
             "OPERATOR_TRANSITION_REPLAY liveness_timeout=1 startup_scheduler_timeout=1 missing_or_foreign_evidence=refused"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn startup_refusal_retains_container_identity_during_restart_backoff() -> anyhow::Result<()> {
+        let stopped = json!({
+            "containerID":"containerd://stopped", "exitCode":1, "reason":"Error",
+            "startedAt":"2026-09-12T00:32:36Z", "finishedAt":"2026-09-12T00:32:41Z",
+        });
+        let mut previous = OperatorState {
+            pod_name: "operator".to_owned(),
+            pod_uid: "pod".to_owned(),
+            container_id: Some("containerd://stopped".to_owned()),
+            restart_count: 2,
+            image_id: Some("image".to_owned()),
+            ready: false,
+            termination: Some(stopped.clone()),
+            state: json!({"waiting":{"reason":"CrashLoopBackOff"}}),
+        };
+        let current = OperatorState {
+            container_id: Some("containerd://next".to_owned()),
+            restart_count: 3,
+            state: json!({"running":{"startedAt":"2026-09-12T00:32:52Z"}}),
+            ..previous.clone()
+        };
+        let since = timestamp("2026-09-12T00:31:15Z")?;
+        let address = "10.96.239.215:4222";
+        let log = "2026-09-12T00:32:41Z\tERROR\tsetup\tunable to create runtime operator\t{\"error\":\"transport error: dial tcp 10.96.239.215:4222: i/o timeout\"}";
+        let events = json!({"items":[]});
+        assert_eq!(
+            supervised_restart(&previous, &current, log, &events, since, address)?["cause"],
+            "scheduler-nats-startup-timeout"
+        );
+        previous.termination.as_mut().unwrap()["containerID"] = json!("containerd://other");
+        assert!(supervised_restart(&previous, &current, log, &events, since, address).is_err());
+        previous.termination = Some(stopped.clone());
+        previous.termination.as_mut().unwrap()["startedAt"] = json!("2026-09-12T00:32:35Z");
+        assert!(supervised_restart(&previous, &current, log, &events, since, address).is_err());
+        previous.termination = None;
+        assert!(supervised_restart(&previous, &current, log, &events, since, address).is_err());
+        previous.termination = Some(stopped);
+        assert!(supervised_restart(&previous, &current, "", &events, since, address).is_err());
+        previous.state = json!({"waiting":null});
+        assert!(supervised_restart(&previous, &current, log, &events, since, address).is_err());
+        previous.state = json!({"waiting":{"reason":"CrashLoopBackOff"}});
+        previous.container_id = None;
+        previous.termination.as_mut().unwrap()["containerID"] = Value::Null;
+        let mut unidentified = current.clone();
+        unidentified.termination.as_mut().unwrap()["containerID"] = Value::Null;
+        assert!(
+            supervised_restart(&previous, &unidentified, log, &events, since, address).is_err()
         );
         Ok(())
     }
