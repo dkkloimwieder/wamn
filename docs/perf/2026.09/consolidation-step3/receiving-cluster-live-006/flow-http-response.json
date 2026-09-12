@@ -1,0 +1,10 @@
+{
+  "body": {
+    "error": {
+      "code": "route-not-found"
+    }
+  },
+  "content_type": "application/json",
+  "host": "receiving.localhost",
+  "status": 404
+}

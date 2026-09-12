@@ -1,0 +1,50 @@
+{
+    "apiVersion": "v1",
+    "kind": "Service",
+    "metadata": {
+        "annotations": {
+            "meta.helm.sh/release-name": "wamn",
+            "meta.helm.sh/release-namespace": "wamn-system"
+        },
+        "creationTimestamp": "2026-09-12T00:27:50Z",
+        "labels": {
+            "app.kubernetes.io/instance": "wamn",
+            "app.kubernetes.io/managed-by": "Helm",
+            "app.kubernetes.io/name": "runtime-operator",
+            "app.kubernetes.io/version": "2.9.0",
+            "helm.sh/chart": "runtime-operator-2.9.0",
+            "wasmcloud.com/name": "nats"
+        },
+        "name": "nats",
+        "namespace": "wamn-system",
+        "resourceVersion": "983",
+        "uid": "50e9d12d-a509-4840-b945-776840b2d850"
+    },
+    "spec": {
+        "clusterIP": "10.96.239.215",
+        "clusterIPs": [
+            "10.96.239.215"
+        ],
+        "internalTrafficPolicy": "Cluster",
+        "ipFamilies": [
+            "IPv4"
+        ],
+        "ipFamilyPolicy": "SingleStack",
+        "ports": [
+            {
+                "name": "tcp-nats",
+                "port": 4222,
+                "protocol": "TCP",
+                "targetPort": "tcp-nats"
+            }
+        ],
+        "selector": {
+            "wasmcloud.com/name": "nats"
+        },
+        "sessionAffinity": "None",
+        "type": "ClusterIP"
+    },
+    "status": {
+        "loadBalancer": {}
+    }
+}

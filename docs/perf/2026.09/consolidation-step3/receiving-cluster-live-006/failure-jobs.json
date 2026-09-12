@@ -1,0 +1,115 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "batch/v1",
+            "kind": "Job",
+            "metadata": {
+                "annotations": {
+                    "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"batch/v1\",\"kind\":\"Job\",\"metadata\":{\"annotations\":{},\"name\":\"flow-http-reachability\",\"namespace\":\"wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a\"},\"spec\":{\"activeDeadlineSeconds\":60,\"backoffLimit\":0,\"template\":{\"spec\":{\"containers\":[{\"args\":[\"transport=$(curl --silent --show-error --connect-timeout 5 --max-time 15 --output /tmp/body --write-out '{\\\"status\\\":%{http_code},\\\"content_type\\\":\\\"%{content_type}\\\"}' --header \\\"Host: $ROUTE_HOST\\\" \\\"http://flow-http.$NAMESPACE.svc.cluster.local/no-such-route\\\")\\nbody_hex=$(od -An -v -tx1 /tmp/body | tr -d ' \\\\n')\\nprintf '{\\\"transport\\\":%s,\\\"body_hex\\\":\\\"%s\\\"}\\\\n' \\\"$transport\\\" \\\"$body_hex\\\" \\u003e/dev/termination-log\\n\"],\"command\":[\"/bin/sh\",\"-ec\"],\"env\":[{\"name\":\"ROUTE_HOST\",\"value\":\"receiving.localhost\"},{\"name\":\"NAMESPACE\",\"value\":\"wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a\"}],\"image\":\"wamn-host:wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a\",\"imagePullPolicy\":\"Never\",\"name\":\"probe\"}],\"restartPolicy\":\"Never\"}}}}\n"
+                },
+                "creationTimestamp": "2026-09-12T00:28:24Z",
+                "generation": 1,
+                "labels": {
+                    "batch.kubernetes.io/controller-uid": "9fdfaf22-5941-46db-ac2a-c34bba00e5d9",
+                    "batch.kubernetes.io/job-name": "flow-http-reachability",
+                    "controller-uid": "9fdfaf22-5941-46db-ac2a-c34bba00e5d9",
+                    "job-name": "flow-http-reachability"
+                },
+                "name": "flow-http-reachability",
+                "namespace": "wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
+                "resourceVersion": "1366",
+                "uid": "9fdfaf22-5941-46db-ac2a-c34bba00e5d9"
+            },
+            "spec": {
+                "activeDeadlineSeconds": 60,
+                "backoffLimit": 0,
+                "completionMode": "NonIndexed",
+                "completions": 1,
+                "manualSelector": false,
+                "parallelism": 1,
+                "podReplacementPolicy": "TerminatingOrFailed",
+                "selector": {
+                    "matchLabels": {
+                        "batch.kubernetes.io/controller-uid": "9fdfaf22-5941-46db-ac2a-c34bba00e5d9"
+                    }
+                },
+                "suspend": false,
+                "template": {
+                    "metadata": {
+                        "labels": {
+                            "batch.kubernetes.io/controller-uid": "9fdfaf22-5941-46db-ac2a-c34bba00e5d9",
+                            "batch.kubernetes.io/job-name": "flow-http-reachability",
+                            "controller-uid": "9fdfaf22-5941-46db-ac2a-c34bba00e5d9",
+                            "job-name": "flow-http-reachability"
+                        }
+                    },
+                    "spec": {
+                        "containers": [
+                            {
+                                "args": [
+                                    "transport=$(curl --silent --show-error --connect-timeout 5 --max-time 15 --output /tmp/body --write-out '{\"status\":%{http_code},\"content_type\":\"%{content_type}\"}' --header \"Host: $ROUTE_HOST\" \"http://flow-http.$NAMESPACE.svc.cluster.local/no-such-route\")\nbody_hex=$(od -An -v -tx1 /tmp/body | tr -d ' \\n')\nprintf '{\"transport\":%s,\"body_hex\":\"%s\"}\\n' \"$transport\" \"$body_hex\" \u003e/dev/termination-log\n"
+                                ],
+                                "command": [
+                                    "/bin/sh",
+                                    "-ec"
+                                ],
+                                "env": [
+                                    {
+                                        "name": "ROUTE_HOST",
+                                        "value": "receiving.localhost"
+                                    },
+                                    {
+                                        "name": "NAMESPACE",
+                                        "value": "wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a"
+                                    }
+                                ],
+                                "image": "wamn-host:wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
+                                "imagePullPolicy": "Never",
+                                "name": "probe",
+                                "resources": {},
+                                "terminationMessagePath": "/dev/termination-log",
+                                "terminationMessagePolicy": "File"
+                            }
+                        ],
+                        "dnsPolicy": "ClusterFirst",
+                        "restartPolicy": "Never",
+                        "schedulerName": "default-scheduler",
+                        "securityContext": {},
+                        "terminationGracePeriodSeconds": 30
+                    }
+                }
+            },
+            "status": {
+                "completionTime": "2026-09-12T00:28:27Z",
+                "conditions": [
+                    {
+                        "lastProbeTime": "2026-09-12T00:28:27Z",
+                        "lastTransitionTime": "2026-09-12T00:28:27Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "SuccessCriteriaMet"
+                    },
+                    {
+                        "lastProbeTime": "2026-09-12T00:28:27Z",
+                        "lastTransitionTime": "2026-09-12T00:28:27Z",
+                        "message": "Reached expected number of succeeded pods",
+                        "reason": "CompletionsReached",
+                        "status": "True",
+                        "type": "Complete"
+                    }
+                ],
+                "ready": 0,
+                "startTime": "2026-09-12T00:28:24Z",
+                "succeeded": 1,
+                "terminating": 0,
+                "uncountedTerminatedPods": {}
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

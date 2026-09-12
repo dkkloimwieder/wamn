@@ -1,0 +1,15 @@
+{
+  "argv": [
+    "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910/tools/receiving-cluster-journey-run",
+    "build-images",
+    "wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
+    "/tmp/wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
+    "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+    "fb6c2b2e28fbcb90a8a373672a60e2397488cae5",
+    "wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
+    "local"
+  ],
+  "cwd": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "stderr": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/receiving-cluster-live-006/build-images.stderr.log",
+  "stdout": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/receiving-cluster-live-006/build-images.stdout.log"
+}

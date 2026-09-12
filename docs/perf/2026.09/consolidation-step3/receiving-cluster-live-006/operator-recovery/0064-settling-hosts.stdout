@@ -1,0 +1,150 @@
+{
+    "apiVersion": "v1",
+    "items": [
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
+            "hostId": "24570e35-752a-4735-badb-2ca7398b700a",
+            "hostname": "10.244.2.5",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-12T00:28:18Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "dangerous-calculator-4939",
+                "namespace": "wamn-system",
+                "resourceVersion": "1763",
+                "uid": "a94d417a-1efa-4cef-ac0c-aaf8f288fb3d"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-12T00:28:18Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-12T00:28:19Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-12T00:30:20Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "6.3228974",
+                "systemMemoryFree": 7931842560,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0",
+                "workloadCount": 1
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
+            "hostId": "27acadbe-9ebd-4601-893d-30517af7b1bc",
+            "hostname": "10.244.1.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-12T00:28:17Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "filthy-fifth-0298",
+                "namespace": "wamn-system",
+                "resourceVersion": "1793",
+                "uid": "951e4465-0aaa-419f-915b-957e28e696fb"
+            },
+            "status": {
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-12T00:28:17Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-12T00:28:19Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-12T00:30:32Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "6.4476132",
+                "systemMemoryFree": 7932096512,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0"
+            }
+        },
+        {
+            "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+            "environment": "wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
+            "hostId": "bc0278e2-12d7-4b82-9010-ea76a58e9fab",
+            "hostname": "10.244.2.6",
+            "httpPort": 80,
+            "kind": "Host",
+            "metadata": {
+                "creationTimestamp": "2026-09-12T00:28:18Z",
+                "finalizers": [
+                    "runtime.wasmcloud.dev/host-finalizer"
+                ],
+                "generation": 1,
+                "labels": {
+                    "hostgroup": "default"
+                },
+                "name": "tacit-taste-7198",
+                "namespace": "wamn-system",
+                "resourceVersion": "1762",
+                "uid": "4d14864a-dd76-4671-85f9-78dccefb584f"
+            },
+            "status": {
+                "componentCount": 1,
+                "conditions": [
+                    {
+                        "lastTransitionTime": "2026-09-12T00:28:18Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Reporting"
+                    },
+                    {
+                        "lastTransitionTime": "2026-09-12T00:28:19Z",
+                        "reason": "Available",
+                        "status": "True",
+                        "type": "Ready"
+                    }
+                ],
+                "lastSeen": "2026-09-12T00:30:20Z",
+                "osArch": "x86_64",
+                "osKernel": "unix",
+                "osName": "linux",
+                "systemCPUUsage": "6.3384614",
+                "systemMemoryFree": 7931842560,
+                "systemMemoryTotal": 65437421568,
+                "version": "2.9.0",
+                "workloadCount": 1
+            }
+        }
+    ],
+    "kind": "List",
+    "metadata": {
+        "resourceVersion": ""
+    }
+}

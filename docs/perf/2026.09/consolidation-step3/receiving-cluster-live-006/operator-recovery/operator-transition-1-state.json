@@ -1,0 +1,36 @@
+{
+  "current": {
+    "container_id": "containerd://d8a9178591df7b1852dd85884fc433704ef2795936b4d1fa2972426c37a96b2d",
+    "image_id": "ghcr.io/wasmcloud/runtime-operator@sha256:71b681e70e593720819d8f13c08292df16aac712f5591fc0a4175f7558804f50",
+    "pod_name": "runtime-operator-59fd66bc6b-vmrtz",
+    "pod_uid": "1cca06ef-863c-44a4-abc2-78dca64eeb33",
+    "ready": false,
+    "restart_count": 1,
+    "state": {
+      "running": {
+        "startedAt": "2026-09-12T00:32:27Z"
+      }
+    },
+    "termination": {
+      "containerID": "containerd://88500cdfb3c65dd3b6cfecc2e9a600ac86cd908c43984bd56f45d0660ad99954",
+      "exitCode": 0,
+      "finishedAt": "2026-09-12T00:32:27Z",
+      "reason": "Completed",
+      "startedAt": "2026-09-12T00:27:56Z"
+    }
+  },
+  "previous": {
+    "container_id": "containerd://88500cdfb3c65dd3b6cfecc2e9a600ac86cd908c43984bd56f45d0660ad99954",
+    "image_id": "ghcr.io/wasmcloud/runtime-operator@sha256:71b681e70e593720819d8f13c08292df16aac712f5591fc0a4175f7558804f50",
+    "pod_name": "runtime-operator-59fd66bc6b-vmrtz",
+    "pod_uid": "1cca06ef-863c-44a4-abc2-78dca64eeb33",
+    "ready": true,
+    "restart_count": 0,
+    "state": {
+      "running": {
+        "startedAt": "2026-09-12T00:27:56Z"
+      }
+    },
+    "termination": null
+  }
+}

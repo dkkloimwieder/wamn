@@ -1,0 +1,382 @@
+[
+  {
+    "timestamp": 1789172985,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.004339841,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789172990,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.003023341,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789172995,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.003037292,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173000,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.003005917,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173005,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.003025589,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173010,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002695765,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173015,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002652374,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173020,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002777897,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173025,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002692476,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173030,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002827594,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173035,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002656907,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173040,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002927243,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173045,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002806659,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173050,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.003031825,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173055,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002543023,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173060,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.003216968,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173065,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.00267982,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173070,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002886132,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173075,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002804961,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173080,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.00287026,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173085,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002765016,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173090,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002542392,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173095,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002783665,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173100,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002607125,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173105,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002860309,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173110,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002836442,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173115,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002599674,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173120,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002726835,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173125,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002593557,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173130,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.003039459,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173135,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002889244,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173140,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.003295275,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173145,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002709633,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173150,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002685599,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173155,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002589847,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173160,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.003037533,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173165,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.002618868,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  },
+  {
+    "timestamp": 1789173170,
+    "status": 200,
+    "transport_failure": null,
+    "content_type": "application/json",
+    "seconds": 0.003663455,
+    "body": "[{\"request_id\":\"00000000-0000-4000-8000-000000000929\",\"value\":{\"created_at\":\"2026-08-31T12:00:00.000000Z\",\"id\":\"00000000-0000-0000-0000-000000000301\",\"purchase_order_number\":\"PO-301\",\"row_version\":\"3\",\"status\":\"complete\",\"supplier_id\":\"00000000-0000-0000-0000-000000000402\",\"updated_at\":\"2026-09-12T00:27:04.848140Z\"}}]",
+    "result": "serving",
+    "origin": "http://172.28.0.6:32653"
+  }
+]

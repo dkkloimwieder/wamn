@@ -1,0 +1,29 @@
+{
+  "action": "Reject",
+  "apiVersion": "events.k8s.io/v1",
+  "deprecatedFirstTimestamp": null,
+  "deprecatedLastTimestamp": null,
+  "deprecatedSource": {},
+  "eventTime": "2026-09-12T00:29:42.703939Z",
+  "kind": "Event",
+  "metadata": {
+    "creationTimestamp": "2026-09-12T00:29:42Z",
+    "name": "flow-http-cross-environment.18d46b592bcb7397",
+    "namespace": "wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
+    "resourceVersion": "1656",
+    "uid": "f91bd214-f749-4e8c-a5e8-ad090c8caa07"
+  },
+  "note": "Environment \"wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a-denied\" is outside \"wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a\" and operator has allowSharedHosts=false",
+  "reason": "CrossEnvironmentSchedulingDenied",
+  "regarding": {
+    "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+    "kind": "Workload",
+    "name": "flow-http-cross-environment",
+    "namespace": "wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
+    "resourceVersion": "1654",
+    "uid": "6819e1b2-63c8-4fc6-8c59-9e245b27b27c"
+  },
+  "reportingController": "workload-controller",
+  "reportingInstance": "workload-controller-runtime-operator-59fd66bc6b-vmrtz",
+  "type": "Warning"
+}

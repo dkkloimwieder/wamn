@@ -1,0 +1,4 @@
+{
+  "failure": "startup refusal must identify the observed container start",
+  "verdict": "fail"
+}

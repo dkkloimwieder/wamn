@@ -1,0 +1,23 @@
+{
+  "source_commit": "fb6c2b2e28fbcb90a8a373672a60e2397488cae5",
+  "source_directory": "/home/kaalin/.cache/wamn-lanes/receiving-postcommit-final-20260910",
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-receiving-tests",
+    "--lib",
+    "route_authentication_live::cluster::startup_case::tests",
+    "--",
+    "--nocapture"
+  ],
+  "environment": {
+    "RUSTC_WRAPPER": "",
+    "CARGO_BUILD_JOBS": "2"
+  },
+  "started_utc": "2026-09-12T00:21:37.307230+00:00",
+  "controller_pid": 1352295
+}

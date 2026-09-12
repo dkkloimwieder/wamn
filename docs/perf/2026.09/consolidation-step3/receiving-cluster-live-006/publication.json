@@ -1,0 +1,4096 @@
+{
+  "source_commit": "fb6c2b2e28fbcb90a8a373672a60e2397488cae5",
+  "publication_base": "7f93f9cb6a26ea8c534372fc88e09432fce4aee2",
+  "original_directory": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3",
+  "copied_file_count": 679,
+  "copied_bytes": 8967551,
+  "all_copied_bytes_and_modes_match": true,
+  "scheduler_object_review": {
+    "files": [
+      "scheduler-certificate.json",
+      "scheduler-certificate-ready.json",
+      "scheduler-deployment-before.json",
+      "scheduler-deployment-ready.json"
+    ],
+    "private_key_material_present": false,
+    "secret_data_fields_present": false,
+    "deployment_literal_credentials_present": false
+  },
+  "private_temporary_files_copied": false,
+  "files": [
+    {
+      "path": "receiving-cluster-cargo-006/capture.py",
+      "bytes": 5546,
+      "sha256": "e00f5ec18659e9aca8194923192a55d421e573de9e61d245b664c291786545ff",
+      "mode": "0664"
+    },
+    {
+      "path": "receiving-cluster-cargo-006/cargo.log",
+      "bytes": 17087,
+      "sha256": "4a6db1150135a6c48370c714ec985c5b7e24da8c3a74d9d18db49de82d0cb58c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-cargo-006/command.json",
+      "bytes": 766,
+      "sha256": "8dd136967c045c29ac8f67f546e588596486cb936a40eea50fef1b8352864273",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-cargo-006/ordinary/cargo.log",
+      "bytes": 12528,
+      "sha256": "52dc7a4205e077146080f85b33e9e9745a0f115572f53cf5166eb00be826eda0",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-cargo-006/ordinary/command.json",
+      "bytes": 552,
+      "sha256": "aea9afc02ef0393351b42ea0a95d75660e52ef0657d0433e8b105ad55ff50da3",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-cargo-006/ordinary/record.json",
+      "bytes": 665,
+      "sha256": "d9dc9667812a678e07c1b3ac1953b659cf9d4f86d4255caccb07cf54af78f28d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-cargo-006/post-run-observation.json",
+      "bytes": 1959,
+      "sha256": "2a64cc5802fb153f023ab3762c5784e3381361d0ddc995bc642605229c16314d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-cargo-006/record.json",
+      "bytes": 880,
+      "sha256": "c1b66fa2159e7051c35a61f9127042d4fa7894660d68314a43a87154690341de",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-cargo-006/source-after.json.gz",
+      "bytes": 1027446,
+      "sha256": "90d3ce0939648b0ecb0f8f8a79f336f30668a41520355612d970c99bad8da94b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-cargo-006/source-before.json.gz",
+      "bytes": 1027447,
+      "sha256": "daeffaf889b208ba654f32e1304d6d35e50ba309781872df3d20aa09e53f8faa",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-cargo-006/source-stability.json",
+      "bytes": 262,
+      "sha256": "662f6258ea8d041617b2aa0f7a982e265309c83fa96897a926e3b9edf9f825d9",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-cargo-006/source.json",
+      "bytes": 241,
+      "sha256": "018e81966ca5b7ad67f062c2eb7f44bef12a33b7e548c27102ef9518fa11bf2d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/build-components.log",
+      "bytes": 28537,
+      "sha256": "a30aa88c9ccf81485c74b48eef6f8cc010b7831da835a8ad8a915a47913fa898",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/build-host.log",
+      "bytes": 5365,
+      "sha256": "1a97a4112b329ff07fa1f5d54fa2c362e2d6121d47123e1cea74e7f0f0e1f085",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/build-images-command.json",
+      "bytes": 784,
+      "sha256": "e02bd6a257b48932f07889d476f532c5bf6af9b1ee1bdce8bb4e0c5e309815b0",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/build-images-result.json",
+      "bytes": 120,
+      "sha256": "79d6d573e64648c87214ba162e3c6f4194b75a3f6afc5a6ecd59357ce955447d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/build-images.stderr.log",
+      "bytes": 930,
+      "sha256": "ae3362cd32b5d6eb1cc75ffb3dfedf7d6cc965af5de7a608dfcc89e484c3297c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/build-images.stdout.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/build-native-tools.log",
+      "bytes": 9088,
+      "sha256": "45f1bd5d1e4ffef80ce88aac6bec886c7434202c9fd278791cf4d53392f7268b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/cdc-reader-ready.log",
+      "bytes": 93,
+      "sha256": "66672ad4766df2f12099e75cda71c78270a3febe288a795b4b63237cdffbb1cc",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/cdc-reader.log",
+      "bytes": 5444,
+      "sha256": "335bcb01656662dbc9a57c06c1b1e8f255b9f6f48711cc604e054a0cfb1e8161",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/component-bytes.sha256",
+      "bytes": 748,
+      "sha256": "0d3fa7922c257055240614729373a1d5ec5ad2084fc889d9addaf0f77232298d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/control-plane-network.json",
+      "bytes": 1036,
+      "sha256": "8b32661e9ee996cc0cb672702f7efcc86c4c4855934079c9dc3995451d89aa00",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/cross-environment-event.json",
+      "bytes": 1175,
+      "sha256": "416c30c12cc1813081a99568525bde68e7c2d0391c2c9b4cad4215f0861429f4",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/cross-environment-workload.json",
+      "bytes": 4399,
+      "sha256": "487955e814db5d9265b8008b0c025ac8dd6a7e5652c972af73ffa6fc57b9beea",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/executor-SIGINT.log",
+      "bytes": 13190,
+      "sha256": "53807e1c9474b16ca3ce0f05a0e6ebb8d122d1ee8134e19a66645a63888dae16",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/executor-SIGTERM.log",
+      "bytes": 13504,
+      "sha256": "e5e3478daafbe0087441b9409802276fa0bd712236630bd1b66240aee12f2a60",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/executor-lifecycle.json",
+      "bytes": 1871,
+      "sha256": "f9be2afa239894575f0dea3b73f8d92b93ee0074ccd0b10dd5a2885df9882bf8",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-events.json",
+      "bytes": 69169,
+      "sha256": "df7a347122549bdb1dc01165d6816e100701fafe3c0a393011d496746d50a64f",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-host-deployment.json",
+      "bytes": 21453,
+      "sha256": "9c0a56a1c6a0dbcf2e3ce91c8201c418dd905850deefe71406480d108ae7bca3",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-jobs.json",
+      "bytes": 6518,
+      "sha256": "2acfcb9853930801db0703a0ee04d86ee7ad37ac4c235bbe7e979a917cc79a03",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-flow-http-reachability-gvntj-result.json",
+      "bytes": 66,
+      "sha256": "688c26349717215b71aaf1c5dd5d1aa37ff7d7e83aa8d6e51285c0db84e50d57",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-flow-http-reachability-gvntj.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-flow-http-reachability-gvntj.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-hostgroup-default-679c58b5fb-5nkzz-result.json",
+      "bytes": 72,
+      "sha256": "eaccc3268098a4852f5eb86274c56df3cae42c3411697de60bba662dddb97889",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-hostgroup-default-679c58b5fb-5nkzz.log",
+      "bytes": 4402,
+      "sha256": "2da0bf2e4911a54912c8b2a088df25fc9801937f67fee3f5a4f6c0a05c8ab0f2",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-hostgroup-default-679c58b5fb-5nkzz.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-hostgroup-default-679c58b5fb-8q95l-result.json",
+      "bytes": 72,
+      "sha256": "e527318c14cee49e3f3079b05a1373a4abc1b1a68f38203a979eb3e537966291",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-hostgroup-default-679c58b5fb-8q95l.log",
+      "bytes": 5296,
+      "sha256": "3f6c9d2e8b28e257f42badc4baec5c5c4b653c29b41cf832321312cf20960d5a",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-hostgroup-default-679c58b5fb-8q95l.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-hostgroup-default-679c58b5fb-xkbsv-result.json",
+      "bytes": 72,
+      "sha256": "095f89580c92b85b054f5707058d5c546117033dd459670163e79235bb9205b1",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-hostgroup-default-679c58b5fb-xkbsv.log",
+      "bytes": 4018,
+      "sha256": "4795fe699e0e79383c1bc2afa1cbd2d5af4f2008ca41cbb7ee67b2b14d09b08c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pod-hostgroup-default-679c58b5fb-xkbsv.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-pods.json",
+      "bytes": 92026,
+      "sha256": "dff9a8362486c3a6e50bbaa15a0e12a83b8b1ef287f32824bb165b580415ba56",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure-workloads.json",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/failure.json",
+      "bytes": 98,
+      "sha256": "91567d2c4932fb1a6d57a324f5ab6e22878b40ebb40d6d71c72740fe4b6ea15b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/flow-http-deployment.json",
+      "bytes": 4500,
+      "sha256": "72072667e1ede411a2e013dd80ccb64d9434ecbb1ea5163540532da79130672b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/flow-http-endpointslices.json",
+      "bytes": 1277,
+      "sha256": "e3cf7512b4b97133408d27c9a25feb6813ee00b59241c9ba68b05d6a490b0bd0",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/flow-http-probe-job.json",
+      "bytes": 4772,
+      "sha256": "8f43149f5b3804f484c72812a847621e16bada46478b4864c8c1c452276adbe9",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/flow-http-probe-pod.json",
+      "bytes": 7928,
+      "sha256": "04968088fe3e4d4bde0a1c4af048efc97b00788659880ae383c4405ac1f7fbca",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/flow-http-push.json",
+      "bytes": 252,
+      "sha256": "a9d53a4289f48857b23961a1dda0b6de4c9c9383d2f0dbb3513e93cbc9c1246c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/flow-http-replicaset.json",
+      "bytes": 4338,
+      "sha256": "366f87bfe5338d1d8d273ee72e28b4e24d300170d761ddcd15c2e8b4f5d747e8",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/flow-http-response.json",
+      "bytes": 160,
+      "sha256": "f483c0ae02494e8b9b740412000918e2a7a67d4a09fa8d8de761842367709d24",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/flow-http-service.json",
+      "bytes": 1189,
+      "sha256": "e3564c5281e84f11f297f61882785c25ab5f78d8fd6af144a40d1fbc8a61b808",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/flow-http-workload.json",
+      "bytes": 3214,
+      "sha256": "3e4d16985e25a765253d373aa3fb67e7cb32bed521d88d49e7c2dbcd8bb6472e",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/helm-releases.json",
+      "bytes": 506,
+      "sha256": "641f845ba80eab0ccf5c1e6ab615027fb4e3a5fcc776980c975cc4aa687a63d1",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/host-deployment.json",
+      "bytes": 15120,
+      "sha256": "bf5296b8f516187606ed97bee7392964d480849ef67f6c1b6e9a16f4c0b601a6",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/host-image-labels.json",
+      "bytes": 111,
+      "sha256": "3f3daa580a42b9bc27425b3d5f6b01be0c1d2c024e587a0bdea857ecb8ca72aa",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/host-image-nodes.json",
+      "bytes": 811,
+      "sha256": "eb27e946381270cfdb5d9fd354539e957f69cbbe75df6bf2d7963d94eb338679",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/host-pods.json",
+      "bytes": 56712,
+      "sha256": "5cdd630730465c2af7dc110ac9f950d8c4fe0a2ecafae98728460c2e852bd3f2",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/hosts.json",
+      "bytes": 4249,
+      "sha256": "70847211d1f59a6ec0bb0cc0e76e4a2980fbab64ce0adc1ca042f58fbfe4ca25",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/materializer-deployment.json",
+      "bytes": 5626,
+      "sha256": "1590527f4f3c5544f580062fa10ff47e48b0ec1d349748e08675af6bce0fb8d1",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/materializer-host.log",
+      "bytes": 8910,
+      "sha256": "4abd1106b910022044ae85ea51df1fcec8019444cd6656b1bdcdc376e57f8844",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/materializer-push.json",
+      "bytes": 252,
+      "sha256": "a66ac0dd375bea193f3df745a8c30a896b084499a14bc49640d6965bbc9d0f0c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/materializer-receipt.json",
+      "bytes": 349,
+      "sha256": "100c7c75de23959f5da4b547708d78330d3b1cdeaedca9a99cca34232dd56eaf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/materializer-replicaset.json",
+      "bytes": 5466,
+      "sha256": "1d75cba54112be0b011b17a933783f85ae76adad97cd4b2f4a21f7063dfd6aa4",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/materializer-trace-ids.json",
+      "bytes": 90,
+      "sha256": "316d6d2e5b9e6ac20c74059c241b6d786e7051a611847cd927bf2843431734de",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/materializer-update.json",
+      "bytes": 457,
+      "sha256": "414567653c45bf6456a1eaee1251329673378512ebae2e7f366dc0fd7da9bc1b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/materializer-workload.json",
+      "bytes": 3821,
+      "sha256": "c0d1ef7841a559ca9104a66e424caf723517bcb71f099946942c20f00c55b3dc",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/nats-network.json",
+      "bytes": 1021,
+      "sha256": "3016e7c717af9b68a39c4837d0bbcfcaf19bd20ce7832f481d48198b8d2f71c6",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/nats-reader-ready.json",
+      "bytes": 1451,
+      "sha256": "f3cbf5b74ecbff895f5e9a48f6a1ca3cbdb191cad69ef2c25fc3180f911e9895",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/node-image-wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a-control-plane.json",
+      "bytes": 2830,
+      "sha256": "63814e1fc43e07a20ad944e293da9a07814b2df7ebe53c8a0a0a48e084d57a6a",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/node-image-wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a-worker.json",
+      "bytes": 2830,
+      "sha256": "63814e1fc43e07a20ad944e293da9a07814b2df7ebe53c8a0a0a48e084d57a6a",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/node-image-wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a-worker2.json",
+      "bytes": 2830,
+      "sha256": "63814e1fc43e07a20ad944e293da9a07814b2df7ebe53c8a0a0a48e084d57a6a",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/nodes.json",
+      "bytes": 23879,
+      "sha256": "8a2fe7d24913f2de594f6c18c2d618babaf504f0a1f8121a8fd2c4fe1b2a9b48",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-events-authorization.json",
+      "bytes": 419,
+      "sha256": "079b753044fe3988cee89098f8ff25b9cfad538f977cb41e5a91dc66e21d8c15",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0001-private-context.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0001-private-context.stdout",
+      "bytes": 53,
+      "sha256": "ed8c5226de970ad40749bac0f7e66bf49d6b4091a41e67e2b4ff38c28596ff32",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0002-private-cluster.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0002-private-cluster.stdout",
+      "bytes": 52,
+      "sha256": "3527911dd1075d25381777a900effb294a3673e03ff69abe460036ddd7c96d55",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0003-distributed-crds-client-decode.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0003-distributed-crds-client-decode.stdout",
+      "bytes": 215081,
+      "sha256": "809672b651994716a55f08ef52fe20ae0ba9b74793da0c05c5810f365d2f7106",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0004-installed-crds.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0004-installed-crds.stdout",
+      "bytes": 240227,
+      "sha256": "2159a926d89c8a4d60ab07e07e5e1a65b775ce4368e60e972ba05f72258a6747",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0005-operator-deployment.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0005-operator-deployment.stdout",
+      "bytes": 8297,
+      "sha256": "aaf3ca9bff533566cbe0f47d643c610aeb13357725a91d3ed73f599712851aad",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0006-scheduler-deployment.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0006-scheduler-deployment.stdout",
+      "bytes": 7552,
+      "sha256": "d8841ac3accd66194a9d63d169cdb31f88f95faad7c446cb96640d3fd1cd79c6",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0007-scheduler-service.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0007-scheduler-service.stdout",
+      "bytes": 1406,
+      "sha256": "78ce41081c1652ace48161983ec90be467f013c8d532feec3266f789c790984f",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0008-host-deployment.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0008-host-deployment.stdout",
+      "bytes": 21453,
+      "sha256": "9c0a56a1c6a0dbcf2e3ce91c8201c418dd905850deefe71406480d108ae7bca3",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0009-before-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0009-before-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "c897b43ecb17458f05ae78b3c696e95bd40652dd24a0de636f304452a3914c81",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0010-before-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0010-before-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0011-before-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0011-before-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0012-before-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0012-before-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0013-before-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0013-before-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0014-initial-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0014-initial-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "c897b43ecb17458f05ae78b3c696e95bd40652dd24a0de636f304452a3914c81",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0015-initial-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0015-initial-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0016-initial-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0016-initial-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0017-initial-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0017-initial-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0018-initial-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0018-initial-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0019-initial-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0019-initial-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "e4a17d654579356ee08a68e37d97fa622df00f5f5385a81a63999e9291d1a4d5",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0020-initial-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0020-initial-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0021-initial-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0021-initial-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0022-initial-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0022-initial-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0023-initial-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0023-initial-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0024-initial-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0024-initial-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "e4a17d654579356ee08a68e37d97fa622df00f5f5385a81a63999e9291d1a4d5",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0025-initial-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0025-initial-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0026-initial-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0026-initial-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0027-initial-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0027-initial-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0028-initial-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0028-initial-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0029-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0029-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "e4a17d654579356ee08a68e37d97fa622df00f5f5385a81a63999e9291d1a4d5",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0030-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0030-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0031-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0031-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0032-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0032-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0033-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0033-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0034-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0034-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "e4a17d654579356ee08a68e37d97fa622df00f5f5385a81a63999e9291d1a4d5",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0035-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0035-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0036-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0036-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0037-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0037-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0038-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0038-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0039-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0039-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "a1416a931c5c5647f3adde9f11f7906b2f7637a9b1fee8aa57f3955ea7b871fd",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0040-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0040-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0041-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0041-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0042-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0042-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0043-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0043-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0044-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0044-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "a1416a931c5c5647f3adde9f11f7906b2f7637a9b1fee8aa57f3955ea7b871fd",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0045-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0045-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0046-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0046-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0047-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0047-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0048-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0048-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0049-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0049-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "a1416a931c5c5647f3adde9f11f7906b2f7637a9b1fee8aa57f3955ea7b871fd",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0050-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0050-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0051-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0051-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0052-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0052-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0053-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0053-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0054-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0054-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "88818f253cb1cc88bf344f52604b4d57c98575e6a3fd526dd821d7ae49d15f7d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0055-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0055-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0056-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0056-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0057-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0057-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0058-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0058-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0059-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0059-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "88818f253cb1cc88bf344f52604b4d57c98575e6a3fd526dd821d7ae49d15f7d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0060-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0060-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0061-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0061-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0062-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0062-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0063-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0063-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0064-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0064-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "6d990a7c1eda7cb01f0554374560854189272b7fcd895d6a9f05671f22f5d6d4",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0065-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0065-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0066-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0066-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0067-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0067-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0068-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0068-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0069-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0069-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "30b019ce96586d4bd7c43ce45ffceb0ef1fd1253205587b4c9241f3ee54f5f51",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0070-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0070-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0071-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0071-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0072-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0072-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0073-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0073-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0074-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0074-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "30b019ce96586d4bd7c43ce45ffceb0ef1fd1253205587b4c9241f3ee54f5f51",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0075-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0075-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0076-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0076-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0077-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0077-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0078-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0078-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0079-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0079-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "fd022fff7d103240a0f54ccedd9b7840706a677b9ea2af3ea8a0e15132e4ea8f",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0080-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0080-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0081-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0081-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0082-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0082-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0083-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0083-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0084-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0084-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "fd022fff7d103240a0f54ccedd9b7840706a677b9ea2af3ea8a0e15132e4ea8f",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0085-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0085-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0086-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0086-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0087-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0087-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0088-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0088-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0089-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0089-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "fd022fff7d103240a0f54ccedd9b7840706a677b9ea2af3ea8a0e15132e4ea8f",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0090-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0090-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0091-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0091-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0092-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0092-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0093-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0093-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0094-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0094-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "7cee29f0705d8f411f0c560b733265d5095b16921fd002da6f8227707c8172d4",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0095-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0095-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0096-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0096-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0097-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0097-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0098-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0098-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0099-settling-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0099-settling-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "7cee29f0705d8f411f0c560b733265d5095b16921fd002da6f8227707c8172d4",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0100-settling-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0100-settling-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0101-settling-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0101-settling-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0102-settling-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0102-settling-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0103-settling-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0103-settling-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0104-stop-scheduler.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0104-stop-scheduler.stdout",
+      "bytes": 28,
+      "sha256": "50995f4adf995ded18b31188fb268e4c7f530b7e17192a4e13117f9e8250c035",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0105-scheduler-stopping.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0105-scheduler-stopping.stdout",
+      "bytes": 12189,
+      "sha256": "aa253ee9ebd4fabf50dce5a54cc89257154724097bf13737c65a689d0e669ca6",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0106-scheduler-stopping.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0106-scheduler-stopping.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0107-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0107-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0108-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0108-scheduler-down-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "7cee29f0705d8f411f0c560b733265d5095b16921fd002da6f8227707c8172d4",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0109-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0109-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0110-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0110-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0111-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0111-scheduler-down-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0112-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0112-scheduler-down-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0113-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0113-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0114-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0114-scheduler-down-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "7cee29f0705d8f411f0c560b733265d5095b16921fd002da6f8227707c8172d4",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0115-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0115-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0116-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0116-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0117-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0117-scheduler-down-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0118-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0118-scheduler-down-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0119-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0119-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0120-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0120-scheduler-down-hosts.stdout",
+      "bytes": 5528,
+      "sha256": "7cee29f0705d8f411f0c560b733265d5095b16921fd002da6f8227707c8172d4",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0121-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0121-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0122-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0122-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0123-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0123-scheduler-down-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0124-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0124-scheduler-down-workloads.stdout",
+      "bytes": 17093,
+      "sha256": "4c5026473b1ba7baecea3e6e50dc0d4d4c43f6f140a3958e70a23e712c94742d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0125-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0125-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0126-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0126-scheduler-down-hosts.stdout",
+      "bytes": 5593,
+      "sha256": "d0198a9d83b5a050c1f0bb5117dcb6455e34bd3e5c18eb39cb6d729e3a8adc10",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0127-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0127-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0128-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0128-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0129-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0129-scheduler-down-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0130-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0130-scheduler-down-workloads.stdout",
+      "bytes": 17158,
+      "sha256": "d34d3c01cef260c3d0ffc80a42975d7c8630e740a7811f90784b117386bf390b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0131-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0131-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0132-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0132-scheduler-down-hosts.stdout",
+      "bytes": 5658,
+      "sha256": "65c1cbc5af8d22ac3aea4ef4bc28e284f3c692c114916a7838203682560ebe82",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0133-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0133-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0134-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0134-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0135-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0135-scheduler-down-endpointslices.stdout",
+      "bytes": 1686,
+      "sha256": "8fa91a18845890a200a1be92f28347a9b7e72243a3031f9fa3d402c8d82e293c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0136-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0136-scheduler-down-workloads.stdout",
+      "bytes": 17223,
+      "sha256": "4ed9ee8e1b400f1337857eb9de99a0f556a4cc6cd7e698c9adf1100a35332918",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0137-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0137-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0138-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0138-scheduler-down-hosts.stdout",
+      "bytes": 5723,
+      "sha256": "bfda4775acbb6e11233433041e6b45d67315e0b257e1f44ca492eda060a8d7c9",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0139-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0139-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0140-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0140-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0141-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0141-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0142-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0142-scheduler-down-workloads.stdout",
+      "bytes": 17299,
+      "sha256": "0ede7d535da2e3b0519cbbd130425dd791bbf849a30fe78d5451df9c048a142b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0143-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0143-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0144-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0144-scheduler-down-hosts.stdout",
+      "bytes": 5802,
+      "sha256": "afa5afb50f172d7e4a819f46c62a7467ac8a5304f4fe039c66e16221d6f81da8",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0145-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0145-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0146-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0146-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0147-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0147-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0148-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0148-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0149-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0149-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0150-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0150-scheduler-down-hosts.stdout",
+      "bytes": 5802,
+      "sha256": "afa5afb50f172d7e4a819f46c62a7467ac8a5304f4fe039c66e16221d6f81da8",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0151-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0151-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0152-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0152-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0153-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0153-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0154-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0154-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0155-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0155-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0156-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0156-scheduler-down-hosts.stdout",
+      "bytes": 5881,
+      "sha256": "b1be502ca1d0acfb370d80097a38cf54bf1ab4dc28fe142410c287d3c3478999",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0157-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0157-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0158-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0158-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0159-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0159-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0160-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0160-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0161-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0161-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0162-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0162-scheduler-down-hosts.stdout",
+      "bytes": 5960,
+      "sha256": "6521f1e1ad210ada2378279abe951dad5594b46b131c38bc21889c28af1a4fc8",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0163-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0163-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0164-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0164-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0165-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0165-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0166-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0166-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0167-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0167-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0168-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0168-scheduler-down-hosts.stdout",
+      "bytes": 6027,
+      "sha256": "b7b76cb61b44113e43bb0c44f8d17ea23acd7c07b454068347d78a8d5b78de87",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0169-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0169-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0170-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0170-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0171-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0171-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0172-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0172-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0173-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0173-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0174-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0174-scheduler-down-hosts.stdout",
+      "bytes": 6027,
+      "sha256": "b7b76cb61b44113e43bb0c44f8d17ea23acd7c07b454068347d78a8d5b78de87",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0175-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0175-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0176-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0176-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0177-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0177-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0178-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0178-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0179-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0179-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0180-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0180-scheduler-down-hosts.stdout",
+      "bytes": 6027,
+      "sha256": "b7b76cb61b44113e43bb0c44f8d17ea23acd7c07b454068347d78a8d5b78de87",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0181-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0181-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0182-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0182-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0183-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0183-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0184-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0184-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0185-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0185-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0186-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0186-scheduler-down-hosts.stdout",
+      "bytes": 6027,
+      "sha256": "b7b76cb61b44113e43bb0c44f8d17ea23acd7c07b454068347d78a8d5b78de87",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0187-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0187-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0188-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0188-scheduler-down-operator-pods.stdout",
+      "bytes": 14853,
+      "sha256": "8aeca836bc714a9b7e7651b3b607d580d55d2d44bc75b37f723c4c43d0827572",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0189-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0189-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0190-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0190-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0191-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0191-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0192-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0192-scheduler-down-hosts.stdout",
+      "bytes": 6027,
+      "sha256": "b7b76cb61b44113e43bb0c44f8d17ea23acd7c07b454068347d78a8d5b78de87",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0193-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0193-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0194-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0194-scheduler-down-operator-pods.stdout",
+      "bytes": 15614,
+      "sha256": "de88c85f2d97b9aff848b793321b028b5b96f30e5ff5658b10f107892e51bb31",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0195-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0195-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0196-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0196-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0197-operator-transition-1-previous-log.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0197-operator-transition-1-previous-log.stdout",
+      "bytes": 19079,
+      "sha256": "96935564d8e860d1b8a7c7c5e18b04a039eef9533798210b6f5cde34393f5648",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0198-operator-transition-1-events.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0198-operator-transition-1-events.stdout",
+      "bytes": 12905,
+      "sha256": "eeae195b51708bb22d52138edfdd9c044560837e528a47a9f6bb6198f78880da",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0199-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0199-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0200-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0200-scheduler-down-hosts.stdout",
+      "bytes": 6027,
+      "sha256": "b7b76cb61b44113e43bb0c44f8d17ea23acd7c07b454068347d78a8d5b78de87",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0201-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0201-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0202-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0202-scheduler-down-operator-pods.stdout",
+      "bytes": 15610,
+      "sha256": "e134f73a40dbac3e69ba5caab938c39deb35ba35991ae6c611779a01636e1f37",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0203-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0203-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0204-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0204-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0205-operator-transition-2-previous-log.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0205-operator-transition-2-previous-log.stdout",
+      "bytes": 400,
+      "sha256": "9e9f7a25213d2543c9e4b6ebe559927c78c543d4e60bb09f6ed05a9b321706a5",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0206-operator-transition-2-events.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0206-operator-transition-2-events.stdout",
+      "bytes": 14386,
+      "sha256": "8c31d637b93ee7b238b540cbcffd4aaaf85620c7008d194f4e3c5957787cbb9a",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0207-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0207-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0208-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0208-scheduler-down-hosts.stdout",
+      "bytes": 6027,
+      "sha256": "b7b76cb61b44113e43bb0c44f8d17ea23acd7c07b454068347d78a8d5b78de87",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0209-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0209-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0210-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0210-scheduler-down-operator-pods.stdout",
+      "bytes": 15909,
+      "sha256": "28f9c5fd3bbf38ecf06c35e832baddfb5838a67959ed71a2e5d23bbddffd64d0",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0211-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0211-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0212-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0212-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0213-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0213-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0214-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0214-scheduler-down-hosts.stdout",
+      "bytes": 6027,
+      "sha256": "b7b76cb61b44113e43bb0c44f8d17ea23acd7c07b454068347d78a8d5b78de87",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0215-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0215-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0216-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0216-scheduler-down-operator-pods.stdout",
+      "bytes": 15795,
+      "sha256": "a5f1533a2aec4e529b5fb7e2ba9a52de4c8a3194c41a88a276477f3550f22b64",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0217-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0217-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0218-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0218-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0219-scheduler-still-stopped.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0219-scheduler-still-stopped.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0220-scheduler-down-hosts.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0220-scheduler-down-hosts.stdout",
+      "bytes": 6027,
+      "sha256": "b7b76cb61b44113e43bb0c44f8d17ea23acd7c07b454068347d78a8d5b78de87",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0221-scheduler-down-host-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0221-scheduler-down-host-pods.stdout",
+      "bytes": 81377,
+      "sha256": "a1b083a28e5258022f28157c76fda8b3a03c6b88b2f3f6a76598423bb2a5b71d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0222-scheduler-down-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0222-scheduler-down-operator-pods.stdout",
+      "bytes": 15610,
+      "sha256": "ab564c4014075ff0290281b18e4335425bbc47a1b292f7ce9673a681666b9aee",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0223-scheduler-down-endpointslices.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0223-scheduler-down-endpointslices.stdout",
+      "bytes": 119,
+      "sha256": "7a779468a2dde976a9b896541df1e4ef805e813093bd5edb40ef1a6eea588edf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0224-scheduler-down-workloads.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0224-scheduler-down-workloads.stdout",
+      "bytes": 17375,
+      "sha256": "84f4b61f7097e4d1ae481267b255544c478e757bfd4cfc9d3714695387d0e800",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0225-operator-transition-3-previous-log.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0225-operator-transition-3-previous-log.stdout",
+      "bytes": 400,
+      "sha256": "3b577892842876112aef32c319af91e89c12c4d04116a556e8d49f83368ef450",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0226-operator-transition-3-events.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0226-operator-transition-3-events.stdout",
+      "bytes": 18852,
+      "sha256": "c91342d759bb0f337d864f9609e998cf43d628c8f3c17bfd5857568212e4931a",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0227-restore-scheduler-after-failure.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0227-restore-scheduler-after-failure.stdout",
+      "bytes": 28,
+      "sha256": "50995f4adf995ded18b31188fb268e4c7f530b7e17192a4e13117f9e8250c035",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0228-delete-sampler-endpoint.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0228-delete-sampler-endpoint.stdout",
+      "bytes": 241,
+      "sha256": "89a67b15401ecc12f741a89b381e3c5fe9c42d36470e1313e35b694fa9b52554",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0229-final-operator-log.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0229-final-operator-log.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0230-final-operator-pods.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0230-final-operator-pods.stdout",
+      "bytes": 15610,
+      "sha256": "ab564c4014075ff0290281b18e4335425bbc47a1b292f7ce9673a681666b9aee",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0231-final-operator-0-current-log.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0231-final-operator-0-current-log.stdout",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0232-final-operator-0-previous-log.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0232-final-operator-0-previous-log.stdout",
+      "bytes": 400,
+      "sha256": "3b577892842876112aef32c319af91e89c12c4d04116a556e8d49f83368ef450",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0233-final-operator-0-events.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/0233-final-operator-0-events.stdout",
+      "bytes": 18852,
+      "sha256": "c91342d759bb0f337d864f9609e998cf43d628c8f3c17bfd5857568212e4931a",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/before-state.json",
+      "bytes": 85497,
+      "sha256": "5a60eb517baae97a35a218e77e299cdc45799a7f7a87f30fb20e5ed3e311071b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/cleanup.json",
+      "bytes": 62,
+      "sha256": "511a077ea50f93ce4943793d1519c75aa152bdbd34ab5d85c35fc1e5f2aa4897",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/commands.jsonl",
+      "bytes": 98415,
+      "sha256": "0dd5dc7974825cd70981ef6a03728abeb6e00acc5a62a99f78110f3a727856f3",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/initial-state.json",
+      "bytes": 85497,
+      "sha256": "de470fe898ad6ce104506735d17e296aa5c9cd99a292fe0e6bed6ad197a74d52",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/installed-crd-identity.json",
+      "bytes": 2733,
+      "sha256": "4626bbbd98508cc5c5f76d3546df7b0c38fef290d9a7267ac84d0b5532548193",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/operator-image-identity.json",
+      "bytes": 1444,
+      "sha256": "b6aa53ba48861d6af9309e39dfc0863680c9437980f4fafbf9b64241637c0bb7",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/operator-supervision.json",
+      "bytes": 7435,
+      "sha256": "8893cfd6ae79043e91829d05c31900dd93d8d56377ebc5b4721d62b3e9a9f49c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/operator-transition-1-state.json",
+      "bytes": 1275,
+      "sha256": "2977e1d9724cff283858d53f98596d8ef4d1f3538a103d383a0536f1b5d0daa2",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/operator-transition-2-state.json",
+      "bytes": 1513,
+      "sha256": "ad8ab054b39224377ee22b896768443abed6b1e5182d282e25487fc2aae5846f",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/operator-transition-3-state.json",
+      "bytes": 1670,
+      "sha256": "a3796915659111e8799d0a3f7ac015b33f7648d2f9e5d5eb6eecc022427f21fa",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/phases.json",
+      "bytes": 1054,
+      "sha256": "924b1bc25c9518ee5e84a38fbb9d17b0c87e2b85db84bd6944e818e2fe83823d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/request-origin.json",
+      "bytes": 299,
+      "sha256": "0da51ecb02ebce782eee1e312f4239b473eb1db2d747a11b6d3b65aa305d0d6e",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/route-samples.json",
+      "bytes": 22420,
+      "sha256": "f92d5db2e95cd74357115b172a0b197f59dbfefdf48a448a374c2c698f95b3a2",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/scheduler-down-state.json",
+      "bytes": 85574,
+      "sha256": "0e4cd22918eaffadce9913fddc528e14e1b8f7f9a35a34cbd19df298cf16e0ee",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/operator-recovery/settling-state.json",
+      "bytes": 85497,
+      "sha256": "af87a999383c41d40a70abd67d0976a8aa3d42b347ba7d8a237d32b47e93dc15",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/postgres-network.json",
+      "bytes": 1032,
+      "sha256": "2c5dc0a6a7d38810884250a538cb75d3a9243e82ab5285fa1cc0a625f7691b34",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/postgres-readiness.log",
+      "bytes": 3734,
+      "sha256": "89c10b1f913cd5e7ee6cf2e92b971b2161d15b42952a4e2573ae4c7b343c3e81",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/receiving-materializer-nodeport-readiness.json",
+      "bytes": 579,
+      "sha256": "508c02c186da391b521ee1a299345b80e7c2aaa4ad4b998481c45fcb90a475e0",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/receiving-materializer-nodeport-service.json",
+      "bytes": 1219,
+      "sha256": "fcfd307fef38d551727b0d8888e3c2a5e29c862d6a934267946952cb67de21bf",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/receiving-materializer-nodeport.json",
+      "bytes": 1190,
+      "sha256": "c3c213000d0d02febb3c2abccade7cd681dd15449877d71b4f4f41d97eb6b059",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/receiving-operator-recovery-readiness.json",
+      "bytes": 579,
+      "sha256": "b834a0c1585cdf8e02ccb2ae0bb567c459480f89bcf34dfda71debe16806213c",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/receiving-operator-recovery-service.json",
+      "bytes": 1213,
+      "sha256": "6edc9d5b11b0fcb601415536c3e6256ec4a6a213768a93336361d8ae6025d7a6",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/receiving-operator-recovery.json",
+      "bytes": 1178,
+      "sha256": "5e1880a6c2dcc913a0527f868e07ce74e5ccbc69b5f0a05962d5c8e6cb1f1e29",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/registry-network.json",
+      "bytes": 993,
+      "sha256": "f691e3337ff01754832a55012871687819ffe986e626937a9b8a8b87a9d4dbb4",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/result.json",
+      "bytes": 216,
+      "sha256": "b4754f7f6cd077ed3dc101f26076e38e194ed976fe4f03b4e089cd05793e2d1d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/source.json",
+      "bytes": 255,
+      "sha256": "9bd5f312124594ea156bc8e29894d3a1a8f9dc82fd6a57c55ad9f71eddc36c02",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/evidence.sha256",
+      "bytes": 3443,
+      "sha256": "6fc4ca99835dea3b2f7ad58b8ff42e16d3c631976df0b087f499e14d5761ebf1",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/host.log",
+      "bytes": 14236,
+      "sha256": "9c8eb8393695b9599eb1325fa8b5ce8df33f7681c2467ef48930ba447e072389",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-1817534ea7d624948c271d8c55ac00d6.json",
+      "bytes": 22287,
+      "sha256": "a462ec90659a81c57767e7c6dd4f573769bbec5e8cdd199ecb492a8a09131ad5",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-2b8608f4feb37c2b6be7f67aa7ac2ac1.json",
+      "bytes": 22291,
+      "sha256": "9d35ea37405fe7622dcbb222b0bfe8760c0ba77ad2f0ac184580f9f6ba0e1292",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-53bb95a27e61169054224f2a497843a9.json",
+      "bytes": 22287,
+      "sha256": "2498e9687c72fb809c117d7cadc345ae3274729adf5180a0d1106efcca56d47a",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-5ec7c6d9ada3abd106f2c1e791157d3a.json",
+      "bytes": 22298,
+      "sha256": "90ba6cbb36bdadb769165d13d4c4a0c47f8deb32bf35aadb813a8f06637a306f",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-abd3f0c4ff52993febc59e41bed2d3a8.json",
+      "bytes": 22292,
+      "sha256": "133d927f5305bc3776cff6e67d819feffaba901164faba3172f38b8c59b374ea",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-c33871a636b8bdd629d42b3fd28d317d.json",
+      "bytes": 22287,
+      "sha256": "ddf08f1b4435eb7a04ce7d3b6c346f41e9b9168d7c590a4fcf2bcda20ec94b14",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-c5e32260f9d96d1c67d0970a1fdfbdfa.json",
+      "bytes": 22284,
+      "sha256": "c9ec48c61344fcb657e61f80dfab197536f5eaa9f37b1c0d994dccedefee7864",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-cb5c2ee0781f29b23b2ce0e339872909.json",
+      "bytes": 22296,
+      "sha256": "cab1200f202cb9891e3948fa39c9bd492b76f3ffe3068b70ada958eecaea1aab",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-d0d855b426ec97aa301c2e2d5f0bf720.json",
+      "bytes": 22285,
+      "sha256": "a004884a9ddd3b04c4b00b4de0f1c57f8f976480375748ec59a9a5d6897cbc4d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-d0df43e4bc70c02061afaac323fbe340.json",
+      "bytes": 22288,
+      "sha256": "9c8f61c6ef4935e43670b3dd1087efa3022b44ce135714842ef5438fb63893eb",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-e1430ae042492f4e6a1ae0443240e03e.json",
+      "bytes": 22287,
+      "sha256": "21d88b7459829f2d1b265ca91e942a3f1dc5c55c00879504513b438058841cb3",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-e4c39e1cb1a9956ac510a0c2ad62426b.json",
+      "bytes": 22289,
+      "sha256": "83205097671892986afba4f5c6c80303d2ab764b17182c6f832afd7330750521",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-e8d772f85a6aad7eb776650d5f6e2272.json",
+      "bytes": 22297,
+      "sha256": "393943da14fbbcd0ef43c0e6dce190f78b0e75725402048f1d9acfee10beb5fb",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-f1d61bed92e9beee17a0bd325199ff09.json",
+      "bytes": 22286,
+      "sha256": "e94b672812c0c15d5025e56a31f380d7881bd36b7ddb1143ed98c9d318ff7958",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-f35d3da4a526ee83bcbce1d475db2aca.json",
+      "bytes": 22298,
+      "sha256": "1bdc43ca4515c065b7d62989a869a36d605a18e2696372efa4ad70aa6640221a",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/native-trace-008-f5a937be58879423dbd6cc957fcaf60f.json",
+      "bytes": 22286,
+      "sha256": "3624f9276480daa4a1e86c3d7c5ae9db1f1126112529c33ee46e952c0ae8c65a",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/otlp-port-forward.log",
+      "bytes": 130,
+      "sha256": "3fc1bf9d68ef6a20a11d39125e4f703609be6e3920a477d4bed674cb008665ff",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/protocol.json",
+      "bytes": 17008,
+      "sha256": "fed612a93bbd4edaf2432e5ec8e3ab01781169151169048b2ba1f7e9da21497b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/result.json",
+      "bytes": 8481,
+      "sha256": "a46d8a0fc9759c8771dffe32cb0fa1034bb4d3c03e931c899cc154649fb19568",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/scheduler-certificate-ready.json",
+      "bytes": 2134,
+      "sha256": "4feeb04a9aee4de896fb5ff6157d67facd744c0d64f6f33127ef1a96a2e6dfcd",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/scheduler-certificate.json",
+      "bytes": 649,
+      "sha256": "661618b0c35ccf916b967ca048e59912fb35a07203f332528c2f76b1fc661a75",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/scheduler-deployment-before.json",
+      "bytes": 7544,
+      "sha256": "1cfda4f493be3a0ab63fd33c468f5dbde9c2affba026ae765fdf5e05369e6828",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/scheduler-deployment-ready.json",
+      "bytes": 7552,
+      "sha256": "da5e1426befb48a68e3a7fcdeabb1f8ed151a49a31296b59d60b19638bbab77d",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/scheduler-port-forward.log",
+      "bytes": 100,
+      "sha256": "0f64161fdb8e8714a370677df8677f6bf8e4510b305fa330fbbe0b1333a6de46",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/trace-search-001.json",
+      "bytes": 83,
+      "sha256": "b786ae0d3d5a3c14f10259fdf32fcc0b0fd2b642483f19b53b2e34b14e0a1795",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/trace-search-002.json",
+      "bytes": 83,
+      "sha256": "b786ae0d3d5a3c14f10259fdf32fcc0b0fd2b642483f19b53b2e34b14e0a1795",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/trace-search-003.json",
+      "bytes": 83,
+      "sha256": "b786ae0d3d5a3c14f10259fdf32fcc0b0fd2b642483f19b53b2e34b14e0a1795",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/trace-search-004.json",
+      "bytes": 83,
+      "sha256": "b786ae0d3d5a3c14f10259fdf32fcc0b0fd2b642483f19b53b2e34b14e0a1795",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/trace-search-005.json",
+      "bytes": 83,
+      "sha256": "b786ae0d3d5a3c14f10259fdf32fcc0b0fd2b642483f19b53b2e34b14e0a1795",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/trace-search-006.json",
+      "bytes": 83,
+      "sha256": "b786ae0d3d5a3c14f10259fdf32fcc0b0fd2b642483f19b53b2e34b14e0a1795",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/trace-search-007.json",
+      "bytes": 83,
+      "sha256": "b786ae0d3d5a3c14f10259fdf32fcc0b0fd2b642483f19b53b2e34b14e0a1795",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/startup-burst/trace-search-008.json",
+      "bytes": 12262,
+      "sha256": "48a133dddc1f3daaa4c02699df203441098762decd92654a2c3adb25334ee8eb",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-001.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-001.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-001.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-002.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-002.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-002.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-003.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-003.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-003.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-004.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-004.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-004.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-005.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-005.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-005.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-006.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-006.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-006.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-007.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-007.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-007.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-008.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-008.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-008.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-009.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-009.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-009.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-010.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-010.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-010.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-011.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-011.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-011.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-012.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-012.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-012.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-013.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-013.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-013.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-014.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-014.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-014.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-015.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-015.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-015.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-016.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-016.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-016.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-017.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-017.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-017.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-018.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-018.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-018.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-019.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-019.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-019.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-020.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-020.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-020.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-021.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-021.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-021.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-022.prom",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-022.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-022.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-023.prom",
+      "bytes": 50296,
+      "sha256": "f12f4c44219c1b43bc48879897cdc9c6d1732ddcf906667f6466bf93ae91eac9",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-023.refusal.txt",
+      "bytes": 86,
+      "sha256": "d12cb179844235fb3a431bff5a3f3b2f0fd34f381bc0b938461734aaa23e4a5b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-023.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-024.prom",
+      "bytes": 108731,
+      "sha256": "0585749aa62f13bcf90eedfb9c10518cd0d5d870512460d24b6e665fe675976b",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/metrics-024.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/receipt-001.json",
+      "bytes": 80321,
+      "sha256": "1b7006f95ec2bbb961bb7a9dbb8f4f68f5c79f70169f8f47944737f166292102",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/receipt-001.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/result.json",
+      "bytes": 21562,
+      "sha256": "1c0c0410349c91d6d26cb239f4418df6050e2cfaf50fec9e87d4452a98f81fe1",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/update-001.json",
+      "bytes": 29268,
+      "sha256": "9f3c15c5768e146cc9ef97e158330d047a5796e2f8134d79db7e1c16066342eb",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-live-006/telemetry/update-001.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "mode": "0600"
+    },
+    {
+      "path": "receiving-cluster-controller-006.log",
+      "bytes": 1501,
+      "sha256": "121c3e3158c3361552259a943ffcce80ce724f3afe0e8e3ebfe2ad597ce8717c",
+      "mode": "0664"
+    }
+  ]
+}

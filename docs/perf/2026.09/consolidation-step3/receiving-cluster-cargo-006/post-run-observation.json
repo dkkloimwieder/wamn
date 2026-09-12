@@ -1,0 +1,49 @@
+{
+  "observed_utc": "2026-09-12T00:32:59.490722+00:00",
+  "resource_commands": [
+    {
+      "command": [
+        "kind",
+        "get",
+        "clusters"
+      ],
+      "exit_code": 0,
+      "stdout": "wamn\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "docker",
+        "ps",
+        "-a",
+        "--format",
+        "{{.Names}}"
+      ],
+      "exit_code": 0,
+      "stdout": "acct-postgres\nwamn-worker2\nwamn-worker\nwamn-control-plane\ngateway-fuuzdevicegateway-1\nbetter-auth-db\nshadcn-admin-db\ndocker-zstart_postgres-1\npg\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "docker",
+        "image",
+        "ls",
+        "--format",
+        "{{.Repository}}:{{.Tag}}"
+      ],
+      "exit_code": 0,
+      "stdout": "wamn-gates:dev\nwamn-host:dev\nwamn-recipe:probe\nrust:1.98-trixie\ndebian:trixie-slim\nghcr.io/hatoo/oha:<none>\nredis:7-alpine\npostgres:16-alpine\npostgres:18-alpine\npostgres:18\nwamn-postgres:m1-pg18-1268\nwamn-postgres:m1-pg18-720c455e\nwamn-gates:pre-10-18\nacct-postgres:18\nmoby/buildkit:buildx-stable-1\nnats:latest\nhttpd:2-alpine\nkindest/node:<none>\nnats:2.12.8\nnats:2.12.8-alpine\nnats:2.11-alpine\nnode:20-bookworm-slim\nalpine:3.20\npublic.ecr.aws/n9a9v7z5/qa/mfgx-native-app-device-gateway-server:latest\nnats:2.10\nnats:2.10-alpine\nminio/minio:RELEASE.2025-09-07T16-13-09Z\nminio/mc:latest\npostgres:17\nnginx:1.27-alpine\nprom/prometheus:v3.1.0\ngrafana/grafana:11.4.0\notel/opentelemetry-collector-contrib:0.115.1\ngrafana/tempo:2.6.1\npostgres:alpine\npostgres:16.2-alpine\nregistry:2\n",
+      "stderr": ""
+    }
+  ],
+  "source_commit": "fb6c2b2e28fbcb90a8a373672a60e2397488cae5",
+  "source_clean": true,
+  "mutation_performed": false,
+  "cluster": "wamn-receiving-e4936f123dae46b2875b4fa7a1e8711a",
+  "cluster_present": false,
+  "owned_container_names": [],
+  "owned_image_names": [],
+  "private_directory_exists": false,
+  "frozen_wamn_present": true,
+  "result": "pass"
+}

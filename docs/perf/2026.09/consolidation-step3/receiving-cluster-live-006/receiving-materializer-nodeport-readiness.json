@@ -1,0 +1,20 @@
+{
+  "attempts": [
+    {
+      "attempt": 0,
+      "failure": "error sending request for url (http://172.28.0.6:32500/no-such-route): client error (Connect): tcp connect error: Connection refused (os error 111)"
+    },
+    {
+      "attempt": 1,
+      "body_hex": "7b226572726f72223a7b22636f6465223a22726f7574652d6e6f742d666f756e64227d7d",
+      "content_type": "application/json",
+      "status": 404
+    }
+  ],
+  "endpoint": "http://172.28.0.6:32500",
+  "failure": null,
+  "host": "receiving.localhost",
+  "origin": "host-nodeport",
+  "passed": true,
+  "path": "/no-such-route"
+}
