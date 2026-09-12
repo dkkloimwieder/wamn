@@ -1913,16 +1913,16 @@ fn additive_unused_column_on_consumed_relation_preserves_required_contract() {
         ),
     );
     let additive = shipped_generation(&additive_catalog, &manifest).unwrap();
-    let base_weld = artifact_json(&base, "generated/package-weld.json");
-    let additive_weld = artifact_json(&additive, "generated/package-weld.json");
+    let base_metadata = artifact_json(&base, "generated/package-weld.json");
+    let additive_metadata = artifact_json(&additive, "generated/package-weld.json");
 
     assert_ne!(
-        base_weld["verified_schema_state_id"],
-        additive_weld["verified_schema_state_id"]
+        base_metadata["verified_schema_state_id"],
+        additive_metadata["verified_schema_state_id"]
     );
     assert_eq!(
-        base_weld["required_schema_contract"],
-        additive_weld["required_schema_contract"]
+        base_metadata["required_schema_contract"],
+        additive_metadata["required_schema_contract"]
     );
 }
 

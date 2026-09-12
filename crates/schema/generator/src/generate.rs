@@ -77,7 +77,7 @@ impl<'a> AuthoredSql<'a> {
     }
 }
 
-/// Explicit generator and toolchain facts embedded in every package weld.
+/// Generator and toolchain facts in each generated package.
 #[derive(Debug, Clone, Copy)]
 pub struct GenerationProvenance<'a> {
     generator: &'a str,
@@ -189,10 +189,14 @@ impl GeneratedFile {
     }
 }
 
-/// Canonical immutable package weld emitted as `generated/package-weld.json`.
+/// Canonical immutable package metadata emitted as `generated/package-weld.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PackageWeld {
+#[serde(
+    rename = "PackageWeld",
+    expecting = "struct PackageWeld",
+    deny_unknown_fields
+)]
+pub struct GeneratedPackageMetadata {
     verified_schema_state_id: Box<str>,
     required_schema_contract: RequiredSchemaContract,
     required_platform_policy_contract: PolicyContractRequirement,
@@ -201,10 +205,10 @@ pub struct PackageWeld {
     promotion_state: PromotionState,
 }
 
-impl PackageWeld {
-    /// Parse the exact canonical generated weld, refusing alternate spellings.
+impl GeneratedPackageMetadata {
+    /// Parse the canonical generated metadata and refuse alternate spellings.
     pub fn from_slice(bytes: &[u8]) -> Result<Self, GenerateError> {
-        let weld: Self = serde_json::from_slice(bytes).map_err(|source| {
+        let metadata: Self = serde_json::from_slice(bytes).map_err(|source| {
             GenerateError::with_source(
                 GenerateErrorKind::InvalidManifest,
                 "package-weld.json does not match the closed weld vocabulary",
@@ -212,7 +216,7 @@ impl PackageWeld {
             )
         })?;
         let canonical = canonical_json_bytes(
-            &serde_json::to_value(&weld).expect("a package weld always serializes"),
+            &serde_json::to_value(&metadata).expect("generated package metadata always serializes"),
         );
         if canonical != bytes {
             return Err(GenerateError::new(
@@ -221,10 +225,13 @@ impl PackageWeld {
             ));
         }
         for (field, value) in [
-            ("verified_schema_state_id", weld.verified_schema_state_id()),
+            (
+                "verified_schema_state_id",
+                metadata.verified_schema_state_id(),
+            ),
             (
                 "application_sql_corpus_identity",
-                weld.application_sql_corpus_identity(),
+                metadata.application_sql_corpus_identity(),
             ),
         ] {
             if !valid_sha256(value) {
@@ -234,17 +241,17 @@ impl PackageWeld {
                 ));
             }
         }
-        let expected_promotion_state = match weld.required_platform_policy_contract.state {
+        let expected_promotion_state = match metadata.required_platform_policy_contract.state {
             PolicyContractState::Unsatisfied => PromotionState::BlockedUnsatisfiedPolicyContract,
             PolicyContractState::Satisfied => PromotionState::Eligible,
         };
-        if weld.promotion_state != expected_promotion_state {
+        if metadata.promotion_state != expected_promotion_state {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidManifest,
                 "package-weld.json promotion_state disagrees with required_platform_policy_contract.state",
             ));
         }
-        Ok(weld)
+        Ok(metadata)
     }
 
     /// Digest of the complete normalized catalog IR used for generation.
@@ -268,11 +275,11 @@ impl PackageWeld {
     }
 }
 
-/// Deterministically generated package artifacts and their weld.
+/// Generated package files and their metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GeneratedPackage {
     files: Box<[GeneratedFile]>,
-    weld: PackageWeld,
+    metadata: GeneratedPackageMetadata,
 }
 
 impl GeneratedPackage {
@@ -289,9 +296,9 @@ impl GeneratedPackage {
             .map(|index| &self.files[index])
     }
 
-    /// Canonical package weld also present in the generated file set.
-    pub const fn weld(&self) -> &PackageWeld {
-        &self.weld
+    /// Canonical metadata included in the generated file set.
+    pub const fn metadata(&self) -> &GeneratedPackageMetadata {
+        &self.metadata
     }
 }
 
@@ -393,7 +400,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
         &data_access,
     )?;
 
-    let weld = PackageWeld {
+    let metadata = GeneratedPackageMetadata {
         verified_schema_state_id: sha256(&canonical_json_bytes(
             &serde_json::to_value(input.catalog).expect("schema IR always serializes"),
         ))
@@ -415,7 +422,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
             PolicyContractState::Satisfied => PromotionState::Eligible,
         },
     };
-    insert_canonical_json(&mut files, "generated/package-weld.json", &weld)?;
+    insert_canonical_json(&mut files, "generated/package-weld.json", &metadata)?;
 
     let files = files
         .into_iter()
@@ -426,7 +433,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
         .collect::<Vec<_>>()
         .into_boxed_slice();
 
-    Ok(GeneratedPackage { files, weld })
+    Ok(GeneratedPackage { files, metadata })
 }
 
 /// Hash sorted path/byte entries with unambiguous big-endian length framing.

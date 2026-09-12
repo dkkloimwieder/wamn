@@ -733,34 +733,35 @@ fn load_component_statement_facts(
         all_statements.insert(operation.clone(), operation_statements);
     }
 
-    let weld_path = "generated/package-weld.json";
-    let weld_bytes = read_package_owned_file(
+    let metadata_path = "generated/package-weld.json";
+    let metadata_bytes = read_package_owned_file(
         package_root,
         &canonical_root,
         "package weld",
-        weld_path,
+        metadata_path,
         "json",
     )?;
-    let weld = wamn_schema_generator::PackageWeld::from_slice(&weld_bytes).map_err(|error| {
-        ComponentProjectionError::new(
-            ComponentProjectionErrorKind::StatementCorpusMismatch,
-            format!(
-                "generated package weld {} is invalid: {error}",
-                package_root.join(weld_path).display()
-            ),
-        )
-    })?;
+    let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(&metadata_bytes)
+        .map_err(|error| {
+            ComponentProjectionError::new(
+                ComponentProjectionErrorKind::StatementCorpusMismatch,
+                format!(
+                    "generated package weld {} is invalid: {error}",
+                    package_root.join(metadata_path).display()
+                ),
+            )
+        })?;
     let observed_corpus = wamn_schema_generator::corpus_sha256(
         corpus
             .iter()
             .map(|(path, bytes)| (path.as_str(), bytes.as_slice())),
     );
-    if observed_corpus != weld.application_sql_corpus_identity() {
+    if observed_corpus != metadata.application_sql_corpus_identity() {
         return Err(ComponentProjectionError::new(
             ComponentProjectionErrorKind::StatementCorpusMismatch,
             format!(
                 "generated statement corpus is {observed_corpus}, but package weld records {}",
-                weld.application_sql_corpus_identity()
+                metadata.application_sql_corpus_identity()
             ),
         ));
     }
@@ -2134,7 +2135,7 @@ mod tests {
         let mut component = repository_receiving_component();
 
         let statements = load_component_statement_facts(&package_root, &manifest, &component)
-            .expect("generated operation contracts and package weld agree");
+            .expect("generated operation contracts and package metadata agree");
         assert_eq!(statements.len(), component.operations.len());
         assert!(statements.values().all(|operation| !operation.is_empty()));
         bind_component_statement_facts(&mut component, statements)

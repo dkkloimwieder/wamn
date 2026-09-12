@@ -229,7 +229,7 @@ pub enum MintManifestErrorKind {
     Storage,
     Release,
     PackageManifest,
-    PackageWeld,
+    GeneratedPackageMetadata,
     PolicyContractUnsatisfied,
     Wiring,
     Component,
@@ -251,7 +251,7 @@ impl MintManifestErrorKind {
             Self::Storage => "storage",
             Self::Release => "release",
             Self::PackageManifest => "package-manifest",
-            Self::PackageWeld => "package-weld",
+            Self::GeneratedPackageMetadata => "package-weld",
             Self::PolicyContractUnsatisfied => "policy-contract-unsatisfied",
             Self::Wiring => "wiring",
             Self::Component => "component",
@@ -908,29 +908,29 @@ fn read_package_manifests(
         })?;
         let root = path.parent().ok_or_else(|| {
             MintManifestError::new(
-                MintManifestErrorKind::PackageWeld,
+                MintManifestErrorKind::GeneratedPackageMetadata,
                 format!(
                     "package manifest {} has no package directory; pass package-owned wamn.json",
                     path.display()
                 ),
             )
         })?;
-        let weld_path = root.join("generated/package-weld.json");
-        let weld_bytes = std::fs::read(&weld_path).map_err(|error| {
+        let metadata_path = root.join("generated/package-weld.json");
+        let metadata_bytes = std::fs::read(&metadata_path).map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::PackageWeld,
+                MintManifestErrorKind::GeneratedPackageMetadata,
                 format!(
                     "package {}@{} requires generated/package-weld.json at {}; regenerate the package evidence",
                     manifest.package.id,
                     manifest.package.version,
-                    weld_path.display()
+                    metadata_path.display()
                 ),
                 error,
             )
         })?;
-        let weld = wamn_schema_generator::PackageWeld::from_slice(&weld_bytes).map_err(|error| {
+        let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(&metadata_bytes).map_err(|error| {
             MintManifestError::with_source(
-                MintManifestErrorKind::PackageWeld,
+                MintManifestErrorKind::GeneratedPackageMetadata,
                 format!(
                     "package {}@{} carries an invalid generated/package-weld.json; regenerate the package evidence",
                     manifest.package.id, manifest.package.version
@@ -938,7 +938,7 @@ fn read_package_manifests(
                 error,
             )
         })?;
-        validate_package_weld(&manifest, &weld)?;
+        validate_package_metadata(&manifest, &metadata)?;
         let package_id = manifest.package.id.clone();
         if manifests.insert(package_id.clone(), manifest).is_some() {
             return Err(MintManifestError::new(
@@ -951,20 +951,20 @@ fn read_package_manifests(
     Ok((manifests, hashes))
 }
 
-fn validate_package_weld(
+fn validate_package_metadata(
     manifest: &wamn_schema_generator::PackageManifest,
-    weld: &wamn_schema_generator::PackageWeld,
+    metadata: &wamn_schema_generator::GeneratedPackageMetadata,
 ) -> Result<(), MintManifestError> {
     let coordinate = format!("{}@{}", manifest.package.id, manifest.package.version);
-    if weld.required_platform_policy_contract() != &manifest.required_platform_policy_contract {
+    if metadata.required_platform_policy_contract() != &manifest.required_platform_policy_contract {
         return Err(MintManifestError::new(
-            MintManifestErrorKind::PackageWeld,
+            MintManifestErrorKind::GeneratedPackageMetadata,
             format!(
                 "package {coordinate} manifest and generated weld disagree on the required platform policy contract; regenerate the package evidence"
             ),
         ));
     }
-    if !weld.promotion_eligible() {
+    if !metadata.promotion_eligible() {
         return Err(MintManifestError::new(
             MintManifestErrorKind::PolicyContractUnsatisfied,
             format!(
@@ -2756,15 +2756,16 @@ mod tests {
     }
 
     #[test]
-    fn release_mint_consumes_the_package_owned_weld_and_refuses_unsatisfied_policy() {
+    fn release_mint_consumes_package_metadata_and_refuses_unsatisfied_policy() {
         let manifest_bytes = include_bytes!("../../../apps/wamn_receiving/wamn.json");
         let manifest = wamn_schema_generator::PackageManifest::from_slice(manifest_bytes)
             .expect("the Receiving manifest is valid");
-        let weld_bytes = include_bytes!("../../../apps/wamn_receiving/generated/package-weld.json");
-        let weld = wamn_schema_generator::PackageWeld::from_slice(weld_bytes)
-            .expect("the Receiving weld is canonical");
-        validate_package_weld(&manifest, &weld)
-            .expect("the Receiving manifest and weld carry one satisfied policy fact");
+        let metadata_bytes =
+            include_bytes!("../../../apps/wamn_receiving/generated/package-weld.json");
+        let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(metadata_bytes)
+            .expect("the Receiving metadata is canonical");
+        validate_package_metadata(&manifest, &metadata)
+            .expect("the Receiving manifest and metadata carry one satisfied policy fact");
 
         let mut unsatisfied_manifest: serde_json::Value =
             serde_json::from_slice(manifest_bytes).unwrap();
@@ -2774,17 +2775,18 @@ mod tests {
             &serde_json::to_vec(&unsatisfied_manifest).unwrap(),
         )
         .unwrap();
-        let mut unsatisfied_weld: serde_json::Value = serde_json::from_slice(weld_bytes).unwrap();
-        unsatisfied_weld["required_platform_policy_contract"]["state"] =
+        let mut unsatisfied_metadata: serde_json::Value =
+            serde_json::from_slice(metadata_bytes).unwrap();
+        unsatisfied_metadata["required_platform_policy_contract"]["state"] =
             serde_json::json!("unsatisfied");
-        unsatisfied_weld["promotion_state"] =
+        unsatisfied_metadata["promotion_state"] =
             serde_json::json!("blocked_unsatisfied_policy_contract");
-        let unsatisfied_weld = wamn_schema_generator::PackageWeld::from_slice(
-            &wamn_execution_contract::canonical_json_bytes(&unsatisfied_weld),
+        let unsatisfied_metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(
+            &wamn_execution_contract::canonical_json_bytes(&unsatisfied_metadata),
         )
         .unwrap();
-        let refusal = validate_package_weld(&unsatisfied_manifest, &unsatisfied_weld)
-            .expect_err("an unsatisfied generated weld cannot enter a release");
+        let refusal = validate_package_metadata(&unsatisfied_manifest, &unsatisfied_metadata)
+            .expect_err("unsatisfied generated metadata cannot enter a release");
         assert_eq!(
             refusal.kind(),
             MintManifestErrorKind::PolicyContractUnsatisfied
@@ -2792,16 +2794,20 @@ mod tests {
         assert!(refusal.detail().contains("receiving_data_access"));
         assert!(refusal.detail().contains("regenerate"));
 
-        let mut mismatched_weld: serde_json::Value = serde_json::from_slice(weld_bytes).unwrap();
-        mismatched_weld["required_platform_policy_contract"]["id"] =
+        let mut mismatched_metadata: serde_json::Value =
+            serde_json::from_slice(metadata_bytes).unwrap();
+        mismatched_metadata["required_platform_policy_contract"]["id"] =
             serde_json::json!("different_policy");
-        let mismatched_weld = wamn_schema_generator::PackageWeld::from_slice(
-            &wamn_execution_contract::canonical_json_bytes(&mismatched_weld),
+        let mismatched_metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(
+            &wamn_execution_contract::canonical_json_bytes(&mismatched_metadata),
         )
         .unwrap();
-        let refusal = validate_package_weld(&manifest, &mismatched_weld)
-            .expect_err("a weld cannot restate the manifest policy requirement");
-        assert_eq!(refusal.kind(), MintManifestErrorKind::PackageWeld);
+        let refusal = validate_package_metadata(&manifest, &mismatched_metadata)
+            .expect_err("metadata cannot restate the manifest policy requirement");
+        assert_eq!(
+            refusal.kind(),
+            MintManifestErrorKind::GeneratedPackageMetadata
+        );
     }
 
     fn handler_manifest() -> wamn_schema_generator::PackageManifest {

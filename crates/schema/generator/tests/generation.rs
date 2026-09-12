@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_schema_generator::{
     AuthoredSql, CrudAction, DATA_ACCESS_OVERLAY_PATH, GenerateErrorKind, GeneratedPackage,
-    PackageManifest, PackageWeld, canonical_operation_identity, canonical_operation_prefix,
-    corpus_sha256, validate_operation_vocabulary, validate_parity_json,
+    GeneratedPackageMetadata, PackageManifest, canonical_operation_identity,
+    canonical_operation_prefix, corpus_sha256, validate_operation_vocabulary, validate_parity_json,
 };
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, Exclusion, ExclusionAccessMethod,
@@ -695,13 +695,13 @@ fn wamn_accessors_are_structurally_derived_from_operations_and_ir() {
 }
 
 #[test]
-fn weld_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables() {
+fn metadata_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables() {
     let base_ir = catalog(false);
     let additive_ir = catalog(true);
     let base = run(&base_ir, &manifest(), &QUERY_SOURCES).unwrap();
     let additive = run(&additive_ir, &manifest(), &QUERY_SOURCES).unwrap();
-    let base_weld = artifact_json(&base, "generated/package-weld.json");
-    let additive_weld = artifact_json(&additive, "generated/package-weld.json");
+    let base_metadata = artifact_json(&base, "generated/package-weld.json");
+    let additive_metadata = artifact_json(&additive, "generated/package-weld.json");
 
     let expected_schema = format!(
         "sha256:{}",
@@ -709,24 +709,24 @@ fn weld_hashes_exact_ir_and_sql_but_contract_ignores_unused_tables() {
             &serde_json::to_value(&base_ir).unwrap()
         )))
     );
-    assert_eq!(base_weld["verified_schema_state_id"], expected_schema);
+    assert_eq!(base_metadata["verified_schema_state_id"], expected_schema);
     assert_ne!(
-        base_weld["verified_schema_state_id"],
-        additive_weld["verified_schema_state_id"]
+        base_metadata["verified_schema_state_id"],
+        additive_metadata["verified_schema_state_id"]
     );
     assert_eq!(
-        base_weld["required_schema_contract"],
-        additive_weld["required_schema_contract"]
+        base_metadata["required_schema_contract"],
+        additive_metadata["required_schema_contract"]
     );
     assert_eq!(
-        base_weld["required_platform_policy_contract"],
+        base_metadata["required_platform_policy_contract"],
         json!({"id": "receiving_data_access", "state": "unsatisfied"})
     );
     assert_eq!(
-        base_weld["promotion_state"],
+        base_metadata["promotion_state"],
         "blocked_unsatisfied_policy_contract"
     );
-    assert!(!base.weld().promotion_eligible());
+    assert!(!base.metadata().promotion_eligible());
 }
 
 #[test]
@@ -740,8 +740,8 @@ fn explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields() {
         }
     });
     let package = run(&catalog(true), &package_manifest, &QUERY_SOURCES).unwrap();
-    let weld = artifact_json(&package, "generated/package-weld.json");
-    let required = weld["required_schema_contract"]["tables"]
+    let metadata = artifact_json(&package, "generated/package-weld.json");
+    let required = metadata["required_schema_contract"]["tables"]
         .as_array()
         .unwrap()
         .iter()
@@ -753,25 +753,30 @@ fn explicit_cdc_exclusion_is_a_required_relation_without_fabricated_fields() {
 }
 
 #[test]
-fn generated_weld_has_one_strict_canonical_reader() {
+fn generated_metadata_has_one_strict_canonical_reader() {
     let package = run(&catalog(false), &manifest(), &QUERY_SOURCES).unwrap();
     let bytes = package
         .file("generated/package-weld.json")
-        .expect("the generated package carries its weld")
+        .expect("the generated package carries its metadata")
         .bytes();
-    assert_eq!(&PackageWeld::from_slice(bytes).unwrap(), package.weld());
+    assert_eq!(
+        &GeneratedPackageMetadata::from_slice(bytes).unwrap(),
+        package.metadata()
+    );
 
     let mut alternate = bytes.to_vec();
     alternate.push(b'\n');
     assert_eq!(
-        PackageWeld::from_slice(&alternate).unwrap_err().kind(),
+        GeneratedPackageMetadata::from_slice(&alternate)
+            .unwrap_err()
+            .kind(),
         GenerateErrorKind::InvalidManifest
     );
 
     let mut unknown: Value = serde_json::from_slice(bytes).unwrap();
     unknown["extra"] = json!(true);
     assert_eq!(
-        PackageWeld::from_slice(&canonical_json_bytes(&unknown))
+        GeneratedPackageMetadata::from_slice(&canonical_json_bytes(&unknown))
             .unwrap_err()
             .kind(),
         GenerateErrorKind::InvalidManifest
@@ -780,7 +785,7 @@ fn generated_weld_has_one_strict_canonical_reader() {
     let mut contradictory: Value = serde_json::from_slice(bytes).unwrap();
     contradictory["promotion_state"] = json!("eligible");
     assert_eq!(
-        PackageWeld::from_slice(&canonical_json_bytes(&contradictory))
+        GeneratedPackageMetadata::from_slice(&canonical_json_bytes(&contradictory))
             .unwrap_err()
             .kind(),
         GenerateErrorKind::InvalidManifest
@@ -1237,9 +1242,9 @@ fn only_a_create_carries_claim_contract_tests() {
 fn generated_create_pins_and_grants_its_claim_relation() {
     let package = run(&claim_catalog(), &claim_manifest(), &QUERY_SOURCES).unwrap();
 
-    let weld = artifact_json(&package, "generated/package-weld.json");
+    let metadata = artifact_json(&package, "generated/package-weld.json");
     let claim = object_named(
-        weld["required_schema_contract"]["tables"]
+        metadata["required_schema_contract"]["tables"]
             .as_array()
             .unwrap(),
         "table",

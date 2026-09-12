@@ -40,8 +40,8 @@ pub use data_access::{
 };
 pub use error::{GenerateError, GenerateErrorKind};
 pub use generate::{
-    AuthoredSql, GeneratedFile, GeneratedPackage, GenerationInput, GenerationProvenance,
-    PackageWeld, StatementTransactionality, corpus_sha256, generate,
+    AuthoredSql, GeneratedFile, GeneratedPackage, GeneratedPackageMetadata, GenerationInput,
+    GenerationProvenance, StatementTransactionality, corpus_sha256, generate,
 };
 pub use manifest::{
     AccessOperationErrorLiteral, AuthoredSqlDeclaration, AuthoredSqlVariant,

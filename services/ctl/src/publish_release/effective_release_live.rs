@@ -12,7 +12,7 @@ use super::{
     DependencyDigestRule, MintManifestErrorKind, MintReleaseManifest, MintedReleaseManifest,
     ReleaseWiringTarget, mint_release_manifest_with_package_manifests,
     proven_effect_free_operation_dependencies, read_package_manifests, resolve_route_host_overlay,
-    sha256, validate_package_weld,
+    sha256, validate_package_metadata,
 };
 use crate::apply_package::{self, ApplyPackageArgs};
 use crate::author_wiring::{self, AuthorWiringRequest};
@@ -364,25 +364,25 @@ async fn mint(
     release
 }
 
-fn prove_typed_weld_refusal(input: &PackageInput) {
+fn assert_typed_metadata_refusal(input: &PackageInput) {
     let manifest_bytes = std::fs::read(input.root.join("wamn.json")).unwrap();
     let mut manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
     manifest["required_platform_policy_contract"]["state"] = serde_json::json!("unsatisfied");
     let manifest =
         wamn_schema_generator::PackageManifest::from_slice(&serde_json::to_vec(&manifest).unwrap())
             .unwrap();
-    let mut weld: serde_json::Value = serde_json::from_slice(
+    let mut metadata: serde_json::Value = serde_json::from_slice(
         &std::fs::read(input.root.join("generated/package-weld.json")).unwrap(),
     )
     .unwrap();
-    weld["required_platform_policy_contract"]["state"] = serde_json::json!("unsatisfied");
-    weld["promotion_state"] = serde_json::json!("blocked_unsatisfied_policy_contract");
-    let weld = wamn_schema_generator::PackageWeld::from_slice(
-        &wamn_execution_contract::canonical_json_bytes(&weld),
+    metadata["required_platform_policy_contract"]["state"] = serde_json::json!("unsatisfied");
+    metadata["promotion_state"] = serde_json::json!("blocked_unsatisfied_policy_contract");
+    let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(
+        &wamn_execution_contract::canonical_json_bytes(&metadata),
     )
     .unwrap();
-    let refusal = validate_package_weld(&manifest, &weld)
-        .expect_err("an unsatisfied package weld must refuse release mint");
+    let refusal = validate_package_metadata(&manifest, &metadata)
+        .expect_err("unsatisfied package metadata must refuse release mint");
     assert_eq!(
         refusal.kind(),
         MintManifestErrorKind::PolicyContractUnsatisfied
@@ -397,7 +397,7 @@ async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
     let control_url = std::env::var(CONTROL_URL_ENV)
         .expect("WAMN_EFFECTIVE_RELEASE_CONTROL_PG_URL names disposable PostgreSQL 18");
     let inputs = packages();
-    prove_typed_weld_refusal(&inputs[0]);
+    assert_typed_metadata_refusal(&inputs[0]);
 
     let (mut project, project_task) = connect(&project_url).await;
     let (control, control_task) = connect(&control_url).await;
