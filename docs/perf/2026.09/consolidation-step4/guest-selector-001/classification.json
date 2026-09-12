@@ -1,0 +1,45 @@
+{
+  "passed": 7,
+  "failed": 0,
+  "ignored": 2,
+  "cases": [
+    {
+      "name": "no_guest_workspace_declares_a_dependency_outside_itself",
+      "outcome": "ok"
+    },
+    {
+      "name": "one_commit_built_in_two_checkouts_yields_identical_guest_digests",
+      "outcome": "ignored, requires two checkouts of one commit built by [GUEST-DIGEST-REPRODUCIBILITY]"
+    },
+    {
+      "name": "one_commit_built_under_two_profiles_yields_identical_guest_digests",
+      "outcome": "ignored, requires one commit built under both profiles by [GUEST-DIGEST-REPRODUCIBILITY]"
+    },
+    {
+      "name": "the_shared_guest_build_remaps_the_source_prefix",
+      "outcome": "ok"
+    },
+    {
+      "name": "component_build_normalizes_only_declared_artifacts_to_separate_outputs",
+      "outcome": "ok"
+    },
+    {
+      "name": "component_build_requires_declared_app_crates_and_accepts_new_cargo_members",
+      "outcome": "ok"
+    },
+    {
+      "name": "selector_tools_execute_exact_fake_cargo_argv",
+      "outcome": "ok"
+    },
+    {
+      "name": "unknown_selector_modes_refuse_before_cargo",
+      "outcome": "ok"
+    },
+    {
+      "name": "virtualization_allowlist_matches_component_metadata",
+      "outcome": "ok"
+    }
+  ],
+  "application_test_targets": "compiled, cluster cases not executed",
+  "integrated_workspace_sweep": "owned by the parent step"
+}

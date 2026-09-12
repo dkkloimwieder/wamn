@@ -1,0 +1,40 @@
+{
+  "commit": "4fd7ca12e898e6440f605aecc085b254805de6f3",
+  "parent": "2adc1f6ff9d29f7a1cd7a79840bc1fadf08605a0",
+  "tested_source_matches_commit": true,
+  "files": {
+    "README.md": {
+      "sha256": "51b56a718fa19a528c3a1cb18826236c954e9e5ecfb48ddec38d2da731f9ed76",
+      "mode": "0o664"
+    },
+    "apps/wamn_receiving/tests/route_authentication_live/cluster/build.rs": {
+      "sha256": "492ab3ddc186600b1a29cbe8f8ab5ffb6e13320d606e69c2fbd88a8861eff29d",
+      "mode": "0o664"
+    },
+    "apps/wamn_wms/tests/cluster/build.rs": {
+      "sha256": "37b5e38ce03a94f6bb10ce398ac25a684bbaea8b157da68d4a459f69cafc60f4",
+      "mode": "0o664"
+    },
+    "docs/operations/build-and-test.md": {
+      "sha256": "b7ef0d19e5c834da87e03dde284d7dca80e4b12611d31666707743682173850a",
+      "mode": "0o664"
+    },
+    "docs/perf/2026.09/effects-response/tools/cross_profile.py": {
+      "sha256": "12fa6bcb1342dadffd0019e0e281741b0e42e1208b52fd026f1a836cc7831407",
+      "mode": "0o664"
+    },
+    "tests/conformance/tests/guest_workspace_closure.rs": {
+      "sha256": "dbb1afb028c8166809c34b37e315d4c28123d939df2d6e884a684e2f7bd6e377",
+      "mode": "0o664"
+    },
+    "tests/conformance/tests/profile_selectors.rs": {
+      "sha256": "166717b3bdcc5a1773aa9748e3d2a01de25cc2982a5a84e5a1958bea0ab6745c",
+      "mode": "0o664"
+    },
+    "tools/build-components": {
+      "sha256": "1082ca6e99ebbecbcc4e6afbfc5cf832ca2ab1f0d3efdda621e193b904d8c668",
+      "mode": "0o775"
+    }
+  },
+  "status": ""
+}

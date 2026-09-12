@@ -1,0 +1,75 @@
+[
+  {
+    "argv": [
+      "bash",
+      "-n",
+      "tools/build-components"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.0022197469952516258
+  },
+  {
+    "argv": [
+      "python3",
+      "-c",
+      "from pathlib import Path; p=Path('docs/perf/2026.09/effects-response/tools/cross_profile.py'); compile(p.read_text(), str(p), 'exec')"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.025179927004501224
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "test",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-proof-conformance",
+      "--test",
+      "profile_selectors",
+      "--test",
+      "guest_workspace_closure",
+      "--",
+      "--nocapture",
+      "--test-threads=1"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 276.54785128799267
+  },
+  {
+    "argv": [
+      "tools/build-components",
+      "watch-roots",
+      "all"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.1034994029905647
+  },
+  {
+    "argv": [
+      "tools/build-components",
+      "watch-roots",
+      "app",
+      "apps/wamn_receiving"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 0.09426946000894532
+  },
+  {
+    "argv": [
+      "cargo",
+      "+1.98.0",
+      "check",
+      "--locked",
+      "--offline",
+      "-p",
+      "wamn-receiving-tests",
+      "-p",
+      "wamn-wms-tests",
+      "--all-targets"
+    ],
+    "exit_code": 0,
+    "elapsed_seconds": 173.06576430500718
+  }
+]
