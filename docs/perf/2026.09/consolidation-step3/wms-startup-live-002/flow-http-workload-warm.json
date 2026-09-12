@@ -1,0 +1,121 @@
+{
+  "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+  "kind": "Workload",
+  "metadata": {
+    "annotations": {
+      "runtime.wasmcloud.dev/workload-replica-set-generation": "7b6dc44ddb"
+    },
+    "creationTimestamp": "2026-09-12T00:28:54Z",
+    "finalizers": [
+      "runtime.wasmcloud.dev/workload-finalizer"
+    ],
+    "generation": 1,
+    "name": "flow-http-79bb7d86d7-dfff8c786",
+    "namespace": "wamn-wms-bf6db9d2e59b44dbbc1b018659633b5b",
+    "ownerReferences": [
+      {
+        "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+        "blockOwnerDeletion": true,
+        "controller": true,
+        "kind": "WorkloadReplicaSet",
+        "name": "flow-http-79bb7d86d7",
+        "uid": "dfc680d4-4eeb-4b0f-8198-def4726e3f43"
+      }
+    ],
+    "resourceVersion": "1329",
+    "uid": "7cec601f-bf51-4809-9e87-784eb72660b9"
+  },
+  "spec": {
+    "components": [
+      {
+        "image": "172.28.0.15:5000/wamn/flow-http@sha256:ccc465d574cb79eb4978d24c5ae219158d20a26b04478235699bbe98d8af2d37",
+        "imagePullPolicy": "Always",
+        "localResources": {
+          "config": {
+            "wamn.catalog": "default",
+            "wamn.environment": "dev",
+            "wamn.project": "wms",
+            "wamn.schema": "wms",
+            "wamn.tenant": "wms-route-auth"
+          }
+        },
+        "name": "flow-http"
+      }
+    ],
+    "environment": "wamn-wms-bf6db9d2e59b44dbbc1b018659633b5b",
+    "hostInterfaces": [
+      {
+        "config": {
+          "host": "wms.localhost"
+        },
+        "interfaces": [
+          "handler"
+        ],
+        "namespace": "wasi",
+        "package": "http",
+        "version": "0.3.0"
+      },
+      {
+        "interfaces": [
+          "routing"
+        ],
+        "namespace": "wamn",
+        "package": "flow-http-routing",
+        "version": "0.1.0"
+      },
+      {
+        "interfaces": [
+          "delivery"
+        ],
+        "namespace": "wamn",
+        "package": "router-delivery",
+        "version": "0.1.0"
+      }
+    ],
+    "hostSelector": {
+      "hostgroup": "default"
+    },
+    "kubernetes": {
+      "service": {
+        "name": "flow-http"
+      }
+    }
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-09-12T00:28:54Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Config"
+      },
+      {
+        "lastTransitionTime": "2026-09-12T00:28:54Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "HostSelection"
+      },
+      {
+        "lastTransitionTime": "2026-09-12T00:28:58Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Placement"
+      },
+      {
+        "lastTransitionTime": "2026-09-12T00:28:58Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Sync"
+      },
+      {
+        "lastTransitionTime": "2026-09-12T00:28:58Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Ready"
+      }
+    ],
+    "environment": "wamn-wms-bf6db9d2e59b44dbbc1b018659633b5b",
+    "hostId": "2678f643-9799-4704-b375-e4f5b904c12a",
+    "workloadId": "7cec601f-bf51-4809-9e87-784eb72660b9"
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+  "kind": "WorkloadReplicaSet",
+  "metadata": {
+    "annotations": {
+      "kubectl.kubernetes.io/last-applied-configuration": "{\"apiVersion\":\"runtime.wasmcloud.dev/v1alpha1\",\"kind\":\"WorkloadDeployment\",\"metadata\":{\"annotations\":{},\"name\":\"flow-http\",\"namespace\":\"wamn-wms-bf6db9d2e59b44dbbc1b018659633b5b\"},\"spec\":{\"replicas\":1,\"template\":{\"spec\":{\"components\":[{\"image\":\"172.28.0.15:5000/wamn/flow-http@sha256:ccc465d574cb79eb4978d24c5ae219158d20a26b04478235699bbe98d8af2d37\",\"imagePullPolicy\":\"Always\",\"localResources\":{\"allowedIpNameLookups\":[],\"config\":{\"wamn.catalog\":\"default\",\"wamn.environment\":\"dev\",\"wamn.project\":\"wms\",\"wamn.schema\":\"wms\",\"wamn.tenant\":\"wms-route-auth\"}},\"name\":\"flow-http\"}],\"environment\":\"wamn-wms-bf6db9d2e59b44dbbc1b018659633b5b\",\"hostInterfaces\":[{\"config\":{\"host\":\"wms.localhost\"},\"interfaces\":[\"handler\"],\"namespace\":\"wasi\",\"package\":\"http\",\"version\":\"0.3.0\"},{\"interfaces\":[\"routing\"],\"namespace\":\"wamn\",\"package\":\"flow-http-routing\",\"version\":\"0.1.0\"},{\"interfaces\":[\"delivery\"],\"namespace\":\"wamn\",\"package\":\"router-delivery\",\"version\":\"0.1.0\"}],\"hostSelector\":{\"hostgroup\":\"default\"},\"kubernetes\":{\"service\":{\"name\":\"flow-http\"}}}}}}\n"
+    },
+    "creationTimestamp": "2026-09-12T00:28:54Z",
+    "generation": 1,
+    "labels": {
+      "runtime.wasmcloud.dev/workload-deployment": "flow-http"
+    },
+    "name": "flow-http-79bb7d86d7",
+    "namespace": "wamn-wms-bf6db9d2e59b44dbbc1b018659633b5b",
+    "ownerReferences": [
+      {
+        "apiVersion": "runtime.wasmcloud.dev/v1alpha1",
+        "blockOwnerDeletion": true,
+        "controller": true,
+        "kind": "WorkloadDeployment",
+        "name": "flow-http",
+        "uid": "0c30ec23-bc7d-4812-be38-1fd67bed9b3c"
+      }
+    ],
+    "resourceVersion": "1330",
+    "uid": "dfc680d4-4eeb-4b0f-8198-def4726e3f43"
+  },
+  "spec": {
+    "replicas": 1,
+    "template": {
+      "spec": {
+        "components": [
+          {
+            "image": "172.28.0.15:5000/wamn/flow-http@sha256:ccc465d574cb79eb4978d24c5ae219158d20a26b04478235699bbe98d8af2d37",
+            "imagePullPolicy": "Always",
+            "localResources": {
+              "config": {
+                "wamn.catalog": "default",
+                "wamn.environment": "dev",
+                "wamn.project": "wms",
+                "wamn.schema": "wms",
+                "wamn.tenant": "wms-route-auth"
+              }
+            },
+            "name": "flow-http"
+          }
+        ],
+        "environment": "wamn-wms-bf6db9d2e59b44dbbc1b018659633b5b",
+        "hostInterfaces": [
+          {
+            "config": {
+              "host": "wms.localhost"
+            },
+            "interfaces": [
+              "handler"
+            ],
+            "namespace": "wasi",
+            "package": "http",
+            "version": "0.3.0"
+          },
+          {
+            "interfaces": [
+              "routing"
+            ],
+            "namespace": "wamn",
+            "package": "flow-http-routing",
+            "version": "0.1.0"
+          },
+          {
+            "interfaces": [
+              "delivery"
+            ],
+            "namespace": "wamn",
+            "package": "router-delivery",
+            "version": "0.1.0"
+          }
+        ],
+        "hostSelector": {
+          "hostgroup": "default"
+        },
+        "kubernetes": {
+          "service": {
+            "name": "flow-http"
+          }
+        }
+      }
+    }
+  },
+  "status": {
+    "conditions": [
+      {
+        "lastTransitionTime": "2026-09-12T00:28:54Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "ScaleUp"
+      },
+      {
+        "lastTransitionTime": "2026-09-12T00:28:54Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "ScaleDown"
+      },
+      {
+        "lastTransitionTime": "2026-09-12T00:28:58Z",
+        "reason": "Available",
+        "status": "True",
+        "type": "Ready"
+      }
+    ],
+    "replicas": {
+      "current": 1,
+      "expected": 1,
+      "ready": 1
+    }
+  }
+}

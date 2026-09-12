@@ -1,0 +1,42 @@
+{
+  "command": [
+    "cargo",
+    "+1.98.0",
+    "test",
+    "--locked",
+    "--offline",
+    "-p",
+    "wamn-wms-tests",
+    "--lib",
+    "cluster::restarted_wms_host_retains_compiled_code_and_serves_requests",
+    "--",
+    "--exact",
+    "--ignored",
+    "--nocapture"
+  ],
+  "elapsed_seconds": 447.5085984780453,
+  "ended_utc": "2026-09-12T00:30:37.265916+00:00",
+  "environment": {
+    "CARGO_BUILD_JOBS": "2",
+    "CARGO_TARGET_DIR": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911/target",
+    "RUSTC_WRAPPER": "",
+    "WAMN_WMS_EVIDENCE_DIR": "/home/kaalin/dev/wamn/docs/perf/2026.09/consolidation-step3/wms-startup-live-002"
+  },
+  "exit_code": 0,
+  "log": "live-cargo.log",
+  "log_sha256": "61e95f5417981dce30ae44435aa0ecb6a65952f0549c9dd2151e77c178ad01e7",
+  "phase": "live",
+  "source_commit": "fb6c2b2e28fbcb90a8a373672a60e2397488cae5",
+  "source_directory": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911",
+  "source_unchanged": true,
+  "started_utc": "2026-09-12T00:23:09.757227+00:00",
+  "test_binaries": [
+    {
+      "bytes": 299153880,
+      "kind": "file",
+      "mode": "0o775",
+      "path": "/home/kaalin/.cache/wamn-lanes/native-c-completion-20260911/target/debug/deps/wamn_wms_tests-f5db035c850a4471",
+      "sha256": "af7919e71dbadb2c2d5c35c430efe3b3e24d8d8202d9e705167ee9d2501ceed8"
+    }
+  ]
+}

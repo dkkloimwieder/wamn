@@ -1,0 +1,17 @@
+{
+  "artifact_pull_ms": 0.0,
+  "authentication_ms": 44.675038,
+  "callable_http_acquire_ms": 41.13897,
+  "compile_ms": 0.0,
+  "executor_platform_acquire_ms": 0.0,
+  "guest_db_call_ms": 92.09095,
+  "guest_sql_acquire_ms": 88.664972,
+  "http_total_ms": 153.219,
+  "link_ms": 0.0,
+  "linker_setup_ms": 0.0,
+  "passed": true,
+  "phase": "restart-first",
+  "resolution_ms": 0.068451,
+  "root_ms": 152.90255100000002,
+  "sql_ms": 2.048867
+}

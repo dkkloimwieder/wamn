@@ -1,0 +1,58 @@
+{
+  "observed_utc": "2026-09-12T00:31:40.440960+00:00",
+  "source": "fb6c2b2e28fbcb90a8a373672a60e2397488cae5",
+  "cluster": "wamn-wms-bf6db9d2e59b44dbbc1b018659633b5b",
+  "image": "wamn-host:wms-fb6c2b2e28fb-bf6db9d2e59b-debug",
+  "commands": [
+    {
+      "command": [
+        "docker",
+        "container",
+        "ls",
+        "--all",
+        "--format",
+        "{{json .Names}}"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.010907988995313644,
+      "stdout": "remaining-containers.stdout",
+      "stderr": "remaining-containers.stderr",
+      "stdout_sha256": "47822dc73e866ab3f6fdfa370c32d98705d431f202350c28a366d5613fc8b48b",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "kind",
+        "get",
+        "clusters"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.022031268978025764,
+      "stdout": "remaining-clusters.stdout",
+      "stderr": "remaining-clusters.stderr",
+      "stdout_sha256": "7defddd79c7cfd281e37421fe308d5bedf73a70eea3109dcf578b5f18946dab4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "docker",
+        "image",
+        "ls",
+        "--format",
+        "{{json .Repository}} {{json .Tag}}"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.01601879595546052,
+      "stdout": "remaining-images.stdout",
+      "stderr": "remaining-images.stderr",
+      "stdout_sha256": "ef35a043906b53500fb9f2e084da5a2f08c07b483c03a81c410bdc7c34184e95",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "remaining_owned_containers": [],
+  "owned_cluster_present": false,
+  "owned_image_present": false,
+  "private_directory": "/tmp/wamn-wms-bf6db9d2e59b44dbbc1b018659633b5b",
+  "private_directory_present": false,
+  "scope": "This is a post-run observation of exact owned names. Other resources were not changed."
+}
