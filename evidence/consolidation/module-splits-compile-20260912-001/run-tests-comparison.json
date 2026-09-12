@@ -1,0 +1,121 @@
+{
+  "base": "b0f049e010925e1032bfd7ce2f0921cfe17630b9",
+  "source": "services/ctl/tests/run_plane_live.rs",
+  "function_count": 84,
+  "functions_byte_identical_excluding_required_visibility": true,
+  "test_count": 17,
+  "test_names": [
+    "run_plane_reconcile_live",
+    "frame_identity_cutover_live",
+    "effect_writer_cutover_live",
+    "provisioner_minted_generation_live",
+    "two_plane_residency_live",
+    "partition_plane_cutover_live",
+    "partition_plane_active_lease_refusal_live",
+    "stored_suite_cutover_live",
+    "child_run_cutover_live",
+    "rerun_lineage_cutover_live",
+    "failure_detail_cutover_live",
+    "dispatch_reader_read_surface_live",
+    "environment_policy_row_security_live",
+    "registry_durability_schema_ensure_live",
+    "reconcile_target_identity_guard_live",
+    "retired_effect_disposition_cutover_live",
+    "authoring_privileges_at_record_plan_no_repair_live"
+  ],
+  "test_module_mapping": [
+    {
+      "before": "frame_identity_cutover_live",
+      "after": "effect_ledgers::frame_identity_cutover_live"
+    },
+    {
+      "before": "effect_writer_cutover_live",
+      "after": "effect_ledgers::effect_writer_cutover_live"
+    },
+    {
+      "before": "two_plane_residency_live",
+      "after": "catalog::two_plane_residency_live"
+    },
+    {
+      "before": "partition_plane_cutover_live",
+      "after": "partition::partition_plane_cutover_live"
+    },
+    {
+      "before": "partition_plane_active_lease_refusal_live",
+      "after": "partition::partition_plane_active_lease_refusal_live"
+    },
+    {
+      "before": "stored_suite_cutover_live",
+      "after": "catalog::stored_suite_cutover_live"
+    },
+    {
+      "before": "child_run_cutover_live",
+      "after": "run_history::child_run_cutover_live"
+    },
+    {
+      "before": "rerun_lineage_cutover_live",
+      "after": "run_history::rerun_lineage_cutover_live"
+    },
+    {
+      "before": "failure_detail_cutover_live",
+      "after": "run_history::failure_detail_cutover_live"
+    },
+    {
+      "before": "reconcile_target_identity_guard_live",
+      "after": "target_identity::reconcile_target_identity_guard_live"
+    },
+    {
+      "before": "authoring_privileges_at_record_plan_no_repair_live",
+      "after": "catalog::authoring_privileges_at_record_plan_no_repair_live"
+    }
+  ],
+  "ignore_count": 7,
+  "literal_count": 1395,
+  "existing_literal_bytes_unchanged": true,
+  "all_comment_bytes_unchanged": true,
+  "held_sql_contexts_unchanged": true,
+  "main_sequence_body_unchanged": true,
+  "explicit_location_macro_changes": false,
+  "draft_corrections": [
+    "Add EMPTY_EXECUTION_BUNDLE_HASH to effect_ledgers parent imports for its existing format-string captures.",
+    "Format only declarations and imports."
+  ],
+  "rustfmt_exit_code": 0,
+  "cargo_or_tests_run": false,
+  "files": {
+    "services/ctl/tests/run_plane_live.rs": {
+      "bytes": 107200,
+      "sha256": "6fac93479b5ff460ac855cb37bdb52bc19ba80c59fe7544ea9b9ccd0955051fb",
+      "git_mode": "100644"
+    },
+    "services/ctl/tests/run_plane_live/target_identity.rs": {
+      "bytes": 19421,
+      "sha256": "72ebe1248a2ae51a4612e89f4f8f956802a185419f116c444e84f065abc059fe",
+      "git_mode": "100644"
+    },
+    "services/ctl/tests/run_plane_live/partition.rs": {
+      "bytes": 21553,
+      "sha256": "3cd5fa773f3c8448819b33ce9b35f5db91d86719018d21471ea823621027af90",
+      "git_mode": "100644"
+    },
+    "services/ctl/tests/run_plane_live/run_history.rs": {
+      "bytes": 37999,
+      "sha256": "f67a7c3728cd2ede2aa0b1b9e7cc26fad57065f4f6271202db36d0c32f7cb061",
+      "git_mode": "100644"
+    },
+    "services/ctl/tests/run_plane_live/effect_ledgers.rs": {
+      "bytes": 40231,
+      "sha256": "9e5c2dccd20dfcbe5baf63ce6da3d6b1af148516bcf5ec3e356350df55fb9657",
+      "git_mode": "100644"
+    },
+    "services/ctl/tests/run_plane_live/catalog.rs": {
+      "bytes": 24749,
+      "sha256": "b5545cacdd759f1c3532be049c105ede2650f9a1e1fdcf75b74c6b63d555d788",
+      "git_mode": "100644"
+    }
+  },
+  "commit": "f4533fa22100adde62929a839259c77da6238a92",
+  "committed_bytes_match": true,
+  "worktree_clean": true,
+  "staged_diff_check_exit_code": 0
+}

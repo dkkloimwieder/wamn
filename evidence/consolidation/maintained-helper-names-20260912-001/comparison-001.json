@@ -1,0 +1,10 @@
+{
+  "passed": false,
+  "command": [
+    "python3",
+    "/tmp/consolidation-maintained-helper-names-check-20260912.py"
+  ],
+  "failure": "AssertionError: docs/perf/2026.09/generated-tui-wms/tools/terminal_preflight.py",
+  "cause": "The comparison reversed driver_path in every file, including an existing unchanged driver_path binding. Restrict reverse names to each file\u2019s actual substitutions.",
+  "source_changed_by_check": false
+}

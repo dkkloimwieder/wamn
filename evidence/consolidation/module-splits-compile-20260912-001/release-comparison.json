@@ -1,0 +1,168 @@
+{
+  "base_commit": "53ad74da9cab51d1eba75203c6f0998bb4af9f2d",
+  "base_source_sha256": "6a330e0fb02cf21db18d6ec4ea61448ad956c54dc8cbfc2ec3c0210ace3f11fc",
+  "patch_sha256": "5361558a7ef625a34ca60f1471eca8bf65a0c2be92982e5adbeb8bfbb69084e9",
+  "patch_applied": false,
+  "source_edits": false,
+  "tests_or_builds_run": false,
+  "new_dependencies": false,
+  "files": [
+    {
+      "path": "services/ctl/src/publish_release.rs",
+      "before_sha256": "6a330e0fb02cf21db18d6ec4ea61448ad956c54dc8cbfc2ec3c0210ace3f11fc",
+      "after_sha256": "c13ce505bbbb336cae03525ac15ded305fc0a20819a3e0b5a779a04b5e03d962",
+      "before_lines": 3540,
+      "after_lines": 2791,
+      "mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/publish_release/attachments.rs",
+      "before_sha256": null,
+      "after_sha256": "de2075d779102cfa5e888342e8874eb4b169046fabba29a62b9f2f2dfc90b92c",
+      "before_lines": 0,
+      "after_lines": 206,
+      "mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/publish_release/package_sources.rs",
+      "before_sha256": null,
+      "after_sha256": "4339e7b5c0929ef7064b01d9b58365f4266a84b58f25c2fc7f4fdae1fcad1715",
+      "before_lines": 0,
+      "after_lines": 107,
+      "mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/publish_release/components.rs",
+      "before_sha256": null,
+      "after_sha256": "717193a397534db1dd13d45f05dceb46230fb74747627d38905d2ae4cac8ec27",
+      "before_lines": 0,
+      "after_lines": 472,
+      "mode": "100644"
+    }
+  ],
+  "moved_spans": [
+    {
+      "module": "attachments",
+      "start_line": 819,
+      "end_line": 874,
+      "source_bytes": 2203,
+      "source_sha256": "3a937e1f3fe8ad34a4168525f4920c8734da3481e9d76b4e6e461bb66a1779a5",
+      "body_bytes_preserved_after_visibility_normalization": true
+    },
+    {
+      "module": "package_sources",
+      "start_line": 875,
+      "end_line": 978,
+      "source_bytes": 4307,
+      "source_sha256": "cbc8c1cf7084d22c1a0a27b9fd737fdf44b85534507cada8e940df9086ebba4d",
+      "body_bytes_preserved_after_visibility_normalization": true
+    },
+    {
+      "module": "attachments",
+      "start_line": 1270,
+      "end_line": 1413,
+      "source_bytes": 5700,
+      "source_sha256": "2041f71d5e7a08af89404ae09a86d773fb972459ef4be975c7de64919056d655",
+      "body_bytes_preserved_after_visibility_normalization": true
+    },
+    {
+      "module": "components",
+      "start_line": 1539,
+      "end_line": 1880,
+      "source_bytes": 14543,
+      "source_sha256": "7089e1ca18be317051bd083c4c47aff669c41d10f8de0835b887f404800ac248",
+      "body_bytes_preserved_after_visibility_normalization": true
+    },
+    {
+      "module": "components",
+      "start_line": 2078,
+      "end_line": 2200,
+      "source_bytes": 5103,
+      "source_sha256": "96608a8a34ad29c21ecbe23fec3dfa6545ba8e097b681c134e5c17ea16c75a60",
+      "body_bytes_preserved_after_visibility_normalization": true
+    }
+  ],
+  "visibility_changes": {
+    "attachments": [
+      "read_package_attachments",
+      "merge_package_attachment_documents",
+      "validate_attachment_definition_hashes",
+      "resolve_route_host_overlay"
+    ],
+    "package_sources": [
+      "read_package_manifests",
+      "validate_package_metadata"
+    ],
+    "components": [
+      "resolve_wiring_components",
+      "resolved_wiring_entry_operation",
+      "resolve_component_dependency_closure",
+      "project_serving_component",
+      "validate_anonymous_wiring_closure"
+    ]
+  },
+  "parent_reconstruction_exact": true,
+  "function_bodies_and_literals_exact": true,
+  "sql_constants_and_transaction_groups_unchanged": true,
+  "existing_test_module_sha256": "672b5b6a7da6d4aa8a0a4e119ef71484ec586709a9e1c7fa9c305203e5efcc37",
+  "existing_test_names": [
+    "real_package_attachment_documents_merge_into_one_release",
+    "package_attachment_documents_refuse_duplicate_identity",
+    "package_attachment_route_collisions_use_the_existing_governor",
+    "release_mint_binds_each_attachment_hash_to_its_definition",
+    "release_mint_requires_and_applies_the_deployment_route_host",
+    "fresh_only_component_policy_survives_release_projection",
+    "release_mint_consumes_package_metadata_and_refuses_unsatisfied_policy",
+    "serving_registration_is_derived_from_the_exact_handler_and_unique_entry_wiring",
+    "operation_dependency_resolves_the_exact_release_tuple_without_relabeling",
+    "operation_dependency_refuses_digest_and_release_membership_drift",
+    "a_disposable_target_resolves_a_moved_base_digest_and_still_demands_membership",
+    "the_projected_environment_marker_selects_the_dependency_rule",
+    "component_dependencies_expand_the_exact_release_closure_and_refuse_cycles",
+    "a_disposable_target_expands_a_closure_whose_declared_dependency_digest_moved",
+    "a_dependency_admitted_with_no_effects_keeps_the_effect_free_case_path",
+    "a_dependency_admitted_with_one_effect_loses_the_effect_free_case_path",
+    "release_projection_preserves_operation_scoped_statement_facts",
+    "release_mint_refuses_an_anonymous_path_to_a_registered_operation",
+    "package_and_wiring_coordinates_are_exact",
+    "environment_policy_refusals_remain_distinct"
+  ],
+  "existing_test_names_unchanged": true,
+  "public_paths_unchanged": true,
+  "public_reexport": "publish_release::effect_free_operation_dependencies",
+  "location_dependent_macro_or_attribute_hits": [],
+  "relative_include_or_module_path_changes": false,
+  "private_module_only_imports": true,
+  "held_sql_dependency": {
+    "path": "/tmp/consolidation-sql-projections-patch-20260912/01-attestation-release.patch",
+    "sha256": "e84e4ac1606e02ca0d334610a6e30c96b094541e196bd63116207dba8ca63231",
+    "applied": false,
+    "protected_caller_sha256": "cce66a7f4ca774dec0873775c16421743a181f0b51ba8f0fdbdcef4408ef8f6c",
+    "protected_start_line": 694,
+    "protected_end_line": 818,
+    "hunks": [
+      {
+        "hunk": "@@ -723,20 +723,6 @@",
+        "old_context_sha256": "c1acb92dfc1679d50dce641fef52c37f0711a17746cfee0d114afed1ae06cae4",
+        "present_unchanged": true
+      },
+      {
+        "hunk": "@@ -750,17 +736,37 @@",
+        "old_context_sha256": "ebcc2b75dfc998f838a6b1b6af2dea6ddd39d3594cf3e6bca15c7b73cbcc7b4b",
+        "present_unchanged": true
+      },
+      {
+        "hunk": "@@ -779,8 +785,9 @@",
+        "old_context_sha256": "8c4b9aacab31eabed9a74a7e9e98f110ceee68d6be1a343c736ffdafdbbc1052",
+        "present_unchanged": true
+      },
+      {
+        "hunk": "@@ -789,28 +796,64 @@",
+        "old_context_sha256": "5f3a83d2138fb3c290226b65aa0078a2dad09408c6c3dd92ac17a88d2170869d",
+        "present_unchanged": true
+      }
+    ],
+    "integration_requirement": "Keep the held attestation decision patch separate. Its original caller hunk bytes remain present after this split."
+  },
+  "parent_body_references_have_preserved_imports": true
+}

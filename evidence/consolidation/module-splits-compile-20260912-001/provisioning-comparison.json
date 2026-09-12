@@ -1,0 +1,253 @@
+{
+  "base_commit": "53ad74da9cab51d1eba75203c6f0998bb4af9f2d",
+  "base_source_sha256": "5256df5853d186d194c20518d337668344e2efa436cb893c0e590dc4a2fbb914",
+  "patch_sha256": "569fbbf24403ebfe6839681c92de757b3db1b801c111dd2e07b6a969a461c503",
+  "patch_applied": false,
+  "source_edits": false,
+  "tests_or_builds_run": false,
+  "new_dependencies": false,
+  "files": [
+    {
+      "path": "services/ctl/src/provision_project_env.rs",
+      "before_sha256": "5256df5853d186d194c20518d337668344e2efa436cb893c0e590dc4a2fbb914",
+      "after_sha256": "39f1d2792f93502598951bc5cc14381653e69e688367c2c41d4c4d5de93eba1d",
+      "before_lines": 3552,
+      "after_lines": 3137,
+      "mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/provision_project_env/database.rs",
+      "before_sha256": null,
+      "after_sha256": "abe4e71d858a23b74c8ff8b0ac8964c5a27849aa371e2deaa1b87d0cd7b50dc4",
+      "before_lines": 0,
+      "after_lines": 70,
+      "mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/provision_project_env/pat_secrets.rs",
+      "before_sha256": null,
+      "after_sha256": "3de9d4e1567347f5ca6f457de2ce64f07b1e6d04702209571bc6347150dd7dc7",
+      "before_lines": 0,
+      "after_lines": 256,
+      "mode": "100644"
+    },
+    {
+      "path": "services/ctl/src/provision_project_env/output.rs",
+      "before_sha256": null,
+      "after_sha256": "d2027bba9c71d81ec9bfd2340841a9acfe45065d58efa0475297a5638e2c10ea",
+      "before_lines": 0,
+      "after_lines": 132,
+      "mode": "100644"
+    }
+  ],
+  "moved_spans": [
+    {
+      "module": "database",
+      "start_line": 1840,
+      "end_line": 1902,
+      "source_bytes": 2014,
+      "source_sha256": "34242c141252b40a0b8325ebe63a1b14250c54bdac9ece911d6dd044cf66fa72",
+      "visibility_changes": [
+        "fn exact_project_database_config",
+        "fn named_database_config",
+        "fn workload_config",
+        "fn workload_url",
+        "async fn connect_config"
+      ],
+      "normalized_moved_bytes_exact": true
+    },
+    {
+      "module": "pat_secrets",
+      "start_line": 2910,
+      "end_line": 3145,
+      "source_bytes": 7286,
+      "source_sha256": "5231d3283db64072a36f2ae67c98bb3892aeea2fb215206f216551f2c45e6f65",
+      "visibility_changes": [
+        "const PAT_TTL",
+        "struct PatPurpose",
+        "const MANAGEMENT_AUTHOR",
+        "const ROUTE_CALLER",
+        "fn subject",
+        "fn display_name",
+        "async fn issue_pat_secrets",
+        "async fn revoke_provisioning_pat",
+        "fn render_pat_secret"
+      ],
+      "normalized_moved_bytes_exact": true
+    },
+    {
+      "module": "output",
+      "start_line": 3152,
+      "end_line": 3195,
+      "source_bytes": 1541,
+      "source_sha256": "9046a185a55c1e72097d9f0b1873caf15bd5637b0fb2eb016b30e33697b9f3c0",
+      "visibility_changes": [
+        "fn parse_secret_path",
+        "fn ensure_secret_path",
+        "fn ensure_distinct_secret_paths"
+      ],
+      "normalized_moved_bytes_exact": true
+    },
+    {
+      "module": "pat_secrets",
+      "start_line": 3196,
+      "end_line": 3206,
+      "source_bytes": 339,
+      "source_sha256": "3066b713338ea13f30c1a8cdad64646d0bbd1f53a18cfd24322db19cb07d2e53",
+      "visibility_changes": [
+        "fn parse_pat_prefix"
+      ],
+      "normalized_moved_bytes_exact": true
+    },
+    {
+      "module": "output",
+      "start_line": 3207,
+      "end_line": 3267,
+      "source_bytes": 2310,
+      "source_sha256": "fbcb918151341b5bd49ea7455fe09294f1ed44ffbb9f437d8a5b6c82a5ee22f2",
+      "visibility_changes": [
+        "static SECRET_TEMP_SEQUENCE"
+      ],
+      "normalized_moved_bytes_exact": true
+    },
+    {
+      "module": "output",
+      "start_line": 3534,
+      "end_line": 3550,
+      "source_bytes": 664,
+      "source_sha256": "5787fdebc70a7f41fac3609815d8bfc929ac4961510e812a9d397bc8f0353f3f",
+      "visibility_changes": [
+        "fn emit_json",
+        "fn emit_text"
+      ],
+      "normalized_moved_bytes_exact": true
+    }
+  ],
+  "parent_reconstruction_exact": true,
+  "function_bodies_and_literals_exact": true,
+  "sql_bytes_exact": true,
+  "parent_import_changes": [
+    {
+      "before": "use std::io::Write as _;\n",
+      "after": ""
+    },
+    {
+      "before": "use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};\n",
+      "after": "#[cfg(test)]\nuse std::os::unix::fs::PermissionsExt as _;\n"
+    },
+    {
+      "before": "use std::str::FromStr as _;\n",
+      "after": ""
+    }
+  ],
+  "public_paths_unchanged": true,
+  "crate_reexport": "provision_project_env::write_secret_json",
+  "existing_tests": {
+    "path": "services/ctl/src/provision_project_env/tests.rs",
+    "sha256": "c714f089d11c6ece33c76a2d71a2f42b3fe2943975a9df720d314e8109f8ade1",
+    "names": [
+      "clap_guards_the_three_infallible_provisioning_identity_accesses",
+      "clap_guards_the_workload_identity_accesses_in_every_action_mode",
+      "the_minted_instance_suffix_is_a_fresh_valid_dns_label_tail",
+      "a_reserved_or_bad_project_id_is_rejected_before_any_effect",
+      "cluster_is_derived_by_placement_and_policy",
+      "pat_literals_and_secret_documents_are_exact",
+      "pat_issue_flags_select_independently_and_revoke_conflicts",
+      "pat_transport_configuration_refuses_before_provisioning_effects",
+      "pat_transport_flags_hide_environment_values",
+      "every_secret_output_rejects_stdout_and_prefix_is_strict",
+      "parsed_credential_outputs_must_name_distinct_files",
+      "secret_files_are_plain_json_and_mode_0600",
+      "secret_writes_replace_links_without_following_or_sharing_them",
+      "provisioning_summary_contains_no_database_credentials",
+      "the_privilege_batch_revokes_every_stable_role_connect_after_the_owner_statement",
+      "the_privilege_batch_never_grants_the_stable_guest_acl_role_connect",
+      "the_role_batch_creates_passwordless_nologin_acl_roles",
+      "provisioning_mints_no_dispatch_reader_credential",
+      "the_app_password_has_no_default",
+      "the_credential_free_modes_parse_without_a_password",
+      "no_flag_exclusion_list_names_a_family_and_none_can",
+      "every_family_gets_its_flags_from_the_one_derivation",
+      "one_action_group_excludes_every_pair_across_every_family",
+      "every_family_secret_is_bound_to_its_own_prepare",
+      "every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family",
+      "the_registry_reader_grants_are_exact_and_never_reach_identity",
+      "the_identity_reader_grants_are_exact_and_never_allow_a_write",
+      "the_http_admitter_grants_require_fresh_reads_and_refuse_writes",
+      "every_family_derives_its_credential_secret_name",
+      "session_reader_requires_exact_grants",
+      "materializer_grants_cover_exactly_the_two_production_reads",
+      "stable_writer_grants_require_the_complete_schema_set",
+      "stable_writer_grants_refuse_unrelated_object_kinds",
+      "management_grants_are_exact_and_required_in_the_target_database",
+      "the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle",
+      "every_workload_family_carries_a_distinct_frozen_label",
+      "stable_acl_role_members_are_only_scoped_generation_roles"
+    ],
+    "unchanged": true,
+    "source_reader_path_and_cli_subject_unchanged": true
+  },
+  "held_sql_dependencies": [
+    {
+      "path": "/tmp/consolidation-management-review.patch",
+      "sha256": "b465317ac4a0100e492b8f33436665280ad088e9ba80113b2842785b35aa9e59",
+      "applied": false,
+      "parent_hunks": [
+        {
+          "hunk": "@@ -2458,23 +2458,6 @@",
+          "old_context_sha256": "383f096e722c1fa6fde8a2b0dc409f0518f033e875c099d3513709ccd7bc3c8e",
+          "present_unchanged": true
+        },
+        {
+          "hunk": "@@ -2496,37 +2479,6 @@",
+          "old_context_sha256": "d6d9f9e8996cd94106993391736c0d670899a8b3da7e7e647e038e053ca9e2a8",
+          "present_unchanged": true
+        }
+      ]
+    },
+    {
+      "path": "/tmp/consolidation-authority-review.patch",
+      "sha256": "5a8b75bb19ab573673dd5342480b4363703e4786aa3a6a1cc3b3b0f81ad641aa",
+      "applied": false,
+      "parent_hunks": [
+        {
+          "hunk": "@@ -2614,12 +2614,6 @@",
+          "old_context_sha256": "d73d02baa8707c0b7e2f4ebd897ae297a36fa0102bffca2588a53c15d13a5a46",
+          "present_unchanged": true
+        }
+      ]
+    },
+    {
+      "path": "/tmp/consolidation-sql-projections-patch-20260912/02-environment-claim.patch",
+      "sha256": "4275209ae12e893e3d9482ea3b6dd48880ecc30232abdaf8f71d1e0ff078d894",
+      "applied": false,
+      "parent_hunks": [
+        {
+          "hunk": "@@ -3457,10 +3457,6 @@",
+          "old_context_sha256": "73df7eb8969731c69568b1f33f21d898050081c3ad95221b673fbcea22d82ef3",
+          "present_unchanged": true
+        },
+        {
+          "hunk": "@@ -3474,7 +3470,7 @@",
+          "old_context_sha256": "d457740aec4c111befb7a26453457701278ffacefa48d0255f2670052444a6e9",
+          "present_unchanged": true
+        },
+        {
+          "hunk": "@@ -3513,7 +3509,7 @@",
+          "old_context_sha256": "5e05ac296c4fdc83d93f680eb75b87b6f49249b8c7459a3e26295af867c3a95f",
+          "present_unchanged": true
+        },
+        {
+          "hunk": "@@ -3525,6 +3521,25 @@",
+          "old_context_sha256": "4d7d8c82afa1ef794e8b6e3b1d8ddbbda4ba7e165621001625b5ded0903a3b97",
+          "present_unchanged": true
+        }
+      ]
+    }
+  ],
+  "location_dependent_macro_or_attribute_hits": [],
+  "relative_include_or_module_path_changes": false,
+  "secret_counter_single_instance_preserved": true,
+  "diagnostic_source_locations_move_with_functions": true,
+  "integration_requirement": "Keep held SQL decisions separate and unapplied until approved. Their caller groups and every old hunk context remain in the parent."
+}

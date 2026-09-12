@@ -1,0 +1,226 @@
+{
+  "base": "b0f049e010925e1032bfd7ce2f0921cfe17630b9",
+  "source_commit": "fb2b4e7711e39247f492bdc71de5b1eebdc89f77",
+  "patch_sha256": "f0f1c1c9f8d33ab3572dfd659e8721f60399f97ce7d4bffe3b7c07ce0a4716cc",
+  "paths": [
+    {
+      "path": "crates/control/provision/src/sql.rs",
+      "sha256": "6fc1906c343aa7ec6991bb5754808e5ce561461cdd968acad311d7cbd31127f1",
+      "bytes": 103144,
+      "mode": "0o664",
+      "prepared_change": "none"
+    },
+    {
+      "path": "crates/control/provision/src/sql/cdc.rs",
+      "sha256": "347d2115e68ef71c147ec5752a554fd675c5cfa057385d43e0b490941e70d520",
+      "bytes": 10711,
+      "mode": "0o664",
+      "prepared_change": "removed one extra EOF newline"
+    },
+    {
+      "path": "crates/control/provision/src/sql/credentials.rs",
+      "sha256": "b620b957a1e97888f6aedb2db403d1d82f200e3ae648b59903e9a93abb7de5d8",
+      "bytes": 15815,
+      "mode": "0o664",
+      "prepared_change": "removed one extra EOF newline"
+    },
+    {
+      "path": "crates/control/provision/src/sql/database.rs",
+      "sha256": "21f2c2187367f20e24fc1f7bda1e523a13ea5eb46b31a4bc97a6c5f364e4a62d",
+      "bytes": 9908,
+      "mode": "0o664",
+      "prepared_change": "removed one extra EOF newline"
+    },
+    {
+      "path": "crates/control/provision/src/sql/database_grants.rs",
+      "sha256": "243be5bce23a8ca38765726276241951902a5650cff021347c63dd603b05d8c9",
+      "bytes": 7950,
+      "mode": "0o664",
+      "prepared_change": "removed one extra EOF newline"
+    }
+  ],
+  "moved_blocks": [
+    {
+      "module": "database",
+      "old_lines": [
+        85,
+        276
+      ],
+      "sha256": "cff6bbdac83d8f72c54aba354edd28f268da6e27aba3344ae3d4014c17bcd0bd",
+      "body_unchanged": true
+    },
+    {
+      "module": "credentials",
+      "old_lines": [
+        552,
+        584
+      ],
+      "sha256": "d6acc0f4349e7a7ac62773b907291ccab626e4d434e4ed9db90731516abb276c",
+      "body_unchanged": true
+    },
+    {
+      "module": "credentials",
+      "old_lines": [
+        1102,
+        1122
+      ],
+      "sha256": "9f28828f309cb9fd26f8d1556947adcafc471a1f28feea10bd51ff5c3a9fce21",
+      "body_unchanged": true
+    },
+    {
+      "module": "credentials",
+      "old_lines": [
+        1152,
+        1344
+      ],
+      "sha256": "75fdd3205fe644bf276369f50a1e470b603ad65831b5d130c390c213673663e9",
+      "body_unchanged": true
+    },
+    {
+      "module": "credentials",
+      "old_lines": [
+        1481,
+        1557
+      ],
+      "sha256": "395e5b6e2bdf2b81a23007e1162c683b197532c4dc230bca4d701b0830740678",
+      "body_unchanged": true
+    },
+    {
+      "module": "database_grants",
+      "old_lines": [
+        1345,
+        1480
+      ],
+      "sha256": "1b9def615f443aba880d4845cefc952a65b9104b7e878035e0d41a79b73191d7",
+      "body_unchanged": true
+    },
+    {
+      "module": "cdc",
+      "old_lines": [
+        1580,
+        1790
+      ],
+      "sha256": "e8d72e60cb4012728410ccf0b57115cbf7645d18919453306f060cd9254e237f",
+      "body_unchanged": true
+    }
+  ],
+  "public_exports": {
+    "database": [
+      "ensure_db_owner_role_sql",
+      "set_database_owner_sql",
+      "PLATFORM_EXTENSIONS",
+      "install_platform_extensions_sql",
+      "create_database_named_sql",
+      "create_database_sql",
+      "drop_database_named_sql",
+      "drop_database_sql",
+      "database_exists_sql",
+      "grant_connect_on_database_sql",
+      "grant_connect_sql"
+    ],
+    "credentials": [
+      "ensure_effect_writer_acl_role_sql",
+      "ensure_workload_acl_role_sql",
+      "prepare_effect_writer_generation_sql",
+      "prepare_workload_generation_sql",
+      "normalize_workload_generation_membership_sql",
+      "retire_effect_writer_generation_sql",
+      "retire_workload_generation_sql",
+      "terminate_effect_writer_generation_sessions_sql",
+      "terminate_workload_generation_sessions_sql",
+      "effect_writer_generation_state_sql",
+      "workload_generation_state_sql",
+      "effect_writer_scope_lock_sql",
+      "workload_scope_lock_sql",
+      "ensure_control_author_acl_role_sql",
+      "prepare_control_author_generation_sql",
+      "retire_control_author_generation_sql",
+      "terminate_control_author_generation_sessions_sql"
+    ],
+    "database_grants": [
+      "public_connect_databases_sql",
+      "revoke_public_connect_floor_sql",
+      "public_temporary_on_current_database_sql",
+      "non_template_databases_sql",
+      "role_database_grants_sql"
+    ],
+    "cdc": [
+      "ensure_replication_role_sql",
+      "ensure_schema_sql",
+      "create_publication_sql",
+      "create_failover_slot_sql",
+      "grant_replication_access_sql",
+      "ensure_cdc_exclusion_map_sql",
+      "upsert_cdc_exclusion_map_sql",
+      "ensure_entity_map_sql",
+      "upsert_entity_map_sql",
+      "drop_publication_sql",
+      "drop_replication_slot_sql"
+    ]
+  },
+  "crate_private_exports": {
+    "database": [],
+    "credentials": [
+      "ensure_acl_role_sql",
+      "retire_acl_generation_sql"
+    ],
+    "database_grants": [],
+    "cdc": []
+  },
+  "inline_tests_identical": true,
+  "all_declaration_names_identical": true,
+  "held_groups_unchanged": [
+    {
+      "group": "Management admission grants",
+      "items": [
+        "MANAGEMENT_ADMITTER_RUN_SELECT_COLUMNS",
+        "MANAGEMENT_ADMITTER_RUN_INSERT_COLUMNS",
+        "MANAGEMENT_ADMITTER_QUEUE_SELECT_COLUMNS",
+        "MANAGEMENT_ADMITTER_QUEUE_INSERT_COLUMNS",
+        "grant_management_admitter_surface_sql"
+      ],
+      "patch": "/tmp/consolidation-management-review.patch"
+    },
+    {
+      "group": "Executor authority grants",
+      "items": [
+        "grant_executor_platform_surface_sql"
+      ],
+      "patch": "/tmp/consolidation-authority-review.patch"
+    },
+    {
+      "group": "Tenant environment projection insertions",
+      "items": [
+        "insert_tenant_environment_sql",
+        "read_tenant_environment_sql",
+        "refresh_tenant_environment_sql"
+      ],
+      "patch": "/tmp/consolidation-sql-projections-patch-20260912/02-environment-claim.patch"
+    },
+    {
+      "group": "Current inline SQL tests",
+      "items": [
+        "sql::tests"
+      ],
+      "reason": "Pending management and executor patches change these assertion bodies; moving them now would obscure their existing patch context."
+    }
+  ],
+  "path_macros_and_relative_includes": [],
+  "syntax": {
+    "argv": [
+      "rustfmt",
+      "+1.98.0",
+      "--edition",
+      "2024",
+      "--emit",
+      "stdout",
+      "crates/control/provision/src/sql.rs"
+    ],
+    "cwd": "/home/kaalin/.cache/wamn-lanes/consolidation-sql-package-20260912",
+    "exit": 0,
+    "elapsed_seconds": 0.025502361997496337
+  },
+  "cargo_builds_or_tests_run": false,
+  "committed_blobs_match_compared_sources": true,
+  "git_diff_cached_check_exit": 0
+}

@@ -1,0 +1,329 @@
+{
+  "base": "53ad74da9cab51d1eba75203c6f0998bb4af9f2d",
+  "source": "services/ctl/tests/run_plane_live.rs",
+  "source_sha256": "10c513b0fa1284a14868bd037871cc6883fb1227cf1e50bf15e591127ce67ba6",
+  "source_lines": 5872,
+  "parent_lines": 2543,
+  "groups": {
+    "target_identity": {
+      "path": "services/ctl/tests/run_plane_live/target_identity.rs",
+      "functions": [
+        "seed_target_guard_registry",
+        "target_guard_system_snapshot",
+        "target_guard_database_snapshot",
+        "target_guard_args",
+        "reconcile_target_identity_guard_live"
+      ],
+      "parent_imports": [
+        "CLI_ENV",
+        "CLI_INSTANCE",
+        "CLI_ORG",
+        "CLI_PROJECT",
+        "Client",
+        "RECONCILE_TARGET_REFUSAL_PREFIX",
+        "ReconcileRunPlaneArgs",
+        "ReconcileTargetError",
+        "ReconcileTargetErrorKind",
+        "SCHEMA",
+        "connect",
+        "database_url",
+        "drop_database",
+        "project_env_database_name",
+        "project_environment_policy",
+        "reconcile_run_plane",
+        "recreate_database",
+        "reset",
+        "schema",
+        "support"
+      ],
+      "pub_super_functions": [],
+      "line_count": 492
+    },
+    "partition": {
+      "path": "services/ctl/tests/run_plane_live/partition.rs",
+      "functions": [
+        "install_legacy_partition_plane",
+        "partition_plane_schema_snapshot",
+        "partition_plane_cutover_live",
+        "partition_plane_active_lease_refusal_live",
+        "partition_plane_authored_ordering_refusal_leg",
+        "partition_plane_cutover_leg",
+        "partition_plane_active_lease_refusal_leg",
+        "partition_plane_unobservable_lease_refusal_leg",
+        "partition_plane_dead_letter_refusal_leg"
+      ],
+      "parent_imports": [
+        "Client",
+        "RunPlaneActionKind",
+        "SCHEMA",
+        "column_exists",
+        "connect",
+        "indexdef",
+        "install_current_run_plane",
+        "install_legacy_flow_registry",
+        "reconcile_run_plane",
+        "reset",
+        "schema",
+        "seed_run_admission_facts",
+        "support",
+        "table_exists"
+      ],
+      "pub_super_functions": [
+        "partition_plane_active_lease_refusal_leg",
+        "partition_plane_authored_ordering_refusal_leg",
+        "partition_plane_cutover_leg",
+        "partition_plane_dead_letter_refusal_leg",
+        "partition_plane_unobservable_lease_refusal_leg"
+      ],
+      "line_count": 515
+    },
+    "run_history": {
+      "path": "services/ctl/tests/run_plane_live/run_history.rs",
+      "functions": [
+        "install_legacy_child_run_state",
+        "install_legacy_failure_detail",
+        "seed_failure_detail_run",
+        "assert_retained_failure_record",
+        "failure_detail_snapshot",
+        "child_run_cutover_live",
+        "rerun_lineage_cutover_live",
+        "failure_detail_cutover_live",
+        "node_runs_retirement_leg",
+        "shared_runner_legacy_leg",
+        "child_run_cutover_leg",
+        "rerun_lineage_cutover_leg",
+        "failure_detail_cutover_leg",
+        "persisted_literal_check_drift_leg"
+      ],
+      "parent_imports": [
+        "CATALOG_SCHEMA_SQL",
+        "Client",
+        "RUN_QUEUE_SQL",
+        "RUN_STATE_SQL",
+        "RunPlaneActionKind",
+        "SCHEMA",
+        "assert_db_code",
+        "assert_db_code_in_chain",
+        "column_exists",
+        "connect",
+        "indexdef",
+        "install_current_run_plane",
+        "reconcile_run_plane",
+        "reset",
+        "rewrite_schema",
+        "schema",
+        "seed_run_admission_facts",
+        "support",
+        "table_exists"
+      ],
+      "pub_super_functions": [
+        "child_run_cutover_leg",
+        "failure_detail_cutover_leg",
+        "node_runs_retirement_leg",
+        "persisted_literal_check_drift_leg",
+        "rerun_lineage_cutover_leg",
+        "shared_runner_legacy_leg"
+      ],
+      "line_count": 938
+    },
+    "effect_ledgers": {
+      "path": "services/ctl/tests/run_plane_live/effect_ledgers.rs",
+      "functions": [
+        "frame_identity_cutover_live",
+        "effect_writer_cutover_live",
+        "retired_shape_schema_snapshot",
+        "create_old_frame_identity_tables",
+        "frame_identity_cutover_leg",
+        "effect_writer_schema_snapshot",
+        "install_empty_incompatible_effect_writer_shape",
+        "effect_writer_cutover_leg",
+        "effect_writer_populated_refusal_leg"
+      ],
+      "parent_imports": [
+        "CATALOG_SCHEMA_SQL",
+        "Client",
+        "RUN_STATE_SQL",
+        "RunPlaneActionKind",
+        "SCHEMA",
+        "column_exists",
+        "connect",
+        "reconcile_run_plane",
+        "reset",
+        "rewrite_schema",
+        "schema",
+        "seed_run_admission_facts",
+        "support"
+      ],
+      "pub_super_functions": [
+        "effect_writer_cutover_leg",
+        "effect_writer_populated_refusal_leg",
+        "frame_identity_cutover_leg"
+      ],
+      "line_count": 917
+    },
+    "catalog": {
+      "path": "services/ctl/tests/run_plane_live/catalog.rs",
+      "functions": [
+        "two_plane_residency_live",
+        "stored_suite_cutover_live",
+        "authoring_privileges_at_record_plan_no_repair_live",
+        "install_control_plane_residency",
+        "two_plane_residency_leg",
+        "capture_mode_additive_leg",
+        "stored_suite_cutover_leg"
+      ],
+      "parent_imports": [
+        "CATALOG_SCHEMA_SQL",
+        "CONTROL_PORTABLE_STORE_SQL",
+        "Client",
+        "RUN_QUEUE_SQL",
+        "RUN_STATE_SQL",
+        "RunPlaneActionKind",
+        "SCHEMA",
+        "assert_db_code",
+        "column_exists",
+        "connect",
+        "drop_generation_role",
+        "install_current_run_plane",
+        "mint_guest_generation",
+        "reconcile_run_plane",
+        "reset",
+        "rewrite_schema",
+        "schema",
+        "seed_run_admission_facts",
+        "support",
+        "table_exists"
+      ],
+      "pub_super_functions": [
+        "capture_mode_additive_leg",
+        "stored_suite_cutover_leg",
+        "two_plane_residency_leg"
+      ],
+      "line_count": 603
+    }
+  },
+  "functions_total": 84,
+  "functions_moved": 44,
+  "function_body_bytes_unchanged": true,
+  "all_comments_unchanged": true,
+  "existing_literal_count": 1395,
+  "existing_literal_bytes_and_multiplicities_unchanged": true,
+  "only_added_literals": [
+    "run_plane_live/target_identity.rs",
+    "run_plane_live/partition.rs",
+    "run_plane_live/run_history.rs",
+    "run_plane_live/effect_ledgers.rs",
+    "run_plane_live/catalog.rs"
+  ],
+  "parent_entry_body_unchanged": true,
+  "held_patch_overlap": {
+    "management": [],
+    "authority": [],
+    "durability": [
+      "v1_era_drifted_leg"
+    ]
+  },
+  "held_function_bytes_unchanged_in_parent": true,
+  "test_count": 17,
+  "test_path_mapping": [
+    {
+      "before": "frame_identity_cutover_live",
+      "after": "effect_ledgers::frame_identity_cutover_live"
+    },
+    {
+      "before": "effect_writer_cutover_live",
+      "after": "effect_ledgers::effect_writer_cutover_live"
+    },
+    {
+      "before": "two_plane_residency_live",
+      "after": "catalog::two_plane_residency_live"
+    },
+    {
+      "before": "partition_plane_cutover_live",
+      "after": "partition::partition_plane_cutover_live"
+    },
+    {
+      "before": "partition_plane_active_lease_refusal_live",
+      "after": "partition::partition_plane_active_lease_refusal_live"
+    },
+    {
+      "before": "stored_suite_cutover_live",
+      "after": "catalog::stored_suite_cutover_live"
+    },
+    {
+      "before": "child_run_cutover_live",
+      "after": "run_history::child_run_cutover_live"
+    },
+    {
+      "before": "rerun_lineage_cutover_live",
+      "after": "run_history::rerun_lineage_cutover_live"
+    },
+    {
+      "before": "failure_detail_cutover_live",
+      "after": "run_history::failure_detail_cutover_live"
+    },
+    {
+      "before": "reconcile_target_identity_guard_live",
+      "after": "target_identity::reconcile_target_identity_guard_live"
+    },
+    {
+      "before": "authoring_privileges_at_record_plan_no_repair_live",
+      "after": "catalog::authoring_privileges_at_record_plan_no_repair_live"
+    }
+  ],
+  "unchanged_test_paths": [
+    "run_plane_reconcile_live",
+    "provisioner_minted_generation_live",
+    "dispatch_reader_read_surface_live",
+    "environment_policy_row_security_live",
+    "registry_durability_schema_ensure_live",
+    "retired_effect_disposition_cutover_live"
+  ],
+  "ignore_attributes_and_optional_arming_unchanged": true,
+  "moved_location_dependent_macros": [],
+  "parent_include_paths_unchanged": true,
+  "public_api_changes": [],
+  "tests_and_builds_run": false,
+  "files": {
+    "services/ctl/tests/run_plane_live.rs": {
+      "mode": "100644",
+      "bytes": 107247,
+      "sha256": "82afd18911f525f9e3a1622afebe0be86739f751cdcaa96c70084ca212bd82d4"
+    },
+    "services/ctl/tests/run_plane_live/target_identity.rs": {
+      "mode": "100644",
+      "bytes": 19485,
+      "sha256": "455f903427400e7cd8b3c240c26ef9f6a65e3b21e7b1b607a55366dcf1a1e462"
+    },
+    "services/ctl/tests/run_plane_live/partition.rs": {
+      "mode": "100644",
+      "bytes": 21597,
+      "sha256": "60ad94f8a5a06e5fae78f4c4ee11b3ecc1710802b0858a8c9d446c01f1dea3fd"
+    },
+    "services/ctl/tests/run_plane_live/run_history.rs": {
+      "mode": "100644",
+      "bytes": 38059,
+      "sha256": "b22b4da6fd0890a851d092e46883ebdcc2c2919ba50576490fd2e6bdebe5c9af"
+    },
+    "services/ctl/tests/run_plane_live/effect_ledgers.rs": {
+      "mode": "100644",
+      "bytes": 40242,
+      "sha256": "83a9ccd9949e84e339524b55c1767f98e9d90afe4873b9ca3fdd270d7797880f"
+    },
+    "services/ctl/tests/run_plane_live/catalog.rs": {
+      "mode": "100644",
+      "bytes": 24813,
+      "sha256": "e3df63a323d1862b82fa34ef1e21b88d608c5a004d0ff0b65f263412a4420049"
+    }
+  },
+  "patch_sha256": "791b0052b22c02e360de071f36670de865da8b492848f205cc1006e0d2891a6c",
+  "held_durability_old_contexts_preserved": [
+    "c03ec3eb6ab6a85a91ab683178e57343c9812cdc80e2574e9a6207c534e92acf",
+    "dd4757fe965ea48f45c672b73044c16a6d320f90708fe39086028a17db891717",
+    "f38d06811e48063b05aab8202e03c7d8242be5bfda885e600b6e1ae6df607812"
+  ],
+  "unchanged_explicit_ignores": 7,
+  "diagnostic_location_effect": "Moved test and helper assertion diagnostics name their child source path and line. No moved explicit location macro exists.",
+  "maintained_named_callers": "No matching named filters in services, tests, tools, or docs/operations/build-and-test.md outside the source at the base commit.",
+  "sequential_shared_entry": "The complete run_plane_reconcile_live body is unchanged, including its ordered calls, LockedUrl lifetime, database setup and cleanup."
+}

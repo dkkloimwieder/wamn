@@ -1,0 +1,150 @@
+{
+  "source": "1fb8dfd21c9fad904102af03e196fbdc8fb630cd",
+  "files": [
+    {
+      "path": "crates/control/provision/src/sql.rs",
+      "sha256": "6fc1906c343aa7ec6991bb5754808e5ce561461cdd968acad311d7cbd31127f1",
+      "bytes": 103144,
+      "lines": 2127
+    },
+    {
+      "path": "crates/control/provision/src/sql/cdc.rs",
+      "sha256": "347d2115e68ef71c147ec5752a554fd675c5cfa057385d43e0b490941e70d520",
+      "bytes": 10711,
+      "lines": 214
+    },
+    {
+      "path": "crates/control/provision/src/sql/credentials.rs",
+      "sha256": "b620b957a1e97888f6aedb2db403d1d82f200e3ae648b59903e9a93abb7de5d8",
+      "bytes": 15815,
+      "lines": 329
+    },
+    {
+      "path": "crates/control/provision/src/sql/database.rs",
+      "sha256": "21f2c2187367f20e24fc1f7bda1e523a13ea5eb46b31a4bc97a6c5f364e4a62d",
+      "bytes": 9908,
+      "lines": 195
+    },
+    {
+      "path": "crates/control/provision/src/sql/database_grants.rs",
+      "sha256": "243be5bce23a8ca38765726276241951902a5650cff021347c63dd603b05d8c9",
+      "bytes": 7950,
+      "lines": 137
+    },
+    {
+      "path": "crates/schema/control/src/run_plane.rs",
+      "sha256": "9f68ac95c1dead8d1a848fee0a46a672329d204308f1ff0d069df830739f2a3e",
+      "bytes": 169134,
+      "lines": 3837
+    },
+    {
+      "path": "crates/schema/control/src/run_plane/observation.rs",
+      "sha256": "c4ae6ec7a24e82e8666e009aa88874b0a41e115d07d4ba9a379ba1771ea0e066",
+      "bytes": 9699,
+      "lines": 190
+    },
+    {
+      "path": "crates/schema/control/src/run_plane/observation_sql.rs",
+      "sha256": "8cb77d32c87869cfe0bf68c8e306712f382d47d761c08f229a78d375b46ce6b3",
+      "bytes": 27711,
+      "lines": 523
+    },
+    {
+      "path": "crates/schema/control/src/run_plane/schema.rs",
+      "sha256": "680cdc3388b0fb66a04cc64297ba360062aac80667e07a31f411731a9767b586",
+      "bytes": 14707,
+      "lines": 376
+    },
+    {
+      "path": "services/ctl/src/provision_project_env.rs",
+      "sha256": "39f1d2792f93502598951bc5cc14381653e69e688367c2c41d4c4d5de93eba1d",
+      "bytes": 120742,
+      "lines": 3137
+    },
+    {
+      "path": "services/ctl/src/provision_project_env/database.rs",
+      "sha256": "abe4e71d858a23b74c8ff8b0ac8964c5a27849aa371e2deaa1b87d0cd7b50dc4",
+      "bytes": 2227,
+      "lines": 70
+    },
+    {
+      "path": "services/ctl/src/provision_project_env/output.rs",
+      "sha256": "d2027bba9c71d81ec9bfd2340841a9acfe45065d58efa0475297a5638e2c10ea",
+      "bytes": 4873,
+      "lines": 132
+    },
+    {
+      "path": "services/ctl/src/provision_project_env/pat_secrets.rs",
+      "sha256": "3de9d4e1567347f5ca6f457de2ce64f07b1e6d04702209571bc6347150dd7dc7",
+      "bytes": 8098,
+      "lines": 256
+    },
+    {
+      "path": "services/ctl/src/publish_release.rs",
+      "sha256": "c13ce505bbbb336cae03525ac15ded305fc0a20819a3e0b5a779a04b5e03d962",
+      "bytes": 110880,
+      "lines": 2791
+    },
+    {
+      "path": "services/ctl/src/publish_release/attachments.rs",
+      "sha256": "de2075d779102cfa5e888342e8874eb4b169046fabba29a62b9f2f2dfc90b92c",
+      "bytes": 8201,
+      "lines": 206
+    },
+    {
+      "path": "services/ctl/src/publish_release/components.rs",
+      "sha256": "717193a397534db1dd13d45f05dceb46230fb74747627d38905d2ae4cac8ec27",
+      "bytes": 20041,
+      "lines": 472
+    },
+    {
+      "path": "services/ctl/src/publish_release/package_sources.rs",
+      "sha256": "4339e7b5c0929ef7064b01d9b58365f4266a84b58f25c2fc7f4fdae1fcad1715",
+      "bytes": 4463,
+      "lines": 107
+    },
+    {
+      "path": "services/ctl/tests/run_plane_live.rs",
+      "sha256": "6fac93479b5ff460ac855cb37bdb52bc19ba80c59fe7544ea9b9ccd0955051fb",
+      "bytes": 107200,
+      "lines": 2531
+    },
+    {
+      "path": "services/ctl/tests/run_plane_live/catalog.rs",
+      "sha256": "b5545cacdd759f1c3532be049c105ede2650f9a1e1fdcf75b74c6b63d555d788",
+      "bytes": 24749,
+      "lines": 587
+    },
+    {
+      "path": "services/ctl/tests/run_plane_live/effect_ledgers.rs",
+      "sha256": "9e5c2dccd20dfcbe5baf63ce6da3d6b1af148516bcf5ec3e356350df55fb9657",
+      "bytes": 40231,
+      "lines": 907
+    },
+    {
+      "path": "services/ctl/tests/run_plane_live/partition.rs",
+      "sha256": "3cd5fa773f3c8448819b33ce9b35f5db91d86719018d21471ea823621027af90",
+      "bytes": 21553,
+      "lines": 504
+    },
+    {
+      "path": "services/ctl/tests/run_plane_live/run_history.rs",
+      "sha256": "f67a7c3728cd2ede2aa0b1b9e7cc26fad57065f4f6271202db36d0c32f7cb061",
+      "bytes": 37999,
+      "lines": 923
+    },
+    {
+      "path": "services/ctl/tests/run_plane_live/target_identity.rs",
+      "sha256": "72ebe1248a2ae51a4612e89f4f8f956802a185419f116c444e84f065abc059fe",
+      "bytes": 19421,
+      "lines": 476
+    }
+  ],
+  "adjustments": [
+    "Only newly added import blocks and final blank lines differ from the run-schema draft.",
+    "The live-test modules import the existing EMPTY_EXECUTION_BUNDLE_HASH used by format strings."
+  ],
+  "tests_executed": 0,
+  "live_services_started": 0,
+  "comparison_basis": "The adjacent comparison records retain their preparation states. This source includes the applied refactors and the listed import formatting."
+}
