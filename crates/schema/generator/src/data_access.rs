@@ -45,7 +45,7 @@ pub struct DataAccessRelation {
 
 /// Minimal live relation shape needed to re-derive generated data authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DataAccessRelationInventory {
+pub struct DataAccessRelationFields {
     schema: String,
     table: String,
     fields: Vec<String>,
@@ -71,8 +71,8 @@ pub struct EffectiveDataAccessRelation {
     lock_carrier_fields: Vec<String>,
 }
 
-impl DataAccessRelationInventory {
-    /// Construct a normalized relation inventory from server catalog facts.
+impl DataAccessRelationFields {
+    /// Construct normalized relation fields from server catalog facts.
     pub fn new(
         schema: impl Into<String>,
         table: impl Into<String>,
@@ -139,7 +139,7 @@ impl DataAccessOverlay {
         &self.schemas
     }
 
-    /// Complete application relation inventory ordered by schema and table.
+    /// Complete application relation list ordered by schema and table.
     pub fn relations(&self) -> &[DataAccessRelation] {
         &self.relations
     }
@@ -340,36 +340,37 @@ impl EffectiveDataAccessRelation {
     }
 }
 
-/// Re-derive one generated contribution from its own welded relation inventory.
+/// Re-derive one generated contribution from its recorded relation fields.
 pub fn validate_data_access_contribution(
     overlay: &DataAccessOverlay,
     manifest_bytes: &[u8],
 ) -> Result<(), GenerateError> {
-    let inventory = overlay
+    let relation_fields = overlay
         .relations()
         .iter()
         .map(|relation| {
-            DataAccessRelationInventory::new(
+            DataAccessRelationFields::new(
                 relation.schema(),
                 relation.table(),
                 relation.all_fields().to_vec(),
             )
         })
         .collect::<Vec<_>>();
-    let expected = derive_data_access_overlay_from_inventory(&inventory, manifest_bytes)?;
+    let expected =
+        derive_data_access_overlay_from_relation_fields(&relation_fields, manifest_bytes)?;
     if &expected == overlay {
         Ok(())
     } else {
         Err(GenerateError::new(
             GenerateErrorKind::InvalidManifest,
-            "generated data-access contribution does not match its welded package manifest",
+            "generated data-access contribution does not match its recorded package manifest",
         ))
     }
 }
 
 /// Derive the exact GuestSql authority union for one installed package set.
 pub fn derive_effective_data_access(
-    inventory: &[DataAccessRelationInventory],
+    relation_fields: &[DataAccessRelationFields],
     overlays: &[DataAccessOverlay],
 ) -> Result<EffectiveDataAccess, GenerateError> {
     if overlays.is_empty() {
@@ -393,7 +394,7 @@ pub fn derive_effective_data_access(
     }
 
     let mut desired = BTreeMap::new();
-    for relation in inventory {
+    for relation in relation_fields {
         relation.validate()?;
         if schemas.contains(&relation.schema)
             && desired
@@ -405,7 +406,7 @@ pub fn derive_effective_data_access(
         {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidManifest,
-                "live installed-set relation inventory repeats a relation",
+                "live installed-set relation list repeats a relation",
             ));
         }
     }
@@ -413,7 +414,7 @@ pub fn derive_effective_data_access(
         if !desired.keys().any(|(candidate, _)| candidate == schema) {
             return Err(GenerateError::for_object(
                 GenerateErrorKind::UnknownRelation,
-                "installed data-access schema has no ordinary relation inventory",
+                "installed data-access schema has no ordinary relations",
                 schema.as_str(),
             ));
         }
@@ -512,7 +513,7 @@ struct EffectiveDesiredRelation {
 }
 
 impl EffectiveDesiredRelation {
-    fn new(relation: &DataAccessRelationInventory) -> Self {
+    fn new(relation: &DataAccessRelationFields) -> Self {
         Self {
             all_fields: relation.fields.clone(),
             select: BTreeSet::new(),
@@ -569,11 +570,11 @@ pub(crate) fn derive_data_access_overlay(
     manifest_bytes: &[u8],
     manifest: &PackageManifest,
 ) -> Result<DataAccessOverlay, GenerateError> {
-    let inventory = catalog
+    let relation_fields = catalog
         .tables()
         .iter()
         .map(|table| {
-            DataAccessRelationInventory::new(
+            DataAccessRelationFields::new(
                 table.schema(),
                 table.name(),
                 table
@@ -584,33 +585,33 @@ pub(crate) fn derive_data_access_overlay(
             )
         })
         .collect::<Vec<_>>();
-    derive_data_access_overlay_for_manifest(&inventory, manifest_bytes, manifest)
+    derive_data_access_overlay_for_manifest(&relation_fields, manifest_bytes, manifest)
 }
 
-/// Re-derive the exact overlay from a verified manifest and live relation inventory.
-pub fn derive_data_access_overlay_from_inventory(
-    inventory: &[DataAccessRelationInventory],
+/// Re-derive the exact overlay from a verified manifest and live relation fields.
+pub fn derive_data_access_overlay_from_relation_fields(
+    relation_fields: &[DataAccessRelationFields],
     manifest_bytes: &[u8],
 ) -> Result<DataAccessOverlay, GenerateError> {
     let manifest = PackageManifest::from_slice(manifest_bytes)?;
-    derive_data_access_overlay_for_manifest(inventory, manifest_bytes, &manifest)
+    derive_data_access_overlay_for_manifest(relation_fields, manifest_bytes, &manifest)
 }
 
-/// Application schemas whose complete relation inventory owns ACL convergence.
+/// Application schemas whose complete relation list owns ACL convergence.
 pub fn data_access_schemas(manifest_bytes: &[u8]) -> Result<Vec<String>, GenerateError> {
     let manifest = PackageManifest::from_slice(manifest_bytes)?;
     application_schemas(&manifest)
 }
 
 fn derive_data_access_overlay_for_manifest(
-    inventory: &[DataAccessRelationInventory],
+    relation_fields: &[DataAccessRelationFields],
     manifest_bytes: &[u8],
     manifest: &PackageManifest,
 ) -> Result<DataAccessOverlay, GenerateError> {
     let schemas = application_schemas(manifest)?;
     let schema_set = schemas.iter().map(String::as_str).collect::<BTreeSet<_>>();
     let mut desired = BTreeMap::<(String, String), DesiredRelation>::new();
-    for relation in inventory {
+    for relation in relation_fields {
         relation.validate()?;
         if schema_set.contains(relation.schema.as_str())
             && desired
@@ -622,7 +623,7 @@ fn derive_data_access_overlay_for_manifest(
         {
             return Err(GenerateError::for_object(
                 GenerateErrorKind::InvalidManifest,
-                "live data-access relation inventory repeats a relation",
+                "live data-access relation list repeats a relation",
                 format!("{}.{}", relation.schema, relation.table),
             ));
         }
@@ -631,7 +632,7 @@ fn derive_data_access_overlay_for_manifest(
         if !desired.keys().any(|(candidate, _)| candidate == schema) {
             return Err(GenerateError::for_object(
                 GenerateErrorKind::UnknownRelation,
-                "application schema has no ordinary relation inventory",
+                "application schema has no ordinary relations",
                 schema.as_str(),
             ));
         }
@@ -769,7 +770,7 @@ fn desired_relation<'a>(
         })
 }
 
-impl DataAccessRelationInventory {
+impl DataAccessRelationFields {
     fn validate(&self) -> Result<(), GenerateError> {
         if !valid_identifier(&self.schema)
             || !valid_identifier(&self.table)
@@ -779,7 +780,7 @@ impl DataAccessRelationInventory {
         {
             return Err(GenerateError::for_object(
                 GenerateErrorKind::InvalidManifest,
-                "live data-access relation inventory is invalid",
+                "live data-access relation fields are invalid",
                 format!("{}.{}", self.schema, self.table),
             ));
         }
@@ -796,7 +797,7 @@ struct DesiredRelation {
 }
 
 impl DesiredRelation {
-    fn new(relation: &DataAccessRelationInventory) -> Self {
+    fn new(relation: &DataAccessRelationFields) -> Self {
         Self {
             all_fields: relation.fields.clone(),
             select: BTreeSet::new(),

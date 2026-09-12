@@ -146,7 +146,7 @@ mod tests {
     #[ignore = "requires a fresh disposable PostgreSQL 18 URL in WAMN_RECEIVING_PG_URL"]
     async fn generated_update_ignores_ungranted_additive_columns() -> Result<()> {
         use wamn_schema_generator::{
-            DataAccessOverlay, DataAccessRelationInventory, derive_effective_data_access,
+            DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
             render_effective_data_access_sql,
         };
 
@@ -191,9 +191,9 @@ mod tests {
         {
             fields.entry(row.get(0)).or_default().push(row.get(1));
         }
-        let inventory = fields
+        let relation_fields = fields
             .into_iter()
-            .map(|(table, fields)| DataAccessRelationInventory::new("receiving", table, fields))
+            .map(|(table, fields)| DataAccessRelationFields::new("receiving", table, fields))
             .collect::<Vec<_>>();
         let overlays = [
             DataAccessOverlay::from_slice(include_bytes!(
@@ -203,7 +203,7 @@ mod tests {
                 "../../../apps/client_acme_receiving/generated/platform-policy/data-access.json"
             ))?,
         ];
-        let authority = derive_effective_data_access(&inventory, &overlays)?;
+        let authority = derive_effective_data_access(&relation_fields, &overlays)?;
         client
             .batch_execute(&render_effective_data_access_sql(&authority)?)
             .await?;

@@ -9,7 +9,7 @@ use clap::Args;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_schema_control::plan_package_migrations;
 use wamn_schema_generator::{
-    DATA_ACCESS_OVERLAY_PATH, DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelationInventory,
+    DATA_ACCESS_OVERLAY_PATH, DATA_ACCESS_ROLE, DataAccessOverlay, DataAccessRelationFields,
     EffectiveDataAccess, data_access_schemas, derive_effective_data_access,
     render_effective_data_access_sql, validate_data_access_contribution,
 };
@@ -21,7 +21,7 @@ const SELECT_INSTALLED_SQL: &str = "\
 SELECT package_id, package_version, manifest_sha256 FROM catalog.packages \
  WHERE tenant_id = $1 ORDER BY package_id COLLATE \"C\", package_version COLLATE \"C\"";
 // apply-package owns these OID histories beside application tables. No package
-// declaration consumes them, so the declared relation inventory leaves them out.
+// declaration consumes them, so the declared relation list leaves them out.
 // The sweep below still reads them, because every relation in a package-owned
 // schema is in scope for revocation.
 const CONTROL_OWNED_RELATION_MAPS: [&str; 2] = ["wamn_entities", "wamn_cdc_exclusions"];
@@ -249,12 +249,12 @@ async fn reconcile(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let inventory = relation_inventory(&tx, &schemas).await?;
+    let relation_fields = load_relation_fields(&tx, &schemas).await?;
     let overlays = packages
         .iter()
         .map(|package| package.overlay.clone())
         .collect::<Vec<_>>();
-    let effective = derive_effective_data_access(&inventory, &overlays)
+    let effective = derive_effective_data_access(&relation_fields, &overlays)
         .context("derive installed-set data-access authority")?;
     let role = tx
         .query_opt(
@@ -400,10 +400,10 @@ fn validate_presented_lineages(
     Ok(())
 }
 
-async fn relation_inventory(
+async fn load_relation_fields(
     tx: &Transaction<'_>,
     schemas: &[String],
-) -> anyhow::Result<Vec<DataAccessRelationInventory>> {
+) -> anyhow::Result<Vec<DataAccessRelationFields>> {
     tx.query(
         "SELECT namespace.nspname::text, relation.relname::text, \
                 array_agg(attribute.attname::text ORDER BY attribute.attname::text COLLATE \"C\") \
@@ -419,10 +419,10 @@ async fn relation_inventory(
         &[&schemas, &CONTROL_OWNED_RELATION_MAPS.as_slice()],
     )
     .await
-    .context("read live package relation inventory")?
+    .context("read live package relation fields")?
     .into_iter()
     .map(|row| {
-        Ok(DataAccessRelationInventory::new(
+        Ok(DataAccessRelationFields::new(
             row.try_get::<_, String>(0)
                 .context("decode relation schema")?,
             row.try_get::<_, String>(1)
