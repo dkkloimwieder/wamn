@@ -1,4 +1,13 @@
 use super::*;
+use super::grants::{
+    RoleAcl, StableGrantSet, stable_grant_set, verify_effect_writer_grants,
+    verify_event_materializer_grants, verify_http_admitter_grants, verify_management_admitter_grants,
+    verify_session_role_reader_grants, verify_system_reader_grants,
+};
+use super::registry::{INSTANCE_SUFFIX_ALPHABET, do_record_project_env};
+use super::workload::{
+    WorkloadActionIdentity, WorkloadLifecycle, is_workload_generation_role, workload_lifecycle,
+};
 use clap::{CommandFactory as _, FromArgMatches as _, Parser};
 use wamn_control_provision::{EFFECT_WRITER_ROLE, MANAGEMENT_ADMITTER_ROLE};
 

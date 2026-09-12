@@ -43,7 +43,8 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
     assert!(provision.contains(
         "render_project_env_database(&triple, &instance, &cluster, args.connection_limit)"
     ));
-    assert!(provision.contains(
+    let workload = compact(&source("services/ctl/src/provision_project_env/workload.rs"));
+    assert!(workload.contains(
         "let instance = read_project_env_instance(system_url, &triple).await?; let database = project_env_database_name(org, project, environment, &instance);"
     ));
     // Pinned to the BINDING, not to the owned-conversion method: 358f6792
@@ -53,7 +54,7 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
     // credential scope is fed the stored-suffix-derived `database`, never a
     // freshly recomputed name (wamn-0h0g.15.137).
     assert!(
-        provision.contains("database: database."),
+        workload.contains("database: database."),
         "the effect-writer credential scope must carry the stored-suffix-derived \
          `database` binding"
     );
@@ -61,18 +62,19 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
     // so the pin moved to the derived call. What is load-bearing is unchanged:
     // the published Secret is rendered from `&credential`, which carries the
     // stored-suffix-derived database, never a freshly recomputed name.
-    assert!(provision.contains(
+    assert!(workload.contains(
         "render_workload_secret_manifest( family, &triple, &args.namespace, \
          WorkloadSecretBody::EffectWriterCredential(&credential), )"
     ));
-    let stored = provision
+    let registry = compact(&source("services/ctl/src/provision_project_env/registry.rs"));
+    let stored = registry
         .rfind("let stored: String = row.get(0);")
         .expect("recording consumes the returned stored suffix");
-    let returned = provision[stored..]
+    let returned = registry[stored..]
         .find("Ok(stored)")
         .expect("recording returns the stored suffix");
     assert!(returned > 0);
-    assert!(!provision[stored..].contains("Ok(minted.to_string())"));
+    assert!(!registry[stored..].contains("Ok(minted.to_string())"));
 
     let copy = compact(&source("services/ctl/src/copy_project_env.rs"));
     assert!(copy.contains("read_project_env_instance(system_url, &src).await?"));
