@@ -56,7 +56,7 @@ the declared primary sort direction; descending reverses the compound order.
 Cursor keys preserve canonical PostgreSQL lexical values: `timestamptz` is UTC
 RFC3339 with exactly six fractional digits, always, and `numeric` preserves scale.
 Canonical means one spelling of what PostgreSQL holds, never a transformation
-of it. Durable command, cursor, and weld JSON use
+of it. Durable command, cursor, and package record JSON use
 `wamn_execution_contract::canonical_json_bytes` as their single byte authority.
 
 CANONICALIZE ON INGEST, THEN HASH. An input arrives in any accepted

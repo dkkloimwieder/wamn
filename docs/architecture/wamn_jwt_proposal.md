@@ -24,7 +24,7 @@ system database. Signing keys remain with that authority; hosts receive
 public keys only. It never shares a process with a host or the authoring Gate
 (`POST /authoring`, system-principal mode).
 
-The owner accepts the service's chart, inventory, and overlay cost.
+The owner accepts the service's chart, resource list, and overlay cost.
 OIDC federation later lands in `wamn-identity`; the identity epic needs no
 further service. PAT minting stays on the provisioning CLI for now.
 Moving PAT minting into the service is later work (`wamn-ctc8.20`), after
@@ -127,9 +127,9 @@ revocation is a separate proposal with its own consistency rules.
 ### Owner rulings, 2026-09-08
 
 The owner approved these foundation choices in `wamn-ctc8.24` through `.28`.
-They clarify this proposal without removing any §8 proof.
+They clarify this proposal without removing any §8 test.
 
-The retirement clock starts at a proven stop-signing barrier.
+The retirement clock starts at a verified stop-signing barrier.
 The barrier prevents successful issuance with the old key after its cutoff.
 A successful database commit must precede the return of a signed token.
 Retain the old public key for 930 seconds after that cutoff.
@@ -149,10 +149,10 @@ Request starts remain at least one second apart.
 Each fetch has a five-second total timeout and a 65,536-byte response limit.
 These limits never extend the 300-second freshness deadline.
 
-`wamn-ctc8.15.1` owns the deployed service boundary, key lifecycle, and public-key cache proofs.
-`wamn-ctc8.15.3` owns the actual two-host session-token acceptance and refusal proofs.
-Those proofs include both reachable and unreachable JWKS.
-Session activation remains blocked until those proofs and the fresh-only operation proof pass.
+`wamn-ctc8.15.1` owns the deployed service boundary, key lifecycle, and public-key cache tests.
+`wamn-ctc8.15.3` owns the actual two-host session-token acceptance and refusal tests.
+Those tests include both reachable and unreachable JWKS.
+Session activation remains blocked until those tests and the fresh-only operation test pass.
 
 ## 5. Minting
 
@@ -174,7 +174,7 @@ Session activation remains blocked until those proofs and the fresh-only operati
   project-environment. All identity and membership checks happen here, fresh.
   Reuse that membership check; do not create a separate session-specific
   membership store.
-- **Membership proof:** with membership in `dev` only, the same human PAT
+- **Membership test:** with membership in `dev` only, the same human PAT
   obtains a `dev` session and cannot obtain a `prod` session in that project.
   Removing membership prevents the next exchange. An already-issued session
   remains subject to §2's expiry window.
@@ -186,7 +186,7 @@ Session activation remains blocked until those proofs and the fresh-only operati
 ### Exchange rulings, 2026-09-08
 
 The owner approved the exchange choices in `wamn-ctc8.29` through `.31`.
-These rulings clarify §§3 and 5 and preserve the §8 proof list.
+These rulings clarify §§3 and 5 and preserve the §8 test list.
 
 The exact audience is `urn:wamn:project-env:{org}:{project}:{env}:{instance_suffix}`.
 It includes the current registry instance suffix, not only the environment name.
@@ -199,7 +199,7 @@ The service reads these bindings from mounted Secrets.
 The HTTP request supplies only the audience, never an organization override, tenant, database URL, or roles.
 The principal must hold current membership in that exact organization and project-environment.
 The global principal record has no separate home-organization field.
-The wrong-organization proof tests absent exact membership, not a home organization inferred from PAT text.
+The wrong-organization case tests absent exact membership, not a home organization inferred from PAT text.
 
 The issuer reads only the approved principal, PAT, membership, and registry columns in the system database.
 A dedicated `SessionRoleReader` reads active users and their role assignments in the selected environment.
@@ -275,7 +275,7 @@ under the PAT — that would repeat already-committed work.
    `/session`; host verifier + `session` mode + credential-kind in the caller
    context; fresh-only as a registered-operation property; TUI login with the
    fresh-only client rule.
-4. Proofs: §3's audience matrix and role-resolution cases; age rules (over
+4. Tests: §3's audience matrix and role-resolution cases; age rules (over
    lifetime, future `iat`, expired under tolerance); rotation overlap counted
    from last signing; compromised-key removal on two warm hosts, with and
    without JWKS reachable; role-assignment removal window; permission change
@@ -294,12 +294,12 @@ under the PAT — that would repeat already-committed work.
 The owner resolved the membership and service questions in `wamn-ctc8.17`
 and `wamn-ctc8.18`. The membership fact and live route reader belong to
 `wamn-ctc8.19`; the new deployable, public JWKS, key management, chart,
-inventory, overlay, and deployed boundary proof belong to `wamn-ctc8.15.1`.
+resource list, overlay, and deployed boundary test belong to `wamn-ctc8.15.1`.
 `wamn-ctc8.15.2` adds `/session` and depends on both implementations.
 These are implementation tasks, not claims that the prerequisites exist.
 At `f100345a`, route PAT authentication accepts only the configured service
 principal. The membership route reader must supply fresh human PAT admission;
-the verifier work reuses it for item 4's paired proof.
+the verifier work reuses it for item 4's paired test.
 Before enabling sessions, reconcile the owner-approved exception with the
 fresh-authorization rule in `docs/exe-model.md`; fresh PAT checks and tenant
 permission reads retain next-request revocation.
@@ -352,6 +352,6 @@ If the connection fails after issuance, a PAT can exist even when its raw token 
 The CLI reports that uncertainty without exposing response contents or credentials.
 The stored digest cannot recover the lost raw token.
 
-This increment runs correctness and security proofs, not benchmarks.
+This increment runs correctness and security tests, not benchmarks.
 Both PATs and JWT sessions remain required.
 The owner paused session measurements in `wamn-ctc8.15.6`.

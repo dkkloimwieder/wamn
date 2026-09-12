@@ -2,7 +2,7 @@
 
 Status: DRAFT rev 3 · 2026-08-27 · aligned to
 `wamn_base_application_poc_revised.md` + receiving scenario · supersedes
-rev 2's generic-entity default · evidence: wamn-0h0g.22.13 (receipt
+rev 2's generic-entity default · evidence: wamn-0h0g.22.13 (record
 5c464ae). Scope: post-merge product work (Phase B item-4 successor);
 nothing here rides the scope-reduction RC.
 
@@ -23,7 +23,7 @@ migrations. The IR is a release artifact, not a schema-editing surface.
 
 | Layer | Checking | Notes |
 |---|---|---|
-| **Application SQL corpus** — generated CRUD/lock/mutation SQL **plus authored named query/projection SQL** (`query/*.sql`) | **Compile-time, two-sibling**: the native verifier runs `query_file!`/`query_file_as!` against `sqlx::Postgres` on the exact effective schema and `cargo sqlx prepare --check` in CI; the wasm artifact sends a statement digest and binds, and the host resolves the pinned exact bytes through its existing claim-aware `WamnPostgres` runner (`wamn-10yt.9.2`) | Corpus identity welded into the package record |
+| **Application SQL corpus** — generated CRUD/lock/mutation SQL **plus authored named query/projection SQL** (`query/*.sql`) | **Compile-time, two-sibling**: the native verifier runs `query_file!`/`query_file_as!` against `sqlx::Postgres` on the exact effective schema and `cargo sqlx prepare --check` in CI; the wasm artifact sends a statement digest and binds, and the host resolves the pinned exact bytes through its existing claim-aware `WamnPostgres` runner (`wamn-10yt.9.2`) | Corpus identity recorded in the package |
 | Tenant/developer + workflow-editor arbitrary SQL | **Runtime-checked** over `WamnPostgres`; gate + bounded execution | `.22.13` unchanged |
 | External consumers | Generated routes → registered operations | CallerIdentity → permission check; host-selected DB identity → privileges/RLS |
 
@@ -57,7 +57,7 @@ transaction resource never crosses a wiring edge**; wirings compose
 coarse operations. `per_input`: one transaction per outer array item;
 cross-item atomicity out of scope.
 
-## Package weld (replaces rev 2's five-part weld)
+## Package record (replaces rev 2's five-part record)
 
 Each immutable application package records: `verified_schema_state_id` ·
 `required_schema_contract` · `required_platform_policy_contract` ·
@@ -66,7 +66,7 @@ commit attribution is recorded when Publish and release deployment occur. An
 additive base schema may satisfy an unchanged overlay's contracts
 without rebuilding it.
 
-## Compile-time proves / integration still proves
+## Compile-time checks and integration tests
 
 Compile: SQL parses against the exact effective schema; bind counts and
 types; result columns/types/nullability vs generated models; routes
@@ -82,7 +82,7 @@ idempotency; business invariants.
    **transaction runner** commands require. The only execution path.
 2. **`.22.2b` — verifier sibling harness**, now over the full corpus
    (generated + authored `query/*.sql`), on the exact effective schema
-   (base + overlay migrations applied); parity refusal; weld emission.
+   (base + overlay migrations applied); parity refusal; package record emission.
 3. **Introspection → IR pipeline** (new): pg_catalog reader over the
    closed supported object set, normalized IR, refused-object
    enforcement (§4.3 of the POC).
