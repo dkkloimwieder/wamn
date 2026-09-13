@@ -29,8 +29,9 @@ const SCHEMA: &str = "apps/wamn_receiving/migrations/0001_initial.sql";
 const CODE_BEFORE: &str =
     "invoke_operation(wamn_receiving_data_access::operation::location_list(&input))";
 const CODE_AFTER: &str = "invoke_operation(wamn_receiving_data_access::operation::location_list(&input.replace(\"timing-original\", \"timing-edited\")))";
-const SCHEMA_ADDITION: &str =
-    "\nCREATE INDEX delivery_timing_location_code_idx ON receiving.location(location_code);\n";
+const SCHEMA_BEFORE: &str = "location_code text NOT NULL CONSTRAINT";
+const SCHEMA_AFTER: &str =
+    "location_code text NOT NULL DEFAULT 'delivery-reset' CONSTRAINT";
 
 #[tokio::test]
 #[ignore = "requires an explicitly owned linked worktree, owned PG18/NATS, and built local runtime files"]
@@ -156,14 +157,12 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         let repaired = watch.served().await?;
         repaired.retained(&sql, &["migrate", "introspect", "apply"])?;
 
-        let mut migration = fs::read(repository.join(SCHEMA))?;
-        migration.extend_from_slice(SCHEMA_ADDITION.as_bytes());
-        fs::write(repository.join(SCHEMA), migration)?;
+        original.replace(SCHEMA, SCHEMA_BEFORE, SCHEMA_AFTER)?;
         let reset = watch.served().await?;
         ensure!(reset.instance != first.instance && !reset.skipped.contains("migrate"), "a schema edit must create a new target instance");
         reset.locations(token, "timing-edited", &[]).await?;
         let (project, task) = connect(&environment.route.database_url).await?;
-        let applied: bool = project.query_one("SELECT to_regclass('receiving.delivery_timing_location_code_idx') IS NOT NULL", &[]).await?.get(0);
+        let applied: bool = project.query_one("SELECT column_default = '''delivery-reset''::text' FROM information_schema.columns WHERE table_schema = 'receiving' AND table_name = 'location' AND column_name = 'location_code'", &[]).await?.get(0);
         task.abort();
         ensure!(applied, "the recreated target lacks the actual schema edit");
         require_local_facts(root, admin.as_ref(), &environment.route.database_url).await?;
