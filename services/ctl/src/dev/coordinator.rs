@@ -936,6 +936,7 @@ impl ProductionDevStageRunner {
                 let facts = self
                     .admissions
                     .iter()
+                    .filter(|admission| admission.facts().scope == scope)
                     .map(|admission| admission.facts().clone())
                     .collect::<Vec<_>>();
                 wamn_authoring_model::gate::judge_gate_document(&input.wiring, &scope, &facts).map(
