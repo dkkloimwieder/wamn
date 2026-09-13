@@ -22,10 +22,12 @@ DO $db_owner$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $db_owner$;
 
-CREATE SCHEMA wamn_history;
+-- Test setups drop catalog and apply CATALOG_SCHEMA_SQL again on the same
+-- database. wamn_history stays, so the schema and function DDL is idempotent.
+CREATE SCHEMA IF NOT EXISTS wamn_history;
 REVOKE ALL ON SCHEMA wamn_history FROM PUBLIC;
 
-CREATE FUNCTION wamn_history.stamp_row()
+CREATE OR REPLACE FUNCTION wamn_history.stamp_row()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog
