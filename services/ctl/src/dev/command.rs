@@ -502,7 +502,18 @@ impl DevSession {
         };
         self.last_served = self.read_handle().snapshot().runtime_endpoint().cloned();
         let cleanup = self.runner.shutdown().await;
-        finish_with_cleanup(result, cleanup)
+        let result = finish_with_cleanup(result, cleanup);
+        if self.config.local_artifacts().is_some()
+            && let Err(cleanup) = super::verification_database::remove(&self.config).await
+        {
+            return match result {
+                Ok(_) => Err(cleanup).context("remove the local session verification database"),
+                Err(error) => Err(error.context(format!(
+                    "local verification database cleanup also failed: {cleanup}"
+                ))),
+            };
+        }
+        result
     }
 }
 

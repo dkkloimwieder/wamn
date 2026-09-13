@@ -372,6 +372,26 @@ where
     run_with_authority(&authority, &spec, operation).await
 }
 
+/// Remove the unused verification database after a retained local session.
+///
+/// Environment setup can create this database before selecting local files.
+/// Local generation uses the application target, so cleanup takes the existing
+/// verification lease without creating another database or touching that target.
+pub(super) async fn remove(config: &DevConfig) -> Result<(), VerificationDatabaseError> {
+    let spec = DatabaseSpec::from_config(config)?;
+    let authority = PostgresAuthority::connect(&spec.maintenance).await?;
+    if !authority.try_acquire_database(&spec.database).await? {
+        return Err(VerificationDatabaseError::new(
+            VerificationDatabaseErrorKind::LeaseUnavailable,
+            "wait for the active wamn dev command using verification_database_url to finish or choose another disposable database",
+        ));
+    }
+    let cleanup_result = cleanup(&authority, &spec.database).await;
+    let release_result = authority.release_database(&spec.database).await;
+    cleanup_result?;
+    release_result
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
