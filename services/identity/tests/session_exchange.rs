@@ -1050,7 +1050,7 @@ async fn snapshots(fixture: &Fixture) -> Vec<(String, Vec<String>)> {
 }
 
 async fn seed_user(client: &Client, principal: &Principal, tenant: &str, role: &str) {
-    client.execute("INSERT INTO app_system.users (tenant_id,id,email) VALUES ($1,$2::text::uuid,$3) ON CONFLICT (tenant_id,id) DO UPDATE SET status='active'", &[&tenant, &principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
+    client.execute("INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ($1,$2::text::uuid,'person',$3) ON CONFLICT (tenant_id,id) DO UPDATE SET status='active'", &[&tenant, &principal.id().as_str(), &format!("{}@fixture.invalid", principal.id())])
         .await.expect_redacted("tenant user fixture");
     client
         .execute(

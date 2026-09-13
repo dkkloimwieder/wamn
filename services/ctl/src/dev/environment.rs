@@ -29,7 +29,7 @@ use serde_json::Value;
 use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
 use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
-    management_admitter_generation_role, sql as provision_sql,
+    management_admitter_generation_role, platform_principals_sql, sql as provision_sql,
 };
 use wamn_pg_core::Identifier;
 
@@ -61,6 +61,8 @@ pub struct DevEnvironmentInputs {
     pub component_artifact_base: String,
     pub release_artifact_base: String,
     pub route_host: String,
+    /// Domain of the platform principal emails, `<component>@<platform-domain>`.
+    pub platform_domain: String,
     pub registry_auth_file: PathBuf,
     pub package_sources: Vec<PathBuf>,
 }
@@ -87,6 +89,7 @@ pub async fn provision(
     system_url: &str,
     admin: &Client,
     root: &Path,
+    platform_domain: &str,
 ) -> anyhow::Result<DevEnvironment> {
     let version: i32 = admin
         .query_one("SHOW server_version_num", &[])
@@ -112,7 +115,7 @@ pub async fn provision(
     // Only the platform floor. The product command remains the sole owner of
     // both package migrations and their generated ACL union.
     let (project, project_task) = connect(&route.database_url).await?;
-    install_journey_platform_floor(project.as_ref()).await?;
+    install_journey_platform_floor(project.as_ref(), platform_domain).await?;
     drop(project);
     project_task.abort();
 
@@ -127,7 +130,8 @@ pub async fn provision(
     let template =
         prepare_target_template(admin, system_url, &route.database_url, root, &identity).await?;
 
-    let verification = prepare_dev_verification_gate(system_url, admin, &identity).await?;
+    let verification =
+        prepare_dev_verification_gate(system_url, admin, &identity, platform_domain).await?;
 
     Ok(DevEnvironment {
         template,
@@ -556,7 +560,14 @@ async fn render_database_acl(admin: &Client, database: &str) -> anyhow::Result<S
     Ok(sql)
 }
 
-pub async fn install_journey_platform_floor(project: &Client) -> anyhow::Result<()> {
+/// Install the catalog, the application authorization schema, and the
+/// platform principal rows of [`TENANT`].
+pub async fn install_journey_platform_floor(
+    project: &Client,
+    platform_domain: &str,
+) -> anyhow::Result<()> {
+    let platform_principals = platform_principals_sql(TENANT, platform_domain)
+        .context("render the platform principal rows")?;
     project
         .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
         .await
@@ -564,7 +575,11 @@ pub async fn install_journey_platform_floor(project: &Client) -> anyhow::Result<
     project
         .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))
         .await
-        .context("install the application authorization schema")
+        .context("install the application authorization schema")?;
+    project
+        .batch_execute(&platform_principals)
+        .await
+        .context("create the platform principal rows")
 }
 
 pub async fn reconcile_journey_run_plane(
@@ -868,6 +883,7 @@ pub async fn prepare_dev_verification_gate(
     system_url: &str,
     admin: &Client,
     identity: &DevActivationIdentity,
+    platform_domain: &str,
 ) -> anyhow::Result<DevVerificationGate> {
     let database = format!("wamn_dev_verification_{}", std::process::id());
     admin
@@ -922,7 +938,7 @@ pub async fn prepare_dev_verification_gate(
     drop(verification);
     verification_task.abort();
 
-    crate::dev::verification_world::bootstrap(&verification_url, identity)
+    crate::dev::verification_world::bootstrap(&verification_url, identity, platform_domain)
         .await
         .context("bootstrap the Gate's initial disposable verification world")?;
 
@@ -1043,6 +1059,8 @@ pub fn write_dev_config(
         "host_binary": &inputs.host_binary,
         "wasmtime_cache_dir": wasmtime_cache,
     });
+    // A separate insert keeps the literal above inside the json! recursion limit.
+    config["platform_domain"] = inputs.platform_domain.as_str().into();
     if let Some(local) = &inputs.local_artifacts {
         let document = config
             .as_object_mut()

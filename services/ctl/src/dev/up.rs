@@ -98,6 +98,10 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_ROUTE_HOST")]
     route_host: String,
 
+    /// Domain of the platform principal emails, `<component>@<platform-domain>`.
+    #[arg(long, env = "WAMN_DEV_ENV_PLATFORM_DOMAIN")]
+    platform_domain: String,
+
     #[arg(
         long,
         env = "WAMN_DEV_ENV_FLOW_HTTP_WORKLOAD_IMAGE",
@@ -132,10 +136,11 @@ pub struct DevUpArgs {
 
 /// Stand the environment up, then hold the Gate open until interrupted.
 pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
-    // Both settled before a single credential is minted: an environment is
+    // All settled before a single credential is minted: an environment is
     // expensive to stand up, and a Gate that cannot be started or cannot be
     // named leaves a written configuration nothing can use.
     gate_listen_address(&args.gate_bind)?;
+    wamn_control_provision::validate_platform_domain(&args.platform_domain)?;
     anyhow::ensure!(
         args.scenario_worker_binary.is_file(),
         "{} does not name a built wamn-scenario-worker binary",
@@ -192,6 +197,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         component_artifact_base: args.component_artifact_base,
         release_artifact_base: args.release_artifact_base,
         route_host: args.route_host,
+        platform_domain: args.platform_domain,
         registry_auth_file: args.registry_auth_file,
         package_sources,
     };
@@ -207,7 +213,13 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
             .context("connect event provisioning credential")?,
     );
     let (admin, admin_task) = connect(&args.system_database_url).await?;
-    let environment = provision(&args.system_database_url, admin.as_ref(), &args.root).await?;
+    let environment = provision(
+        &args.system_database_url,
+        admin.as_ref(),
+        &args.root,
+        &inputs.platform_domain,
+    )
+    .await?;
     let event_scope = wamn_control_registry::Triple::new(
         &environment.identity.org,
         &environment.identity.project,

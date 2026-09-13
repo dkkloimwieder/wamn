@@ -901,8 +901,8 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
                      'active', 'valid', '{digest}');\n\
              INSERT INTO app_system.roles (tenant_id, name, is_system) \
              VALUES ('tenant-a', 'route-caller', true);\n\
-             INSERT INTO app_system.users (tenant_id, id, email) \
-             VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'caller@example.test');\n\
+             INSERT INTO app_system.users (tenant_id, id, type, email) \
+             VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'person', 'caller@example.test');\n\
              INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) \
              VALUES ('tenant-a', '00000000-0000-4000-8000-000000000001', 'route-caller');\n\
              INSERT INTO app_system.permissions (tenant_id, role_name, permission) \

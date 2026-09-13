@@ -1,7 +1,7 @@
 -- The per-project SYSTEM SCHEMA v1 (wamn-as5, docs/archive/platform-plan.md §2.4). The
 -- application-facing auth/RBAC/config tables that live IN a project database:
--- users, roles (+ the user↔role linkage), permissions, configurations,
--- audit_log, and api_keys.
+-- users, roles (+ the user↔role linkage), permissions, configurations, and
+-- api_keys.
 --
 -- This is the AUTH/RBAC half of item 2.4. Package coordinates, immutable
 -- migration tables, effective releases, and release membership are already
@@ -35,7 +35,7 @@
 -- guest generation convention derives NULL and matches no row, and
 -- CHECK (tenant_id <> '') forbids a ''-tenant row, so the floor is structural.
 --
--- WRITE AUTHORITY (R11) splits these seven tables into three classes. RLS answers
+-- WRITE AUTHORITY (R11) splits these six tables into two classes. RLS answers
 -- "which rows"; the GRANT answers "which relations at all", and the two questions
 -- have different answers here:
 --
@@ -55,10 +55,6 @@
 --   Nothing in the trust chain reads it; it is the project's own settings
 --   surface, and narrowing it would protect the platform from data the platform
 --   never consumes.
---
---   APPEND-ONLY AGAINST THE AUDITED PARTY — audit_log. SELECT + INSERT, no
---   UPDATE/DELETE. Appending to your own history is the point; rewriting or
---   erasing it is exactly what the word "audit" forbids.
 --
 -- TRUNCATE is not mentioned anywhere below because it was never granted to
 -- wamn_app: only the table owner holds it.
@@ -160,10 +156,20 @@ $wamn_authority_bootstrap$;
 -- only: no credential material lives here (auth is 4.2/8.1).
 -- `status` gates whether the account may authenticate (enforced by 4.2, not this
 -- schema). Email is unique within a tenant.
+--
+-- `type` names the kind of principal: a person, a service (a station or an
+-- integration), or a platform component. It has no default, so every insert
+-- names its type. A platform row carries its `wamn:<component>` name in
+-- `display_name` and the id that `wamn-project-state` derives from that name.
+-- `users_platform_principal_check` pins each (display_name, id) pair and
+-- refuses a `wamn:` name on any other type. PostgreSQL has no UUIDv5, so a
+-- Rust test compares these literals with the derivation. Provisioning writes
+-- the platform rows and their `<component>@<platform-domain>` email.
 -- ---------------------------------------------------------------------------
 CREATE TABLE app_system.users (
     tenant_id    text NOT NULL CHECK (tenant_id <> ''),
     id           uuid NOT NULL,
+    type         text NOT NULL,
     email        text NOT NULL,
     display_name text,
     status       text NOT NULL DEFAULT 'active',
@@ -172,7 +178,19 @@ CREATE TABLE app_system.users (
     PRIMARY KEY (tenant_id, id),
     UNIQUE (tenant_id, email),
     CONSTRAINT users_status_check
-        CHECK (status IN ('active', 'disabled', 'invited'))
+        CHECK (status IN ('active', 'disabled', 'invited')),
+    CONSTRAINT users_type_check
+        CHECK (type IN ('person', 'service', 'platform')),
+    CONSTRAINT users_platform_principal_check
+        CHECK (CASE WHEN type = 'platform'
+                    THEN COALESCE((display_name, id) IN (
+                             ('wamn:provisioning', '770df186-ac15-579e-b46b-c297cae2011b'::uuid),
+                             ('wamn:apply-package', '7695180f-4b9a-581f-84ef-d7e9cdbd2b77'::uuid),
+                             ('wamn:materializer', '968bd0cc-e612-5d29-9d6c-af1993b8df0a'::uuid),
+                             ('wamn:executor', 'd318d033-29ea-5cb0-ab56-24340413fbcc'::uuid)),
+                         false)
+                    ELSE display_name IS NULL OR display_name NOT LIKE 'wamn:%'
+               END)
 );
 ALTER TABLE app_system.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.users FORCE ROW LEVEL SECURITY;
@@ -298,42 +316,6 @@ CREATE POLICY configurations_platform ON app_system.configurations
 CREATE INDEX configurations_tkey
     ON app_system.configurations ((wamn_authority.tenant_key(tenant_id)));
 GRANT SELECT, INSERT, UPDATE, DELETE ON app_system.configurations TO wamn_app;
-
--- ---------------------------------------------------------------------------
--- Audit log — append-only trail of who did what. Append-only is ENFORCED by the
--- grant below (R11 class 3): wamn_app holds SELECT + INSERT and no UPDATE/DELETE,
--- so the audited party can add to its history but cannot rewrite or erase it. The
--- missing FK is the other half: `actor_id` is a bare uuid, NOT FK'd to users, so
--- the history SURVIVES deletion of the user it references (a cascade would erase
--- the very record of that user's actions). Both halves are against wamn_app — the
--- table owner is unconstrained, as it must be to run migrations and retention.
--- `actor_id` is nullable for system/anonymous actions. `detail` is structured
--- jsonb context. Indexed by (tenant_id, occurred_at) for the time-range scan.
--- ---------------------------------------------------------------------------
-CREATE TABLE app_system.audit_log (
-    tenant_id   text NOT NULL CHECK (tenant_id <> ''),
-    id          uuid NOT NULL DEFAULT gen_random_uuid(),
-    actor_id    uuid,
-    action      text NOT NULL,
-    target      text,
-    detail      jsonb,
-    occurred_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, id)
-);
-ALTER TABLE app_system.audit_log ENABLE ROW LEVEL SECURITY;
-ALTER TABLE app_system.audit_log FORCE ROW LEVEL SECURITY;
-CREATE POLICY audit_log_tenant ON app_system.audit_log
-    TO wamn_app
-    USING (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key())
-    WITH CHECK (wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key());
-CREATE POLICY audit_log_platform ON app_system.audit_log
-    AS PERMISSIVE FOR ALL TO wamn_platform
-    USING (true)
-    WITH CHECK (true);
-CREATE INDEX audit_log_tkey
-    ON app_system.audit_log ((wamn_authority.tenant_key(tenant_id)));
-GRANT SELECT, INSERT ON app_system.audit_log TO wamn_app;
-CREATE INDEX audit_log_occurred ON app_system.audit_log (tenant_id, occurred_at);
 
 -- ---------------------------------------------------------------------------
 -- API keys — the api-key substrate. `key_hash` is a one-way digest (the raw key

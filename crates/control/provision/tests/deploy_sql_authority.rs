@@ -1211,8 +1211,8 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
     apply(
         &db_url,
         &format!(
-            "INSERT INTO app_system.users (tenant_id, id, email) \
-               VALUES ('t1', '{OPERATOR}', 'operator@example.test');\n\
+            "INSERT INTO app_system.users (tenant_id, id, type, email) \
+               VALUES ('t1', '{OPERATOR}', 'person', 'operator@example.test');\n\
              BEGIN;\n{refusals}COMMIT;\n\
              BEGIN;\n\
              SELECT set_config('app.user_id', \

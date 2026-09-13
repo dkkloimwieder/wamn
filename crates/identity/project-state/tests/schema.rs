@@ -6,20 +6,26 @@
 //!   a45 empty-tenant-row hardening, the `users.status` CHECK literals from
 //!   `UserStatus::as_str`, and the FK cascades);
 //! - a **live-apply gate** showing the DB-enforced behavior — tenant RLS
-//!   isolation, the FK cascades (and audit-log immutability), the empty-tenant /
-//!   status CHECKs — gated on
+//!   isolation, the FK cascades, the empty-tenant / status / type CHECKs, and
+//!   the platform principal rows — gated on
 //!   `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness prepares App generations)
 //!   and skipped cleanly when unset.
 
 use std::path::Path;
+use std::sync::{Mutex, PoisonError};
 
 use wamn_control_provision::{
-    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
+    CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, platform_principals_sql, sql,
+    workload_generation_role,
 };
-use wamn_project_state::{SCHEMA_NAME, TABLES, UserStatus};
+use wamn_project_state::{PlatformComponent, SCHEMA_NAME, TABLES, UserStatus, UserType};
 
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
+
+/// Each live test rebuilds `app_system` in the target database, so they take
+/// turns (cargo runs the tests in one binary on parallel threads).
+static LIVE_DB: Mutex<()> = Mutex::new(());
 
 fn deploy_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy")
@@ -54,8 +60,6 @@ fn code_only(sql: &str) -> String {
 ///   generates, and 4.2 resolves those claims from exactly these tables. Author
 ///   SQL holding DML here could write itself the credential its own policies are
 ///   then evaluated against.
-/// - `audit_log` is append-only against the audited party: `SELECT` + `INSERT`,
-///   no `UPDATE`/`DELETE`. The grant is the whole enforcement mechanism.
 /// - `configurations` is tenant business state — nothing in the trust chain reads
 ///   it — so it deliberately keeps full DML.
 ///
@@ -64,7 +68,6 @@ fn code_only(sql: &str) -> String {
 fn wamn_app_privileges(table: &str) -> &'static str {
     match table {
         "users" | "roles" | "user_roles" | "permissions" | "api_keys" => "SELECT",
-        "audit_log" => "SELECT, INSERT",
         "configurations" => "SELECT, INSERT, UPDATE, DELETE",
         other => panic!("table {other} has no adjudicated wamn_app grant (R11)"),
     }
@@ -174,8 +177,7 @@ fn user_status_literals_are_pinned() {
 
 /// The FK cascades that keep the graph consistent are pinned: the user↔role
 /// linkage and api_keys reference users ON DELETE CASCADE; permissions and the
-/// linkage reference roles ON DELETE CASCADE. (audit_log deliberately does NOT
-/// FK actor_id — immutable history survives user deletion; shown live.)
+/// linkage reference roles ON DELETE CASCADE.
 #[test]
 fn fk_cascades_are_pinned() {
     let sql = code_only(&app_schema_sql());
@@ -186,12 +188,6 @@ fn fk_cascades_are_pinned() {
     assert!(
         sql.contains("REFERENCES app_system.roles (tenant_id, name) ON DELETE CASCADE"),
         "user_roles / permissions must FK roles ON DELETE CASCADE"
-    );
-    // audit_log must NOT FK actor_id (immutable history survives user deletion) —
-    // a real audit FK would introduce a `FOREIGN KEY (tenant_id, actor_id)` clause.
-    assert!(
-        !sql.contains("FOREIGN KEY (tenant_id, actor_id)"),
-        "audit_log.actor_id must NOT be FK'd — the audit trail is immutable"
     );
 }
 
@@ -237,6 +233,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         );
         return;
     };
+    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
 
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
@@ -274,17 +271,15 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     script.push_str(&app_schema_sql());
     script.push('\n');
     // Seed as the superuser (bypasses RLS): two tenants for the isolation test,
-    // known user ids to tie the docs rows to. U1 has a role, key, config, and two
-    // audit entries; the docs rows are owned by U1 and U2.
+    // known user ids to tie the docs rows to. U1 has a role, key, and config.
     script.push_str(&format!(
-        "INSERT INTO app_system.users (tenant_id, id, email) VALUES \
-           ('t1','{U1}','u1@t1'),('t1','{U2}','u2@t1'),('t2','{U3}','u3@t2');\n\
+        "INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
+           ('t1','{U1}','person','u1@t1'),('t1','{U2}','service','u2@t1'),('t2','{U3}','person','u3@t2');\n\
          INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES ('t1','admin',true);\n\
          INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
          INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('t1','admin','receipts:read');\n\
          INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('t1','{U1}','ci','hash-1','wk_a');\n\
-         INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('t1','theme','\"dark\"'::jsonb);\n\
-         INSERT INTO app_system.audit_log (tenant_id, actor_id, action) VALUES ('t1','{U1}','user.login'),('t1','{U1}','receipt.create');\n"
+         INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('t1','theme','\"dark\"'::jsonb);\n"
     ));
 
     // Tenant isolation follows current_user's prepared scope: tenant 1 sees only
@@ -300,7 +295,6 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
            ASSERT (SELECT count(*) FROM app_system.permissions)=1, 't1 sees its permission';\n\
            ASSERT (SELECT count(*) FROM app_system.api_keys)=1, 't1 sees its api key';\n\
            ASSERT (SELECT count(*) FROM app_system.configurations)=1, 't1 sees its config';\n\
-           ASSERT (SELECT count(*) FROM app_system.audit_log)=2, 't1 sees its 2 audit rows';\n\
          END $$;\n\
          COMMIT;\n"
     ));
@@ -343,32 +337,36 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // The status / empty-tenant CHECKs reject bad rows.
     script.push_str(&format!(
         "DO $$ BEGIN BEGIN\n\
-           INSERT INTO app_system.users (tenant_id, id, email, status) VALUES ('t1','{U3}','x@t1','zombie');\n\
+           INSERT INTO app_system.users (tenant_id, id, type, email, status) VALUES ('t1','{U3}','person','x@t1','zombie');\n\
            ASSERT false, 'an unknown user status must be rejected';\n\
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;\n\
          DO $$ BEGIN BEGIN\n\
-           INSERT INTO app_system.users (tenant_id, id, email) VALUES ('','{U4}','x@none');\n\
+           INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('','{U4}','person','x@none');\n\
            ASSERT false, 'a ''-tenant row must be rejected (a45)';\n\
          EXCEPTION WHEN check_violation THEN NULL; END; END $$;\n"
     ));
-    // FK cascade + audit immutability: deleting U1 prunes its role grant and api
-    // key, but its audit rows SURVIVE (actor_id is not FK'd — immutable history).
+    // FK cascade: deleting U1 prunes its role grant and api key.
     script.push_str(&format!(
         "DELETE FROM app_system.users WHERE tenant_id='t1' AND id='{U1}';\n\
          DO $$ BEGIN\n\
            ASSERT (SELECT count(*) FROM app_system.user_roles WHERE user_id='{U1}')=0, 'user_roles cascade';\n\
            ASSERT (SELECT count(*) FROM app_system.api_keys WHERE user_id='{U1}')=0, 'api_keys cascade';\n\
-           ASSERT (SELECT count(*) FROM app_system.audit_log WHERE actor_id='{U1}')=2, 'audit_log survives user deletion (immutable)';\n\
          END $$;\n"
     ));
 
     script.push_str("DROP SCHEMA app_system CASCADE;\n");
 
+    run(&url, &script);
+}
+
+/// Run `script` through `psql` and return its unaligned output, failing the
+/// test with its stderr if any statement or `ASSERT` does.
+fn run(url: &str, script: &str) -> String {
     use std::io::Write;
     use std::process::{Command as Proc, Stdio};
     let mut child = Proc::new("psql")
-        .arg(&url)
-        .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
+        .arg(url)
+        .args(["-X", "-v", "ON_ERROR_STOP=1", "-q", "-At", "-f", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -386,4 +384,140 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
         "psql failed:\n--- stderr ---\n{}\n--- script ---\n{script}",
         String::from_utf8_lossy(&out.stderr)
     );
+    String::from_utf8(out.stdout).expect("psql output is utf-8")
+}
+
+/// A fresh tenant database holds the platform rows that the provisioning
+/// function renders, with the ids that `PlatformComponent::principal_id`
+/// derives. The users CHECKs refuse every other shape: a missing or unknown
+/// type, a platform row with a name or id outside the pinned pairs, and a
+/// person or service row with a `wamn:` name. Set `WAMN_SYSSCHEMA_PG_URL` to a
+/// superuser URL. Skipped when unset.
+#[test]
+fn platform_rows_carry_their_pinned_ids_on_postgres() {
+    const TENANT: &str = "t1";
+    const DOMAIN: &str = "example.invalid";
+    const PERSON: &str = "11111111-1111-1111-1111-111111111111";
+
+    let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
+        eprintln!(
+            "skipping platform_rows_carry_their_pinned_ids_on_postgres \
+             (set WAMN_SYSSCHEMA_PG_URL to run)"
+        );
+        return;
+    };
+    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+
+    let provisioning = PlatformComponent::Provisioning;
+    let executor = PlatformComponent::Executor;
+    let mut script = sql::ensure_app_acl_role_sql();
+    script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
+    script.push_str(&app_schema_sql());
+    script.push('\n');
+    script.push_str(
+        &platform_principals_sql(TENANT, DOMAIN).expect("example.invalid is a domain name"),
+    );
+    // Every refused row sits in its own subtransaction, so the fresh rows
+    // above stay as the only rows in the table.
+    let refused = [
+        (
+            "not_null_violation",
+            format!(
+                "INSERT INTO app_system.users (tenant_id, id, email) \
+                 VALUES ('{TENANT}', '{PERSON}', 'untyped@{DOMAIN}')"
+            ),
+        ),
+        (
+            "check_violation",
+            format!(
+                "INSERT INTO app_system.users (tenant_id, id, type, email) \
+                 VALUES ('{TENANT}', '{PERSON}', 'robot', 'robot@{DOMAIN}')"
+            ),
+        ),
+        (
+            "check_violation",
+            format!(
+                "INSERT INTO app_system.users (tenant_id, id, type, email) \
+                 VALUES ('{TENANT}', '{PERSON}', 'platform', 'unnamed@{DOMAIN}')"
+            ),
+        ),
+        (
+            "check_violation",
+            format!(
+                "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+                 VALUES ('{TENANT}', '{}', 'platform', 'swapped@{DOMAIN}', '{}')",
+                executor.principal_id(),
+                provisioning.principal_name(),
+            ),
+        ),
+        (
+            "check_violation",
+            format!(
+                "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+                 VALUES ('{TENANT}', '{PERSON}', 'platform', 'unknown@{DOMAIN}', 'wamn:unknown')"
+            ),
+        ),
+    ]
+    .into_iter()
+    .chain(
+        [UserType::Person, UserType::Service]
+            .into_iter()
+            .flat_map(|user_type| {
+                let user_type = user_type.as_str();
+                [
+                    format!(
+                        "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+                         VALUES ('{TENANT}', '{PERSON}', '{user_type}', 'named@{DOMAIN}', 'wamn:person')"
+                    ),
+                    format!(
+                        "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+                         VALUES ('{TENANT}', '{}', '{user_type}', 'pinned@{DOMAIN}', '{}')",
+                        provisioning.principal_id(),
+                        provisioning.principal_name(),
+                    ),
+                ]
+            })
+            .map(|statement| ("check_violation", statement)),
+    );
+    for (condition, statement) in refused {
+        let quoted = statement.replace('\'', "''");
+        script.push_str(&format!(
+            "DO $$ BEGIN BEGIN\n\
+               EXECUTE '{quoted}';\n\
+               RAISE EXCEPTION 'the users CHECKs admitted: %', '{quoted}';\n\
+             EXCEPTION WHEN {condition} THEN NULL; END; END $$;\n"
+        ));
+    }
+    // Every user type is admitted.
+    for (index, user_type) in UserType::ALL.into_iter().enumerate() {
+        if user_type == UserType::Platform {
+            continue;
+        }
+        script.push_str(&format!(
+            "INSERT INTO app_system.users (tenant_id, id, type, email, display_name) \
+             VALUES ('other', '00000000-0000-0000-0000-00000000000{index}', '{user_type}', \
+                     '{user_type}@{DOMAIN}', 'Fixture {user_type}');\n"
+        ));
+    }
+    script.push_str(&format!(
+        "SELECT display_name, id, type, email FROM app_system.users \
+          WHERE tenant_id = '{TENANT}' ORDER BY display_name;\n\
+         SELECT count(*) FROM app_system.users WHERE tenant_id = 'other';\n\
+         DROP SCHEMA app_system CASCADE;\n"
+    ));
+
+    let output = run(&url, &script);
+    let mut expected = PlatformComponent::ALL
+        .map(|component| {
+            format!(
+                "{}|{}|platform|{}@{DOMAIN}",
+                component.principal_name(),
+                component.principal_id(),
+                component.as_str()
+            )
+        })
+        .to_vec();
+    expected.sort();
+    expected.push("2".to_owned());
+    assert_eq!(output.lines().collect::<Vec<_>>(), expected);
 }

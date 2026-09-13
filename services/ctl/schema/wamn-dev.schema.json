@@ -126,6 +126,9 @@
       },
       "type": "array"
     },
+    "platform_domain": {
+      "type": "string"
+    },
     "project": {
       "type": "string"
     },
@@ -203,6 +206,7 @@
     "org",
     "otel_exporter_otlp_endpoint",
     "package_sources",
+    "platform_domain",
     "project",
     "route_host",
     "runner",

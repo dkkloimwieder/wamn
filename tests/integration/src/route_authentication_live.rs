@@ -354,10 +354,10 @@ async fn assert_human_environment_membership(
     ).await?;
     project
         .execute(
-            "INSERT INTO app_system.users (tenant_id, id, email) \
-         VALUES ($1, $2::text::uuid, 'member@example.test'), \
-                ($1, $3::text::uuid, 'other@example.test'), \
-                ('other-tenant', $2::text::uuid, 'member@example.test')",
+            "INSERT INTO app_system.users (tenant_id, id, type, email) \
+         VALUES ($1, $2::text::uuid, 'person', 'member@example.test'), \
+                ($1, $3::text::uuid, 'person', 'other@example.test'), \
+                ('other-tenant', $2::text::uuid, 'person', 'member@example.test')",
             &[&TENANT, &human.id().as_str(), &other.id().as_str()],
         )
         .await?;

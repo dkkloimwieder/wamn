@@ -5712,6 +5712,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-event-wire",
  "wamn-pg-core",
+ "wamn-project-state",
  "wamn-run-state",
  "wamn-schema-control",
  "wamn-schema-generator",

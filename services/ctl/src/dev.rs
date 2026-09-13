@@ -814,8 +814,12 @@ async fn bootstrap_verification_world<R>(
 where
     R: DevStageRunner,
 {
-    if let Err(error) =
-        verification_world::bootstrap(verification_database_url, config.activation_identity()).await
+    if let Err(error) = verification_world::bootstrap(
+        verification_database_url,
+        config.activation_identity(),
+        config.platform_domain(),
+    )
+    .await
     {
         runner.reset(DevStage::Migrate);
         runner.stage_started(DevStage::Migrate);

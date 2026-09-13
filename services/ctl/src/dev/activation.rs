@@ -1641,6 +1641,7 @@ mod tests {
             "gate_url": "http://127.0.0.1:41013/authoring",
             "gate_bearer_token": "gate-secret",
             "route_host": "receiving.localhost",
+            "platform_domain": "example.invalid",
             "flow_http_workload_image": "127.0.0.1:41014/wamn/flow-http:dev",
             "package_sources": [],
             "effective_release_id": 1,

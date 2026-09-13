@@ -57,6 +57,7 @@ const GATE_URL: &str = "gate_url";
 const GATE_BEARER_TOKEN: &str = "gate_bearer_token";
 const OPERATOR_BEARER_TOKEN: &str = "operator_bearer_token";
 const ROUTE_HOST: &str = "route_host";
+const PLATFORM_DOMAIN: &str = "platform_domain";
 const FLOW_HTTP_WORKLOAD_IMAGE: &str = "flow_http_workload_image";
 const PACKAGE_SOURCES: &str = "package_sources";
 const EFFECTIVE_RELEASE_ID: &str = "effective_release_id";
@@ -126,6 +127,7 @@ struct DevConfigDocument {
     #[schemars(with = "String")]
     operator_bearer_token: Option<String>,
     route_host: String,
+    platform_domain: String,
     #[serde(default)]
     flow_http_workload_image: String,
     #[serde(default)]
@@ -622,6 +624,7 @@ pub struct DevConfig {
     gate_bearer_token: Box<str>,
     operator_bearer_token: Option<Box<str>>,
     route_host: Box<str>,
+    platform_domain: Box<str>,
     flow_http_workload_image: Box<str>,
     package_sources: Box<[PathBuf]>,
     effective_release_id: NonZeroU32,
@@ -697,6 +700,7 @@ impl fmt::Debug for DevConfig {
             .field(GATE_URL, &self.sanitized_endpoint(GATE_URL))
             .field(GATE_BEARER_TOKEN, &"[REDACTED]")
             .field(ROUTE_HOST, &self.route_host)
+            .field(PLATFORM_DOMAIN, &self.platform_domain)
             .field(
                 FLOW_HTTP_WORKLOAD_IMAGE,
                 &self.sanitized_endpoint(FLOW_HTTP_WORKLOAD_IMAGE),
@@ -878,6 +882,11 @@ impl DevConfig {
         &self.route_host
     }
 
+    /// Deployment-owned domain of the platform principal emails.
+    pub fn platform_domain(&self) -> &str {
+        &self.platform_domain
+    }
+
     /// OCI image reference started through the native workload API.
     pub fn flow_http_workload_image(&self) -> &str {
         &self.flow_http_workload_image
@@ -984,6 +993,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         gate_bearer_token,
         operator_bearer_token,
         route_host,
+        platform_domain,
         flow_http_workload_image,
         package_sources,
         effective_release_id,
@@ -1085,6 +1095,14 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         .map(|token| nonempty_string(token, OPERATOR_BEARER_TOKEN))
         .transpose()?;
     let route_host = nonempty_string(route_host, ROUTE_HOST)?;
+    wamn_control_provision::validate_platform_domain(&platform_domain).map_err(|source| {
+        DevConfigError::new(
+            DevConfigErrorKind::InvalidValue,
+            PLATFORM_DOMAIN,
+            "expected a domain name",
+        )
+        .with_source(source)
+    })?;
     let flow_http_workload_image = if local_artifacts.is_some() {
         flow_http_workload_image.into_boxed_str()
     } else {
@@ -1257,6 +1275,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         gate_bearer_token,
         operator_bearer_token,
         route_host,
+        platform_domain: platform_domain.into_boxed_str(),
         flow_http_workload_image,
         package_sources,
         effective_release_id,
@@ -1942,6 +1961,7 @@ pub(crate) mod tests {
             (GATE_URL): format!("http://{}/authoring", addresses[12]),
             (GATE_BEARER_TOKEN): "gate-super-secret",
             (ROUTE_HOST): "receiving.localhost",
+            (PLATFORM_DOMAIN): "example.invalid",
             (FLOW_HTTP_WORKLOAD_IMAGE): format!("{}/wamn/flow-http:dev", addresses[13]),
             (PACKAGE_SOURCES): [],
             (EFFECTIVE_RELEASE_ID): 1,
@@ -2156,6 +2176,7 @@ pub(crate) mod tests {
             Path::new("/tmp/wamn-dev-cache")
         );
         assert_eq!(config.effective_release_id(), 1);
+        assert_eq!(config.platform_domain(), "example.invalid");
         assert_eq!(
             config.tempo_query_url(),
             format!("http://{}", addresses[14])
@@ -2165,7 +2186,7 @@ pub(crate) mod tests {
             format!("http://{}", addresses[15])
         );
 
-        for key in [TENANT, HOST_BINARY, WASMTIME_CACHE_DIR] {
+        for key in [TENANT, PLATFORM_DOMAIN, HOST_BINARY, WASMTIME_CACHE_DIR] {
             let mut missing = complete_document(&addresses);
             missing.as_object_mut().expect("fixture object").remove(key);
             let error = parse_config(
@@ -2175,6 +2196,15 @@ pub(crate) mod tests {
             assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
             assert_eq!(error.key(), key);
         }
+
+        let mut invalid_domain = complete_document(&addresses);
+        invalid_domain[PLATFORM_DOMAIN] = json!("example.invalid/path");
+        let error = parse_config(
+            &serde_json::to_vec(&invalid_domain).expect("serialize invalid platform domain"),
+        )
+        .expect_err("the platform domain must be a domain name");
+        assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
+        assert_eq!(error.key(), PLATFORM_DOMAIN);
 
         let mut zero_release = complete_document(&addresses);
         zero_release[EFFECTIVE_RELEASE_ID] = json!(0);

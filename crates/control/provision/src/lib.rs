@@ -65,6 +65,7 @@ pub mod management_admitter;
 mod name;
 pub mod operation_grants;
 pub mod org;
+pub mod platform_principals;
 #[cfg(feature = "ops")]
 pub mod restore;
 pub mod saga;
@@ -119,6 +120,9 @@ pub use name::{
     workload_secret_name,
 };
 pub use org::{OrgClusters, render_org_cluster_set};
+pub use platform_principals::{
+    PlatformDomainError, platform_principals_sql, validate_platform_domain,
+};
 #[cfg(feature = "ops")]
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
 pub use system_reader::{

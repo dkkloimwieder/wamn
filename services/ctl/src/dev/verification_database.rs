@@ -862,6 +862,7 @@ mod tests {
             "gate_url": "http://127.0.0.1:8080/authoring",
             "gate_bearer_token": "live-test-token",
             "route_host": "receiving.localhost",
+            "platform_domain": "example.invalid",
             "flow_http_workload_image": "127.0.0.1:5002/wamn/flow-http:dev",
             "package_sources": [],
             "effective_release_id": 1,

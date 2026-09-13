@@ -2,6 +2,8 @@
 
 use std::str::FromStr as _;
 
+mod print_platform_principals;
+
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
     apply_package, author_wiring, bind_connection, delivery, enable_cdc_project_env,
@@ -67,6 +69,8 @@ enum Command {
     PublishRelease(publish_release::PublishReleaseArgs),
     /// Print the release lines a pod template carries for one minted release (wamn-duyl)
     PrintReleaseEnv(print_release_env::PrintReleaseEnvArgs),
+    /// Print the SQL that creates the platform principal rows of one tenant.
+    PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),
     /// Promote one verified format-1 release into a target environment
     Promote(promote::PromoteArgs),
     /// Detect or repair per-model REPLICA IDENTITY drift from package registrations — one-shot and idempotent.
@@ -114,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
         Command::AuthorWiring(args) => author_wiring::run(args).await,
         Command::PublishRelease(args) => publish_release::run(args).await,
         Command::PrintReleaseEnv(args) => print_release_env::run(args).await,
+        Command::PrintPlatformPrincipals(args) => print_platform_principals::run(args),
         Command::Promote(args) => promote::run(args).await,
         Command::ReconcileReplicaIdentity(args) => reconcile_replica_identity::run(args).await,
         Command::ReconcileRunPlane(args) => reconcile_run_plane::run(args).await,

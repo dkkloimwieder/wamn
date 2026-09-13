@@ -242,8 +242,8 @@ async fn seed_tenant_role(
         .await
         .context("begin test fixture seed")?;
     tx.execute(
-        "INSERT INTO app_system.users (tenant_id, id, email) \
-         VALUES ($1, $2::text::uuid, $3)",
+        "INSERT INTO app_system.users (tenant_id, id, type, email) \
+         VALUES ($1, $2::text::uuid, 'person', $3)",
         &[
             &args.tenant,
             &principal.as_str(),

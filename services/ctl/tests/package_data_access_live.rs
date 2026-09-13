@@ -643,12 +643,9 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
     // app_system and catalog are platform schemas. No package manifest names
     // them, so the reconciler never reads a relation there. The floor grants the
     // two schema files install stand outside every package declaration, and so
-    // do these two seeded grants.
+    // does this seeded grant.
     admin
-        .batch_execute(
-            "GRANT DELETE ON TABLE app_system.audit_log TO wamn_app; \
-             GRANT UPDATE (tenant_id) ON TABLE catalog.packages TO wamn_app;",
-        )
+        .batch_execute("GRANT UPDATE (tenant_id) ON TABLE catalog.packages TO wamn_app;")
         .await
         .expect("seed App authority inside the platform schemas");
     reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
@@ -659,7 +656,6 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
     .expect("reconcile the installed package set beside platform-schema authority");
 
     for (relation, privilege) in [
-        ("app_system.audit_log", "DELETE"),
         ("app_system.users", "SELECT"),
         ("app_system.configurations", "UPDATE"),
         ("catalog.packages", "SELECT"),

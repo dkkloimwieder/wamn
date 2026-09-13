@@ -41,6 +41,9 @@ serde_json = { workspace = true }
 # A lean pure→pure edge (wamn-control-registry deps serde + serde_json only).
 wamn-control-registry = { workspace = true }
 wamn-pg-core = { workspace = true }
+# The platform principal rows take their component list, names, and derived
+# ids from the app_system model.
+wamn-project-state = { workspace = true }
 wamn-run-state = { workspace = true, features = ["effect-writer-credential"] }
 # Operation-grant reconciliation consumes the same deny-unknown-fields package
 # manifest as generation. It derives grants from that public parsed shape; it

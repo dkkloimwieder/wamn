@@ -368,9 +368,14 @@ session_target() {
     -c "CREATE DATABASE \"$database\"" >"$evidence_dir/session-$label-create.log" 2>&1
   run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
     <"$repo_root/deploy/sql/app-schema.sql" >"$evidence_dir/session-$label-schema.log" 2>&1
+  # The one provisioning function renders the tenant's platform rows.
+  run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl print-platform-principals \
+    --tenant "$tenant" --platform-domain example.invalid >"$evidence_dir/session-$label-platform-principals.sql"
+  run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
+    <"$evidence_dir/session-$label-platform-principals.sql" >"$evidence_dir/session-$label-platform-principals.log" 2>&1
   printf '%s\n' "CREATE SCHEMA catalog; CREATE SCHEMA wamn_run;" \
     "REVOKE CONNECT, TEMPORARY ON DATABASE \"$database\" FROM PUBLIC;" \
-    "INSERT INTO app_system.users (tenant_id,id,email) VALUES ('$tenant','$session_human_id','session@example.invalid');" \
+    "INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('$tenant','$session_human_id','person','session@example.invalid');" \
     "INSERT INTO app_system.roles (tenant_id,name) VALUES ('$tenant','$role');" \
     "INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('$tenant','$session_human_id','$role');" \
     >"$evidence_dir/session-$label-data.sql"

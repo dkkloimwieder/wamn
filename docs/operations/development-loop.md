@@ -26,6 +26,8 @@ For declared connections, pass `--local-bindings` with an absolute path to the s
 The emitted configuration stores that path in `local_artifacts.bindings`.
 
 The gate listener needs a fixed, unused port rather than port zero.
+Supply `--platform-domain` with the domain of the platform principal emails, for example `example.invalid`.
+The emitted configuration stores it in `platform_domain`.
 Supply event runtime credentials separately from provisioning credentials.
 Declare `--stream-replicas` and `--dup-window-secs` explicitly.
 Use `--event-provisioning-username` and `--event-provisioning-password-file` for stream creation.

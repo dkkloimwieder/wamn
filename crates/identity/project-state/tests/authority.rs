@@ -7,10 +7,10 @@
 //! One test per adjudicated class:
 //! - `users` / `roles` / `user_roles` / `permissions` / `api_keys` are the rows
 //!   the trust chain reads as authorization INPUT, so an App generation may
-//!   inherit their stable `wamn_app` reads and nothing more;
-//! - `audit_log` takes appends from the audited party and refuses rewrites;
+//!   inherit their stable `wamn_app` reads and nothing more, so a tenant or an
+//!   application cannot create a platform row or a `wamn:` name;
 //! - `configurations` stays fully writable — the class the platform has no
-//!   jurisdiction over, and the control proving the other two tests fail for the
+//!   jurisdiction over, and the control proving the other test fails for the
 //!   revoked privilege rather than for an over-broad narrowing.
 //!
 //! Gated on `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness prepares one
@@ -27,6 +27,10 @@ use wamn_control_provision::{
 /// The tenant every probe runs under, and the user its seeded rows belong to.
 const TENANT: &str = "t1";
 const U1: &str = "11111111-1111-1111-1111-111111111111";
+/// An unused person id for the refused inserts.
+const U2: &str = "22222222-2222-2222-2222-222222222222";
+/// The pinned `wamn:provisioning` id, the row a tenant must not create.
+const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
@@ -97,13 +101,12 @@ fn prelude(url: &str) -> (String, String) {
     script.push_str(&app_schema_sql());
     script.push_str(&format!(
         r#"
-INSERT INTO app_system.users (tenant_id, id, email) VALUES ('{TENANT}','{U1}','u1@t1');
+INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','person','u1@t1');
 INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES ('{TENANT}','admin',true),('{TENANT}','auditor',false);
 INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
 INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ('{TENANT}','admin','receipts:read');
 INSERT INTO app_system.api_keys (tenant_id, user_id, name, key_hash, prefix) VALUES ('{TENANT}','{U1}','ci','hash-1','wk_a');
 INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES ('{TENANT}','theme','"dark"'::jsonb);
-INSERT INTO app_system.audit_log (tenant_id, actor_id, action) VALUES ('{TENANT}','{U1}','user.login');
 "#
     ));
     (app_generation, script)
@@ -147,7 +150,7 @@ fn run(url: &str, script: &str) {
 /// Each denied statement is RLS-LEGAL for the probe tenant — same generation,
 /// FKs satisfied, no key collision — so `42501` here is the revoked privilege and
 /// not a `WITH CHECK` rejection, which shares the SQLSTATE. That the tenant floor
-/// does admit such a row under the App generation is what the other two tests show.
+/// does admit such a row under the App generation is what the configurations test shows.
 #[test]
 fn author_sql_cannot_write_the_relations_that_authorize_it() {
     let Some(url) = live_url("author_sql_cannot_write_the_relations_that_authorize_it") else {
@@ -187,8 +190,10 @@ DO $$
 DECLARE probe_sql text;
 BEGIN
   FOREACH probe_sql IN ARRAY ARRAY[
-    'INSERT INTO app_system.users (tenant_id, email) VALUES (''{TENANT}'', ''intruder@t1'')',
+    'INSERT INTO app_system.users (tenant_id, id, type, email) VALUES (''{TENANT}'', ''{U2}'', ''person'', ''intruder@t1'')',
+    'INSERT INTO app_system.users (tenant_id, id, type, email, display_name) VALUES (''{TENANT}'', ''{PROVISIONING}'', ''platform'', ''provisioning@example.invalid'', ''wamn:provisioning'')',
     'UPDATE app_system.users SET status = ''disabled''',
+    'UPDATE app_system.users SET display_name = ''wamn:intruder''',
     'DELETE FROM app_system.users',
     'INSERT INTO app_system.roles (tenant_id, name) VALUES (''{TENANT}'', ''superadmin'')',
     'UPDATE app_system.roles SET is_system = false',
@@ -206,71 +211,6 @@ BEGIN
     BEGIN
       EXECUTE probe_sql;
       RAISE EXCEPTION 'author SQL mutated a platform-protected relation: %', probe_sql;
-    EXCEPTION WHEN insufficient_privilege THEN NULL;
-    END;
-  END LOOP;
-END $$;
-
-ROLLBACK;
-"#
-    ));
-    script.push_str(TEARDOWN);
-    run(&url, &script);
-}
-
-/// `audit_log` is neither platform-protected nor tenant-owned: appending to your
-/// own history is the point, rewriting or erasing it is what "audit" forbids. The
-/// grant is the entire mechanism — there is no trigger — so this is where the
-/// header's append-only claim is actually cashed.
-///
-/// The successful append also shows that the tenant floor admits a well-formed
-/// same-tenant row under the App generation, which is what lets the sibling test read a
-/// `42501` as "privilege revoked" rather than "policy rejected".
-#[test]
-fn the_audited_party_may_append_to_its_trail_but_not_rewrite_it() {
-    let Some(url) = live_url("the_audited_party_may_append_to_its_trail_but_not_rewrite_it") else {
-        return;
-    };
-    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
-
-    let (app_generation, mut script) = prelude(&url);
-    script.push_str(&format!(
-        r#"
-DO $$ BEGIN
-  ASSERT has_table_privilege('wamn_app'::name, 'app_system.audit_log'::text, 'SELECT'::text),
-    'the audit trail must stay readable by its tenant';
-  ASSERT has_table_privilege('wamn_app'::name, 'app_system.audit_log'::text, 'INSERT'::text),
-    'the audit trail must stay appendable — append-only is not read-only';
-  ASSERT NOT has_table_privilege('wamn_app'::name, 'app_system.audit_log'::text, 'UPDATE'::text),
-    'wamn_app holds UPDATE on the audit trail — the audited party can rewrite it';
-  ASSERT NOT has_table_privilege('wamn_app'::name, 'app_system.audit_log'::text, 'DELETE'::text),
-    'wamn_app holds DELETE on the audit trail — the audited party can erase it';
-  ASSERT NOT has_table_privilege('wamn_app'::name, 'app_system.audit_log'::text, 'TRUNCATE'::text),
-    'wamn_app holds TRUNCATE on the audit trail';
-END $$;
-
-BEGIN;
-SET LOCAL ROLE {app_generation};
-
-DO $$ BEGIN
-  ASSERT current_user = '{app_generation}',
-    'the tenant authority is the prepared App generation';
-  INSERT INTO app_system.audit_log (tenant_id, actor_id, action)
-    VALUES ('{TENANT}', '{U1}', 'probe.append');
-  ASSERT (SELECT count(*) FROM app_system.audit_log) = 2,
-    'the audited party may append to its own trail';
-END $$;
-
-DO $$
-DECLARE probe_sql text;
-BEGIN
-  FOREACH probe_sql IN ARRAY ARRAY[
-    'UPDATE app_system.audit_log SET action = ''user.logout''',
-    'DELETE FROM app_system.audit_log'
-  ] LOOP
-    BEGIN
-      EXECUTE probe_sql;
-      RAISE EXCEPTION 'the audited party rewrote its own audit trail: %', probe_sql;
     EXCEPTION WHEN insufficient_privilege THEN NULL;
     END;
   END LOOP;

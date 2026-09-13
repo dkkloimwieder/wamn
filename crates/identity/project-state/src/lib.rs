@@ -16,7 +16,7 @@
 //!
 //! The tables are the AUTH/RBAC half of plan item 2.4: [`USERS`], [`ROLES`] (+
 //! the user↔role linkage [`USER_ROLES`]), [`PERMISSIONS`], [`CONFIGURATIONS`],
-//! [`AUDIT_LOG`], [`API_KEYS`]. The "platform metadata" half of 2.4 (entities /
+//! [`API_KEYS`]. The "platform metadata" half of 2.4 (entities /
 //! fields / relations / flows) is ALREADY shipped — the catalog model in
 //! `deploy/sql/catalog-schema.sql` (3.1) — and is referenced, not redefined here.
 //!
@@ -94,6 +94,40 @@ impl UserStatus {
 }
 
 impl std::fmt::Display for UserStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// The kind of principal a user row names, the `users.type` CHECK domain.
+///
+/// The column has no default, so every insert names its type. A type does not
+/// change how a principal authenticates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UserType {
+    /// A person.
+    Person,
+    /// A station or an integration.
+    Service,
+    /// A platform component named `wamn:<component>`.
+    Platform,
+}
+
+impl UserType {
+    /// Every type. Order is presentational.
+    pub const ALL: [UserType; 3] = [UserType::Person, UserType::Service, UserType::Platform];
+
+    /// The CHECK-literal form (`person` / `service` / `platform`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UserType::Person => "person",
+            UserType::Service => "service",
+            UserType::Platform => "platform",
+        }
+    }
+}
+
+impl std::fmt::Display for UserType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
@@ -186,7 +220,7 @@ impl Table {
 /// Application accounts. `id` (`uuid`) is the [`USER_ID_CLAIM`] ownership target.
 pub const USERS: Table = Table {
     name: "users",
-    columns: &["tenant_id", "id", "email", "display_name", "status"],
+    columns: &["tenant_id", "id", "type", "email", "display_name", "status"],
 };
 
 /// Named roles. `name` is the [`ROLE_CLAIM`] gate target.
@@ -213,13 +247,6 @@ pub const CONFIGURATIONS: Table = Table {
     columns: &["tenant_id", "config_key", "config_value"],
 };
 
-/// Append-only audit trail. `actor_id` is a bare uuid (not FK'd — immutable
-/// history survives user deletion).
-pub const AUDIT_LOG: Table = Table {
-    name: "audit_log",
-    columns: &["tenant_id", "actor_id", "action", "occurred_at"],
-};
-
 /// The api-key substrate. `key_hash` is a one-way digest, never the raw key.
 pub const API_KEYS: Table = Table {
     name: "api_keys",
@@ -235,7 +262,6 @@ pub const TABLES: &[Table] = &[
     USER_ROLES,
     PERMISSIONS,
     CONFIGURATIONS,
-    AUDIT_LOG,
     API_KEYS,
 ];
 
@@ -255,10 +281,20 @@ mod tests {
     }
 
     #[test]
+    fn user_type_as_str_is_stable() {
+        assert_eq!(UserType::Person.as_str(), "person");
+        assert_eq!(UserType::Service.as_str(), "service");
+        assert_eq!(UserType::Platform.as_str(), "platform");
+        for t in UserType::ALL {
+            assert_eq!(t.to_string(), t.as_str());
+        }
+    }
+
+    #[test]
     fn table_manifest_is_complete_and_unique() {
-        // The plan's six auth/RBAC concepts, with the user↔role linkage split
-        // out as its own table = seven tables.
-        assert_eq!(TABLES.len(), 7);
+        // Five auth/RBAC concepts, with the user↔role linkage split out as its
+        // own table, make six tables.
+        assert_eq!(TABLES.len(), 6);
         let mut names: Vec<&str> = TABLES.iter().map(|t| t.name).collect();
         names.sort_unstable();
         names.dedup();

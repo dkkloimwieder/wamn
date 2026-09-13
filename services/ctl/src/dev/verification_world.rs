@@ -6,7 +6,8 @@ use std::fmt;
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::{
-    CredentialGeneration, DB_OWNER_ROLE, management_admitter_generation_role, sql,
+    CredentialGeneration, DB_OWNER_ROLE, management_admitter_generation_role,
+    platform_principals_sql, sql,
 };
 use wamn_pg_core::Identifier;
 use wamn_schema_control::BareSchemaName;
@@ -59,13 +60,14 @@ impl VerificationWorldBootstrapResult {
 /// Gate and Publish path presents. The order mirrors production prerequisites:
 /// generation access, package-owner/effect-writer roles, package-owner database
 /// authority, the converged catalog + run plane, the static
-/// application-authorization floor, then the management-admitter surface that
-/// names those relations.
+/// application-authorization floor with the tenant's platform principal rows,
+/// then the management-admitter surface that names those relations.
 pub async fn bootstrap(
     verification_database_url: &str,
     identity: &DevActivationIdentity,
+    platform_domain: &str,
 ) -> Result<VerificationWorldBootstrapResult, VerificationWorldBootstrapError> {
-    bootstrap_inner(verification_database_url, identity)
+    bootstrap_inner(verification_database_url, identity, platform_domain)
         .await
         .map_err(VerificationWorldBootstrapError)
 }
@@ -73,12 +75,13 @@ pub async fn bootstrap(
 async fn bootstrap_inner(
     verification_database_url: &str,
     identity: &DevActivationIdentity,
+    platform_domain: &str,
 ) -> anyhow::Result<VerificationWorldBootstrapResult> {
     let (mut client, connection) = tokio_postgres::connect(verification_database_url, NoTls)
         .await
         .context("connect to the disposable verification database")?;
     let connection_task = tokio::spawn(connection);
-    let result = bootstrap_with_client(&mut client, identity).await;
+    let result = bootstrap_with_client(&mut client, identity, platform_domain).await;
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -94,6 +97,7 @@ async fn bootstrap_inner(
 async fn bootstrap_with_client(
     client: &mut Client,
     identity: &DevActivationIdentity,
+    platform_domain: &str,
 ) -> anyhow::Result<VerificationWorldBootstrapResult> {
     let management_admitter_connect_granted =
         ensure_management_admitter_connect(client, identity).await?;
@@ -115,7 +119,8 @@ async fn bootstrap_with_client(
         .await
         .context("converge the verification catalog and run plane")?;
 
-    let application_authorization_installed = ensure_application_authorization(client).await?;
+    let application_authorization_installed =
+        ensure_application_authorization(client, &identity.tenant, platform_domain).await?;
 
     client
         .batch_execute(&sql::grant_management_admitter_surface_sql(RUN_SCHEMA))
@@ -242,7 +247,11 @@ async fn ensure_package_owner_create(client: &Client) -> anyhow::Result<bool> {
     Ok(true)
 }
 
-async fn ensure_application_authorization(client: &mut Client) -> anyhow::Result<bool> {
+async fn ensure_application_authorization(
+    client: &mut Client,
+    tenant: &str,
+    platform_domain: &str,
+) -> anyhow::Result<bool> {
     let present: bool = client
         .query_one(
             "SELECT pg_catalog.to_regnamespace('app_system') IS NOT NULL",
@@ -252,6 +261,8 @@ async fn ensure_application_authorization(client: &mut Client) -> anyhow::Result
         .context("read application-authorization schema presence")?
         .get(0);
     if !present {
+        let platform_principals = platform_principals_sql(tenant, platform_domain)
+            .context("render the verification tenant's platform principal rows")?;
         let transaction = client
             .transaction()
             .await
@@ -260,6 +271,10 @@ async fn ensure_application_authorization(client: &mut Client) -> anyhow::Result
             .batch_execute(APP_SCHEMA_SQL)
             .await
             .context("install the production application-authorization schema")?;
+        transaction
+            .batch_execute(&platform_principals)
+            .await
+            .context("create the verification tenant's platform principal rows")?;
         transaction
             .commit()
             .await
@@ -412,6 +427,7 @@ mod tests {
             "gate_url": "http://127.0.0.1:8080/authoring",
             "gate_bearer_token": "live-test-token",
             "route_host": "receiving.localhost",
+            "platform_domain": "example.invalid",
             "flow_http_workload_image": "127.0.0.1:5002/wamn/flow-http:dev",
             "package_sources": [],
             "effective_release_id": 1,
@@ -505,7 +521,11 @@ mod tests {
             .get(0)
     }
 
-    async fn assert_fresh_world(url: &str, identity: &DevActivationIdentity) {
+    async fn assert_fresh_world(
+        url: &str,
+        identity: &DevActivationIdentity,
+        platform_domain: &str,
+    ) {
         let client = connect(url).await;
         let major: i32 = client
             .query_one(
@@ -545,10 +565,32 @@ mod tests {
             .get(0);
         assert_eq!(preexisting, 0, "the verification database is not fresh");
 
-        let first = bootstrap(url, identity)
+        let first = bootstrap(url, identity, platform_domain)
             .await
             .expect("bootstrap the fresh world");
         assert!(!first.is_noop());
+        // The users CHECK pins each platform name to its derived id, so the
+        // names and emails identify the rows.
+        let platform_rows = client
+            .query(
+                "SELECT display_name, email FROM app_system.users \
+                  WHERE tenant_id = $1 AND type = 'platform' ORDER BY display_name",
+                &[&identity.tenant],
+            )
+            .await
+            .expect("read the verification tenant's platform principal rows")
+            .into_iter()
+            .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
+            .collect::<Vec<_>>();
+        let expected = ["apply-package", "executor", "materializer", "provisioning"]
+            .map(|component| {
+                (
+                    format!("wamn:{component}"),
+                    format!("{component}@{platform_domain}"),
+                )
+            })
+            .to_vec();
+        assert_eq!(platform_rows, expected);
         assert!(first.management_admitter_connect_granted);
         let verification_database = database_name(url);
         for role in management_admitter_roles(identity, &verification_database) {
@@ -558,7 +600,7 @@ mod tests {
             );
         }
         assert_eq!(runtime_fact_count(&client).await, 0);
-        let again = bootstrap(url, identity)
+        let again = bootstrap(url, identity, platform_domain)
             .await
             .expect("replay verification bootstrap");
         assert!(again.is_noop(), "verification bootstrap did not converge");
@@ -637,8 +679,9 @@ mod tests {
             .expect("install the durable-environment ACL sentinel");
         let durable_acl_before = database_acl(&admin, &durable_database).await;
         let identity = config.activation_identity().clone();
+        let platform_domain = config.platform_domain().to_owned();
         verification_database::run(&config, |verification_url| async move {
-            assert_fresh_world(&verification_url, &identity).await;
+            assert_fresh_world(&verification_url, &identity, &platform_domain).await;
             Ok::<_, std::convert::Infallible>(())
         })
         .await

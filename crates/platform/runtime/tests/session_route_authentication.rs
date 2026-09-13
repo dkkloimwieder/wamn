@@ -122,7 +122,7 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
         (first.as_str(), "first@example.test"),
         (SECOND_PRINCIPAL, "second@example.test"),
     ] {
-        admin.execute("INSERT INTO app_system.users (tenant_id, id, email) VALUES ($1, $2::text::uuid, $3)",
+        admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ($1, $2::text::uuid, 'person', $3)",
             &[&TENANT, &principal, &email]).await?;
         admin.execute("INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ($1, $2::text::uuid, 'purchase-reader')",
             &[&TENANT, &principal]).await?;
