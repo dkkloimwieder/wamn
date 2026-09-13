@@ -702,9 +702,16 @@ impl ProductionDevStageRunner {
                 if let Some(verifier) =
                     crate::delivery::sqlx::verifier_for(&package.manifest.package.id)
                 {
+                    let database_url = crate::delivery::sqlx::package_database_url(
+                        self.preparation_database_url(),
+                        &package.manifest,
+                    )
+                    .map_err(|source| {
+                        ProductionDevStageError::owner("scope SQLx to the package schemas", source)
+                    })?;
                     let output = crate::delivery::sqlx::prepare_command(
                         &package.root.join("tests"),
-                        self.preparation_database_url(),
+                        &database_url,
                         verifier,
                         false,
                     )

@@ -2,8 +2,40 @@
 
 use std::path::Path;
 
-use anyhow::ensure;
+use anyhow::{Context as _, ensure};
 use tokio::process::Command;
+use wamn_schema_generator::PackageManifest;
+
+/// Use the package's existing SQL search path without changing other connection options.
+pub fn package_database_url(
+    database_url: &str,
+    manifest: &PackageManifest,
+) -> anyhow::Result<String> {
+    let schemas = wamn_schema_generator::data_access_schemas(&serde_json::to_vec(manifest)?)
+        .context("resolve the package SQLx schemas")?;
+    let connection = database_url
+        .parse::<tokio_postgres::Config>()
+        .context("parse SQLx connection options")?;
+    let mut url = url::Url::parse(database_url).context("parse the SQLx database URL")?;
+    // The schema owner validates these as bare identifiers. The final setting
+    // wins over any inherited search_path, like the generator's session SET.
+    let options = format!(
+        "{} -csearch_path={},public",
+        connection.get_options().unwrap_or_default(),
+        schemas.join(",")
+    );
+    // PostgreSQL decodes percent escapes in URLs; '+' is a literal character.
+    let encoded = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("options", options.trim())
+        .finish()
+        .replace('+', "%20");
+    let query = match url.query().filter(|query| !query.is_empty()) {
+        Some(query) => format!("{query}&{encoded}"),
+        None => encoded,
+    };
+    url.set_query(Some(&query));
+    Ok(url.into())
+}
 
 /// Return the existing verifier target for an application package.
 pub fn verifier_for(package_id: &str) -> Option<&'static str> {
@@ -56,4 +88,45 @@ pub fn prepare_command(
         .env("SQLX_OFFLINE", "false")
         .env("CARGO_NET_OFFLINE", "true");
     command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_search_path_preserves_other_connection_options() {
+        let manifest = PackageManifest::from_slice(include_bytes!(
+            "../../../../apps/wamn_receiving/wamn.json"
+        ))
+        .expect("read the existing package schema owner");
+        let database_url = package_database_url(
+            "postgresql://user:password@127.0.0.1:5432/test?application_name=local%2Bcheck&options=-cstatement_timeout%3D2500%20-csearch_path%3Dold&connect_timeout=5",
+            &manifest,
+        ).expect("scope SQLx to the package schemas");
+        let connection = database_url
+            .parse::<tokio_postgres::Config>()
+            .expect("the scoped URL remains a PostgreSQL connection");
+        assert_eq!(connection.get_dbname(), Some("test"));
+        assert_eq!(connection.get_application_name(), Some("local+check"));
+        assert_eq!(
+            connection.get_connect_timeout(),
+            Some(&std::time::Duration::from_secs(5))
+        );
+        assert_eq!(
+            connection.get_options(),
+            Some("-cstatement_timeout=2500 -csearch_path=old -csearch_path=receiving,public")
+        );
+        assert_eq!(connection.get_user(), Some("user"));
+        assert_eq!(connection.get_password(), Some(b"password".as_slice()));
+        let plain = package_database_url("postgresql://127.0.0.1/test", &manifest)
+            .expect("scope the unconfigured local connection");
+        assert_eq!(
+            plain
+                .parse::<tokio_postgres::Config>()
+                .unwrap()
+                .get_options(),
+            Some("-csearch_path=receiving,public")
+        );
+    }
 }
