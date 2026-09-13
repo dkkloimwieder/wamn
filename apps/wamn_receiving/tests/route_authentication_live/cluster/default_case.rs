@@ -119,8 +119,6 @@ async fn run(evidence: &std::path::Path) -> anyhow::Result<()> {
             &resources.name,
             &resources.work,
             &resources.name,
-            &resources.host_image,
-            &digest,
             &cluster.inputs.route_host,
             &evidence,
         )

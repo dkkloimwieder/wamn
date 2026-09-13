@@ -99,8 +99,6 @@ async fn prepare(
         &resources.name,
         &resources.work,
         &resources.name,
-        &resources.host_image,
-        &digest,
         &cluster.inputs.route_host,
         evidence,
     )

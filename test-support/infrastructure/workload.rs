@@ -425,11 +425,13 @@ pub async fn unknown_route(
     cluster: &str,
     work: &Path,
     namespace: &str,
-    image: &str,
-    runtime_digest: &str,
     route_host: &str,
     evidence: &Path,
 ) -> anyhow::Result<()> {
+    // curlimages/curl 8.12.1, linux/amd64 manifest and its exact config identity.
+    let image_digest = "sha256:88a9abad9d958340e48564f9bdcdaa29916a2984be59314da709f8bbc0eef6f7";
+    let config_digest = "sha256:5dce198cca467ce79994ed65e01d03882238f9efdd16a8c6f4bc55151c8a4a54";
+    let image = format!("curlimages/curl@{image_digest}");
     let script = r#"transport=$(curl --silent --show-error --connect-timeout 5 --max-time 15 --output /tmp/body --write-out '{"status":%{http_code},"content_type":"%{content_type}"}' --header "Host: $ROUTE_HOST" "http://flow-http.$NAMESPACE.svc.cluster.local/no-such-route")
 body_hex=$(od -An -v -tx1 /tmp/body | tr -d ' \n')
 printf '{"transport":%s,"body_hex":"%s"}\n' "$transport" "$body_hex" >/dev/termination-log
@@ -437,13 +439,13 @@ printf '{"transport":%s,"body_hex":"%s"}\n' "$transport" "$body_hex" >/dev/termi
     let job = json!({"apiVersion":"batch/v1","kind":"Job",
     "metadata":{"name":"flow-http-reachability","namespace":namespace},
     "spec":{"activeDeadlineSeconds":60,"backoffLimit":0,"template":{"spec":{"restartPolicy":"Never","containers":[{
-        "name":"probe","image":image,"imagePullPolicy":"Never","command":["/bin/sh","-ec"],"args":[script],
+        "name":"probe","image":image,"imagePullPolicy":"IfNotPresent","command":["/bin/sh","-ec"],"args":[script],
         "env":[{"name":"ROUTE_HOST","value":route_host},{"name":"NAMESPACE","value":namespace}]
     }]}}}});
     let path = work.join("flow-http-reachability.json");
     fs::write(&path, serde_json::to_vec_pretty(&job)?)?;
     checked(kubectl(cluster, work).args(["apply", "-f"]).arg(&path)).await?;
-    checked(kubectl(cluster, work).args([
+    let completed = checked(kubectl(cluster, work).args([
         "-n",
         namespace,
         "wait",
@@ -451,7 +453,7 @@ printf '{"transport":%s,"body_hex":"%s"}\n' "$transport" "$body_hex" >/dev/termi
         "job/flow-http-reachability",
         "--timeout=90s",
     ]))
-    .await?;
+    .await;
     let job = command_json(kubectl(cluster, work).args([
         "-n",
         namespace,
@@ -475,6 +477,24 @@ printf '{"transport":%s,"body_hex":"%s"}\n' "$transport" "$body_hex" >/dev/termi
     .await?;
     save(evidence, "flow-http-probe-job.json", &job)?;
     save(evidence, "flow-http-probe-pod.json", &pods)?;
+    if let Err(error) = completed {
+        let logs = checked(kubectl(cluster, work).args([
+            "-n",
+            namespace,
+            "logs",
+            "job/flow-http-reachability",
+            "--tail=40",
+        ]))
+        .await
+        .unwrap_or_else(|error| format!("probe logs unavailable: {error:#}").into_bytes());
+        fs::write(evidence.join("flow-http-probe.log"), &logs)?;
+        return Err(error.context(format!(
+            "HTTP probe job status {}; pods {}; logs: {}",
+            job["status"],
+            pods,
+            String::from_utf8_lossy(&logs)
+        )));
+    }
     ensure!(
         job["status"]["succeeded"] == 1 && condition(&job["status"], "Complete", "True"),
         "the in-cluster HTTP Job did not complete exactly once"
@@ -492,8 +512,8 @@ printf '{"transport":%s,"body_hex":"%s"}\n' "$transport" "$body_hex" >/dev/termi
             && statuses[0]["ready"] == false
             && statuses[0]["imageID"]
                 .as_str()
-                .is_some_and(|id| id.ends_with(runtime_digest)),
-        "the in-cluster HTTP Job did not run the retained host image successfully"
+                .is_some_and(|id| id.ends_with(image_digest) || id.ends_with(config_digest)),
+        "the in-cluster HTTP Job did not run the pinned client image successfully"
     );
     ensure!(
         statuses[0]["state"]["terminated"]["exitCode"] == 0,

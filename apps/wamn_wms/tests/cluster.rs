@@ -610,8 +610,6 @@ async fn run_created(
             cluster,
             work,
             cluster,
-            image,
-            runtime_digest,
             &document.route_host,
             evidence,
         )
