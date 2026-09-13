@@ -5,6 +5,7 @@ use wamn_postgres_statements::Connection;
 #[derive(Debug)]
 pub struct InventoryMovementRow {
     pub created_at: wamn_postgres_statements::TimestampTz,
+    pub created_by: wamn_postgres_statements::Uuid,
     pub from_location_id: Option<wamn_postgres_statements::Uuid>,
     pub id: wamn_postgres_statements::Uuid,
     pub idempotency_key: String,

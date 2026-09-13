@@ -3,12 +3,14 @@
 #[derive(Debug, sqlx::FromRow)]
 pub struct PalletRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_by: uuid::Uuid,
     pub id: uuid::Uuid,
     pub location_id: uuid::Uuid,
     pub pallet_code: String,
     pub row_version: i64,
     pub status: String,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub updated_by: uuid::Uuid,
 }
 
 pub(crate) const GET_SQL: &str = include_str!("../sql/pallet/get.sql");

@@ -50,7 +50,7 @@ pub(crate) const FIND_REPLAY_DIGEST: &str = "sha256:982241a393ffb1d4289136cbee42
 pub(crate) const INSERT_MOVEMENT_DIGEST: &str = "sha256:cd00a091fed66f2f78e28f58d1264017a2b105a2666cfddd5b288f5a8a99c940";
 pub(crate) const LOCK_PALLET_DIGEST: &str = "sha256:a55bfebbebf5bba9540074165b1e5750116fda67b8ef07439c89469ed1ffece3";
 pub(crate) const SET_QUANTITY_DIGEST: &str = "sha256:013414bd90ba990f46f429326fbb956c10e709e3a355ee5f91fcea7d82c3ef86";
-pub(crate) const TOUCH_PALLET_DIGEST: &str = "sha256:520d48df78ae4ba6b655106f7785d0ca1e2887fcd3db489836f783e80ac88ea8";
+pub(crate) const TOUCH_PALLET_DIGEST: &str = "sha256:1015523c5b8bfcec2e8b84ed44c5b1a20fb39209656c0f78f3f68408850070d9";
 
 /// One claim and its work, with no commit before finalization.
 #[derive(Debug)]

@@ -76,7 +76,7 @@ pub(crate) const LOCK_PALLET_DIGEST: &str = "sha256:a55bfebbebf5bba9540074165b1e
 pub(crate) const PLACE_QUANTITY_DIGEST: &str = "sha256:7441c97e8175dadd886f000b59b6f1706a55e89f183b2e5bd4a154a7ba5b74f8";
 pub(crate) const SELECT_QUANTITY_DIGEST: &str = "sha256:9e8cae601ec91090165e5d3e72999e7c7aaf5937c7e0ec1b8c17f52b7d54d4f3";
 pub(crate) const TAKE_FROM_SOURCE_DIGEST: &str = "sha256:d2d1f7e49de0b5cb74c0d1d672bb9cf8a50e930b529463f93d054f5f5145467c";
-pub(crate) const TOUCH_SOURCE_DIGEST: &str = "sha256:520d48df78ae4ba6b655106f7785d0ca1e2887fcd3db489836f783e80ac88ea8";
+pub(crate) const TOUCH_SOURCE_DIGEST: &str = "sha256:1015523c5b8bfcec2e8b84ed44c5b1a20fb39209656c0f78f3f68408850070d9";
 pub(crate) const VALIDATE_LOCATION_DIGEST: &str = "sha256:043f1cb7e8359f79c83b7944e308c1d4238a2bc7b0eac50a0093e53e7563d516";
 
 /// One claim and its work, with no commit before finalization.

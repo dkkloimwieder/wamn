@@ -329,12 +329,14 @@ fn row_time(value: &TimestampTz) -> Result<DateTime<Utc>, AccessError> {
 pub(crate) fn row_to_json(row: &sql::PalletRow) -> Value {
     json!({
         "created_at": row.created_at.0,
+        "created_by": row.created_by.0,
         "id": row.id.0,
         "location_id": row.location_id.0,
         "pallet_code": row.pallet_code,
         "row_version": row.row_version,
         "status": row.status,
         "updated_at": row.updated_at.0,
+        "updated_by": row.updated_by.0,
     })
 }
 
@@ -352,16 +354,19 @@ mod tests {
     const FIRST: &str = "01234567-89ab-cdef-0123-456789abcdef";
     const SECOND: &str = "11234567-89ab-cdef-0123-456789abcdef";
     const LOCATION: &str = "21234567-89ab-cdef-0123-456789abcdef";
+    const ACTOR: &str = "31234567-89ab-cdef-0123-456789abcdef";
 
     fn row(id: &str, created_at: &str) -> sql::PalletRow {
         sql::PalletRow {
             created_at: TimestampTz(created_at.to_owned()),
+            created_by: Uuid(ACTOR.to_owned()),
             id: Uuid(id.to_owned()),
             location_id: Uuid(LOCATION.to_owned()),
             pallet_code: "PAL-1".to_owned(),
             row_version: 1,
             status: "available".to_owned(),
             updated_at: TimestampTz(created_at.to_owned()),
+            updated_by: Uuid(ACTOR.to_owned()),
         }
     }
 

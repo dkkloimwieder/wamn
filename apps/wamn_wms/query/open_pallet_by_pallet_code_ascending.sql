@@ -1,11 +1,13 @@
 SELECT
     pallet.created_at,
+    pallet.created_by,
     pallet.id,
     pallet.location_id,
     pallet.pallet_code,
     pallet.row_version,
     pallet.status,
-    pallet.updated_at
+    pallet.updated_at,
+    pallet.updated_by
 FROM pallet AS pallet
 WHERE
     (

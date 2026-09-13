@@ -13,6 +13,12 @@ pub const PALLET_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "created_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "id",
         type_name: "uuid",
         nullable: false,
@@ -52,6 +58,12 @@ pub const PALLET_FIELDS: &[FieldDescriptor] = &[
         nullable: false,
         values: &[],
     },
+    FieldDescriptor {
+        path: "updated_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
 ];
 
 
@@ -70,6 +82,8 @@ pub struct PalletGetResult {
     /// `timestamptz`
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// `uuid`
+    pub created_by: uuid::Uuid,
+    /// `uuid`
     pub id: uuid::Uuid,
     /// `uuid`
     pub location_id: uuid::Uuid,
@@ -81,6 +95,8 @@ pub struct PalletGetResult {
     pub status: String,
     /// `timestamptz`
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// `uuid`
+    pub updated_by: uuid::Uuid,
 }
 
 /// Input descriptors for `wamn-wms:pallet/get@1.0.0`.
@@ -108,6 +124,12 @@ pub const PALLET_GET_RESULT: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "created_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "id",
         type_name: "uuid",
         nullable: false,
@@ -147,6 +169,12 @@ pub const PALLET_GET_RESULT: &[FieldDescriptor] = &[
         nullable: false,
         values: &[],
     },
+    FieldDescriptor {
+        path: "updated_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
 ];
 
 pub const PALLET_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
@@ -163,6 +191,10 @@ required: true, minimum: None, maximum: None, children: &[
 pub const PALLET_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
 wamn_client::descriptor::FieldSchema {
 field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "created_by", type_name: "uuid", nullable: false, values: &[] },
 required: true, minimum: None, maximum: None, children: &[
 ], },
 wamn_client::descriptor::FieldSchema {
@@ -187,6 +219,10 @@ required: true, minimum: None, maximum: None, children: &[
 ], },
 wamn_client::descriptor::FieldSchema {
 field: FieldDescriptor { path: "updated_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "updated_by", type_name: "uuid", nullable: false, values: &[] },
 required: true, minimum: None, maximum: None, children: &[
 ], },
 ];
@@ -276,6 +312,8 @@ pub struct PalletQueryResult {
     /// `timestamptz`
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// `uuid`
+    pub created_by: uuid::Uuid,
+    /// `uuid`
     pub id: uuid::Uuid,
     /// `uuid`
     pub location_id: uuid::Uuid,
@@ -287,6 +325,8 @@ pub struct PalletQueryResult {
     pub status: String,
     /// `timestamptz`
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// `uuid`
+    pub updated_by: uuid::Uuid,
 }
 
 /// Input descriptors for `wamn-wms:pallet/query@1.0.0`.
@@ -362,6 +402,12 @@ pub const PALLET_QUERY_RESULT: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "created_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "id",
         type_name: "uuid",
         nullable: false,
@@ -398,6 +444,12 @@ pub const PALLET_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "updated_at",
         type_name: "timestamptz",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "updated_by",
+        type_name: "uuid",
         nullable: false,
         values: &[],
     },
@@ -464,6 +516,10 @@ field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable:
 required: true, minimum: None, maximum: None, children: &[
 ], },
 wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "created_by", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
 field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
 required: true, minimum: None, maximum: None, children: &[
 ], },
@@ -485,6 +541,10 @@ required: true, minimum: None, maximum: None, children: &[
 ], },
 wamn_client::descriptor::FieldSchema {
 field: FieldDescriptor { path: "updated_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "updated_by", type_name: "uuid", nullable: false, values: &[] },
 required: true, minimum: None, maximum: None, children: &[
 ], },
 ];

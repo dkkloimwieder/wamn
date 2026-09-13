@@ -12,6 +12,8 @@ Stock status is `available` or `held`.
 The pallet row provides the common lock and `row_version` for competing commands.
 Quantities belong to their product and status rows.
 `inventory_movement` records the committed movement history.
+The platform stamp trigger records who created and changed each `pallet` row and when, and who created each `inventory_movement` row and when.
+Command SQL writes no stamp column.
 
 The four commands have distinct authority and effects:
 
@@ -39,6 +41,7 @@ Two competing moves on the same pallet must produce one success and one `concurr
 The query filters on `status`, `location_id`, and `pallet_code`.
 It sorts on `pallet_code`, `location_id`, `updated_at`, or `created_at`.
 Its default order uses `created_at` with an `id` tie-breaker and an opaque cursor.
+`updated_at` changes only when a command changes the pallet row.
 Sorting across the quantity join is outside its declared query.
 
 `inventory.aggregate` returns a bounded projection grouped by status, product, and location.

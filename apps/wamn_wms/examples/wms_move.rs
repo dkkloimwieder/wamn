@@ -133,6 +133,7 @@ mod tests {
     const PALLET_ID: &str = "33333333-0000-0000-0000-000000000002";
     const DESTINATION: &str = "33333333-0000-0000-0000-000000000003";
     const LABEL_KEY: &str = "labels/move-9.zpl";
+    const ACTOR: &str = "33333333-0000-0000-0000-000000000004";
 
     fn binding() -> SessionBinding {
         SessionBinding {
@@ -169,7 +170,8 @@ mod tests {
         json!({
             "id": PALLET_ID, "location_id": "33333333-0000-0000-0000-000000000001",
             "pallet_code": "P-2", "row_version": 7, "status": "available",
-            "created_at": "2026-09-10T10:00:00Z", "updated_at": "2026-09-10T10:00:00Z"
+            "created_at": "2026-09-10T10:00:00Z", "created_by": ACTOR,
+            "updated_at": "2026-09-10T10:00:00Z", "updated_by": ACTOR
         })
     }
 

@@ -64,14 +64,14 @@ pub(crate) struct TouchTargetRow {
 
 pub(crate) const ADD_TO_TARGET_DIGEST: &str = "sha256:0e3ab67e560416a19b68cc0003cdc1f52e97c5a9267ffa5224c64de8c6dd84b1";
 pub(crate) const CLAIM_COMMAND_DIGEST: &str = "sha256:28b172e9d7ca08c84145653187ca6b234e21228f966a0b31209c9f00c4f4d9b2";
-pub(crate) const CONSUME_SOURCE_DIGEST: &str = "sha256:605d3de9fd482e0e290cfc9c198f717ecd89f8a171e9e2b7b0be02b4c9dc562e";
+pub(crate) const CONSUME_SOURCE_DIGEST: &str = "sha256:92b0585255ca8e6949e1f8a4f1c32459a92c9f7a7145fc0e80d74c57d585d2d6";
 pub(crate) const FINALIZE_COMMAND_DIGEST: &str = "sha256:c44c7e84564e5796433d1f1cece5709c6c1695d12e138cf00e297b2df0309a07";
 pub(crate) const FIND_REPLAY_DIGEST: &str = "sha256:2db8575b15514d01b3a1dbdbd6e5663ace03c60bbe97b4c05becffc2d2e86266";
 pub(crate) const INSERT_MOVEMENT_DIGEST: &str = "sha256:bb2256f51ee5bf3496731b4a77bf372e60d1cdad76aae282bab3ae17b7950229";
 pub(crate) const LOCK_BOTH_PALLETS_DIGEST: &str = "sha256:1169fa9ccfdf21804049cb6c9698544af13f9d2e2460f8a871bfb5011e84480f";
 pub(crate) const PLACE_ON_TARGET_DIGEST: &str = "sha256:7441c97e8175dadd886f000b59b6f1706a55e89f183b2e5bd4a154a7ba5b74f8";
 pub(crate) const SELECT_SOURCE_QUANTITY_DIGEST: &str = "sha256:7788b618608496d40d21c0bbfec54e4508661fbea826075abb61e5cceeec6288";
-pub(crate) const TOUCH_TARGET_DIGEST: &str = "sha256:520d48df78ae4ba6b655106f7785d0ca1e2887fcd3db489836f783e80ac88ea8";
+pub(crate) const TOUCH_TARGET_DIGEST: &str = "sha256:1015523c5b8bfcec2e8b84ed44c5b1a20fb39209656c0f78f3f68408850070d9";
 
 /// One claim and its work, with no commit before finalization.
 #[derive(Debug)]

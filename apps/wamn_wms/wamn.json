@@ -16,6 +16,13 @@
         "id"
       ],
       "enum_fields": {},
+      "audit_log": {
+        "columns": [
+          "created_at",
+          "created_by"
+        ],
+        "retention": "none"
+      },
       "operations": {}
     },
     "location": {
@@ -26,6 +33,10 @@
         "id"
       ],
       "enum_fields": {},
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
       "operations": {}
     },
     "pallet": {
@@ -44,6 +55,15 @@
           "held",
           "consumed"
         ]
+      },
+      "audit_log": {
+        "columns": [
+          "created_at",
+          "created_by",
+          "updated_at",
+          "updated_by"
+        ],
+        "retention": "none"
       },
       "operations": {
         "get": {
@@ -200,6 +220,10 @@
         "id"
       ],
       "enum_fields": {},
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
       "operations": {}
     },
     "product": {
@@ -210,6 +234,10 @@
         "id"
       ],
       "enum_fields": {},
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
       "operations": {}
     }
   },
@@ -450,8 +478,7 @@
           "insert_fields": [],
           "update_fields": [
             "location_id",
-            "row_version",
-            "updated_at"
+            "row_version"
           ],
           "lock": true,
           "constraints": []
@@ -980,8 +1007,7 @@
           ],
           "insert_fields": [],
           "update_fields": [
-            "row_version",
-            "updated_at"
+            "row_version"
           ],
           "lock": true,
           "constraints": []
@@ -1453,8 +1479,7 @@
           "insert_fields": [],
           "update_fields": [
             "row_version",
-            "status",
-            "updated_at"
+            "status"
           ],
           "lock": true,
           "constraints": []
@@ -2078,8 +2103,7 @@
             "status"
           ],
           "update_fields": [
-            "row_version",
-            "updated_at"
+            "row_version"
           ],
           "lock": true,
           "constraints": []

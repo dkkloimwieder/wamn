@@ -38,6 +38,8 @@ pub const ENVIRONMENT: &str = "dev";
 pub const TENANT: &str = "wms-route-auth";
 pub(super) const SCHEMA: &str = "wms";
 const CLUSTER: &str = "route-auth-pg18";
+/// Platform rows take the email `<component>@example.invalid` in this test.
+const PLATFORM_DOMAIN: &str = "example.invalid";
 pub(super) const RELEASE_ID: u32 = 1;
 
 fn package_root() -> PathBuf {
@@ -153,8 +155,11 @@ pub async fn prepare_project(
     task.abort();
     result?;
     let (project, task) = connect(&route.database_url).await?;
-    let installed =
-        wamn_ctl::dev::environment::install_journey_platform_floor(project.as_ref()).await;
+    let installed = wamn_ctl::dev::environment::install_journey_platform_floor(
+        project.as_ref(),
+        PLATFORM_DOMAIN,
+    )
+    .await;
     drop(project);
     task.abort();
     installed?;

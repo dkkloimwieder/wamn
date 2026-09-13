@@ -17,7 +17,9 @@ CREATE TABLE wms.pallet (
     status text NOT NULL,
     row_version int8 NOT NULL DEFAULT 1,
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by uuid NOT NULL,
     updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_by uuid NOT NULL,
     CONSTRAINT pallet_status_check
         CHECK (status IN ('available', 'held', 'consumed'))
 );
@@ -142,6 +144,7 @@ CREATE TABLE wms.inventory_movement (
     reason_code text,
     occurred_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_by uuid NOT NULL,
     CONSTRAINT inventory_movement_kind_check
         CHECK (kind IN ('move', 'adjust', 'merge', 'split')),
     CONSTRAINT inventory_movement_quantity_check CHECK (quantity > 0),

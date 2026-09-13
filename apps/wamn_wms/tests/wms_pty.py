@@ -27,6 +27,7 @@ SUPPORT_SPEC = importlib.util.spec_from_file_location("wms_live_support", SUPPOR
 support = importlib.util.module_from_spec(SUPPORT_SPEC)
 SUPPORT_SPEC.loader.exec_module(support)
 require = support.require
+FIXTURE_PRINCIPAL = "00000000-0000-4000-8000-0000000000f1"
 
 
 class Relay:
@@ -96,7 +97,9 @@ class Relay:
 
 
 def seed(db, ids, prefix):
+    # The fixture writes as its test principal, so the stamp trigger has an actor.
     db.sql("01-seed", f"""BEGIN;
+SET LOCAL app.user_id = '{FIXTURE_PRINCIPAL}';
 INSERT INTO wms.product (id, product_code) VALUES ('{ids.product}', '{prefix}-PRODUCT');
 INSERT INTO wms.location (id, location_code) VALUES
   ('{ids.source}', '{prefix}-FROM'), ('{ids.destination}', '{prefix}-TO');

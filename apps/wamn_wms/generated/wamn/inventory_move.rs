@@ -56,7 +56,7 @@ pub(crate) const FINALIZE_COMMAND_DIGEST: &str = "sha256:25ad208233b35158b2a8b6e
 pub(crate) const FIND_REPLAY_DIGEST: &str = "sha256:1de97cab3802dcc898f61fc86c29fb776b9b33cd81b080b6d1567fa48e449b54";
 pub(crate) const INSERT_MOVEMENT_DIGEST: &str = "sha256:4ecddcc7be1836213dd4b10c5e039ae2f6a10e590e4228131a1ffffb41b978a7";
 pub(crate) const LOCK_PALLET_DIGEST: &str = "sha256:a55bfebbebf5bba9540074165b1e5750116fda67b8ef07439c89469ed1ffece3";
-pub(crate) const MOVE_PALLET_DIGEST: &str = "sha256:0253289ea4de402bbf488abeb841b2ee2bd63f324d7936200fe533e42282d7eb";
+pub(crate) const MOVE_PALLET_DIGEST: &str = "sha256:feffc4e473ca661e1d446a2a928eb3bed2d5f45ebeadf07ddf7808874e6b3af9";
 pub(crate) const SELECT_PALLET_QUANTITY_DIGEST: &str = "sha256:7788b618608496d40d21c0bbfec54e4508661fbea826075abb61e5cceeec6288";
 pub(crate) const VALIDATE_LOCATION_DIGEST: &str = "sha256:043f1cb7e8359f79c83b7944e308c1d4238a2bc7b0eac50a0093e53e7563d516";
 

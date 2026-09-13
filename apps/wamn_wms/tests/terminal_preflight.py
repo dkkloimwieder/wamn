@@ -38,7 +38,9 @@ class HttpFixture:
                         value = {"id": ids.pallet, "location_id": ids.source,
                                  "pallet_code": "WMS-TUI-PREFLIGHT", "row_version": 1,
                                  "status": "available", "created_at": "2026-09-10T10:00:00Z",
-                                 "updated_at": "2026-09-10T10:00:00Z"}
+                                 "created_by": "00000000-0000-4000-8000-0000000000f1",
+                                 "updated_at": "2026-09-10T10:00:00Z",
+                                 "updated_by": "00000000-0000-4000-8000-0000000000f1"}
                         status, body = 200, [{"request_id": request[0]["request_id"], "value": value}]
                     elif self.path == "/inventory/move":
                         value = dict(fixture.movement)

@@ -3,6 +3,7 @@
 #[derive(Debug, sqlx::FromRow)]
 pub struct InventoryMovementRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_by: uuid::Uuid,
     pub from_location_id: Option<uuid::Uuid>,
     pub id: uuid::Uuid,
     pub idempotency_key: String,

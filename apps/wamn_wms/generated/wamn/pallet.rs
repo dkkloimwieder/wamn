@@ -5,23 +5,25 @@ use wamn_postgres_statements::Connection;
 #[derive(Debug)]
 pub struct PalletRow {
     pub created_at: wamn_postgres_statements::TimestampTz,
+    pub created_by: wamn_postgres_statements::Uuid,
     pub id: wamn_postgres_statements::Uuid,
     pub location_id: wamn_postgres_statements::Uuid,
     pub pallet_code: String,
     pub row_version: i64,
     pub status: String,
     pub updated_at: wamn_postgres_statements::TimestampTz,
+    pub updated_by: wamn_postgres_statements::Uuid,
 }
 
-pub(crate) const GET_DIGEST: &str = "sha256:5d1c6823fbfd92249a2aa7f2ef32ae68c7f8dcea402a0445a2268b6c5bbe89b9";
-pub(crate) const QUERY_0_DIGEST: &str = "sha256:0ffb462ced2154ea4eb6abcb97c3c6c5551780fca3e4558a88223652f1fdc081";
-pub(crate) const QUERY_1_DIGEST: &str = "sha256:12dffafe7a7ad065bdb61b6098cda17f0f4240d85886f9ae4e206baf0f76c7d2";
-pub(crate) const QUERY_2_DIGEST: &str = "sha256:7a2804291a43ead7fe73e124e2c16de5b509c8bfb00f4e810bc38a1e08289fce";
-pub(crate) const QUERY_3_DIGEST: &str = "sha256:398b50da5833accfdda221902f1b7e11b6f176f28595ed6cddf6c15ea67c70d4";
-pub(crate) const QUERY_4_DIGEST: &str = "sha256:96f8476ca0f6d7212461fe9a274ab1da5747704070e461015cac0ffd4c34d375";
-pub(crate) const QUERY_5_DIGEST: &str = "sha256:7b234eda921a228673eb91de24df5d4159ec55a65bf5ba0dc8c864e3bd40a0eb";
-pub(crate) const QUERY_6_DIGEST: &str = "sha256:bf0d1e3ecbc0c28de1b76e3251676e38c54ba063d30945890c0fba022726f78e";
-pub(crate) const QUERY_7_DIGEST: &str = "sha256:c12cb794daff757f02a8df8a91b27e9d1328cd2e4deded765a19fcb0c9aa80d6";
+pub(crate) const GET_DIGEST: &str = "sha256:59ee1bf6f48b27780e89935e399a45d07383a480caf7975adbee30c6a531255c";
+pub(crate) const QUERY_0_DIGEST: &str = "sha256:ab0f5918c00f290756e66d76b201b6d76ddbed7eb023d11a60759f14aeccbdb3";
+pub(crate) const QUERY_1_DIGEST: &str = "sha256:1a9785556de188d8c6ede5f3cd9d6fad6a2dacf2df6c229877fe0859784a5ffb";
+pub(crate) const QUERY_2_DIGEST: &str = "sha256:66b4eeabd83bdc28632f8e028c84dfd163c2b466a2451e8b49eedde057be85c6";
+pub(crate) const QUERY_3_DIGEST: &str = "sha256:3d51f113fe0866ed4fe592a0283ce2b0fb4c57415cdeaf1767ad61db0c31b772";
+pub(crate) const QUERY_4_DIGEST: &str = "sha256:3dade3da3f0a41604364daee48c15066b318d2175caeacb7c9aed48760bed2dd";
+pub(crate) const QUERY_5_DIGEST: &str = "sha256:b9151b34b566ee8077e1b0e9c772d927941edd99653494040636b0445b440d99";
+pub(crate) const QUERY_6_DIGEST: &str = "sha256:a626cf7ec2aa2db57149c49c4616025e2c1d0bc44d25c21facb0f660e38ee2dc";
+pub(crate) const QUERY_7_DIGEST: &str = "sha256:db3edc9b06f2b06e2c1f100132b22ca3c709a0cb1a3866b74fd3e1baec10de81";
 
 pub(crate) async fn get(
     connection: &mut Connection,
@@ -33,12 +35,14 @@ pub(crate) async fn get(
     wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
         Ok(PalletRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             location_id: row.decode("location_id")?,
             pallet_code: row.decode("pallet_code")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -63,12 +67,14 @@ pub(crate) async fn query_pallet_code_ascending(
     wamn_postgres_statements::decode_all(QUERY_0_DIGEST, rows, |row| {
         Ok(PalletRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             location_id: row.decode("location_id")?,
             pallet_code: row.decode("pallet_code")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -93,12 +99,14 @@ pub(crate) async fn query_pallet_code_descending(
     wamn_postgres_statements::decode_all(QUERY_1_DIGEST, rows, |row| {
         Ok(PalletRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             location_id: row.decode("location_id")?,
             pallet_code: row.decode("pallet_code")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -123,12 +131,14 @@ pub(crate) async fn query_location_id_ascending(
     wamn_postgres_statements::decode_all(QUERY_2_DIGEST, rows, |row| {
         Ok(PalletRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             location_id: row.decode("location_id")?,
             pallet_code: row.decode("pallet_code")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -153,12 +163,14 @@ pub(crate) async fn query_location_id_descending(
     wamn_postgres_statements::decode_all(QUERY_3_DIGEST, rows, |row| {
         Ok(PalletRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             location_id: row.decode("location_id")?,
             pallet_code: row.decode("pallet_code")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -183,12 +195,14 @@ pub(crate) async fn query_updated_at_ascending(
     wamn_postgres_statements::decode_all(QUERY_4_DIGEST, rows, |row| {
         Ok(PalletRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             location_id: row.decode("location_id")?,
             pallet_code: row.decode("pallet_code")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -213,12 +227,14 @@ pub(crate) async fn query_updated_at_descending(
     wamn_postgres_statements::decode_all(QUERY_5_DIGEST, rows, |row| {
         Ok(PalletRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             location_id: row.decode("location_id")?,
             pallet_code: row.decode("pallet_code")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -243,12 +259,14 @@ pub(crate) async fn query_created_at_ascending(
     wamn_postgres_statements::decode_all(QUERY_6_DIGEST, rows, |row| {
         Ok(PalletRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             location_id: row.decode("location_id")?,
             pallet_code: row.decode("pallet_code")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -273,12 +291,14 @@ pub(crate) async fn query_created_at_descending(
     wamn_postgres_statements::decode_all(QUERY_7_DIGEST, rows, |row| {
         Ok(PalletRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             location_id: row.decode("location_id")?,
             pallet_code: row.decode("pallet_code")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
