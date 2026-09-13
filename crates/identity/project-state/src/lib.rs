@@ -32,6 +32,13 @@
 //! resolves to a `roles.name` (text) — the role-gate target. [`TENANT_CLAIM`]
 //! (`app.tenant`) is the RLS floor every table keys on. The claims are injected
 //! by the plugin from a resolved session (4.2); this schema is the substrate.
+//!
+//! # Platform principals
+//!
+//! A platform component writes under a `users` row named `wamn:<component>`.
+//! [`PlatformComponent`] is the closed component list, and
+//! [`PlatformComponent::principal_id`] derives the row id. Provisioning and the
+//! host compute the same id, so no configuration carries it.
 
 /// The Postgres schema the tables live in. The single source both the DDL and
 /// downstream consumers (`SET search_path` / qualified queries) reference.
@@ -89,6 +96,71 @@ impl UserStatus {
 impl std::fmt::Display for UserStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// The fixed WAMN namespace for platform principal ids. Every tenant and every
+/// deployment derives the same id from the same name, so no configuration
+/// carries the id. The value is frozen: a change changes every platform row id.
+pub const PLATFORM_PRINCIPAL_NAMESPACE: uuid::Uuid =
+    uuid::Uuid::from_u128(0x485d_b377_302e_4a7d_9d66_3c81_85a7_346b);
+
+/// The reserved principal namespace. A platform principal name is
+/// `wamn:<component>`, where the component is kebab-case and carries no action
+/// and no version. A tenant or application cannot create a name with this prefix.
+pub const PLATFORM_PRINCIPAL_PREFIX: &str = "wamn:";
+
+/// A platform component that writes under its own `app_system.users` row.
+///
+/// The row names the component, never the invocation. The list is closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlatformComponent {
+    /// Tenant provisioning. Its row is the first row in a tenant database.
+    Provisioning,
+    /// Package application, including operation grants.
+    ApplyPackage,
+    /// Post-commit registration delivery.
+    Materializer,
+    /// Executor queue delivery and management candidate cases.
+    Executor,
+}
+
+impl PlatformComponent {
+    /// Every component. Order is presentational.
+    pub const ALL: [PlatformComponent; 4] = [
+        PlatformComponent::Provisioning,
+        PlatformComponent::ApplyPackage,
+        PlatformComponent::Materializer,
+        PlatformComponent::Executor,
+    ];
+
+    /// The kebab-case component name, for example `apply-package`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PlatformComponent::Provisioning => "provisioning",
+            PlatformComponent::ApplyPackage => "apply-package",
+            PlatformComponent::Materializer => "materializer",
+            PlatformComponent::Executor => "executor",
+        }
+    }
+
+    /// The principal name `wamn:<component>`, which `display_name` carries.
+    pub fn principal_name(self) -> &'static str {
+        match self {
+            PlatformComponent::Provisioning => "wamn:provisioning",
+            PlatformComponent::ApplyPackage => "wamn:apply-package",
+            PlatformComponent::Materializer => "wamn:materializer",
+            PlatformComponent::Executor => "wamn:executor",
+        }
+    }
+
+    /// The `app_system.users` id: the UUIDv5 of [`Self::principal_name`] under
+    /// [`PLATFORM_PRINCIPAL_NAMESPACE`].
+    pub fn principal_id(self) -> uuid::Uuid {
+        uuid::Uuid::new_v5(
+            &PLATFORM_PRINCIPAL_NAMESPACE,
+            self.principal_name().as_bytes(),
+        )
     }
 }
 
@@ -197,6 +269,55 @@ mod tests {
                 t.columns.contains(&"tenant_id"),
                 "{} is tenant-scoped and must pin tenant_id",
                 t.name
+            );
+        }
+    }
+
+    #[test]
+    fn platform_principal_ids_are_pinned() {
+        // Computed independently with Python `uuid.uuid5`.
+        let pinned = [
+            (
+                PlatformComponent::Provisioning,
+                "3fa25435-6f8e-55b8-a34f-0fad550a12f6",
+            ),
+            (
+                PlatformComponent::ApplyPackage,
+                "e6ede3ff-e4fc-53f8-af68-c78f9e2fa92c",
+            ),
+            (
+                PlatformComponent::Materializer,
+                "294f663d-02c6-5f1d-9ef8-41c77991b0c1",
+            ),
+            (
+                PlatformComponent::Executor,
+                "a6960acb-283d-56cc-a114-2f870cd9344c",
+            ),
+        ];
+        assert_eq!(
+            pinned.map(|(component, _)| component),
+            PlatformComponent::ALL
+        );
+        for (component, id) in pinned {
+            assert_eq!(component.principal_id().to_string(), id, "{component:?}");
+        }
+    }
+
+    #[test]
+    fn platform_principal_names_follow_the_grammar() {
+        for component in PlatformComponent::ALL {
+            let name = component.as_str();
+            assert_eq!(
+                component.principal_name(),
+                format!("{PLATFORM_PRINCIPAL_PREFIX}{name}")
+            );
+            let mut bytes = name.bytes();
+            assert!(
+                bytes.next().is_some_and(|byte| byte.is_ascii_lowercase())
+                    && bytes.all(|byte| byte.is_ascii_lowercase() || byte == b'-')
+                    && !name.ends_with('-')
+                    && !name.contains("--"),
+                "{name} is not kebab-case"
             );
         }
     }

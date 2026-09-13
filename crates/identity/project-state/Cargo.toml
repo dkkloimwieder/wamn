@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+uuid = { workspace = true, features = ["v5"] }
 
 [dev-dependencies]
 wamn-control-provision = { workspace = true }

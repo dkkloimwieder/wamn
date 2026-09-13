@@ -43,3 +43,18 @@ There is no separate alias between the dispatch identity and the permission iden
 
 The [component contract](components.md) defines grouping and dependency declarations.
 [Data access](data-access.md#canonical-values-and-sql-names) owns SQL names, canonical values, and pagination order.
+
+## Reserved names
+
+The platform reserves four column names: `created_at`, `created_by`, `updated_at`, and `updated_by`.
+A model column with one of these names carries record history, and the model selects it in `audit_log`.
+A column with another meaning takes another name.
+
+The platform reserves the package id `wamn`, because its operation tokens start with `wamn:`.
+The catalog and the generator refuse it.
+
+The platform reserves the principal namespace `wamn:`.
+A platform component writes under the `app_system.users` row named `wamn:<component>`.
+The component is kebab-case and carries no action and no version.
+`wamn-project-state` defines the component list and derives each row id.
+A tenant or application cannot create a `wamn:` name.

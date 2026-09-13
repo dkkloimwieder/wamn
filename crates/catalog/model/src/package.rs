@@ -22,6 +22,7 @@ pub(crate) fn validate_canonical_operation(value: &str) -> Result<(), CatalogIde
         return invalid("registered operation contains more than one version separator");
     };
     validate_kebab_identifier(package_id, "registered-operation package-id")?;
+    refuse_reserved_package_id(package_id)?;
     validate_package_version(package_version)?;
     let Some((owner, action)) = local.split_once('/') else {
         return invalid("local operation must be <module>/<action>");
@@ -77,6 +78,17 @@ fn validate_kebab_identifier(value: &str, field: &'static str) -> Result<(), Cat
     Ok(())
 }
 
+/// The package id reserved for the platform. Its operation tokens start with
+/// `wamn:`, the platform principal namespace.
+const RESERVED_PACKAGE_ID: &str = "wamn";
+
+fn refuse_reserved_package_id(value: &str) -> Result<(), CatalogIdentityError> {
+    if value == RESERVED_PACKAGE_ID {
+        return invalid(format!("package id {RESERVED_PACKAGE_ID:?} is reserved"));
+    }
+    Ok(())
+}
+
 fn validate_package_version(value: &str) -> Result<(), CatalogIdentityError> {
     validate_text(value, "package-version")?;
     if value.contains('@') || value.contains(':') || value.contains('/') {
@@ -127,6 +139,7 @@ impl PackageCoordinate {
         let package_id = package_id.into();
         let package_version = package_version.into();
         validate_snake_identifier(&package_id, "package-id")?;
+        refuse_reserved_package_id(&package_id)?;
         validate_package_version(&package_version)?;
         Ok(Self {
             package_id,
@@ -204,6 +217,19 @@ mod tests {
             assert!(serde_json::from_value::<PackageCoordinate>(wire).is_err());
         }
         assert!(serde_json::from_str::<EffectiveReleaseId>("0").is_err());
+    }
+
+    #[test]
+    fn package_id_wamn_is_reserved() {
+        assert!(PackageCoordinate::new("wamn", "1.0.0").is_err());
+        assert!(
+            serde_json::from_str::<PackageCoordinate>(
+                r#"{"package-id":"wamn","package-version":"1.0.0"}"#
+            )
+            .is_err()
+        );
+        assert!(validate_canonical_operation("wamn:purchase-order/get@1.0.0").is_err());
+        assert!(PackageCoordinate::new("wamn_receiving", "1.0.0").is_ok());
     }
 
     #[test]
