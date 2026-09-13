@@ -71,7 +71,7 @@ pub(super) async fn install_journey_project(
     project_url: &str,
     fresh_only: bool,
 ) -> anyhow::Result<()> {
-    install_journey_platform_floor(project, PLATFORM_DOMAIN).await?;
+    install_journey_platform_floor(project, TENANT, PLATFORM_DOMAIN).await?;
     for package in JOURNEY_PACKAGES {
         apply_package::run(ApplyPackageArgs {
             package: journey_package_root(package, Some(inputs)),

@@ -157,6 +157,7 @@ pub async fn prepare_project(
     let (project, task) = connect(&route.database_url).await?;
     let installed = wamn_ctl::dev::environment::install_journey_platform_floor(
         project.as_ref(),
+        TENANT,
         PLATFORM_DOMAIN,
     )
     .await;

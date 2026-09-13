@@ -115,7 +115,7 @@ pub async fn provision(
     // Only the platform floor. The product command remains the sole owner of
     // both package migrations and their generated ACL union.
     let (project, project_task) = connect(&route.database_url).await?;
-    install_journey_platform_floor(project.as_ref(), platform_domain).await?;
+    install_journey_platform_floor(project.as_ref(), TENANT, platform_domain).await?;
     drop(project);
     project_task.abort();
 
@@ -561,12 +561,13 @@ async fn render_database_acl(admin: &Client, database: &str) -> anyhow::Result<S
 }
 
 /// Install the catalog, the application authorization schema, and the
-/// platform principal rows of [`TENANT`].
+/// platform principal rows of `tenant`, the tenant the project database serves.
 pub async fn install_journey_platform_floor(
     project: &Client,
+    tenant: &str,
     platform_domain: &str,
 ) -> anyhow::Result<()> {
-    let platform_principals = platform_principals_sql(TENANT, platform_domain)
+    let platform_principals = platform_principals_sql(tenant, platform_domain)
         .context("render the platform principal rows")?;
     project
         .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
