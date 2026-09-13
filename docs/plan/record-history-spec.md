@@ -267,7 +267,7 @@ The trigger is derived state, like the grants that reconciliation installs from 
 Migration policy still refuses a trigger in a migration.
 
 Introspection reads each trigger's function, timing, events, and arguments.
-It admits exactly the `record_history_stamp` shape and records it in the catalog IR.
+It admits exactly the `record_history_stamp` shape and leaves it out of the catalog IR, because apply-package reads and compares the installed triggers itself.
 Every other trigger is still refused.
 apply-package reads the installed triggers through introspection and makes sure that they match the declarations.
 

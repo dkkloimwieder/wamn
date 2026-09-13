@@ -126,7 +126,6 @@ struct TableParts {
     constraints: Vec<Constraint>,
     indexes: Vec<Index>,
     exclusions: Vec<Exclusion>,
-    record_history_stamp: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -809,7 +808,6 @@ fn validate_relations(
                         constraints: Vec::new(),
                         indexes: Vec::new(),
                         exclusions: Vec::new(),
-                        record_history_stamp: Vec::new(),
                     },
                 );
             }
@@ -2052,16 +2050,15 @@ pub async fn read_catalog_excluding_relations(
     let mut tables = validate_relations(&relations)?;
     refuse_routines(client, &schemas).await?;
     let stamps = load_record_history_stamps(client, &schemas, excluded_relations).await?;
-    for ((schema, table), columns) in stamps {
-        let Some(parts) = tables.get_mut(&(schema.clone(), table.clone())) else {
+    for (schema, table) in stamps.into_keys() {
+        if !tables.contains_key(&(schema.clone(), table.clone())) {
             return Err(refusal(
                 PostgresIntrospectionErrorKind::UnsupportedTrigger,
                 Some(&schema),
                 Some(&format!("{table}.{RECORD_HISTORY_STAMP_TRIGGER}")),
                 "trigger belongs to a relation that is not an ordinary table",
             ));
-        };
-        parts.record_history_stamp = columns;
+        }
     }
     refuse_rules(client, &schemas, excluded_relations).await?;
     refuse_policies(client, &schemas, excluded_relations).await?;
@@ -2116,7 +2113,6 @@ pub async fn read_catalog_excluding_relations(
                     parts.indexes,
                 )
                 .with_exclusions(parts.exclusions)
-                .with_record_history_stamp(parts.record_history_stamp)
             })
             .collect(),
     ))

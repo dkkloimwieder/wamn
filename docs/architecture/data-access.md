@@ -37,7 +37,7 @@ The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes `wamn_histo
 apply-package installs no trigger for `"columns": []`, and it removes a stamp trigger that the declaration no longer selects.
 It then reads the installed triggers through introspection and refuses a result that differs from the declarations.
 Development package reconciliation runs the same step.
-The catalog reader admits only that trigger shape and records its columns in the schema description.
+The catalog reader admits only that trigger shape and leaves it out of the schema description.
 Every other trigger refuses.
 
 Each managed relation, field, and constraint records its owning package.

@@ -50,11 +50,6 @@ pub struct Table {
     /// keeps the canonical bytes it had before this field existed.
     #[serde(skip_serializing_if = "<[Exclusion]>::is_empty")]
     exclusions: Box<[Exclusion]>,
-    /// Columns that the platform `record_history_stamp` trigger selects, in
-    /// trigger argument order. Omitted when the table has no such trigger, so
-    /// the table keeps the canonical bytes it had before this field existed.
-    #[serde(skip_serializing_if = "<[Box<str>]>::is_empty")]
-    record_history_stamp: Box<[Box<str>]>,
 }
 
 impl Table {
@@ -73,7 +68,6 @@ impl Table {
             constraints: constraints.into_boxed_slice(),
             indexes: indexes.into_boxed_slice(),
             exclusions: Box::default(),
-            record_history_stamp: Box::default(),
         }
     }
 
@@ -81,16 +75,6 @@ impl Table {
     #[must_use]
     pub fn with_exclusions(mut self, exclusions: Vec<Exclusion>) -> Self {
         self.exclusions = exclusions.into_boxed_slice();
-        self
-    }
-
-    /// Attach the columns that this table's record-history stamp trigger selects.
-    #[must_use]
-    pub fn with_record_history_stamp(
-        mut self,
-        columns: impl IntoIterator<Item = impl Into<Box<str>>>,
-    ) -> Self {
-        self.record_history_stamp = boxed_strings(columns);
         self
     }
 
@@ -122,12 +106,6 @@ impl Table {
     /// Exclusion constraints in canonical structural order.
     pub fn exclusions(&self) -> &[Exclusion] {
         &self.exclusions
-    }
-
-    /// Columns that the record-history stamp trigger selects, in argument
-    /// order. Empty when the table has no stamp trigger.
-    pub fn record_history_stamp(&self) -> &[Box<str>] {
-        &self.record_history_stamp
     }
 
     fn normalize(&mut self) {

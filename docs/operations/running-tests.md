@@ -217,30 +217,18 @@ Use a base-only database for Receiving and a separate base-plus-overlay database
 Otherwise, introspection can write overlay fields into generated base files.
 Use another database for WMS.
 
-Generation reads a database that apply-package prepared.
-apply-package installs the record-history triggers from each `audit_log` declaration, and introspection records them.
-The owned runner creates the server, runs one script, and removes the server.
-The script installs the catalog schema files in their `CATALOG_SCHEMA_SQL` order and the application authorization floor.
-Then it applies the package and checks the generated files:
+Inside a fresh PostgreSQL 18 shell, prepare Receiving from its migrations:
 
 ```bash
-cargo build --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres
-cargo build --locked --offline -p wamn-ctl --bin wamn-ctl
-"${CARGO_TARGET_DIR:-target}/debug/wamn-test-postgres" \
-  --database wamn_receiving --url-env RECEIVING_DATABASE_URL -- bash -ec '
-psql "$RECEIVING_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 \
-  -c "CREATE ROLE wamn_app NOLOGIN" -c "CREATE ROLE wamn_scenario_author NOLOGIN"
-cat deploy/sql/catalog-schema-prefix.sql deploy/sql/reject-immutable-row-change.sql \
-  deploy/sql/record-history.sql deploy/sql/catalog-schema.sql |
-  psql "$RECEIVING_DATABASE_URL" -X -q -v ON_ERROR_STOP=1
-psql "$RECEIVING_DATABASE_URL" -X -q -v ON_ERROR_STOP=1 \
-  -c "GRANT CREATE ON DATABASE wamn_receiving TO wamn_db_owner" -f deploy/sql/app-schema.sql
-"${CARGO_TARGET_DIR:-target}/debug/wamn-ctl" apply-package --package apps/wamn_receiving \
-  --database-url "$RECEIVING_DATABASE_URL" --tenant generation
+createdb wamn_receiving
+psql -d wamn_receiving -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA receiving'
+for migration in apps/wamn_receiving/migrations/*.sql; do
+  psql -d wamn_receiving -v ON_ERROR_STOP=1 -f "$migration" || exit
+done
+RECEIVING_DATABASE_URL="postgresql://$PGUSER:$PGPASSWORD@127.0.0.1:$PGPORT/wamn_receiving"
 WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
   cargo run --locked --offline -p wamn-schema-generator --example materialize_package \
   -- check apps/wamn_receiving
-'
 ```
 
 `check` compares the complete generated path and byte set without changing it.
@@ -248,13 +236,13 @@ For an intended declaration or SQL change, replace `check` with `write`.
 Review the generated files before building the guest and operator.
 Do not edit generated Rust directly.
 
-For Acme, apply `apps/wamn_receiving` and then `apps/client_acme_receiving` in a separate database.
+For Acme, apply the Receiving migrations first and then its overlay migrations in a separate database.
 Use `apps/client_acme_receiving` as the generation input.
-For WMS, apply only `apps/wamn_wms` in its separate database.
+For WMS, create its declared schema and apply only `apps/wamn_wms/migrations/*.sql` in its separate database.
 Use `apps/wamn_wms` as the input.
 
 SQLx uses each application's committed `tests/.sqlx/` directory during offline compilation.
-After a Receiving SQL change, regenerate that cache inside the same runner script:
+After a Receiving SQL change, regenerate that cache:
 
 ```bash
 RECEIVING_SQLX_DATABASE_URL="${RECEIVING_DATABASE_URL}?options=-csearch_path%3Dreceiving%2Cpublic"

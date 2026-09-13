@@ -1022,13 +1022,16 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     );
 }
 
-/// Introspection admits the platform stamp trigger, records its columns, and
-/// refuses every other trigger shape (spec test 13).
+/// Introspection admits the platform stamp trigger, keeps it out of the catalog
+/// IR, and refuses every other trigger shape (spec test 13).
 async fn assert_record_history_stamp_admission(admin: &Client, reader: &Client) {
     admin
         .batch_execute(RECORD_HISTORY_SQL)
         .await
         .expect("install the platform record-history function");
+    let unstamped = read_catalog(reader, &[APPLICATION_SCHEMA])
+        .await
+        .expect("read the catalog before the stamp trigger");
     admin
         .batch_execute(
             "CREATE TRIGGER record_history_stamp \
@@ -1041,28 +1044,10 @@ async fn assert_record_history_stamp_admission(admin: &Client, reader: &Client) 
     let catalog = read_catalog(reader, &[APPLICATION_SCHEMA])
         .await
         .expect("introspection admits the platform stamp trigger");
-    let stamped = catalog
-        .tables()
-        .iter()
-        .filter(|table| !table.record_history_stamp().is_empty())
-        .map(|table| {
-            (
-                table.name().to_owned(),
-                table
-                    .record_history_stamp()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>(),
-            )
-        })
-        .collect::<Vec<_>>();
     assert_eq!(
-        stamped,
-        [(
-            "purchase_order".to_owned(),
-            vec!["created_at".to_owned(), "updated_at".to_owned()]
-        )],
-        "the catalog IR records the installed stamp trigger and nothing else"
+        catalog.canonical_json_bytes(),
+        unstamped.canonical_json_bytes(),
+        "the catalog IR does not carry the stamp trigger"
     );
     assert_eq!(
         read_record_history_stamps(reader, &[APPLICATION_SCHEMA])
