@@ -10,7 +10,8 @@ use serde_json::{Value, json};
 use http_route::{
     AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality, DeliveryError,
     DeliveryFailure, DeliveryFailureKind, DeliveryOutcome, DeliveryRequest, Emission, Header,
-    Mapping, MappingSource, ProviderError, RequestHead, RouteDefinition, handle_request,
+    Mapping, MappingSource, ProviderError, RequestHead, RouteDefinition, SchemaInvalid,
+    handle_request,
 };
 
 const AUTHENTICATED_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -19,7 +20,6 @@ const AUTHENTICATED_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
 enum Fault {
     None,
     Routes,
-    Schema,
     Permit,
     Deliver,
 }
@@ -36,6 +36,7 @@ struct FakeBackend {
     routes: Vec<RouteDefinition>,
     auth: Result<Option<String>, AuthRejection>,
     delivery: Result<DeliveryOutcome, DeliveryError>,
+    schema: Result<(), SchemaInvalid>,
     fault: Fault,
     authenticated_attachments: Vec<String>,
     validated_inputs: Vec<(String, String)>,
@@ -52,6 +53,7 @@ impl FakeBackend {
             routes: vec![route],
             auth: Ok(Some(AUTHENTICATED_USER_ID.to_string())),
             delivery: Ok(DeliveryOutcome::Respond(r#"{"ok":true}"#.to_string())),
+            schema: Ok(()),
             fault: Fault::None,
             authenticated_attachments: Vec::new(),
             validated_inputs: Vec::new(),
@@ -88,12 +90,10 @@ impl Backend for FakeBackend {
         self.auth.clone()
     }
 
-    fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), ProviderError> {
+    fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), SchemaInvalid> {
         self.validated_inputs
             .push((attachment_id.to_string(), payload.to_string()));
-        (self.fault != Fault::Schema)
-            .then_some(())
-            .ok_or(ProviderError)
+        self.schema.clone()
     }
 
     fn try_acquire_route(
@@ -509,7 +509,7 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_deliver() {
         selected.body_limit = body_limit;
         let mut backend = FakeBackend::new(selected);
         if name == "schema" {
-            backend.fault = Fault::Schema;
+            backend.schema = Err(SchemaInvalid::from_refusal("/amount".to_string()));
         }
         if let Some(rejection) = auth {
             backend.auth = Err(rejection);
@@ -538,6 +538,33 @@ fn malformed_oversize_mapping_schema_and_auth_refusals_never_deliver() {
     let output = request(&mut backend, &head(), br#"{"amount":1}"#);
     assert_eq!(error_code(&output.body), "mapping-cardinality");
     assert!(backend.deliveries.is_empty());
+}
+
+#[test]
+fn a_schema_refusal_carries_the_pointer_of_the_offending_value() {
+    for (refusal, expected) in [
+        (
+            "/0/change/created_by",
+            json!({"error":{"code":"schema-invalid","data":{"pointer":"/0/change/created_by"}}}),
+        ),
+        (
+            "",
+            json!({"error":{"code":"schema-invalid","data":{"pointer":""}}}),
+        ),
+        ("schema-invalid", json!({"error":{"code":"schema-invalid"}})),
+    ] {
+        let mut backend = FakeBackend::new(route());
+        backend.schema = Err(SchemaInvalid::from_refusal(refusal.to_string()));
+
+        let output = request(&mut backend, &head(), br#"{"amount":1}"#);
+
+        assert_eq!(output.status, 400, "{refusal}");
+        assert_eq!(
+            serde_json::from_slice::<Value>(&output.body).expect("JSON error"),
+            expected
+        );
+        assert!(backend.deliveries.is_empty(), "{refusal}");
+    }
 }
 
 #[test]

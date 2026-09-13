@@ -202,6 +202,31 @@ impl std::fmt::Display for ProviderError {
 
 impl std::error::Error for ProviderError {}
 
+/// The host refused the mapped payload against the route input schema.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SchemaInvalid {
+    /// The RFC 6901 pointer of the offending value. A platform-side cause has none.
+    pub pointer: Option<String>,
+}
+
+impl SchemaInvalid {
+    /// Read the host refusal. Only an empty string or a string that starts
+    /// with `/` is a pointer. Any other string names a platform-side cause.
+    #[must_use]
+    pub fn from_refusal(refusal: String) -> Self {
+        let pointer = (refusal.is_empty() || refusal.starts_with('/')).then_some(refusal);
+        Self { pointer }
+    }
+}
+
+impl std::fmt::Display for SchemaInvalid {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("route input schema refused the payload")
+    }
+}
+
+impl std::error::Error for SchemaInvalid {}
+
 /// Incremental request-body source. A read error never reaches the router.
 #[expect(
     async_fn_in_trait,
@@ -229,7 +254,7 @@ pub trait Backend {
         attachment_id: &str,
         headers: &[Header],
     ) -> Result<Option<Self::AuthenticatedCaller>, AuthRejection>;
-    fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), ProviderError>;
+    fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), SchemaInvalid>;
     fn try_acquire_route(
         &mut self,
         attachment_id: &str,
@@ -301,7 +326,10 @@ async fn try_handle(
         serde_json::to_string(&mapped).map_err(|_| error_response(400, "mapping-failed"))?;
     backend
         .validate_input(&matched.definition.attachment_id, &payload)
-        .map_err(|_| error_response(400, "schema-invalid"))?;
+        .map_err(|refusal| {
+            let data = refusal.pointer.map(|pointer| json!({ "pointer": pointer }));
+            detailed_error_response(400, "schema-invalid", None, data)
+        })?;
     let mapped_limit = matched.definition.mapped_limit.min(limits.mapped_bytes);
     if payload.len() > mapped_limit {
         return Err(error_response(413, "mapped-payload-too-large"));

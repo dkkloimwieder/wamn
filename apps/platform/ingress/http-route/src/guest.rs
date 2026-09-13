@@ -17,7 +17,7 @@ use super::{
     AdapterLimits, AuthRejection, Backend, BodyReadError, BodyReader, Cardinality, DeliveryError,
     DeliveryFailure, DeliveryFailureKind, DeliveryOutcome, DeliveryRequest, Emission,
     FailedOutcome, Header, HttpResponse, Mapping, MappingSource, PartialCompletion, ProviderError,
-    RequestHead, RouteDefinition, handle_request,
+    RequestHead, RouteDefinition, SchemaInvalid, handle_request,
 };
 
 struct Component;
@@ -77,9 +77,9 @@ impl Backend for GuestBackend {
         )
     }
 
-    fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), ProviderError> {
+    fn validate_input(&mut self, attachment_id: &str, payload: &str) -> Result<(), SchemaInvalid> {
         wamn::flow_http_routing::routing::validate_input(attachment_id, payload)
-            .map_err(|_| ProviderError)
+            .map_err(SchemaInvalid::from_refusal)
     }
 
     fn try_acquire_route(

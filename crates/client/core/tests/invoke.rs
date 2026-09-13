@@ -163,6 +163,38 @@ async fn authentication_and_authorization_failures_differ_through_the_client() {
     );
 }
 
+/// A route schema refusal reports the pointer of the offending value.
+#[tokio::test]
+async fn a_schema_refusal_reports_the_offending_pointer_through_the_client() {
+    let refused = client(FakeTransport::replying(
+        400,
+        r#"{"error":{"code":"schema-invalid","data":{"pointer":"/0/change/created_by"}}}"#,
+    ))
+    .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+    .await
+    .expect_err("400 refuses");
+    assert_eq!(
+        refused,
+        ClientError::Operation {
+            literal: "schema-invalid".to_owned(),
+            detail: serde_json::json!({ "pointer": "/0/change/created_by" }),
+        }
+    );
+    assert_eq!(
+        refused.to_string(),
+        r#"schema-invalid at JSON pointer "/0/change/created_by""#
+    );
+
+    let platform = client(FakeTransport::replying(
+        400,
+        r#"{"error":{"code":"schema-invalid"}}"#,
+    ))
+    .invoke(&route(), &BTreeMap::new(), &[item("r1")])
+    .await
+    .expect_err("400 refuses");
+    assert_eq!(platform.to_string(), "schema-invalid");
+}
+
 /// An outcome count that does not match the request is malformed. Silently
 /// truncating would hand a caller fewer results than items it sent, and they
 /// would read the missing ones as never attempted.

@@ -24,7 +24,7 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use boon::{Compiler, Draft, SchemaIndex, Schemas};
+use boon::{Compiler, Draft, ErrorKind, SchemaIndex, Schemas, ValidationError};
 use opentelemetry::KeyValue;
 use serde_json::Value;
 use tracing::Instrument as _;
@@ -307,21 +307,42 @@ impl InputSchemaValidators {
         }
     }
 
-    fn validate(&self, attachment_id: &str, payload: &str) -> Result<(), &'static str> {
+    /// Refuse a payload with the RFC 6901 pointer of its offending value.
+    ///
+    /// A platform-side cause refuses with `schema-invalid`, which is not a
+    /// pointer, because no payload value is at fault.
+    fn validate(&self, attachment_id: &str, payload: &str) -> Result<(), String> {
         let hash = self
             .attachment_hashes
             .get(attachment_id)
             .ok_or(SCHEMA_INVALID)?;
         let validator = self.validators.get(hash).ok_or(SCHEMA_INVALID)?;
-        let payload = serde_json::from_str(payload).map_err(|_| SCHEMA_INVALID)?;
-        match validator {
-            InputSchemaValidator::Compiled(compiled) => compiled
-                .schemas
-                .validate(&payload, compiled.index)
-                .map_err(|_| SCHEMA_INVALID),
-            InputSchemaValidator::Invalid => Err(SCHEMA_INVALID),
-        }
+        let InputSchemaValidator::Compiled(compiled) = validator else {
+            return Err(SCHEMA_INVALID.to_owned());
+        };
+        let payload = serde_json::from_str(payload).map_err(|_| String::new())?;
+        compiled
+            .schemas
+            .validate(&payload, compiled.index)
+            .map_err(|error| offending_pointer(&error))
     }
+}
+
+/// The top-level error always has an empty location, so the pointer comes from
+/// the first leaf cause. For an unexpected property, the pointer names it.
+fn offending_pointer(error: &ValidationError<'_, '_>) -> String {
+    let mut leaf = error;
+    while let Some(cause) = leaf.causes.first() {
+        leaf = cause;
+    }
+    let mut pointer = leaf.instance_location.to_string();
+    if let ErrorKind::AdditionalProperties { got } = &leaf.kind
+        && let Some(property) = got.first()
+    {
+        pointer.push('/');
+        pointer.push_str(&property.replace('~', "~0").replace('/', "~1"));
+    }
+    pointer
 }
 
 fn compile_input_schema(hash: &str, schema: Value) -> InputSchemaValidator {
@@ -595,7 +616,7 @@ impl FlowHttpRouting {
             .is_some_and(|attachment| carries_http_route(attachment.kind)))
     }
 
-    fn validate_input(&self, attachment_id: &str, payload: &str) -> Result<(), &'static str> {
+    fn validate_input(&self, attachment_id: &str, payload: &str) -> Result<(), String> {
         self.input_schemas.validate(attachment_id, payload)
     }
 
@@ -1038,9 +1059,7 @@ impl routing::Host for ActiveCtx<'_> {
             wamn.payload_bytes = payload.len(),
         )
         .entered();
-        Ok(plugin
-            .validate_input(&attachment_id, &payload)
-            .map_err(str::to_owned))
+        Ok(plugin.validate_input(&attachment_id, &payload))
     }
 
     async fn try_acquire(
@@ -1337,8 +1356,56 @@ mod tests {
             .expect("the authored schema accepts its matching payload");
         assert_eq!(
             plugin.validate_input("orders", r#"{"request_id":"r-1"}"#),
-            Err(SCHEMA_INVALID)
+            Err(String::new())
         );
+    }
+
+    #[test]
+    fn a_nonmatching_payload_refuses_with_the_pointer_of_the_offending_value() {
+        let mut definition = orders_definition();
+        definition["input-schema"] = json!({
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["request_id"],
+                "properties": {
+                    "request_id": {"type": "string"},
+                    "change": {
+                        "type": "object",
+                        "properties": {"quantity": {"type": "integer"}},
+                        "additionalProperties": false,
+                    },
+                },
+                "additionalProperties": false,
+            },
+        });
+        let manifest = release_manifest(BTreeMap::from([(
+            "orders".to_string(),
+            attachment(AttachmentKind::Http, definition),
+        )]));
+        let mount = Mount::holding(&manifest, "schema-pointer");
+        let plugin = FlowHttpRouting::new(Some(mount.load_release()), RouteInFlightLimit::default());
+
+        for (payload, pointer) in [
+            (
+                r#"[{"request_id":"r-1","change":{"created_by":"u-1"}}]"#,
+                "/0/change/created_by",
+            ),
+            (
+                r#"[{"request_id":"r-1"},{"request_id":"r-2","change":{"quantity":"7"}}]"#,
+                "/1/change/quantity",
+            ),
+            (r#"[{"request_id":"r-1","a/b~c":1}]"#, "/0/a~1b~0c"),
+            (r#"[{"change":{}}]"#, "/0"),
+            (r#"{"request_id":"r-1"}"#, ""),
+            ("[", ""),
+        ] {
+            assert_eq!(
+                plugin.validate_input("orders", payload),
+                Err(pointer.to_owned()),
+                "{payload}"
+            );
+        }
     }
 
     #[test]
@@ -1387,12 +1454,12 @@ mod tests {
             .expect("the distinct integer schema keeps its own validator");
         assert_eq!(
             plugin.validate_input("distinct", r#"{"id":"order-1"}"#),
-            Err(SCHEMA_INVALID)
+            Err(String::new())
         );
     }
 
     #[test]
-    fn invalid_schema_and_nonmatching_payload_share_the_exact_refusal() {
+    fn platform_causes_refuse_without_a_pointer() {
         let mut invalid_definition = orders_definition();
         invalid_definition["route"]["path"] = json!("/invalid");
         invalid_definition["input-schema"] = json!({"type": 7});
@@ -1418,13 +1485,13 @@ mod tests {
             Some(InputSchemaValidator::Invalid)
         ));
         assert_eq!(
-            plugin.validate_input("invalid", r#""anything""#),
-            Err(SCHEMA_INVALID)
+            plugin.validate_input("invalid", "["),
+            Err(SCHEMA_INVALID.to_owned())
         );
-        assert_eq!(plugin.validate_input("string", "7"), Err(SCHEMA_INVALID));
+        assert_eq!(plugin.validate_input("string", "7"), Err(String::new()));
         assert_eq!(
             plugin.validate_input("missing", r#""anything""#),
-            Err(SCHEMA_INVALID)
+            Err(SCHEMA_INVALID.to_owned())
         );
     }
 

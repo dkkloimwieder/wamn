@@ -113,6 +113,19 @@ impl ClientError {
             // No detail, deliberately: distinguishing "unknown token" from
             // "expired token" hands an attacker an oracle.
             401 => Self::Unauthenticated,
+            400 => {
+                let body = serde_json::from_str::<serde_json::Value>(body).unwrap_or_default();
+                let error = &body["error"];
+                if error["code"].as_str() == Some("schema-invalid") {
+                    return Self::Operation {
+                        literal: "schema-invalid".to_owned(),
+                        detail: error.get("data").cloned().unwrap_or_default(),
+                    };
+                }
+                Self::Transport {
+                    detail: "status 400".to_owned(),
+                }
+            }
             403 => {
                 let body = serde_json::from_str::<serde_json::Value>(body).unwrap_or_default();
                 let error = &body["error"];
@@ -154,6 +167,12 @@ impl core::fmt::Display for ClientError {
                 formatter.write_str(
                     "fresh-credential-required: this operation requires a PAT. The request was not retried",
                 )
+            }
+            Self::Operation { literal, detail } if literal == "schema-invalid" => {
+                match detail["pointer"].as_str() {
+                    Some(pointer) => write!(formatter, "{literal} at JSON pointer {pointer:?}"),
+                    None => write!(formatter, "{literal}"),
+                }
             }
             Self::Operation { literal, .. } => write!(formatter, "{literal}"),
             Self::Transport { detail } => write!(formatter, "transport failed: {detail}"),
