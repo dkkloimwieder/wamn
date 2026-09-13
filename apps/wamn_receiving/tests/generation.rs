@@ -184,6 +184,7 @@ fn receiving_catalog() -> CatalogIr {
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
             ),
+            Column::new("created_by", ColumnType::Uuid, false, None, None),
             Column::new(
                 "updated_at",
                 ColumnType::Timestamptz,
@@ -191,6 +192,7 @@ fn receiving_catalog() -> CatalogIr {
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
             ),
+            Column::new("updated_by", ColumnType::Uuid, false, None, None),
         ],
         vec![
             Constraint::primary_key("purchase_order_id_pkey", ["id"]).unwrap(),
@@ -282,6 +284,7 @@ fn receiving_catalog() -> CatalogIr {
                 Some(ColumnDefault::CurrentTimestamp),
                 None,
             ),
+            Column::new("created_by", ColumnType::Uuid, false, None, None),
         ],
         vec![
             Constraint::primary_key("receipt_id_pkey", ["id"]).unwrap(),
@@ -453,6 +456,11 @@ fn overlay_manifest() -> Value {
         }
     });
     overlay["models"]["purchase_order"]["owner"] = json!("wamn_receiving");
+    // An overlay model inherits the record-history declaration of the relation owner.
+    overlay["models"]["purchase_order"]
+        .as_object_mut()
+        .unwrap()
+        .remove("audit_log");
     overlay["models"]["purchase_order"]["field_owners"] = json!({
         "supplier_id": "client_acme_receiving"
     });
@@ -1571,10 +1579,10 @@ fn command_privilege_mismatch_reports_for_update_lock_and_declared_value() {
             "does not match verified SQL reads, writes, and row locks.\n",
             "Verified SQL: {\"insert_fields\":[],\"lock\":true,",
             "\"select_fields\":[\"id\",\"row_version\",\"status\"],",
-            "\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\n",
+            "\"update_fields\":[\"row_version\",\"status\"]}\n",
             "Declared: {\"insert_fields\":[],\"lock\":false,",
             "\"select_fields\":[\"id\",\"row_version\",\"status\"],",
-            "\"update_fields\":[\"row_version\",\"status\",\"updated_at\"]}\n",
+            "\"update_fields\":[\"row_version\",\"status\"]}\n",
             "RETURNING columns require select_fields. ",
             "Row-lock clauses such as FOR UPDATE require lock=true.",
         )

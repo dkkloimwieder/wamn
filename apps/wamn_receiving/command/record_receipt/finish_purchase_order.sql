@@ -9,8 +9,7 @@ SET
         WHEN coalesce(final_state.complete, false) THEN 'complete'
         ELSE 'open'
     END,
-    row_version = purchase_order.row_version + 1,
-    updated_at = CURRENT_TIMESTAMP
+    row_version = purchase_order.row_version + 1
 FROM final_state
 WHERE purchase_order.id = $1
     AND purchase_order.status = 'open'

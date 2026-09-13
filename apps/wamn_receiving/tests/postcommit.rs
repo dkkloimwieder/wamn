@@ -266,10 +266,11 @@ async fn delivery_taps(
 async fn fixture(project: &Client, label: &str) -> anyhow::Result<(String, String)> {
     let order = uuid::Uuid::new_v4().to_string();
     let line = uuid::Uuid::new_v4().to_string();
+    super::bind_fixture_principal(project, super::TENANT).await?;
     project.execute(
         "INSERT INTO receiving.purchase_order \
-         (id,purchase_order_number,supplier_id,status,row_version,created_at,updated_at,acme_inspection_required,acme_quality_status) \
-         VALUES ($1::text::uuid,$2,'00000000-0000-0000-0000-000000000404','open',1,now(),now(),true,'pending')",
+         (id,purchase_order_number,supplier_id,status,row_version,acme_inspection_required,acme_quality_status) \
+         VALUES ($1::text::uuid,$2,'00000000-0000-0000-0000-000000000404','open',1,true,'pending')",
         &[&order, &format!("POSTCOMMIT-{label}-{order}")],
     ).await?;
     project.execute(

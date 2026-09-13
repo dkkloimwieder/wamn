@@ -454,12 +454,28 @@ async fn receiving_release_journey(
             && value["row_version"] == "2",
         "purchase_order.update returned the wrong row: {value}"
     );
+    // The service principal stamps its own id. The seeded row keeps its creator.
+    anyhow::ensure!(
+        value["updated_by"] == caller_principal_id.as_str()
+            && value["created_by"] == FIXTURE_PRINCIPAL,
+        "purchase_order.update stamped the wrong actors: {value}"
+    );
     expected_direct_traces.push((
         trace_id,
         "purchase_order_update",
         "wamn-receiving:purchase-order/update@1.0.0",
         BASE_PACKAGE_ID,
     ));
+    assert_route_update_record_history(
+        &engine,
+        &flow_http,
+        &routing,
+        &bridge,
+        &inputs.route_host,
+        &route.token,
+        &value,
+    )
+    .await?;
 
     let (trace_id, traceparent) = journey_trace(5);
     let response = invoke_journey_route(
@@ -485,6 +501,25 @@ async fn receiving_release_journey(
         .as_str()
         .context("record_receipt returned no receipt_id")?
         .to_owned();
+    // One command transaction stamps the order and its receipt with one instant.
+    let stamps = project
+        .query_one(
+            "SELECT purchase_order.updated_at = receipt.created_at, \
+                    purchase_order.updated_by::text, receipt.created_by::text \
+             FROM receiving.receipt AS receipt \
+             JOIN receiving.purchase_order AS purchase_order \
+               ON purchase_order.id = receipt.purchase_order_id \
+             WHERE receipt.id = $1::text::uuid",
+            &[&receipt_id],
+        )
+        .await
+        .context("read the record_receipt stamps")?;
+    anyhow::ensure!(
+        stamps.get::<_, bool>(0)
+            && stamps.get::<_, String>(1) == caller_principal_id
+            && stamps.get::<_, String>(2) == caller_principal_id,
+        "receiving.record_receipt did not stamp the order and receipt with one instant and actor"
+    );
     expected_direct_traces.push((
         trace_id,
         "receiving_record_receipt",
@@ -607,6 +642,13 @@ async fn receiving_release_journey(
             && value["acme_quality_status"] == "pending",
         "Acme purchase_order.update returned the wrong row: {value}"
     );
+    // The overlay declares no record history, and its update stamps the base columns.
+    anyhow::ensure!(
+        value["updated_by"] == caller_principal_id.as_str()
+            && value["created_by"] == FIXTURE_PRINCIPAL
+            && value["updated_at"] != value["created_at"],
+        "Acme purchase_order.update did not stamp the base columns: {value}"
+    );
     expected_direct_traces.push((
         trace_id,
         "purchase_order_update",
@@ -717,6 +759,17 @@ async fn receiving_release_journey(
         "nested permission refusal was not the exact discoverable 403 contract: status={} body={denied_nested_body}",
         denied_nested.status()
     );
+
+    assert_unauthorized_no_op_refuses(
+        &engine,
+        &flow_http,
+        &routing,
+        &bridge,
+        &inputs.route_host,
+        &route.token,
+        project.as_ref(),
+    )
+    .await?;
 
     let (unauthorized_trace, unauthorized_parent) = journey_trace(13);
     let unauthorized = invoke_journey_route(
@@ -854,4 +907,159 @@ async fn receiving_release_journey(
     admin_task.abort();
     gate_stop?;
     Ok(route)
+}
+
+/// A true no-op through the generated update keeps the row, its revision, and
+/// its stamps. A stale no-op still refuses with `concurrency_conflict`.
+///
+/// `updated` is the result of the update that set supplier 402 at revision 2.
+async fn assert_route_update_record_history(
+    engine: &wash_runtime::engine::Engine,
+    flow_http: &Component,
+    routing: &Arc<FlowHttpRouting>,
+    bridge: &Arc<RouterDeliveryBridge>,
+    route_host: &str,
+    token: &str,
+    updated: &Value,
+) -> anyhow::Result<()> {
+    let (_, traceparent) = journey_trace(17);
+    let response = invoke_journey_route(
+        engine,
+        flow_http,
+        Arc::clone(routing),
+        Arc::clone(bridge),
+        route_host,
+        "/purchase_order/update",
+        Some(token),
+        &traceparent,
+        Bytes::from_static(
+            br#"[{"request_id":"purchase-order-no-op","id":"00000000-0000-0000-0000-000000000301","expected_row_version":"2","change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#,
+        ),
+    )
+    .await?;
+    let no_op = successful_value(&response, "purchase-order-no-op")?;
+    anyhow::ensure!(
+        no_op == *updated,
+        "a true no-op changed the row, its revision, or its stamps: {no_op}"
+    );
+
+    let (_, traceparent) = journey_trace(18);
+    let response = invoke_journey_route(
+        engine,
+        flow_http,
+        Arc::clone(routing),
+        Arc::clone(bridge),
+        route_host,
+        "/purchase_order/update",
+        Some(token),
+        &traceparent,
+        Bytes::from_static(
+            br#"[{"request_id":"purchase-order-stale-no-op","id":"00000000-0000-0000-0000-000000000301","expected_row_version":"1","change":{"supplier_id":"00000000-0000-0000-0000-000000000402"}}]"#,
+        ),
+    )
+    .await?;
+    let body: Value = serde_json::from_slice(response.body())
+        .context("decode the stale no-op response")?;
+    anyhow::ensure!(
+        response.status() == StatusCode::OK
+            && body[0]["request_id"] == "purchase-order-stale-no-op"
+            && body[0]["error"]["code"] == "concurrency_conflict"
+            && body[0].get("value").is_none(),
+        "a stale no-op did not refuse with concurrency_conflict: {body}"
+    );
+
+    // A client-supplied stamp fails the closed route schema at its pointer.
+    let (_, traceparent) = journey_trace(19);
+    let response = invoke_journey_route(
+        engine,
+        flow_http,
+        Arc::clone(routing),
+        Arc::clone(bridge),
+        route_host,
+        "/purchase_order/update",
+        Some(token),
+        &traceparent,
+        Bytes::from_static(
+            br#"[{"request_id":"purchase-order-supplied-stamp","id":"00000000-0000-0000-0000-000000000301","expected_row_version":"2","change":{"created_by":"00000000-0000-0000-0000-000000000401"}}]"#,
+        ),
+    )
+    .await?;
+    let body: Value = serde_json::from_slice(response.body())
+        .context("decode the supplied-stamp refusal")?;
+    anyhow::ensure!(
+        response.status() == StatusCode::BAD_REQUEST
+            && body
+                == serde_json::json!({
+                    "error": {
+                        "code": "schema-invalid",
+                        "data": {"pointer": "/0/change/created_by"},
+                    }
+                }),
+        "a supplied stamp was not refused at its JSON pointer: status={} body={body}",
+        response.status()
+    );
+    Ok(())
+}
+
+/// An unauthorized true no-op refuses before the operation runs, and the row
+/// keeps its revision and stamps.
+async fn assert_unauthorized_no_op_refuses(
+    engine: &wash_runtime::engine::Engine,
+    flow_http: &Component,
+    routing: &Arc<FlowHttpRouting>,
+    bridge: &Arc<RouterDeliveryBridge>,
+    route_host: &str,
+    token: &str,
+    project: &Client,
+) -> anyhow::Result<()> {
+    const UPDATE_OPERATION: &str = "wamn-receiving:purchase-order/update@1.0.0";
+    async fn row(project: &Client) -> anyhow::Result<Value> {
+        project
+            .query_one(
+                "SELECT to_jsonb(purchase_order) FROM receiving.purchase_order \
+                 WHERE id = '00000000-0000-0000-0000-000000000301'",
+                &[],
+            )
+            .await
+            .map(|row| row.get::<_, Value>(0))
+            .context("read the purchase order around the unauthorized no-op")
+    }
+    let before = row(project).await?;
+    let removed = project
+        .execute(
+            "DELETE FROM app_system.permissions \
+             WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
+            &[&TENANT, &ROUTE_CALLER_ROLE, &UPDATE_OPERATION],
+        )
+        .await
+        .context("remove only the purchase_order.update permission")?;
+    anyhow::ensure!(
+        removed == 1,
+        "unauthorized no-op setup removed {removed} permission rows instead of one"
+    );
+    let body = serde_json::to_vec(&serde_json::json!([{
+        "request_id": "purchase-order-unauthorized-no-op",
+        "id": "00000000-0000-0000-0000-000000000301",
+        "expected_row_version": before["row_version"].to_string(),
+        "change": {"supplier_id": before["supplier_id"]},
+    }]))?;
+    let (_, traceparent) = journey_trace(20);
+    let response = invoke_journey_route(
+        engine,
+        flow_http,
+        Arc::clone(routing),
+        Arc::clone(bridge),
+        route_host,
+        "/purchase_order/update",
+        Some(token),
+        &traceparent,
+        Bytes::from(body),
+    )
+    .await?;
+    super::sessions::assert_operation_refusal(&response, "permission-denied", UPDATE_OPERATION)?;
+    anyhow::ensure!(
+        row(project).await? == before,
+        "an unauthorized no-op changed the purchase order"
+    );
+    Ok(())
 }

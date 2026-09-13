@@ -7,12 +7,14 @@ pub struct PurchaseOrderRow {
     pub acme_inspection_required: bool,
     pub acme_quality_status: String,
     pub created_at: wamn_postgres_statements::TimestampTz,
+    pub created_by: wamn_postgres_statements::Uuid,
     pub id: wamn_postgres_statements::Uuid,
     pub purchase_order_number: String,
     pub row_version: i64,
     pub status: String,
     pub supplier_id: wamn_postgres_statements::Uuid,
     pub updated_at: wamn_postgres_statements::TimestampTz,
+    pub updated_by: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
@@ -22,16 +24,18 @@ pub struct PurchaseOrderUpdateRow {
     pub acme_inspection_required: Option<bool>,
     pub acme_quality_status: Option<String>,
     pub created_at: Option<wamn_postgres_statements::TimestampTz>,
+    pub created_by: Option<wamn_postgres_statements::Uuid>,
     pub id: Option<wamn_postgres_statements::Uuid>,
     pub purchase_order_number: Option<String>,
     pub row_version: Option<i64>,
     pub status: Option<String>,
     pub supplier_id: Option<wamn_postgres_statements::Uuid>,
     pub updated_at: Option<wamn_postgres_statements::TimestampTz>,
+    pub updated_by: Option<wamn_postgres_statements::Uuid>,
 }
 
-pub(crate) const GET_DIGEST: &str = "sha256:15c3318293f29e75b0b47d5c77e6628706597407fe300e0f771731870751d4cc";
-pub(crate) const UPDATE_DIGEST: &str = "sha256:0c8ddebddf00a12125acec9fb36f9cbd8619c99773ee79102b5dcd9afe844a95";
+pub(crate) const GET_DIGEST: &str = "sha256:39b89be8cfeb1ad9031416d2aac96a6fdcfa092e0f1300f7ed1dfd8799cd415c";
+pub(crate) const UPDATE_DIGEST: &str = "sha256:256d52a514807dd1821c53727abe235c0b8bea7f58b7885e0b5f201082d294b7";
 
 pub(crate) const UPDATE_UNIQUE_CONSTRAINTS: &[&str] = &[];
 pub(crate) const UPDATE_FOREIGN_KEY_CONSTRAINTS: &[&str] = &[];
@@ -50,12 +54,14 @@ pub(crate) async fn get(
             acme_inspection_required: row.decode("acme_inspection_required")?,
             acme_quality_status: row.decode("acme_quality_status")?,
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             purchase_order_number: row.decode("purchase_order_number")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             supplier_id: row.decode("supplier_id")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -84,12 +90,14 @@ pub(crate) async fn update(
             acme_inspection_required: row.decode("acme_inspection_required")?,
             acme_quality_status: row.decode("acme_quality_status")?,
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             purchase_order_number: row.decode("purchase_order_number")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             supplier_id: row.decode("supplier_id")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }

@@ -1,7 +1,7 @@
 //! Real Receiving command histories, rollback, replay, authority and contention.
 
 #[path = "receiving_history/database.rs"]
-mod database;
+pub(crate) mod database;
 #[path = "receiving_history/model.rs"]
 mod model;
 
@@ -19,7 +19,9 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 use uuid::Uuid;
 
-use database::{Fixture, assert_state, connect, seed, snapshot, wait_for_blocked};
+use database::{
+    Fixture, assert_state, bind_fixture_principal, connect, seed, snapshot, wait_for_blocked,
+};
 use model::{Expected, History, Receipt, Step};
 
 const RECEIPT_PATH: &str = "/receiving/record_receipt";
@@ -985,6 +987,12 @@ pub(crate) fn assert_histories_with_cancellation(
         .enable_all()
         .build()?;
     let db = run_before(&runtime, deadline, &cancellation, connect(&inputs.project_pg_url))?;
+    run_before(
+        &runtime,
+        deadline,
+        &cancellation,
+        bind_fixture_principal(&db.client, &inputs.tenant),
+    )?;
     let version: String = run_before(&runtime, deadline, &cancellation, db.client.query_one("SHOW server_version_num", &[]))?
         .get(0);
     ensure!(

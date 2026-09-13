@@ -16,6 +16,10 @@
         "id"
       ],
       "enum_fields": {},
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
       "operations": {}
     },
     "location": {
@@ -26,6 +30,10 @@
         "id"
       ],
       "enum_fields": {},
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
       "operations": {}
     },
     "purchase_order": {
@@ -47,6 +55,15 @@
           "complete",
           "cancelled"
         ]
+      },
+      "audit_log": {
+        "columns": [
+          "created_at",
+          "created_by",
+          "updated_at",
+          "updated_by"
+        ],
+        "retention": "none"
       },
       "operations": {
         "get": {
@@ -223,6 +240,10 @@
         "id"
       ],
       "enum_fields": {},
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
       "operations": {}
     },
     "receipt": {
@@ -238,6 +259,13 @@
         "created_at"
       ],
       "enum_fields": {},
+      "audit_log": {
+        "columns": [
+          "created_at",
+          "created_by"
+        ],
+        "retention": "none"
+      },
       "operations": {
         "get": {
           "permission": "receipt.get",
@@ -321,6 +349,10 @@
         "id"
       ],
       "enum_fields": {},
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
       "operations": {}
     }
   },
@@ -551,8 +583,7 @@
           "insert_fields": [],
           "update_fields": [
             "status",
-            "row_version",
-            "updated_at"
+            "row_version"
           ],
           "lock": true,
           "constraints": []

@@ -139,6 +139,7 @@ pub(super) async fn prepare_session_host_fixture(
         system_database_url: inputs.system_pg_url.clone(),
     })
     .await?;
+    bind_fixture_principal(project.as_ref(), TENANT).await?;
     project
         .execute(
             "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
@@ -151,8 +152,8 @@ pub(super) async fn prepare_session_host_fixture(
     ).await?;
     project
         .execute(
-            "INSERT INTO app_system.users (tenant_id, id, email, status) \
-         VALUES ($1, $2::text::uuid, 'session-host@example.test', 'active')",
+            "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
+         VALUES ($1, $2::text::uuid, 'person', 'session-host@example.test', 'active')",
             &[&TENANT, &human.id().as_str()],
         )
         .await?;
@@ -174,7 +175,9 @@ pub(super) async fn prepare_session_host_fixture(
            'id', id::text, 'purchase_order_number', purchase_order_number, \
            'supplier_id', supplier_id::text, 'status', status, 'row_version', row_version::text, \
            'created_at', to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), \
-           'updated_at', to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) \
+           'created_by', created_by::text, \
+           'updated_at', to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'), \
+           'updated_by', updated_by::text) \
          FROM receiving.purchase_order WHERE id = $1::text::uuid",
         &[&ORDER_ID],
     ).await.context("read the independent expected purchase-order GET result")?.get(0);
@@ -278,6 +281,15 @@ pub(super) async fn assert_nested_session(
                 .iter()
                 .find(|attachment| attachment.operation == OPERATION)
                 .context("the journey omitted the ordinary client GET route")?,
+        );
+    }
+    let stamp_equality = !fresh_only && !session_client;
+    if stamp_equality {
+        selected_attachments.push(
+            JOURNEY_ATTACHMENTS
+                .iter()
+                .find(|attachment| attachment.operation == OVERLAY_UPDATE)
+                .context("the journey omitted the Acme purchase_order update route")?,
         );
     }
     let endpoint = reqwest::Url::parse(&endpoint)?;
@@ -457,6 +469,7 @@ pub(super) async fn assert_nested_session(
         system_database_url: inputs.system_pg_url.clone(),
     })
     .await?;
+    bind_fixture_principal(project.as_ref(), TENANT).await?;
     project
         .execute(
             "INSERT INTO app_system.roles (tenant_id, name) VALUES ($1, $2)",
@@ -467,6 +480,9 @@ pub(super) async fn assert_nested_session(
     if session_client {
         permitted_operations.push(OPERATION);
     }
+    if stamp_equality {
+        permitted_operations.extend([BASE_UPDATE, OVERLAY_UPDATE]);
+    }
     for operation in permitted_operations {
         project.execute(
             "INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, $2, $3)",
@@ -475,8 +491,8 @@ pub(super) async fn assert_nested_session(
     }
     project
         .execute(
-            "INSERT INTO app_system.users (tenant_id, id, email, status) \
-         VALUES ($1, $2::text::uuid, 'session-nested@example.test', 'active')",
+            "INSERT INTO app_system.users (tenant_id, id, type, email, status) \
+         VALUES ($1, $2::text::uuid, 'person', 'session-nested@example.test', 'active')",
             &[&TENANT, &human.id().as_str()],
         )
         .await?;
@@ -853,6 +869,20 @@ pub(super) async fn assert_nested_session(
             human.id().as_str(),
             "session",
         );
+        assert_pat_and_session_stamp_one_actor(
+            &engine,
+            &flow_http,
+            &routing,
+            &bridge,
+            &inputs.route_host,
+            StampCredentials {
+                session: token,
+                pat: pat.token(),
+                human_id: human.id().as_str(),
+            },
+            project.as_ref(),
+        )
+        .await?;
     }
     identity_task.abort();
     project_task.abort();
@@ -866,6 +896,103 @@ pub(super) async fn assert_nested_session(
             "HOST_SESSION_NESTED result=pass credential_kind=session invocations=2 fixture_release=3 manifest_format=1"
         );
     }
+    Ok(())
+}
+
+const BASE_UPDATE: &str = "wamn-receiving:purchase-order/update@1.0.0";
+const OVERLAY_UPDATE: &str = "client-acme-receiving:purchase-order/update@3.0.0";
+
+/// Two credentials of one person.
+struct StampCredentials<'a> {
+    session: &'a str,
+    pat: &'a str,
+    human_id: &'a str,
+}
+
+/// A person stamps the same users id through a session token and through a
+/// personal access token.
+///
+/// The session updates a new order through the Acme route, and the PAT then
+/// updates it through the base route.
+async fn assert_pat_and_session_stamp_one_actor(
+    engine: &wash_runtime::engine::Engine,
+    flow_http: &Component,
+    routing: &Arc<FlowHttpRouting>,
+    bridge: &Arc<RouterDeliveryBridge>,
+    route_host: &str,
+    credentials: StampCredentials<'_>,
+    project: &Client,
+) -> anyhow::Result<()> {
+    let order = uuid::Uuid::new_v4().to_string();
+    bind_fixture_principal(project, TENANT).await?;
+    project
+        .execute(
+            "INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id) \
+             VALUES ($1::text::uuid, $2, '00000000-0000-0000-0000-000000000401')",
+            &[&order, &format!("SESSION-STAMP-{order}")],
+        )
+        .await
+        .context("seed the order that both credentials update")?;
+    let mut values = Vec::with_capacity(2);
+    for (trace, path, token, request_id, change) in [
+        (
+            51,
+            overlay_route_path("purchase_order_update"),
+            credentials.session,
+            "session-stamp",
+            serde_json::json!({"acme_inspection_required": true}),
+        ),
+        (
+            52,
+            "/purchase_order/update",
+            credentials.pat,
+            "pat-stamp",
+            serde_json::json!({"supplier_id": "00000000-0000-0000-0000-000000000402"}),
+        ),
+    ] {
+        let body = serde_json::to_vec(&serde_json::json!([{
+            "request_id": request_id,
+            "id": order,
+            "expected_row_version": (values.len() + 1).to_string(),
+            "change": change,
+        }]))?;
+        let (_, traceparent) = journey_trace(trace);
+        let response = invoke_journey_route(
+            engine,
+            flow_http,
+            Arc::clone(routing),
+            Arc::clone(bridge),
+            route_host,
+            path,
+            Some(token),
+            &traceparent,
+            Bytes::from(body),
+        )
+        .await?;
+        values.push(successful_value(&response, request_id)?);
+    }
+    let (session, pat) = (&values[0], &values[1]);
+    anyhow::ensure!(
+        session["row_version"] == "2"
+            && pat["row_version"] == "3"
+            && session["updated_by"] == credentials.human_id
+            && pat["updated_by"] == credentials.human_id
+            && session["created_by"] == FIXTURE_PRINCIPAL
+            && pat["created_by"] == FIXTURE_PRINCIPAL,
+        "a session and a PAT of one person stamped different actors: session={session} pat={pat}"
+    );
+    let stored: String = project
+        .query_one(
+            "SELECT updated_by::text FROM receiving.purchase_order WHERE id = $1::text::uuid",
+            &[&order],
+        )
+        .await
+        .context("read the stamped order")?
+        .get(0);
+    anyhow::ensure!(
+        stored == credentials.human_id,
+        "the stored order does not carry the person's users id"
+    );
     Ok(())
 }
 

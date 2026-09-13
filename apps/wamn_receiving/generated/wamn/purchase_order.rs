@@ -5,12 +5,14 @@ use wamn_postgres_statements::Connection;
 #[derive(Debug)]
 pub struct PurchaseOrderRow {
     pub created_at: wamn_postgres_statements::TimestampTz,
+    pub created_by: wamn_postgres_statements::Uuid,
     pub id: wamn_postgres_statements::Uuid,
     pub purchase_order_number: String,
     pub row_version: i64,
     pub status: String,
     pub supplier_id: wamn_postgres_statements::Uuid,
     pub updated_at: wamn_postgres_statements::TimestampTz,
+    pub updated_by: wamn_postgres_statements::Uuid,
 }
 
 #[derive(Debug)]
@@ -18,22 +20,24 @@ pub struct PurchaseOrderUpdateRow {
     pub outcome: Option<String>,
     pub observed_row_version: Option<i64>,
     pub created_at: Option<wamn_postgres_statements::TimestampTz>,
+    pub created_by: Option<wamn_postgres_statements::Uuid>,
     pub id: Option<wamn_postgres_statements::Uuid>,
     pub purchase_order_number: Option<String>,
     pub row_version: Option<i64>,
     pub status: Option<String>,
     pub supplier_id: Option<wamn_postgres_statements::Uuid>,
     pub updated_at: Option<wamn_postgres_statements::TimestampTz>,
+    pub updated_by: Option<wamn_postgres_statements::Uuid>,
 }
 
-pub(crate) const GET_DIGEST: &str = "sha256:2eb6a5c78c23fe93f83c17877b291b537411cce8c055b38b252a17a11dd52873";
-pub(crate) const QUERY_0_DIGEST: &str = "sha256:47a7f14532525b24ebee265ee292d2d94be43b489d485bbac0e85266c7802a54";
-pub(crate) const QUERY_1_DIGEST: &str = "sha256:aa601d2ee46c27f2639aa2293fff212b90ad4ffb35ee35e820ff0d72aa2aa7ff";
-pub(crate) const QUERY_2_DIGEST: &str = "sha256:b896cab6620a3ff895611111659791d505cf7f9518b12eba53f5873655c4ae07";
-pub(crate) const QUERY_3_DIGEST: &str = "sha256:4ca93e4ff637cb3d9da2719d7bf4c509e05618438645195e3fbb653729177d3b";
-pub(crate) const QUERY_4_DIGEST: &str = "sha256:61505031f82c3e321f1ba595f393e1dd4b24ce81543992687e77ca1df4e37fe4";
-pub(crate) const QUERY_5_DIGEST: &str = "sha256:eca2e9c5412c8137418e3703ec957fa59cfa10232143eab50f2d489de98b4368";
-pub(crate) const UPDATE_DIGEST: &str = "sha256:a972049a3023f1c87ac95c07a3716f75aff4f520b37c8dcdecd74c49090eb6ab";
+pub(crate) const GET_DIGEST: &str = "sha256:49a2aa0628387bc2717872be320426a14bb964ba8a657f71095160d81ed9ff77";
+pub(crate) const QUERY_0_DIGEST: &str = "sha256:9bd3e9f80676150bbc60545e5409ba75c886184129dbf35fb2bf49676f5edae3";
+pub(crate) const QUERY_1_DIGEST: &str = "sha256:7b2a4336071091e8271cee0a59abd007465dd1f302c7565de4649f2cdd12ba38";
+pub(crate) const QUERY_2_DIGEST: &str = "sha256:ba31a18e45b651d8897812a8ba261392745ed4fbbf1725f574d7dffd7444f6fd";
+pub(crate) const QUERY_3_DIGEST: &str = "sha256:c39f74894247cfa16c18acb8c43c463b7bd37f39a53b76f325c05b1b04b2a177";
+pub(crate) const QUERY_4_DIGEST: &str = "sha256:69e14cbd3cc603aeb3bb33fbf82c6499b952454cbddac8103d547b9c38555127";
+pub(crate) const QUERY_5_DIGEST: &str = "sha256:b00b6afd3a821a4e0ae4cb67371453bb122863c690015753ddfe8e5a46a63cf8";
+pub(crate) const UPDATE_DIGEST: &str = "sha256:1be727b7302658f76ea31ee13b87bd24de12ebe17041f7272be79d8f6fe2544f";
 
 pub(crate) const UPDATE_UNIQUE_CONSTRAINTS: &[&str] = &[];
 pub(crate) const UPDATE_FOREIGN_KEY_CONSTRAINTS: &[&str] = &[];
@@ -50,12 +54,14 @@ pub(crate) async fn get(
     wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
         Ok(PurchaseOrderRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             purchase_order_number: row.decode("purchase_order_number")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             supplier_id: row.decode("supplier_id")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -78,12 +84,14 @@ pub(crate) async fn query_purchase_order_number_ascending(
     wamn_postgres_statements::decode_all(QUERY_0_DIGEST, rows, |row| {
         Ok(PurchaseOrderRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             purchase_order_number: row.decode("purchase_order_number")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             supplier_id: row.decode("supplier_id")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -106,12 +114,14 @@ pub(crate) async fn query_purchase_order_number_descending(
     wamn_postgres_statements::decode_all(QUERY_1_DIGEST, rows, |row| {
         Ok(PurchaseOrderRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             purchase_order_number: row.decode("purchase_order_number")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             supplier_id: row.decode("supplier_id")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -134,12 +144,14 @@ pub(crate) async fn query_status_ascending(
     wamn_postgres_statements::decode_all(QUERY_2_DIGEST, rows, |row| {
         Ok(PurchaseOrderRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             purchase_order_number: row.decode("purchase_order_number")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             supplier_id: row.decode("supplier_id")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -162,12 +174,14 @@ pub(crate) async fn query_status_descending(
     wamn_postgres_statements::decode_all(QUERY_3_DIGEST, rows, |row| {
         Ok(PurchaseOrderRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             purchase_order_number: row.decode("purchase_order_number")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             supplier_id: row.decode("supplier_id")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -190,12 +204,14 @@ pub(crate) async fn query_created_at_ascending(
     wamn_postgres_statements::decode_all(QUERY_4_DIGEST, rows, |row| {
         Ok(PurchaseOrderRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             purchase_order_number: row.decode("purchase_order_number")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             supplier_id: row.decode("supplier_id")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -218,12 +234,14 @@ pub(crate) async fn query_created_at_descending(
     wamn_postgres_statements::decode_all(QUERY_5_DIGEST, rows, |row| {
         Ok(PurchaseOrderRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             purchase_order_number: row.decode("purchase_order_number")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             supplier_id: row.decode("supplier_id")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }
@@ -246,12 +264,14 @@ pub(crate) async fn update(
             outcome: row.decode("outcome")?,
             observed_row_version: row.decode("observed_row_version")?,
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             purchase_order_number: row.decode("purchase_order_number")?,
             row_version: row.decode("row_version")?,
             status: row.decode("status")?,
             supplier_id: row.decode("supplier_id")?,
             updated_at: row.decode("updated_at")?,
+            updated_by: row.decode("updated_by")?,
         })
     })
 }

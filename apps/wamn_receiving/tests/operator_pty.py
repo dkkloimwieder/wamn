@@ -64,7 +64,8 @@ def check_query_descriptors(root):
         ("id", "uuid", False), ("purchase_order_number", "text", False),
         ("status", "text", False), ("row_version", "int64", False),
         ("supplier_id", "uuid", False), ("created_at", "timestamptz", False),
-        ("updated_at", "timestamptz", False),
+        ("updated_at", "timestamptz", False), ("created_by", "uuid", False),
+        ("updated_by", "uuid", False),
     }, "purchase_order.query result descriptors changed; update the fixture")
     attachments = json.loads((package / "publication/attachments.json").read_text())
     attachment = attachments["purchase-order-query-http"]
@@ -131,6 +132,8 @@ class Fixture:
                             "supplier_id": "00000000-0000-0000-0000-000000000042",
                             "created_at": "2026-09-03T00:00:00Z",
                             "updated_at": "2026-09-03T00:00:00Z",
+                            "created_by": "00000000-0000-0000-0000-000000000043",
+                            "updated_by": "00000000-0000-0000-0000-000000000043",
                         }], "next_cursor": None},
                     }], separators=(",", ":")).encode()
                     self.send_response(200)

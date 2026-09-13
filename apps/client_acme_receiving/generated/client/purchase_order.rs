@@ -29,6 +29,12 @@ pub const PURCHASE_ORDER_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "created_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "id",
         type_name: "uuid",
         nullable: false,
@@ -68,6 +74,12 @@ pub const PURCHASE_ORDER_FIELDS: &[FieldDescriptor] = &[
         nullable: false,
         values: &[],
     },
+    FieldDescriptor {
+        path: "updated_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
 ];
 
 
@@ -90,6 +102,8 @@ pub struct PurchaseOrderGetResult {
     /// `timestamptz`
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// `uuid`
+    pub created_by: uuid::Uuid,
+    /// `uuid`
     pub id: uuid::Uuid,
     /// `text`
     pub purchase_order_number: String,
@@ -101,6 +115,8 @@ pub struct PurchaseOrderGetResult {
     pub supplier_id: uuid::Uuid,
     /// `timestamptz`
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// `uuid`
+    pub updated_by: uuid::Uuid,
 }
 
 /// Input descriptors for `client-acme-receiving:purchase-order/get@3.0.0`.
@@ -144,6 +160,12 @@ pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "created_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "id",
         type_name: "uuid",
         nullable: false,
@@ -183,6 +205,12 @@ pub const PURCHASE_ORDER_GET_RESULT: &[FieldDescriptor] = &[
         nullable: false,
         values: &[],
     },
+    FieldDescriptor {
+        path: "updated_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
 ];
 
 pub const PURCHASE_ORDER_GET_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
@@ -210,6 +238,10 @@ field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable:
 required: true, minimum: None, maximum: None, children: &[
 ], },
 wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "created_by", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
 field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
 required: true, minimum: None, maximum: None, children: &[
 ], },
@@ -231,6 +263,10 @@ required: true, minimum: None, maximum: None, children: &[
 ], },
 wamn_client::descriptor::FieldSchema {
 field: FieldDescriptor { path: "updated_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "updated_by", type_name: "uuid", nullable: false, values: &[] },
 required: true, minimum: None, maximum: None, children: &[
 ], },
 ];
@@ -312,6 +348,8 @@ pub struct PurchaseOrderUpdateResult {
     /// `timestamptz`
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// `uuid`
+    pub created_by: uuid::Uuid,
+    /// `uuid`
     pub id: uuid::Uuid,
     /// `text`
     pub purchase_order_number: String,
@@ -323,6 +361,8 @@ pub struct PurchaseOrderUpdateResult {
     pub supplier_id: uuid::Uuid,
     /// `timestamptz`
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// `uuid`
+    pub updated_by: uuid::Uuid,
 }
 
 /// Input descriptors for `client-acme-receiving:purchase-order/update@3.0.0`.
@@ -388,6 +428,12 @@ pub const PURCHASE_ORDER_UPDATE_RESULT: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "created_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "id",
         type_name: "uuid",
         nullable: false,
@@ -424,6 +470,12 @@ pub const PURCHASE_ORDER_UPDATE_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "updated_at",
         type_name: "timestamptz",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "updated_by",
+        type_name: "uuid",
         nullable: false,
         values: &[],
     },
@@ -470,6 +522,10 @@ field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable:
 required: true, minimum: None, maximum: None, children: &[
 ], },
 wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "created_by", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
 field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
 required: true, minimum: None, maximum: None, children: &[
 ], },
@@ -491,6 +547,10 @@ required: true, minimum: None, maximum: None, children: &[
 ], },
 wamn_client::descriptor::FieldSchema {
 field: FieldDescriptor { path: "updated_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "updated_by", type_name: "uuid", nullable: false, values: &[] },
 required: true, minimum: None, maximum: None, children: &[
 ], },
 ];

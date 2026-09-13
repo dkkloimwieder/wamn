@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    model.created_at,\n    model.id,\n    model.idempotency_key,\n    model.occurred_at,\n    model.purchase_order_id,\n    model.receipt_reference\nFROM receipt AS model\nWHERE model.id = $1::uuid;\n",
+  "query": "SELECT\n    model.created_at,\n    model.created_by,\n    model.id,\n    model.idempotency_key,\n    model.occurred_at,\n    model.purchase_order_id,\n    model.receipt_reference\nFROM receipt AS model\nWHERE model.id = $1::uuid;\n",
   "describe": {
     "columns": [
       {
@@ -16,6 +16,17 @@
       },
       {
         "ordinal": 1,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "receipt",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
         "name": "id",
         "type_info": "Uuid",
         "origin": {
@@ -26,7 +37,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "idempotency_key",
         "type_info": "Text",
         "origin": {
@@ -37,7 +48,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "occurred_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "purchase_order_id",
         "type_info": "Uuid",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "receipt_reference",
         "type_info": "Text",
         "origin": {
@@ -81,8 +92,9 @@
       false,
       false,
       false,
+      false,
       false
     ]
   },
-  "hash": "73e18a76c60b67894ed4b7abb362953da0cc6d29254054096454ae837e3245d1"
+  "hash": "0761529775d51c86b2f7a77c646630c0384012476c84d7dc99e027616cf3afd2"
 }

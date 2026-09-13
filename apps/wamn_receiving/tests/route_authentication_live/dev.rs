@@ -57,6 +57,7 @@ impl DevJourneyInputs {
                 component_artifact_base: required_journey("WAMN_ROUTE_COMPONENT_ARTIFACT_BASE")?,
                 release_artifact_base: required_journey("WAMN_ROUTE_RELEASE_ARTIFACT_BASE")?,
                 route_host: required_journey("WAMN_ROUTE_HOST")?,
+                platform_domain: PLATFORM_DOMAIN.to_owned(),
                 registry_auth_file: required_journey_path("WAMN_ROUTE_REGISTRY_AUTH_FILE")?,
                 package_sources: vec![
                     package_root()
@@ -559,7 +560,8 @@ pub(super) async fn assert_dev_command(
     let (admin, admin_task) = connect(&system_url).await?;
     let gate_binary = journey_scenario_worker_binary()?;
     let environment =
-        wamn_ctl::dev::environment::provision(&system_url, admin.as_ref(), root).await?;
+        wamn_ctl::dev::environment::provision(&system_url, admin.as_ref(), root, PLATFORM_DOMAIN)
+            .await?;
     let publisher_subject = environment
         .route
         .management_principal_subject

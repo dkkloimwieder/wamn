@@ -55,7 +55,7 @@ pub(crate) struct ValidateReceiptLineRow {
 pub(crate) const CLAIM_COMMAND_DIGEST: &str = "sha256:6b854d40de1d42cab4ab852d0d6b1b6d869e7d5117a0dbd9c7f00b3602874430";
 pub(crate) const FINALIZE_COMMAND_DIGEST: &str = "sha256:a5bb7392dff080e683c8fad4a3abd813bcd8db55230ff2a826552c9f8cb5fd15";
 pub(crate) const FIND_REPLAY_DIGEST: &str = "sha256:21136f24dadfdf9f5bf9f17b25beb189f50cca409acae2ff3ea97c7997107025";
-pub(crate) const FINISH_PURCHASE_ORDER_DIGEST: &str = "sha256:2add12d3a2d7bd9fe80df600e7c46e77c0b55f7213b75131a5e3ef4473004b36";
+pub(crate) const FINISH_PURCHASE_ORDER_DIGEST: &str = "sha256:d23e50cb5d69842ea6f5bc4d9b3f3511695d07eef02f6386b30f2361328cfd8e";
 pub(crate) const INSERT_RECEIPT_DIGEST: &str = "sha256:6ee94d218f33fda99dcc91f7b72265119b16db159624597c9e5d584d7a35a7b0";
 pub(crate) const INSERT_RECEIPT_LINE_DIGEST: &str = "sha256:46af356f1b2e4640f42ffb8040f14aa7bd88d303f54941cf1d707456337c781d";
 pub(crate) const LOCK_PURCHASE_ORDER_DIGEST: &str = "sha256:f54302c31a8ac7d1d26fdc1eaa4886f1d60b3656d6850cc5589c1bb2abeb85e2";

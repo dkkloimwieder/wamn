@@ -390,7 +390,7 @@ async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Val
     let (project, connection_task) = super::connect(database_url).await?;
     let result = async {
         project.batch_execute("SET statement_timeout = '20s'; SET lock_timeout = '10s'").await?;
-        super::install_journey_platform_floor(project.as_ref()).await?;
+        super::install_journey_platform_floor(project.as_ref(), super::PLATFORM_DOMAIN).await?;
         let apply = |package: PathBuf| apply_package::run(ApplyPackageArgs {
             package,database_url:database_url.to_owned(),tenant:TENANT.to_owned(),
         });
@@ -541,7 +541,7 @@ async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirem
             server.get(1),
         ))
         .await?;
-    super::install_journey_platform_floor(&project).await?;
+    super::install_journey_platform_floor(&project, super::PLATFORM_DOMAIN).await?;
     for package in [super::package_root(), super::overlay_package_root()] {
         apply_package::run(ApplyPackageArgs {
             package,

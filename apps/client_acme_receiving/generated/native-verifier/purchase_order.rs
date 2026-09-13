@@ -5,12 +5,14 @@ pub struct PurchaseOrderRow {
     pub acme_inspection_required: bool,
     pub acme_quality_status: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_by: uuid::Uuid,
     pub id: uuid::Uuid,
     pub purchase_order_number: String,
     pub row_version: i64,
     pub status: String,
     pub supplier_id: uuid::Uuid,
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub updated_by: uuid::Uuid,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -20,12 +22,14 @@ pub struct PurchaseOrderUpdateRow {
     pub acme_inspection_required: Option<bool>,
     pub acme_quality_status: Option<String>,
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub created_by: Option<uuid::Uuid>,
     pub id: Option<uuid::Uuid>,
     pub purchase_order_number: Option<String>,
     pub row_version: Option<i64>,
     pub status: Option<String>,
     pub supplier_id: Option<uuid::Uuid>,
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub updated_by: Option<uuid::Uuid>,
 }
 
 pub(crate) const GET_SQL: &str = include_str!("../sql/purchase_order/get.sql");

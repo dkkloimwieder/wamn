@@ -7,6 +7,7 @@ mod cluster;
 mod startup_burst;
 #[path = "receiving_command_histories_live.rs"]
 mod command_histories;
+use command_histories::database::{FIXTURE_PRINCIPAL, bind_fixture_principal};
 #[path = "../../client_acme_receiving/tests/overlay_compatibility.rs"]
 mod overlay_compatibility;
 #[path = "../../../tests/integration/src/route_authentication_live/p3_shell.rs"]
@@ -97,6 +98,8 @@ const OVERLAY_PACKAGE_ID: &str = "client_acme_receiving";
 const OVERLAY_PACKAGE_VERSION: &str = "3.0.0";
 const OVERLAY_COMPONENT: &str = "client_acme_receiving";
 const RAW_BODY_LIMIT: usize = 1024 * 1024;
+/// Domain of the platform principal emails in every test tenant.
+const PLATFORM_DOMAIN: &str = "example.invalid";
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
 const BASE_OPERATIONS: [(&str, &str); 8] = [
     ("location_list", "wamn-receiving:location/list@1.0.0"),

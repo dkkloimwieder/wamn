@@ -5,6 +5,7 @@ use wamn_postgres_statements::Connection;
 #[derive(Debug)]
 pub struct ReceiptRow {
     pub created_at: wamn_postgres_statements::TimestampTz,
+    pub created_by: wamn_postgres_statements::Uuid,
     pub id: wamn_postgres_statements::Uuid,
     pub idempotency_key: String,
     pub occurred_at: wamn_postgres_statements::TimestampTz,
@@ -12,8 +13,8 @@ pub struct ReceiptRow {
     pub receipt_reference: String,
 }
 
-pub(crate) const GET_DIGEST: &str = "sha256:73e18a76c60b67894ed4b7abb362953da0cc6d29254054096454ae837e3245d1";
-pub(crate) const QUERY_DIGEST: &str = "sha256:7c9d3439ce29d392049e5bda1e005e146eb4882d22fee290ed7de80c3b4e1eb3";
+pub(crate) const GET_DIGEST: &str = "sha256:0761529775d51c86b2f7a77c646630c0384012476c84d7dc99e027616cf3afd2";
+pub(crate) const QUERY_DIGEST: &str = "sha256:2814a03759be697b6ad57b0c484db94dbf0ae628db238c4b32c1ab7cf2718706";
 
 pub(crate) async fn get(
     connection: &mut Connection,
@@ -25,6 +26,7 @@ pub(crate) async fn get(
     wamn_postgres_statements::decode_optional(GET_DIGEST, rows, |row| {
         Ok(ReceiptRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             idempotency_key: row.decode("idempotency_key")?,
             occurred_at: row.decode("occurred_at")?,
@@ -48,6 +50,7 @@ pub(crate) async fn query_created_at_ascending(
     wamn_postgres_statements::decode_all(QUERY_DIGEST, rows, |row| {
         Ok(ReceiptRow {
             created_at: row.decode("created_at")?,
+            created_by: row.decode("created_by")?,
             id: row.decode("id")?,
             idempotency_key: row.decode("idempotency_key")?,
             occurred_at: row.decode("occurred_at")?,

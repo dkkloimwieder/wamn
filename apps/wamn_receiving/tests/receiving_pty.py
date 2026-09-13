@@ -30,17 +30,23 @@ TestError, require = support.TestError, support.require
 load_terminal, Evidence, Database = support.load_terminal, support.Evidence, support.Database
 
 
+FIXTURE_PRINCIPAL = "00000000-0000-4000-8000-0000000000f1"
+
+
 def seed(db, ids, prefix):
+    # The fixture writes as its test principal in the tenant of the platform rows.
     db.sql("01-seed", f"""BEGIN;
+SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true);
+INSERT INTO app_system.users (tenant_id, id, type, email)
+SELECT tenant_id, '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid'
+FROM app_system.users WHERE display_name = 'wamn:provisioning'
+ON CONFLICT DO NOTHING;
 INSERT INTO receiving.item (id, item_number) VALUES
   ('{ids.item}', '{prefix}-ITEM');
 INSERT INTO receiving.location (id, location_code) VALUES
   ('{ids.dock1}', '{prefix}-A'), ('{ids.dock2}', '{prefix}-B');
-INSERT INTO receiving.purchase_order
-  (id, purchase_order_number, supplier_id, created_at, updated_at)
-SELECT '{ids.order}', '{prefix}-PO', '{ids.supplier}',
-  COALESCE(MIN(created_at), CURRENT_TIMESTAMP) - interval '1 second', CURRENT_TIMESTAMP
-FROM receiving.purchase_order;
+INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id)
+VALUES ('{ids.order}', '{prefix}-PO', '{ids.supplier}');
 INSERT INTO receiving.purchase_order_line
   (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity)
 VALUES
@@ -48,12 +54,15 @@ VALUES
   ('{ids.line2}', '{ids.order}', 2, '{ids.item}', 7.0000, 0.0000);
 COMMIT;""")
     navigation = db.sql("02-navigation", f"""SELECT json_build_object(
-  'first_order', (SELECT id FROM receiving.purchase_order ORDER BY created_at, id LIMIT 1),
+  'order_index', (SELECT position FROM (
+    SELECT id, row_number() OVER (ORDER BY created_at, id) - 1 AS position
+    FROM receiving.purchase_order) AS purchase_order WHERE id = '{ids.order}'),
+  'order_count', (SELECT count(*) FROM receiving.purchase_order),
   'location_index', (SELECT position FROM (
     SELECT id, row_number() OVER (ORDER BY location_code, id) - 1 AS position
     FROM receiving.location) AS location WHERE id = '{ids.dock2}'),
   'location_count', (SELECT count(*) FROM receiving.location));""", parse=True)
-    require(navigation["first_order"] == ids.order, "owned order is not first under the default query sort")
+    require(navigation["order_count"] <= 40, "live test needs at most 40 purchase orders")
     require(navigation["location_count"] <= 100, "live test needs at most 100 locations")
     return navigation
 
@@ -123,6 +132,11 @@ def drive(session, db, evidence, ids, prefix, navigation):
 
     session.text(prefix + "-PO")
     require(termios.tcgetattr(session.slave) != session.original, "operator did not enter raw terminal mode")
+    # The trigger stamps the owned order with the newest creation time, so other orders can come first.
+    keys("select owned order", b"\x1b[B" * navigation["order_index"])
+    session.until(lambda: any(
+        ">" in row and prefix + "-PO" in row for row in session.display.text().splitlines()
+    ), "owned order selection")
     frame("10-orders")
     keys("open owned order", b"\r")
     projection()

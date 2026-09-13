@@ -480,7 +480,9 @@ fn update_result(
             row.status,
             row.row_version,
             row.created_at,
+            row.created_by,
             row.updated_at,
+            row.updated_by,
         ) {
             (
                 Some(id),
@@ -489,15 +491,19 @@ fn update_result(
                 Some(status),
                 Some(row_version),
                 Some(created_at),
+                Some(created_by),
                 Some(updated_at),
+                Some(updated_by),
             ) => Ok(PurchaseOrderRow {
                 created_at,
+                created_by,
                 id,
                 purchase_order_number,
                 row_version,
                 status,
                 supplier_id,
                 updated_at,
+                updated_by,
             }),
             _ => Err(AccessError::internal(
                 "purchase_order update returned an incomplete row",
@@ -657,12 +663,14 @@ mod tests {
     fn row(id: &str, created_at: &str) -> PurchaseOrderRow {
         PurchaseOrderRow {
             created_at: TimestampTz(created_at.to_owned()),
+            created_by: WamnUuid(SECOND_ID.to_owned()),
             id: WamnUuid(id.to_owned()),
             purchase_order_number: "PO-100".to_owned(),
             row_version: 1,
             status: "open".to_owned(),
             supplier_id: WamnUuid(SECOND_ID.to_owned()),
             updated_at: TimestampTz(created_at.to_owned()),
+            updated_by: WamnUuid(SECOND_ID.to_owned()),
         }
     }
 
@@ -671,12 +679,14 @@ mod tests {
             outcome: Some(outcome.to_owned()),
             observed_row_version: (outcome == "concurrency_conflict").then_some(2),
             created_at: complete.then(|| TimestampTz("2026-08-29T12:34:56.000000Z".to_owned())),
+            created_by: complete.then(|| WamnUuid(SECOND_ID.to_owned())),
             id: complete.then(|| WamnUuid(FIRST_ID.to_owned())),
             purchase_order_number: complete.then(|| "PO-100".to_owned()),
             row_version: complete.then_some(2),
             status: complete.then(|| "open".to_owned()),
             supplier_id: complete.then(|| WamnUuid(SECOND_ID.to_owned())),
             updated_at: complete.then(|| TimestampTz("2026-08-29T12:35:56.000000Z".to_owned())),
+            updated_by: complete.then(|| WamnUuid(SECOND_ID.to_owned())),
         }
     }
 }

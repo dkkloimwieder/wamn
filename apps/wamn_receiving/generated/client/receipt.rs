@@ -13,6 +13,12 @@ pub const RECEIPT_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "created_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "id",
         type_name: "uuid",
         nullable: false,
@@ -60,6 +66,8 @@ pub struct ReceiptGetResult {
     /// `timestamptz`
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// `uuid`
+    pub created_by: uuid::Uuid,
+    /// `uuid`
     pub id: uuid::Uuid,
     /// `text`
     pub idempotency_key: String,
@@ -92,6 +100,12 @@ pub const RECEIPT_GET_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
         type_name: "timestamptz",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "created_by",
+        type_name: "uuid",
         nullable: false,
         values: &[],
     },
@@ -141,6 +155,10 @@ required: true, minimum: None, maximum: None, children: &[
 pub const RECEIPT_GET_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
 wamn_client::descriptor::FieldSchema {
 field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "created_by", type_name: "uuid", nullable: false, values: &[] },
 required: true, minimum: None, maximum: None, children: &[
 ], },
 wamn_client::descriptor::FieldSchema {
@@ -228,6 +246,8 @@ pub struct ReceiptQueryResult {
     /// `timestamptz`
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// `uuid`
+    pub created_by: uuid::Uuid,
+    /// `uuid`
     pub id: uuid::Uuid,
     /// `text`
     pub idempotency_key: String,
@@ -266,6 +286,12 @@ pub const RECEIPT_QUERY_RESULT: &[FieldDescriptor] = &[
     FieldDescriptor {
         path: "created_at",
         type_name: "timestamptz",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "created_by",
+        type_name: "uuid",
         nullable: false,
         values: &[],
     },
@@ -319,6 +345,10 @@ required: true, minimum: None, maximum: None, children: &[
 pub const RECEIPT_QUERY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
 wamn_client::descriptor::FieldSchema {
 field: FieldDescriptor { path: "created_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "created_by", type_name: "uuid", nullable: false, values: &[] },
 required: true, minimum: None, maximum: None, children: &[
 ], },
 wamn_client::descriptor::FieldSchema {

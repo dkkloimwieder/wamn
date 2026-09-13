@@ -3,6 +3,7 @@
 #[derive(Debug, sqlx::FromRow)]
 pub struct ReceiptRow {
     pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_by: uuid::Uuid,
     pub id: uuid::Uuid,
     pub idempotency_key: String,
     pub occurred_at: chrono::DateTime<chrono::Utc>,

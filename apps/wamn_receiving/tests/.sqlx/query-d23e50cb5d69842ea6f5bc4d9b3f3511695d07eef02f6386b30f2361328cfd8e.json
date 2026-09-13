@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "WITH final_state AS (\n    SELECT bool_and(received_quantity = ordered_quantity) AS complete\n    FROM purchase_order_line\n    WHERE purchase_order_id = $1\n)\nUPDATE purchase_order\nSET\n    status = CASE\n        WHEN coalesce(final_state.complete, false) THEN 'complete'\n        ELSE 'open'\n    END,\n    row_version = purchase_order.row_version + 1,\n    updated_at = CURRENT_TIMESTAMP\nFROM final_state\nWHERE purchase_order.id = $1\n    AND purchase_order.status = 'open'\nRETURNING purchase_order.status, purchase_order.row_version;\n",
+  "query": "WITH final_state AS (\n    SELECT bool_and(received_quantity = ordered_quantity) AS complete\n    FROM purchase_order_line\n    WHERE purchase_order_id = $1\n)\nUPDATE purchase_order\nSET\n    status = CASE\n        WHEN coalesce(final_state.complete, false) THEN 'complete'\n        ELSE 'open'\n    END,\n    row_version = purchase_order.row_version + 1\nFROM final_state\nWHERE purchase_order.id = $1\n    AND purchase_order.status = 'open'\nRETURNING purchase_order.status, purchase_order.row_version;\n",
   "describe": {
     "columns": [
       {
@@ -36,5 +36,5 @@
       false
     ]
   },
-  "hash": "2add12d3a2d7bd9fe80df600e7c46e77c0b55f7213b75131a5e3ef4473004b36"
+  "hash": "d23e50cb5d69842ea6f5bc4d9b3f3511695d07eef02f6386b30f2361328cfd8e"
 }

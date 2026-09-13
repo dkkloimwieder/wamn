@@ -14,7 +14,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
 use super::super::{
-    DevSourceState, GitSource, ScratchRoot, TENANT, connect,
+    DevSourceState, GitSource, PLATFORM_DOMAIN, ScratchRoot, TENANT, connect,
     environment::seed_receiving_business_rows, journey_scenario_worker_binary, repository_root,
     required_journey, required_journey_path, spawn_journey_management_gate, write_dev_config,
 };
@@ -73,7 +73,8 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
 
     let (admin, admin_task) = connect(&system_url).await?;
     let environment =
-        wamn_ctl::dev::environment::provision(&system_url, admin.as_ref(), root).await?;
+        wamn_ctl::dev::environment::provision(&system_url, admin.as_ref(), root, PLATFORM_DOMAIN)
+            .await?;
     let system_acl = current_database_acl(admin.as_ref()).await?;
     let mut gate = spawn_journey_management_gate(
         &journey_scenario_worker_binary()?,

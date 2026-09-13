@@ -398,7 +398,9 @@ struct PurchaseOrderValue {
     status: Box<str>,
     row_version: Box<str>,
     created_at: Box<str>,
+    created_by: Box<str>,
     updated_at: Box<str>,
+    updated_by: Box<str>,
 }
 
 impl From<purchase_order::PurchaseOrderRow> for PurchaseOrderValue {
@@ -410,7 +412,9 @@ impl From<purchase_order::PurchaseOrderRow> for PurchaseOrderValue {
             status: row.status.into_boxed_str(),
             row_version: row.row_version.to_string().into_boxed_str(),
             created_at: row.created_at.0.into_boxed_str(),
+            created_by: row.created_by.0.into_boxed_str(),
             updated_at: row.updated_at.0.into_boxed_str(),
+            updated_by: row.updated_by.0.into_boxed_str(),
         }
     }
 }
@@ -423,6 +427,7 @@ struct ReceiptValue {
     receipt_reference: Box<str>,
     occurred_at: Box<str>,
     created_at: Box<str>,
+    created_by: Box<str>,
 }
 
 #[derive(Debug, Serialize)]
@@ -493,6 +498,7 @@ impl From<receipt::ReceiptRow> for ReceiptValue {
             receipt_reference: row.receipt_reference.into_boxed_str(),
             occurred_at: row.occurred_at.0.into_boxed_str(),
             created_at: row.created_at.0.into_boxed_str(),
+            created_by: row.created_by.0.into_boxed_str(),
         }
     }
 }
@@ -1207,12 +1213,14 @@ mod tests {
     fn persisted_int64_and_structured_errors_have_closed_wire_shapes() {
         let value = PurchaseOrderValue::from(purchase_order::PurchaseOrderRow {
             created_at: TimestampTz("2026-08-31T12:00:00.000000Z".to_owned()),
+            created_by: Uuid("00000000-0000-0000-0000-000000000003".to_owned()),
             id: Uuid("00000000-0000-0000-0000-000000000001".to_owned()),
             purchase_order_number: "PO-1".to_owned(),
             row_version: 42,
             status: "open".to_owned(),
             supplier_id: Uuid("00000000-0000-0000-0000-000000000002".to_owned()),
             updated_at: TimestampTz("2026-08-31T12:01:00.000000Z".to_owned()),
+            updated_by: Uuid("00000000-0000-0000-0000-000000000004".to_owned()),
         });
         assert_eq!(
             serde_json::to_value(value).expect("the result serializes")["row_version"],

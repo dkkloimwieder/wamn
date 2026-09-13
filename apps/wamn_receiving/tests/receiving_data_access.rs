@@ -14,6 +14,12 @@ mod tests {
 
     const MANIFEST: &[u8] = include_bytes!("../../../apps/wamn_receiving/wamn.json");
     const MIGRATION: &str = include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
+    const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
+    /// The test principal that the fixture writes as. This SQL-only fixture has
+    /// no `app_system` schema, and no stamp column reads a users row.
+    const FIXTURE_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f1);
+    /// A second principal, so a stamp shows which write set it.
+    const COMMAND_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f2);
     const UPDATE_SQL: &str =
         include_str!("../../../apps/wamn_receiving/generated/sql/purchase_order/update.sql");
     const CLAIM_COMMAND_SQL: &str =
@@ -76,12 +82,23 @@ mod tests {
     struct UpdateResult {
         outcome: String,
         created_at: Option<DateTime<Utc>>,
+        created_by: Option<Uuid>,
         id: Option<Uuid>,
         purchase_order_number: Option<String>,
         row_version: Option<i64>,
         status: Option<String>,
         supplier_id: Option<Uuid>,
         updated_at: Option<DateTime<Utc>>,
+        updated_by: Option<Uuid>,
+    }
+
+    /// The record-history stamps of one purchase order.
+    #[derive(Debug, Eq, PartialEq)]
+    struct Stamps {
+        created_at: DateTime<Utc>,
+        created_by: Uuid,
+        updated_at: DateTime<Utc>,
+        updated_by: Uuid,
     }
 
     #[derive(Clone, Debug)]
@@ -140,6 +157,8 @@ mod tests {
         second_received: String,
         purchase_order_status: String,
         row_version: i64,
+        purchase_order_stamps: Stamps,
+        receipt_stamps: Value,
     }
 
     #[tokio::test]
@@ -160,6 +179,7 @@ mod tests {
             .batch_execute("BEGIN; CREATE SCHEMA receiving")
             .await?;
         client.batch_execute(MIGRATION).await?;
+        install_record_history(&client).await?;
         client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
         client.batch_execute(OVERLAY_INSPECTION_MIGRATION).await?;
         client
@@ -324,6 +344,7 @@ mod tests {
             .batch_execute(MIGRATION)
             .await
             .context("apply the exact Receiving migration")?;
+        install_record_history(&client).await?;
         select_receiving_schema(&client).await?;
 
         assert_status_vocabulary(&client).await?;
@@ -347,6 +368,13 @@ mod tests {
             "open",
         )
         .await?;
+        let inserted = stamps(&client, subject_id).await?;
+        ensure!(
+            inserted.created_by == FIXTURE_PRINCIPAL
+                && inserted.updated_by == FIXTURE_PRINCIPAL
+                && inserted.created_at == inserted.updated_at,
+            "an insert did not stamp both pairs with one instant: {inserted:?}"
+        );
 
         let first_supplier = Uuid::from_u128(0x202);
         let second_supplier = Uuid::from_u128(0x203);
@@ -425,6 +453,7 @@ mod tests {
             persisted_revision(&client, subject_id).await? == persisted,
             "stale update mutated the winning row"
         );
+        assert_no_op_keeps_revision_and_stamps(&client, subject_id, persisted).await?;
 
         assert_record_receipt(&url, &mut client).await?;
         client
@@ -438,6 +467,100 @@ mod tests {
         assert_acme_overlay(&mut client).await?;
 
         Ok(())
+    }
+
+    /// Install the platform stamp function and the triggers that apply-package
+    /// derives from the Receiving `audit_log` declarations.
+    async fn install_record_history(client: &Client) -> Result<()> {
+        let manifest: wamn_schema_generator::PackageManifest =
+            serde_json::from_slice(MANIFEST).context("parse Receiving manifest")?;
+        let triggers = manifest.models.values().filter_map(|model| {
+            let audit_log = model.audit_log.as_ref()?;
+            let columns = wamn_schema_generator::RecordHistoryColumn::ALL
+                .into_iter()
+                .filter(|column| audit_log.columns.contains(column))
+                .map(|column| format!("'{}'", column.as_str()))
+                .collect::<Vec<_>>();
+            (!columns.is_empty()).then(|| {
+                format!(
+                    "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON {}.{} \
+                     FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({});",
+                    model.schema,
+                    model.table,
+                    columns.join(", ")
+                )
+            })
+        });
+        let sql = std::iter::once(RECORD_HISTORY_SQL.to_owned())
+            .chain(triggers)
+            .collect::<Vec<_>>()
+            .join("\n");
+        client
+            .batch_execute(&sql)
+            .await
+            .context("install the Receiving record-history triggers")
+    }
+
+    async fn bind_actor(client: &Client, actor: Uuid) -> Result<()> {
+        client
+            .execute(
+                "SELECT set_config('app.user_id', $1, false)",
+                &[&actor.hyphenated().to_string()],
+            )
+            .await
+            .context("bind the fixture actor")?;
+        Ok(())
+    }
+
+    async fn stamps(client: &Client, id: Uuid) -> Result<Stamps> {
+        let row = client
+            .query_one(
+                "SELECT created_at, created_by, updated_at, updated_by \
+                 FROM purchase_order WHERE id = $1",
+                &[&id],
+            )
+            .await
+            .context("read purchase_order stamps")?;
+        Ok(Stamps {
+            created_at: row.get("created_at"),
+            created_by: row.get("created_by"),
+            updated_at: row.get("updated_at"),
+            updated_by: row.get("updated_by"),
+        })
+    }
+
+    /// A true no-op keeps the revision and every stamp, and returns the
+    /// current row. A stale no-op still refuses.
+    async fn assert_no_op_keeps_revision_and_stamps(
+        client: &Client,
+        id: Uuid,
+        (supplier_id, row_version): (Uuid, i64),
+    ) -> Result<()> {
+        let before = stamps(client, id).await?;
+        bind_actor(client, COMMAND_PRINCIPAL).await?;
+        let no_op = execute_update(client, id, row_version, supplier_id).await?;
+        let stale = execute_update(client, id, row_version - 1, supplier_id).await?;
+        bind_actor(client, FIXTURE_PRINCIPAL).await?;
+        ensure!(
+            no_op.outcome == "updated"
+                && no_op.row_version == Some(row_version)
+                && no_op.supplier_id == Some(supplier_id)
+                && no_op.created_at == Some(before.created_at)
+                && no_op.created_by == Some(before.created_by)
+                && no_op.updated_at == Some(before.updated_at)
+                && no_op.updated_by == Some(before.updated_by),
+            "a true no-op changed its revision or stamps: {no_op:?}"
+        );
+        ensure!(
+            stamps(client, id).await? == before
+                && persisted_revision(client, id).await? == (supplier_id, row_version),
+            "a true no-op wrote the row"
+        );
+        ensure!(
+            stale.outcome == "concurrency_conflict",
+            "a stale no-op did not refuse"
+        );
+        assert_null_payload(&stale)
     }
 
     async fn assert_acme_overlay(client: &mut Client) -> Result<()> {
@@ -461,6 +584,8 @@ mod tests {
 
         let no_quality_status = Option::<String>::None;
         let enabled = Some(true);
+        let before = stamps(client, purchase_order_id).await?;
+        bind_actor(client, COMMAND_PRINCIPAL).await?;
         let updated = client
             .query_one(
                 OVERLAY_UPDATE_SQL,
@@ -484,6 +609,17 @@ mod tests {
                     == Some("not_required")
                 && updated.get::<_, Option<i64>>("row_version") == Some(2),
             "Acme purchase_order.update returned the wrong state"
+        );
+        // The overlay declares no record history, and its update stamps the base columns.
+        let after = stamps(client, purchase_order_id).await?;
+        bind_actor(client, FIXTURE_PRINCIPAL).await?;
+        ensure!(
+            after.created_at == before.created_at
+                && after.created_by == FIXTURE_PRINCIPAL
+                && after.updated_by == COMMAND_PRINCIPAL
+                && after.updated_at > before.updated_at
+                && updated.get::<_, Option<Uuid>>("updated_by") == Some(COMMAND_PRINCIPAL),
+            "Acme purchase_order.update did not stamp the base columns: {after:?}"
         );
 
         let command = ReceiptCommand {
@@ -595,6 +731,7 @@ mod tests {
             )
             .await
             .context("bound Receiving gate timeouts")?;
+        bind_actor(&client, FIXTURE_PRINCIPAL).await?;
         Ok(client)
     }
 
@@ -749,9 +886,12 @@ mod tests {
         )
         .await?;
 
+        let inserted = stamps(client, purchase_order_id).await?;
+        bind_actor(client, COMMAND_PRINCIPAL).await?;
         let committed = execute_record_receipt(client, &base)
             .await?
             .map_err(|refusal| anyhow::anyhow!(refusal.code))?;
+        bind_actor(client, FIXTURE_PRINCIPAL).await?;
         ensure!(
             committed.purchase_order_id == purchase_order_id
                 && committed.purchase_order_status == "open"
@@ -760,6 +900,24 @@ mod tests {
         );
         let committed_snapshot =
             command_snapshot(client, first_line_id, second_line_id, purchase_order_id).await?;
+        // One command transaction stamps the order and its receipt with one instant.
+        let receipt = client
+            .query_one(
+                "SELECT created_at, created_by FROM receipt WHERE id = $1",
+                &[&committed.receipt_id],
+            )
+            .await
+            .context("read the recorded receipt stamps")?;
+        let ordered = &committed_snapshot.purchase_order_stamps;
+        ensure!(
+            receipt.get::<_, DateTime<Utc>>("created_at") == ordered.updated_at
+                && receipt.get::<_, Uuid>("created_by") == COMMAND_PRINCIPAL
+                && ordered.updated_by == COMMAND_PRINCIPAL
+                && ordered.created_at == inserted.created_at
+                && ordered.created_by == inserted.created_by
+                && ordered.updated_at > inserted.updated_at,
+            "record_receipt did not stamp the order and receipt with one instant: {ordered:?}"
+        );
         ensure!(
             committed_snapshot.command_count == 1
                 && committed_snapshot.receipt_count == 1
@@ -1296,7 +1454,9 @@ mod tests {
                  (SELECT received_quantity::text FROM purchase_order_line WHERE id = $1) AS first_received, \
                  (SELECT received_quantity::text FROM purchase_order_line WHERE id = $2) AS second_received, \
                  (SELECT status FROM purchase_order WHERE id = $3) AS purchase_order_status, \
-                 (SELECT row_version FROM purchase_order WHERE id = $3) AS row_version",
+                 (SELECT row_version FROM purchase_order WHERE id = $3) AS row_version, \
+                 (SELECT COALESCE(jsonb_agg(jsonb_build_array(id, created_at, created_by) ORDER BY id), '[]') \
+                  FROM receipt) AS receipt_stamps",
                 &[&first_line_id, &second_line_id, &purchase_order_id],
             )
             .await
@@ -1309,6 +1469,8 @@ mod tests {
             second_received: row.get("second_received"),
             purchase_order_status: row.get("purchase_order_status"),
             row_version: row.get("row_version"),
+            purchase_order_stamps: stamps(client, purchase_order_id).await?,
+            receipt_stamps: row.get("receipt_stamps"),
         })
     }
 
@@ -1435,17 +1597,21 @@ mod tests {
         UpdateResult {
             outcome: row.get("outcome"),
             created_at: row.get("created_at"),
+            created_by: row.get("created_by"),
             id: row.get("id"),
             purchase_order_number: row.get("purchase_order_number"),
             row_version: row.get("row_version"),
             status: row.get("status"),
             supplier_id: row.get("supplier_id"),
             updated_at: row.get("updated_at"),
+            updated_by: row.get("updated_by"),
         }
     }
 
     fn assert_null_payload(result: &UpdateResult) -> Result<()> {
         if result.created_at.is_none()
+            && result.created_by.is_none()
+            && result.updated_by.is_none()
             && result.id.is_none()
             && result.purchase_order_number.is_none()
             && result.row_version.is_none()

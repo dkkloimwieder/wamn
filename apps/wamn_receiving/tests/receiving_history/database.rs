@@ -8,6 +8,34 @@ use tokio::task::JoinHandle;
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
 
+/// The provisioned test principal that Receiving fixtures write as.
+pub const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
+
+/// Bind the fixture test principal as `app.user_id` for this session.
+///
+/// The record-history triggers stamp each fixture write with this principal.
+/// The first binding in a tenant creates its users row, and that row stamps
+/// itself.
+pub async fn bind_fixture_principal(client: &Client, tenant: &str) -> Result<()> {
+    client
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&FIXTURE_PRINCIPAL],
+        )
+        .await
+        .context("bind the fixture test principal")?;
+    client
+        .execute(
+            "INSERT INTO app_system.users (tenant_id, id, type, email) \
+             VALUES ($1, $2::text::uuid, 'person', 'fixture@example.invalid') \
+             ON CONFLICT DO NOTHING",
+            &[&tenant, &FIXTURE_PRINCIPAL],
+        )
+        .await
+        .context("create the fixture test principal")?;
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct Db {
     pub client: Client,
@@ -63,8 +91,9 @@ pub async fn seed(client: &Client, ordered: [u16; 2], status: &str) -> Result<Fi
         key_prefix: format!("history-{}", Uuid::new_v4()),
     };
     let item_id = Uuid::new_v4();
-    client.execute(
-        r#"WITH item AS (
+    client
+        .execute(
+            r#"WITH item AS (
             INSERT INTO receiving.item (id, item_number)
             VALUES ($4, $7 || '-item') RETURNING id
         ), location AS (
@@ -72,9 +101,8 @@ pub async fn seed(client: &Client, ordered: [u16; 2], status: &str) -> Result<Fi
             VALUES ($5, $7 || '-dock')
         ), purchase AS (
             INSERT INTO receiving.purchase_order
-                (id, purchase_order_number, supplier_id, status, row_version, created_at, updated_at)
-            VALUES ($1, $7 || '-po', $6, $8, 1,
-                '2026-09-09T00:00:00Z', '2026-09-09T00:00:00Z')
+                (id, purchase_order_number, supplier_id, status, row_version)
+            VALUES ($1, $7 || '-po', $6, $8, 1)
             RETURNING id
         )
         INSERT INTO receiving.purchase_order_line
@@ -84,12 +112,21 @@ pub async fn seed(client: &Client, ordered: [u16; 2], status: &str) -> Result<Fi
         UNION ALL
         SELECT $3::uuid, purchase.id, 2, item.id, $10::int4::numeric, 0
         FROM purchase CROSS JOIN item"#,
-        &[
-            &fixture.id, &fixture.line_ids[0], &fixture.line_ids[1], &item_id,
-            &fixture.location_id, &fixture.supplier_id, &fixture.key_prefix, &status,
-            &i32::from(ordered[0]), &i32::from(ordered[1]),
-        ],
-    ).await.context("seed distinct Receiving business fixture in one statement")?;
+            &[
+                &fixture.id,
+                &fixture.line_ids[0],
+                &fixture.line_ids[1],
+                &item_id,
+                &fixture.location_id,
+                &fixture.supplier_id,
+                &fixture.key_prefix,
+                &status,
+                &i32::from(ordered[0]),
+                &i32::from(ordered[1]),
+            ],
+        )
+        .await
+        .context("seed distinct Receiving business fixture in one statement")?;
     Ok(fixture)
 }
 

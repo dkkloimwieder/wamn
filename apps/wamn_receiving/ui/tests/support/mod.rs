@@ -55,7 +55,9 @@ pub fn orders(numbers: &[u8], cursor: Option<&str>) -> Value {
         "purchase_order_number": format!("PO-{number}"),
         "status": "open", "row_version": "4",
         "supplier_id": "aaaaaaaa-0000-0000-0000-000000000001",
-        "created_at": "2026-09-03T00:00:00Z", "updated_at": "2026-09-03T00:00:00Z"
+        "created_at": "2026-09-03T00:00:00Z", "updated_at": "2026-09-03T00:00:00Z",
+        "created_by": "cccccccc-0000-0000-0000-000000000001",
+        "updated_by": "cccccccc-0000-0000-0000-000000000001"
     })).collect::<Vec<_>>(), "next_cursor": cursor})
 }
 

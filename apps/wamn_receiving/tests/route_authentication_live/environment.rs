@@ -71,7 +71,7 @@ pub(super) async fn install_journey_project(
     project_url: &str,
     fresh_only: bool,
 ) -> anyhow::Result<()> {
-    install_journey_platform_floor(project).await?;
+    install_journey_platform_floor(project, PLATFORM_DOMAIN).await?;
     for package in JOURNEY_PACKAGES {
         apply_package::run(ApplyPackageArgs {
             package: journey_package_root(package, Some(inputs)),
@@ -730,6 +730,7 @@ pub(super) fn released_component_digests(
 }
 
 pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Result<()> {
+    bind_fixture_principal(project, TENANT).await?;
     project
         .batch_execute(
             "INSERT INTO receiving.item (id, item_number) VALUES \
@@ -737,14 +738,12 @@ pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Re
              INSERT INTO receiving.location (id, location_code) VALUES \
                ('00000000-0000-0000-0000-000000000201', 'DOCK-1'); \
              INSERT INTO receiving.purchase_order \
-               (id, purchase_order_number, supplier_id, status, row_version, created_at, updated_at) \
+               (id, purchase_order_number, supplier_id, status, row_version) \
              VALUES \
                ('00000000-0000-0000-0000-000000000301', 'PO-301', \
-                '00000000-0000-0000-0000-000000000401', 'open', 1, \
-                '2026-08-31T12:00:00.000000Z', '2026-08-31T12:00:00.000000Z'), \
+                '00000000-0000-0000-0000-000000000401', 'open', 1), \
                ('00000000-0000-0000-0000-000000000302', 'PO-302', \
-                '00000000-0000-0000-0000-000000000402', 'open', 1, \
-                '2026-08-31T12:01:00.000000Z', '2026-08-31T12:01:00.000000Z'); \
+                '00000000-0000-0000-0000-000000000402', 'open', 1); \
              INSERT INTO receiving.purchase_order_line \
                (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) \
              VALUES \
@@ -755,12 +754,11 @@ pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Re
                 '00000000-0000-0000-0000-000000000302', 1, \
                 '00000000-0000-0000-0000-000000000101', 7.0000, 0.0000); \
              INSERT INTO receiving.purchase_order \
-               (id, purchase_order_number, supplier_id, status, row_version, created_at, updated_at, \
+               (id, purchase_order_number, supplier_id, status, row_version, \
                 acme_inspection_required, acme_quality_status) \
              VALUES \
                ('00000000-0000-0000-0000-000000000303', 'PO-303', \
                 '00000000-0000-0000-0000-000000000403', 'complete', 2, \
-                '2026-08-31T11:00:00.000000Z', '2026-08-31T11:30:00.000000Z', \
                 true, 'pending');",
         )
         .await
@@ -770,6 +768,7 @@ pub(super) async fn seed_receiving_business_rows(project: &Client) -> anyhow::Re
 // Distinct route-only approval precondition. This fixture does not claim that
 // CDC or a materializer created the inspection; `.15.25.4` owns that test.
 pub(super) async fn seed_preexisting_quality_fixture(project: &Client) -> anyhow::Result<()> {
+    bind_fixture_principal(project, TENANT).await?;
     project
         .batch_execute(
             "INSERT INTO receiving.record_receipt_command \
@@ -793,14 +792,14 @@ pub(super) async fn seed_preexisting_quality_fixture(project: &Client) -> anyhow
 }
 
 pub(super) async fn seed_materializer_trigger_rows(project: &Client) -> anyhow::Result<()> {
+    bind_fixture_principal(project, TENANT).await?;
     project
         .batch_execute(
             "INSERT INTO receiving.purchase_order \
-               (id, purchase_order_number, supplier_id, status, row_version, created_at, updated_at) \
+               (id, purchase_order_number, supplier_id, status, row_version) \
              VALUES \
                ('00000000-0000-0000-0000-000000000304', 'PO-304', \
-                '00000000-0000-0000-0000-000000000404', 'open', 1, \
-                '2026-08-31T12:03:00.000000Z', '2026-08-31T12:03:00.000000Z'); \
+                '00000000-0000-0000-0000-000000000404', 'open', 1); \
              INSERT INTO receiving.purchase_order_line \
                (id, purchase_order_id, line_number, item_id, ordered_quantity, received_quantity) \
              VALUES \

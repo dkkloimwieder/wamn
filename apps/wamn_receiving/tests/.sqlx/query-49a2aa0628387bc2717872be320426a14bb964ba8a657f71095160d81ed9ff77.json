@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT\n    model.created_at,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at\nFROM purchase_order AS model\nWHERE model.id = $1::uuid;\n",
+  "query": "SELECT\n    model.created_at,\n    model.created_by,\n    model.id,\n    model.purchase_order_number,\n    model.row_version,\n    model.status,\n    model.supplier_id,\n    model.updated_at,\n    model.updated_by\nFROM purchase_order AS model\nWHERE model.id = $1::uuid;\n",
   "describe": {
     "columns": [
       {
@@ -16,6 +16,17 @@
       },
       {
         "ordinal": 1,
+        "name": "created_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "created_by"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
         "name": "id",
         "type_info": "Uuid",
         "origin": {
@@ -26,7 +37,7 @@
         }
       },
       {
-        "ordinal": 2,
+        "ordinal": 3,
         "name": "purchase_order_number",
         "type_info": "Text",
         "origin": {
@@ -37,7 +48,7 @@
         }
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "row_version",
         "type_info": "Int8",
         "origin": {
@@ -48,7 +59,7 @@
         }
       },
       {
-        "ordinal": 4,
+        "ordinal": 5,
         "name": "status",
         "type_info": "Text",
         "origin": {
@@ -59,7 +70,7 @@
         }
       },
       {
-        "ordinal": 5,
+        "ordinal": 6,
         "name": "supplier_id",
         "type_info": "Uuid",
         "origin": {
@@ -70,13 +81,24 @@
         }
       },
       {
-        "ordinal": 6,
+        "ordinal": 7,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
             "table": "purchase_order",
             "name": "updated_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "updated_by",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "purchase_order",
+            "name": "updated_by"
           }
         }
       }
@@ -93,8 +115,10 @@
       false,
       false,
       false,
+      false,
+      false,
       false
     ]
   },
-  "hash": "2eb6a5c78c23fe93f83c17877b291b537411cce8c055b38b252a17a11dd52873"
+  "hash": "49a2aa0628387bc2717872be320426a14bb964ba8a657f71095160d81ed9ff77"
 }

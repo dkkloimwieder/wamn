@@ -1,5 +1,6 @@
 SELECT
     model.created_at,
+    model.created_by,
     model.id,
     model.idempotency_key,
     model.occurred_at,
