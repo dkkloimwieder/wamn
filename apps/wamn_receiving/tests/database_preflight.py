@@ -37,6 +37,14 @@ try:
     db = driver.Database(url, evidence)
     db.sql('00-schema', 'CREATE SCHEMA receiving;')
     db.sql('00-migration', (tree / 'apps/wamn_receiving/migrations/0001_initial.sql').read_text())
+    # apply-package installs these stamp triggers from the declarations. The preflight installs them the same way.
+    db.sql('00-record-history', (tree / 'deploy/sql/record-history.sql').read_text())
+    for model in json.loads((tree / 'apps/wamn_receiving/wamn.json').read_text())['models'].values():
+        columns = model['audit_log']['columns']
+        if columns:
+            db.sql('00-trigger-' + model['table'], f"CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON {model['schema']}.{model['table']} FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({', '.join(repr(column) for column in columns)});")
+    # The seed provisions its principal beside the platform rows, so the preflight installs the project system schema.
+    db.sql('00-app-schema', 'CREATE ROLE wamn_app NOLOGIN;\n' + (tree / 'deploy/sql/app-schema.sql').read_text())
     ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ('order','supplier','item','dock1','dock2','line1','line2')})
     navigation = driver.seed(db, ids, 'PREFLIGHT-' + uuid.uuid4().hex[:8])
     observed = driver.snapshot(db, '03-observation', ids)
