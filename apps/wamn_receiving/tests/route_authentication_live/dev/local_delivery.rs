@@ -172,6 +172,17 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         Ok::<_, anyhow::Error>(())
     }.await;
     let stopped = watch.stop().await;
+    let result = result.with_context(|| {
+        format!(
+            "local developer stderr tail:\n{}",
+            watch
+                .diagnostics
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    });
     drop(watch);
     let gate_stopped = gate.shutdown().await;
     let verification = super::verify_dev_verification_database_absent(
@@ -366,7 +377,7 @@ async fn watch_reports_startup_failure_after_stdout_closes() -> anyhow::Result<(
     let binary = scratch.path().join("failed-watch");
     fs::write(
         &binary,
-        "#!/bin/sh\nexec 1>&-\nsleep 0.05\nprintf 'watch startup diagnostic\\n' >&2\nexit 23\n",
+        "#!/bin/sh\nexec 1>&-\nsleep 0.05\nprintf 'dev-stage-failed at generate: watch startup diagnostic\\nwatch compiler diagnostic\\n' >&2\nexit 23\n",
     )?;
     fs::set_permissions(&binary, fs::Permissions::from_mode(0o700))?;
     let mut watch = Watch::start(&binary, scratch.path(), &scratch.path().join("config"))?;
@@ -379,7 +390,26 @@ async fn watch_reports_startup_failure_after_stdout_closes() -> anyhow::Result<(
         error.to_string().contains("watch startup diagnostic"),
         "the startup error lost its child diagnostic: {error:#}"
     );
+    watch
+        .stop()
+        .await
+        .expect_err("the child exits unsuccessfully");
+    ensure!(
+        watch
+            .diagnostics
+            .iter()
+            .any(|line| line == "watch compiler diagnostic"),
+        "cleanup must retain the rest of a multiline failure"
+    );
     Ok(())
+}
+
+fn retain_diagnostic(diagnostics: &mut VecDeque<String>, line: String) {
+    // Keep startup failures available without retaining an unbounded build log.
+    if diagnostics.len() == 32 {
+        diagnostics.pop_front();
+    }
+    diagnostics.push_back(line);
 }
 
 struct Watch {
@@ -442,11 +472,7 @@ impl Watch {
                 continue;
             };
             if stderr {
-                // Keep startup failures available without retaining an unbounded build log.
-                if self.diagnostics.len() == 32 {
-                    self.diagnostics.pop_front();
-                }
-                self.diagnostics.push_back(line.clone());
+                retain_diagnostic(&mut self.diagnostics, line.clone());
             }
             return Ok((stderr, line));
         }
@@ -512,7 +538,28 @@ impl Watch {
                 .output()
                 .await?;
         }
-        let status = match tokio::time::timeout(Duration::from_secs(60), self.child.wait()).await {
+        let child = &mut self.child;
+        let stdout = &mut self.stdout;
+        let stderr = &mut self.stderr;
+        let diagnostics = &mut self.diagnostics;
+        let completed = tokio::time::timeout(Duration::from_secs(60), async {
+            let (status, (), ()) = tokio::try_join!(
+                child.wait(),
+                async {
+                    while stdout.next_line().await?.is_some() {}
+                    Ok::<_, std::io::Error>(())
+                },
+                async {
+                    while let Some(line) = stderr.next_line().await? {
+                        retain_diagnostic(diagnostics, line);
+                    }
+                    Ok::<_, std::io::Error>(())
+                }
+            )?;
+            Ok::<_, std::io::Error>(status)
+        })
+        .await;
+        let status = match completed {
             Ok(status) => status?,
             Err(_) => {
                 self.kill_group();
