@@ -255,6 +255,7 @@ pub enum MintManifestErrorKind {
     Component,
     OperationDependency,
     UnauthenticatedRegisteredOperation,
+    UnauthenticatedWrite,
     Registration,
     ClosureConflict,
     Document,
@@ -277,6 +278,7 @@ impl MintManifestErrorKind {
             Self::Component => "component",
             Self::OperationDependency => "operation-dependency",
             Self::UnauthenticatedRegisteredOperation => "unauthenticated-registered-operation",
+            Self::UnauthenticatedWrite => "unauthenticated-write",
             Self::Registration => "registration",
             Self::ClosureConflict => "closure-conflict",
             Self::Document => "document",
@@ -2994,6 +2996,72 @@ mod tests {
                 "authenticated modes satisfy the anonymous-closure guard"
             );
         }
+    }
+
+    /// Spec test 14: an anonymous attachment cannot reach a statement that
+    /// writes or locks, and it still reaches a statement that only reads.
+    #[test]
+    fn release_mint_refuses_an_anonymous_closure_that_can_write() {
+        let target = ReleaseWiringTarget {
+            package_id: "base".to_owned(),
+            package_version: "1.0.0".to_owned(),
+            wiring_id: "receiving".to_owned(),
+            wiring_version: 1,
+        };
+        let anonymous = BTreeMap::from([(
+            "receiving-http".to_owned(),
+            closure_attachment(wamn_catalog::NO_AUTHENTICATION_MODE),
+        )]);
+        let closure = |transactional: bool| {
+            let sql = if transactional {
+                "UPDATE purchase_order SET note = $1"
+            } else {
+                "SELECT note FROM purchase_order"
+            };
+            let mut entry = closure_component("entry-component", None);
+            entry
+                .operations
+                .get_mut("run")
+                .expect("fixture has the run operation")
+                .statements
+                .insert(
+                    sha256(sql.as_bytes()),
+                    wamn_catalog::ComponentSqlStatement {
+                        name: "note".to_owned(),
+                        path: "sql/note.sql".to_owned(),
+                        sql: sql.to_owned(),
+                        binds: Vec::new(),
+                        columns: Vec::new(),
+                        transactional,
+                    },
+                );
+            BTreeMap::from([("entry".to_owned(), entry)])
+        };
+
+        let error = validate_anonymous_wiring_closure(
+            &anonymous,
+            &target,
+            &closure_document(false),
+            &closure(true),
+        )
+        .expect_err("an anonymous closure that can write must fail at release mint");
+        assert_eq!(error.kind().as_str(), "unauthenticated-write");
+        assert_eq!(
+            error.detail(),
+            "attachment \"receiving-http\" reaches transactional statement \"note\" at \
+             node \"entry\"; set auth-policy modes = [\"pat\"]"
+        );
+
+        assert!(
+            validate_anonymous_wiring_closure(
+                &anonymous,
+                &target,
+                &closure_document(false),
+                &closure(false),
+            )
+            .is_ok(),
+            "an anonymous closure that only reads is admitted"
+        );
     }
 
     #[test]

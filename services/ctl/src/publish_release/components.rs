@@ -393,7 +393,9 @@ pub(super) fn project_serving_component(
 }
 
 /// Refuse an anonymous attachment whose selected wiring can reach a registered
-/// application operation.
+/// application operation or a transactional statement.
+///
+/// An anonymous request has no principal, so it cannot write (`wamn-emtx.22`).
 ///
 /// The attachment itself cannot carry this fact for nested calls: reachability
 /// exists only in the exact stored wiring plus its admitted component facts, so
@@ -444,6 +446,21 @@ pub(super) fn validate_anonymous_wiring_closure(
                          {:?} through component dependency at node {node_id:?}; set \
                          auth-policy modes = [{mode:?}]",
                         dependency.operation,
+                        mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
+                    ),
+                ));
+            }
+            if let Some(statement) = operation
+                .statements
+                .values()
+                .find(|statement| statement.transactional)
+            {
+                return Err(MintManifestError::new(
+                    MintManifestErrorKind::UnauthenticatedWrite,
+                    format!(
+                        "attachment {attachment_id:?} reaches transactional statement \
+                         {:?} at node {node_id:?}; set auth-policy modes = [{mode:?}]",
+                        statement.name,
                         mode = wamn_catalog::PAT_AUTHENTICATION_MODE,
                     ),
                 ));
