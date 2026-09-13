@@ -3068,6 +3068,10 @@ mod tests {
                 vec![
                     Column::new("id", ColumnType::Uuid, false, None, None),
                     Column::new("supplier_id", ColumnType::Uuid, false, None, None),
+                    Column::new("created_at", ColumnType::Timestamptz, false, None, None),
+                    Column::new("created_by", ColumnType::Uuid, false, None, None),
+                    Column::new("updated_at", ColumnType::Timestamptz, false, None, None),
+                    Column::new("updated_by", ColumnType::Uuid, false, None, None),
                     Column::new(
                         "acme_inspection_required",
                         ColumnType::Boolean,
@@ -3124,7 +3128,14 @@ mod tests {
                 .iter()
                 .map(|column| column.name())
                 .collect::<Vec<_>>(),
-            ["id", "supplier_id"]
+            [
+                "created_at",
+                "created_by",
+                "id",
+                "supplier_id",
+                "updated_at",
+                "updated_by"
+            ]
         );
         assert_eq!(
             base_purchase_order
@@ -3143,7 +3154,7 @@ mod tests {
             .iter()
             .find(|table| table.name() == "purchase_order")
             .expect("overlay includes the extended base relation");
-        assert_eq!(overlay_purchase_order.columns().len(), 4);
+        assert_eq!(overlay_purchase_order.columns().len(), 8);
         assert_eq!(overlay_purchase_order.constraints().len(), 2);
         let clean_base = CatalogIr::new(vec![Table::new(
             "receiving",
@@ -3151,6 +3162,10 @@ mod tests {
             vec![
                 Column::new("id", ColumnType::Uuid, false, None, None),
                 Column::new("supplier_id", ColumnType::Uuid, false, None, None),
+                Column::new("created_at", ColumnType::Timestamptz, false, None, None),
+                Column::new("created_by", ColumnType::Uuid, false, None, None),
+                Column::new("updated_at", ColumnType::Timestamptz, false, None, None),
+                Column::new("updated_by", ColumnType::Uuid, false, None, None),
             ],
             vec![Constraint::primary_key("purchase_order_id_pkey", ["id"]).unwrap()],
             Vec::new(),
