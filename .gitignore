@@ -11,6 +11,9 @@
 /apps/platform/no-std/target
 *.wasm
 
+# Temporary acceptance output
+/evidence/
+
 # Client workspace artifacts
 /node_modules/
 
