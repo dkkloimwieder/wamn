@@ -17,6 +17,14 @@ A schema edit must create a new disposable database with the edited schema and n
 The case also requires zero registry requests, unchanged system database grants, restored source, and successful cleanup.
 Client tests separately establish the state reset after target replacement.
 
+For requested build measurements, complete correctness acceptance first.
+Use separate clean worktrees and separate Cargo targets for the starting and changed revisions.
+Keep the selected application, package commands, profiles, dependency cache, and build concurrency equivalent.
+Measure a full build from an empty target before measuring saved edits with that target populated.
+Record application compilation separately from required helper compilation and from the time between saving and serving an edit.
+Require the expected authenticated application result and successful cleanup before accepting an edit measurement.
+Record the source, tools, machine limits, commands, and sample count without a fixed latency threshold or permanent report requirement.
+
 ## Receiving commands
 
 The [Receiving history tests](../../apps/wamn_receiving/tests/receiving_command_histories_live.rs) exercise `receiving.record_receipt` and `purchase_order.update`.
