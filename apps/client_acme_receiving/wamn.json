@@ -128,7 +128,12 @@
         ]
       },
       "audit_log": {
-        "columns": [],
+        "columns": [
+          "created_at",
+          "created_by",
+          "updated_at",
+          "updated_by"
+        ],
         "retention": "none"
       },
       "operations": {}

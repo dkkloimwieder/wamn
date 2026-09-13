@@ -13,6 +13,8 @@ mod tests {
     use wamn_execution_contract::canonical_json_bytes;
 
     const MANIFEST: &[u8] = include_bytes!("../../../apps/wamn_receiving/wamn.json");
+    const OVERLAY_MANIFEST: &[u8] =
+        include_bytes!("../../../apps/client_acme_receiving/wamn.json");
     const MIGRATION: &str = include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
     const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
     /// The test principal that the fixture writes as. This SQL-only fixture has
@@ -179,7 +181,7 @@ mod tests {
             .batch_execute("BEGIN; CREATE SCHEMA receiving")
             .await?;
         client.batch_execute(MIGRATION).await?;
-        install_record_history(&client).await?;
+        install_record_history(&client, MANIFEST).await?;
         client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
         client.batch_execute(OVERLAY_INSPECTION_MIGRATION).await?;
         client
@@ -344,7 +346,7 @@ mod tests {
             .batch_execute(MIGRATION)
             .await
             .context("apply the exact Receiving migration")?;
-        install_record_history(&client).await?;
+        install_record_history(&client, MANIFEST).await?;
         select_receiving_schema(&client).await?;
 
         assert_status_vocabulary(&client).await?;
@@ -464,16 +466,17 @@ mod tests {
             .batch_execute(OVERLAY_INSPECTION_MIGRATION)
             .await
             .context("apply the exact Acme inspection migration")?;
+        install_record_history(&client, OVERLAY_MANIFEST).await?;
         assert_acme_overlay(&mut client).await?;
 
         Ok(())
     }
 
     /// Install the platform stamp function and the triggers that apply-package
-    /// derives from the Receiving `audit_log` declarations.
-    async fn install_record_history(client: &Client) -> Result<()> {
+    /// derives from the `audit_log` declarations of one package manifest.
+    async fn install_record_history(client: &Client, manifest: &[u8]) -> Result<()> {
         let manifest: wamn_schema_generator::PackageManifest =
-            serde_json::from_slice(MANIFEST).context("parse Receiving manifest")?;
+            serde_json::from_slice(manifest).context("parse package manifest")?;
         let triggers = manifest.models.values().filter_map(|model| {
             let audit_log = model.audit_log.as_ref()?;
             let columns = wamn_schema_generator::RecordHistoryColumn::ALL
@@ -498,7 +501,7 @@ mod tests {
         client
             .batch_execute(&sql)
             .await
-            .context("install the Receiving record-history triggers")
+            .context("install the package record-history triggers")
     }
 
     async fn bind_actor(client: &Client, actor: Uuid) -> Result<()> {

@@ -15,9 +15,9 @@ CREATE TABLE receiving.purchase_order (
     supplier_id uuid NOT NULL,
     status text NOT NULL DEFAULT 'open',
     row_version int8 NOT NULL DEFAULT 1,
-    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
-    updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at timestamptz NOT NULL,
     updated_by uuid NOT NULL,
     CONSTRAINT purchase_order_status_check
         CHECK (status IN ('open', 'complete', 'cancelled'))
@@ -81,7 +81,7 @@ CREATE TABLE receiving.receipt (
         REFERENCES receiving.purchase_order (id),
     receipt_reference text NOT NULL,
     occurred_at timestamptz NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at timestamptz NOT NULL,
     created_by uuid NOT NULL,
     CONSTRAINT receipt_purchase_order_id_receipt_reference_key
         UNIQUE (purchase_order_id, receipt_reference)

@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// The `wamn:materializer` platform principal id, pinned by
+/// `crates/identity/project-state`.
+const MATERIALIZER_PRINCIPAL: &str = "968bd0cc-e612-5d29-9d6c-af1993b8df0a";
 
 pub(super) async fn connect_event_test_client(
     url: &str,
@@ -151,7 +154,8 @@ pub(super) async fn assert_materializer_causation(
 
     let inspection_rows = project
         .query(
-            "SELECT status, row_version FROM receiving.quality_inspection WHERE receipt_id = $1::text::uuid",
+            "SELECT status, row_version, created_by::text FROM receiving.quality_inspection \
+             WHERE receipt_id = $1::text::uuid",
             &[&receipt_id],
         )
         .await
@@ -161,6 +165,11 @@ pub(super) async fn assert_materializer_causation(
             && inspection_rows[0].get::<_, String>(0) == "pending"
             && inspection_rows[0].get::<_, i64>(1) == 1,
         "receipt {receipt_id} did not materialize to exactly one pending revision-1 inspection"
+    );
+    // Spec test 4: the post-commit handler write stamps the materializer principal.
+    anyhow::ensure!(
+        inspection_rows[0].get::<_, String>(2) == MATERIALIZER_PRINCIPAL,
+        "the quality.create_inspection write did not stamp wamn:materializer as created_by"
     );
 
     let settled_deadline = std::time::Instant::now() + Duration::from_secs(30);
