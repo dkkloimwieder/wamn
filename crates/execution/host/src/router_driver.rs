@@ -22,6 +22,7 @@ use wamn_catalog::{
 };
 use wamn_control_registry::identifiers::valid_runner;
 use wamn_event_wire::Causation;
+use wamn_project_state::PlatformComponent;
 use wamn_router::{
     ActiveWiring, CacheInsert, Delivery, ErrorDetail, NodeError, NodeOutcome, Outcome,
     RateLimitDetail, Step, WiringCache, WiringCacheSnapshot,
@@ -666,10 +667,13 @@ impl RouterDriver {
         })
     }
 
-    /// Execute one direct or queued delivery through the same router and node
-    /// invoker. The caller owns acting on the terminal verdict.
+    /// Execute one queued delivery through the same router and node invoker.
+    /// The caller owns acting on the terminal verdict.
+    ///
+    /// A callerless delivery executes as `wamn:executor`.
     pub async fn execute(&self, request: RouterDriverRequest) -> anyhow::Result<RouterDelivery> {
-        self.execute_with_context(request, None).await
+        self.execute_with_context(request, None, Some(PlatformComponent::Executor))
+            .await
     }
 
     /// Execute one delivery with host-derived event provenance.
@@ -678,18 +682,23 @@ impl RouterDriver {
     /// from caller identity: a post-commit registration remains callerless
     /// while every PostgreSQL transaction it drives carries the delivery's
     /// causation stamp.
+    ///
+    /// `platform` names the component that executes a callerless delivery.
     pub(crate) async fn execute_with_causation(
         &self,
         request: RouterDriverRequest,
         causation: Causation,
+        platform: Option<PlatformComponent>,
     ) -> anyhow::Result<RouterDelivery> {
-        self.execute_with_context(request, Some(causation)).await
+        self.execute_with_context(request, Some(causation), platform)
+            .await
     }
 
     async fn execute_with_context(
         &self,
         request: RouterDriverRequest,
         causation: Option<Causation>,
+        platform: Option<PlatformComponent>,
     ) -> anyhow::Result<RouterDelivery> {
         self.validate_request_scope(&request)?;
         let active = self
@@ -697,12 +706,18 @@ impl RouterDriver {
             .instrument(tracing::info_span!("wamn.router.resolve"))
             .await?;
         self.validate_wiring_closure(&request, &active)?;
-        self.execute_resolved(request, active, ExecutionClosure::Released, causation)
-            .await
+        self.execute_resolved(
+            request,
+            active,
+            ExecutionClosure::Released,
+            causation,
+            platform,
+        )
+        .await
     }
 
     /// Execute a DB-frozen candidate through the same router and invoker as
-    /// release-backed delivery.
+    /// release-backed delivery. A candidate case executes as `wamn:executor`.
     pub async fn execute_candidate(
         &self,
         request: CandidateCaseRequest,
@@ -756,6 +771,7 @@ impl RouterDriver {
                     application: &application,
                 },
                 None,
+                Some(PlatformComponent::Executor),
             )
             .await;
         let cleanup = application.workload.resolved.unbind_all_plugins().await;
@@ -772,6 +788,7 @@ impl RouterDriver {
         active: ActiveWiring<CatalogFacts>,
         closure: ExecutionClosure<'_>,
         causation: Option<Causation>,
+        platform: Option<PlatformComponent>,
     ) -> anyhow::Result<RouterDelivery> {
         // Parse the ingress context once per delivery, not once per node on the
         // router hot path. Queue delivery deliberately carries no remote
@@ -844,6 +861,7 @@ impl RouterDriver {
                                 &call,
                                 closure,
                                 causation.as_ref(),
+                                platform,
                                 effects.clone(),
                             )
                             .instrument(span)
@@ -1249,6 +1267,10 @@ impl RouterDriver {
         .await
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the delivery, graph, call, closure, provenance and executing component are independent facts"
+    )]
     async fn invoke_node(
         &self,
         request: &RouterDriverRequest,
@@ -1256,6 +1278,7 @@ impl RouterDriver {
         call: &wamn_router::NodeCall,
         closure: ExecutionClosure<'_>,
         causation: Option<&Causation>,
+        platform: Option<PlatformComponent>,
         effects: Option<EffectEvidence>,
     ) -> anyhow::Result<NodeOutcome> {
         let component = active
@@ -1295,6 +1318,8 @@ impl RouterDriver {
                 schema: self.config.schema.clone(),
                 runner: Some(self.config.owner_prefix.clone()),
                 role: None,
+                // Activation binds the executing principal from the caller or
+                // `platform`, so a nested call derives the same one.
                 user_id: None,
                 release,
             },
@@ -1323,6 +1348,7 @@ impl RouterDriver {
                 effects,
             },
             causation: causation.cloned(),
+            platform,
         };
         let deadline_ms = bounded_node_deadline_ms(call.deadline_ms);
         let deadline = tokio::time::Instant::now() + Duration::from_millis(deadline_ms);
@@ -1453,9 +1479,25 @@ struct NodeAcquisition {
     /// This is intentionally independent of `caller`: post-commit delivery has
     /// causation but no caller identity.
     causation: Option<Causation>,
+    /// The platform component that executes a callerless delivery. Activation
+    /// binds the caller principal as `app.user_id` when a caller exists, and
+    /// this component's principal otherwise. A nested call keeps both.
+    platform: Option<PlatformComponent>,
 }
 
 impl NodeAcquisition {
+    /// The `app.user_id` of this acquisition: the caller principal, or the
+    /// platform principal of a callerless delivery. An anonymous attachment
+    /// has neither.
+    fn executing_principal(&self, caller: Option<&AuthenticatedCaller>) -> Option<String> {
+        match caller {
+            Some(caller) => Some(caller.principal_id().to_owned()),
+            None => self
+                .platform
+                .map(|component| component.principal_id().to_string()),
+        }
+    }
+
     /// Point one acquisition at the nested target it is about to enter.
     ///
     /// The target arrives as the catalog fact rather than as its parts, because
@@ -1975,6 +2017,7 @@ mod tests {
                 effects: None,
             },
             causation: Some(causation.clone()),
+            platform: Some(PlatformComponent::Materializer),
         };
 
         let original = acquisition.clone();
@@ -1982,7 +2025,26 @@ mod tests {
         target.scope.package_id = "wamn_receiving".to_owned();
         target.component = "receiving".to_owned();
         target.component_digest = "sha256:base".to_owned();
+        let executor = NodeAcquisition {
+            platform: Some(PlatformComponent::Executor),
+            ..acquisition.clone()
+        }
+        .retarget(&target, "wamn-receiving:receiving/record-receipt@1.0.0");
         let child = acquisition.retarget(&target, "wamn-receiving:receiving/record-receipt@1.0.0");
+        // A callerless parent and its nested call bind the same platform principal.
+        let materializer = PlatformComponent::Materializer.principal_id().to_string();
+        assert_eq!(
+            original.executing_principal(None).as_deref(),
+            Some(materializer.as_str())
+        );
+        assert_eq!(
+            child.executing_principal(None).as_deref(),
+            Some(materializer.as_str())
+        );
+        assert_eq!(
+            executor.executing_principal(None),
+            Some(PlatformComponent::Executor.principal_id().to_string())
+        );
         assert_eq!(child.causation.as_ref(), Some(&causation));
         assert_eq!(child.invocation.package_id, "wamn_receiving");
         assert_eq!(child.invocation.component_digest, "sha256:base");

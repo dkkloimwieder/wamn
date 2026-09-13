@@ -13,7 +13,7 @@ use super::super::resources::{
 use super::super::statements::VerifiedStatement;
 use super::super::types::map_pg_error;
 use super::super::{PgError, RowSet, SqlValue, StatementError};
-use super::{OneShotResult, WamnPostgres, validate_claims};
+use super::{OneShotResult, WamnPostgres, refuse_unattributed_statement, validate_claims};
 
 /// The transactional `wamn.causation` logical-message emit appended to a
 /// run-owned transaction's BEGIN batch (l5i9.12.2). The [`Causation`] is
@@ -44,8 +44,9 @@ pub(super) fn causation_emit_sql(c: &Causation) -> String {
 /// - `$4` `app.runner` — `COALESCE($4, current_setting('app.runner', true))`, so
 ///   a NULL bind (absent runner) re-asserts the current value (a no-op), exactly
 ///   like the pre-fqg.4 "no `app.runner` statement" path.
-/// - `$5` `app.role` / `$6` `app.user_id` — the per-role / per-user RLS claims
-///   the compiled policies key on (wamn-0h0g.23.1). Bound UNCONDITIONALLY, not
+/// - `$5` `app.role` / `$6` `app.user_id` — the per-role RLS claim the
+///   compiled policies key on (wamn-0h0g.23.1), and the executing principal
+///   the record-history triggers stamp. Bound UNCONDITIONALLY, not
 ///   COALESCEd to the current value like `$3`/`$4`: an absent claim binds `''`,
 ///   which is exactly the deny floor
 ///   `COALESCE(current_setting('app.role', true), '')` and
@@ -93,8 +94,9 @@ pub(super) const CLAIM_SQL: &str = "SELECT \
 /// `app.role` and `app.user_id` are deliberately ABSENT. Those are per-caller
 /// claims, and a session-scoped claim would outlive the request and reach the
 /// next borrower of the pooled connection -- the exact leak the claim model
-/// exists to prevent. A request carrying either one takes the transactional
-/// path instead.
+/// exists to prevent. A request carrying `app.role` takes the transactional
+/// path instead. A read needs no `app.user_id`: only the record-history
+/// triggers read it, and a read that writes nothing fires no trigger.
 const GUEST_AUTOCOMMIT_SETTINGS_SQL: &str = "SELECT \
      set_config('statement_timeout', $1, false), \
      set_config('search_path', COALESCE($2, current_setting('search_path')), false), \
@@ -340,6 +342,8 @@ impl WamnPostgres {
         let runner = self.runner_for(component_id);
         let role = self.role_for(component_id);
         let user_id = self.user_id_for(component_id);
+        refuse_unattributed_statement(statement, user_id.as_deref())
+            .map_err(StatementError::Postgres)?;
         let run = self.current_run_for(component_id);
         let (connection, policy, authority) = self
             .checkout_workload(component_id, &project, &tenant)
@@ -353,10 +357,11 @@ impl WamnPostgres {
         // COMMIT of 2.1-3.8 ms, around a 0.6 ms statement
         // (measurement records in commits 494b5b8d5595 and 3659506bdeef).
         //
-        // A read carrying a per-caller claim keeps the transaction: a
-        // session-scoped app.role or app.user_id would outlive the request and
-        // reach the next borrower of this pooled connection.
-        if !statement.transactional && role.is_none() && user_id.is_none() {
+        // A read carrying a role claim keeps the transaction: a session-scoped
+        // app.role would outlive the request and reach the next borrower of
+        // this pooled connection. A bound executing principal does not: the
+        // read skips app.user_id, which only the record-history triggers read.
+        if !statement.transactional && role.is_none() {
             let timeout = policy.statement_timeout_ms.to_string();
             // The settings must be APPLIED before the statement that depends on
             // search_path. They cannot ride the statement's flight: each side is

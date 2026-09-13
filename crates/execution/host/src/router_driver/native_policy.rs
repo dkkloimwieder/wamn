@@ -16,7 +16,9 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::{
     self as blobstore, WAMN_BLOBSTORE_ID, WamnBlobstore,
 };
 use wamn_runtime::plugins::wamn_logging::{WAMN_LOGGING_ID, WamnLogging};
-use wamn_runtime::plugins::wamn_postgres::{PreparedStatementSet, WAMN_POSTGRES_ID, WamnPostgres};
+use wamn_runtime::plugins::wamn_postgres::{
+    PreparedStatementSet, SessionClaims, WAMN_POSTGRES_ID, WamnPostgres,
+};
 use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
@@ -164,9 +166,13 @@ impl NativePolicy {
             scope: scope.to_owned(),
         };
         let resources = &self.resources;
-        resources
-            .postgres
-            .bind_session_claims(scope, &acquisition.claims)?;
+        // Every claims transaction binds its executing principal as
+        // `app.user_id`, which the record-history triggers stamp.
+        let claims = SessionClaims {
+            user_id: acquisition.executing_principal(caller),
+            ..acquisition.claims.clone()
+        };
+        resources.postgres.bind_session_claims(scope, &claims)?;
         resources
             .postgres
             .set_current_run(scope, acquisition.causation.clone());

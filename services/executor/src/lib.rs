@@ -23,6 +23,7 @@ use wamn_execution_host::{
     CandidateWiringTarget, RouterDriver, RouterDriverConfig, RouterDriverRequest,
     RouterReadinessProbe, WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
 };
+use wamn_project_state::PlatformComponent;
 use wamn_run_state::FailKind;
 use wamn_runtime::component_artifact_source::{
     ComponentArtifactSource, ComponentArtifactSourceConfig,
@@ -432,7 +433,8 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
             schema: args.schema.clone(),
             runner: Some(owner.clone()),
             role: None,
-            user_id: None,
+            // Queue claims, renewals and completions run as wamn:executor.
+            user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
             release: Some(ReleaseIdentity {
                 effective_release_id: release.release().effective_release_id,
                 manifest_digest: release.release().manifest_digest.clone(),

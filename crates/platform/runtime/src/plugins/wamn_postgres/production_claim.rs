@@ -522,6 +522,7 @@ impl WamnPostgres {
         let release = self.release_identity_for(component_id);
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
+        let user_id = self.user_id_for(component_id);
         let (connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
@@ -540,7 +541,7 @@ impl WamnPostgres {
                 schema.as_deref(),
                 Some(&runner),
                 None,
-                None,
+                user_id.as_deref(),
                 None,
                 policy.statement_timeout_ms,
             )
@@ -629,6 +630,7 @@ impl WamnPostgres {
         })?;
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
+        let user_id = self.user_id_for(component_id);
         let (connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
@@ -647,7 +649,7 @@ impl WamnPostgres {
                 schema.as_deref(),
                 Some(&runner),
                 None,
-                None,
+                user_id.as_deref(),
                 None,
                 policy.statement_timeout_ms,
             )
@@ -719,6 +721,7 @@ impl WamnPostgres {
         })?;
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
+        let user_id = self.user_id_for(component_id);
         let (connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
@@ -737,7 +740,7 @@ impl WamnPostgres {
                 schema.as_deref(),
                 Some(&runner),
                 None,
-                None,
+                user_id.as_deref(),
                 None,
                 policy.statement_timeout_ms,
             )
@@ -791,6 +794,7 @@ impl WamnPostgres {
         })?;
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
+        let user_id = self.user_id_for(component_id);
         let (connection, policy) = self
             .checkout_platform(&project, AuthorityClass::ExecutorPlatform)
             .await
@@ -809,7 +813,7 @@ impl WamnPostgres {
                 schema.as_deref(),
                 Some(&runner),
                 None,
-                None,
+                user_id.as_deref(),
                 None,
                 policy.statement_timeout_ms,
             )

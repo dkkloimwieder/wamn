@@ -9,6 +9,7 @@ use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Meter};
 use wamn_catalog::{AttachmentAuthPolicy, ServingManifest, parse_attachment_auth_policy};
 use wamn_event_wire::Causation;
+use wamn_project_state::PlatformComponent;
 use wamn_router::{FailureKind, Outcome, Verdict, WalkStatus};
 pub use wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller;
 use wamn_runtime::plugins::wamn_jetstream::{
@@ -189,7 +190,7 @@ impl RouterDeliveryBridge {
         };
         match self
             .driver
-            .execute_with_causation(request, causation.clone())
+            .execute_with_causation(request, causation.clone(), source.platform())
             .await
         {
             Ok(delivery) => {
@@ -450,6 +451,16 @@ impl<'a> SourceRef<'a> {
     fn id(self) -> &'a str {
         match self {
             SourceRef::Attachment(id) | SourceRef::Registration(id) => id,
+        }
+    }
+
+    /// The platform component that executes a callerless delivery from this
+    /// source. A registration delivery stays callerless and executes as
+    /// `wamn:materializer`. An anonymous attachment has no executing principal.
+    fn platform(self) -> Option<PlatformComponent> {
+        match self {
+            SourceRef::Attachment(_) => None,
+            SourceRef::Registration(_) => Some(PlatformComponent::Materializer),
         }
     }
 }
@@ -819,6 +830,15 @@ mod tests {
         ServingManifest::from_canonical_bytes(MANIFEST)
             .expect("format-1 fixture is canonical")
             .0
+    }
+
+    #[test]
+    fn a_registration_delivery_executes_as_the_materializer_and_an_attachment_as_its_caller() {
+        assert_eq!(
+            SourceRef::Registration("manifest_mint::orders-changed").platform(),
+            Some(PlatformComponent::Materializer)
+        );
+        assert_eq!(SourceRef::Attachment("orders-http").platform(), None);
     }
 
     #[test]

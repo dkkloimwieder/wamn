@@ -422,6 +422,11 @@ async fn assert_case(scenario: Scenario, caller: &AuthenticatedCaller) {
         );
         let claims = event.claims.expect("host claims");
         assert_eq!(claims.tenant, TENANT);
+        assert_eq!(
+            claims.user_id.as_deref(),
+            Some(caller.principal_id()),
+            "the parent and its nested call bind the caller principal"
+        );
         assert_eq!(claims.project.as_deref(), Some(PROJECT));
         assert_eq!(
             claims.release,

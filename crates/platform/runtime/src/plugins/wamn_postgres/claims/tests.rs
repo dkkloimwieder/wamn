@@ -1,5 +1,7 @@
 use super::super::pool::ResolvedCredential;
-use super::super::statements::{StatementField, StatementValueType, VerifiedStatement};
+use super::super::resources::admit_transaction_statement;
+use super::super::statements::{StatementField, StatementValueType};
+use super::super::{SqlValue, StatementError};
 use super::transactions::{CLAIM_SQL, causation_emit_sql};
 use super::*;
 use tokio_postgres::NoTls;
@@ -647,6 +649,9 @@ fn test_pg_url() -> Option<String> {
 
 /// The tenant every live guest checkout in this module authenticates for.
 const LIVE_TENANT: &str = "acme";
+
+/// The executing principal a live transactional statement binds.
+const LIVE_PRINCIPAL: &str = "5c2b7e1a-9d3f-4a6b-8c1e-2f4d6a8b0c3e";
 
 /// Ensure the stable guest ACL role exists, race-tolerantly.
 ///
@@ -1978,7 +1983,7 @@ fn cold_parse_statement() -> VerifiedStatement {
             nullable: false,
         }]),
         // The claim path under test. A non-transactional statement with no
-        // per-caller claim takes the autocommit branch instead.
+        // role claim takes the autocommit branch instead.
         transactional: true,
     }
 }
@@ -2034,6 +2039,7 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
         &SessionClaims {
             tenant: TENANT.to_string(),
             schema: Some(schema.clone()),
+            user_id: Some(LIVE_PRINCIPAL.to_string()),
             ..SessionClaims::default()
         },
     )
@@ -2066,6 +2072,158 @@ async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
         .batch_execute(&format!(
             "DROP SCHEMA {schema} CASCADE; DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"
         ))
+        .await
+        .expect("drop the fixture");
+}
+
+/// A statement that reports the `app.user_id` its session carries.
+fn principal_statement(transactional: bool) -> VerifiedStatement {
+    VerifiedStatement {
+        exact_sql: "SELECT COALESCE(current_setting('app.user_id', true), '')".into(),
+        binds: Box::new([]),
+        columns: Box::new([StatementField {
+            value_type: StatementValueType::Text,
+            nullable: true,
+        }]),
+        transactional,
+    }
+}
+
+/// A transactional statement with no executing principal never reaches
+/// PostgreSQL. The plugin holds no credential, so any checkout fails with a
+/// different error.
+#[tokio::test]
+async fn a_transactional_statement_without_an_executing_principal_is_refused() {
+    let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
+        HashMap::new(),
+        None,
+    )));
+    let scope = "principal-refusal-instance-0";
+    pg.bind_session_claims(
+        scope,
+        &SessionClaims {
+            tenant: LIVE_TENANT.to_string(),
+            ..SessionClaims::default()
+        },
+    )
+    .expect("the scope binds");
+    let refused = pg
+        .one_shot_statement(scope, "sha256:principal", &principal_statement(true), &[])
+        .await
+        .expect_err("no executing principal");
+    let StatementError::Postgres(PgError::QueryError((code, message))) = refused else {
+        panic!("the refusal is the host's own: {refused:?}");
+    };
+    assert_eq!(code, "55000");
+    assert_eq!(message, "actor-required");
+    assert_eq!(
+        pg.destroyed.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "no connection was checked out"
+    );
+}
+
+/// The explicit statement transaction refuses a transactional statement with
+/// no executing principal when the statement resolves, before the
+/// transaction's connection runs it. The same scope with a principal admits
+/// the statement.
+#[test]
+fn an_explicit_transaction_statement_without_an_executing_principal_is_refused() {
+    use sha2::{Digest as _, Sha256};
+
+    let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
+        HashMap::new(),
+        None,
+    )));
+    let scope = "principal-refusal-instance-1";
+    let statement = principal_statement(true);
+    let digest = format!(
+        "sha256:{}",
+        hex::encode(Sha256::digest(statement.exact_sql.as_bytes()))
+    );
+    pg.bind_statement_operation(
+        scope,
+        "principal",
+        std::collections::BTreeMap::from([(digest.clone(), statement)]),
+    )
+    .expect("the statement set binds");
+    pg.activate_statement_operation(scope, "principal")
+        .expect("the operation activates");
+    let statements = pg.active_statement_set(scope);
+
+    let refused = admit_transaction_statement(&pg, scope, statements.as_deref(), &digest, &[])
+        .expect_err("no executing principal");
+    let StatementError::Postgres(PgError::QueryError((code, message))) = refused else {
+        panic!("the refusal is the host's own: {refused:?}");
+    };
+    assert_eq!(code, "55000");
+    assert_eq!(message, "actor-required");
+
+    pg.set_user_id(scope, LIVE_PRINCIPAL)
+        .expect("the principal binds");
+    admit_transaction_statement(&pg, scope, statements.as_deref(), &digest, &[])
+        .expect("a bound principal admits the statement");
+}
+
+/// A transactional statement runs with `app.user_id` bound to its executing
+/// principal. A read with the same principal keeps the autocommit path, so its
+/// session carries no `app.user_id`.
+#[tokio::test]
+async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autocommit() {
+    const TENANT: &str = "principal";
+    let Some(admin_url) = test_pg_url() else {
+        return;
+    };
+    let role = format!(
+        "wamn_app_{}_a",
+        wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+    );
+    let guest_url = live_guest_url(&admin_url, TENANT).await;
+    let pg = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest_url)),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 1_000,
+    })
+    .expect("the plugin builds from the guest generation's url");
+    let scope = "principal-instance-0";
+    pg.bind_session_claims(
+        scope,
+        &SessionClaims {
+            tenant: TENANT.to_string(),
+            user_id: Some(LIVE_PRINCIPAL.to_string()),
+            ..SessionClaims::default()
+        },
+    )
+    .expect("the principal scope binds");
+
+    let bound = pg
+        .one_shot_statement(scope, "sha256:principal", &principal_statement(true), &[])
+        .await
+        .expect("the transactional statement runs");
+    assert!(
+        matches!(&bound.rows[0][0], SqlValue::Text(value) if value == LIVE_PRINCIPAL),
+        "the transaction carries the executing principal: {:?}",
+        bound.rows
+    );
+    // The pool holds one connection, so the read reuses the connection whose
+    // transaction-local claim ended at COMMIT.
+    let read = pg
+        .one_shot_statement(scope, "sha256:principal", &principal_statement(false), &[])
+        .await
+        .expect("the read runs");
+    assert!(
+        matches!(&read.rows[0][0], SqlValue::Text(value) if value.is_empty()),
+        "the read took the autocommit path and bound no app.user_id: {:?}",
+        read.rows
+    );
+
+    drop(pg);
+    let admin = connect_raw(&admin_url).await;
+    admin
+        .batch_execute(&format!("DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
         .await
         .expect("drop the fixture");
 }
@@ -2123,6 +2281,7 @@ async fn bench_pipelined_claim_flight() {
         &SessionClaims {
             tenant: TENANT.to_string(),
             schema: Some(schema.clone()),
+            user_id: Some(LIVE_PRINCIPAL.to_string()),
             ..SessionClaims::default()
         },
     )

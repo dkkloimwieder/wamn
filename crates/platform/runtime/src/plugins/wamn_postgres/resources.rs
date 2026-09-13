@@ -16,7 +16,7 @@ use wash_runtime::wasmtime::component::Resource;
 
 use crate::plugins::effect_span::{EffectIdentity, effect_span, record_effect_ms};
 
-use super::claims::{OneShotResult, reject_claim_mutation};
+use super::claims::{OneShotResult, refuse_unattributed_statement, reject_claim_mutation};
 use super::pool::destroy_connection;
 use super::statements::{
     BoundStatementSet, VerifiedStatement, resolve_statement, validate_prepared_statement,
@@ -1114,7 +1114,9 @@ impl statement_wit::HostTransaction for ActiveCtx<'_> {
                 let component_id = self.component_id.to_string();
                 let project = plugin.project_for(&component_id);
                 let transaction = self.table.get(&rep)?;
-                let statement = match resolve_statement(
+                let statement = match admit_transaction_statement(
+                    &plugin,
+                    &component_id,
                     transaction.statements.as_deref(),
                     &statement_digest,
                     &binds,
@@ -1189,6 +1191,23 @@ impl statement_wit::HostTransaction for ActiveCtx<'_> {
         drop(transaction);
         Ok(())
     }
+}
+
+/// Resolve a statement for an explicit statement transaction.
+///
+/// A transactional statement with no executing principal is refused here,
+/// before the transaction's connection runs it.
+pub(super) fn admit_transaction_statement(
+    plugin: &WamnPostgres,
+    component_id: &str,
+    statements: Option<&BoundStatementSet>,
+    statement_digest: &str,
+    binds: &[SqlValue],
+) -> Result<Arc<VerifiedStatement>, StatementError> {
+    let statement = resolve_statement(statements, statement_digest, binds)?;
+    refuse_unattributed_statement(&statement, plugin.user_id_for(component_id).as_deref())
+        .map_err(StatementError::Postgres)?;
+    Ok(statement)
 }
 
 async fn statement_txn_finish(

@@ -13,6 +13,7 @@ use wamn_catalog::{
     ComponentPackageScope, EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
     ServingComponent, ServingComponentOperation, ServingManifest, ServingRelease,
 };
+use wamn_project_state::PlatformComponent;
 use wamn_runtime::component_admission::component_digest;
 use wamn_runtime::plugins::connection_http::transport::HttpTransport;
 use wamn_runtime::plugins::connection_http::{
@@ -587,6 +588,7 @@ impl Fixture {
                     effects: None,
                 },
                 causation: None,
+                platform: None,
             },
         }
     }
@@ -682,7 +684,9 @@ async fn run_case(case: Case) {
             } else {
                 BUDGET
             };
-        let result = invoke_native(&target, fixture.request(deadline)).await;
+        let mut request = fixture.request(deadline);
+        request.acquisition.platform = Some(PlatformComponent::Materializer);
+        let result = invoke_native(&target, request).await;
         match case {
             Case::Success => {
                 let emission = result
@@ -730,6 +734,13 @@ async fn run_case(case: Case) {
             );
             let claims = event.claims.as_ref().expect("execution has host claims");
             assert_eq!(claims.tenant, "tenant-a");
+            if !matches!(case, Case::Cancellation) {
+                assert_eq!(
+                    claims.user_id,
+                    Some(PlatformComponent::Materializer.principal_id().to_string()),
+                    "a callerless delivery binds its platform principal"
+                );
+            }
             let invocation = event
                 .invocation
                 .as_ref()

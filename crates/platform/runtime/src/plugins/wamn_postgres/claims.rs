@@ -22,7 +22,7 @@ use super::pool::{
     ClassCredentials, CredentialProvider, PoolKey, ProjectConfig, ProjectPool,
     StaticCredentialProvider, WamnPostgresConfig,
 };
-use super::statements::StatementScopes;
+use super::statements::{StatementScopes, VerifiedStatement};
 use super::{DEFAULT_PROJECT, PgError, RowSet};
 
 mod pools;
@@ -85,10 +85,13 @@ pub struct WamnPostgres {
     /// the claim contract documented by `deploy/sql/app-schema.sql` gates on
     /// the caller's role instead of denying.
     roles: std::sync::RwLock<HashMap<String, String>>,
-    /// component id → the caller's `app.user_id` claim (a `users.id` uuid).
-    /// Absent (the default) binds the empty string, which the compiled
-    /// ownership predicate `NULLIF(…, '')::uuid` turns into NULL → deny. When
-    /// set, a per-user RLS policy compares against the caller's own id.
+    /// component id → the executing principal's `app.user_id` claim (a
+    /// `users.id` uuid): the caller principal, or the platform principal of a
+    /// callerless delivery. The record-history triggers stamp it on every
+    /// write. Absent (the default) binds the empty string, which the triggers
+    /// refuse with actor-required. Until `wamn-0h0g.22` replaces
+    /// caller-settable authority, modified application SQL can forge this
+    /// attribution.
     users: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the `(effective release id, manifest digest)` this pod carries.
     /// Absent (the default) ⇒ the production claim records nothing, so every
@@ -158,7 +161,9 @@ pub struct SessionClaims {
     pub runner: Option<String>,
     /// `app.role` — the caller's `roles.name` for compiled per-role RLS.
     pub role: Option<String>,
-    /// `app.user_id` — the caller's `users.id` for compiled ownership RLS.
+    /// `app.user_id` — the executing principal's `users.id`, which the
+    /// record-history triggers stamp. A transactional statement with none is
+    /// refused.
     pub user_id: Option<String>,
     /// The `(effective release id, manifest digest)` the claiming pod carries.
     pub release: Option<ReleaseIdentity>,
@@ -437,6 +442,28 @@ pub(super) fn reject_claim_mutation(sql: &str) -> Result<(), PgError> {
         return Err(PgError::QueryError((
             "WAMN0".to_string(),
             "emitting a wamn.* logical message is not permitted".to_string(),
+        )));
+    }
+    Ok(())
+}
+
+/// Refuse a transactional statement that has no executing principal.
+///
+/// A write stamps its executing principal, so such a statement is a platform
+/// defect. The host refuses it before it reaches PostgreSQL, with the SQLSTATE
+/// and message that the record-history trigger raises.
+pub(super) fn refuse_unattributed_statement(
+    statement: &VerifiedStatement,
+    user_id: Option<&str>,
+) -> Result<(), PgError> {
+    if statement.transactional && user_id.is_none() {
+        tracing::warn!(
+            target: "wamn::security",
+            "refused a transactional statement with no executing principal"
+        );
+        return Err(PgError::QueryError((
+            "55000".to_string(),
+            "actor-required".to_string(),
         )));
     }
     Ok(())
@@ -874,11 +901,10 @@ impl WamnPostgres {
             .cloned()
     }
 
-    /// Register the caller's `app.user_id` claim for a component id (4.2). When
-    /// set, every transaction the plugin opens for that component binds
-    /// `app.user_id`, so a compiled row-ownership RLS policy compares against
-    /// the caller's own `users.id` instead of NULL. Host-injected identity like
-    /// the tenant.
+    /// Register the executing principal's `app.user_id` claim for a component
+    /// id. When set, every transaction the plugin opens for that component
+    /// binds `app.user_id`, so the record-history triggers stamp that
+    /// `users.id`. Host-injected identity like the tenant.
     pub fn set_user_id(&self, component_id: &str, user_id: &str) -> anyhow::Result<()> {
         anyhow::ensure!(
             valid_user_id(user_id),
@@ -1247,6 +1273,7 @@ impl WamnPostgres {
             .checkout_platform(project, AuthorityClass::CallableHttp)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        // This read writes nothing, so it binds no `app.user_id`.
         if let Err(error) = self
             .begin_with_claims(
                 &conn,
