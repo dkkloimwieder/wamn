@@ -10,6 +10,13 @@ Those cases compare the freshly minted manifest with the exact candidate before 
 They report success only after application assertions and owned resource cleanup pass.
 Receiving runs command histories and baseline overlay compatibility, while WMS runs its released routes.
 
+The [local saved-edit case](../operations/running-tests.md#local-saved-edit-acceptance) runs the existing Receiving developer command against owned services.
+It keeps an authenticated mutation through code and SQL edits, and it observes the changed application response.
+Invalid SQL must refuse while the previous candidate remains usable.
+A schema edit must create a new disposable database with the edited schema and no retained business rows.
+The case also requires zero registry requests, unchanged system database grants, restored source, and successful cleanup.
+Client tests separately establish the state reset after target replacement.
+
 ## Receiving commands
 
 The [Receiving history tests](../../apps/wamn_receiving/tests/receiving_command_histories_live.rs) exercise `receiving.record_receipt` and `purchase_order.update`.

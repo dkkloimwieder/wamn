@@ -150,6 +150,47 @@ The source owners declare additional credentials, artifact paths, and selected a
 Do not substitute shared services for missing test inputs.
 For deployed runs, use [cluster commands](cluster-tests.md).
 
+### Local saved-edit acceptance
+
+Use a clean linked worktree reserved for this test.
+Set `SOURCE` to its absolute path.
+Export `CARGO_TARGET_DIR` with the path to its separate absolute build directory.
+The case changes authored files, observes the running application, and restores the saved source.
+Keep port 18088 unused and run this case alone.
+The fixture requires PostgreSQL 18 binaries, Docker, and the existing development service images.
+
+Build the native programs, fixture, HTTP guest, and exact test binary from that worktree:
+
+```bash
+cd "$SOURCE"
+cargo build --locked --offline \
+  -p wamn-ctl -p wamn-host -p wamn-identity -p wamn-scenario-worker \
+  -p wamn-test-infrastructure --bins --example delivery_timings
+cargo build --locked --offline --manifest-path apps/Cargo.toml \
+  --target wasm32-wasip2 -p http-route
+cargo test --locked --offline -p wamn-receiving-tests --lib --no-run
+```
+
+Set `WAMN_LOCAL_TEST_BINARY` to the absolute executable path printed by the last command.
+Set `WAMN_LOCAL_RESULTS` to an unused private directory outside the worktree.
+Run the exact case through the owned fixture:
+
+```bash
+WAMN_LOCAL_DEV_EDIT_ROOT="$SOURCE" \
+WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_route.wasm" \
+  "$CARGO_TARGET_DIR/debug/examples/delivery_timings" \
+  "$SOURCE" "$CARGO_TARGET_DIR" "$WAMN_LOCAL_RESULTS" -- \
+  "$WAMN_LOCAL_TEST_BINARY" \
+  route_authentication_live::dev::local_delivery::local_watch_preserves_data_refuses_bad_sql_and_recreates_schema \
+  --exact --ignored --nocapture --test-threads=1
+```
+
+The fixture creates its own PostgreSQL server and Compose services on assigned loopback ports.
+The case refuses registry access and requires authenticated application results after code, SQL, and schema edits.
+It also requires retained data for compatible edits, refusal of invalid SQL, and a new database after a schema edit.
+Require one executed passing case, successful resource cleanup, and restored source before reporting success.
+This correctness case does not report performance measurements.
+
 ### Bounded HTTP reuse
 
 Use the exact debug integration test binary and debug `http_request.wasm` from the intended build.

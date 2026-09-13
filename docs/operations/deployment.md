@@ -2,7 +2,8 @@
 
 The current path uses `wamn-ctl`, OCI artifacts, Helm, and Kubernetes commands.
 An operator selects the release and applies its workload configuration.
-Provider-independent CI automation remains [delivery work](../plan/delivery.md).
+The [repository delivery commands](delivery.md) qualify, publish, select, and deploy exact releases without a CI-provider API.
+CI-provider configuration remains [delivery work](../plan/delivery.md).
 [Components](../architecture/components.md) defines the artifact boundary.
 
 ## Prerequisites
