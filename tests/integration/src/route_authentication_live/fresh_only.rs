@@ -792,6 +792,7 @@ fn fixture_manifest(base_digest: &str) -> Value {
         "required_platform_policy_contract": {"id": "prior_commit_fixture", "state": "satisfied"},
         "models": {"counter": {
             "schema": PACKAGE, "table": "counter", "owner": PACKAGE,
+            "audit_log": {"columns": [], "retention": "none"},
             "operations": {"get": {
                 "permission": "counter.get", "result": "one",
                 "error_details": {

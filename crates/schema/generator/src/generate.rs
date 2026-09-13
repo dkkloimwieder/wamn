@@ -22,9 +22,10 @@ use crate::manifest::{
     ContractFieldDeclaration, CrudAction, CursorDirection, CustomOperationDeclaration,
     CustomOperationKind, CustomOperationResultDeclaration, InheritedClaimDeclaration,
     ModelDeclaration, OperationDeclaration, OperationErrorDetailDeclaration, PackageManifest,
-    PolicyContractRequirement, PolicyContractState, ResultClass, SortDeclaration,
-    StateGuardDeclaration, StaticSqlFetch, canonical_operation_identity, custom_artifact_stem,
-    rust_identifier, rust_type_identifier, validate_identifier, validate_operation_vocabulary,
+    PolicyContractRequirement, PolicyContractState, RecordHistoryColumn, ResultClass,
+    SortDeclaration, StateGuardDeclaration, StaticSqlFetch, canonical_operation_identity,
+    custom_artifact_stem, rust_identifier, rust_type_identifier, validate_identifier,
+    validate_operation_vocabulary,
 };
 use crate::sql;
 use crate::sql_lex::contains_schema_qualified_reference;
@@ -766,6 +767,24 @@ fn relation<'a>(catalog: &'a CatalogIr, model: &ModelDeclaration) -> Option<&'a 
 
 fn column<'a>(table: &'a Table, name: &str) -> Option<&'a Column> {
     table.columns().iter().find(|column| column.name() == name)
+}
+
+/// Declared server-owned fields, then every reserved record-history column.
+///
+/// Validation refuses an unselected reserved-name column on an owned relation.
+/// On an overlay, the base declaration selects every reserved-name base column.
+fn server_owned_fields<'a>(model: &'a ModelDeclaration, table: &'a Table) -> Vec<&'a str> {
+    let mut fields = model
+        .server_owned_fields
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    for reserved in RecordHistoryColumn::ALL.map(RecordHistoryColumn::as_str) {
+        if column(table, reserved).is_some() && !fields.contains(&reserved) {
+            fields.push(reserved);
+        }
+    }
+    fields
 }
 
 fn insert_json(

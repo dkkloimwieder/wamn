@@ -45,7 +45,7 @@ pub use generate::{
     GenerationProvenance, StatementTransactionality, corpus_sha256, generate,
 };
 pub use manifest::{
-    AccessOperationErrorLiteral, AuthoredSqlDeclaration, AuthoredSqlVariant,
+    AccessOperationErrorLiteral, AuditLogDeclaration, AuthoredSqlDeclaration, AuthoredSqlVariant,
     BaseDependencyRequirement, CdcDisposition, ClaimDeclaration, CommandCanonicalization,
     CommandIdempotence, CommandLineOrder, CommandTransaction, ComponentDeclaration,
     ConnectionDeclaration, ContractFieldDeclaration, CountLimitDeclaration, CrudAction,
@@ -56,10 +56,11 @@ pub use manifest::{
     ItemSemantics, LimitDeclaration, ModelDeclaration, NumericSpelling, OperationDeclaration,
     OperationErrorDetailDeclaration, OperationErrorDetailKey, OperationVisibility, PackageIdentity,
     PackageManifest, PaginationDeclaration, PaginationKind, PolicyContractRequirement,
-    PolicyContractState, ResultClass, SortDeclaration, SortKey, StateGuardDeclaration,
-    StaticSqlFetch, StaticSqlRelationDeclaration, StaticSqlStatementDeclaration,
-    StaticSqlValueDeclaration, TieBreakerDeclaration, TimestamptzSpelling, UuidSpelling,
-    canonical_operation_identity, canonical_operation_prefix, validate_operation_vocabulary,
+    PolicyContractState, RecordHistoryColumn, ResultClass, SortDeclaration, SortKey,
+    StateGuardDeclaration, StaticSqlFetch, StaticSqlRelationDeclaration,
+    StaticSqlStatementDeclaration, StaticSqlValueDeclaration, TieBreakerDeclaration,
+    TimestamptzSpelling, UuidSpelling, canonical_operation_identity, canonical_operation_prefix,
+    validate_operation_vocabulary,
 };
 pub use materialize::{
     MaterializeMode, introspect_package, materialize_package, materialize_package_from_catalog,

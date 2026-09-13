@@ -54,6 +54,7 @@ fn manifest() -> Value {
                 "table": "stock",
                 "owner": "example",
                 "server_owned_fields": ["id", "edit_version"],
+                "audit_log": {"columns": [], "retention": "none"},
                 "operations": operations
             }
         },

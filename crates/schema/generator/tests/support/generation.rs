@@ -196,6 +196,7 @@ pub(super) fn manifest() -> Value {
                     "id", "purchase_order_number", "status", "row_version", "created_at"
                 ],
                 "enum_fields": {"status": ["open", "complete", "cancelled"]},
+                "audit_log": {"columns": ["created_at"], "retention": "none"},
                 "operations": {
                     "get": {
                         "permission": "purchase_order.get",

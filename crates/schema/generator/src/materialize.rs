@@ -534,6 +534,7 @@ mod tests {
                 "table":"thing",
                 "owner":"test_package",
                 "server_owned_fields":["id"],
+                "audit_log":{"columns":[],"retention":"none"},
                 "operations":{
                     "get":{
                         "permission":"thing.get",

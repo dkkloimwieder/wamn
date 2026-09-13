@@ -71,7 +71,8 @@ Omission lets the declared database default apply, while explicit null requires 
 Update input preserves three states: absent means unchanged, null means SQL NULL, and a supplied value replaces the field.
 A revision-controlled update or delete requires the expected revision.
 An absent row returns `not_found`, and a changed revision returns `concurrency_conflict`.
-A successful update returns the new revision.
+A generated update increases the revision only when a supplied field differs from its current value.
+A successful update returns the current revision, so a true no-op returns outcome `updated` with its unchanged revision.
 
 Each outer item carries its `request_id`.
 For `per_input` commands, each item owns one transaction on one PostgreSQL connection.

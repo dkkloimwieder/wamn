@@ -59,6 +59,7 @@ pub fn write_package_directory(root: &Path, schema: &str) -> anyhow::Result<()> 
                     "schema": schema,
                     "table": table,
                     "owner": PACKAGE_ID,
+                    "audit_log": {"columns": [], "retention": "none"},
                     "operations": {}
                 }),
             )

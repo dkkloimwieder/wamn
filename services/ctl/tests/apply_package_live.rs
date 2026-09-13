@@ -175,6 +175,10 @@ fn copy_overlay_package(
         .as_object_mut()
         .expect("overlay model is an object")
         .remove("client_field_extensible");
+    model
+        .as_object_mut()
+        .expect("overlay model is an object")
+        .remove("audit_log");
     model["field_owners"] = serde_json::Value::Object(
         fields
             .iter()
@@ -248,6 +252,7 @@ fn declare_ownership_only_model(root: &Path, model_id: &str, table: &str) {
         "owner": "wamn_receiving",
         "server_owned_fields": ["id"],
         "enum_fields": {},
+        "audit_log": {"columns": [], "retention": "none"},
         "operations": {}
     });
     std::fs::write(

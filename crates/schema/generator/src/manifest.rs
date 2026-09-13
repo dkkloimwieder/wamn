@@ -474,6 +474,7 @@ pub fn validate_operation_vocabulary(
     let mut artifact_owners = BTreeMap::new();
     for (model_name, model) in &manifest.models {
         validate_identifier(model_name, "operation module")?;
+        validate_audit_log(manifest, model_name, model)?;
         artifact_owners.insert(model_name.clone(), format!("model {model_name}"));
         for (action, operation) in &model.operations {
             let identity = format!("{model_name}.{}", action.as_str());
@@ -521,6 +522,63 @@ pub fn validate_operation_vocabulary(
 
     validate_component_groups(manifest, &component_by_operation)?;
     Ok(declared)
+}
+
+/// Refuse a record-history declaration whose shape is invalid without a catalog.
+fn validate_audit_log(
+    manifest: &PackageManifest,
+    model_name: &str,
+    model: &ModelDeclaration,
+) -> Result<(), GenerateError> {
+    let refuse =
+        |message: String| Err(GenerateError::new(GenerateErrorKind::InvalidModel, message));
+    let Some(audit_log) = &model.audit_log else {
+        if model.owner == manifest.package.id {
+            return refuse(format!(
+                "{model_name} owns its relation and must declare audit_log"
+            ));
+        }
+        return Ok(());
+    };
+    if model.owner != manifest.package.id {
+        return refuse(format!(
+            "{model_name} overlays a {} relation and must not declare audit_log",
+            model.owner
+        ));
+    }
+    let selected = audit_log.columns.iter().copied().collect::<BTreeSet<_>>();
+    if selected.len() != audit_log.columns.len() {
+        return refuse(format!("{model_name} audit_log repeats a column"));
+    }
+    for (actor, time) in [
+        (
+            RecordHistoryColumn::CreatedBy,
+            RecordHistoryColumn::CreatedAt,
+        ),
+        (
+            RecordHistoryColumn::UpdatedBy,
+            RecordHistoryColumn::UpdatedAt,
+        ),
+    ] {
+        if selected.contains(&actor) && !selected.contains(&time) {
+            return refuse(format!(
+                "{model_name} audit_log selects {} without {}",
+                actor.as_str(),
+                time.as_str()
+            ));
+        }
+    }
+    if selected.is_empty() && audit_log.retention != "none" {
+        return refuse(format!(
+            "{model_name} audit_log selects no column, so its retention must be none"
+        ));
+    }
+    if audit_log.retention != "none" {
+        return refuse(format!(
+            "{model_name} audit_log retention must be none until the record-history log exists"
+        ));
+    }
+    Ok(())
 }
 
 fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(), GenerateError> {
@@ -1682,6 +1740,13 @@ pub fn canonical_operation_prefix(package: &PackageIdentity) -> Result<String, G
 }
 
 fn validate_package_identity(package: &PackageIdentity) -> Result<(), GenerateError> {
+    // The platform owns the `wamn:` operation-token namespace.
+    if package.id == "wamn" {
+        return Err(GenerateError::new(
+            GenerateErrorKind::InvalidIdentity,
+            "package id `wamn` is reserved for the platform",
+        ));
+    }
     validate_package_coordinate(&package.id, &package.version)
 }
 
@@ -1907,7 +1972,50 @@ pub struct ModelDeclaration {
     pub server_owned_fields: Vec<String>,
     #[serde(default)]
     pub enum_fields: BTreeMap<String, Vec<String>>,
+    /// Record-history declaration. A relation-owning model requires it, and
+    /// an overlay model inherits the declaration of the relation owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit_log: Option<AuditLogDeclaration>,
     pub operations: BTreeMap<CrudAction, OperationDeclaration>,
+}
+
+/// Stamp columns and log retention of one relation-owning model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuditLogDeclaration {
+    pub columns: Vec<RecordHistoryColumn>,
+    /// An ISO 8601 duration, `unlimited`, or `none`. Level 1 admits only `none`.
+    pub retention: String,
+}
+
+/// The four reserved record-history column names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordHistoryColumn {
+    CreatedAt,
+    CreatedBy,
+    UpdatedAt,
+    UpdatedBy,
+}
+
+impl RecordHistoryColumn {
+    /// Every reserved name, in trigger argument order.
+    pub const ALL: [Self; 4] = [
+        Self::CreatedAt,
+        Self::CreatedBy,
+        Self::UpdatedAt,
+        Self::UpdatedBy,
+    ];
+
+    /// Reserved column spelling.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CreatedAt => "created_at",
+            Self::CreatedBy => "created_by",
+            Self::UpdatedAt => "updated_at",
+            Self::UpdatedBy => "updated_by",
+        }
+    }
 }
 
 /// Package-owned mechanism state that must never enter the CDC event plane.

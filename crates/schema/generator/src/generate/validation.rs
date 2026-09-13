@@ -5,10 +5,11 @@ use super::{
     CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN, CURSOR_VERSION, CatalogIr, Column, ColumnDefault,
     ColumnType, ConstraintKind, CrudAction, CursorDirection, CustomOperationDeclaration,
     GenerateError, GenerateErrorKind, GenerationInput, ModelDeclaration, OperationDeclaration,
-    POSTGRES_INTERFACE, PackageManifest, QUERY_LIMIT, ResultClass, SortDeclaration, StaticSqlFetch,
-    Table, column, constraint_error_code, contains_schema_qualified_reference,
-    custom_operation_constraint_origin, operation_constraints, operation_exclusions, relation,
-    rust_identifier, sql, validate_identifier, validate_operation_vocabulary,
+    POSTGRES_INTERFACE, PackageManifest, QUERY_LIMIT, RecordHistoryColumn, ResultClass,
+    SortDeclaration, StaticSqlFetch, Table, column, constraint_error_code,
+    contains_schema_qualified_reference, custom_operation_constraint_origin, operation_constraints,
+    operation_exclusions, relation, rust_identifier, server_owned_fields, sql, validate_identifier,
+    validate_operation_vocabulary,
 };
 
 pub(super) fn validate(
@@ -149,6 +150,7 @@ fn validate_model(
             ));
         }
     }
+    validate_audit_log_columns(manifest, model_name, model, table)?;
     for (field, values) in &model.enum_fields {
         let column = validate_field(table, model_name, field)?;
         if column.column_type() != ColumnType::Text || values.is_empty() {
@@ -209,7 +211,7 @@ fn validate_operation(
         ));
     }
 
-    let server_owned = model.server_owned_fields.iter().collect::<BTreeSet<_>>();
+    let server_owned = server_owned_fields(model, table);
     let mut writable = BTreeSet::new();
     for field in &operation.writable_fields {
         let column = validate_field(table, model_name, field)?;
@@ -219,7 +221,7 @@ fn validate_operation(
                 format!("{context} repeats writable field {field}"),
             ));
         }
-        if server_owned.contains(field) || column.generation().is_some() {
+        if server_owned.contains(&field.as_str()) || column.generation().is_some() {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,
                 format!("{context} exposes server-owned field {field}"),
@@ -543,8 +545,19 @@ fn require_claim_relation<'a>(
             format!("{schema}.{table}"),
         )
     })?;
-    require_claim_column(context, claim, CLAIM_KEY_COLUMN, ColumnType::Text)?;
-    require_claim_column(context, claim, CLAIM_COMMAND_COLUMN, ColumnType::Bytes)?;
+    let claim_context = format!("{context} claim");
+    for (name, ty) in [
+        (CLAIM_KEY_COLUMN, ColumnType::Text),
+        (CLAIM_COMMAND_COLUMN, ColumnType::Bytes),
+    ] {
+        require_column(
+            GenerateErrorKind::InvalidOperation,
+            &claim_context,
+            claim,
+            name,
+            ty,
+        )?;
+    }
     Ok((claim, primary_key))
 }
 
@@ -601,23 +614,73 @@ fn claim_primary_key(claim: &Table) -> Option<&str> {
     })
 }
 
-fn require_claim_column(
+fn require_column(
+    kind: GenerateErrorKind,
     context: &str,
-    claim: &Table,
+    table: &Table,
     name: &str,
     ty: ColumnType,
 ) -> Result<(), GenerateError> {
     let valid =
-        column(claim, name).is_some_and(|column| column.column_type() == ty && !column.nullable());
+        column(table, name).is_some_and(|column| column.column_type() == ty && !column.nullable());
     if valid {
         Ok(())
     } else {
         Err(GenerateError::for_object(
-            GenerateErrorKind::InvalidOperation,
-            format!("{context} claim must carry non-null {name} {}", ty.as_str()),
-            format!("{}.{}.{name}", claim.schema(), claim.name()),
+            kind,
+            format!("{context} must carry non-null {name} {}", ty.as_str()),
+            format!("{}.{}.{name}", table.schema(), table.name()),
         ))
     }
+}
+
+/// Refuse a record-history column that the stamp trigger cannot stamp.
+///
+/// Every selected column exists as a non-null `timestamptz` time or `uuid`
+/// actor. Every reserved-name column is selected, except a base column under
+/// an overlay, which the relation owner's declaration selects.
+fn validate_audit_log_columns(
+    manifest: &PackageManifest,
+    model_name: &str,
+    model: &ModelDeclaration,
+    table: &Table,
+) -> Result<(), GenerateError> {
+    let context = format!("{model_name} audit_log");
+    let selected = model
+        .audit_log
+        .as_ref()
+        .map_or(&[][..], |audit_log| audit_log.columns.as_slice());
+    for selection in selected {
+        let ty = match selection {
+            RecordHistoryColumn::CreatedAt | RecordHistoryColumn::UpdatedAt => {
+                ColumnType::Timestamptz
+            }
+            RecordHistoryColumn::CreatedBy | RecordHistoryColumn::UpdatedBy => ColumnType::Uuid,
+        };
+        require_column(
+            GenerateErrorKind::InvalidModel,
+            &context,
+            table,
+            selection.as_str(),
+            ty,
+        )?;
+    }
+    for reserved in RecordHistoryColumn::ALL {
+        let name = reserved.as_str();
+        let base_column_under_overlay =
+            model.owner != manifest.package.id && model.field_owner(name) != manifest.package.id;
+        if column(table, name).is_some()
+            && !selected.contains(&reserved)
+            && !base_column_under_overlay
+        {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::InvalidModel,
+                format!("{context} must select reserved column {name}"),
+                format!("{}.{}.{name}", table.schema(), table.name()),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_query(

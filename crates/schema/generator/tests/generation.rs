@@ -1715,3 +1715,319 @@ fn a_generated_operation_names_an_exclusion_violation_with_its_constraint() {
         GenerateErrorKind::InvalidOperation
     );
 }
+
+// ---------------------------------------------------------------------------
+// Record history, level 1: the audit_log declaration (spec section 2, test 6).
+// ---------------------------------------------------------------------------
+
+/// The support catalog, with each named column added to `purchase_order`.
+fn catalog_with_columns(columns: &[(&str, ColumnType, bool)]) -> CatalogIr {
+    let base = catalog(false);
+    let purchase_order = table(&base, "purchase_order");
+    let stamped = rebuilt_table(
+        purchase_order,
+        purchase_order
+            .columns()
+            .iter()
+            .cloned()
+            .chain(
+                columns
+                    .iter()
+                    .map(|(name, ty, nullable)| Column::new(*name, *ty, *nullable, None, None)),
+            )
+            .collect(),
+        purchase_order.constraints().to_vec(),
+    );
+    replacing_table(&base, stamped)
+}
+
+fn all_stamps_catalog() -> CatalogIr {
+    catalog_with_columns(&[
+        ("created_by", ColumnType::Uuid, false),
+        ("updated_at", ColumnType::Timestamptz, false),
+        ("updated_by", ColumnType::Uuid, false),
+    ])
+}
+
+fn with_audit_log(columns: Value, retention: &str) -> Value {
+    let mut manifest = manifest();
+    manifest["models"]["purchase_order"]["audit_log"] =
+        json!({"columns": columns, "retention": retention});
+    manifest
+}
+
+fn all_stamps_manifest() -> Value {
+    with_audit_log(
+        json!(["created_at", "created_by", "updated_at", "updated_by"]),
+        "none",
+    )
+}
+
+/// A package that overlays the `wamn_receiving` purchase order.
+fn overlay_manifest() -> Value {
+    let mut manifest = manifest();
+    manifest["package"]["id"] = json!("acme_receiving");
+    manifest["base_dependencies"] = json!({"base_receiving": {
+        "package": "wamn_receiving",
+        "version": "1.0.0",
+        "digest": format!("sha256:{}", "a".repeat(64)),
+        "operations": ["purchase_order.get"]
+    }});
+    manifest["models"]["purchase_order"]
+        .as_object_mut()
+        .unwrap()
+        .remove("audit_log");
+    manifest
+}
+
+#[test]
+fn selected_stamp_columns_become_server_owned() {
+    let package = run(
+        &all_stamps_catalog(),
+        &all_stamps_manifest(),
+        &QUERY_SOURCES,
+    )
+    .expect("a declaration that selects four valid columns generates");
+    let input = artifact_json(
+        &package,
+        "generated/contracts/purchase_order/update.input.json",
+    );
+    assert_eq!(
+        input["server_owned_fields"]["fields"],
+        json!([
+            "id",
+            "purchase_order_number",
+            "status",
+            "row_version",
+            "created_at",
+            "created_by",
+            "updated_at",
+            "updated_by"
+        ])
+    );
+    let model = artifact_json(&package, "generated/models/purchase_order.json");
+    for field in model["fields"].as_array().unwrap() {
+        if field["name"].as_str().unwrap().starts_with("created_")
+            || field["name"].as_str().unwrap().starts_with("updated_")
+        {
+            assert_eq!(field["server_owned"], json!(true), "{}", field["name"]);
+        }
+    }
+
+    // An overlay declares nothing, and the base stamp columns are server-owned.
+    let overlay = run(&all_stamps_catalog(), &overlay_manifest(), &QUERY_SOURCES)
+        .expect("an overlay inherits the owner's declaration");
+    let input = artifact_json(
+        &overlay,
+        "generated/contracts/purchase_order/update.input.json",
+    );
+    assert_eq!(
+        input["server_owned_fields"]["fields"],
+        json!([
+            "id",
+            "purchase_order_number",
+            "status",
+            "row_version",
+            "created_at",
+            "created_by",
+            "updated_at",
+            "updated_by"
+        ])
+    );
+}
+
+/// A catalog-free defect refuses in the shared vocabulary as well as in generation.
+#[test]
+fn audit_log_shape_refuses_without_a_catalog() {
+    let mut missing = manifest();
+    missing["models"]["purchase_order"]
+        .as_object_mut()
+        .unwrap()
+        .remove("audit_log");
+    let mut on_overlay = overlay_manifest();
+    on_overlay["models"]["purchase_order"]["audit_log"] =
+        json!({"columns": [], "retention": "none"});
+    let cases = [
+        ("a relation-owning model without the key", missing),
+        ("an overlay model with the key", on_overlay),
+        (
+            "a repeated name",
+            with_audit_log(
+                json!([
+                    "created_at",
+                    "created_at",
+                    "created_by",
+                    "updated_at",
+                    "updated_by"
+                ]),
+                "none",
+            ),
+        ),
+        (
+            "created_by without created_at",
+            with_audit_log(json!(["created_by", "updated_at", "updated_by"]), "none"),
+        ),
+        (
+            "updated_by without updated_at",
+            with_audit_log(json!(["created_at", "created_by", "updated_by"]), "none"),
+        ),
+        ("no column with a log", with_audit_log(json!([]), "P90D")),
+        (
+            "a log before level 2",
+            with_audit_log(
+                json!(["created_at", "created_by", "updated_at", "updated_by"]),
+                "unlimited",
+            ),
+        ),
+    ];
+    for (label, manifest) in cases {
+        assert_eq!(
+            validate_operation_vocabulary(&parsed_manifest(&manifest))
+                .expect_err(label)
+                .kind(),
+            GenerateErrorKind::InvalidModel,
+            "{label}"
+        );
+        assert_eq!(
+            run(&all_stamps_catalog(), &manifest, &QUERY_SOURCES)
+                .expect_err(label)
+                .kind(),
+            GenerateErrorKind::InvalidModel,
+            "{label}"
+        );
+    }
+
+    let outside = with_audit_log(json!(["created_at", "deleted_at"]), "none");
+    assert_eq!(
+        run(&all_stamps_catalog(), &outside, &QUERY_SOURCES)
+            .expect_err("a name outside the four refuses")
+            .kind(),
+        GenerateErrorKind::InvalidManifest
+    );
+}
+
+/// A catalog defect names the column that the trigger cannot stamp.
+#[test]
+fn audit_log_columns_refuse_against_the_catalog() {
+    let timestamps_only = with_audit_log(json!(["created_at", "updated_at"]), "none");
+    let mut overlay_added = overlay_manifest();
+    overlay_added["models"]["purchase_order"]["field_owners"] =
+        json!({"updated_by": "acme_receiving"});
+    let cases = [
+        (
+            "an absent selected column",
+            catalog(false),
+            timestamps_only.clone(),
+            "updated_at",
+        ),
+        (
+            "a wrongly typed time",
+            catalog_with_columns(&[("updated_at", ColumnType::Text, false)]),
+            timestamps_only.clone(),
+            "updated_at",
+        ),
+        (
+            "a wrongly typed actor",
+            catalog_with_columns(&[("created_by", ColumnType::Text, false)]),
+            with_audit_log(json!(["created_at", "created_by"]), "none"),
+            "created_by",
+        ),
+        (
+            "a nullable selected column",
+            catalog_with_columns(&[("updated_at", ColumnType::Timestamptz, true)]),
+            timestamps_only.clone(),
+            "updated_at",
+        ),
+        (
+            "an unselected reserved-name column",
+            all_stamps_catalog(),
+            timestamps_only,
+            "created_by",
+        ),
+        (
+            "an off declaration over a reserved-name column",
+            catalog(false),
+            with_audit_log(json!([]), "none"),
+            "created_at",
+        ),
+        (
+            "an overlay-added reserved-name column",
+            catalog_with_columns(&[("updated_by", ColumnType::Uuid, false)]),
+            overlay_added,
+            "updated_by",
+        ),
+    ];
+    for (label, catalog, manifest, column) in cases {
+        validate_operation_vocabulary(&parsed_manifest(&manifest))
+            .unwrap_or_else(|error| panic!("{label} is a catalog defect: {error:?}"));
+        let refusal = run(&catalog, &manifest, &QUERY_SOURCES).expect_err(label);
+        assert_eq!(refusal.kind(), GenerateErrorKind::InvalidModel, "{label}");
+        let object = format!("receiving.purchase_order.{column}");
+        assert_eq!(refusal.object(), Some(object.as_str()), "{label}");
+    }
+
+    let mut writable = all_stamps_manifest();
+    writable["models"]["purchase_order"]["operations"]["update"]["writable_fields"] =
+        json!(["supplier_id", "updated_by"]);
+    assert_eq!(
+        run(&all_stamps_catalog(), &writable, &QUERY_SOURCES)
+            .expect_err("a selected column declared writable refuses")
+            .kind(),
+        GenerateErrorKind::InvalidOperation
+    );
+}
+
+#[test]
+fn package_id_wamn_is_reserved_for_the_platform() {
+    let mut reserved = manifest();
+    reserved["package"]["id"] = json!("wamn");
+    assert_eq!(
+        validate_operation_vocabulary(&parsed_manifest(&reserved))
+            .expect_err("package id wamn was accepted")
+            .kind(),
+        GenerateErrorKind::InvalidIdentity
+    );
+    assert_eq!(
+        run(&catalog(false), &reserved, &QUERY_SOURCES)
+            .expect_err("generation accepted package id wamn")
+            .kind(),
+        GenerateErrorKind::InvalidIdentity
+    );
+}
+
+/// A generated update moves the revision only when a supplied field changes.
+#[test]
+fn generated_update_keeps_the_revision_on_a_true_no_op() {
+    let mut manifest = manifest();
+    manifest["models"]["purchase_order"]["operations"]["update"]["writable_fields"] =
+        json!(["supplier_id", "note"]);
+    let catalog = catalog_with_columns(&[("note", ColumnType::Text, true)]);
+    let package = run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
+    let sql = std::str::from_utf8(
+        package
+            .file("generated/sql/purchase_order/update.sql")
+            .unwrap()
+            .bytes(),
+    )
+    .unwrap();
+    let set = sql
+        .split_once("    SET\n")
+        .unwrap()
+        .1
+        .split_once("\n    FROM target\n")
+        .unwrap()
+        .0;
+    assert_eq!(
+        set,
+        concat!(
+            "        supplier_id = CASE WHEN $3::boolean THEN $4::uuid ELSE model.supplier_id END,\n",
+            "        note = CASE WHEN $5::boolean THEN $6::text ELSE model.note END,\n",
+            "        row_version = CASE\n",
+            "            WHEN ($3::boolean AND $4::uuid IS DISTINCT FROM model.supplier_id)\n",
+            "            OR ($5::boolean AND $6::text IS DISTINCT FROM model.note)\n",
+            "            THEN model.row_version + 1\n",
+            "            ELSE model.row_version\n",
+            "        END",
+        )
+    );
+}

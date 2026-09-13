@@ -101,20 +101,38 @@ pub(crate) fn update(table: &Table, operation: &OperationDeclaration) -> String 
         .revision_field
         .as_deref()
         .expect("update validation requires revision");
-    let assignments = operation
+    // Each writable field binds a presence flag, then its value.
+    let binds = operation
         .writable_fields
         .iter()
         .enumerate()
         .map(|(index, field)| {
             let value_bind = 4 + index * 2;
-            format!(
-                "        {field} = CASE WHEN ${}::boolean THEN ${value_bind}::{} ELSE model.{field} END",
+            (
+                field,
                 value_bind - 1,
-                postgres_type(column_type(table, field))
+                format!(
+                    "${value_bind}::{}",
+                    postgres_type(column_type(table, field))
+                ),
             )
         })
+        .collect::<Vec<_>>();
+    // A true no-op keeps its revision, so the stamp trigger sees no change.
+    let changed = binds
+        .iter()
+        .map(|(field, present, value)| {
+            format!("(${present}::boolean AND {value} IS DISTINCT FROM model.{field})")
+        })
+        .collect::<Vec<_>>()
+        .join("\n            OR ");
+    let assignments = binds
+        .iter()
+        .map(|(field, present, value)| {
+            format!("        {field} = CASE WHEN ${present}::boolean THEN {value} ELSE model.{field} END")
+        })
         .chain(std::iter::once(format!(
-            "        {revision} = model.{revision} + 1"
+            "        {revision} = CASE\n            WHEN {changed}\n            THEN model.{revision} + 1\n            ELSE model.{revision}\n        END"
         )))
         .collect::<Vec<_>>()
         .join(",\n");

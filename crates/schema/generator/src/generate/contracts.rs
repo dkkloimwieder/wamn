@@ -19,7 +19,7 @@ use super::{
     canonical_operation_identity, column, constraint_error, constraint_error_code,
     custom_artifact_stem, custom_operation_constraint_origin, insert_bytes, insert_json,
     insert_json_line, json, operation_constraints, operation_exclusions, query_variants, relation,
-    rust_type_identifier, sha256, sql,
+    rust_type_identifier, server_owned_fields, sha256, sql,
 };
 
 #[expect(
@@ -776,7 +776,7 @@ fn emit_model_contract(
     model: &ModelDeclaration,
     table: &Table,
 ) -> Result<(), GenerateError> {
-    let server_owned = model.server_owned_fields.iter().collect::<BTreeSet<_>>();
+    let server_owned = server_owned_fields(model, table);
     let fields = table
         .columns()
         .iter()
@@ -785,7 +785,7 @@ fn emit_model_contract(
                 "name": column.name(),
                 "type": column.column_type().as_str(),
                 "nullable": column.nullable(),
-                "server_owned": server_owned.contains(&column.name().to_owned()),
+                "server_owned": server_owned.contains(&column.name()),
                 "enum_values": model.enum_fields.get(column.name()),
             })
         })
@@ -1090,7 +1090,7 @@ fn input_contract(
     let common = json!({
         "request_id": {"type": "string", "required": true},
         "server_owned_fields": {
-            "fields": model.server_owned_fields,
+            "fields": server_owned_fields(model, table),
             "if_supplied": "invalid_input",
         },
         "writable_fields": writable,
