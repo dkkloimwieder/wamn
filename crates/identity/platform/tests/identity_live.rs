@@ -2,14 +2,14 @@
 
 use std::time::Duration;
 
+use tokio_postgres::error::SqlState;
+use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL};
 use wamn_platform_identity::{
-    IdentityErrorKind, PreparedIdentityReads, Principal, PrincipalKind, PrincipalStatus,
-    assign_project_role, create_human, create_service, disable_principal,
+    IdentityErrorKind, PreparedIdentityReads, Principal, PrincipalId, PrincipalKind,
+    PrincipalStatus, assign_project_role, create_human, create_service, disable_principal,
     grant_project_env_membership, has_project_env_membership, issue_pat, project_roles,
     resolve_principal, resolve_subject, revoke_project_env_membership,
 };
-
-const SYSTEM_SCHEMA: &str = include_str!("../../../../deploy/sql/system-schema.sql");
 
 #[tokio::test]
 async fn platform_identity_round_trip_on_postgres() {
@@ -41,9 +41,9 @@ async fn platform_identity_round_trip_on_postgres() {
         .await
         .expect("prepare empty platform schemas");
     client
-        .batch_execute(SYSTEM_SCHEMA)
+        .batch_execute(SYSTEM_SCHEMA_SQL)
         .await
-        .expect("apply deploy/sql/system-schema.sql");
+        .expect("apply the system schema composition");
     client
         .batch_execute(
             "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
@@ -52,6 +52,17 @@ async fn platform_identity_round_trip_on_postgres() {
         )
         .await
         .expect("seed registered project");
+    let provisioning = provisioning_principal_is_seeded(&client).await;
+    unbound_identity_writes_refuse(&client).await;
+    // The fixture is platform setup, so it writes as wamn:provisioning.
+    client
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&provisioning.as_str()],
+        )
+        .await
+        .expect("bind wamn:provisioning for the fixture session");
+    platform_principal_check_refuses_other_rows(&client).await;
 
     let human = create_human(&client, "Author@Example.com", "Receiving Author")
         .await
@@ -88,6 +99,22 @@ async fn platform_identity_round_trip_on_postgres() {
     assert_eq!(
         roles.iter().map(|role| role.as_str()).collect::<Vec<_>>(),
         ["project-author", "project-promoter"]
+    );
+    let stamps = client
+        .query_one(
+            "SELECT count(*) FROM identity.principals p \
+             JOIN identity.project_roles r ON r.principal_id = p.id \
+             WHERE p.id = $1::text::uuid \
+               AND p.created_by = $2::text::uuid AND p.updated_by = $2::text::uuid \
+               AND r.created_by = $2::text::uuid AND r.updated_by = $2::text::uuid",
+            &[&human.id().as_str(), &provisioning.as_str()],
+        )
+        .await
+        .expect("read principal and role stamps");
+    assert_eq!(
+        stamps.get::<_, i64>(0),
+        2,
+        "the principal and both roles stamp wamn:provisioning"
     );
 
     project_environment_membership_round_trip(&client, &human, &service).await;
@@ -194,6 +221,19 @@ async fn project_environment_membership_round_trip(
         .expect("read the stored grant");
     assert_eq!(stored.get::<_, String>(0), human.id().as_str());
     assert_eq!(stored.get::<_, i64>(1), 1);
+    let stamped: bool = client
+        .query_one(
+            "SELECT created_by = updated_by AND created_by = current_setting('app.user_id')::uuid \
+             FROM identity.project_env_memberships",
+            &[],
+        )
+        .await
+        .expect("read the grant stamps")
+        .get(0);
+    assert!(
+        stamped,
+        "the grant stamps the bound wamn:provisioning actor"
+    );
     assert!(
         has_project_env_membership(client, human.id(), "acme", "receiving", "dev")
             .await
@@ -359,6 +399,143 @@ async fn project_environment_membership_round_trip(
             .await
             .expect("principal deletion removes its membership")
     );
+}
+
+/// The system schema seeds the wamn:provisioning row with the derived id, and
+/// the row stamps itself.
+async fn provisioning_principal_is_seeded(client: &tokio_postgres::Client) -> PrincipalId {
+    let component = PlatformComponent::Provisioning;
+    let id: PrincipalId = component
+        .principal_id()
+        .to_string()
+        .parse()
+        .expect("a derived id is a principal id");
+    let row = client
+        .query_one(
+            "SELECT subject, display_name, created_by::text, updated_by::text, \
+                    (SELECT count(*) FROM identity.principals) \
+             FROM identity.principals WHERE id = $1::text::uuid",
+            &[&id.as_str()],
+        )
+        .await
+        .expect("read the seeded wamn:provisioning row");
+    assert_eq!(row.get::<_, String>(0), component.principal_name());
+    assert_eq!(row.get::<_, String>(1), component.principal_name());
+    assert_eq!(row.get::<_, String>(2), id.as_str());
+    assert_eq!(row.get::<_, String>(3), id.as_str());
+    assert_eq!(
+        row.get::<_, i64>(4),
+        1,
+        "only the wamn:provisioning row is seeded"
+    );
+    let principal = resolve_principal(client, &id)
+        .await
+        .expect("resolve the platform principal")
+        .expect("the platform principal is stored");
+    assert_eq!(principal.kind(), PrincipalKind::Platform);
+    id
+}
+
+/// A write to an identity authority relation with no bound actor raises
+/// SQLSTATE 55000 with the message actor-required. The stamp trigger runs
+/// before every constraint, so the rows need no valid references.
+async fn unbound_identity_writes_refuse(client: &tokio_postgres::Client) {
+    const PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
+    for statement in [
+        "INSERT INTO identity.principals (kind, subject, display_name) \
+         VALUES ('human', 'unbound', 'Unbound')"
+            .to_owned(),
+        format!(
+            "INSERT INTO identity.project_roles (principal_id, org, project, role) \
+             VALUES ('{PRINCIPAL}', 'acme', 'receiving', 'unbound')"
+        ),
+        format!(
+            "INSERT INTO identity.project_env_memberships (principal_id, org, project, env) \
+             VALUES ('{PRINCIPAL}', 'acme', 'receiving', 'dev')"
+        ),
+        format!(
+            "INSERT INTO identity.pats \
+               (principal_id, principal_kind, token_prefix, token_hash, label, expires_at) \
+             VALUES ('{PRINCIPAL}', 'human', '{}', '{}', 'unbound', now() + interval '1 hour')",
+            "0".repeat(16),
+            "0".repeat(64),
+        ),
+        "UPDATE identity.principals SET display_name = 'Unbound'".to_owned(),
+    ] {
+        let error = client
+            .execute(statement.as_str(), &[])
+            .await
+            .expect_err("a write with no bound actor must refuse");
+        assert_eq!(
+            error.code(),
+            Some(&SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE),
+            "{statement}"
+        );
+        assert_eq!(
+            error
+                .as_db_error()
+                .map(tokio_postgres::error::DbError::message),
+            Some("actor-required"),
+            "{statement}"
+        );
+    }
+}
+
+/// `principals_platform_principal_check` admits only the pinned
+/// wamn:provisioning row for kind platform, and the other kinds refuse a
+/// `wamn:` name.
+async fn platform_principal_check_refuses_other_rows(client: &tokio_postgres::Client) {
+    const OTHER: &str = "00000000-0000-4000-8000-0000000000f2";
+    let provisioning = PlatformComponent::Provisioning;
+    let executor = PlatformComponent::Executor;
+    for (kind, id, subject, display_name) in [
+        (
+            "platform",
+            OTHER.to_owned(),
+            provisioning.principal_name(),
+            provisioning.principal_name(),
+        ),
+        (
+            "platform",
+            executor.principal_id().to_string(),
+            provisioning.principal_name(),
+            provisioning.principal_name(),
+        ),
+        (
+            "platform",
+            executor.principal_id().to_string(),
+            executor.principal_name(),
+            executor.principal_name(),
+        ),
+        (
+            "platform",
+            provisioning.principal_id().to_string(),
+            provisioning.principal_name(),
+            "Provisioning",
+        ),
+        ("human", OTHER.to_owned(), "person", "wamn:person"),
+        ("service", OTHER.to_owned(), "station", "wamn:station"),
+        (
+            "human",
+            OTHER.to_owned(),
+            provisioning.principal_name(),
+            "Person",
+        ),
+    ] {
+        let error = client
+            .execute(
+                "INSERT INTO identity.principals (id, kind, subject, display_name) \
+                 VALUES ($1::text::uuid, $2, $3, $4)",
+                &[&id, &kind, &subject, &display_name],
+            )
+            .await
+            .expect_err("the principal CHECKs must refuse this row");
+        assert_eq!(
+            error.code(),
+            Some(&SqlState::CHECK_VIOLATION),
+            "{kind} {id} {subject} {display_name}"
+        );
+    }
 }
 
 async fn route_principal_id(

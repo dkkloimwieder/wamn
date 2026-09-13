@@ -17,7 +17,7 @@ use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::reconcile_run_plane;
 use wamn_schema_control::BareSchemaName;
 
-const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
+const SYSTEM_SCHEMA_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const OPS_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/ops-schema.sql");
 const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
@@ -112,6 +112,10 @@ async fn prepare_scratch_database(client: &Client) {
 }
 
 async fn install_control_database(client: &Client) {
+    client
+        .batch_execute(sql::ensure_db_owner_role_sql())
+        .await
+        .expect("ensure the database-owner role that the record history grants name");
     let system_install = format!(
         "SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\n{CONTROL_PORTABLE_STORE_SQL}\n\
          {OPS_SCHEMA_SQL}\nRESET ROLE;"

@@ -168,7 +168,7 @@ const APP_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
 const PACKAGE_ID: &str = measurement_schema::PACKAGE_ID;
 
 // The shipped DDL + retained receiving catalog, compiled in (checked for changes).
-const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
+const SYSTEM_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const CATALOG_SQL: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 /// A delete-only registration on `entity` — exactly what drives the l5i9.31
 /// reconcile to REPLICA IDENTITY FULL for that entity's table (the ri axis

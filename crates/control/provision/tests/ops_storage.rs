@@ -163,10 +163,11 @@ fn ops_schema_applies_idempotently_after_core_on_postgres() {
          DROP SCHEMA IF EXISTS registry CASCADE;\n\
          DROP SCHEMA IF EXISTS provisioning CASCADE;\n\
          DROP SCHEMA IF EXISTS identity CASCADE;\n\
-         DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $$;\n\
-         SET ROLE wamn_system;\n",
+         DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $$;\n",
     );
-    script.push_str(&system_schema_sql());
+    script.push_str(wamn_control_provision::sql::ensure_db_owner_role_sql());
+    script.push_str("\nSET ROLE wamn_system;\n");
+    script.push_str(wamn_control_provision::SYSTEM_SCHEMA_SQL);
     script.push('\n');
     script.push_str(&ops_schema_sql());
     script.push('\n');

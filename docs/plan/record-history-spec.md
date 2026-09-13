@@ -66,25 +66,9 @@ Level 2 adds that component to the closed component list.
 
 ## 3. System database
 
-The system database (`wamn_system`) stamps its identity authority relations.
-These relations are `identity.principals`, `identity.project_roles`, `identity.project_env_memberships`, and `identity.pats`.
-
-- Each of these relations gets the four stamp columns and a static `record_history_stamp` trigger.
-- The columns `assigned_at` and `granted_at` become `created_at`.
-- The registry, the sagas, the session keys, the ops tables, and the control store get no stamps.
-- `identity.principals` admits the kind `platform`. A CHECK pins each platform name and id pair.
-- A platform row exists only for a component that writes in `wamn_system`. That component is `wamn:provisioning`.
-- `PrincipalKind` gains `Platform`. `identity.pats` refuses a platform principal through a composite key.
-- The identity issuer and wamn-ctl bind `wamn:provisioning` as the actor in each write transaction.
-
-Beads `wamn-emtx.20` delivers the stamps only.
+The system database stamps its identity authority relations, as [data access](../architecture/data-access.md#system-database) describes.
 After level 2, Beads `wamn-emtx.24` adds a log table in `wamn_system` with the `app_system` log shape.
 Its static `record_history_log` triggers carry the retention `unlimited`, and no retention task runs against `wamn_system`.
-
-The system database has two limits:
-
-- The issuer and the revoker of a token read `wamn:provisioning` until Beads `wamn-0h0g.9` gives issuance a person caller.
-- A delete gets no stamp. Role and membership removals therefore stay unattributed until the system database log lands.
 
 ## 4. Level 2: the audit log
 

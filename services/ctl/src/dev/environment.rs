@@ -323,6 +323,10 @@ pub async fn reset_control_store(admin: &Client) -> anyhow::Result<()> {
         .await
         .context("ensure the portable store's control-author ACL role")?;
     admin
+        .batch_execute(provision_sql::ensure_db_owner_role_sql())
+        .await
+        .context("ensure the database-owner role that the record history grants name")?;
+    admin
         .batch_execute("SET ROLE wamn_system")
         .await
         .context("assume the production control owner")?;

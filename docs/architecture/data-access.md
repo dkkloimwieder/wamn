@@ -174,6 +174,33 @@ Every relation in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql)
 These relations are `users`, `roles`, `user_roles`, `permissions`, `configurations`, and `api_keys`.
 An applier installs `record-history.sql` before `app-schema.sql`.
 
+### System database
+
+The system database (`wamn_system`) stamps its identity authority relations.
+These relations are `identity.principals`, `identity.project_roles`, `identity.project_env_memberships`, and `identity.pats`.
+Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `record_history_stamp` trigger.
+The registry, the sagas, the session keys, the operations tables, and the control store carry no stamps.
+In the system database, the actor is an `identity.principals` id.
+
+The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/control/provision/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
+`record-history.sql` grants to `wamn_db_owner`, so an applier that runs as `wamn_system` creates that role first.
+
+`identity.principals.kind` is `human`, `service`, or `platform`.
+A `platform` row carries its `wamn:<component>` name in `subject` and in `display_name`, and its derived id.
+The `principals_platform_principal_check` constraint pins that subject, display name, and id.
+It also refuses a `wamn:` display name on another kind, and the subject pattern of another kind refuses a colon.
+Only `wamn:provisioning` writes in the system database, so the schema creates only its row.
+The schema binds `wamn:provisioning` for the transaction that creates the row, so the row stamps itself.
+A platform principal cannot authenticate.
+The `identity.pats` foreign key carries the principal kind, and a CHECK refuses a token for a platform principal.
+Every path that turns a stored principal into a caller also refuses the platform kind.
+
+The identity issuer and wamn-ctl bind `wamn:provisioning` in each write transaction.
+wamn-identity issues each token in its own transaction.
+wamn-ctl creates service principals, assigns project roles, grants and revokes memberships, and revokes tokens in the same way.
+Test fixtures bind `wamn:provisioning` for platform setup, or a principal row that they insert.
+The trigger keeps `created_at`, so an expired-token fixture moves `expires_at` to just after `created_at`.
+
 ### Limits
 
 Stamps are correct for writes through the supported platform paths.
@@ -182,6 +209,11 @@ No production code applies `app-schema.sql` or writes person, service, or platfo
 Beads `wamn-0h0g.9` owns that production application, the person and service rows, and the refusal of a credential for a principal without a users row.
 Until `wamn-0h0g.22` replaces caller-settable authority, modified application SQL can forge actor attribution.
 Record history gives no tamper resistance against modified application code or administrative SQL.
+
+The system database has two more limits:
+
+- The issuer and the revoker of a token read `wamn:provisioning` until Beads `wamn-0h0g.9` gives issuance a person caller.
+- A delete gets no stamp. Role and membership removals therefore stay unattributed until Beads `wamn-emtx.24` adds the system database log.
 
 ## Canonical values and SQL names
 

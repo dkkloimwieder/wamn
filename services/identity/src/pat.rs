@@ -6,6 +6,7 @@ use bytes::Bytes;
 use http_body_util::{BodyExt as _, Full, Limited};
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use serde::{Deserialize, Serialize};
+use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_platform_identity::{IdentityErrorKind, IssuedPat, PrincipalId, issue_pat};
 
 use crate::{IO_TIMEOUT, Inner, response, unavailable};
@@ -71,20 +72,40 @@ async fn issue(inner: &Inner, request: Request<Incoming>) -> Response<Full<Bytes
     let Ok(principal) = request.principal_id.parse::<PrincipalId>() else {
         return invalid_request();
     };
-    match issue_pat(
-        &inner.database.client,
+    // Issuance has no person caller yet, so the token row stamps wamn:provisioning.
+    let mut issuance = inner.issuance.lock().await;
+    let Ok(transaction) = issuance.client.transaction().await else {
+        return unavailable();
+    };
+    if transaction
+        .batch_execute(&bind_platform_principal_sql(
+            PlatformComponent::Provisioning,
+        ))
+        .await
+        .is_err()
+    {
+        return unavailable();
+    }
+    let token = match issue_pat(
+        &transaction,
         &principal,
         &request.label,
         Duration::from_secs(request.lifetime_seconds),
     )
     .await
     {
-        Ok(token) => token_response(&token, &principal),
-        Err(error) => match error.kind() {
-            IdentityErrorKind::InvalidInput | IdentityErrorKind::NotFound => invalid_request(),
-            _ => unavailable(),
-        },
+        Ok(token) => token,
+        Err(error) => {
+            return match error.kind() {
+                IdentityErrorKind::InvalidInput | IdentityErrorKind::NotFound => invalid_request(),
+                _ => unavailable(),
+            };
+        }
+    };
+    if transaction.commit().await.is_err() {
+        return unavailable();
     }
+    token_response(&token, &principal)
 }
 
 fn token_response(token: &IssuedPat, principal: &PrincipalId) -> Response<Full<Bytes>> {

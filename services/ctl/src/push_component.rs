@@ -2577,7 +2577,8 @@ mod tests {
         base.batch_execute(
             "DO $roles$ DECLARE role_name text; BEGIN \
                FOREACH role_name IN ARRAY ARRAY[\
-                 'wamn_system', 'wamn_control_author', 'wamn_app', 'wamn_scenario_author'\
+                 'wamn_system', 'wamn_control_author', 'wamn_app', 'wamn_scenario_author', \
+                 'wamn_db_owner'\
                ] LOOP \
                  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
                    EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
@@ -2614,7 +2615,7 @@ mod tests {
             .await
             .expect("assume production control owner");
         control
-            .batch_execute(include_str!("../../../deploy/sql/system-schema.sql"))
+            .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
             .await
             .expect("install production control system schema");
         control
@@ -2985,7 +2986,8 @@ mod tests {
         base.batch_execute(
             "DO $roles$ DECLARE role_name text; BEGIN \
                FOREACH role_name IN ARRAY ARRAY[\
-                 'wamn_system', 'wamn_control_author', 'wamn_app', 'wamn_scenario_author'\
+                 'wamn_system', 'wamn_control_author', 'wamn_app', 'wamn_scenario_author', \
+                 'wamn_db_owner'\
                ] LOOP \
                  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
                    EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
@@ -3010,7 +3012,7 @@ mod tests {
             .await
             .expect("assume production control owner");
         control
-            .batch_execute(include_str!("../../../deploy/sql/system-schema.sql"))
+            .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
             .await
             .expect("install production control system schema");
         control

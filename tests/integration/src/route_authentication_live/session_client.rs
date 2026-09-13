@@ -312,12 +312,12 @@ pub(super) async fn assert_session_client(
         Duration::from_secs(3600),
     )
     .await?;
+    // The stamp trigger keeps created_at, so the token expires just after it.
     anyhow::ensure!(
-        test
-            .control
+        test.control
             .execute(
-                "UPDATE identity.pats SET created_at = clock_timestamp() - interval '2 hours', \
-         expires_at = clock_timestamp() - interval '1 hour' WHERE token_prefix = $1",
+                "UPDATE identity.pats SET expires_at = created_at + interval '1 microsecond' \
+         WHERE token_prefix = $1",
                 &[&expired.record().prefix()],
             )
             .await?

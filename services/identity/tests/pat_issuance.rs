@@ -21,9 +21,12 @@ use wamn_control_provision::identity_issuer::{
     prepare_identity_issuer_generation_sql,
 };
 use wamn_control_provision::session_target::SessionTarget;
-use wamn_control_provision::sql::revoke_public_connect_floor_sql;
+use wamn_control_provision::sql::{ensure_db_owner_role_sql, revoke_public_connect_floor_sql};
 use wamn_control_provision::workload_role::{WorkloadRoleScope, workload_generation_role};
-use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, project_env_database_name};
+use wamn_control_provision::{
+    CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
+    project_env_database_name,
+};
 use wamn_control_registry::Triple;
 use wamn_identity::tls_config_with_operator_ca;
 use wamn_pg_core::quote_ident;
@@ -35,7 +38,6 @@ use wamn_platform_identity::{
 
 const ISSUER: &str = "https://identity.pat-test.internal";
 const PASSWORD: &str = "operator-pat-disposable-fixture-password";
-const SYSTEM_SCHEMA: &str = include_str!("../../../deploy/sql/system-schema.sql");
 const FORBIDDEN: &str = "{\"error\":\"operator certificate required\"}";
 const INVALID: &str = "{\"error\":\"invalid PAT request\"}";
 const UNAVAILABLE: &str = "{\"error\":\"identity unavailable\"}";
@@ -149,10 +151,14 @@ async fn operator_pat_issuance_over_https() {
         !exists,
         "refuse to replace existing identity authority roles"
     );
+    system
+        .batch_execute(ensure_db_owner_role_sql())
+        .await
+        .expect_redacted("record history grants name wamn_db_owner");
     system.batch_execute("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; DROP SCHEMA IF EXISTS registry CASCADE; DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$; GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system;")
         .await.expect_redacted("prepare disposable system schema owner");
     system
-        .batch_execute(SYSTEM_SCHEMA)
+        .batch_execute(SYSTEM_SCHEMA_SQL)
         .await
         .expect_redacted("production system schema");
     system
@@ -188,6 +194,14 @@ async fn operator_pat_issuance_over_https() {
     scoped.set_fragment(None);
     let scoped = scoped.to_string();
 
+    // The fixture is platform setup, so it writes as wamn:provisioning.
+    system
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&PlatformComponent::Provisioning.principal_id().to_string()],
+        )
+        .await
+        .expect_redacted("bind wamn:provisioning for the fixture session");
     let human = create_human(&system, "pat-human", "PAT Human")
         .await
         .expect_redacted("human fixture");
@@ -385,7 +399,8 @@ async fn operator_pat_issuance_over_https() {
         &system,
     )
     .await;
-    system.execute("UPDATE identity.pats SET created_at=clock_timestamp()-interval '2 hours', expires_at=clock_timestamp()-interval '1 hour' WHERE token_prefix=$1", &[&expired_pat["token_prefix"].as_str().expect("expiry prefix")])
+    // The stamp trigger keeps created_at, so the fixture expires the token just after it.
+    system.execute("UPDATE identity.pats SET expires_at=created_at+interval '1 microsecond' WHERE token_prefix=$1", &[&expired_pat["token_prefix"].as_str().expect("expiry prefix")])
         .await.expect_redacted("deterministic PAT expiry fixture");
     assert!(
         authenticate_pat(
@@ -399,7 +414,7 @@ async fn operator_pat_issuance_over_https() {
 
     system
         .batch_execute(&format!(
-            "REVOKE INSERT (principal_id, token_prefix, token_hash, label, expires_at) ON identity.pats FROM {}",
+            "REVOKE INSERT (principal_id, principal_kind, token_prefix, token_hash, label, expires_at) ON identity.pats FROM {}",
             quote_ident(IDENTITY_ISSUER_ROLE)
         ))
         .await
@@ -534,7 +549,7 @@ async fn success(
         .expect_redacted("real PAT verification")
         .expect("issued token authenticates");
     assert!(authenticated.principal().id() == principal);
-    let record = system.query_one("SELECT principal_id::text, token_hash, label, extract(epoch FROM expires_at-created_at)::bigint FROM identity.pats WHERE token_prefix=$1", &[&value["token_prefix"].as_str().expect("token prefix")])
+    let record = system.query_one("SELECT principal_id::text, token_hash, label, extract(epoch FROM expires_at-created_at)::bigint, created_by::text, updated_by::text FROM identity.pats WHERE token_prefix=$1", &[&value["token_prefix"].as_str().expect("token prefix")])
         .await.expect_redacted("persisted PAT record");
     assert!(record.get::<_, String>(0) == principal.as_str());
     assert!(
@@ -543,6 +558,11 @@ async fn success(
     );
     assert!(record.get::<_, String>(2) == label.trim());
     assert_eq!(record.get::<_, i64>(3), 3600);
+    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+    assert!(
+        record.get::<_, String>(4) == provisioning && record.get::<_, String>(5) == provisioning,
+        "the identity service issues the token as wamn:provisioning"
+    );
     for field in ["created_at", "expires_at"] {
         let instant = value[field].as_str().expect("RFC 3339 instant");
         assert!(instant.len() == 20 && instant.ends_with('Z') && instant.contains('T'));
@@ -719,7 +739,7 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
         project: "pattest".into(),
         env: "dev".into(),
     };
-    let database = project_env_database_name("acme", "pattest", "dev", "pattest");
+    let database = project_env_database_name("acme", "pattest", "dev", "pattest1");
     let role = workload_generation_role(
         WorkloadRoleFamily::SessionRoleReader,
         WorkloadRoleScope::ProjectEnvironment {
@@ -739,7 +759,7 @@ fn unused_target(admin: &url::Url) -> SessionTarget {
     url.set_path(&database);
     url.set_query(None);
     url.set_fragment(None);
-    SessionTarget::new(&triple, "pattest", "pat-tenant", url.as_str())
+    SessionTarget::new(&triple, "pattest1", "pat-tenant", url.as_str())
         .expect_redacted("unused configured audience")
 }
 

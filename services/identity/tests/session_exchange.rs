@@ -19,11 +19,13 @@ use wamn_control_provision::identity_issuer::{
 use wamn_control_provision::project_env_database_name;
 use wamn_control_provision::session_target::SessionTarget;
 use wamn_control_provision::sql::{
-    grant_session_role_reader_surface_sql, prepare_workload_generation_sql,
-    revoke_public_connect_floor_sql,
+    ensure_db_owner_role_sql, grant_session_role_reader_surface_sql,
+    prepare_workload_generation_sql, revoke_public_connect_floor_sql,
 };
 use wamn_control_provision::workload_role::{WorkloadRoleScope, workload_generation_role};
-use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily};
+use wamn_control_provision::{
+    CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
+};
 use wamn_control_registry::Triple;
 use wamn_identity::{IdentityConfig, IdentityService, serve, tls_config};
 use wamn_pg_core::quote_ident;
@@ -392,7 +394,8 @@ async fn exercise(fixture: &Fixture, https: &Https) {
     )
     .await
     .expect_redacted("expiring PAT");
-    system.execute("UPDATE identity.pats SET created_at=clock_timestamp()-interval '2 hours', expires_at=clock_timestamp()-interval '1 hour' WHERE token_prefix=$1", &[&expired.record().prefix()])
+    // The stamp trigger keeps created_at, so the fixture expires the token just after it.
+    system.execute("UPDATE identity.pats SET expires_at=created_at+interval '1 microsecond' WHERE token_prefix=$1", &[&expired.record().prefix()])
         .await.expect_redacted("expired PAT control");
     refuse(https, expired.token(), aud).await;
     revoke_pat(system, alice_pat.record().prefix())
@@ -1140,15 +1143,29 @@ async fn setup() -> Fixture {
         !exists,
         "refuse to overwrite existing fixture databases or authority roles"
     );
+    system
+        .client
+        .batch_execute(ensure_db_owner_role_sql())
+        .await
+        .expect_redacted("record history grants name wamn_db_owner");
     system.client.batch_execute("DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; DROP SCHEMA IF EXISTS registry CASCADE; DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system; END IF; END $$; GRANT CREATE ON DATABASE wamn_system TO wamn_system; SET ROLE wamn_system;")
         .await.expect_redacted("prepare armed disposable system owner");
     system
         .client
-        .batch_execute(include_str!("../../../deploy/sql/system-schema.sql"))
+        .batch_execute(SYSTEM_SCHEMA_SQL)
         .await
         .expect_redacted("production system schema");
     system.client.batch_execute("RESET ROLE; CREATE ROLE wamn_app NOLOGIN; CREATE ROLE wamn_scenario_author NOLOGIN; CREATE ROLE wamn_control_author NOLOGIN; CREATE ROLE wamn_effect_writer NOLOGIN;")
         .await.expect_redacted("schema prerequisite roles");
+    // The system fixture is platform setup, so it writes as wamn:provisioning.
+    system
+        .client
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&PlatformComponent::Provisioning.principal_id().to_string()],
+        )
+        .await
+        .expect_redacted("bind wamn:provisioning for the system fixture session");
     for name in &databases {
         system
             .client

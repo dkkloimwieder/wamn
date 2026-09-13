@@ -233,6 +233,9 @@ async fn reset(admin: &Client) -> anyhow::Result<()> {
 async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
     admin.batch_execute("DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$; GRANT CREATE ON DATABASE wamn_system TO wamn_system;").await?;
     admin
+        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
+        .await?;
+    admin
         .batch_execute(&format!(
             "SET ROLE wamn_system; {SYSTEM_SCHEMA_SQL} RESET ROLE;"
         ))

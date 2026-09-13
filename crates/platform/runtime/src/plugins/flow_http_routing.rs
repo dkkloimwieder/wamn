@@ -684,6 +684,7 @@ impl FlowHttpRouting {
                 .ok_or_else(unauthorized)?;
             let principal = principal.principal();
             let permissions = match principal.kind() {
+                PrincipalKind::Platform => return Err(unauthorized()),
                 PrincipalKind::Service => {
                     if principal.subject() != authentication.expected_subject.as_ref() {
                         return Err(unauthorized());

@@ -28,6 +28,16 @@ pub(super) async fn prepare_session_host_fixture(
     );
     let scratch = ScratchRoot::create()?;
     let (admin, admin_task) = connect(&inputs.system_pg_url).await?;
+    // The system fixture writes principals and tokens as wamn:provisioning.
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await
+        .context("bind wamn:provisioning for the system fixture session")?;
     let instance_suffix: String = admin
         .query_one(
             "SELECT instance_suffix FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
@@ -322,6 +332,16 @@ pub(super) async fn assert_nested_session(
     inputs.compilation_cache_directory = scratch.path().join("nested-compilation-cache");
     std::fs::create_dir(&inputs.compilation_cache_directory)?;
     let (admin, admin_task) = connect(&inputs.system_pg_url).await?;
+    // The system fixture writes principals and tokens as wamn:provisioning.
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await
+        .context("bind wamn:provisioning for the system fixture session")?;
     let instance_suffix: String = admin.query_one(
         "SELECT instance_suffix FROM registry.project_envs WHERE org = $1 AND project = $2 AND env = $3",
         &[&ORG, &PROJECT, &ENVIRONMENT],

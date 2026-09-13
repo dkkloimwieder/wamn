@@ -2,10 +2,12 @@
 
 use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use wamn_control_provision::PlatformComponent;
 use wamn_ctl::dev::environment::{connect, provision_journey_control, provision_route};
-use wamn_platform_identity::{PrincipalKind, authenticate_pat, revoke_pat};
+use wamn_platform_identity::{PrincipalKind, authenticate_pat};
 
 struct Files(PathBuf);
 
@@ -140,10 +142,59 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
         "SELECT count(*) FROM pg_roles WHERE rolname LIKE 'wamn_identity_issuer_%' AND rolcanlogin", &[])
         .await.expect("read issuer login state").get(0);
     assert_eq!(active, 0, "bootstrap left active issuer authority");
-    revoke_pat(admin.as_ref(), &route.token_prefix)
+    // Every provisioning write stamps wamn:provisioning: the service principals
+    // and roles from wamn-ctl, and the tokens from wamn-identity.
+    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+    let stamped: bool = admin
+        .query_one(
+            "SELECT (SELECT bool_and(created_by = $1::text::uuid AND updated_by = $1::text::uuid) \
+                     FROM identity.principals) \
+                AND (SELECT bool_and(created_by = $1::text::uuid AND updated_by = $1::text::uuid) \
+                     FROM identity.project_roles) \
+                AND (SELECT bool_and(created_by = $1::text::uuid AND updated_by = $1::text::uuid \
+                                     AND created_at = updated_at) \
+                     FROM identity.pats) \
+                AND (SELECT count(*) = 2 FROM identity.pats)",
+            &[&provisioning],
+        )
         .await
-        .ok()
-        .expect("revoke route PAT");
+        .expect("read provisioning stamps")
+        .get(0);
+    assert!(stamped, "provisioning writes must stamp wamn:provisioning");
+    let issued_at: String = admin
+        .query_one(
+            "SELECT created_at::text FROM identity.pats WHERE token_prefix = $1",
+            &[&route.token_prefix],
+        )
+        .await
+        .expect("read the route PAT issuance time")
+        .get(0);
+    let revoked = std::process::Command::new(env!("CARGO_BIN_EXE_wamn-ctl"))
+        .args([
+            "provision-project-env",
+            "--revoke-pat-prefix",
+            &route.token_prefix,
+        ])
+        .env("WAMN_SYSTEM_ADMIN_URL", &url)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run the compiled PAT revocation verb");
+    assert!(revoked.status.success(), "the PAT revocation verb failed");
+    let revocation: bool = admin
+        .query_one(
+            "SELECT revoked_at IS NOT NULL AND created_at::text = $2 \
+                AND created_by = $1::text::uuid AND updated_by = $1::text::uuid \
+                AND updated_at > created_at \
+             FROM identity.pats WHERE token_prefix = $3",
+            &[&provisioning, &issued_at, &route.token_prefix],
+        )
+        .await
+        .expect("read the revocation stamps")
+        .get(0);
+    assert!(
+        revocation,
+        "the revocation keeps the created pair and stamps wamn:provisioning"
+    );
     assert!(
         authenticate_pat(admin.as_ref(), &route.token)
             .await

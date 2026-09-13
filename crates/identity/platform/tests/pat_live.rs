@@ -2,12 +2,14 @@
 
 use std::time::Duration;
 
+use tokio_postgres::error::SqlState;
+use tokio_postgres::{Client, Transaction};
+use wamn_control_provision::{PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql};
 use wamn_platform_identity::{
-    IdentityErrorKind, PAT_TOKEN_PREFIX, PrincipalKind, authenticate_pat, create_human,
-    create_service, disable_principal, issue_pat, list_pats, revoke_pat,
+    IdentityErrorKind, PAT_TOKEN_PREFIX, PrincipalId, PrincipalKind, authenticate_pat,
+    create_human, create_service, disable_principal, issue_pat, list_pats, revoke_pat,
 };
 
-const SYSTEM_SCHEMA: &str = include_str!("../../../../deploy/sql/system-schema.sql");
 const TTL: Duration = Duration::from_secs(3600);
 
 #[tokio::test]
@@ -20,7 +22,7 @@ async fn platform_pat_round_trip_on_postgres() {
         return;
     };
 
-    let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+    let (mut client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
         .await
         .expect("connect platform identity test database");
     let connection_task = tokio::spawn(async move {
@@ -40,17 +42,24 @@ async fn platform_pat_round_trip_on_postgres() {
         .await
         .expect("prepare empty platform schemas");
     client
-        .batch_execute(SYSTEM_SCHEMA)
+        .batch_execute(SYSTEM_SCHEMA_SQL)
         .await
-        .expect("apply deploy/sql/system-schema.sql");
+        .expect("apply the system schema composition");
+    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
 
-    let human = create_human(&client, "author@example.com", "Receiving Author")
+    // Issuance binds wamn:provisioning in its own transaction.
+    let transaction = provisioning_transaction(&mut client).await;
+    let human = create_human(&transaction, "author@example.com", "Receiving Author")
         .await
         .expect("create human principal");
-
-    let issued = issue_pat(&client, human.id(), " laptop ", TTL)
+    let issued = issue_pat(&transaction, human.id(), " laptop ", TTL)
         .await
         .expect("issue human token from trusted context");
+    transaction.commit().await.expect("commit the issuance");
+    let issued_stamps = pat_stamps(&client, issued.record().prefix()).await;
+    assert_eq!(issued_stamps.created_by, provisioning);
+    assert_eq!(issued_stamps.updated_by, provisioning);
+    assert_eq!(issued_stamps.created_at, issued_stamps.updated_at);
     let token = issued.token().to_owned();
     let prefix = issued.record().prefix().to_owned();
     assert!(token.starts_with(PAT_TOKEN_PREFIX));
@@ -119,35 +128,85 @@ async fn platform_pat_round_trip_on_postgres() {
         );
     }
 
-    // An elapsed expiry refuses without any revocation.
+    // A revocation with no bound actor refuses.
+    let unbound = client
+        .execute(
+            "UPDATE identity.pats SET revoked_at = now() WHERE token_prefix = $1",
+            &[&issued.record().prefix()],
+        )
+        .await
+        .expect_err("a revocation with no bound actor must refuse");
+    assert_eq!(
+        unbound.code(),
+        Some(&SqlState::OBJECT_NOT_IN_PREREQUISITE_STATE)
+    );
+    assert_eq!(
+        unbound
+            .as_db_error()
+            .map(tokio_postgres::error::DbError::message),
+        Some("actor-required")
+    );
+    assert_eq!(
+        revoke_pat(&client, issued.record().prefix())
+            .await
+            .expect_err("the library revocation also needs a bound actor")
+            .kind(),
+        IdentityErrorKind::Database
+    );
+
+    // Revocation is a one-way stamp and repeating it changes nothing. It
+    // binds wamn:provisioning in a later transaction and keeps the created pair.
+    let transaction = provisioning_transaction(&mut client).await;
+    let revocable = issue_pat(&transaction, human.id(), "revocable", TTL)
+        .await
+        .expect("issue revocable token");
+    transaction.commit().await.expect("commit the issuance");
+    let before = pat_stamps(&client, revocable.record().prefix()).await;
+    let transaction = provisioning_transaction(&mut client).await;
+    let revoked = revoke_pat(&transaction, revocable.record().prefix())
+        .await
+        .expect("revoke token");
+    transaction.commit().await.expect("commit the revocation");
+    assert!(revoked.revoked_at().is_some());
+    let after = pat_stamps(&client, revocable.record().prefix()).await;
+    assert_eq!(after.created_at, before.created_at);
+    assert_eq!(after.created_by, provisioning);
+    assert_eq!(after.updated_by, provisioning);
+    assert!(
+        after.updated_after_created,
+        "the revocation moves the updated time"
+    );
+
+    // The rest of the fixture is platform setup, so it writes as wamn:provisioning.
+    client
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&provisioning],
+        )
+        .await
+        .expect("bind wamn:provisioning for the fixture session");
+    platform_principal_cannot_hold_a_token(&client, &provisioning).await;
+
+    // An elapsed expiry refuses without any revocation. The stamp trigger keeps
+    // created_at, so the fixture moves expires_at to just after it.
     let expired = issue_pat(&client, human.id(), "expiring", TTL)
         .await
         .expect("issue expiring token");
     client
         .execute(
             "UPDATE identity.pats \
-             SET created_at = now() - interval '2 hours', \
-                 expires_at = now() - interval '1 hour' \
+             SET expires_at = created_at + interval '1 microsecond' \
              WHERE token_prefix = $1",
             &[&expired.record().prefix()],
         )
         .await
-        .expect("age the expiring token");
+        .expect("expire the expiring token");
     assert!(
         authenticate_pat(&client, expired.token())
             .await
             .expect("reject expired token")
             .is_none()
     );
-
-    // Revocation is a one-way stamp and repeating it changes nothing.
-    let revocable = issue_pat(&client, human.id(), "revocable", TTL)
-        .await
-        .expect("issue revocable token");
-    let revoked = revoke_pat(&client, revocable.record().prefix())
-        .await
-        .expect("revoke token");
-    assert!(revoked.revoked_at().is_some());
     assert!(
         authenticate_pat(&client, revocable.token())
             .await
@@ -198,13 +257,12 @@ async fn platform_pat_round_trip_on_postgres() {
     );
 
     // Listing returns the stored metadata, newest first, and no token material.
-    // `expiring` sorts last because its issuance was aged two hours above.
     let listed = list_pats(&client, human.id())
         .await
         .expect("list human tokens");
     assert_eq!(
         listed.iter().map(|pat| pat.label()).collect::<Vec<_>>(),
-        ["revocable", "laptop", "expiring"]
+        ["expiring", "revocable", "laptop"]
     );
     assert!(listed.iter().all(|pat| pat.prefix().len() == 16));
     assert!(!format!("{listed:?}").contains(&token));
@@ -242,6 +300,80 @@ async fn platform_pat_round_trip_on_postgres() {
 }
 
 /// Forge a token that keeps its lookup prefix but carries a different secret.
+/// Begin a transaction that binds wamn:provisioning, as the identity issuer and
+/// wamn-ctl do.
+async fn provisioning_transaction(client: &mut Client) -> Transaction<'_> {
+    let transaction = client
+        .transaction()
+        .await
+        .expect("begin a provisioning transaction");
+    transaction
+        .batch_execute(&bind_platform_principal_sql(
+            PlatformComponent::Provisioning,
+        ))
+        .await
+        .expect("bind wamn:provisioning");
+    transaction
+}
+
+struct PatStamps {
+    created_at: String,
+    created_by: String,
+    updated_at: String,
+    updated_by: String,
+    updated_after_created: bool,
+}
+
+async fn pat_stamps(client: &Client, prefix: &str) -> PatStamps {
+    let row = client
+        .query_one(
+            "SELECT created_at::text, created_by::text, updated_at::text, updated_by::text, \
+                    updated_at > created_at \
+             FROM identity.pats WHERE token_prefix = $1",
+            &[&prefix],
+        )
+        .await
+        .expect("read token stamps");
+    PatStamps {
+        created_at: row.get(0),
+        created_by: row.get(1),
+        updated_at: row.get(2),
+        updated_by: row.get(3),
+        updated_after_created: row.get(4),
+    }
+}
+
+/// The pats foreign key carries the principal kind, so no token names the
+/// platform principal, through the library or through direct SQL.
+async fn platform_principal_cannot_hold_a_token(client: &Client, provisioning: &str) {
+    let principal: PrincipalId = provisioning
+        .parse()
+        .expect("a derived id is a principal id");
+    assert_eq!(
+        issue_pat(client, &principal, "platform", TTL)
+            .await
+            .expect_err("a platform principal must not gain a token")
+            .kind(),
+        IdentityErrorKind::Database
+    );
+    for (kind, code) in [
+        ("platform", SqlState::CHECK_VIOLATION),
+        ("human", SqlState::FOREIGN_KEY_VIOLATION),
+        ("service", SqlState::FOREIGN_KEY_VIOLATION),
+    ] {
+        let error = client
+            .execute(
+                "INSERT INTO identity.pats \
+                   (principal_id, principal_kind, token_prefix, token_hash, label, expires_at) \
+                 VALUES ($1::text::uuid, $2, $3, $4, 'platform', now() + interval '1 hour')",
+                &[&provisioning, &kind, &"e".repeat(16), &"e".repeat(64)],
+            )
+            .await
+            .expect_err("direct SQL must not bind a token to the platform principal");
+        assert_eq!(error.code(), Some(&code), "{kind}");
+    }
+}
+
 fn flip_last_hex_digit(token: &str) -> String {
     let (head, last) = token.split_at(token.len() - 1);
     let replacement = if last == "a" { 'b' } else { 'a' };

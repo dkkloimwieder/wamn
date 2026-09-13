@@ -18,6 +18,8 @@ tokio-postgres = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "net", "io-util", "sync"] }
+# The live tests apply the system schema composition and bind platform principals.
+wamn-control-provision = { workspace = true }
 
 [lints]
 workspace = true

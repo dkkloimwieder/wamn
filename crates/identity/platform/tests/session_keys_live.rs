@@ -8,6 +8,7 @@ use tokio::sync::oneshot;
 use tokio::task::JoinSet;
 use tokio_postgres::config::{Host, SslMode};
 use tokio_postgres::{Client, NoTls};
+use wamn_control_provision::SYSTEM_SCHEMA_SQL;
 use wamn_platform_identity::session_keys::{
     PublicSessionKey, activate_session_key, publish_session_key, remove_compromised_session_key,
     retire_session_keys, session_jwks,
@@ -19,7 +20,6 @@ use wamn_platform_identity::session_token::{
 
 const ISSUER: &str = "https://identity.lifecycle.internal";
 const OTHER_ISSUER: &str = "https://other.lifecycle.internal";
-const SYSTEM_SCHEMA: &str = include_str!("../../../../deploy/sql/system-schema.sql");
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires an explicitly armed disposable PostgreSQL database"]
@@ -404,7 +404,7 @@ async fn prepare_database() -> (String, Client) {
         .await
         .expect("prepare empty platform schemas");
     admin
-        .batch_execute(SYSTEM_SCHEMA)
+        .batch_execute(SYSTEM_SCHEMA_SQL)
         .await
         .expect("apply production system schema");
     (url, admin)

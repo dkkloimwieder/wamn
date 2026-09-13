@@ -3,9 +3,9 @@
 use anyhow::Context as _;
 
 use super::{
-    Duration, IdentityErrorKind, NoTls, PatClient, Path, Principal, PrincipalKind,
-    PrincipalStatus, Triple, Value, assign_project_role, authenticate_pat, create_service,
-    json, resolve_subject, revoke_pat, route_caller_subject, write_secret_json,
+    Client, Duration, IdentityErrorKind, NoTls, PatClient, Path, Principal, PrincipalKind,
+    PrincipalStatus, Triple, Value, assign_project_role, authenticate_pat, create_service, json,
+    provisioning_transaction, resolve_subject, revoke_pat, route_caller_subject, write_secret_json,
 };
 
 /// Provisioning PATs retain their existing 30-day lifetime.
@@ -71,7 +71,7 @@ pub(super) async fn issue_pat_secrets(
     management_author_path: Option<&Path>,
     route_caller_path: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let (client, connection) = tokio_postgres::connect(system_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect for PAT issuance")?;
     let connection_task = tokio::spawn(connection);
@@ -82,7 +82,7 @@ pub(super) async fn issue_pat_secrets(
             .context("SET ROLE wamn_system for PAT issuance")?;
         if let Some(path) = management_author_path {
             issue_pat_secret(
-                &client,
+                &mut client,
                 pat_client,
                 triple,
                 namespace,
@@ -92,7 +92,15 @@ pub(super) async fn issue_pat_secrets(
             .await?;
         }
         if let Some(path) = route_caller_path {
-            issue_pat_secret(&client, pat_client, triple, namespace, ROUTE_CALLER, path).await?;
+            issue_pat_secret(
+                &mut client,
+                pat_client,
+                triple,
+                namespace,
+                ROUTE_CALLER,
+                path,
+            )
+            .await?;
         }
         Ok::<(), anyhow::Error>(())
     }
@@ -103,7 +111,7 @@ pub(super) async fn issue_pat_secrets(
 }
 
 async fn issue_pat_secret(
-    client: &tokio_postgres::Client,
+    client: &mut Client,
     pat_client: &PatClient,
     triple: &Triple,
     namespace: &str,
@@ -117,8 +125,9 @@ async fn issue_pat_secret(
         principal.status() == PrincipalStatus::Active,
         "service principal {subject:?} is disabled"
     );
+    let transaction = provisioning_transaction(client).await?;
     assign_project_role(
-        client,
+        &transaction,
         principal.id(),
         &triple.org,
         &triple.project,
@@ -126,12 +135,16 @@ async fn issue_pat_secret(
     )
     .await
     .with_context(|| format!("assign {} role", purpose.role))?;
+    transaction
+        .commit()
+        .await
+        .with_context(|| format!("commit {} role", purpose.role))?;
 
     let issued = pat_client
         .issue(principal.id(), purpose.purpose, PAT_TTL)
         .await
         .with_context(|| format!("issue {} PAT", purpose.purpose))?;
-    let authenticated = authenticate_pat(client, &issued.token)
+    let authenticated = authenticate_pat(&*client, &issued.token)
         .await
         .with_context(|| format!("authenticate newly issued {} PAT", purpose.purpose))?
         .with_context(|| format!("newly issued {} PAT did not authenticate", purpose.purpose))?;
@@ -160,21 +173,32 @@ async fn issue_pat_secret(
 }
 
 async fn resolve_or_create_service(
-    client: &tokio_postgres::Client,
+    client: &mut Client,
     subject: &str,
     display_name: &str,
 ) -> anyhow::Result<Principal> {
-    if let Some(principal) = resolve_subject(client, PrincipalKind::Service, subject)
+    if let Some(principal) = resolve_subject(&*client, PrincipalKind::Service, subject)
         .await
         .context("resolve service principal")?
     {
         return Ok(principal);
     }
 
-    match create_service(client, subject, display_name).await {
-        Ok(principal) => Ok(principal),
+    let transaction = provisioning_transaction(client).await?;
+    match create_service(&transaction, subject, display_name).await {
+        Ok(principal) => {
+            transaction
+                .commit()
+                .await
+                .context("commit service principal")?;
+            Ok(principal)
+        }
         Err(error) if error.kind() == IdentityErrorKind::Conflict => {
-            resolve_subject(client, PrincipalKind::Service, subject)
+            transaction
+                .rollback()
+                .await
+                .context("roll back conflicting service principal")?;
+            resolve_subject(&*client, PrincipalKind::Service, subject)
                 .await
                 .context("resolve concurrently created service principal")?
                 .context("service principal conflict was not resolvable")
@@ -184,7 +208,7 @@ async fn resolve_or_create_service(
 }
 
 pub(super) async fn revoke_provisioning_pat(system_url: &str, prefix: &str) -> anyhow::Result<()> {
-    let (client, connection) = tokio_postgres::connect(system_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect for PAT revocation")?;
     let connection_task = tokio::spawn(connection);
@@ -193,9 +217,14 @@ pub(super) async fn revoke_provisioning_pat(system_url: &str, prefix: &str) -> a
             .batch_execute("SET ROLE wamn_system")
             .await
             .context("SET ROLE wamn_system for PAT revocation")?;
-        revoke_pat(&client, prefix)
+        let transaction = provisioning_transaction(&mut client).await?;
+        revoke_pat(&transaction, prefix)
             .await
             .context("revoke PAT by prefix")?;
+        transaction
+            .commit()
+            .await
+            .context("commit PAT revocation")?;
         Ok::<(), anyhow::Error>(())
     }
     .await;

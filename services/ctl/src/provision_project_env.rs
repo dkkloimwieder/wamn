@@ -70,7 +70,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use clap::Args;
 use ring::rand::SystemRandom;
 use serde_json::{Value, json};
-use tokio_postgres::{Config as PgConfig, GenericClient, NoTls};
+use tokio_postgres::{Client, Config as PgConfig, GenericClient, NoTls, Transaction};
 use url::Url;
 
 use wamn_control_provision::SystemReader;
@@ -78,11 +78,11 @@ use wamn_control_provision::session_target::{SessionTarget, validate_session_ten
 use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, EffectWriterCredentialScope,
-    EffectWriterCredentialValidity, INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, WorkloadRoleFamily,
-    WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind,
-    compose_url, effect_writer_credential, legacy_effect_writer_generation_role,
-    project_env_database_name, project_env_namespace, project_env_secret_name,
-    render_project_env_database, render_project_env_secret_manifest,
+    EffectWriterCredentialValidity, INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, PlatformComponent,
+    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody,
+    WorkloadSecretBodyKind, bind_platform_principal_sql, compose_url, effect_writer_credential,
+    legacy_effect_writer_generation_role, project_env_database_name, project_env_namespace,
+    project_env_secret_name, render_project_env_database, render_project_env_secret_manifest,
     render_workload_secret_manifest, sql, validate_instance_suffix, validate_project_env,
     workload_generation_role,
 };
@@ -571,6 +571,26 @@ pub fn privilege_sql(database: &str) -> String {
         app = quote_ident(APP_ROLE),
         reader_connect = sql::revoke_dispatch_reader_connect_sql(database),
     )
+}
+
+/// Begin a system database transaction that writes as `wamn:provisioning`.
+///
+/// The identity relations stamp the bound actor. The binding ends with the
+/// transaction.
+pub(crate) async fn provisioning_transaction(
+    client: &mut Client,
+) -> anyhow::Result<Transaction<'_>> {
+    let transaction = client
+        .transaction()
+        .await
+        .context("begin a system database write transaction")?;
+    transaction
+        .batch_execute(&bind_platform_principal_sql(
+            PlatformComponent::Provisioning,
+        ))
+        .await
+        .context("bind wamn:provisioning as the actor")?;
+    Ok(transaction)
 }
 
 pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {

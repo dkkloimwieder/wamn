@@ -24,6 +24,15 @@
 -- what .6 provision-org connects as. A superuser driving the apply `SET ROLE
 -- wamn_system` first.
 --
+-- RECORD HISTORY: the four identity authority relations carry created_at,
+-- created_by, updated_at, and updated_by as NOT NULL columns, and a
+-- record_history_stamp trigger that calls wamn_history.stamp_row(). An applier
+-- installs deploy/sql/record-history.sql first. The SYSTEM_SCHEMA_SQL
+-- composition in wamn-control-provision carries it. That file grants to
+-- wamn_db_owner, so an applier that runs as wamn_system creates that role
+-- first. Every write to these relations binds app.user_id: the identity issuer
+-- and wamn-ctl bind wamn:provisioning, and test fixtures bind a principal.
+--
 -- THE GENERIC DEPLOYMENT MODEL (D18, wamn-8df.3;
 -- org-scoped policies + templates, wamn-8df.4): the closed tier/env CHECK
 -- enumerations are RETIRED. `env` is a validated slug resolving a
@@ -199,6 +208,16 @@ CREATE TABLE registry.projects (
 -- an external OIDC adapter may resolve a human subject through this same core.
 -- Role slugs are opaque: permission meaning belongs to the management
 -- authorization boundary.
+--
+-- `kind` is human, service, or platform. A platform row names a platform
+-- component that writes in this database, and only wamn:provisioning does. The
+-- row carries its `wamn:<component>` name in `subject` and in `display_name`,
+-- and the id that `wamn-project-state` derives from that name.
+-- `principals_platform_principal_check` pins the subject, display name, and id
+-- of each platform row, and it refuses a `wamn:` display name on another kind.
+-- The subject pattern refuses a colon on another kind. PostgreSQL has no
+-- UUIDv5, so a Rust test compares the literal with the derivation. A platform
+-- principal cannot authenticate.
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.principals (
     id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -207,22 +226,44 @@ CREATE TABLE identity.principals (
     display_name text NOT NULL,
     status       text NOT NULL DEFAULT 'active',
     disabled_at  timestamptz,
-    created_at   timestamptz NOT NULL DEFAULT now(),
-    updated_at   timestamptz NOT NULL DEFAULT now(),
+    created_at   timestamptz NOT NULL,
+    created_by   uuid NOT NULL,
+    updated_at   timestamptz NOT NULL,
+    updated_by   uuid NOT NULL,
     UNIQUE (id, kind),
     UNIQUE (kind, subject),
     CONSTRAINT principals_kind_check
-        CHECK (kind IN ('human', 'service')),
+        CHECK (kind IN ('human', 'service', 'platform')),
     CONSTRAINT principals_subject_check
-        CHECK (subject ~ '^[a-z0-9][a-z0-9._@+-]*$'
-               AND char_length(subject) <= 254),
+        CHECK (kind = 'platform'
+               OR (subject ~ '^[a-z0-9][a-z0-9._@+-]*$'
+                   AND char_length(subject) <= 254)),
     CONSTRAINT principals_display_name_check
         CHECK (btrim(display_name) <> '' AND char_length(display_name) <= 200),
     CONSTRAINT principals_status_check
         CHECK (status IN ('active', 'disabled')),
     CONSTRAINT principals_disabled_at_check
-        CHECK ((status = 'disabled') = (disabled_at IS NOT NULL))
+        CHECK ((status = 'disabled') = (disabled_at IS NOT NULL)),
+    CONSTRAINT principals_platform_principal_check
+        CHECK (CASE WHEN kind = 'platform'
+                    THEN (subject, display_name, id) IN (
+                             ('wamn:provisioning', 'wamn:provisioning', '770df186-ac15-579e-b46b-c297cae2011b'::uuid))
+                    ELSE display_name NOT LIKE 'wamn:%'
+               END)
 );
+CREATE TRIGGER record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.principals
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
+
+-- The wamn:provisioning row is the first row in this database. The block binds
+-- that principal for the current transaction, so the row stamps itself.
+DO $provisioning$ BEGIN
+  PERFORM pg_catalog.set_config('app.user_id', '770df186-ac15-579e-b46b-c297cae2011b', true);
+  INSERT INTO identity.principals (id, kind, subject, display_name)
+  VALUES ('770df186-ac15-579e-b46b-c297cae2011b', 'platform',
+          'wamn:provisioning', 'wamn:provisioning');
+END $provisioning$;
 
 CREATE TABLE identity.project_roles (
     principal_id uuid NOT NULL
@@ -230,13 +271,20 @@ CREATE TABLE identity.project_roles (
     org          text NOT NULL,
     project      text NOT NULL,
     role         text NOT NULL,
-    assigned_at  timestamptz NOT NULL DEFAULT now(),
+    created_at   timestamptz NOT NULL,
+    created_by   uuid NOT NULL,
+    updated_at   timestamptz NOT NULL,
+    updated_by   uuid NOT NULL,
     PRIMARY KEY (principal_id, org, project, role),
     FOREIGN KEY (org, project)
         REFERENCES registry.projects (org, id) ON DELETE CASCADE,
     CONSTRAINT project_roles_role_check
         CHECK (role ~ '^[a-z0-9][a-z0-9-]*$' AND char_length(role) <= 64)
 );
+CREATE TRIGGER record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.project_roles
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- ---------------------------------------------------------------------------
 -- Personal access tokens (wamn-ctc8.7) — the opaque bearer presenter both
@@ -247,18 +295,26 @@ CREATE TABLE identity.project_roles (
 -- high-entropy random material, so a plain digest is the correct rest form.
 -- Expiry is mandatory (no immortal tokens) and revocation is a one-way stamp.
 -- The principal FK is deliberately RESTRICT, not CASCADE: a token row is audit
--- evidence that must outlive careless principal deletes.
+-- evidence that must outlive careless principal deletes. The FK carries the
+-- principal kind, and `pats_principal_kind_check` refuses a platform principal.
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.pats (
-    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    principal_id uuid NOT NULL
-        REFERENCES identity.principals (id) ON DELETE RESTRICT,
-    token_prefix text NOT NULL UNIQUE,
-    token_hash   text NOT NULL,
-    label        text NOT NULL,
-    created_at   timestamptz NOT NULL DEFAULT now(),
-    expires_at   timestamptz NOT NULL,
-    revoked_at   timestamptz,
+    id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    principal_id   uuid NOT NULL,
+    principal_kind text NOT NULL,
+    token_prefix   text NOT NULL UNIQUE,
+    token_hash     text NOT NULL,
+    label          text NOT NULL,
+    created_at     timestamptz NOT NULL,
+    created_by     uuid NOT NULL,
+    updated_at     timestamptz NOT NULL,
+    updated_by     uuid NOT NULL,
+    expires_at     timestamptz NOT NULL,
+    revoked_at     timestamptz,
+    FOREIGN KEY (principal_id, principal_kind)
+        REFERENCES identity.principals (id, kind) ON DELETE RESTRICT,
+    CONSTRAINT pats_principal_kind_check
+        CHECK (principal_kind IN ('human', 'service')),
     CONSTRAINT pats_token_prefix_check
         CHECK (token_prefix ~ '^[0-9a-f]{16}$'),
     CONSTRAINT pats_token_hash_check
@@ -268,6 +324,11 @@ CREATE TABLE identity.pats (
     CONSTRAINT pats_expiry_check
         CHECK (expires_at > created_at)
 );
+
+CREATE TRIGGER record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.pats
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
 
@@ -376,7 +437,10 @@ CREATE TABLE identity.project_env_memberships (
     org            text NOT NULL,
     project        text NOT NULL,
     env            text NOT NULL,
-    granted_at     timestamptz NOT NULL DEFAULT now(),
+    created_at     timestamptz NOT NULL,
+    created_by     uuid NOT NULL,
+    updated_at     timestamptz NOT NULL,
+    updated_by     uuid NOT NULL,
     PRIMARY KEY (principal_id, org, project, env),
     FOREIGN KEY (principal_id, principal_kind)
         REFERENCES identity.principals (id, kind) ON DELETE CASCADE,
@@ -385,6 +449,10 @@ CREATE TABLE identity.project_env_memberships (
     CONSTRAINT project_env_memberships_human_check
         CHECK (principal_kind = 'human')
 );
+CREATE TRIGGER record_history_stamp
+    BEFORE INSERT OR UPDATE ON identity.project_env_memberships
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 
 -- The env_policies → orgs CASCADE is added HERE, after projects/project_envs
 -- exist: Postgres fires an org DELETE's cascade triggers in creation order, so

@@ -21,7 +21,6 @@ use wamn_platform_identity::session_keys::{PublicSessionKey, SessionJwks, publis
 
 const ISSUER: &str = "https://identity.service.internal";
 const PASSWORD: &str = "identity-surface-fixture-secret";
-const SYSTEM_SCHEMA: &str = include_str!("../../../deploy/sql/system-schema.sql");
 
 #[test]
 fn cli_and_validated_configuration_debug_do_not_disclose_database_credentials() {
@@ -103,6 +102,10 @@ async fn identity_https_has_only_public_jwks_and_health() {
         "fixture requires absent identity authority roles"
     );
     admin
+        .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
+        .await
+        .expect("record history grants name wamn_db_owner");
+    admin
         .batch_execute(
             "DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; \
          DROP SCHEMA IF EXISTS registry CASCADE; \
@@ -113,7 +116,7 @@ async fn identity_https_has_only_public_jwks_and_health() {
         .await
         .expect("prepare disposable system schema owner");
     admin
-        .batch_execute(SYSTEM_SCHEMA)
+        .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
         .await
         .expect("production system schema");
     admin

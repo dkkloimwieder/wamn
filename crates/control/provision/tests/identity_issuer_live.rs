@@ -13,7 +13,7 @@ use wamn_control_provision::identity_issuer::{
     prepare_identity_issuer_generation_sql, retire_identity_issuer_generation_sql,
 };
 use wamn_control_provision::sql::{
-    prepare_workload_generation_sql, revoke_public_connect_floor_sql,
+    ensure_db_owner_role_sql, prepare_workload_generation_sql, revoke_public_connect_floor_sql,
     role_database_grants_sql, terminate_workload_generation_sessions_sql,
 };
 use wamn_control_provision::{
@@ -140,6 +140,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
             &admin,
             "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$; GRANT CREATE ON DATABASE wamn_system TO wamn_system;",
         );
+        run(&admin, ensure_db_owner_role_sql());
         run(
             &admin,
             &format!("SET ROLE wamn_system; {SYSTEM_SCHEMA_SQL} RESET ROLE;"),
@@ -205,6 +206,7 @@ fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
                 "column|identity|pats.label|SELECT|f",
                 "column|identity|pats.principal_id|INSERT|f",
                 "column|identity|pats.principal_id|SELECT|f",
+                "column|identity|pats.principal_kind|INSERT|f",
                 "column|identity|pats.revoked_at|SELECT|f",
                 "column|identity|pats.token_hash|INSERT|f",
                 "column|identity|pats.token_hash|SELECT|f",

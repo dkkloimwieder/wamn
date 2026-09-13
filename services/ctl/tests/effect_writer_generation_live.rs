@@ -32,7 +32,7 @@ const INSTANCE: &str = "k3m9x2p7";
 const RUN_SCHEMA: &str = "wamn_runner_demo";
 const APP_GENERATION_PASSWORD: &str = "effect-writer-app-probe-0123456789abcdef0123456789abcdef";
 const APP_GENERATION_EXPIRES_AT: &str = "2099-01-01T00:00:00Z";
-const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
+const SYSTEM_SCHEMA_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)

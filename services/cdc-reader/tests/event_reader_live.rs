@@ -42,7 +42,7 @@ use wamn_control_registry::sql::{
 };
 use wamn_event_wire::{Causation, Envelope, Op, msg_id, subject};
 
-const SYSTEM_SCHEMA: &str = include_str!("../../../deploy/sql/system-schema.sql");
+const SYSTEM_SCHEMA: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const DB: &str = "wamn_reader_live";
 const ORG: &str = "rl0";

@@ -6079,6 +6079,7 @@ dependencies = [
  "subtle",
  "tokio",
  "tokio-postgres",
+ "wamn-control-provision",
 ]
 
 [[package]]

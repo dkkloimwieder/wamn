@@ -58,6 +58,16 @@ async fn reset_and_install_control(admin: &Client) -> anyhow::Result<()> {
         )
         .await
         .context("seed the auth-only test's declared environment policies")?;
+    // The fixture writes principals and tokens as wamn:provisioning.
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await
+        .context("bind wamn:provisioning for the fixture session")?;
     Ok(())
 }
 
@@ -480,8 +490,8 @@ async fn assert_human_environment_membership(
     .await?;
     admin
         .execute(
-            "UPDATE identity.pats SET created_at = now() - interval '2 hours', \
-         expires_at = now() - interval '1 hour' WHERE token_prefix = $1",
+            "UPDATE identity.pats SET expires_at = created_at + interval '1 microsecond' \
+         WHERE token_prefix = $1",
             &[&expired.record().prefix()],
         )
         .await?;
@@ -687,8 +697,8 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         .expect("mint expiring PAT");
     admin
         .execute(
-            "UPDATE identity.pats SET created_at = now() - interval '2 hours', \
-             expires_at = now() - interval '1 hour' WHERE token_prefix = $1",
+            "UPDATE identity.pats SET expires_at = created_at + interval '1 microsecond' \
+             WHERE token_prefix = $1",
             &[&expired.1],
         )
         .await

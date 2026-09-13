@@ -79,6 +79,16 @@ pub async fn run(args: MembershipTestArgs) -> anyhow::Result<()> {
         .batch_execute("SET ROLE wamn_system")
         .await
         .context("assume identity provisioning authority")?;
+    // The test identity is platform setup, so it writes as wamn:provisioning.
+    system
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await
+        .context("bind wamn:provisioning for the test identity writes")?;
     let nonce: String = system
         .query_one("SELECT gen_random_uuid()::text", &[])
         .await

@@ -84,6 +84,8 @@ pub struct IdentityService {
 struct Inner {
     issuer: String,
     database: Database,
+    // PAT issuance needs a transaction, so it holds its own connection.
+    issuance: Mutex<Database>,
     // Key reads remain available while a signer waits on the rotation barrier.
     signing: Option<Mutex<Database>>,
     targets: BTreeMap<String, ConfiguredTarget>,
@@ -140,6 +142,7 @@ impl IdentityService {
     /// Connect using already validated issuer-scoped authority.
     pub async fn connect(config: IdentityConfig) -> Result<Self, IdentityServiceError> {
         let database = connect(&config).await?;
+        let issuance = Mutex::new(connect(&config).await?);
         let signing = if config.targets.is_empty() {
             None
         } else {
@@ -149,6 +152,7 @@ impl IdentityService {
             inner: Arc::new(Inner {
                 issuer: config.issuer,
                 database,
+                issuance,
                 signing,
                 targets: config
                     .targets

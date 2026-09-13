@@ -19,7 +19,9 @@ use url::Url;
 use wamn_control_provision::identity_issuer::{
     IDENTITY_ISSUER_ROLE, identity_issuer_generation_role, parse_identity_issuer_url,
 };
-use wamn_control_provision::{CredentialGeneration, SYSTEM_SCHEMA_SQL, sql};
+use wamn_control_provision::{
+    CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql, sql,
+};
 use wamn_platform_identity::{PrincipalId, authenticate_pat, issue_pat};
 
 const ISSUER: &str = "https://identity-issuer-cli-test.wamn-system.svc";
@@ -189,14 +191,14 @@ async fn upgrade_foundation_surface(
 ) -> anyhow::Result<()> {
     let current = stable_acl(admin).await?;
     anyhow::ensure!(
-        current.len() == 36,
+        current.len() == 37,
         "current issuer must hold exactly the approved expanded ACL"
     );
     // Reproduce the installed foundation's actual privileges, not its SQL text.
     admin.batch_execute(
         "REVOKE SELECT (id,kind,subject,display_name,status) ON identity.principals FROM wamn_identity_issuer; \
          REVOKE SELECT (id,principal_id,token_prefix,token_hash,label,created_at,revoked_at,expires_at) ON identity.pats FROM wamn_identity_issuer; \
-         REVOKE INSERT (principal_id,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer; \
+         REVOKE INSERT (principal_id,principal_kind,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer; \
          REVOKE SELECT (principal_id,org,project,env) ON identity.project_env_memberships FROM wamn_identity_issuer; \
          REVOKE SELECT (org,project,env,instance_suffix) ON registry.project_envs FROM wamn_identity_issuer; \
          REVOKE USAGE ON SCHEMA registry FROM wamn_identity_issuer;"
@@ -270,7 +272,7 @@ async fn upgrade_read_only_pat_surface(
     fs::remove_file(b_path)?;
     admin.batch_execute(
         "REVOKE SELECT (id,label,created_at) ON identity.pats FROM wamn_identity_issuer; \
-         REVOKE INSERT (principal_id,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer;"
+         REVOKE INSERT (principal_id,principal_kind,token_prefix,token_hash,label,expires_at) ON identity.pats FROM wamn_identity_issuer;"
     ).await?;
     let previous = stable_acl(admin).await?;
     anyhow::ensure!(
@@ -318,13 +320,26 @@ async fn upgrade_read_only_pat_surface(
 }
 
 async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result<()> {
-    let untouched: bool = admin.query_one(
-        "SELECT NOT EXISTS (SELECT FROM identity.pats) AND NOT EXISTS (SELECT FROM identity.principals)", &[]
-    ).await?.get(0);
+    let untouched: bool = admin
+        .query_one(
+            "SELECT NOT EXISTS (SELECT FROM identity.pats) \
+           AND NOT EXISTS (SELECT FROM identity.principals WHERE kind <> 'platform')",
+            &[],
+        )
+        .await?
+        .get(0);
     anyhow::ensure!(
         untouched,
         "credential provisioning created identity records"
     );
+    // The fixture is platform setup, so it writes as wamn:provisioning.
+    let provisioning = PlatformComponent::Provisioning.principal_id().to_string();
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&provisioning],
+        )
+        .await?;
     let id: String = admin
         .query_one(
             "INSERT INTO identity.principals (kind,subject,display_name) \
@@ -335,6 +350,14 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
         .get(0);
     let principal: PrincipalId = id.parse()?;
     for issuer in [a, b] {
+        // The issuer binds wamn:provisioning in its write transaction, as wamn-identity does.
+        issuer
+            .batch_execute(&format!(
+                "BEGIN; {}",
+                bind_platform_principal_sql(PlatformComponent::Provisioning)
+            ))
+            .await
+            .context("bind wamn:provisioning in the issuer transaction")?;
         let issued = issue_pat(
             issuer,
             &principal,
@@ -343,6 +366,19 @@ async fn pat_authority(admin: &Client, a: &Client, b: &Client) -> anyhow::Result
         )
         .await
         .context("issue PAT through the scoped identity credential")?;
+        issuer
+            .batch_execute("COMMIT")
+            .await
+            .context("commit the issuer transaction")?;
+        let stamped: bool = admin
+            .query_one(
+                "SELECT created_by = $1::text::uuid AND updated_by = $1::text::uuid \
+                 FROM identity.pats WHERE token_prefix = $2",
+                &[&provisioning, &issued.record().prefix()],
+            )
+            .await?
+            .get(0);
+        anyhow::ensure!(stamped, "the issuer PAT must stamp wamn:provisioning");
         anyhow::ensure!(
             issued.record().label() == "scoped issuer test"
                 && issued.record().revoked_at().is_none(),
@@ -447,6 +483,7 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
          GRANT CREATE ON DATABASE wamn_system TO wamn_system;",
         )
         .await?;
+    admin.batch_execute(sql::ensure_db_owner_role_sql()).await?;
     admin
         .batch_execute(&format!(
             "SET ROLE wamn_system; {SYSTEM_SCHEMA_SQL} RESET ROLE;"
@@ -584,7 +621,8 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
         .context("B survived unused A abort")?;
     let empty: bool = admin.query_one(
         "SELECT NOT EXISTS (SELECT FROM identity.session_keys) AND NOT EXISTS (SELECT FROM identity.session_signing_state) \
-           AND NOT EXISTS (SELECT FROM identity.pats) AND NOT EXISTS (SELECT FROM identity.principals)", &[]
+           AND NOT EXISTS (SELECT FROM identity.pats) \
+           AND NOT EXISTS (SELECT FROM identity.principals WHERE kind <> 'platform')", &[]
     ).await?.get(0);
     anyhow::ensure!(
         empty,

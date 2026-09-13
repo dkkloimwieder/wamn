@@ -51,6 +51,7 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
     let setup=async {
         admin.batch_execute("CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS").await?;
         admin.batch_execute(&sql::ensure_control_author_acl_role_sql()).await?;
+        admin.batch_execute(sql::ensure_db_owner_role_sql()).await?;
         admin.batch_execute("CREATE DATABASE wamn_system OWNER wamn_system").await?;
         Ok::<_,anyhow::Error>(())
     }.await;

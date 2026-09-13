@@ -1880,8 +1880,9 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
         client
     };
     let mut first = connect().await;
-    first.batch_execute("DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS wamn_run CASCADE; DROP SCHEMA IF EXISTS wamn_authority CASCADE; DROP SCHEMA IF EXISTS registry CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; DROP SCHEMA IF EXISTS identity CASCADE; CREATE EXTENSION IF NOT EXISTS pgcrypto;
-DO $roles$ DECLARE role_name text; BEGIN FOREACH role_name IN ARRAY ARRAY['wamn_system','wamn_control_author','wamn_app','wamn_scenario_author'] LOOP
+    // A test that ran first in this database can own wamn_history, so the reset drops it.
+    first.batch_execute("DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS wamn_run CASCADE; DROP SCHEMA IF EXISTS wamn_authority CASCADE; DROP SCHEMA IF EXISTS registry CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS wamn_history CASCADE; CREATE EXTENSION IF NOT EXISTS pgcrypto;
+DO $roles$ DECLARE role_name text; BEGIN FOREACH role_name IN ARRAY ARRAY['wamn_system','wamn_control_author','wamn_app','wamn_scenario_author','wamn_db_owner'] LOOP
 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname=role_name) THEN EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS',role_name); END IF; END LOOP;
 EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system',current_database()); END $roles$;
 SET ROLE wamn_system;").await.unwrap();

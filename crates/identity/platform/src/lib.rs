@@ -8,6 +8,10 @@
 //! or per-project `app_system` authority: every function here is
 //! transport-neutral and takes an already-open client. An OIDC adapter may
 //! resolve an externally authenticated subject through [`resolve_subject`].
+//!
+//! Principals, project roles, memberships, and tokens carry record-history
+//! stamps. A caller that writes them binds `app.user_id` in the same
+//! transaction. Without a bound actor, the write fails with SQLSTATE `55000`.
 
 use std::fmt;
 use std::time::Duration;
@@ -43,7 +47,7 @@ const SELECT_PRINCIPAL_BY_SUBJECT_SQL: &str = "SELECT id::text, kind, subject, \
     display_name, status FROM identity.principals \
     WHERE kind = $1 AND subject = $2";
 const DISABLE_PRINCIPAL_SQL: &str = "UPDATE identity.principals \
-    SET status = 'disabled', disabled_at = COALESCE(disabled_at, now()), updated_at = now() \
+    SET status = 'disabled', disabled_at = COALESCE(disabled_at, now()) \
     WHERE id = $1::text::uuid \
     RETURNING id::text, kind, subject, display_name, status";
 const ASSIGN_PROJECT_ROLE_SQL: &str = "INSERT INTO identity.project_roles \
@@ -63,8 +67,8 @@ const REVOKE_PROJECT_ENV_MEMBERSHIP_SQL: &str = "DELETE FROM identity.project_en
 // text rendered by PostgreSQL, so the crate needs no calendar dependency and a
 // later transport can put the value straight on the wire.
 const INSERT_PAT_SQL: &str = "INSERT INTO identity.pats \
-    (principal_id, token_prefix, token_hash, label, expires_at) \
-    SELECT p.id, $2, $3, $4, now() + ($5::bigint * interval '1 second') \
+    (principal_id, principal_kind, token_prefix, token_hash, label, expires_at) \
+    SELECT p.id, p.kind, $2, $3, $4, now() + ($5::bigint * interval '1 second') \
     FROM identity.principals p \
     WHERE p.id = $1::text::uuid AND p.status = 'active' \
     RETURNING id::text, token_prefix, label, \
@@ -146,6 +150,9 @@ pub enum PrincipalKind {
     Human,
     /// A non-human client that authenticates through a machine presenter.
     Service,
+    /// A platform component that writes in the system database. It cannot
+    /// authenticate.
+    Platform,
 }
 
 impl PrincipalKind {
@@ -154,6 +161,7 @@ impl PrincipalKind {
         match self {
             Self::Human => "human",
             Self::Service => "service",
+            Self::Platform => "platform",
         }
     }
 
@@ -161,6 +169,7 @@ impl PrincipalKind {
         match value {
             "human" => Ok(Self::Human),
             "service" => Ok(Self::Service),
+            "platform" => Ok(Self::Platform),
             other => Err(IdentityError::new(
                 IdentityErrorKind::CorruptData,
                 format!("unknown stored principal kind {other:?}"),
@@ -268,7 +277,7 @@ impl Principal {
         &self.id
     }
 
-    /// Return whether this is a human or service principal.
+    /// Return whether this is a human, service, or platform principal.
     pub const fn kind(&self) -> PrincipalKind {
         self.kind
     }
@@ -625,6 +634,14 @@ fn decide_pat(
     };
 
     let principal = decode_principal(&row)?;
+    // The pats foreign key refuses a platform principal, so a stored token
+    // for one is corrupt data. It never authenticates.
+    if principal.kind == PrincipalKind::Platform {
+        return Err(IdentityError::new(
+            IdentityErrorKind::CorruptData,
+            "stored token names a platform principal",
+        ));
+    }
     let stored_hash: String = row.try_get(5).map_err(database_error)?;
     let usable: bool = row.try_get(6).map_err(database_error)?;
     if !digest_matches(&stored_hash, &digest_token(token))
@@ -1093,6 +1110,22 @@ mod tests {
                 assert!(statement.contains(relation), "{relation} is not read here");
             }
         }
+    }
+
+    #[test]
+    fn principal_kind_literals_round_trip() {
+        for kind in [
+            PrincipalKind::Human,
+            PrincipalKind::Service,
+            PrincipalKind::Platform,
+        ] {
+            assert_eq!(PrincipalKind::parse(kind.as_str()).unwrap(), kind);
+        }
+        assert_eq!(PrincipalKind::Platform.as_str(), "platform");
+        assert_eq!(
+            PrincipalKind::parse("robot").unwrap_err().kind(),
+            IdentityErrorKind::CorruptData
+        );
     }
 
     #[test]

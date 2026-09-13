@@ -11,6 +11,8 @@ use wamn_platform_identity::{
     PrincipalId, grant_project_env_membership, revoke_project_env_membership,
 };
 
+use crate::provision_project_env::provisioning_transaction;
+
 /// Arguments that name one existing human and one existing project environment.
 #[derive(Debug, Args)]
 pub struct ProjectEnvMembershipArgs {
@@ -59,7 +61,7 @@ fn validate_args(args: &ProjectEnvMembershipArgs) -> anyhow::Result<PrincipalId>
 
 async fn run(args: ProjectEnvMembershipArgs, action: Action) -> anyhow::Result<()> {
     let principal_id = validate_args(&args)?;
-    let (client, connection) = tokio_postgres::connect(&args.system_database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(&args.system_database_url, NoTls)
         .await
         .context("connect to the system database for project environment membership")?;
     let connection_task = tokio::spawn(connection);
@@ -68,10 +70,11 @@ async fn run(args: ProjectEnvMembershipArgs, action: Action) -> anyhow::Result<(
             .batch_execute("SET ROLE wamn_system")
             .await
             .context("SET ROLE wamn_system for project environment membership")?;
+        let transaction = provisioning_transaction(&mut client).await?;
         match action {
             Action::Grant => {
                 grant_project_env_membership(
-                    &client,
+                    &transaction,
                     &principal_id,
                     &args.org,
                     &args.project,
@@ -82,7 +85,7 @@ async fn run(args: ProjectEnvMembershipArgs, action: Action) -> anyhow::Result<(
             }
             Action::Revoke => {
                 revoke_project_env_membership(
-                    &client,
+                    &transaction,
                     &principal_id,
                     &args.org,
                     &args.project,
@@ -92,6 +95,10 @@ async fn run(args: ProjectEnvMembershipArgs, action: Action) -> anyhow::Result<(
                 .context("revoke project environment membership")?;
             }
         }
+        transaction
+            .commit()
+            .await
+            .context("commit project environment membership")?;
         Ok::<(), anyhow::Error>(())
     }
     .await;

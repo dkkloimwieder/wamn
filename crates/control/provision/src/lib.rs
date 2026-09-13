@@ -154,7 +154,15 @@ pub use workload_role::{
 };
 
 /// Core control-database schema, applied first by a fresh bootstrap.
-pub const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/system-schema.sql");
+///
+/// It carries `deploy/sql/record-history.sql` first, because the identity
+/// relations have stamp triggers. That file grants to `wamn_db_owner`, so an
+/// applier that runs as `wamn_system` runs [`sql::ensure_db_owner_role_sql`]
+/// before it.
+pub const SYSTEM_SCHEMA_SQL: &str = concat!(
+    include_str!("../../../../deploy/sql/record-history.sql"),
+    include_str!("../../../../deploy/sql/system-schema.sql"),
+);
 
 /// Dormant portable-store extension, applied after [`SYSTEM_SCHEMA_SQL`].
 pub const CONTROL_PORTABLE_STORE_SQL: &str = concat!(

@@ -19,8 +19,9 @@ pub const IDENTITY_ISSUER_DATABASE: &str = "wamn_system";
 /// Tables that allow full row mutations by the signing authority.
 pub const IDENTITY_ISSUER_TABLES: [&str; 2] = ["session_keys", "session_signing_state"];
 /// Columns that allow PAT issuance without update or deletion authority.
-pub const IDENTITY_ISSUER_PAT_INSERT_COLUMNS: [&str; 5] = [
+pub const IDENTITY_ISSUER_PAT_INSERT_COLUMNS: [&str; 6] = [
     "principal_id",
+    "principal_kind",
     "token_prefix",
     "token_hash",
     "label",
@@ -371,7 +372,7 @@ mod tests {
              ON TABLE \"identity\".\"project_env_memberships\" TO \"wamn_identity_issuer\"; \
              GRANT SELECT (\"org\", \"project\", \"env\", \"instance_suffix\") \
              ON TABLE \"registry\".\"project_envs\" TO \"wamn_identity_issuer\"; \
-             GRANT INSERT (\"principal_id\", \"token_prefix\", \"token_hash\", \"label\", \"expires_at\") \
+             GRANT INSERT (\"principal_id\", \"principal_kind\", \"token_prefix\", \"token_hash\", \"label\", \"expires_at\") \
              ON TABLE identity.pats TO \"wamn_identity_issuer\";"
         );
     }

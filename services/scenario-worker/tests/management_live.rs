@@ -885,6 +885,10 @@ async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
         ))
         .await
         .context("reset management-live schemas and mint the control-author generation")?;
+    admin
+        .batch_execute(sql::ensure_db_owner_role_sql())
+        .await
+        .context("ensure the database-owner role that the record history grants name")?;
     // The fresh-control bootstrap record: identity registry AND portable store in
     // the one control database, applied as its documented owner.
     admin
@@ -935,6 +939,16 @@ async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
         ))
         .await
         .context("seed the registry org and projects the role FK needs")?;
+    // The fixture is platform setup, so its identity writes stamp wamn:provisioning.
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&wamn_control_provision::PlatformComponent::Provisioning
+                .principal_id()
+                .to_string()],
+        )
+        .await
+        .context("bind wamn:provisioning for the fixture session")?;
     Ok(())
 }
 
@@ -1352,11 +1366,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .expect("admit the expiring principal");
     admin
         .execute(
-            // `expires_at > created_at` is a stored invariant, so an aged token
-            // moves both instants rather than only its expiry.
+            // `expires_at > created_at` is a stored invariant, and the stamp
+            // trigger keeps created_at, so the token expires just after it.
             "UPDATE identity.pats \
-                SET created_at = now() - interval '2 hours', \
-                    expires_at = now() - interval '1 hour' \
+                SET expires_at = created_at + interval '1 microsecond' \
               WHERE token_prefix = $1",
             &[&expired.record().prefix()],
         )

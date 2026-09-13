@@ -492,12 +492,14 @@ fn charset_length_checks_backstop_the_stored_slug_names() {
     // The id columns (orgs.id, projects.id) mirror the reserved-`wamn` rule
     // (check_id); the pool_cluster / env name columns deliberately do NOT (they
     // may carry the `wamn` prefix / are arbitrary env slugs).
+    // The leading space leaves out `display_name`, whose platform CHECK refuses
+    // a `wamn:` name.
     assert!(
         sql.contains("id <> 'wamn'") && sql.contains("id NOT LIKE 'wamn-%'"),
         "the id charset CHECK must reject the reserved `wamn` prefix"
     );
     assert!(
-        !sql.contains("pool_cluster NOT LIKE") && !sql.contains("name NOT LIKE"),
+        !sql.contains("pool_cluster NOT LIKE") && !sql.contains(" name NOT LIKE"),
         "pool_cluster / env name must NOT carry a reserved-prefix rule"
     );
 }
@@ -599,7 +601,6 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
         return;
     };
 
-    let ddl = system_schema_sql();
     let mut script = String::new();
     script.push_str(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') THEN \
@@ -607,10 +608,11 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          DROP SCHEMA IF EXISTS registry CASCADE;\n\
          DROP SCHEMA IF EXISTS provisioning CASCADE;\n\
          DROP SCHEMA IF EXISTS identity CASCADE;\n\
-         DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $$;\n\
-         SET ROLE wamn_system;\n",
+         DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $$;\n",
     );
-    script.push_str(&ddl);
+    script.push_str(wamn_control_provision::sql::ensure_db_owner_role_sql());
+    script.push_str("\nSET ROLE wamn_system;\n");
+    script.push_str(wamn_control_provision::SYSTEM_SCHEMA_SQL);
     script.push('\n');
     script.push_str(ASSERTIONS);
     // Exercise the REAL org-row builder via PREPARE/EXECUTE: two upserts of the
