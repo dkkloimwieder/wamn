@@ -141,6 +141,8 @@ Include the rendered host Deployment JSON and the application request and expect
 Use absolute paths for these files.
 The Deployment must name the explicit namespace and contain one container with the qualified immutable host image.
 Its `--release-artifact-base` and `--release-manifest-digest` arguments must match the published release.
+For fresh nodes, set `imagePullPolicy: IfNotPresent` so the node can fetch that exact image from its registry.
+The owned application fixtures set this policy for qualified candidates.
 The command permits Kubernetes defaults but refuses changes to supplied container fields or additional container images.
 
 If the candidate includes an executor image, include its Deployment JSON and pass `--executor-deployment`.
