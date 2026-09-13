@@ -360,6 +360,15 @@ pub fn classify(
             return Evidence::Refused(document["error"].clone());
         }
     }
+    // A payload schema refusal also names the offending value.
+    if response.status == 400
+        && let Some(pointer) = document
+            .pointer("/error/data/pointer")
+            .and_then(Value::as_str)
+        && document == json!({"error":{"code":"schema-invalid","data":{"pointer":pointer}}})
+    {
+        return Evidence::Refused(document["error"].clone());
+    }
     if response.status == 403 && contract.direct {
         if let Some(error) = document.get("error")
             && error.get("code").and_then(Value::as_str) == Some("permission-denied")

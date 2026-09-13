@@ -362,6 +362,45 @@ fn exact_ingress_refusals_report_no_dispatch_even_for_composed_routes() {
             Evidence::Uncertain(_)
         ));
     }
+    for pointer in ["", "/0/change/created_by"] {
+        assert!(matches!(
+            classify(
+                &contract,
+                "intent-1",
+                response(
+                    400,
+                    json!({"error":{"code":"schema-invalid","data":{"pointer":pointer}}})
+                )
+            ),
+            Evidence::Refused(_)
+        ));
+    }
+    for data in [
+        json!({}),
+        json!({"pointer":7}),
+        json!({"pointer":"/0","detail":"extra"}),
+        json!({"other":"/0"}),
+    ] {
+        assert!(matches!(
+            classify(
+                &contract,
+                "intent-1",
+                response(400, json!({"error":{"code":"schema-invalid","data":data}}))
+            ),
+            Evidence::Uncertain(_)
+        ));
+    }
+    assert!(matches!(
+        classify(
+            &contract,
+            "intent-1",
+            response(
+                400,
+                json!({"error":{"code":"schema-invalid","message":"downstream failure","data":{"pointer":"/0"}}})
+            )
+        ),
+        Evidence::Uncertain(_)
+    ));
     assert!(matches!(
         classify(
             &contract,
