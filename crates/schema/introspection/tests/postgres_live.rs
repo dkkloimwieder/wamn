@@ -20,7 +20,7 @@ use wamn_schema_introspection::migration_policy::{
 };
 use wamn_schema_introspection::postgres::{
     PostgresIntrospectionError, PostgresIntrospectionErrorKind, read_catalog,
-    read_catalog_excluding_relations,
+    read_catalog_excluding_relations, read_record_history_stamps,
 };
 
 const APPLICATION_SCHEMA: &str = "receiving";
@@ -29,6 +29,7 @@ const FIXTURE_SCHEMA: &str = "wamn_introspection_fixture";
 const STATEMENT_TIMEOUT: &str = "5s";
 const LOCK_TIMEOUT: &str = "2s";
 const TRANSACTION_TIMEOUT: &str = "15s";
+const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-history.sql");
 
 struct Fixture {
     database: String,
@@ -1021,6 +1022,191 @@ async fn assert_refusal_matrix(admin: &Client, reader: &Client) {
     );
 }
 
+/// Introspection admits the platform stamp trigger, records its columns, and
+/// refuses every other trigger shape (spec test 13).
+async fn assert_record_history_stamp_admission(admin: &Client, reader: &Client) {
+    admin
+        .batch_execute(RECORD_HISTORY_SQL)
+        .await
+        .expect("install the platform record-history function");
+    admin
+        .batch_execute(
+            "CREATE TRIGGER record_history_stamp \
+               BEFORE INSERT OR UPDATE ON receiving.purchase_order \
+               FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at')",
+        )
+        .await
+        .expect("install the platform stamp trigger");
+
+    let catalog = read_catalog(reader, &[APPLICATION_SCHEMA])
+        .await
+        .expect("introspection admits the platform stamp trigger");
+    let stamped = catalog
+        .tables()
+        .iter()
+        .filter(|table| !table.record_history_stamp().is_empty())
+        .map(|table| {
+            (
+                table.name().to_owned(),
+                table
+                    .record_history_stamp()
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stamped,
+        [(
+            "purchase_order".to_owned(),
+            vec!["created_at".to_owned(), "updated_at".to_owned()]
+        )],
+        "the catalog IR records the installed stamp trigger and nothing else"
+    );
+    assert_eq!(
+        read_record_history_stamps(reader, &[APPLICATION_SCHEMA])
+            .await
+            .expect("read the stamp triggers alone"),
+        BTreeMap::from([(
+            (APPLICATION_SCHEMA.to_owned(), "purchase_order".to_owned()),
+            vec!["created_at".to_owned(), "updated_at".to_owned()]
+        )])
+    );
+
+    let stamp = "EXECUTE FUNCTION wamn_history.stamp_row('created_at')";
+    let cases = [
+        (
+            "after timing",
+            format!(
+                "CREATE TRIGGER record_history_stamp AFTER INSERT OR UPDATE ON receiving.item \
+                   FOR EACH ROW {stamp}"
+            ),
+            "record_history_stamp",
+            "t.tgtype & 2 = 0",
+        ),
+        (
+            "insert only",
+            format!(
+                "CREATE TRIGGER record_history_stamp BEFORE INSERT ON receiving.item \
+                   FOR EACH ROW {stamp}"
+            ),
+            "record_history_stamp",
+            "t.tgtype & 16 = 0",
+        ),
+        (
+            "statement level",
+            format!(
+                "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+                   FOR EACH STATEMENT {stamp}"
+            ),
+            "record_history_stamp",
+            "t.tgtype & 1 = 0",
+        ),
+        (
+            "column list",
+            format!(
+                "CREATE TRIGGER record_history_stamp \
+                   BEFORE INSERT OR UPDATE OF item_number ON receiving.item \
+                   FOR EACH ROW {stamp}"
+            ),
+            "record_history_stamp",
+            "pg_catalog.cardinality(t.tgattr::pg_catalog.int2[]) > 0",
+        ),
+        (
+            "condition",
+            format!(
+                "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+                   FOR EACH ROW WHEN (NEW.item_number <> '') {stamp}"
+            ),
+            "record_history_stamp",
+            "t.tgqual IS NOT NULL",
+        ),
+        (
+            "disabled",
+            format!(
+                "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+                   FOR EACH ROW {stamp}; \
+                 ALTER TABLE receiving.item DISABLE TRIGGER record_history_stamp"
+            ),
+            "record_history_stamp",
+            "t.tgenabled = 'D'",
+        ),
+        (
+            "unreserved argument",
+            "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+               FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('item_number')"
+                .to_owned(),
+            "record_history_stamp",
+            "t.tgnargs = 1",
+        ),
+        (
+            "repeated argument",
+            "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+               FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_at')"
+                .to_owned(),
+            "record_history_stamp",
+            "t.tgnargs = 2",
+        ),
+        (
+            "no argument",
+            "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+               FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row()"
+                .to_owned(),
+            "record_history_stamp",
+            "t.tgnargs = 0",
+        ),
+        (
+            "other name",
+            format!(
+                "CREATE TRIGGER other_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+                   FOR EACH ROW {stamp}"
+            ),
+            "other_stamp",
+            "true",
+        ),
+        (
+            "other function",
+            "CREATE FUNCTION wamn_introspection_fixture.stamp_row() RETURNS trigger \
+               LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'; \
+             CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+               FOR EACH ROW EXECUTE FUNCTION wamn_introspection_fixture.stamp_row('created_at')"
+                .to_owned(),
+            "record_history_stamp",
+            "t.tgfoid = 'wamn_introspection_fixture.stamp_row()'::pg_catalog.regprocedure",
+        ),
+    ];
+    let matrix = &mut RefusalMatrix::new(admin, reader);
+    for (case, create_sql, trigger, condition) in &cases {
+        refusal_case(
+            matrix,
+            case,
+            create_sql,
+            &format!(
+                "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t \
+                   JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid \
+                   JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
+                  WHERE n.nspname='receiving' AND c.relname='item' \
+                    AND t.tgname='{trigger}' AND {condition})"
+            ),
+            &format!(
+                "DROP TRIGGER {trigger} ON receiving.item; \
+                 DROP FUNCTION IF EXISTS wamn_introspection_fixture.stamp_row()"
+            ),
+            PostgresIntrospectionErrorKind::UnsupportedTrigger,
+        )
+        .await;
+    }
+    assert_eq!(matrix.ran, cases.len());
+    assert!(
+        matrix.failures.is_empty(),
+        "{} of {} stamp trigger refusal cases failed:\n{}",
+        matrix.failures.len(),
+        cases.len(),
+        matrix.failures.join("\n")
+    );
+}
+
 async fn run_gate(admin_config: Config, fixture: Fixture) {
     validate_migration_file(&fixture.migration_path, APPLICATION_SCHEMA)
         .expect("pre-apply policy admits the real Receiving migration");
@@ -1054,6 +1240,7 @@ async fn run_gate(admin_config: Config, fixture: Fixture) {
     add_supported_columns(&migration).await;
     assert_additive_columns(&migration).await;
     assert_refusal_matrix(&target_admin, &migration).await;
+    assert_record_history_stamp_admission(&target_admin, &migration).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

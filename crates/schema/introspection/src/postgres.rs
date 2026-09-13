@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use tokio_postgres::{Client, Row};
+use tokio_postgres::{Client, GenericClient, Row};
 
 use crate::ir::{
     CatalogIr, Column, ColumnGeneration, Constraint, Exclusion, ExclusionAccessMethod,
@@ -126,6 +126,7 @@ struct TableParts {
     constraints: Vec<Constraint>,
     indexes: Vec<Index>,
     exclusions: Vec<Exclusion>,
+    record_history_stamp: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -246,6 +247,16 @@ struct IndexRow {
     predicate: bool,
 }
 
+/// Columns that the record-history stamp trigger selects, keyed by schema and table.
+pub type RecordHistoryStamps = BTreeMap<(String, String), Vec<String>>;
+
+/// The one trigger name that introspection admits.
+const RECORD_HISTORY_STAMP_TRIGGER: &str = "record_history_stamp";
+/// The reserved record-history columns that a stamp trigger can select.
+const RECORD_HISTORY_COLUMNS: [&str; 4] = ["created_at", "created_by", "updated_at", "updated_by"];
+/// `pg_trigger.tgtype` bits for BEFORE INSERT OR UPDATE FOR EACH ROW.
+const BEFORE_INSERT_OR_UPDATE_FOR_EACH_ROW: i16 = 1 | 2 | 4 | 16;
+
 type TableKey = (String, String);
 type AttributeKey = (String, String, i16);
 
@@ -311,12 +322,26 @@ SELECT namespace.nspname::text AS schema_name,
 const TRIGGERS_SQL: &str = r"
 SELECT namespace.nspname::text AS schema_name,
        relation.relname::text AS table_name,
-       trigger.tgname::text AS trigger_name
+       trigger.tgname::text AS trigger_name,
+       routine_namespace.nspname::text AS function_schema,
+       routine.proname::text AS function_name,
+       trigger.tgtype AS trigger_type,
+       trigger.tgenabled::text AS enabled,
+       trigger.tgargs AS arguments,
+       pg_catalog.cardinality(trigger.tgattr::pg_catalog.int2[]) > 0 AS has_column_list,
+       trigger.tgqual IS NOT NULL AS has_condition,
+       trigger.tgconstraint <> 0 AS is_constraint,
+       trigger.tgoldtable IS NOT NULL OR trigger.tgnewtable IS NOT NULL
+           AS has_transition_table
   FROM pg_catalog.pg_trigger AS trigger
   JOIN pg_catalog.pg_class AS relation
     ON relation.oid = trigger.tgrelid
   JOIN pg_catalog.pg_namespace AS namespace
     ON namespace.oid = relation.relnamespace
+  JOIN pg_catalog.pg_proc AS routine
+    ON routine.oid = trigger.tgfoid
+  JOIN pg_catalog.pg_namespace AS routine_namespace
+    ON routine_namespace.oid = routine.pronamespace
  WHERE namespace.nspname = ANY($1::text[])
    AND NOT trigger.tgisinternal
  ORDER BY namespace.nspname, relation.relname, trigger.tgname
@@ -784,6 +809,7 @@ fn validate_relations(
                         constraints: Vec::new(),
                         indexes: Vec::new(),
                         exclusions: Vec::new(),
+                        record_history_stamp: Vec::new(),
                     },
                 );
             }
@@ -872,33 +898,78 @@ async fn refuse_routines(
     ))
 }
 
-async fn refuse_triggers(
-    client: &Client,
+/// Admit only the platform record-history stamp trigger and read its columns.
+///
+/// The admitted shape is `record_history_stamp BEFORE INSERT OR UPDATE FOR EACH
+/// ROW EXECUTE FUNCTION wamn_history.stamp_row(<columns>)`, enabled, with no
+/// column list, condition, constraint, or transition table. Its arguments are
+/// distinct reserved record-history column names. Every other trigger refuses.
+async fn load_record_history_stamps(
+    client: &(impl GenericClient + Sync),
     schemas: &[String],
     excluded_relations: &[(&str, &str)],
-) -> Result<(), PostgresIntrospectionError> {
+) -> Result<RecordHistoryStamps, PostgresIntrospectionError> {
     let rows = client
         .query(TRIGGERS_SQL, &[&schemas])
         .await
         .map_err(|error| database_error("query configured-schema triggers", error))?;
-    let Some(row) = rows.into_iter().find(|row| {
-        !relation_is_excluded(
-            excluded_relations,
-            &row.get::<_, String>("schema_name"),
-            &row.get::<_, String>("table_name"),
-        )
-    }) else {
-        return Ok(());
-    };
-    let schema = row.get::<_, String>("schema_name");
-    let table = row.get::<_, String>("table_name");
-    let trigger = row.get::<_, String>("trigger_name");
-    Err(refusal(
-        PostgresIntrospectionErrorKind::UnsupportedTrigger,
-        Some(&schema),
-        Some(&format!("{table}.{trigger}")),
-        "user-defined triggers are outside the supported catalog set",
-    ))
+    let mut stamps = RecordHistoryStamps::new();
+    for row in rows {
+        let schema = row.get::<_, String>("schema_name");
+        let table = row.get::<_, String>("table_name");
+        if relation_is_excluded(excluded_relations, &schema, &table) {
+            continue;
+        }
+        let trigger = row.get::<_, String>("trigger_name");
+        let arguments = row.get::<_, Vec<u8>>("arguments");
+        let columns = arguments
+            .strip_suffix(b"\0")
+            .map(|arguments| {
+                arguments
+                    .split(|byte| *byte == 0)
+                    .map(|argument| String::from_utf8_lossy(argument).into_owned())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let admitted = trigger == RECORD_HISTORY_STAMP_TRIGGER
+            && row.get::<_, String>("function_schema") == "wamn_history"
+            && row.get::<_, String>("function_name") == "stamp_row"
+            && row.get::<_, i16>("trigger_type") == BEFORE_INSERT_OR_UPDATE_FOR_EACH_ROW
+            && row.get::<_, String>("enabled") == "O"
+            && !row.get::<_, bool>("has_column_list")
+            && !row.get::<_, bool>("has_condition")
+            && !row.get::<_, bool>("is_constraint")
+            && !row.get::<_, bool>("has_transition_table")
+            && !columns.is_empty()
+            && columns
+                .iter()
+                .all(|column| RECORD_HISTORY_COLUMNS.contains(&column.as_str()))
+            && columns.iter().collect::<BTreeSet<_>>().len() == columns.len();
+        if !admitted {
+            return Err(refusal(
+                PostgresIntrospectionErrorKind::UnsupportedTrigger,
+                Some(&schema),
+                Some(&format!("{table}.{trigger}")),
+                "only the record_history_stamp trigger that runs BEFORE INSERT OR UPDATE \
+                 FOR EACH ROW and executes wamn_history.stamp_row with distinct \
+                 record-history columns is inside the supported catalog set",
+            ));
+        }
+        stamps.insert((schema, table), columns);
+    }
+    Ok(stamps)
+}
+
+/// Read the record-history stamp triggers in explicitly configured schemas.
+///
+/// This is the trigger admission of [`read_catalog`] without the rest of the
+/// catalog read, so a caller inside its own transaction can compare installed
+/// triggers with the declarations.
+pub async fn read_record_history_stamps(
+    client: &(impl GenericClient + Sync),
+    application_schemas: &[&str],
+) -> Result<RecordHistoryStamps, PostgresIntrospectionError> {
+    load_record_history_stamps(client, &configured_schemas(application_schemas), &[]).await
 }
 
 async fn refuse_rules(
@@ -1980,7 +2051,18 @@ pub async fn read_catalog_excluding_relations(
         .collect::<Vec<_>>();
     let mut tables = validate_relations(&relations)?;
     refuse_routines(client, &schemas).await?;
-    refuse_triggers(client, &schemas, excluded_relations).await?;
+    let stamps = load_record_history_stamps(client, &schemas, excluded_relations).await?;
+    for ((schema, table), columns) in stamps {
+        let Some(parts) = tables.get_mut(&(schema.clone(), table.clone())) else {
+            return Err(refusal(
+                PostgresIntrospectionErrorKind::UnsupportedTrigger,
+                Some(&schema),
+                Some(&format!("{table}.{RECORD_HISTORY_STAMP_TRIGGER}")),
+                "trigger belongs to a relation that is not an ordinary table",
+            ));
+        };
+        parts.record_history_stamp = columns;
+    }
     refuse_rules(client, &schemas, excluded_relations).await?;
     refuse_policies(client, &schemas, excluded_relations).await?;
     validate_types(client, &schemas, excluded_relations).await?;
@@ -2034,6 +2116,7 @@ pub async fn read_catalog_excluding_relations(
                     parts.indexes,
                 )
                 .with_exclusions(parts.exclusions)
+                .with_record_history_stamp(parts.record_history_stamp)
             })
             .collect(),
     ))

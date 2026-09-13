@@ -31,6 +31,15 @@ Managed schemas refuse foreign tables, authored views, materialized views, unsup
 Nontransactional operations and mutations outside the selected schemas refuse.
 The platform alone installs its declared extension list, currently `btree_gist`, before application migration SQL.
 
+The `audit_log` declaration is the record-history trigger.
+After the migrations apply, apply-package installs one `record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
+The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes `wamn_history.stamp_row` with the selected columns.
+apply-package installs no trigger for `"columns": []`, and it removes a stamp trigger that the declaration no longer selects.
+It then reads the installed triggers through introspection and refuses a result that differs from the declarations.
+Development package reconciliation runs the same step.
+The catalog reader admits only that trigger shape and records its columns in the schema description.
+Every other trigger refuses.
+
 Each managed relation, field, and constraint records its owning package.
 An overlay can add a field only where the base permits that extension.
 The added field remains overlay-owned even inside a base relation.

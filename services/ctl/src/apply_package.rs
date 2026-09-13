@@ -16,15 +16,17 @@ use wamn_event_reg::{
     DELETE_STALE_CATALOG_REGISTRATIONS_SQL, EventRegistration, RegistrationInput,
     UPSERT_CATALOG_REGISTRATION_SQL, project_catalog_registrations,
 };
+use wamn_pg_core::{Identifier, QualifiedName};
 use wamn_schema_control::{
     AppliedPackage, MigrationSource, PackageDirectory, PackageMigrationError, RecordedMigration,
     SqlStatement, plan_package_migrations, plan_package_registration,
 };
-use wamn_schema_generator::{ModelDeclaration, PackageManifest};
+use wamn_schema_generator::{ModelDeclaration, PackageManifest, RecordHistoryColumn};
 use wamn_schema_introspection::migration_policy::{
     DefinitionAction, DefinitionKind, DefinitionMutation, MigrationPolicyError,
     MigrationPolicyErrorKind, inspect_migration_definition_mutations,
 };
+use wamn_schema_introspection::postgres::read_record_history_stamps;
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 const SELECT_ROLE_CONTEXT_SQL: &str = "SELECT current_user::text, session_user::text";
@@ -602,6 +604,7 @@ async fn apply(
     )
     .await?;
     reconcile_entity_maps(&tx, &plan, manifest).await?;
+    let triggers_changed = reconcile_record_history_triggers(&tx, manifest).await?;
     let operation_grants =
         reconcile_package_operation_grants(&tx, &directory.manifest_bytes, tenant).await?;
     let registrations_changed =
@@ -612,6 +615,7 @@ async fn apply(
         changed: package_inserted
             || migration_changed
             || ownership_changed
+            || triggers_changed
             || !operation_grants.is_noop()
             || registrations_changed,
     })
@@ -647,6 +651,7 @@ pub(crate) async fn reconcile_local_package_configuration(
         "local schema inputs changed; recreate the owned disposable target"
     );
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
+    reconcile_record_history_triggers(tx, &manifest).await?;
     reconcile_package_operation_grants(tx, &directory.manifest_bytes, tenant).await?;
     reconcile_package_registrations(
         tx,
@@ -656,6 +661,90 @@ pub(crate) async fn reconcile_local_package_configuration(
     )
     .await?;
     Ok(())
+}
+
+/// Make each owned relation carry exactly the stamp trigger that its declaration selects.
+///
+/// The trigger is derived state, like the operation grants. A declaration that
+/// selects no column has no trigger, and a trigger that a declaration no longer
+/// needs is removed. The installed triggers are then read back through
+/// introspection and compared with the declarations.
+async fn reconcile_record_history_triggers(
+    tx: &Transaction<'_>,
+    manifest: &PackageManifest,
+) -> anyhow::Result<bool> {
+    let declared = manifest
+        .models
+        .iter()
+        .filter(|(_, model)| model.owner == manifest.package.id)
+        .map(|(model_id, model)| {
+            let audit_log = model.audit_log.as_ref().with_context(|| {
+                format!("{model_id} owns its relation and must declare audit_log")
+            })?;
+            let columns = RecordHistoryColumn::ALL
+                .into_iter()
+                .filter(|column| audit_log.columns.contains(column))
+                .map(|column| column.as_str().to_owned())
+                .collect::<Vec<_>>();
+            Ok(((model.schema.clone(), model.table.clone()), columns))
+        })
+        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+    let schemas = declared
+        .keys()
+        .map(|(schema, _)| schema.as_str())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let installed = read_record_history_stamps(tx, &schemas)
+        .await
+        .context("read installed record-history triggers")?;
+
+    let mut changed = false;
+    for (relation, columns) in &declared {
+        if installed.get(relation).map_or(&[][..], Vec::as_slice) == columns.as_slice() {
+            continue;
+        }
+        let quoted = QualifiedName::new(
+            Identifier::new(relation.0.as_str())?,
+            Identifier::new(relation.1.as_str())?,
+        )
+        .quoted();
+        let statement = if columns.is_empty() {
+            format!("DROP TRIGGER record_history_stamp ON {quoted}")
+        } else {
+            format!(
+                "CREATE OR REPLACE TRIGGER record_history_stamp \
+                 BEFORE INSERT OR UPDATE ON {quoted} \
+                 FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({})",
+                columns
+                    .iter()
+                    .map(|column| format!("'{column}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        // The package-owner role owns the relation, so it creates the trigger.
+        set_package_owner_role(tx).await?;
+        tx.batch_execute(&statement)
+            .await
+            .with_context(|| format!("reconcile the record-history trigger on {quoted}"))?;
+        reset_host_role(tx).await?;
+        changed = true;
+    }
+
+    let installed = read_record_history_stamps(tx, &schemas)
+        .await
+        .context("read reconciled record-history triggers")?;
+    for (relation, columns) in &declared {
+        let observed = installed.get(relation).map_or(&[][..], Vec::as_slice);
+        ensure!(
+            observed == columns.as_slice(),
+            "record-history-trigger-mismatch: {}.{} declares {columns:?}, but its installed trigger selects {observed:?}",
+            relation.0,
+            relation.1
+        );
+    }
+    Ok(changed)
 }
 
 async fn set_package_owner_role(tx: &Transaction<'_>) -> anyhow::Result<()> {

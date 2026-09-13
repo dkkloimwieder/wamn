@@ -9,6 +9,10 @@ use std::time::Duration;
 use tokio_postgres::{Client, NoTls};
 use wamn_control_provision::operation_grants::{OPERATION_GRANT_LOCK_SQL, operation_grant_tokens};
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
+use wamn_schema_introspection::migration_policy::{MigrationPolicyError, MigrationPolicyErrorKind};
+use wamn_schema_introspection::postgres::{
+    PostgresIntrospectionError, PostgresIntrospectionErrorKind,
+};
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
@@ -33,6 +37,7 @@ async fn install(client: &Client) {
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_history CASCADE; \
              DO $roles$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
                  CREATE ROLE wamn_app NOLOGIN; \
@@ -95,6 +100,97 @@ fn copy_receiving_package(root: &Path) {
         root.join("migrations/0001_initial.sql"),
     )
     .expect("copy exact initial migration");
+    declare_missing_audit_logs(root);
+}
+
+/// Copy the real client overlay so that its fixture declares every audit_log.
+fn copy_real_overlay_package(root: &Path) {
+    let _ = std::fs::remove_dir_all(root);
+    std::fs::create_dir_all(root.join("migrations")).expect("create overlay fixture directory");
+    let source = overlay_package_root();
+    std::fs::copy(source.join("wamn.json"), root.join("wamn.json"))
+        .expect("copy strict overlay manifest");
+    for entry in std::fs::read_dir(source.join("migrations")).expect("list overlay migrations") {
+        let path = entry.expect("read overlay migration entry").path();
+        std::fs::copy(
+            &path,
+            root.join("migrations").join(path.file_name().unwrap()),
+        )
+        .expect("copy exact overlay migration");
+    }
+    declare_missing_audit_logs(root);
+}
+
+/// Give each owned model without a declaration `"columns": []`.
+///
+/// The fixture then applies before the application declares audit_log, and it
+/// keeps any declaration that the application already has.
+fn declare_missing_audit_logs(root: &Path) {
+    let manifest_path = root.join("wamn.json");
+    let mut manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path).expect("read fixture manifest declarations"),
+    )
+    .expect("parse fixture manifest declarations");
+    let package_id = manifest["package"]["id"].clone();
+    for model in manifest["models"]
+        .as_object_mut()
+        .expect("manifest models are an object")
+        .values_mut()
+    {
+        if model["owner"] == package_id {
+            model
+                .as_object_mut()
+                .expect("manifest model is an object")
+                .entry("audit_log")
+                .or_insert_with(|| serde_json::json!({"columns": [], "retention": "none"}));
+        }
+    }
+    std::fs::write(
+        manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("serialize fixture manifest declarations"),
+    )
+    .expect("write fixture manifest declarations");
+}
+
+fn set_audit_log_columns(root: &Path, model_id: &str, columns: &[&str]) {
+    let manifest_path = root.join("wamn.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).expect("read audit_log manifest"))
+            .expect("parse audit_log manifest");
+    manifest["models"][model_id]["audit_log"] =
+        serde_json::json!({"columns": columns, "retention": "none"});
+    std::fs::write(
+        manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("serialize audit_log manifest"),
+    )
+    .expect("write audit_log manifest");
+}
+
+/// Every user trigger in the receiving schema, as the server renders it, with
+/// the identity of its catalog row.
+async fn receiving_triggers(client: &Client) -> Vec<(String, String)> {
+    client
+        .query(
+            "SELECT pg_catalog.pg_get_triggerdef(t.oid), t.oid::text || ':' || t.xmin::text \
+               FROM pg_catalog.pg_trigger AS t \
+               JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid \
+               JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+              WHERE n.nspname = 'receiving' AND NOT t.tgisinternal \
+              ORDER BY c.relname, t.tgname",
+            &[],
+        )
+        .await
+        .expect("read installed receiving triggers")
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect()
+}
+
+fn trigger_definitions(triggers: &[(String, String)]) -> Vec<&str> {
+    triggers
+        .iter()
+        .map(|(definition, _)| definition.as_str())
+        .collect()
 }
 
 fn copy_receiving_package_as(root: &Path, package_id: &str, schema: &str) {
@@ -798,7 +894,9 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     );
     assert_eq!(write_identity(&client).await, first_identity);
 
-    let overlay = overlay_package_root();
+    let overlay =
+        fixture_root().with_file_name(format!("apply-package-real-overlay-{}", std::process::id()));
+    copy_real_overlay_package(&overlay);
     apply(&url, &overlay)
         .await
         .expect("the exact client overlay applies after its exact base");
@@ -1385,12 +1483,120 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
             "DROP SCHEMA IF EXISTS receiving CASCADE; \
              DROP SCHEMA IF EXISTS app_system CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE;",
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
         )
         .await
         .expect("clean package-runner schemas");
     std::fs::remove_dir_all(package).expect("remove package fixture directory");
-    for fixture in [alter_base, drop_base, nonextensible] {
+    for fixture in [alter_base, drop_base, nonextensible, overlay] {
         std::fs::remove_dir_all(fixture).expect("remove overlay package fixture directory");
     }
+}
+
+/// Spec test 13: the declaration is the trigger.
+#[tokio::test]
+async fn record_history_triggers_follow_the_declaration() {
+    let Some(url) = support::LockedUrl::optional() else {
+        eprintln!("skipping apply-package record-history test; WAMN_CTL_PG_URL is unset");
+        return;
+    };
+    let client = connect(&url).await;
+    install(&client).await;
+    let package = fixture_root().with_file_name(format!(
+        "apply-package-record-history-{}",
+        std::process::id()
+    ));
+    copy_receiving_package(&package);
+    set_audit_log_columns(&package, "purchase_order", &["updated_at", "created_at"]);
+
+    apply(&url, &package)
+        .await
+        .expect("apply a declaration that selects stamp columns");
+    let installed = receiving_triggers(&client).await;
+    assert_eq!(
+        trigger_definitions(&installed),
+        [
+            "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE \
+             ON receiving.purchase_order FOR EACH ROW \
+             EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at')"
+        ],
+        "one trigger for the relation that selects columns, and none for []"
+    );
+    apply(&url, &package)
+        .await
+        .expect("an exact replay keeps the installed trigger");
+    assert_eq!(receiving_triggers(&client).await, installed);
+
+    set_package_identity(&package, "1.0.1", Some("1.0.0"));
+    set_audit_log_columns(&package, "purchase_order", &[]);
+    set_audit_log_columns(&package, "receipt", &["created_at"]);
+    apply(&url, &package)
+        .await
+        .expect("an upgrade moves the trigger with its declaration");
+    assert_eq!(
+        trigger_definitions(&receiving_triggers(&client).await),
+        [
+            "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE \
+             ON receiving.receipt FOR EACH ROW \
+             EXECUTE FUNCTION wamn_history.stamp_row('created_at')"
+        ],
+        "the trigger that the declaration no longer needs is removed"
+    );
+    let upgraded = receiving_triggers(&client).await;
+
+    set_package_identity(&package, "1.0.2", Some("1.0.1"));
+    std::fs::write(
+        package.join("migrations/0002_trigger.sql"),
+        "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+           FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at');",
+    )
+    .expect("write a migration that carries a trigger");
+    let refused = apply(&url, &package)
+        .await
+        .expect_err("a migration that carries a trigger still refuses");
+    assert_eq!(
+        refused
+            .downcast_ref::<MigrationPolicyError>()
+            .map(MigrationPolicyError::kind),
+        Some(MigrationPolicyErrorKind::RuledOperation),
+        "unexpected migration refusal: {refused:#}"
+    );
+    assert_eq!(receiving_triggers(&client).await, upgraded);
+    std::fs::remove_file(package.join("migrations/0002_trigger.sql"))
+        .expect("remove the refused trigger migration");
+
+    set_package_identity(&package, "1.0.1", Some("1.0.0"));
+    client
+        .batch_execute(
+            "CREATE FUNCTION public.record_history_foreign() RETURNS trigger \
+               LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'; \
+             CREATE TRIGGER foreign_trigger BEFORE INSERT ON receiving.item \
+               FOR EACH ROW EXECUTE FUNCTION public.record_history_foreign();",
+        )
+        .await
+        .expect("install a trigger outside the platform shape");
+    let refused = apply(&url, &package)
+        .await
+        .expect_err("apply-package reads triggers through introspection");
+    assert_eq!(
+        refused
+            .downcast_ref::<PostgresIntrospectionError>()
+            .map(PostgresIntrospectionError::kind),
+        Some(PostgresIntrospectionErrorKind::UnsupportedTrigger),
+        "unexpected trigger refusal: {refused:#}"
+    );
+
+    client
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_history CASCADE; \
+             DROP FUNCTION public.record_history_foreign();",
+        )
+        .await
+        .expect("clean record-history schemas");
+    std::fs::remove_dir_all(package).expect("remove record-history package fixture");
 }
