@@ -53,6 +53,7 @@ pub(crate) fn host_values(base: &str, image: &str) -> anyhow::Result<String> {
     base["runtime"]["image"]["registry"] = "".into();
     base["runtime"]["image"]["repository"] = repository.into();
     base["runtime"]["image"]["tag"] = format!("{tag}@{digest}").into();
+    base["runtime"]["image"]["pull_policy"] = "IfNotPresent".into();
     serde_yaml::to_string(&base).context("render the digest-pinned host image")
 }
 
@@ -117,7 +118,7 @@ mod tests {
         ] {
             let image = super::image_reference(&format!("{repository}@sha256:{digest}")).unwrap();
             let base = super::host_values(
-                "runtime:\n  image:\n    registry: old\n    repository: old\n    tag: old\n",
+                "runtime:\n  image:\n    registry: old\n    repository: old\n    tag: old\n    pull_policy: Never\n",
                 &image,
             )
             .unwrap();
@@ -131,6 +132,10 @@ mod tests {
             assert!(actual.starts_with("registry.test:5443/wamn-host:"));
             assert!(actual.ends_with(&format!("@sha256:{digest}")));
             assert_eq!(base["runtime"]["image"]["registry"].as_str(), Some(""));
+            assert_eq!(
+                base["runtime"]["image"]["pull_policy"].as_str(),
+                Some("IfNotPresent")
+            );
         }
     }
 }
