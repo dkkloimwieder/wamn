@@ -70,6 +70,18 @@ The native failure record is a broker advisory, not a fabricated application dea
 Payload recovery is limited by source retention.
 These outcomes require stated recovery assumptions and do not promise immediate progress or platform-wide exactly-once effects.
 
+## Record history
+
+The Receiving tests observe stamps through real routes and commands:
+
+- The [route tests](../../apps/wamn_receiving/tests/route_authentication_live/routes.rs) refuse a supplied stamp at its JSON pointer, and a service principal stamps its own id.
+- In the same tests, `receiving.record_receipt` stamps the order and its receipt with one instant, and an Acme overlay update stamps the base columns.
+- The [session tests](../../apps/wamn_receiving/tests/route_authentication_live/sessions.rs) show that one person stamps the same id through a session token and through a PAT.
+- The [materializer test](../../apps/wamn_receiving/tests/route_authentication_live/materializer.rs) shows that `quality.create_inspection` stamps `wamn:materializer` as `created_by`.
+- The [data access test](../../apps/wamn_receiving/tests/receiving_data_access.rs) installs the declared triggers with its own SQL and tests insert, update, and no-op stamps.
+
+See [database tests](database-tests.md#record-history) for the fixture rules and limits.
+
 ## Operator outcomes
 
 Use the [projection tests](../../crates/schema/generator/tests/client_projection.rs) for declared bindings and screen coverage.

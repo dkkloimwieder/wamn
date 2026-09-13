@@ -4,8 +4,8 @@ These pages describe implemented WAMN behavior, its contract boundaries, and kno
 
 [Overview](overview.md): Applications, control libraries, publication, and releases.
 [Execution](execution.md): Routing, request authority, session tokens, and runtime limits.
-[Data access](data-access.md): Schema ownership, SQL generation, transactions, and query contracts.
-[Naming](naming.md): Package, operation, and language identifiers.
+[Data access](data-access.md): Schema ownership, SQL generation, transactions, record history, and query contracts.
+[Naming](naming.md): Package, operation, and language identifiers, and reserved names.
 [Components](components.md): Artifact grouping, admitted dependencies, and guest build identity.
 [Capabilities](capabilities.md): Import permission, external effects, and environment bindings.
 [Native alignment](native-alignment.md): Retained WAMN implementations, upstream boundaries, and conditions for replacement.

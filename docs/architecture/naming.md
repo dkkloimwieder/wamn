@@ -49,6 +49,7 @@ The [component contract](components.md) defines grouping and dependency declarat
 The platform reserves four column names: `created_at`, `created_by`, `updated_at`, and `updated_by`.
 A model column with one of these names carries record history, and the model selects it in `audit_log`.
 A column with another meaning takes another name.
+[Data access](data-access.md#record-history) owns the declaration and the stamp rules.
 
 The platform reserves the package id `wamn`, because its operation tokens start with `wamn:`.
 The catalog and the generator refuse it.
@@ -56,5 +57,11 @@ The catalog and the generator refuse it.
 The platform reserves the principal namespace `wamn:`.
 A platform component writes under the `app_system.users` row named `wamn:<component>`.
 The component is kebab-case and carries no action and no version.
-`wamn-project-state` defines the component list and derives each row id.
+The row names the component, never the invocation.
+The closed component list is `provisioning`, `apply-package`, `materializer`, and `executor`.
 A tenant or application cannot create a `wamn:` name.
+
+The id of a platform row is `uuid5(WAMN_NAMESPACE, "wamn:<component>")`.
+`WAMN_NAMESPACE` is `uuid5(NAMESPACE_DNS, "wamn.dev")`, which is `0df299cf-7085-537d-919b-1145b5ef00f8`.
+Every tenant and deployment derives the same id, so no configuration carries it.
+[`wamn-project-state`](../../crates/identity/project-state/src/lib.rs) defines the namespace, the component list, and the derivation.

@@ -4,7 +4,7 @@ Testing combines ordinary examples, generated inputs, real database execution, a
 
 - [Strategy](strategy.md): choose the tested boundary and its owner.
 - [Unit and property tests](unit-and-property.md): exercise decisions and shrink generated failures.
-- [Database tests](database-tests.md): inspect transactions, authority, and contention.
+- [Database tests](database-tests.md): inspect transactions, authority, record history, and contention.
 - [Application tests](application-tests.md): test commands, overlays, events, and operator outcomes.
 - [Deterministic tests](deterministic.md): distinguish controlled execution from live scheduling.
 - [Cluster tests](cluster-tests.md): exercise packaged applications and process boundaries.

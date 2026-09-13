@@ -38,6 +38,24 @@ Its assertions about effect order, final caller responses, retries, and fixed re
 The fixture keeps writer and executor credentials separate.
 Beads `wamn-0h0g.10.15` owns the unresolved effect-writer consumer and permission decision.
 
+## Record history
+
+Record-history tests bind `app.user_id` to a test principal before each write.
+They compare stamp times by order and by equality inside one transaction, not by exact value.
+Stamp writes run as the production `wamn_app` guest role where the role is the subject.
+The [stamp rules](../architecture/data-access.md#record-history) define the expected results.
+
+- The [deploy SQL test](../../crates/control/provision/tests/deploy_sql_authority.rs) writes through the stamp function as the guest role, including the `actor-required` refusal.
+- The [apply-package test](../../services/ctl/tests/apply_package_live.rs) installs and removes triggers from declarations, and it makes sure that operation grants stamp `wamn:apply-package`.
+- The [introspection test](../../crates/schema/introspection/tests/postgres_live.rs) admits only the stamp trigger shape and makes sure that the schema description bytes do not change.
+- The [app_system schema test](../../crates/identity/project-state/tests/schema.rs) tests the platform rows, their pinned ids, and the provisioning stamps.
+- The [generation tests](../../crates/schema/generator/tests/generation.rs) refuse each invalid declaration and keep the revision on a true no-op.
+- The [claims conformance test](../../tests/conformance/tests/session_claims.rs) refuses every reader of `app.user_id` except the named trigger functions.
+- The [claims tests](../../crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs) test the principal binding and the refusal before PostgreSQL.
+
+A fixture that installs triggers with its own SQL does not test installation by apply-package.
+These tests run only where test setup applies `app-schema.sql`, so they do not test production provisioning.
+
 ## Contention
 
 Use separate real connections for competing transactions.

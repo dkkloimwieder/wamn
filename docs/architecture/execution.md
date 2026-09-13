@@ -13,6 +13,21 @@ The host compares the route, operation, permissions, wiring, and release facts b
 Each nested operation retains the original caller and needs its own declared authority.
 Component membership or an imported interface alone grants no permission to call an operation.
 
+An attachment with auth policy `none` has no principal, so it cannot write.
+If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release mint](../../services/ctl/src/publish_release/components.rs) refuses it.
+
+A route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
+The body carries the RFC 6901 pointer of the offending value in `data.pointer`:
+
+```json
+{"error":{"code":"schema-invalid","data":{"pointer":"/0/change/created_by"}}}
+```
+
+For an unexpected property, the pointer names that property.
+An unparseable payload carries the root pointer `""`.
+A platform cause, such as a missing or uncompiled schema, gives a body with no `data`.
+The [route validator](../../crates/platform/runtime/src/plugins/flow_http_routing.rs) and the [HTTP route adapter](../../apps/platform/ingress/http-route/src/lib.rs) own this response.
+
 An unknown hostname returns the native 404 response.
 An explicit hostname in the release returns 503 while its route binding is absent.
 The adapter adds no `Retry-After` header and leaves application responses unchanged.
@@ -45,6 +60,19 @@ Native callbacks restore the trace context from that scope.
 Cleanup revokes the scope and clears bindings after success, failure, cancellation, or owner shutdown.
 Candidate execution still refuses nested calls.
 The executor owns durable queue claims and settlement through the existing run-state libraries.
+
+The host binds the executing principal as `app.user_id` in each claims transaction that it opens.
+[Record history](data-access.md#record-history) stamps that principal on every write.
+
+- An authenticated route caller binds its principal id.
+- A nested call binds the executing principal of its parent.
+- A post-commit registration delivery binds `wamn:materializer`.
+- An executor queue delivery and a management candidate case bind `wamn:executor`.
+
+A platform claims transaction that only reads binds no principal.
+A bound principal alone does not move a read out of the autocommit path.
+The [claims owner](../../crates/platform/runtime/src/plugins/wamn_postgres/claims.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
+That refusal carries SQLSTATE `55000` and the message `actor-required`, as the stamp trigger does.
 
 ## Results and effects
 
@@ -171,6 +199,7 @@ A pending command blocks a second submission.
 A confirmed refusal without completion keeps the draft editable.
 Success and confirmed partial completion spend the submission.
 Unknown errors, malformed responses, and transport failures retain uncertainty about completion.
+A `schema-invalid` body whose `data` holds only a string `pointer` is a refusal before delivery, and the client reports that pointer.
 
 Uncertainty belongs to the whole submitted intent.
 A later retry refusal does not clear uncertainty from an earlier attempt.

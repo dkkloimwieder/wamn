@@ -31,14 +31,7 @@ Managed schemas refuse foreign tables, authored views, materialized views, unsup
 Nontransactional operations and mutations outside the selected schemas refuse.
 The platform alone installs its declared extension list, currently `btree_gist`, before application migration SQL.
 
-The `audit_log` declaration is the record-history trigger.
-After the migrations apply, apply-package installs one `record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
-The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes `wamn_history.stamp_row` with the selected columns.
-apply-package installs no trigger for `"columns": []`, and it removes a stamp trigger that the declaration no longer selects.
-It then reads the installed triggers through introspection and refuses a result that differs from the declarations.
-Development package reconciliation runs the same step.
-The catalog reader admits only that trigger shape and leaves it out of the schema description.
-Every other trigger refuses.
+The platform installs the only admitted trigger, as [record history](#record-history) describes.
 
 Each managed relation, field, and constraint records its owning package.
 An overlay can add a field only where the base permits that extension.
@@ -100,6 +93,95 @@ Named projections declare `one`, `optional_one`, `page`, or `bounded_list` resul
 Unbounded JSON materialization is not a streaming or export interface.
 Arbitrary tenant SQL remains subject to runtime authority and execution limits.
 Compile-time checking for arbitrary tenant components remains demand-gated.
+
+## Record history
+
+Record history stamps who created a row, who last changed it, and when.
+[Naming](naming.md#reserved-names) reserves the four stamp column names and the platform principal names.
+
+### Declaration
+
+Every relation-owning model declares `audit_log`:
+
+```json
+"audit_log": {
+  "columns": ["created_at", "created_by", "updated_at", "updated_by"],
+  "retention": "none"
+}
+```
+
+`columns` selects some of the four reserved names, and `[]` turns stamping off.
+An overlay model inherits the declaration of the relation owner and does not declare its own.
+The [manifest validation](../../crates/schema/generator/src/manifest.rs) refuses a missing key, a key on an overlay model, and a repeated name.
+It also refuses an actor without its time: `created_by` requires `created_at`, and `updated_by` requires `updated_at`.
+`retention` must be `"none"`, because the audit log is unbuilt work in the [record history plan](../plan/record-history-spec.md).
+
+[Generation validation](../../crates/schema/generator/src/generate/validation.rs) compares the declaration with the schema.
+It refuses a selected column that is absent or nullable.
+A selected time column must be `timestamptz`, and a selected actor column must be `uuid`, the type of `app_system.users.id`.
+Generation also refuses a column with a reserved name that the declaration does not select.
+Every stamp column is server-owned, so generation refuses a writable declaration of it and omits it from generated input.
+A stamp column needs no default, because the trigger sets every selected value.
+
+### Stamp trigger
+
+[`deploy/sql/record-history.sql`](../../deploy/sql/record-history.sql) creates schema `wamn_history` and the trigger function `wamn_history.stamp_row`.
+The `CATALOG_SCHEMA_SQL` composition carries the file, and the file applies again without error.
+The function reads the actor from `app.user_id` and the time from `transaction_timestamp()`.
+Every stamp in one transaction carries the same instant, and that instant is not the commit time.
+
+- An insert sets every selected column.
+- An update keeps the created pair.
+- If a column other than the selected stamps changes, an update sets the updated pair. A true no-op keeps every stamp.
+- The function replaces any value that a statement supplies for a selected column.
+- A delete gets no stamp.
+- A write with no bound actor raises SQLSTATE `55000` with the message `actor-required`, for every column selection.
+
+The function reads no users row, and no stamp column has a foreign key.
+Only the platform trigger functions read `app.user_id`, and no authorization or row policy reads it.
+
+After the migrations apply, apply-package installs one `record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
+The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes `wamn_history.stamp_row` with the selected columns.
+apply-package installs no trigger for `"columns": []`, and it removes a stamp trigger that the declaration no longer selects.
+It then reads the installed triggers through introspection and refuses a result that differs from the declarations.
+Development package reconciliation runs the same step.
+The catalog reader admits only that trigger shape and leaves it out of the schema description.
+Every other trigger refuses.
+
+### Actors
+
+The actor is the `app_system.users` id of the executing principal, never the credential.
+The [execution page](execution.md#native-dispatch) lists the principal that the host binds for each kind of delivery.
+A writer outside the host binds `app.user_id` with `set_config` in its own transaction.
+Provisioning binds `wamn:provisioning`.
+apply-package binds `wamn:apply-package` for package writes and operation grants.
+Administrative SQL must bind the operator's person row, and test fixtures must bind a provisioned test principal.
+
+`app_system.users.type` is `person`, `service`, or `platform`, and it has no default.
+People have `person` rows, stations and integrations have `service` rows, and platform components have `platform` rows.
+The type does not change how a principal authenticates.
+A `platform` row carries its `wamn:<component>` name in `display_name` and its derived id.
+Its email is `<component>@<platform-domain>`.
+The `users_platform_principal_check` constraint pins each name and id pair, and it refuses a `wamn:` name on another type.
+`wamn_app` has only `SELECT` on `app_system.users`.
+
+The [platform principal owner](../../crates/control/provision/src/platform_principals.rs) renders the platform rows of one tenant.
+It refuses a platform domain that is not a valid domain name.
+Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps itself.
+The development environment, the verification world, and `tools/identity-jwks-journey-run` apply that SQL.
+
+Every relation in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carries the four stamp columns as `NOT NULL` and a `record_history_stamp` trigger.
+These relations are `users`, `roles`, `user_roles`, `permissions`, `configurations`, and `api_keys`.
+An applier installs `record-history.sql` before `app-schema.sql`.
+
+### Limits
+
+Stamps are correct for writes through the supported platform paths.
+On those paths, the triggers exist and every writer binds its executing principal.
+No production code applies `app-schema.sql` or writes person, service, or platform rows today.
+Beads `wamn-0h0g.9` owns that production application, the person and service rows, and the refusal of a credential for a principal without a users row.
+Until `wamn-0h0g.22` replaces caller-settable authority, modified application SQL can forge actor attribution.
+Record history gives no tamper resistance against modified application code or administrative SQL.
 
 ## Canonical values and SQL names
 
