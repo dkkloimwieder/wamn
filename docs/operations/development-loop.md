@@ -75,6 +75,13 @@ The loop replaces the host and operator only after the candidate passes preparat
 The local Gate uses the same wiring rules as release authoring and authenticates the configured publisher.
 The runtime still enforces operation grants, connection bindings, and credentials for each database role.
 
+Local preparation limits each metadata or version command to 60 seconds.
+SQLx preparation, component builds, virtualization, and native operator builds each have a 45-minute limit.
+On interruption or expiry, the loop gives each command and its child processes five seconds to stop.
+After a forced stop, it waits up to five seconds for the command to exit.
+It allows another five seconds to close and collect output.
+A cleanup timeout reports failure and retains the last diagnostic output.
+
 The local selection file contains one entry for each declared connection:
 
 ```json

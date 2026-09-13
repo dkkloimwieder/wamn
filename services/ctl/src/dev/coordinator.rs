@@ -685,14 +685,14 @@ impl ProductionDevStageRunner {
             if selected.iter().any(|package| {
                 crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
             }) {
-                let output = Command::new("cargo")
-                    .args(["sqlx", "--version"])
-                    .kill_on_drop(true)
-                    .output()
-                    .await
-                    .map_err(|source| {
-                        ProductionDevStageError::owner("read SQLx CLI version", source.into())
-                    })?;
+                let output = super::execute_preparation(
+                    Command::new("cargo").args(["sqlx", "--version"]),
+                    super::INPUT_COMMAND_TIMEOUT,
+                )
+                .await
+                .map_err(|source| {
+                    ProductionDevStageError::owner("read SQLx CLI version", source.into())
+                })?;
                 require_command_success("read SQLx CLI version", &output)?;
                 crate::delivery::sqlx::require_cli_version(&output.stdout).map_err(|source| {
                     ProductionDevStageError::owner("require pinned SQLx CLI", source)
@@ -709,21 +709,21 @@ impl ProductionDevStageRunner {
                     .map_err(|source| {
                         ProductionDevStageError::owner("scope SQLx to the package schemas", source)
                     })?;
-                    let output = crate::delivery::sqlx::prepare_command(
+                    let mut command = crate::delivery::sqlx::prepare_command(
                         &package.root.join("tests"),
                         &database_url,
                         verifier,
                         false,
-                    )
-                    .kill_on_drop(true)
-                    .output()
-                    .await
-                    .map_err(|source| {
-                        ProductionDevStageError::owner(
-                            "refresh selected SQLx metadata",
-                            source.into(),
-                        )
-                    })?;
+                    );
+                    let output =
+                        super::execute_preparation(&mut command, super::PREPARATION_TIMEOUT)
+                            .await
+                            .map_err(|source| {
+                                ProductionDevStageError::owner(
+                                    "refresh selected SQLx metadata",
+                                    source.into(),
+                                )
+                            })?;
                     require_command_success("prepare selected SQLx verifier", &output)?;
                 }
             }
@@ -747,18 +747,14 @@ impl ProductionDevStageRunner {
             .map(|package| package.root)
             .collect::<Vec<_>>();
         let tool = self.git.repository_root().join(BUILD_TOOL);
-        let output = Command::new(&tool)
-            .args(["build-only", "app"])
-            .args(&roots)
-            .kill_on_drop(true)
-            .output()
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::owner(
-                    "start the production component build",
-                    source.into(),
-                )
-            })?;
+        let output = super::execute_preparation(
+            Command::new(&tool).args(["build-only", "app"]).args(&roots),
+            super::PREPARATION_TIMEOUT,
+        )
+        .await
+        .map_err(|source| {
+            ProductionDevStageError::owner("start the production component build", source.into())
+        })?;
         require_command_success("build production components", &output)?;
         let plan = serde_json::from_slice(&output.stdout).map_err(|source| {
             ProductionDevStageError::owner(
@@ -788,18 +784,19 @@ impl ProductionDevStageRunner {
             ProductionDevStageError::owner("write the build artifact-plan handoff", source)
         })?;
         let tool = self.git.repository_root().join(BUILD_TOOL);
-        let output = Command::new(&tool)
-            .arg("virtualize-only")
-            .arg(plan_file.path())
-            .kill_on_drop(true)
-            .output()
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::owner(
-                    "start the production component virtualizer",
-                    source.into(),
-                )
-            })?;
+        let output = super::execute_preparation(
+            Command::new(&tool)
+                .arg("virtualize-only")
+                .arg(plan_file.path()),
+            super::PREPARATION_TIMEOUT,
+        )
+        .await
+        .map_err(|source| {
+            ProductionDevStageError::owner(
+                "start the production component virtualizer",
+                source.into(),
+            )
+        })?;
         require_command_success("virtualize production components", &output)?;
         self.artifacts = select_component_artifacts(
             &self.package_inputs()?,

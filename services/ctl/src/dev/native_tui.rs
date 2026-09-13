@@ -158,7 +158,8 @@ pub(super) async fn build(
     for package in &packages {
         let metadata = read_metadata(&package.manifest_path, true).await?;
         let target = operator_target(package, &metadata)?;
-        let output = Command::new("cargo")
+        let mut command = Command::new("cargo");
+        command
             .current_dir(
                 target
                     .manifest_path
@@ -176,12 +177,13 @@ pub(super) async fn build(
             .arg("--package")
             .arg(&target.package_id)
             .arg("--bin")
-            .arg(&target.binary)
-            .kill_on_drop(true)
-            .output()
+            .arg(&target.binary);
+        let output = super::execute_preparation(&mut command, super::PREPARATION_TIMEOUT)
             .await
-            .map_err(|source| {
-                NativeTuiError::with_source("build operator packages", "cannot start Cargo", source)
+            .map_err(|source| NativeTuiError {
+                operation: "build operator packages",
+                detail: source.to_string(),
+                source: Some(source.into_boxed_dyn_error()),
             })?;
         require_success("build operator packages", &output)?;
         executables.extend(artifact_paths(&[target], &output.stdout)?);
@@ -407,18 +409,17 @@ async fn read_metadata(manifest: &Path, no_deps: bool) -> Result<Metadata, Nativ
             "1",
             "--manifest-path",
         ])
-        .arg(manifest)
-        .kill_on_drop(true);
+        .arg(manifest);
     if no_deps {
         command.arg("--no-deps");
     }
-    let output = command.output().await.map_err(|source| {
-        NativeTuiError::with_source(
-            "read native Cargo metadata",
-            "cannot start Cargo metadata",
-            source,
-        )
-    })?;
+    let output = super::execute_preparation(&mut command, super::INPUT_COMMAND_TIMEOUT)
+        .await
+        .map_err(|source| NativeTuiError {
+            operation: "read native Cargo metadata",
+            detail: source.to_string(),
+            source: Some(source.into_boxed_dyn_error()),
+        })?;
     require_success("read native Cargo metadata", &output)?;
     serde_json::from_slice(&output.stdout).map_err(|source| {
         NativeTuiError::with_source(

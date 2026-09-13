@@ -381,6 +381,7 @@ async fn step(
     let output =
         wamn_ctl::delivery::qualification::execute_owned(command, Duration::from_secs(3 * 60 * 60))
             .await
+            .map_err(|error| anyhow::anyhow!(redact(format!("{error:#}"))))
             .with_context(|| format!("execute owned delivery {name}"))?;
     artifact(
         evidence,

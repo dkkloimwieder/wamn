@@ -647,13 +647,14 @@ async fn component_build_watch_roots(
     package_roots: &[PathBuf],
 ) -> anyhow::Result<Vec<PathBuf>> {
     let tool = repository_root.join(BUILD_COMPONENTS_TOOL);
-    let output = Command::new(&tool)
-        .args(["watch-roots", "app"])
-        .args(package_roots)
-        .kill_on_drop(true)
-        .output()
-        .await
-        .with_context(|| format!("start production build owner {}", tool.display()))?;
+    let output = super::execute_preparation(
+        Command::new(&tool)
+            .args(["watch-roots", "app"])
+            .args(package_roots),
+        super::INPUT_COMMAND_TIMEOUT,
+    )
+    .await
+    .with_context(|| format!("start production build owner {}", tool.display()))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!(

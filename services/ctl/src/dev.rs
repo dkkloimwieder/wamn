@@ -36,6 +36,18 @@ use config::DevConfig;
 use read::DevRuntimeEndpoint;
 use verification_database::VerificationDatabaseError;
 
+// Cold local builds may take longer than edits. Metadata probes have their own
+// smaller bound; neither kind can prevent cooperative shutdown indefinitely.
+const PREPARATION_TIMEOUT: Duration = Duration::from_secs(45 * 60);
+const INPUT_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+
+async fn execute_preparation(
+    command: &mut tokio::process::Command,
+    timeout: Duration,
+) -> anyhow::Result<std::process::Output> {
+    crate::owned_command::execute(command, timeout, Duration::from_secs(5)).await
+}
+
 /// Stable refusal code for a dirty worktree reaching committed-source work.
 pub const DIRTY_WORKTREE_ERROR: &str = "dev-worktree-dirty";
 

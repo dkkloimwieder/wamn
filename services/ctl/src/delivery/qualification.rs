@@ -1,7 +1,6 @@
 //! Execute repository checks against one selected revision and exact candidate.
 
 use std::fs::{self, OpenOptions};
-use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::Duration;
@@ -752,39 +751,7 @@ async fn run(
 
 /// Give each selected case time to remove its own resources on cancellation.
 pub async fn execute_owned(command: &mut Command, timeout: Duration) -> anyhow::Result<Output> {
-    use rustix::process::{Pid, Signal, kill_process_group};
-    use tokio::signal::unix::{SignalKind, signal};
-    command.as_std_mut().process_group(0);
-    command
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    let mut interrupt = signal(SignalKind::interrupt())?;
-    let mut terminate = signal(SignalKind::terminate())?;
-    let mut hangup = signal(SignalKind::hangup())?;
-    let child = command
-        .spawn()
-        .context("start the required repository command")?;
-    let pid = Pid::from_raw(i32::try_from(
-        child.id().context("the command has a process ID")?,
-    )?)
-    .context("the command process ID is positive")?;
-    let waited = child.wait_with_output();
-    tokio::pin!(waited);
-    let cause = tokio::select! {
-        output = &mut waited => return output.context("wait for the required repository command"),
-        _ = interrupt.recv() => "the required repository command was interrupted",
-        _ = terminate.recv() => "the required repository command was terminated",
-        _ = hangup.recv() => "the required repository command lost its session",
-        _ = tokio::time::sleep(timeout) => "the required repository command exceeded its time limit",
-    };
-    let _ = kill_process_group(pid, Signal::TERM);
-    if tokio::time::timeout(Duration::from_secs(60), &mut waited)
-        .await
-        .is_err()
-    {
-        let _ = kill_process_group(pid, Signal::KILL);
-    }
-    anyhow::bail!(cause)
+    crate::owned_command::execute(command, timeout, Duration::from_secs(60)).await
 }
 
 #[cfg(test)]
