@@ -46,6 +46,11 @@ Declare stream replicas and the duplicate window in the environment configuratio
 Activation compares declared configuration with the provisioned resources and refuses disagreement.
 It does not grant runtime credentials permission to reconfigure streams.
 
+Every tenant database needs its platform principal rows before any stamped write.
+`wamn-ctl print-platform-principals --tenant "$TENANT" --platform-domain "$PLATFORM_DOMAIN"` prints their SQL.
+Pipe that SQL into `psql --single-transaction` against the tenant database after `record-history.sql` and `app-schema.sql`.
+Production provisioning does not run this step yet, as the [record history limits](../architecture/data-access.md#limits) state.
+
 Apply the selected package migrations to a fresh target with `wamn-ctl apply-package`.
 Reconcile generated data privileges with `wamn-ctl reconcile-package-data-access`.
 Publish the selected component bytes with `wamn-ctl push-component`.
