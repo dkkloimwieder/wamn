@@ -309,19 +309,27 @@ fn relative_path(repository: &Path, path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("non-UTF-8 repository path {}", path.display()))
 }
 
-/// The two session claims wamn-0h0g.22.23 measured a guest session can forge.
+/// The two session claims that wamn-0h0g.22 records a guest session can forge.
 const SESSION_FORGEABLE_CLAIMS: [&str; 2] = ["app.role", "app.user_id"];
 
-/// Every `current_setting` read of a [`SESSION_FORGEABLE_CLAIMS`] entry in
-/// `sql`, as `(claim, call)`.
+/// Platform trigger functions that read `app.user_id` to stamp an actor.
 ///
-/// Keys on the READ. `set_config('app.role', $5, true)` — the host's own
-/// `GUEST_CLAIM_SQL` binding, which wamn-0h0g.23.1 ruled deliberate — WRITES the
-/// claims and is not a consumer. Doubled single quotes collapse first, so a
-/// policy assembled inside an `EXECUTE` string reads like a literal one. A claim
-/// name arriving through a bind parameter or a `format!` hole is out of reach.
-fn forgeable_claim_reads(sql: &str) -> Vec<(&'static str, String)> {
-    let normalized = sql.to_ascii_lowercase().replace("''", "'");
+/// Each entry names a file and the function whose body holds the read. The
+/// owner narrowing of 2026-09-13 admits these readers by name. They record
+/// attribution and take no authorization decision.
+const PLATFORM_TRIGGER_READERS: [(&str, &str); 1] =
+    [("deploy/sql/record-history.sql", "wamn_history.stamp_row")];
+
+/// Every `current_setting` read of a [`SESSION_FORGEABLE_CLAIMS`] entry in
+/// `sql`, as `(claim, call, offset)`. The offset is into the normalized text.
+///
+/// Keys on the READ. `set_config('app.role', $5, true)` is the host's own
+/// `GUEST_CLAIM_SQL` binding. It WRITES the claims and is not a consumer.
+/// Doubled single quotes collapse first, so a policy assembled inside an
+/// `EXECUTE` string reads like a literal one. A claim name that arrives through
+/// a bind parameter or a `format!` hole is out of reach.
+fn forgeable_claim_reads(sql: &str) -> Vec<(&'static str, String, usize)> {
+    let normalized = normalize(sql);
     let mut reads = Vec::new();
     let mut offset = 0;
     while let Some(found) = normalized[offset..].find("current_setting") {
@@ -330,7 +338,7 @@ fn forgeable_claim_reads(sql: &str) -> Vec<(&'static str, String)> {
         let call = tail.find(')').map_or(tail, |end| &tail[..=end]);
         for claim in SESSION_FORGEABLE_CLAIMS {
             if call.contains(claim) {
-                reads.push((claim, call.trim().to_owned()));
+                reads.push((claim, call.trim().to_owned(), start));
             }
         }
         offset = start + "current_setting".len();
@@ -338,15 +346,47 @@ fn forgeable_claim_reads(sql: &str) -> Vec<(&'static str, String)> {
     reads
 }
 
-/// No production RLS policy or generated API reads these claims while
-/// wamn-0h0g.22.23 remains unresolved. Its live case showed that a guest could
-/// rewrite both claims through a DO-wrapped EXECUTE and access another user's rows.
-/// The tenant boundary held because it derives from CURRENT_USER.
+fn normalize(sql: &str) -> String {
+    sql.to_ascii_lowercase().replace("''", "'")
+}
+
+/// Is the read at `offset` of `sql` an `app.user_id` read inside the body of an
+/// admitted platform trigger function in `path`?
+fn is_platform_trigger_read(path: &str, sql: &str, claim: &str, offset: usize) -> bool {
+    let normalized = normalize(sql);
+    claim == "app.user_id"
+        && PLATFORM_TRIGGER_READERS
+            .iter()
+            .filter(|(reader_path, _)| *reader_path == path)
+            .any(|(_, function)| {
+                function_body(&normalized, function).is_some_and(|body| body.contains(&offset))
+            })
+}
+
+/// The dollar-quoted body of `function <name>(` in normalized SQL.
+fn function_body(normalized: &str, name: &str) -> Option<std::ops::Range<usize>> {
+    let header = normalized.find(&format!("function {name}("))?;
+    let open = header + normalized[header..].find('$')?;
+    let tag_end = open + 1 + normalized[open + 1..].find('$')?;
+    let tag = &normalized[open..=tag_end];
+    let body_start = tag_end + 1;
+    let body_end = body_start + normalized[body_start..].find(tag)?;
+    Some(body_start..body_end)
+}
+
+/// No production RLS policy, generated API, or authorization check reads these
+/// claims while wamn-0h0g.22 remains open. Its live case showed that a guest
+/// could rewrite both claims through a DO-wrapped EXECUTE and access another
+/// user's rows. The tenant boundary held because it derives from CURRENT_USER.
+///
+/// The owner narrowing of 2026-09-13 admits the platform trigger functions in
+/// [`PLATFORM_TRIGGER_READERS`] as `app.user_id` readers. Every other reader of
+/// either claim fails.
 ///
 /// Keep the existing SQL-text scope: production Rust literals, deployment SQL,
 /// and application SQL. Test modules, examples, and fixture inputs stay excluded.
 #[test]
-fn app_role_and_app_user_id_have_no_production_reader_while_the_claim_escape_is_open() {
+fn app_role_and_app_user_id_have_no_authorization_reader_while_the_claim_escape_is_open() {
     // A fence that has quietly stopped matching is the failure this one exists
     // to prevent, so show the discrimination before trusting the scan.
     assert!(
@@ -357,13 +397,39 @@ fn app_role_and_app_user_id_have_no_production_reader_while_the_claim_escape_is_
         "the fence must not fire on the GUEST_CLAIM_SQL binding, which writes \
          the claims (wamn-0h0g.23.1 ruled that deliberate)"
     );
+    let policy = "create policy p on t using (owner = nullif(current_setting(''app.user_id'', true), '''')::uuid)";
     assert_eq!(
-        forgeable_claim_reads(
-            "create policy p on t using (owner = nullif(current_setting(''app.user_id'', true), '''')::uuid)"
-        )
-        .len(),
+        forgeable_claim_reads(policy).len(),
         1,
         "the fence must see a claim read, including one nested in an EXECUTE string"
+    );
+    let trigger_file = "create function wamn_history.stamp_row() returns trigger \
+         language plpgsql set search_path = pg_catalog as $stamp_row$ begin \
+         perform current_setting('app.user_id', true); \
+         perform current_setting('app.role', true); \
+         end $stamp_row$; \
+         create policy p on t using (owner = current_setting('app.user_id', true)::uuid);";
+    let admitted = |path: &str, sql: &str| {
+        forgeable_claim_reads(sql)
+            .into_iter()
+            .map(|(claim, _, offset)| is_platform_trigger_read(path, sql, claim, offset))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        admitted("deploy/sql/record-history.sql", trigger_file),
+        [true, false, false],
+        "the allowlist must admit only the app.user_id read inside the named \
+         trigger function body, and still refuse app.role and a policy reader"
+    );
+    assert_eq!(
+        admitted("deploy/sql/app-schema.sql", trigger_file),
+        [false, false, false],
+        "the allowlist must not admit the named function outside its file"
+    );
+    assert_eq!(
+        admitted("deploy/sql/record-history.sql", policy),
+        [false],
+        "the allowlist must refuse a policy reader in the trigger file"
     );
 
     let repository = repository();
@@ -374,22 +440,25 @@ fn app_role_and_app_user_id_have_no_production_reader_while_the_claim_escape_is_
         .flat_map(|(path, line, sql)| {
             forgeable_claim_reads(&sql)
                 .into_iter()
-                .map(move |(claim, call)| format!("  {path}:{line} reads {claim} — {call}"))
+                .filter(|(claim, _, offset)| !is_platform_trigger_read(&path, &sql, claim, *offset))
+                .map(|(claim, call, _)| format!("  {path}:{line} reads {claim} — {call}"))
+                .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
 
     assert!(
         readers.is_empty(),
         "production SQL must not read the session-forgeable identity claims \
-         `app.role` or `app.user_id` while wamn-0h0g.22.23 is OPEN.\n\n\
-         wamn-0h0g.22.23 measured that a guest session rewrites both claims past \
-         the claim blocklist with a DO-wrapped EXECUTE, then reads and zeroes \
-         another user's rows. A policy that reads either claim is that hole made \
-         reachable. Settle wamn-0h0g.22.23 first — the owner ruling of 2026-09-04 \
-         is to re-key the per-user layer onto something the session cannot \
-         rewrite (the wamn-0h0g.22.6 option (c) `current_user` pattern one layer \
-         down), which charters with the identity epic. This fence is \
-         wamn-0h0g.22.44; do not widen it to admit the reader.\n\n\
+         `app.role` or `app.user_id` for authorization or row security while \
+         wamn-0h0g.22 is OPEN.\n\n\
+         wamn-0h0g.22 records that a guest session rewrites both claims past the \
+         claim blocklist with a DO-wrapped EXECUTE, then reads and zeroes another \
+         user's rows. A policy or check that reads either claim makes that hole \
+         reachable. Settle wamn-0h0g.22 first. The owner ruling of 2026-09-04 \
+         re-keys the per-user layer onto something the session cannot rewrite.\n\n\
+         The owner narrowing of 2026-09-13 admits only the platform trigger \
+         functions in PLATFORM_TRIGGER_READERS, which read app.user_id to stamp \
+         an actor. Do not add an authorization or RLS reader to that list.\n\n\
          production readers found:\n{}",
         readers.join("\n")
     );

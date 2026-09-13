@@ -16,12 +16,17 @@
 //! The tests apply the authored artifacts and assert the server's answer from
 //! `pg_policy`, `pg_index`, ACL catalogs, and authenticated sessions.
 //!
+//! The record-history cases (`wamn-emtx.2`) apply `deploy/sql/record-history.sql`
+//! through `CATALOG_SCHEMA_SQL` and write as the production `wamn_app` guest.
+//! They test `wamn_history.stamp_row()` against spec tests 1, 3, 4, 8, 9, and 12.
+//! Run the file with `--test-threads=1`, because every case owns the server.
+//!
 //! ```bash
 //! docker run -d --name wamn-floor-pg -e POSTGRES_PASSWORD=probe \
 //!   -p 127.0.0.1:5434:5432 postgres:18
 //! until psql postgres://postgres:probe@localhost:5434/postgres -Atqc 'select 1'; do :; done
 //! WAMN_TENANT_FLOOR_PG_URL=postgres://postgres:probe@localhost:5434/postgres \
-//!   cargo test -p wamn-control-provision --test deploy_sql_authority
+//!   cargo test -p wamn-control-provision --test deploy_sql_authority -- --test-threads=1
 //! docker rm -f wamn-floor-pg      # BY EXPLICIT NAME. Never prune.
 //! ```
 
@@ -252,6 +257,8 @@ fn reset(admin_url: &str) {
         // to a missing role fails the whole apply. Dropped here BEFORE the group
         // it is a member of, so the reset leaves no edge behind.
         "wamn_run_retention",
+        // `record-history.sql` creates this one because it grants to it.
+        "wamn_db_owner",
         "wamn_platform",
         // Probe roles this file's live arms mint. A leftover one fails the next
         // run's `CREATE ROLE` rather than masking anything, but the gate is
@@ -259,6 +266,7 @@ fn reset(admin_url: &str) {
         PLATFORM_PROBE_OUTSIDER,
         &platform_probe_retention(),
         &effect_writer_probe(),
+        &record_history_guest(),
     ] {
         apply(
             admin_url,
@@ -906,4 +914,322 @@ fn the_two_scenario_author_emitters_agree_at_zero_memberships() {
         ["<none>", "<none>"],
         "the emitters must agree at ZERO GRANTS in either application order"
     );
+}
+
+/// The production guest identity the record-history cases write as, composed
+/// by the real mint. A member of `wamn_app` and nothing else.
+fn record_history_guest() -> String {
+    workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: "t1",
+            database: "wamn",
+        },
+        CredentialGeneration::A,
+    )
+    .expect("App takes a tenant scope")
+}
+
+/// Actors the record-history cases bind. No users row names A, B, or C, so a
+/// stamp that lands shows that the function reads no users row.
+const ACTOR_A: &str = "00000000-0000-4000-8000-00000000000a";
+const ACTOR_B: &str = "00000000-0000-4000-8000-00000000000b";
+const ACTOR_C: &str = "00000000-0000-4000-8000-00000000000c";
+const OPERATOR: &str = "00000000-0000-4000-8000-0000000000e0";
+
+/// Apply the real artifacts and create two stamped relations the way
+/// apply-package does. `wamn_db_owner` owns the tables and creates the
+/// triggers, so the fixture itself exercises the schema USAGE and function
+/// EXECUTE grants. Returns the project database URL and the guest role.
+fn record_history_fixture(admin: &str) -> (String, String) {
+    reset(admin);
+    apply(admin, POSTGRES_INIT);
+    let base = admin.rsplit_once('/').expect("url names a database").0;
+    let db_url = format!("{base}/wamn");
+    for sql in [CATALOG_SCHEMA, RUN_STATE, RUN_QUEUE, APP_SCHEMA] {
+        apply(&db_url, sql);
+    }
+    let guest = record_history_guest();
+    apply(
+        admin,
+        &format!("CREATE ROLE \"{guest}\" NOLOGIN;\nGRANT wamn_app TO \"{guest}\";\n"),
+    );
+    apply(
+        &db_url,
+        "GRANT CREATE ON DATABASE wamn TO wamn_db_owner;\n\
+         BEGIN;\n\
+         SET LOCAL ROLE wamn_db_owner;\n\
+         CREATE SCHEMA rh_probe;\n\
+         CREATE TABLE rh_probe.stamped (\n\
+             id integer PRIMARY KEY, note text NOT NULL,\n\
+             created_at timestamptz NOT NULL, created_by uuid NOT NULL,\n\
+             updated_at timestamptz NOT NULL, updated_by uuid NOT NULL);\n\
+         CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.stamped\n\
+             FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(\n\
+                 'created_at', 'created_by', 'updated_at', 'updated_by');\n\
+         CREATE TABLE rh_probe.timestamps_only (\n\
+             id integer PRIMARY KEY, note text NOT NULL,\n\
+             created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL);\n\
+         CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.timestamps_only\n\
+             FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at');\n\
+         GRANT USAGE ON SCHEMA rh_probe TO wamn_app;\n\
+         GRANT SELECT, INSERT, UPDATE ON rh_probe.stamped, rh_probe.timestamps_only TO wamn_app;\n\
+         COMMIT;\n",
+    );
+    (db_url, guest)
+}
+
+/// Run `body` as the guest in one transaction with `app.user_id` bound to
+/// `actor`, the way the host claims transaction binds it.
+fn as_guest(db_url: &str, guest: &str, actor: &str, body: &str) {
+    apply(
+        db_url,
+        &format!(
+            "BEGIN;\n\
+             SET LOCAL ROLE \"{guest}\";\n\
+             SELECT set_config('app.user_id', '{actor}', true);\n\
+             {body}\n\
+             COMMIT;\n"
+        ),
+    );
+}
+
+/// Spec tests 1, 3, the no-op half of 8, and 9, over the production guest.
+#[test]
+fn the_stamp_trigger_stamps_guest_writes_on_postgres() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_stamp_trigger_stamps_guest_writes_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let (db_url, guest) = record_history_fixture(&admin);
+
+    // THE GRANTS AND THE FUNCTION SHAPE, from the server catalogs.
+    let shape = psql(
+        &db_url,
+        None,
+        &format!(
+            "SELECT concat_ws(' ', \
+               has_schema_privilege('wamn_db_owner', 'wamn_history', 'USAGE'), \
+               has_function_privilege('wamn_db_owner', 'wamn_history.stamp_row()', 'EXECUTE'), \
+               has_schema_privilege('wamn_app', 'wamn_history', 'USAGE'), \
+               has_function_privilege('wamn_app', 'wamn_history.stamp_row()', 'EXECUTE'), \
+               has_function_privilege('{guest}', 'wamn_history.stamp_row()', 'EXECUTE'), \
+               p.prosecdef, array_to_string(p.proconfig, ',')) \
+               FROM pg_proc p WHERE p.oid = 'wamn_history.stamp_row()'::regprocedure"
+        ),
+    );
+    assert_eq!(
+        shape, "t t f f f f search_path=pg_catalog",
+        "wamn_db_owner must hold schema USAGE and function EXECUTE, the guest \
+         must hold neither, and the function must be SECURITY INVOKER with a \
+         pinned search_path (order: owner usage, owner execute, wamn_app usage, \
+         wamn_app execute, guest execute, security definer, config)"
+    );
+
+    // 1. An insert stamps four with one instant per transaction, and replaces
+    //    supplied stamp values. The sleep separates statement time from
+    //    transaction time.
+    as_guest(
+        &db_url,
+        &guest,
+        ACTOR_A,
+        &format!(
+            "INSERT INTO rh_probe.stamped (id, note, created_at, created_by, updated_at, updated_by) \
+               VALUES (1, 'first', '2000-01-01', '{ACTOR_B}', '2000-01-01', '{ACTOR_B}');\n\
+             SELECT pg_sleep(0.01);\n\
+             INSERT INTO rh_probe.stamped (id, note) VALUES (2, 'second');\n\
+             INSERT INTO rh_probe.timestamps_only (id, note, created_at) \
+               VALUES (1, 'first', '2000-01-01');\n\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT count(*) FROM rh_probe.stamped \
+                        WHERE created_at = transaction_timestamp() \
+                          AND updated_at = transaction_timestamp() \
+                          AND created_by = '{ACTOR_A}' AND updated_by = '{ACTOR_A}') = 2, \
+                      'an insert must stamp all four columns with the transaction instant';\n\
+               ASSERT (SELECT created_at = transaction_timestamp() \
+                          AND updated_at = transaction_timestamp() \
+                        FROM rh_probe.timestamps_only WHERE id = 1), \
+                      'a timestamps-only insert must stamp both times';\n\
+             END $$;"
+        ),
+    );
+
+    // 1 and 3. An update moves the updated pair and keeps the created pair,
+    //    even when the statement supplies created values.
+    as_guest(
+        &db_url,
+        &guest,
+        ACTOR_B,
+        &format!(
+            "UPDATE rh_probe.stamped \
+               SET note = 'changed', created_at = '2000-01-01', created_by = '{ACTOR_C}' \
+             WHERE id = 1;\n\
+             UPDATE rh_probe.timestamps_only SET note = 'changed', created_at = '2000-01-01' \
+             WHERE id = 1;\n\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT created_by = '{ACTOR_A}' \
+                          AND created_at < transaction_timestamp() \
+                          AND updated_by = '{ACTOR_B}' \
+                          AND updated_at = transaction_timestamp() \
+                        FROM rh_probe.stamped WHERE id = 1), \
+                      'an update must keep the created pair and stamp the updated pair';\n\
+               ASSERT (SELECT updated_by = '{ACTOR_A}' AND updated_at < transaction_timestamp() \
+                        FROM rh_probe.stamped WHERE id = 2), \
+                      'an untouched row must keep its stamps';\n\
+               ASSERT (SELECT created_at < transaction_timestamp() \
+                          AND updated_at = transaction_timestamp() \
+                        FROM rh_probe.timestamps_only WHERE id = 1), \
+                      'a timestamps-only update must keep created_at and stamp updated_at';\n\
+             END $$;"
+        ),
+    );
+
+    // 8. A true no-op keeps every stamp, including when the statement supplies
+    //    stamp values.
+    as_guest(
+        &db_url,
+        &guest,
+        ACTOR_C,
+        &format!(
+            "UPDATE rh_probe.stamped \
+               SET note = note, updated_at = '2000-01-01', updated_by = '{ACTOR_C}' \
+             WHERE id = 1;\n\
+             UPDATE rh_probe.timestamps_only SET note = note WHERE id = 1;\n\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT note = 'changed' AND created_by = '{ACTOR_A}' \
+                          AND updated_by = '{ACTOR_B}' \
+                          AND updated_at < transaction_timestamp() \
+                        FROM rh_probe.stamped WHERE id = 1), \
+                      'a no-op update must keep the OLD stamps';\n\
+               ASSERT (SELECT updated_at < transaction_timestamp() \
+                        FROM rh_probe.timestamps_only WHERE id = 1), \
+                      'a timestamps-only no-op must keep updated_at';\n\
+             END $$;"
+        ),
+    );
+
+    // 9. A rolled-back write leaves the stamps unchanged.
+    apply(
+        &db_url,
+        &format!(
+            "BEGIN;\n\
+             SET LOCAL ROLE \"{guest}\";\n\
+             SELECT set_config('app.user_id', '{ACTOR_C}', true);\n\
+             UPDATE rh_probe.stamped SET note = 'rolled back' WHERE id = 1;\n\
+             ROLLBACK;\n"
+        ),
+    );
+    as_guest(
+        &db_url,
+        &guest,
+        ACTOR_C,
+        &format!(
+            "DO $$ BEGIN\n\
+               ASSERT (SELECT note = 'changed' AND updated_by = '{ACTOR_B}' \
+                        FROM rh_probe.stamped WHERE id = 1), \
+                      'a rolled-back update must leave the stamps unchanged';\n\
+             END $$;"
+        ),
+    );
+
+    // 9. An upsert's update branch keeps the created pair.
+    as_guest(
+        &db_url,
+        &guest,
+        ACTOR_C,
+        &format!(
+            "INSERT INTO rh_probe.stamped (id, note) VALUES (1, 'upserted') \
+               ON CONFLICT (id) DO UPDATE SET note = EXCLUDED.note;\n\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT note = 'upserted' AND created_by = '{ACTOR_A}' \
+                          AND created_at < transaction_timestamp() \
+                          AND updated_by = '{ACTOR_C}' \
+                          AND updated_at = transaction_timestamp() \
+                        FROM rh_probe.stamped WHERE id = 1), \
+                      'an upsert update branch must keep the created pair';\n\
+             END $$;"
+        ),
+    );
+
+    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+/// Assert that `statement` raises SQLSTATE 55000 with `actor-required`.
+fn refuses_without_actor(statement: &str) -> String {
+    format!(
+        "DO $$ BEGIN\n\
+           {statement};\n\
+           RAISE EXCEPTION 'the write succeeded without a bound actor: {}';\n\
+         EXCEPTION WHEN object_not_in_prerequisite_state THEN\n\
+           ASSERT SQLERRM = 'actor-required', 'wrong message: ' || SQLERRM;\n\
+         END $$;\n",
+        statement.replace('\'', "''")
+    )
+}
+
+/// The database half of spec test 4 and spec test 12.
+#[test]
+fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let (db_url, guest) = record_history_fixture(&admin);
+    as_guest(
+        &db_url,
+        &guest,
+        ACTOR_A,
+        "INSERT INTO rh_probe.stamped (id, note) VALUES (1, 'first');\n\
+         INSERT INTO rh_probe.timestamps_only (id, note) VALUES (1, 'first');",
+    );
+
+    // 4. The guest with no bound actor, and with the empty binding the host
+    //    sends for an absent claim, on both relations. A no-op update refuses
+    //    too.
+    let writes = [
+        "INSERT INTO rh_probe.stamped (id, note) VALUES (2, 'second')",
+        "UPDATE rh_probe.stamped SET note = 'changed' WHERE id = 1",
+        "INSERT INTO rh_probe.timestamps_only (id, note) VALUES (2, 'second')",
+        "UPDATE rh_probe.timestamps_only SET note = note WHERE id = 1",
+    ];
+    let refusals = writes.map(refuses_without_actor).concat();
+    apply(
+        &db_url,
+        &format!("BEGIN;\nSET LOCAL ROLE \"{guest}\";\n{refusals}COMMIT;\n"),
+    );
+    as_guest(&db_url, &guest, "", &refusals);
+
+    // 12. Administrative SQL without app.user_id refuses. Bound to the
+    //     operator's person row, it stamps that row and replaces a supplied
+    //     value.
+    apply(
+        &db_url,
+        &format!(
+            "INSERT INTO app_system.users (tenant_id, id, email) \
+               VALUES ('t1', '{OPERATOR}', 'operator@example.test');\n\
+             BEGIN;\n{refusals}COMMIT;\n\
+             BEGIN;\n\
+             SELECT set_config('app.user_id', \
+               (SELECT id::text FROM app_system.users WHERE email = 'operator@example.test'), true);\n\
+             UPDATE rh_probe.stamped SET note = 'operator', updated_by = '{ACTOR_B}' WHERE id = 1;\n\
+             INSERT INTO rh_probe.stamped (id, note, created_by) VALUES (3, 'operator', '{ACTOR_B}');\n\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT created_by = '{ACTOR_A}' AND updated_by = '{OPERATOR}' \
+                        FROM rh_probe.stamped WHERE id = 1), \
+                      'administrative SQL must stamp the operator person row';\n\
+               ASSERT (SELECT created_by = '{OPERATOR}' AND updated_by = '{OPERATOR}' \
+                        FROM rh_probe.stamped WHERE id = 3), \
+                      'administrative SQL must not keep a supplied stamp value';\n\
+             END $$;\n\
+             COMMIT;\n"
+        ),
+    );
+
+    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
