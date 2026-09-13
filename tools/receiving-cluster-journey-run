@@ -41,11 +41,16 @@ case "$action" in
           docker cp "$work/native-registry-hosts.toml" "$node:/etc/containerd/certs.d/$authority/hosts.toml"
         fi
         for image in "$@"; do
+          # CRI removes a tag when resolving a digest-pinned image.
+          pull_image=${image%@*}
+          if [[ ${pull_image##*/} == *:* ]]; then pull_image=${pull_image%:*}; fi
+          pull_image="$pull_image@${image##*@}"
           timeout 180 docker exec "$node" ctr --namespace k8s.io images pull \
-            --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$image" || {
+            --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$pull_image" || {
             printf 'Cannot pull supplied image %s into owned node %s; its registry must permit access without additional credentials.\n' "$image" "$node" >&2
             exit 1
           }
+          docker exec "$node" crictl inspecti -o json "$image" >/dev/null
         done
       done
     else

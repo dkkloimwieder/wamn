@@ -70,8 +70,13 @@ case "$action" in
       for role in host gates executor; do
         [[ -f $work/native-$role-image ]] || continue
         image=$(cat "$work/native-$role-image")
+        # CRI removes a tag when resolving a digest-pinned image.
+        pull_image=${image%@*}
+        if [[ ${pull_image##*/} == *:* ]]; then pull_image=${pull_image%:*}; fi
+        pull_image="$pull_image@${image##*@}"
         timeout 180 docker exec "$node" ctr --namespace k8s.io images pull \
-          --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$image"
+          --hosts-dir /etc/containerd/certs.d --platform linux/amd64 "$pull_image"
+        docker exec "$node" crictl inspecti -o json "$image" >/dev/null
       done
     done
     ;;
