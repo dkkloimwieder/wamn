@@ -94,7 +94,10 @@ case "$action" in
     exit "$status"
     ;;
   render-host)
-    helm template wamn-host oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+    # Helm can print OCI pull status on stdout; only rendered documents belong there.
+    helm pull oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.9.0 \
+      --destination "$work" >&2
+    helm template wamn-host "$work/runtime-operator-2.9.0.tgz" \
       --namespace "$cluster" --kubeconfig "$work/kubeconfig" \
       -f "$work/host-base.yaml" -f "$work/host-overlay.yaml"
     ;;

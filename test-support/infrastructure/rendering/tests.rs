@@ -7,6 +7,50 @@ const HTTP: &str = include_str!("../../../deploy/platform/http-route-workload.ex
 const MATERIALIZER: &str = include_str!("../../../deploy/platform/materializer.example.yaml");
 const KIND: &str = include_str!("../../../deploy/infra/kind-config.yaml");
 
+#[test]
+fn kubernetes_documents_preserve_objects_and_refuse_command_output() {
+    let rendered = b"---\napiVersion: v1\nkind: Service\nmetadata:\n  name: flow-http\nspec:\n  ports: [{port: 80}]\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: hostgroup-default\nspec:\n  replicas: 1\n---\n";
+    assert_eq!(
+        kubernetes_documents(rendered).unwrap(),
+        vec![
+            serde_json::json!({
+                "apiVersion":"v1","kind":"Service",
+                "metadata":{"name":"flow-http"},"spec":{"ports":[{"port":80}]},
+            }),
+            serde_json::json!({
+                "apiVersion":"apps/v1","kind":"Deployment",
+                "metadata":{"name":"hostgroup-default"},"spec":{"replicas":1},
+            }),
+        ],
+    );
+    let helm_status = format!(
+        "Pulled: ghcr.io/wasmcloud/charts/runtime-operator:2.9.0\nDigest: sha256:{}\n{}",
+        "a".repeat(64),
+        std::str::from_utf8(rendered).unwrap(),
+    );
+    assert!(
+        kubernetes_documents(helm_status.as_bytes())
+            .unwrap_err()
+            .to_string()
+            .contains("document 1 requires apiVersion"),
+    );
+    for invalid in [
+        "",
+        "---\n",
+        "apiVersion: v1\n",
+        "kind: Service\n",
+        "apiVersion: 1\nkind: Service\n",
+        "apiVersion: v1\nkind: ' '\n",
+        "- apiVersion: v1\n  kind: Service\n",
+        "invalid: [\n",
+    ] {
+        assert!(
+            kubernetes_documents(invalid.as_bytes()).is_err(),
+            "{invalid}"
+        );
+    }
+}
+
 fn event(project: &str) -> EventIdentity {
     EventIdentity {
         org: "acme".into(),

@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use serde::Deserialize as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_ctl::delivery::Candidate;
 use wamn_ctl::dev::environment::ProvisionedRoute;
 use wamn_ctl::print_release_env::ReleaseCarrier;
 use wamn_gate_harness::journey::JourneyDocument;
+use wamn_test_infrastructure::rendering::kubernetes_documents;
 use wamn_test_infrastructure::{event_broker::EventBroker, platform};
 
 use super::{application, bootstrap, checked, deployment, kubectl};
@@ -100,7 +100,7 @@ pub(super) async fn run(
     )
     .await?;
     let mut host = None;
-    for document in yaml_documents(&rendered)? {
+    for document in kubernetes_documents(&rendered)? {
         if document["kind"] == "Deployment" {
             ensure!(
                 host.is_none(),
@@ -128,7 +128,7 @@ pub(super) async fn run(
     )
     .await?;
     let rendered = application::render_workload(document, &flow_http, work)?;
-    let mut http = yaml_documents(&fs::read(rendered)?)?;
+    let mut http = kubernetes_documents(&fs::read(rendered)?)?;
     for document in &mut http {
         if document["kind"] == "Service" {
             document["spec"]["type"] = json!("NodePort");
@@ -353,16 +353,6 @@ fn artifact(evidence: &Path, name: &str, value: &Value) -> anyhow::Result<PathBu
     let path = evidence.join(name);
     deployment::write_private(&path, &serde_json::to_vec_pretty(value)?)?;
     Ok(path)
-}
-
-fn yaml_documents(bytes: &[u8]) -> anyhow::Result<Vec<Value>> {
-    serde_yaml::Deserializer::from_slice(bytes)
-        .map(Value::deserialize)
-        .filter_map(|result| match result {
-            Ok(Value::Null) => None,
-            other => Some(other.map_err(Into::into)),
-        })
-        .collect()
 }
 
 async fn step(

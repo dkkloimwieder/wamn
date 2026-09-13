@@ -5,10 +5,10 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use serde::Deserialize as _;
 use serde_json::{Value, json};
 use tokio::process::Command;
 use wamn_ctl::delivery::Candidate;
+use wamn_test_infrastructure::rendering::kubernetes_documents;
 
 use super::super::{ORG, PROJECT, RELEASE_ID, TENANT};
 use super::{ReceivingCluster, apply, checked, deployment, kubectl, resources};
@@ -128,7 +128,7 @@ async fn exercise(
     )
     .await?;
     let mut host = None;
-    for document in yaml_documents(&rendered)? {
+    for document in kubernetes_documents(&rendered)? {
         if document["kind"] == "Deployment" {
             ensure!(
                 host.is_none(),
@@ -153,7 +153,8 @@ async fn exercise(
         &executor(cluster, &carrier, &executor_image)?,
     )?;
     let http_image = deployment::publish_http(cluster).await?;
-    let mut http = yaml_documents(deployment::http_workload(cluster, &http_image)?.as_bytes())?;
+    let mut http =
+        kubernetes_documents(deployment::http_workload(cluster, &http_image)?.as_bytes())?;
     for document in &mut http {
         if document["kind"] == "Service" {
             document["spec"]["type"] = json!("NodePort");
@@ -371,22 +372,12 @@ fn artifact(cluster: &ReceivingCluster, name: &str, value: &Value) -> anyhow::Re
     Ok(path)
 }
 
-fn yaml_documents(bytes: &[u8]) -> anyhow::Result<Vec<Value>> {
-    serde_yaml::Deserializer::from_slice(bytes)
-        .map(Value::deserialize)
-        .filter_map(|result| match result {
-            Ok(Value::Null) => None,
-            other => Some(other.map_err(Into::into)),
-        })
-        .collect()
-}
-
 fn executor(
     cluster: &ReceivingCluster,
     carrier: &wamn_ctl::print_release_env::ReleaseCarrier,
     image: &str,
 ) -> anyhow::Result<Value> {
-    let mut document = yaml_documents(&fs::read(
+    let mut document = kubernetes_documents(&fs::read(
         cluster
             .resources
             .repository

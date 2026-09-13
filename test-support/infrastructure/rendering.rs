@@ -7,6 +7,33 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use wamn_control_provision::{workload_role::WorkloadRoleFamily, workload_secret_name};
 
+/// Parse rendered Kubernetes objects without accepting command output as a document.
+pub fn kubernetes_documents(bytes: &[u8]) -> anyhow::Result<Vec<serde_json::Value>> {
+    let mut documents = Vec::new();
+    for (index, document) in serde_yaml::Deserializer::from_slice(bytes).enumerate() {
+        let document = serde_json::Value::deserialize(document)
+            .context("parse rendered Kubernetes document")?;
+        if document.is_null() {
+            continue;
+        }
+        for field in ["apiVersion", "kind"] {
+            ensure!(
+                document[field]
+                    .as_str()
+                    .is_some_and(|value| !value.trim().is_empty()),
+                "rendered Kubernetes document {} requires {field}",
+                index + 1,
+            );
+        }
+        documents.push(document);
+    }
+    ensure!(
+        !documents.is_empty(),
+        "rendered Kubernetes document stream is empty"
+    );
+    Ok(documents)
+}
+
 /// Event coordinates declared by the environment owner.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventIdentity {
