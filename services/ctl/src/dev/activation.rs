@@ -544,7 +544,8 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
                 component
                     .component_type()
                     .exports(engine.inner())
-                    .any(|(name, _)| name.starts_with("wasi:http/incoming-handler@")),
+                    .any(|(name, _)| name.starts_with("wasi:http/incoming-handler@")
+                        || name == "wasi:http/handler@0.3.0"),
                 "local flow-http component has no incoming HTTP handler"
             );
             Ok(())
@@ -553,7 +554,7 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
             DevActivationError::with_source(
                 DevActivationErrorKind::InvalidInput,
                 "local-flow-http",
-                "local flow-http bytes failed native component validation",
+                format!("local flow-http bytes failed native component validation: {source:#}"),
                 NativeBackendError::from(source),
             )
         })?;
@@ -1831,7 +1832,12 @@ mod tests {
             json!({"directory": directory, "flow_http_component": source});
         let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
         let mut resolve = wit_parser::Resolve::new();
-        let package = resolve.push_str("fixture.wit", "package wasi:http@0.2.6; interface incoming-handler {} world fixture { export incoming-handler; }").unwrap();
+        let package = resolve
+            .push_str(
+                "fixture.wit",
+                "package wasi:http@0.3.0; interface handler {} world fixture { export handler; }",
+            )
+            .unwrap();
         let world = resolve.select_world(&[package], Some("fixture")).unwrap();
         let mut module =
             wit_component::dummy_module(&resolve, world, wit_parser::ManglingAndAbi::Standard32);
