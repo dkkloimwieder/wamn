@@ -42,6 +42,8 @@ const ENVIRONMENT: &str = "test";
 const AUDIENCE: &str = "urn:wamn:project-env:org-a:test:test:native-b";
 const ATTACHMENT: &str = "native-test-http";
 const PASSWORD: &str = "native-b-disposable-test-only";
+/// The test principal that the fixture writes as.
+const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 const TEST_NAME: &str = "native_authenticated_nested_authority_and_lifecycle";
 
 async fn connect(url: &str) -> anyhow::Result<Client> {
@@ -108,6 +110,20 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
             PASSWORD,
             "2099-01-01T00:00:00Z",
         ))
+        .await?;
+    // The fixture writes as its test principal, whose row stamps itself.
+    admin
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&FIXTURE_PRINCIPAL],
+        )
+        .await?;
+    admin
+        .execute(
+            "INSERT INTO app_system.users (tenant_id, id, type, email) \
+             VALUES ($1, $2::text::uuid, 'person', 'fixture@example.invalid')",
+            &[&TENANT, &FIXTURE_PRINCIPAL],
+        )
         .await?;
     for role in ["native-parent", "native-child"] {
         admin

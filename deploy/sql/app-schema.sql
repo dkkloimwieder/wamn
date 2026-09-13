@@ -27,6 +27,14 @@
 -- assumes a pre-existing wamn_app role (NOSUPERUSER, no BYPASSRLS), as in
 -- production and as the live-apply gate provisions.
 --
+-- RECORD HISTORY: every table carries created_at, created_by, updated_at, and
+-- updated_by as NOT NULL columns, and a record_history_stamp trigger that calls
+-- wamn_history.stamp_row(). An applier installs deploy/sql/record-history.sql
+-- first. CATALOG_SCHEMA_SQL carries it, so an applier that applies the catalog
+-- schema first already has it. Every write binds app.user_id: provisioning
+-- binds wamn:provisioning, apply-package binds wamn:apply-package, and
+-- administrative SQL and test fixtures bind a provisioned principal.
+--
 -- SECURITY SHAPE mirrors deploy/sql/catalog-schema.sql exactly (the 3.2 tenant
 -- floor): one stable ACL role (wamn_app, not owner), tenant separation from
 -- `current_user` (wamn-0h0g.22.6). Every table FORCEs RLS keyed on
@@ -173,8 +181,10 @@ CREATE TABLE app_system.users (
     email        text NOT NULL,
     display_name text,
     status       text NOT NULL DEFAULT 'active',
-    created_at   timestamptz NOT NULL DEFAULT now(),
-    updated_at   timestamptz NOT NULL DEFAULT now(),
+    created_at   timestamptz NOT NULL,
+    created_by   uuid NOT NULL,
+    updated_at   timestamptz NOT NULL,
+    updated_by   uuid NOT NULL,
     PRIMARY KEY (tenant_id, id),
     UNIQUE (tenant_id, email),
     CONSTRAINT users_status_check
@@ -192,6 +202,10 @@ CREATE TABLE app_system.users (
                     ELSE display_name IS NULL OR display_name NOT LIKE 'wamn:%'
                END)
 );
+CREATE TRIGGER record_history_stamp
+    BEFORE INSERT OR UPDATE ON app_system.users
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE app_system.users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.users FORCE ROW LEVEL SECURITY;
 CREATE POLICY users_tenant ON app_system.users
@@ -217,9 +231,16 @@ CREATE TABLE app_system.roles (
     name        text NOT NULL,
     description text,
     is_system   boolean NOT NULL DEFAULT false,
-    created_at  timestamptz NOT NULL DEFAULT now(),
+    created_at  timestamptz NOT NULL,
+    created_by  uuid NOT NULL,
+    updated_at  timestamptz NOT NULL,
+    updated_by  uuid NOT NULL,
     PRIMARY KEY (tenant_id, name)
 );
+CREATE TRIGGER record_history_stamp
+    BEFORE INSERT OR UPDATE ON app_system.roles
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE app_system.roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.roles FORCE ROW LEVEL SECURITY;
 CREATE POLICY roles_tenant ON app_system.roles
@@ -243,13 +264,20 @@ CREATE TABLE app_system.user_roles (
     tenant_id  text NOT NULL CHECK (tenant_id <> ''),
     user_id    uuid NOT NULL,
     role_name  text NOT NULL,
-    granted_at timestamptz NOT NULL DEFAULT now(),
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     PRIMARY KEY (tenant_id, user_id, role_name),
     FOREIGN KEY (tenant_id, user_id)
         REFERENCES app_system.users (tenant_id, id) ON DELETE CASCADE,
     FOREIGN KEY (tenant_id, role_name)
         REFERENCES app_system.roles (tenant_id, name) ON DELETE CASCADE
 );
+CREATE TRIGGER record_history_stamp
+    BEFORE INSERT OR UPDATE ON app_system.user_roles
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE app_system.user_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.user_roles FORCE ROW LEVEL SECURITY;
 CREATE POLICY user_roles_tenant ON app_system.user_roles
@@ -273,10 +301,18 @@ CREATE TABLE app_system.permissions (
     tenant_id  text NOT NULL CHECK (tenant_id <> ''),
     role_name  text NOT NULL,
     permission text NOT NULL,
+    created_at timestamptz NOT NULL,
+    created_by uuid NOT NULL,
+    updated_at timestamptz NOT NULL,
+    updated_by uuid NOT NULL,
     PRIMARY KEY (tenant_id, role_name, permission),
     FOREIGN KEY (tenant_id, role_name)
         REFERENCES app_system.roles (tenant_id, name) ON DELETE CASCADE
 );
+CREATE TRIGGER record_history_stamp
+    BEFORE INSERT OR UPDATE ON app_system.permissions
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE app_system.permissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.permissions FORCE ROW LEVEL SECURITY;
 CREATE POLICY permissions_tenant ON app_system.permissions
@@ -300,9 +336,16 @@ CREATE TABLE app_system.configurations (
     tenant_id    text NOT NULL CHECK (tenant_id <> ''),
     config_key   text NOT NULL,
     config_value jsonb NOT NULL,
-    updated_at   timestamptz NOT NULL DEFAULT now(),
+    created_at   timestamptz NOT NULL,
+    created_by   uuid NOT NULL,
+    updated_at   timestamptz NOT NULL,
+    updated_by   uuid NOT NULL,
     PRIMARY KEY (tenant_id, config_key)
 );
+CREATE TRIGGER record_history_stamp
+    BEFORE INSERT OR UPDATE ON app_system.configurations
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE app_system.configurations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.configurations FORCE ROW LEVEL SECURITY;
 CREATE POLICY configurations_tenant ON app_system.configurations
@@ -334,12 +377,19 @@ CREATE TABLE app_system.api_keys (
     last_used_at timestamptz,
     expires_at   timestamptz,
     revoked_at   timestamptz,
-    created_at   timestamptz NOT NULL DEFAULT now(),
+    created_at   timestamptz NOT NULL,
+    created_by   uuid NOT NULL,
+    updated_at   timestamptz NOT NULL,
+    updated_by   uuid NOT NULL,
     PRIMARY KEY (tenant_id, id),
     UNIQUE (tenant_id, key_hash),
     FOREIGN KEY (tenant_id, user_id)
         REFERENCES app_system.users (tenant_id, id) ON DELETE CASCADE
 );
+CREATE TRIGGER record_history_stamp
+    BEFORE INSERT OR UPDATE ON app_system.api_keys
+    FOR EACH ROW
+    EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
 ALTER TABLE app_system.api_keys ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_system.api_keys FORCE ROW LEVEL SECURITY;
 CREATE POLICY api_keys_tenant ON app_system.api_keys

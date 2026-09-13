@@ -899,6 +899,7 @@ fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
                 validation_hash) \
              VALUES ('tenant-a', 1, '{digest}', 'upstream', 'prod', 'upstream', \
                      'active', 'valid', '{digest}');\n\
+             SELECT set_config('app.user_id', '00000000-0000-4000-8000-000000000001', true);\n\
              INSERT INTO app_system.roles (tenant_id, name, is_system) \
              VALUES ('tenant-a', 'route-caller', true);\n\
              INSERT INTO app_system.users (tenant_id, id, type, email) \

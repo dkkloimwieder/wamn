@@ -10,8 +10,12 @@ use wamn_control_provision::operation_grants::{
     APP_SYSTEM_FLOOR_MISSING, OPERATION_CALLER_ROLE, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     OperationGrantReconcileResult, operation_grant_floor_check_sql, reconcile_operation_grants_sql,
 };
+use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 
+const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+/// The test principal that the fixture seed writes as.
+const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
 const ENV_VAR: &str = "WAMN_OPERATION_GRANTS_PG18_URL";
 
@@ -69,11 +73,13 @@ fn result(answer: &str) -> OperationGrantReconcileResult {
 }
 
 /// `PREPARE` shows the reconciliation query remains one extended-query
-/// statement, matching the production driver's `query_one` boundary.
+/// statement, matching the production driver's `query_one` boundary. The
+/// transaction binds `wamn:apply-package`, as apply-package does.
 fn transaction(statement: &str) -> String {
     let floor_check = operation_grant_floor_check_sql();
+    let actor = bind_platform_principal_sql(PlatformComponent::ApplyPackage);
     format!(
-        "BEGIN; {OPERATION_GRANT_TRANSACTION_PRELUDE_SQL}; {floor_check} \
+        "BEGIN; {actor} {OPERATION_GRANT_TRANSACTION_PRELUDE_SQL}; {floor_check} \
          PREPARE operation_grant_reconcile AS {statement} \
          EXECUTE operation_grant_reconcile; COMMIT;"
     )
@@ -118,11 +124,19 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
         "missing-floor refusal lost its SQLSTATE or literal:\n{missing_stderr}"
     );
 
-    run(&url, "install application authority floor", APP_SCHEMA);
+    run(
+        &url,
+        "install application authority floor",
+        &format!("{RECORD_HISTORY}\n{APP_SCHEMA}"),
+    );
     run(
         &url,
         "seed scoped role and grant residue",
-        "INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES \
+        &format!(
+            "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true); \
+         INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
+           ('t1', '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid'); \
+         INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES \
            ('t1', 'route-caller', false), \
            ('t1', 'sibling-role', false), \
            ('t2', 'route-caller', false); \
@@ -132,7 +146,8 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
            ('t1', 'route-caller', 'wamn-receiving:purchase-order/get@1.1.0'), \
            ('t1', 'route-caller', 'client-acme-receiving:receiving/submit-receipt@3.0.0'), \
            ('t1', 'sibling-role', 'residue.must.stay'), \
-           ('t2', 'route-caller', 'residue.must.stay');",
+           ('t2', 'route-caller', 'residue.must.stay'); COMMIT;"
+        ),
     );
 
     let changed = result(&run(&url, "reconcile operation grants", &reconcile));

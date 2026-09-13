@@ -32,6 +32,8 @@ const ATTACHMENT_ID: &str = "receiving-purchase-order-get";
 const OPERATION: &str = "wamn-receiving:purchase-order/get@1.0.0";
 const BASE_COMPONENT: &str = "receiving";
 const RESIDUE: &str = "wamn-receiving:obsolete/operation@1.0.0";
+/// The test principal that the project fixture writes as.
+const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Refusal {
@@ -90,6 +92,22 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .batch_execute("CREATE SCHEMA wamn_run AUTHORIZATION postgres")
         .await
         .context("create the empty run-plane revoke scope")?;
+    // The fixture writes as its test principal, whose row stamps itself.
+    project
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&FIXTURE_PRINCIPAL],
+        )
+        .await
+        .context("bind the fixture test principal")?;
+    project
+        .execute(
+            "INSERT INTO app_system.users (tenant_id, id, type, email) \
+             VALUES ($1, $2::text::uuid, 'person', 'fixture@example.invalid')",
+            &[&TENANT, &FIXTURE_PRINCIPAL],
+        )
+        .await
+        .context("seed the fixture test principal")?;
     project
         .execute(
             "INSERT INTO app_system.roles (tenant_id, name, is_system) \

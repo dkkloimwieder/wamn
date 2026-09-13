@@ -213,6 +213,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             &admin,
             &format!(
                 "REVOKE TEMPORARY ON DATABASE {DATABASE} FROM PUBLIC; \
+            SET app.user_id = '{PRINCIPAL}'; \
             INSERT INTO app_system.users (tenant_id,id,type,email) VALUES \
               ('fixture-a','{PRINCIPAL}','person','a@fixture.invalid'), ('fixture-b','{PRINCIPAL}','person','b@fixture.invalid'); \
             INSERT INTO app_system.roles (tenant_id,name) VALUES ('fixture-a','receiver'), ('fixture-b','outsider'); \
@@ -289,7 +290,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             );
             for statement in [
                 "SELECT email FROM app_system.users",
-                "SELECT granted_at FROM app_system.user_roles",
+                "SELECT created_at FROM app_system.user_roles",
                 "SELECT * FROM app_system.permissions",
                 "SELECT * FROM app_system.roles",
                 "SELECT * FROM catalog.packages",
@@ -307,7 +308,10 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
         }
         run(
             &admin,
-            "UPDATE app_system.users SET status = 'disabled' WHERE tenant_id = 'fixture-a'",
+            &format!(
+                "SET app.user_id = '{PRINCIPAL}'; \
+                 UPDATE app_system.users SET status = 'disabled' WHERE tenant_id = 'fixture-a'"
+            ),
         );
         assert_eq!(
             run(&a_url, READ_ROLES),
@@ -316,7 +320,10 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
         );
         run(
             &admin,
-            "UPDATE app_system.users SET status = 'active' WHERE tenant_id = 'fixture-a'",
+            &format!(
+                "SET app.user_id = '{PRINCIPAL}'; \
+                 UPDATE app_system.users SET status = 'active' WHERE tenant_id = 'fixture-a'"
+            ),
         );
         assert_eq!(run(&b_url, READ_ROLES), "receiver");
         // Reapply after deliberately widening both column and table ACLs.

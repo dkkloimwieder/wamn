@@ -36,6 +36,13 @@ fn app_schema_sql() -> String {
         .expect("read deploy/sql/app-schema.sql")
 }
 
+/// The platform stamp function that every applier installs before
+/// `deploy/sql/app-schema.sql`.
+fn record_history_sql() -> String {
+    std::fs::read_to_string(deploy_dir().join("sql/record-history.sql"))
+        .expect("read deploy/sql/record-history.sql")
+}
+
 /// The SQL with `--` line comments stripped, so text assertions test the actual
 /// DDL and not the explanatory prose (the header names the app.user_id/app.role
 /// claims to explain the integration, but they do not appear in the DDL itself).
@@ -268,12 +275,15 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
          DROP SCHEMA IF EXISTS wamn_sysschema_test CASCADE;\n",
     );
     // The schema itself (deploy/sql/app-schema.sql, applied verbatim as the superuser).
+    script.push_str(&record_history_sql());
     script.push_str(&app_schema_sql());
     script.push('\n');
     // Seed as the superuser (bypasses RLS): two tenants for the isolation test,
     // known user ids to tie the docs rows to. U1 has a role, key, and config.
+    // The fixture writes as U1, its test principal, whose row stamps itself.
     script.push_str(&format!(
-        "INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
+        "SET app.user_id = '{U1}';\n\
+         INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
            ('t1','{U1}','person','u1@t1'),('t1','{U2}','service','u2@t1'),('t2','{U3}','person','u3@t2');\n\
          INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES ('t1','admin',true);\n\
          INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('t1','{U1}','admin');\n\
@@ -398,6 +408,7 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     const TENANT: &str = "t1";
     const DOMAIN: &str = "example.invalid";
     const PERSON: &str = "11111111-1111-1111-1111-111111111111";
+    const FIXTURE_PERSON: &str = "00000000-0000-0000-0000-000000000000";
 
     let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
         eprintln!(
@@ -412,11 +423,14 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     let executor = PlatformComponent::Executor;
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
+    script.push_str(&record_history_sql());
     script.push_str(&app_schema_sql());
-    script.push('\n');
+    script.push_str("\nBEGIN;\n");
     script.push_str(
         &platform_principals_sql(TENANT, DOMAIN).expect("example.invalid is a domain name"),
     );
+    // The fixture writes as its first admitted person row below.
+    script.push_str(&format!("COMMIT;\nSET app.user_id = '{FIXTURE_PERSON}';\n"));
     // Every refused row sits in its own subtransaction, so the fresh rows
     // above stay as the only rows in the table.
     let refused = [
@@ -507,7 +521,9 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     ));
 
     let output = run(&url, &script);
-    let mut expected = PlatformComponent::ALL
+    // The provisioning SQL first binds its principal, and psql prints that result.
+    let mut expected = vec![PlatformComponent::Provisioning.principal_id().to_string()];
+    let mut rows = PlatformComponent::ALL
         .map(|component| {
             format!(
                 "{}|{}|platform|{}@{DOMAIN}",
@@ -517,7 +533,110 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
             )
         })
         .to_vec();
-    expected.sort();
+    rows.sort();
+    expected.extend(rows);
     expected.push("2".to_owned());
+    assert_eq!(output.lines().collect::<Vec<_>>(), expected);
+}
+
+/// Spec test 11, for the relations that `deploy/sql/app-schema.sql` owns. Every
+/// `app_system` relation carries the four stamp columns as `NOT NULL` and one
+/// `record_history_stamp` trigger. The provisioning SQL binds
+/// `wamn:provisioning` for its writes, every platform row stamps that
+/// principal, and the `wamn:provisioning` row stamps itself. The binding ends
+/// with the provisioning transaction. Set `WAMN_SYSSCHEMA_PG_URL` to a
+/// superuser URL. Skipped when unset.
+#[test]
+fn app_system_relations_stamp_provisioning_writes_on_postgres() {
+    const TENANT: &str = "t1";
+    const DOMAIN: &str = "example.invalid";
+
+    let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
+        eprintln!(
+            "skipping app_system_relations_stamp_provisioning_writes_on_postgres \
+             (set WAMN_SYSSCHEMA_PG_URL to run)"
+        );
+        return;
+    };
+    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+
+    let mut script = sql::ensure_app_acl_role_sql();
+    script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
+    script.push_str(&record_history_sql());
+    script.push_str(&app_schema_sql());
+    // The stamp columns and their types, from the server catalogs.
+    script.push_str(
+        "\nSELECT 'column|' || c.relname || '|' || a.attname || '|' \
+                 || pg_catalog.format_type(a.atttypid, a.atttypmod) || '|' || a.attnotnull \
+           FROM pg_catalog.pg_attribute AS a \
+           JOIN pg_catalog.pg_class AS c ON c.oid = a.attrelid \
+           JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+          WHERE n.nspname = 'app_system' AND c.relkind = 'r' \
+            AND a.attname IN ('created_at', 'created_by', 'updated_at', 'updated_by') \
+            AND a.attnum > 0 AND NOT a.attisdropped \
+          ORDER BY c.relname COLLATE \"C\", a.attname;\n\
+         SELECT 'relation|' || c.relname \
+           FROM pg_catalog.pg_class AS c \
+           JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+          WHERE n.nspname = 'app_system' AND c.relkind IN ('r', 'p', 'v', 'm', 'f') \
+          ORDER BY c.relname COLLATE \"C\";\n\
+         SELECT 'trigger|' || pg_catalog.pg_get_triggerdef(t.oid) \
+           FROM pg_catalog.pg_trigger AS t \
+           JOIN pg_catalog.pg_class AS c ON c.oid = t.tgrelid \
+           JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+          WHERE n.nspname = 'app_system' AND NOT t.tgisinternal \
+          ORDER BY c.relname COLLATE \"C\", t.tgname;\n\
+         BEGIN;\n",
+    );
+    script.push_str(
+        &platform_principals_sql(TENANT, DOMAIN).expect("example.invalid is a domain name"),
+    );
+    script.push_str(&format!(
+        "COMMIT;\n\
+         SELECT 'actor|' || COALESCE(current_setting('app.user_id', true), '');\n\
+         SELECT 'stamp|' || display_name || '|' || (id = created_by)::text || '|' \
+                || created_by::text || '|' || updated_by::text || '|' \
+                || (updated_at >= created_at)::text \
+           FROM app_system.users WHERE tenant_id = '{TENANT}' ORDER BY display_name;\n\
+         DROP SCHEMA app_system CASCADE;\n"
+    ));
+
+    let output = run(&url, &script);
+    let mut expected = Vec::new();
+    let mut names = TABLES.iter().map(|table| table.name).collect::<Vec<_>>();
+    names.sort_unstable();
+    for name in &names {
+        for (column, column_type) in [
+            ("created_at", "timestamp with time zone"),
+            ("created_by", "uuid"),
+            ("updated_at", "timestamp with time zone"),
+            ("updated_by", "uuid"),
+        ] {
+            expected.push(format!("column|{name}|{column}|{column_type}|true"));
+        }
+    }
+    expected.extend(names.iter().map(|name| format!("relation|{name}")));
+    expected.extend(names.iter().map(|name| {
+        format!(
+            "trigger|CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE \
+             ON {SCHEMA_NAME}.{name} FOR EACH ROW EXECUTE FUNCTION \
+             wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
+        )
+    }));
+    // The provisioning SQL first binds its principal, and psql prints that result.
+    let provisioning = PlatformComponent::Provisioning.principal_id();
+    expected.push(provisioning.to_string());
+    expected.push("actor|".to_owned());
+    let mut stamps = PlatformComponent::ALL
+        .map(|component| {
+            format!(
+                "stamp|{}|{}|{provisioning}|{provisioning}|true",
+                component.principal_name(),
+                component == PlatformComponent::Provisioning,
+            )
+        })
+        .to_vec();
+    stamps.sort();
+    expected.extend(stamps);
     assert_eq!(output.lines().collect::<Vec<_>>(), expected);
 }

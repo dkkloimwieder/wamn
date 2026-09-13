@@ -177,7 +177,7 @@ sha256sum Cargo.lock Dockerfile tools/identity-jwks-journey-run \
   deploy/platform/identity/templates/deployment.yaml deploy/platform/identity/templates/service.yaml \
   >"$evidence_dir/source-inputs.sha256"
 if [[ "$session_exchange" == true ]]; then
-  sha256sum deploy/sql/app-schema.sql >>"$evidence_dir/source-inputs.sha256"
+  sha256sum deploy/sql/record-history.sql deploy/sql/app-schema.sql >>"$evidence_dir/source-inputs.sha256"
 fi
 identity_owned=true
 run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
@@ -366,14 +366,19 @@ session_target() {
   target_secret=wamn-session-role-reader-$org--shared--$environment
   run "${kube[@]}" -n "$namespace" exec "deployment/$postgres" -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 \
     -c "CREATE DATABASE \"$database\"" >"$evidence_dir/session-$label-create.log" 2>&1
-  run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
-    <"$repo_root/deploy/sql/app-schema.sql" >"$evidence_dir/session-$label-schema.log" 2>&1
-  # The one provisioning function renders the tenant's platform rows.
+  # The stamp function comes first, because every app_system table has a stamp trigger.
+  cat "$repo_root/deploy/sql/record-history.sql" "$repo_root/deploy/sql/app-schema.sql" \
+    | run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
+      --single-transaction >"$evidence_dir/session-$label-schema.log" 2>&1
+  # The one provisioning function renders the tenant's platform rows. Its
+  # actor binding is transaction-local, so psql runs it as one transaction.
   run "${kube[@]}" -n "$namespace" exec "$provisioner" -- /usr/local/bin/wamn-ctl print-platform-principals \
     --tenant "$tenant" --platform-domain example.invalid >"$evidence_dir/session-$label-platform-principals.sql"
   run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
-    <"$evidence_dir/session-$label-platform-principals.sql" >"$evidence_dir/session-$label-platform-principals.log" 2>&1
-  printf '%s\n' "CREATE SCHEMA catalog; CREATE SCHEMA wamn_run;" \
+    --single-transaction <"$evidence_dir/session-$label-platform-principals.sql" >"$evidence_dir/session-$label-platform-principals.log" 2>&1
+  # The fixture writes as the session human, whose row stamps itself.
+  printf '%s\n' "SET app.user_id = '$session_human_id';" \
+    "CREATE SCHEMA catalog; CREATE SCHEMA wamn_run;" \
     "REVOKE CONNECT, TEMPORARY ON DATABASE \"$database\" FROM PUBLIC;" \
     "INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('$tenant','$session_human_id','person','session@example.invalid');" \
     "INSERT INTO app_system.roles (tenant_id,name) VALUES ('$tenant','$role');" \

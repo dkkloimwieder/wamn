@@ -924,6 +924,8 @@ mod tests {
     const ROTATED_HANDLE: &str = "upstream-v2";
     const ROTATED_AUTHORIZATION: &str = "Bearer rotated-fixture-token";
     const CHILD_OPERATION: &str = "orders:http/send@1.0.0";
+    /// The test principal that the nested authority fixture writes as.
+    const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
     const PARENT_COMPONENT: &str = "nested-http-parent";
     const PARENT_PACKAGE: &str = "http_adapter";
     const UNDECLARED_OPERATION: &str = "http-adapter:parent/undeclared@1.0.0";
@@ -1166,6 +1168,14 @@ mod tests {
         .await?;
         let (admin, connection) = tokio_postgres::connect(&options.database_url, NoTls).await?;
         let connection = tokio::spawn(connection);
+        // The fixture writes as its test principal, whose row stamps itself.
+        admin
+            .execute(
+                "SELECT set_config('app.user_id', $1, false)",
+                &[&FIXTURE_PRINCIPAL],
+            )
+            .await?;
+        admin.execute("INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ($1, $2::text::uuid, 'person', 'fixture@example.invalid')", &[&TENANT, &FIXTURE_PRINCIPAL]).await?;
         admin.execute("INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES ($1, 'route-caller', false)", &[&TENANT]).await?;
         admin.execute("INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES ($1, 'route-caller', $2)", &[&TENANT, &CHILD_OPERATION]).await?;
         drop(admin);

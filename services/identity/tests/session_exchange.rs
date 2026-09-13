@@ -43,6 +43,8 @@ const PASSWORD: &str = "session-exchange-disposable-fixture-password";
 const TENANT: &str = "session-tenant-a";
 const OTHER_TENANT: &str = "session-tenant-b";
 const SUFFIX: &str = "s3ss10n2";
+/// The test principal that each environment fixture writes as.
+const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 const SCOPES: [(&str, &str); 3] = [("acme", "dev"), ("acme", "prod"), ("other", "dev")];
 
 // A failing fixture or mutated response must not append upstream error Debug:
@@ -1203,6 +1205,16 @@ async fn setup() -> Fixture {
                 .await
                 .expect_redacted("production environment schema");
         }
+        // The fixture writes as its test principal, whose row stamps itself.
+        environment
+            .client
+            .batch_execute(&format!(
+                "SET app.user_id = '{FIXTURE_PRINCIPAL}'; \
+                 INSERT INTO app_system.users (tenant_id,id,type,email) \
+                 VALUES ('{TENANT}','{FIXTURE_PRINCIPAL}','person','fixture@example.invalid');"
+            ))
+            .await
+            .expect_redacted("environment test principal");
         environment
             .client
             .batch_execute(&format!(

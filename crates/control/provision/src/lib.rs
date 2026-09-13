@@ -121,7 +121,8 @@ pub use name::{
 };
 pub use org::{OrgClusters, render_org_cluster_set};
 pub use platform_principals::{
-    PlatformDomainError, platform_principals_sql, validate_platform_domain,
+    PlatformDomainError, bind_platform_principal_sql, platform_principals_sql,
+    validate_platform_domain,
 };
 #[cfg(feature = "ops")]
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
@@ -136,6 +137,8 @@ pub use secret::{
     render_management_admitter_secret_manifest, render_project_env_cdc_secret_manifest,
     render_project_env_secret_manifest, render_workload_secret_manifest,
 };
+/// The platform component list, for callers that bind a component as the actor.
+pub use wamn_project_state::PlatformComponent;
 pub use wamn_run_state::{
     CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_CREDENTIAL_PATH,
     EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION, EFFECT_WRITER_ROLE, EffectWriterCredential,

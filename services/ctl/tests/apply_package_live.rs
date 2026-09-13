@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tokio_postgres::{Client, NoTls};
+use wamn_control_provision::PlatformComponent;
 use wamn_control_provision::operation_grants::{OPERATION_GRANT_LOCK_SQL, operation_grant_tokens};
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_schema_introspection::migration_policy::{MigrationPolicyError, MigrationPolicyErrorKind};
@@ -17,6 +18,8 @@ use wamn_schema_introspection::postgres::{
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const TENANT: &str = "package-runner-live";
+/// The test principal that the fixture seed writes as.
+const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -636,11 +639,16 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     assert_concurrent_package_grants_share_one_carrier(&url).await;
     client
         .batch_execute(&format!(
-            "INSERT INTO app_system.roles (tenant_id, name, is_system) \
+            "BEGIN; \
+             SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true); \
+             INSERT INTO app_system.users (tenant_id, id, type, email) \
+                 VALUES ('{TENANT}', '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid'); \
+             INSERT INTO app_system.roles (tenant_id, name, is_system) \
                  VALUES ('{TENANT}', 'route-caller', false); \
              INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
                  ('{TENANT}', 'route-caller', 'wamn-receiving:obsolete/operation@1.0.0'), \
-                 ('{TENANT}', 'route-caller', 'client-overlay:receipt/get@1.0.0');"
+                 ('{TENANT}', 'route-caller', 'client-overlay:receipt/get@1.0.0'); \
+             COMMIT;"
         ))
         .await
         .expect("seed exact-coordinate grant residue and a sibling coordinate");
@@ -1522,6 +1530,27 @@ async fn record_history_triggers_follow_the_declaration() {
              EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at')"
         ],
         "one trigger for the relation that selects columns, and none for []"
+    );
+    // Spec test 11: the operation grants stamp wamn:apply-package.
+    let grant_stamps = client
+        .query_one(
+            "SELECT count(*), count(*) FILTER (WHERE created_by = $2::text::uuid \
+                                                AND updated_by = $2::text::uuid) \
+               FROM (SELECT created_by, updated_by FROM app_system.roles WHERE tenant_id = $1 \
+                     UNION ALL \
+                     SELECT created_by, updated_by FROM app_system.permissions \
+                      WHERE tenant_id = $1) AS grants",
+            &[
+                &TENANT,
+                &PlatformComponent::ApplyPackage.principal_id().to_string(),
+            ],
+        )
+        .await
+        .expect("read the operation grant stamps");
+    assert!(
+        grant_stamps.get::<_, i64>(0) > 1
+            && grant_stamps.get::<_, i64>(0) == grant_stamps.get::<_, i64>(1),
+        "every operation grant row must stamp wamn:apply-package"
     );
     apply(&url, &package)
         .await

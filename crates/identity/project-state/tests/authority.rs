@@ -38,10 +38,15 @@ const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 /// (cargo runs the tests in one binary on parallel threads).
 static LIVE_DB: Mutex<()> = Mutex::new(());
 
+/// `deploy/sql/record-history.sql` followed by `deploy/sql/app-schema.sql`,
+/// the order every applier uses.
 fn app_schema_sql() -> String {
     let deploy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy");
-    std::fs::read_to_string(deploy.join("sql/app-schema.sql"))
-        .expect("read deploy/sql/app-schema.sql")
+    let record_history = std::fs::read_to_string(deploy.join("sql/record-history.sql"))
+        .expect("read deploy/sql/record-history.sql");
+    let app_schema = std::fs::read_to_string(deploy.join("sql/app-schema.sql"))
+        .expect("read deploy/sql/app-schema.sql");
+    format!("{record_history}\n{app_schema}")
 }
 
 /// The live gate's URL, or `None` after printing the skip notice.
@@ -78,7 +83,9 @@ fn current_database(url: &str) -> String {
 /// the stable passwordless `wamn_app` ACL carrier it inherits, a fresh
 /// `app_system` applied verbatim from the DDL of record, and one tenant's rows.
 /// Seeded as the superuser, so the seed itself is unaffected by the grants under
-/// test. Returns the generation name for the probes' `current_user`.
+/// test. The fixture writes as U1, its test principal, whose row stamps itself,
+/// and the binding stays for the probes. Returns the generation name for the
+/// probes' `current_user`.
 fn prelude(url: &str) -> (String, String) {
     let database = current_database(url);
     let app_generation = workload_generation_role(
@@ -101,6 +108,7 @@ fn prelude(url: &str) -> (String, String) {
     script.push_str(&app_schema_sql());
     script.push_str(&format!(
         r#"
+SET app.user_id = '{U1}';
 INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','person','u1@t1');
 INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES ('{TENANT}','admin',true),('{TENANT}','auditor',false);
 INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');

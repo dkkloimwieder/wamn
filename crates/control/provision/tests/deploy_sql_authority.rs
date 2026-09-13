@@ -1,7 +1,7 @@
 //! The hand-written DDL's tenant floor derives from `current_user`.
 //!
 //! `wamn-0h0g.22.6.3` established the guest tenant floor across four artifacts;
-//! the current package-era relation set contains 34 governed relations, all off
+//! the current package-era relation set contains 33 governed relations, all off
 //! the settable `app.tenant` claim and onto
 //! `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`,
 //! each with the expression index that keeps the predicate sargable.
@@ -390,8 +390,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "34",
-        "the sweep must cover exactly the 34 governed relations"
+        governed, "33",
+        "the sweep must cover exactly the 33 governed relations"
     );
 
     // 2b. BORN PARKED (wamn-0h0g.20.30 for the attempt record, wamn-0h0g.20.32
@@ -540,7 +540,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
 
     // 2. EVERY GOVERNED RELATION CARRIES EXACTLY ONE ARM OF EACH KIND, counted
     //    PER RELATION rather than in total: a relation with two platform arms and
-    //    one with none sum to the same 34 and leave a silent lockout standing.
+    //    one with none sum to the same 33 and leave a silent lockout standing.
     let missing_arm = psql(
         &db_url,
         None,
@@ -1211,8 +1211,11 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
     apply(
         &db_url,
         &format!(
-            "INSERT INTO app_system.users (tenant_id, id, type, email) \
+            "BEGIN;\n\
+             SELECT set_config('app.user_id', '{OPERATOR}', true);\n\
+             INSERT INTO app_system.users (tenant_id, id, type, email) \
                VALUES ('t1', '{OPERATOR}', 'person', 'operator@example.test');\n\
+             COMMIT;\n\
              BEGIN;\n{refusals}COMMIT;\n\
              BEGIN;\n\
              SELECT set_config('app.user_id', \

@@ -6,11 +6,14 @@
 //! `deploy/sql/app-schema.sql` pins each name and id pair. Static SQL cannot
 //! read deployment configuration, so this module checks the platform domain
 //! and writes the email.
+//!
+//! A platform component that writes binds its principal id as `app.user_id`,
+//! so the record-history triggers stamp that component.
 
 use std::fmt;
 
 use wamn_pg_core::quote_literal;
-use wamn_project_state::{PlatformComponent, USERS, UserType};
+use wamn_project_state::{PlatformComponent, USER_ID_CLAIM, USERS, UserType};
 
 /// The longest domain name in text form, in bytes.
 const MAX_DOMAIN_LEN: usize = 253;
@@ -43,11 +46,26 @@ impl fmt::Display for PlatformDomainError {
 
 impl std::error::Error for PlatformDomainError {}
 
+/// Render the statement that binds `component` as the actor of the current
+/// transaction.
+///
+/// The binding is transaction-local, so the caller runs the statement inside
+/// the transaction that writes.
+pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
+    format!(
+        "SELECT pg_catalog.set_config({}, {}, true);\n",
+        quote_literal(USER_ID_CLAIM),
+        quote_literal(&component.principal_id().to_string()),
+    )
+}
+
 /// Render the SQL that creates the platform rows of one tenant.
 ///
-/// The `wamn:provisioning` row comes first, because it is the first row in a
-/// tenant database. The other components follow. The SQL carries no
-/// transaction control, so the caller runs it inside its own transaction.
+/// The SQL first binds `wamn:provisioning` as the actor. The
+/// `wamn:provisioning` row comes next, because it is the first row in a tenant
+/// database, and it stamps itself. The other components follow. The SQL
+/// carries no transaction control, so the caller runs it inside one
+/// transaction. The binding ends with that transaction.
 ///
 /// # Errors
 ///
@@ -64,7 +82,7 @@ pub fn platform_principals_sql(
             .into_iter()
             .filter(|component| *component != PlatformComponent::Provisioning),
     );
-    let mut sql = String::new();
+    let mut sql = bind_platform_principal_sql(PlatformComponent::Provisioning);
     for component in components {
         sql.push_str(&format!(
             "INSERT INTO {} (tenant_id, id, type, email, display_name) VALUES ({tenant}, {}, {}, {}, {});\n",

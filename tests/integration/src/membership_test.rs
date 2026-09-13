@@ -237,6 +237,15 @@ async fn seed_tenant_role(
     principal: &PrincipalId,
     role: &str,
 ) -> anyhow::Result<()> {
+    // The fixture writes as the test human, whose row stamps itself. The
+    // binding stays on this session for the role restore.
+    project
+        .execute(
+            "SELECT set_config('app.user_id', $1, false)",
+            &[&principal.as_str()],
+        )
+        .await
+        .context("bind the test human as the fixture actor")?;
     let tx = project
         .transaction()
         .await

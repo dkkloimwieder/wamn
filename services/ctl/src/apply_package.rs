@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, bail, ensure};
 use clap::Args;
 use tokio_postgres::{NoTls, Transaction, error::SqlState};
-use wamn_control_provision::DB_OWNER_ROLE;
 use wamn_control_provision::operation_grants::{
     OPERATION_GRANT_LOCK_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     OperationGrantReconcileResult, operation_grant_floor_check_sql, reconcile_operation_grants_sql,
 };
+use wamn_control_provision::{DB_OWNER_ROLE, PlatformComponent, bind_platform_principal_sql};
 use wamn_event_reg::{
     DELETE_STALE_CATALOG_REGISTRATIONS_SQL, EventRegistration, RegistrationInput,
     UPSERT_CATALOG_REGISTRATION_SQL, project_catalog_registrations,
@@ -483,6 +483,7 @@ async fn apply(
     tx.query_one(CLAIM_TENANT_SQL, &[&tenant])
         .await
         .context("claim package tenant")?;
+    bind_apply_package_principal(&tx).await?;
     tx.query_one(LOCK_PACKAGE_SQL, &[&tenant, &package_id])
         .await
         .context("lock package family")?;
@@ -627,6 +628,7 @@ pub(crate) async fn reconcile_local_package_configuration(
     tenant: &str,
     directory: &PackageDirectory,
 ) -> anyhow::Result<()> {
+    bind_apply_package_principal(tx).await?;
     let plan = plan_package_migrations(directory, None)?;
     let installed = load_applied_package(
         tx,
@@ -835,6 +837,16 @@ async fn reconcile_package_registrations(
         .context("delete stale package registrations")?
         > 0;
     Ok(changed)
+}
+
+/// Bind `wamn:apply-package` as the actor of the transaction, so its writes,
+/// including operation grants, stamp that component.
+async fn bind_apply_package_principal(tx: &Transaction<'_>) -> anyhow::Result<()> {
+    tx.batch_execute(&bind_platform_principal_sql(
+        PlatformComponent::ApplyPackage,
+    ))
+    .await
+    .context("bind wamn:apply-package as the transaction actor")
 }
 
 async fn reconcile_package_operation_grants(

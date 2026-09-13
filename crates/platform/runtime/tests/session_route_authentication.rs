@@ -99,6 +99,10 @@ async fn seed(admin: &Client) -> anyhow::Result<()> {
         .as_str()
         .expect("fixture principal")
         .to_owned();
+    // The fixture writes as its first principal, whose row stamps itself.
+    admin
+        .execute("SELECT set_config('app.user_id', $1, false)", &[&first])
+        .await?;
     for tenant in [TENANT, "tenant-b"] {
         for role in ["purchase-reader", "purchase-writer"] {
             admin
