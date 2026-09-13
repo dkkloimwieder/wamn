@@ -30,7 +30,7 @@ pub(super) fn causation_emit_sql(c: &Causation) -> String {
 }
 
 /// The fully-bound claim statement run inside the plugin-managed transaction
-/// (R2/R16). Every claim value travels as a bind parameter (`$1..$6`) — there is
+/// (R2/R16). Every claim value travels as a bind parameter (`$1..$7`) — there is
 /// NO string-interpolation path, so an injection-shaped tenant / schema / runner
 /// / role / user id is *unrepresentable* as SQL, not merely rejected by
 /// validation. `set_config` with `is_local => true` is the exact `SET LOCAL`
@@ -55,6 +55,11 @@ pub(super) fn causation_emit_sql(c: &Causation) -> String {
 ///   pooled connection currently carries would let a session-level value survive
 ///   into the next component's transaction, turning a shared connection into a
 ///   role escalation; binding the floor cannot.
+/// - `$7` `app.operation` is the executing operation token, or
+///   `wamn:<component>` for a platform component outside a registered
+///   operation. The record-history log records it as the source of a write.
+///   It binds unconditionally like `$6`. An absent operation binds `''`, so a
+///   pooled connection never carries the operation of an earlier request.
 ///
 /// The `wamn.causation` emit (l5i9.12.2) is NOT part of this statement — it is a
 /// separate, already-escaped simple-query emit appended by [`begin_with_claims`]
@@ -65,7 +70,8 @@ pub(super) const CLAIM_SQL: &str = "SELECT \
      set_config('search_path', COALESCE($3, current_setting('search_path')), true), \
      set_config('app.runner', COALESCE($4, current_setting('app.runner', true)), true), \
      set_config('app.role', $5, true), \
-     set_config('app.user_id', $6, true)";
+     set_config('app.user_id', $6, true), \
+     set_config('app.operation', $7, true)";
 
 /// The GUEST claim statement: [`CLAIM_SQL`] WITHOUT `app.tenant`
 /// (`wamn-0h0g.22.6.7`).
@@ -81,7 +87,8 @@ pub(super) const CLAIM_SQL: &str = "SELECT \
 ///
 /// `app.role` and `app.user_id` STAY. They key the RESTRICTIVE per-role and
 /// per-user policies, a different claim class layered INSIDE the tenant floor
-/// and explicitly outside `wamn-0h0g.22.6`'s scope.
+/// and explicitly outside `wamn-0h0g.22.6`'s scope. `app.operation` stays with
+/// them: the record-history log records it.
 /// The SESSION-scoped settings an autocommit read still needs.
 ///
 /// `search_path` and `statement_timeout` are not claims -- they are how the
@@ -91,12 +98,13 @@ pub(super) const CLAIM_SQL: &str = "SELECT \
 /// tables. They are POOL-UNIFORM: the pool is keyed by class, project and
 /// tenant, so every borrower of this connection wants the same two values.
 ///
-/// `app.role` and `app.user_id` are deliberately ABSENT. Those are per-caller
-/// claims, and a session-scoped claim would outlive the request and reach the
-/// next borrower of the pooled connection -- the exact leak the claim model
-/// exists to prevent. A request carrying `app.role` takes the transactional
-/// path instead. A read needs no `app.user_id`: only the record-history
-/// triggers read it, and a read that writes nothing fires no trigger.
+/// `app.role`, `app.user_id`, and `app.operation` are deliberately ABSENT.
+/// Those are per-caller claims, and a session-scoped claim would outlive the
+/// request and reach the next borrower of the pooled connection -- the exact
+/// leak the claim model exists to prevent. A request carrying `app.role` takes
+/// the transactional path instead. A read needs no `app.user_id` and no
+/// `app.operation`: only the record-history triggers read them, and a read
+/// that writes nothing fires no trigger.
 const GUEST_AUTOCOMMIT_SETTINGS_SQL: &str = "SELECT \
      set_config('statement_timeout', $1, false), \
      set_config('search_path', COALESCE($2, current_setting('search_path')), false), \
@@ -107,7 +115,8 @@ const GUEST_CLAIM_SQL: &str = "SELECT \
      set_config('search_path', COALESCE($2, current_setting('search_path')), true), \
      set_config('app.runner', COALESCE($3, current_setting('app.runner', true)), true), \
      set_config('app.role', $4, true), \
-     set_config('app.user_id', $5, true)";
+     set_config('app.user_id', $5, true), \
+     set_config('app.operation', $6, true)";
 
 /// The bound claim statement one authority class binds. ONE function, so the
 /// pipelined path's warm-up and the transaction that follows it cannot disagree
@@ -126,7 +135,8 @@ impl WamnPostgres {
     /// present; `schema`/`runner` bind NULL when absent (COALESCE-to-current
     /// preserves the server default / prior value — the S2/pgbench path is
     /// byte-unchanged), and `role`/`user_id` bind `''` when absent, the deny
-    /// floor the compiled RLS predicates read. A run-owned transaction also
+    /// floor the compiled RLS predicates read. An absent `operation` also binds
+    /// `''`. A run-owned transaction also
     /// appends the transactional `wamn.causation` emit (l5i9.12.2).
     ///
     /// Cost: `BEGIN` and the bound claim statement are pipelined (issued without
@@ -147,13 +157,14 @@ impl WamnPostgres {
         runner: Option<&str>,
         role: Option<&str>,
         user_id: Option<&str>,
+        operation: Option<&str>,
         run: Option<&Causation>,
         statement_timeout_ms: u32,
     ) -> Result<(), PgError> {
         // The tenant is still VALIDATED on the guest path even though it is no
         // longer bound: it selected the credential this connection was checked
         // out with, so a malformed one is a bug worth failing on.
-        validate_claims(tenant, schema, runner, role, user_id)?;
+        validate_claims(tenant, schema, runner, role, user_id, operation)?;
         let guest = class == AuthorityClass::GuestSql;
         // A CACHE HIT SENDS NOTHING AND DOES NOT YIELD (deadpool's cell is
         // checked before the init future is ever awaited), so this call is the
@@ -169,12 +180,16 @@ impl WamnPostgres {
         // statement_timeout binds as TEXT (a bare-integer string = ms).
         let timeout = statement_timeout_ms.to_string();
         // An absent role / user id binds the empty claim, not NULL: `''` is the
-        // value the compiled policies' COALESCE / NULLIF floors deny on.
+        // value the compiled policies' COALESCE / NULLIF floors deny on. An
+        // absent operation binds the same empty value.
         let role = role.unwrap_or_default();
         let user_id = user_id.unwrap_or_default();
-        let platform_params: [&(dyn ToSql + Sync); 6] =
-            [&tenant, &timeout, &schema, &runner, &role, &user_id];
-        let guest_params: [&(dyn ToSql + Sync); 5] = [&timeout, &schema, &runner, &role, &user_id];
+        let operation = operation.unwrap_or_default();
+        let platform_params: [&(dyn ToSql + Sync); 7] = [
+            &tenant, &timeout, &schema, &runner, &role, &user_id, &operation,
+        ];
+        let guest_params: [&(dyn ToSql + Sync); 6] =
+            [&timeout, &schema, &runner, &role, &user_id, &operation];
         let params: &[&(dyn ToSql + Sync)] = if guest {
             &guest_params
         } else {
@@ -274,6 +289,7 @@ impl WamnPostgres {
         let runner = self.runner_for(component_id);
         let role = self.role_for(component_id);
         let user_id = self.user_id_for(component_id);
+        let operation = self.operation_for(component_id);
         let run = self.current_run_for(component_id);
         let (conn, pp, authority) = self
             .checkout_workload(component_id, project, &tenant)
@@ -287,6 +303,7 @@ impl WamnPostgres {
                 runner.as_deref(),
                 role.as_deref(),
                 user_id.as_deref(),
+                operation.as_deref(),
                 run.as_ref(),
                 pp.statement_timeout_ms,
             )
@@ -344,6 +361,7 @@ impl WamnPostgres {
         let user_id = self.user_id_for(component_id);
         refuse_unattributed_statement(statement, user_id.as_deref())
             .map_err(StatementError::Postgres)?;
+        let operation = self.operation_for(component_id);
         let run = self.current_run_for(component_id);
         let (connection, policy, authority) = self
             .checkout_workload(component_id, &project, &tenant)
@@ -359,8 +377,9 @@ impl WamnPostgres {
         //
         // A read carrying a role claim keeps the transaction: a session-scoped
         // app.role would outlive the request and reach the next borrower of
-        // this pooled connection. A bound executing principal does not: the
-        // read skips app.user_id, which only the record-history triggers read.
+        // this pooled connection. A bound executing principal or operation does
+        // not: the read skips app.user_id and app.operation, which only the
+        // record-history triggers read.
         if !statement.transactional && role.is_none() {
             let timeout = policy.statement_timeout_ms.to_string();
             // The settings must be APPLIED before the statement that depends on
@@ -449,6 +468,7 @@ impl WamnPostgres {
                 runner.as_deref(),
                 role.as_deref(),
                 user_id.as_deref(),
+                operation.as_deref(),
                 run.as_ref(),
                 policy.statement_timeout_ms,
             ),

@@ -453,6 +453,7 @@ fn claim_sql_is_fully_bound_with_no_interpolation() {
         // role into the next component's transaction.
         "set_config('app.role', $5, true)",
         "set_config('app.user_id', $6, true)",
+        "set_config('app.operation', $7, true)",
     ] {
         assert!(CLAIM_SQL.contains(frag), "CLAIM_SQL missing {frag:?}");
     }
@@ -525,20 +526,23 @@ fn validate_claims_rejects_malformed_identities() {
             Some("public"),
             Some("owner-1"),
             Some("inspector"),
-            Some(U1)
+            Some(U1),
+            Some("wamn-receiving:purchase-order/update@1.0.0"),
         )
         .is_ok()
     );
-    assert!(validate_claims("acme", None, None, None, None).is_ok());
-    assert!(validate_claims("bad'tenant", None, None, None, None).is_err());
-    assert!(validate_claims("acme", Some("has-hyphen"), None, None, None).is_err());
-    assert!(validate_claims("acme", None, Some("bad;runner"), None, None).is_err());
+    assert!(validate_claims("acme", None, None, None, None, None).is_ok());
+    assert!(validate_claims("bad'tenant", None, None, None, None, None).is_err());
+    assert!(validate_claims("acme", Some("has-hyphen"), None, None, None, None).is_err());
+    assert!(validate_claims("acme", None, Some("bad;runner"), None, None, None).is_err());
     // `''` is the deny floor, never a claim.
-    assert!(validate_claims("acme", None, None, Some(""), None).is_err());
+    assert!(validate_claims("acme", None, None, Some(""), None, None).is_err());
     // A non-uuid user id would raise 22P02 inside every ownership predicate.
-    assert!(validate_claims("acme", None, None, None, Some("not-a-uuid")).is_err());
-    assert!(validate_claims("acme", None, None, None, Some(&U1[..35])).is_err());
-    assert!(validate_claims("acme", None, None, None, Some(&format!("{U1}-1"))).is_err());
+    assert!(validate_claims("acme", None, None, None, Some("not-a-uuid"), None).is_err());
+    assert!(validate_claims("acme", None, None, None, Some(&U1[..35]), None).is_err());
+    assert!(validate_claims("acme", None, None, None, Some(&format!("{U1}-1")), None).is_err());
+    // `''` is the unbound operation, never a claim.
+    assert!(validate_claims("acme", None, None, None, None, Some("")).is_err());
 }
 
 #[test]
@@ -581,6 +585,8 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
         pg.set_role(c, "inspector").unwrap();
         pg.set_user_id(c, "6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
             .unwrap();
+        pg.set_operation(c, "wamn-receiving:purchase-order/update@1.0.0")
+            .unwrap();
         pg.set_current_run(
             c,
             Some(Causation {
@@ -609,6 +615,7 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     );
     assert_eq!(pg.role_for("wl-a-component-0"), None);
     assert_eq!(pg.user_id_for("wl-a-component-0"), None);
+    assert_eq!(pg.operation_for("wl-a-component-0"), None);
     assert!(pg.current_run_for("wl-a-component-0").is_none());
 
     // The other workload's component is untouched across the board.
@@ -630,6 +637,10 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
     assert_eq!(
         pg.user_id_for("wl-b-component-0").as_deref(),
         Some("6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
+    );
+    assert_eq!(
+        pg.operation_for("wl-b-component-0").as_deref(),
+        Some("wamn-receiving:purchase-order/update@1.0.0")
     );
     assert_eq!(pg.current_run_for("wl-b-component-0").unwrap().run, "r1");
 }
@@ -768,15 +779,17 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
     let evil_runner = format!("r'; DELETE FROM public.{marker}; --");
     let evil_role = format!("admin'); DROP TABLE public.{marker}; --");
     let evil_user = format!("u'; TRUNCATE public.{marker}; --");
+    let evil_operation = format!("o'; DROP TABLE public.{marker}; --");
     let no_schema: Option<&str> = None;
     client.batch_execute("BEGIN").await.unwrap();
-    let params: [&(dyn ToSql + Sync); 6] = [
+    let params: [&(dyn ToSql + Sync); 7] = [
         &evil_tenant,
         &timeout,
         &no_schema,
         &evil_runner,
         &evil_role,
         &evil_user,
+        &evil_operation,
     ];
     client.execute(&stmt, &params).await.unwrap();
 
@@ -804,6 +817,12 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
         .unwrap()
         .get(0);
     assert_eq!(got_user.as_deref(), Some(evil_user.as_str()));
+    let got_operation: Option<String> = client
+        .query_one("SELECT current_setting('app.operation', true)", &[])
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(got_operation.as_deref(), Some(evil_operation.as_str()));
     let got_sp: Option<String> = client
         .query_one("SELECT current_setting('search_path', true)", &[])
         .await
@@ -838,13 +857,14 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
     //     parsed as data, never executed — and the marker still stands.
     client.batch_execute("BEGIN").await.unwrap();
     let evil_schema: Option<&str> = Some("s'; DROP TABLE public.foo; --");
-    let params2: [&(dyn ToSql + Sync); 6] = [
+    let params2: [&(dyn ToSql + Sync); 7] = [
         &evil_tenant,
         &timeout,
         &evil_schema,
         &evil_runner,
         &evil_role,
         &evil_user,
+        &evil_operation,
     ];
     let err = client.execute(&stmt, &params2).await.unwrap_err();
     assert_eq!(
@@ -888,6 +908,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
     })
     .unwrap();
     let user_id = "11111111-1111-4111-8111-111111111111";
+    let operation = "wamn-receiving:purchase-order/update@1.0.0";
     let (conn, _pp) = pg
         .checkout_guest(DEFAULT_PROJECT, LIVE_TENANT)
         .await
@@ -900,6 +921,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
         Some("owner-1"),
         Some("inspector"),
         Some(user_id),
+        Some(operation),
         None,
         4321,
     )
@@ -912,7 +934,8 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
                  current_setting('search_path', true), \
                  current_setting('app.runner', true), \
                  current_setting('app.role', true), \
-                 current_setting('app.user_id', true)",
+                 current_setting('app.user_id', true), \
+                 current_setting('app.operation', true)",
             &[],
         )
         .await
@@ -923,6 +946,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
     let runner: Option<String> = row.get(3);
     let role: Option<String> = row.get(4);
     let user: Option<String> = row.get(5);
+    let bound_operation: Option<String> = row.get(6);
     // THE DELETION, ASSERTED — and NULL is the sharper result. A custom GUC
     // reads back as the EMPTY STRING once it has been set and the SET LOCAL
     // scope ended; it reads NULL only if it was never set in this session at
@@ -951,6 +975,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
     assert_eq!(runner.as_deref(), Some("owner-1"));
     assert_eq!(role.as_deref(), Some("inspector"));
     assert_eq!(user.as_deref(), Some(user_id));
+    assert_eq!(bound_operation.as_deref(), Some(operation));
 
     // COMMIT (the one_shot success path): a `set_config(is_local => true)`
     // claim reverts even across a commit — showing it is truly LOCAL, not a
@@ -1173,6 +1198,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
         None,
         Some("inspector"),
         Some(U1),
+        None,
         None,
         5_000,
     )
@@ -2218,6 +2244,160 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
         matches!(&read.rows[0][0], SqlValue::Text(value) if value.is_empty()),
         "the read took the autocommit path and bound no app.user_id: {:?}",
         read.rows
+    );
+
+    drop(pg);
+    let admin = connect_raw(&admin_url).await;
+    admin
+        .batch_execute(&format!("DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
+        .await
+        .expect("drop the fixture");
+}
+
+/// A statement that reports the `app.operation` its session carries.
+fn operation_statement(transactional: bool) -> VerifiedStatement {
+    VerifiedStatement {
+        exact_sql: "SELECT COALESCE(current_setting('app.operation', true), '')".into(),
+        binds: Box::new([]),
+        columns: Box::new([StatementField {
+            value_type: StatementValueType::Text,
+            nullable: true,
+        }]),
+        transactional,
+    }
+}
+
+/// An acquisition binds its operation, reads it back, and clears it. A later
+/// acquisition with no operation does not inherit the previous one.
+#[test]
+fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it() {
+    const OPERATION: &str = "wamn-receiving:purchase-order/update@1.0.0";
+    let pg = WamnPostgres::with_provider(Arc::new(StaticCredentialProvider::new(
+        HashMap::new(),
+        None,
+    )));
+    let scope = "operation-instance-0";
+    let claims = SessionClaims {
+        tenant: LIVE_TENANT.to_string(),
+        user_id: Some(LIVE_PRINCIPAL.to_string()),
+        operation: Some(OPERATION.to_string()),
+        ..SessionClaims::default()
+    };
+    pg.bind_session_claims(scope, &claims)
+        .expect("the operation binds");
+    assert_eq!(pg.session_claims(scope), Some(claims.clone()));
+
+    pg.bind_session_claims(
+        scope,
+        &SessionClaims {
+            operation: None,
+            ..claims.clone()
+        },
+    )
+    .expect("the next acquisition binds");
+    assert_eq!(pg.operation_for(scope), None);
+
+    pg.bind_session_claims(scope, &claims)
+        .expect("the operation binds again");
+    pg.revoke_session_claims(scope);
+    assert_eq!(pg.operation_for(scope), None);
+
+    let refused = pg.bind_session_claims(
+        scope,
+        &SessionClaims {
+            operation: Some(String::new()),
+            ..claims
+        },
+    );
+    assert!(refused.is_err(), "the unbound value is not an operation");
+}
+
+/// A transactional statement runs with `app.operation` bound to its executing
+/// operation. A read keeps the autocommit path and carries no `app.operation`.
+/// The pool holds one connection. A session-level `app.operation` on that
+/// connection does not reach the next transaction, which has no operation.
+#[tokio::test]
+async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connection_keeps_none() {
+    const TENANT: &str = "operation";
+    const OPERATION: &str = "wamn-receiving:purchase-order/update@1.0.0";
+    let Some(admin_url) = test_pg_url() else {
+        return;
+    };
+    let role = format!(
+        "wamn_app_{}_a",
+        wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+    );
+    let guest_url = live_guest_url(&admin_url, TENANT).await;
+    let pg = WamnPostgres::new(WamnPostgresConfig {
+        credentials: Some(ClassCredentials::every_class(guest_url)),
+        guest_pool_max_size: 1,
+        platform_pool_max_size: 1,
+        wait_timeout_ms: 2_000,
+        statement_timeout_ms: 5_000,
+        row_limit: 1_000,
+    })
+    .expect("the plugin builds from the guest generation's url");
+    let scope = "operation-instance-1";
+    let claims = SessionClaims {
+        tenant: TENANT.to_string(),
+        user_id: Some(LIVE_PRINCIPAL.to_string()),
+        operation: Some(OPERATION.to_string()),
+        ..SessionClaims::default()
+    };
+    pg.bind_session_claims(scope, &claims)
+        .expect("the operation scope binds");
+
+    let bound = pg
+        .one_shot_statement(scope, "sha256:operation", &operation_statement(true), &[])
+        .await
+        .expect("the transactional statement runs");
+    assert!(
+        matches!(&bound.rows[0][0], SqlValue::Text(value) if value == OPERATION),
+        "the transaction carries the executing operation: {:?}",
+        bound.rows
+    );
+    let read = pg
+        .one_shot_statement(scope, "sha256:operation", &operation_statement(false), &[])
+        .await
+        .expect("the read runs");
+    assert!(
+        matches!(&read.rows[0][0], SqlValue::Text(value) if value.is_empty()),
+        "the read took the autocommit path and bound no app.operation: {:?}",
+        read.rows
+    );
+
+    // Leave a session-level value on the one pooled connection. The pool
+    // recycles without a reset, so only the bound claim clears it.
+    let (connection, _policy) = pg
+        .checkout_guest(DEFAULT_PROJECT, TENANT)
+        .await
+        .expect("check out the pooled connection");
+    connection
+        .batch_execute("SELECT set_config('app.operation', 'stale', false)")
+        .await
+        .expect("set a session-level operation");
+    drop(connection);
+    pg.bind_session_claims(
+        scope,
+        &SessionClaims {
+            operation: None,
+            ..claims
+        },
+    )
+    .expect("the next acquisition binds");
+    let next = pg
+        .one_shot_statement(scope, "sha256:operation", &operation_statement(true), &[])
+        .await
+        .expect("the next transactional statement runs");
+    assert!(
+        matches!(&next.rows[0][0], SqlValue::Text(value) if value.is_empty()),
+        "the pooled connection carries no stale app.operation: {:?}",
+        next.rows
+    );
+    assert_eq!(
+        pg.destroyed.load(std::sync::atomic::Ordering::Relaxed),
+        0,
+        "every statement reused the one pooled connection"
     );
 
     drop(pg);

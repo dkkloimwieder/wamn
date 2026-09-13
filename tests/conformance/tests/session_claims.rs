@@ -309,16 +309,27 @@ fn relative_path(repository: &Path, path: &Path) -> Result<String, String> {
         .ok_or_else(|| format!("non-UTF-8 repository path {}", path.display()))
 }
 
-/// The two session claims that wamn-0h0g.22 records a guest session can forge.
-const SESSION_FORGEABLE_CLAIMS: [&str; 2] = ["app.role", "app.user_id"];
+/// The session claims that a guest session can forge. wamn-0h0g.22 records
+/// `app.role` and `app.user_id`. `app.operation` has the same forgeability.
+const SESSION_FORGEABLE_CLAIMS: [&str; 3] = ["app.role", "app.user_id", "app.operation"];
 
-/// Platform trigger functions that read `app.user_id` to stamp an actor.
+/// The claims that the platform trigger functions read to record attribution.
+const PLATFORM_TRIGGER_CLAIMS: [&str; 2] = ["app.user_id", "app.operation"];
+
+/// Platform trigger functions that read [`PLATFORM_TRIGGER_CLAIMS`] to record
+/// the actor and the operation of a write.
 ///
 /// Each entry names a file and the function whose body holds the read. The
 /// owner narrowing of 2026-09-13 admits these readers by name. They record
-/// attribution and take no authorization decision.
-const PLATFORM_TRIGGER_READERS: [(&str, &str); 1] =
-    [("deploy/sql/record-history.sql", "wamn_history.stamp_row")];
+/// attribution and take no authorization decision. `wamn_history.log_row_change`
+/// is the level-2 log function that owner ruling 29 admits.
+const PLATFORM_TRIGGER_READERS: [(&str, &str); 2] = [
+    ("deploy/sql/record-history.sql", "wamn_history.stamp_row"),
+    (
+        "deploy/sql/record-history.sql",
+        "wamn_history.log_row_change",
+    ),
+];
 
 /// Every `current_setting` read of a [`SESSION_FORGEABLE_CLAIMS`] entry in
 /// `sql`, as `(claim, call, offset)`. The offset is into the normalized text.
@@ -350,11 +361,11 @@ fn normalize(sql: &str) -> String {
     sql.to_ascii_lowercase().replace("''", "'")
 }
 
-/// Is the read at `offset` of `sql` an `app.user_id` read inside the body of an
-/// admitted platform trigger function in `path`?
+/// Is the read at `offset` of `sql` a [`PLATFORM_TRIGGER_CLAIMS`] read inside
+/// the body of an admitted platform trigger function in `path`?
 fn is_platform_trigger_read(path: &str, sql: &str, claim: &str, offset: usize) -> bool {
     let normalized = normalize(sql);
-    claim == "app.user_id"
+    PLATFORM_TRIGGER_CLAIMS.contains(&claim)
         && PLATFORM_TRIGGER_READERS
             .iter()
             .filter(|(reader_path, _)| *reader_path == path)
@@ -376,22 +387,24 @@ fn function_body(normalized: &str, name: &str) -> Option<std::ops::Range<usize>>
 
 /// No production RLS policy, generated API, or authorization check reads these
 /// claims while wamn-0h0g.22 remains open. Its live case showed that a guest
-/// could rewrite both claims through a DO-wrapped EXECUTE and access another
-/// user's rows. The tenant boundary held because it derives from CURRENT_USER.
+/// could rewrite `app.role` and `app.user_id` through a DO-wrapped EXECUTE and
+/// access another user's rows. The same rewrite reaches `app.operation`. The
+/// tenant boundary held because it derives from CURRENT_USER.
 ///
 /// The owner narrowing of 2026-09-13 admits the platform trigger functions in
-/// [`PLATFORM_TRIGGER_READERS`] as `app.user_id` readers. Every other reader of
-/// either claim fails.
+/// [`PLATFORM_TRIGGER_READERS`] as readers of `app.user_id` and
+/// `app.operation`. Every other reader of these claims fails.
 ///
 /// Keep the existing SQL-text scope: production Rust literals, deployment SQL,
 /// and application SQL. Test modules, examples, and fixture inputs stay excluded.
 #[test]
-fn app_role_and_app_user_id_have_no_authorization_reader_while_the_claim_escape_is_open() {
+fn session_forgeable_claims_have_no_authorization_reader_while_the_claim_escape_is_open() {
     // A fence that has quietly stopped matching is the failure this one exists
     // to prevent, so show the discrimination before trusting the scan.
     assert!(
         forgeable_claim_reads(
-            "select set_config('app.role', $5, true), set_config('app.user_id', $6, true)"
+            "select set_config('app.role', $5, true), set_config('app.user_id', $6, true), \
+             set_config('app.operation', $7, true)"
         )
         .is_empty(),
         "the fence must not fire on the GUEST_CLAIM_SQL binding, which writes \
@@ -403,9 +416,17 @@ fn app_role_and_app_user_id_have_no_authorization_reader_while_the_claim_escape_
         1,
         "the fence must see a claim read, including one nested in an EXECUTE string"
     );
+    let operation_policy =
+        "create policy p on t using (current_setting('app.operation', true) = 'x')";
+    assert_eq!(
+        forgeable_claim_reads(operation_policy).len(),
+        1,
+        "the fence must see an app.operation read"
+    );
     let trigger_file = "create function wamn_history.stamp_row() returns trigger \
          language plpgsql set search_path = pg_catalog as $stamp_row$ begin \
          perform current_setting('app.user_id', true); \
+         perform current_setting('app.operation', true); \
          perform current_setting('app.role', true); \
          end $stamp_row$; \
          create policy p on t using (owner = current_setting('app.user_id', true)::uuid);";
@@ -417,19 +438,25 @@ fn app_role_and_app_user_id_have_no_authorization_reader_while_the_claim_escape_
     };
     assert_eq!(
         admitted("deploy/sql/record-history.sql", trigger_file),
-        [true, false, false],
-        "the allowlist must admit only the app.user_id read inside the named \
-         trigger function body, and still refuse app.role and a policy reader"
+        [true, true, false, false],
+        "the allowlist must admit only the app.user_id and app.operation reads \
+         inside the named trigger function body, and still refuse app.role and \
+         a policy reader"
     );
     assert_eq!(
         admitted("deploy/sql/app-schema.sql", trigger_file),
-        [false, false, false],
+        [false, false, false, false],
         "the allowlist must not admit the named function outside its file"
     );
     assert_eq!(
         admitted("deploy/sql/record-history.sql", policy),
         [false],
         "the allowlist must refuse a policy reader in the trigger file"
+    );
+    assert_eq!(
+        admitted("deploy/sql/record-history.sql", operation_policy),
+        [false],
+        "the allowlist must refuse an app.operation policy reader in the trigger file"
     );
 
     let repository = repository();
@@ -448,17 +475,20 @@ fn app_role_and_app_user_id_have_no_authorization_reader_while_the_claim_escape_
 
     assert!(
         readers.is_empty(),
-        "production SQL must not read the session-forgeable identity claims \
-         `app.role` or `app.user_id` for authorization or row security while \
-         wamn-0h0g.22 is OPEN.\n\n\
-         wamn-0h0g.22 records that a guest session rewrites both claims past the \
-         claim blocklist with a DO-wrapped EXECUTE, then reads and zeroes another \
-         user's rows. A policy or check that reads either claim makes that hole \
-         reachable. Settle wamn-0h0g.22 first. The owner ruling of 2026-09-04 \
-         re-keys the per-user layer onto something the session cannot rewrite.\n\n\
+        "production SQL must not read the session-forgeable claims `app.role`, \
+         `app.user_id`, or `app.operation` for authorization or row security \
+         while wamn-0h0g.22 is OPEN.\n\n\
+         wamn-0h0g.22 records that a guest session rewrites `app.role` and \
+         `app.user_id` past the claim blocklist with a DO-wrapped EXECUTE, then \
+         reads and zeroes another user's rows. The same rewrite reaches \
+         `app.operation`. A policy or check that reads any of these claims makes \
+         that hole reachable. Settle wamn-0h0g.22 first. The owner ruling of \
+         2026-09-04 re-keys the per-user layer onto something the session cannot \
+         rewrite.\n\n\
          The owner narrowing of 2026-09-13 admits only the platform trigger \
-         functions in PLATFORM_TRIGGER_READERS, which read app.user_id to stamp \
-         an actor. Do not add an authorization or RLS reader to that list.\n\n\
+         functions in PLATFORM_TRIGGER_READERS, which read app.user_id and \
+         app.operation to record the actor and the operation of a write. Do not \
+         add an authorization or RLS reader to that list.\n\n\
          production readers found:\n{}",
         readers.join("\n")
     );

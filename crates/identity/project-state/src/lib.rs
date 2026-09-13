@@ -56,6 +56,11 @@ pub const TENANT_CLAIM: &str = "app.tenant";
 /// target ([`USERS`]`.id`) is a `uuid`.
 pub const USER_ID_CLAIM: &str = "app.user_id";
 
+/// The claim that names the source of a write (`app.operation`): an operation
+/// token, `wamn:<component>`, or `admin:<kebab-purpose>`. The record-history
+/// log records it.
+pub const OPERATION_CLAIM: &str = "app.operation";
+
 /// The per-role claim the 3.5 RLS builder reads as
 /// `COALESCE(current_setting('app.role', true), '') IN (...)` — so the gate
 /// compares against [`ROLES`]`.name` (text).

@@ -1321,6 +1321,9 @@ impl RouterDriver {
                 // Activation binds the executing principal from the caller or
                 // `platform`, so a nested call derives the same one.
                 user_id: None,
+                // Activation binds the operation token of `invocation`, so a
+                // nested call binds its own operation.
+                operation: None,
                 release,
             },
             invocation: ConnectionInvocation {
@@ -1495,6 +1498,18 @@ impl NodeAcquisition {
             None => self
                 .platform
                 .map(|component| component.principal_id().to_string()),
+        }
+    }
+
+    /// The claims that activation binds: [`Self::claims`] with the executing
+    /// principal as `app.user_id` and the operation token that this
+    /// acquisition executes as `app.operation`. A retargeted acquisition
+    /// carries the nested operation, so a nested call binds its own token.
+    fn executing_claims(&self, caller: Option<&AuthenticatedCaller>) -> SessionClaims {
+        SessionClaims {
+            user_id: self.executing_principal(caller),
+            operation: Some(self.invocation.operation.clone()),
+            ..self.claims.clone()
         }
     }
 
@@ -1988,6 +2003,7 @@ mod tests {
                 runner: Some("executor-a".to_owned()),
                 role: Some("operator".to_owned()),
                 user_id: Some("user-a".to_owned()),
+                operation: None,
                 release: Some(ReleaseIdentity {
                     effective_release_id: 7,
                     manifest_digest: wamn_catalog::ManifestDigest::parse(
@@ -2044,6 +2060,20 @@ mod tests {
         assert_eq!(
             executor.executing_principal(None),
             Some(PlatformComponent::Executor.principal_id().to_string())
+        );
+        // The parent binds its own operation token and the nested call binds
+        // the token of the operation that it executes.
+        assert_eq!(
+            original.executing_claims(None).operation.as_deref(),
+            Some("client-acme-receiving:receiving/record-receipt@1.0.0")
+        );
+        assert_eq!(
+            child.executing_claims(None),
+            SessionClaims {
+                user_id: Some(materializer.clone()),
+                operation: Some("wamn-receiving:receiving/record-receipt@1.0.0".to_owned()),
+                ..original.claims.clone()
+            }
         );
         assert_eq!(child.causation.as_ref(), Some(&causation));
         assert_eq!(child.invocation.package_id, "wamn_receiving");

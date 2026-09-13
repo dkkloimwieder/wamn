@@ -740,6 +740,11 @@ async fn run_case(case: Case) {
                     Some(PlatformComponent::Materializer.principal_id().to_string()),
                     "a callerless delivery binds its platform principal"
                 );
+                assert_eq!(
+                    claims.operation.as_deref(),
+                    Some(ROOT),
+                    "a callerless delivery binds the operation that it runs"
+                );
             }
             let invocation = event
                 .invocation

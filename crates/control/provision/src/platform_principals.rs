@@ -7,13 +7,14 @@
 //! read deployment configuration, so this module checks the platform domain
 //! and writes the email.
 //!
-//! A platform component that writes binds its principal id as `app.user_id`,
-//! so the record-history triggers stamp that component.
+//! A platform component that writes binds its principal id as `app.user_id`
+//! and its `wamn:<component>` name as `app.operation`, so the record-history
+//! triggers record that component.
 
 use std::fmt;
 
 use wamn_pg_core::quote_literal;
-use wamn_project_state::{PlatformComponent, USER_ID_CLAIM, USERS, UserType};
+use wamn_project_state::{OPERATION_CLAIM, PlatformComponent, USER_ID_CLAIM, USERS, UserType};
 
 /// The longest domain name in text form, in bytes.
 const MAX_DOMAIN_LEN: usize = 253;
@@ -46,22 +47,26 @@ impl fmt::Display for PlatformDomainError {
 
 impl std::error::Error for PlatformDomainError {}
 
-/// Render the statement that binds `component` as the actor of the current
-/// transaction.
+/// Render the statement that binds `component` as the actor and the operation
+/// of the current transaction.
 ///
-/// The binding is transaction-local, so the caller runs the statement inside
-/// the transaction that writes.
+/// The statement binds the principal id as `app.user_id` and the
+/// `wamn:<component>` name as `app.operation`. The binding is
+/// transaction-local, so the caller runs the statement inside the transaction
+/// that writes.
 pub fn bind_platform_principal_sql(component: PlatformComponent) -> String {
     format!(
-        "SELECT pg_catalog.set_config({}, {}, true);\n",
+        "SELECT pg_catalog.set_config({}, {}, true), pg_catalog.set_config({}, {}, true);\n",
         quote_literal(USER_ID_CLAIM),
         quote_literal(&component.principal_id().to_string()),
+        quote_literal(OPERATION_CLAIM),
+        quote_literal(component.principal_name()),
     )
 }
 
 /// Render the SQL that creates the platform rows of one tenant.
 ///
-/// The SQL first binds `wamn:provisioning` as the actor. The
+/// The SQL first binds `wamn:provisioning` as the actor and the operation. The
 /// `wamn:provisioning` row comes next, because it is the first row in a tenant
 /// database, and it stamps itself. The other components follow. The SQL
 /// carries no transaction control, so the caller runs it inside one
@@ -127,6 +132,29 @@ pub fn validate_platform_domain(domain: &str) -> Result<(), PlatformDomainError>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_platform_binding_names_the_actor_and_the_operation() {
+        for component in PlatformComponent::ALL {
+            assert_eq!(
+                bind_platform_principal_sql(component),
+                format!(
+                    "SELECT pg_catalog.set_config('app.user_id', '{}', true), \
+                     pg_catalog.set_config('app.operation', '{}', true);\n",
+                    component.principal_id(),
+                    component.principal_name(),
+                )
+            );
+        }
+        assert!(
+            platform_principals_sql("t1", "example.invalid")
+                .expect("a domain name renders")
+                .starts_with(&bind_platform_principal_sql(
+                    PlatformComponent::Provisioning
+                )),
+            "the platform rows are written as wamn:provisioning"
+        );
+    }
 
     #[test]
     fn a_domain_name_renders() {

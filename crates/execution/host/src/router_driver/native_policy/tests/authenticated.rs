@@ -450,6 +450,11 @@ async fn assert_case(scenario: Scenario, caller: &AuthenticatedCaller) {
         );
         let invocation = event.invocation.expect("host invocation");
         assert_eq!(
+            claims.operation.as_deref(),
+            Some(invocation.operation.as_str()),
+            "the parent and its nested call each bind their own operation"
+        );
+        assert_eq!(
             invocation.origin,
             fixture.request(deadline).acquisition.invocation.origin,
             "nested execution preserves its distinct wiring owner and original root component"

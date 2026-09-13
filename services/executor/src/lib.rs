@@ -433,8 +433,10 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
             schema: args.schema.clone(),
             runner: Some(owner.clone()),
             role: None,
-            // Queue claims, renewals and completions run as wamn:executor.
+            // Queue claims, renewals and completions run as wamn:executor,
+            // outside a registered operation.
             user_id: Some(PlatformComponent::Executor.principal_id().to_string()),
+            operation: Some(PlatformComponent::Executor.principal_name().to_owned()),
             release: Some(ReleaseIdentity {
                 effective_release_id: release.release().effective_release_id,
                 manifest_digest: release.release().manifest_digest.clone(),

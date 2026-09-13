@@ -839,14 +839,15 @@ async fn reconcile_package_registrations(
     Ok(changed)
 }
 
-/// Bind `wamn:apply-package` as the actor of the transaction, so its writes,
-/// including operation grants, stamp that component.
+/// Bind `wamn:apply-package` as the actor and the operation of the
+/// transaction, so its writes, including operation grants, record that
+/// component.
 async fn bind_apply_package_principal(tx: &Transaction<'_>) -> anyhow::Result<()> {
     tx.batch_execute(&bind_platform_principal_sql(
         PlatformComponent::ApplyPackage,
     ))
     .await
-    .context("bind wamn:apply-package as the transaction actor")
+    .context("bind wamn:apply-package as the transaction actor and operation")
 }
 
 async fn reconcile_package_operation_grants(
