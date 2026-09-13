@@ -102,8 +102,11 @@ impl std::fmt::Display for UserStatus {
 /// The fixed WAMN namespace for platform principal ids. Every tenant and every
 /// deployment derives the same id from the same name, so no configuration
 /// carries the id. The value is frozen: a change changes every platform row id.
-pub const PLATFORM_PRINCIPAL_NAMESPACE: uuid::Uuid =
-    uuid::Uuid::from_u128(0x485d_b377_302e_4a7d_9d66_3c81_85a7_346b);
+/// Anyone can recompute it from the domain.
+///
+/// `WAMN_NAMESPACE = uuid5(NAMESPACE_DNS, "wamn.dev")`
+pub const WAMN_NAMESPACE: uuid::Uuid =
+    uuid::Uuid::from_u128(0x0df2_99cf_7085_537d_919b_1145_b5ef_00f8);
 
 /// The reserved principal namespace. A platform principal name is
 /// `wamn:<component>`, where the component is kebab-case and carries no action
@@ -155,12 +158,9 @@ impl PlatformComponent {
     }
 
     /// The `app_system.users` id: the UUIDv5 of [`Self::principal_name`] under
-    /// [`PLATFORM_PRINCIPAL_NAMESPACE`].
+    /// [`WAMN_NAMESPACE`].
     pub fn principal_id(self) -> uuid::Uuid {
-        uuid::Uuid::new_v5(
-            &PLATFORM_PRINCIPAL_NAMESPACE,
-            self.principal_name().as_bytes(),
-        )
+        uuid::Uuid::new_v5(&WAMN_NAMESPACE, self.principal_name().as_bytes())
     }
 }
 
@@ -274,24 +274,32 @@ mod tests {
     }
 
     #[test]
+    fn wamn_namespace_derives_from_the_domain() {
+        assert_eq!(
+            WAMN_NAMESPACE,
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_DNS, b"wamn.dev")
+        );
+    }
+
+    #[test]
     fn platform_principal_ids_are_pinned() {
         // Computed independently with Python `uuid.uuid5`.
         let pinned = [
             (
                 PlatformComponent::Provisioning,
-                "3fa25435-6f8e-55b8-a34f-0fad550a12f6",
+                "770df186-ac15-579e-b46b-c297cae2011b",
             ),
             (
                 PlatformComponent::ApplyPackage,
-                "e6ede3ff-e4fc-53f8-af68-c78f9e2fa92c",
+                "7695180f-4b9a-581f-84ef-d7e9cdbd2b77",
             ),
             (
                 PlatformComponent::Materializer,
-                "294f663d-02c6-5f1d-9ef8-41c77991b0c1",
+                "968bd0cc-e612-5d29-9d6c-af1993b8df0a",
             ),
             (
                 PlatformComponent::Executor,
-                "a6960acb-283d-56cc-a114-2f870cd9344c",
+                "d318d033-29ea-5cb0-ab56-24340413fbcc",
             ),
         ];
         assert_eq!(
