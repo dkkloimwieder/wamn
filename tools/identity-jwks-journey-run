@@ -245,8 +245,11 @@ run "${kube[@]}" -n "$namespace" exec "deployment/$postgres" -- psql -U postgres
   "SELECT current_database(), current_setting('server_version_num')" >"$evidence_dir/postgres-version.txt"
 [[ $(<"$evidence_dir/postgres-version.txt") =~ ^wamn_system\|18[0-9]{4}$ ]] || fail 'fixture is not PostgreSQL 18 on wamn_system'
 {
+  # record-history.sql grants to wamn_db_owner, and wamn_system cannot create that role.
   printf '%s\n' "CREATE ROLE wamn_system NOLOGIN; GRANT CREATE ON DATABASE wamn_system TO wamn_system;" \
+    "CREATE ROLE wamn_db_owner NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;" \
     "REVOKE CONNECT, TEMPORARY ON DATABASE wamn_system, postgres, template1 FROM PUBLIC; SET ROLE wamn_system;"
+  sed -n '1,$p' "$repo_root/deploy/sql/record-history.sql"
   sed -n '1,$p' "$repo_root/deploy/sql/system-schema.sql"
   printf '\nRESET ROLE;\n'
 } >"$evidence_dir/bootstrap.sql"

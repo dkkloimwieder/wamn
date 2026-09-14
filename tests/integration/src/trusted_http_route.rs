@@ -1245,6 +1245,15 @@ mod tests {
             "nested identity test requires PostgreSQL 18"
         );
         wamn_ctl::dev::environment::reset_control_store(&system).await?;
+        // The test identity is platform setup, so it writes as wamn:provisioning.
+        system
+            .execute(
+                "SELECT set_config('app.user_id', $1, false)",
+                &[&wamn_control_provision::PlatformComponent::Provisioning
+                    .principal_id()
+                    .to_string()],
+            )
+            .await?;
         system.execute("INSERT INTO registry.orgs (id, placement_kind, pool_cluster) VALUES ($1, 'pooled', 'http-reuse-test')", &[&TENANT]).await?;
         system
             .execute(

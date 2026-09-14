@@ -16,6 +16,7 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt as _;
 use wamn_control_provision::identity_issuer::validate_identity_issuer;
+use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_platform_identity::session_keys::{PublicSessionKey, SessionJwks, decode_public_key};
 use wamn_platform_identity::session_token::{
     MAXIMUM_LIFETIME, SessionScope, TOLERANCE, session_key_id, verify_session_token,
@@ -385,6 +386,9 @@ async fn create_fixture(url: &str) -> anyhow::Result<Vec<u8>> {
             .map_err(|_| anyhow!("identity session fixture clock refused"))?.as_nanos();
         let transaction = client.transaction().await
             .map_err(|_| anyhow!("begin identity session fixture transaction failed"))?;
+        // The fixture identity is platform setup, so it writes as wamn:provisioning.
+        transaction.batch_execute(&bind_platform_principal_sql(PlatformComponent::Provisioning)).await
+            .map_err(|_| anyhow!("bind identity session fixture actor failed"))?;
         let human = create_human(&transaction, &format!("session-fixture-human-{suffix}-{}", std::process::id()), "Disposable session test human").await
             .map_err(|_| anyhow!("create identity session fixture human failed"))?;
         let service = create_service(&transaction, &format!("session-fixture-service-{suffix}-{}", std::process::id()), "Disposable session test service").await
