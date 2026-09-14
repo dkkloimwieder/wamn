@@ -130,7 +130,7 @@ A 30-day log with no stamp columns:
 The [manifest validation](../../crates/schema/generator/src/manifest.rs) refuses a missing key, a key on an overlay model, and a repeated name.
 It also refuses an actor without its time: `created_by` requires `created_at`, and `updated_by` requires `updated_at`.
 It refuses every other retention, including `P0D`, weeks, months, years, time parts, fractions, and signs.
-The retention task that removes expired entries is unbuilt work in the [record history plan](../plan/record-history-spec.md).
+The [retention task](#retention-task) removes expired entries.
 
 [Generation validation](../../crates/schema/generator/src/generate/validation.rs) compares the declaration with the schema.
 It refuses a selected column that is absent or nullable, and a logged relation with no primary key.

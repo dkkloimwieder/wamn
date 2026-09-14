@@ -74,6 +74,7 @@ chrono = { workspace = true, features = ["std"] }
 # A DEV edge only — nothing in this crate's production surface reaches it.
 # This test edge adds no database effects to the production builders.
 wamn-schema-control = { workspace = true }
+wamn-record-history = { workspace = true }
 
 [lints]
 workspace = true

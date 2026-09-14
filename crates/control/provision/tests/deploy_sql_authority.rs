@@ -41,6 +41,7 @@ use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::workload_role::{
     WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
 };
+use wamn_record_history::{HistoryRow, RowState, state_at};
 
 const POSTGRES_INIT: &str = include_str!("../../../../deploy/sql/postgres-init.sql");
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -2198,12 +2199,6 @@ fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 
-/// The record history fold, compiled from the source of its crate. The fold
-/// has no dependencies, so this test reads it without a crate dependency.
-#[path = "../../../../apps/platform/data/record-history/src/lib.rs"]
-#[expect(dead_code, reason = "the history read test reads no fold refusal")]
-mod record_history_fold;
-
 /// The generator fixture package that declares a logged relation and its
 /// history read.
 const HISTORY_FIXTURE_MANIFEST: &[u8] =
@@ -2290,15 +2285,15 @@ fn writes_or_locks(plan: &serde_json::Value) -> bool {
 
 /// The columns of `image` as the fold splits them.
 fn image_columns(image: &str) -> Vec<(String, String)> {
-    let row = record_history_fold::HistoryRow {
+    let row = HistoryRow {
         position: 1,
         kind: "insert",
         before: "{}",
         current: image,
         head_position: 1,
     };
-    match record_history_fold::state_at(&[row], 1) {
-        Ok(record_history_fold::RowState::Present(image)) => image
+    match state_at(&[row], 1) {
+        Ok(RowState::Present(image)) => image
             .columns()
             .map(|(name, value)| (name.to_owned(), value.to_owned()))
             .collect(),
@@ -2398,10 +2393,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     // A row with no retained entries returns an empty page.
     let unknown = history_pages(&db_url, &guest, "00000000-0000-4000-8000-000000000999");
     assert!(unknown.is_empty(), "an unknown row must return no entries");
-    assert_eq!(
-        record_history_fold::state_at(&[], 1),
-        Ok(record_history_fold::RowState::Unavailable)
-    );
+    assert_eq!(state_at(&[], 1), Ok(RowState::Unavailable));
 
     // An insert, a scale-only update, an update of a text and a time, and a
     // delete, each in its own transaction. After each write, the row image of
@@ -2463,7 +2455,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     let pages = history_pages(&db_url, &guest, HISTORY_ITEM);
     let rows = pages
         .iter()
-        .map(|row| record_history_fold::HistoryRow {
+        .map(|row| HistoryRow {
             position: row[0].parse().expect("position is a bigint"),
             kind: &row[1],
             before: &row[6],
@@ -2490,17 +2482,15 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
         ]
     );
 
-    let state = |position: i64| match record_history_fold::state_at(&rows, position)
-        .expect("the read folds")
-    {
-        record_history_fold::RowState::Present(image) => Some(
+    let state = |position: i64| match state_at(&rows, position).expect("the read folds") {
+        RowState::Present(image) => Some(
             image
                 .columns()
                 .map(|(name, value)| (name.to_owned(), value.to_owned()))
                 .collect::<Vec<_>>(),
         ),
-        record_history_fold::RowState::Absent => None,
-        record_history_fold::RowState::Unavailable => {
+        RowState::Absent => None,
+        RowState::Unavailable => {
             panic!("position {position} is retained")
         }
     };
@@ -2523,8 +2513,8 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     assert_eq!(quantity(rows[0].position).as_deref(), Some("12.3400"));
     assert_eq!(quantity(rows[1].position).as_deref(), Some("12.34"));
     assert_eq!(
-        record_history_fold::state_at(&rows, rows[0].position - 1),
-        Ok(record_history_fold::RowState::Unavailable)
+        state_at(&rows, rows[0].position - 1),
+        Ok(RowState::Unavailable)
     );
 
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));

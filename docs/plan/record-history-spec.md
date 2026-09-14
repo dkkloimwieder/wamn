@@ -79,7 +79,6 @@ Entry contents:
 - Every entry records an actor, because every write has one. The `columns` selection controls row metadata only, not log contents.
 - JSONB fits because PostgreSQL compresses large values without custom encoding, a diff keeps ordinary entries small, and the normal JSON operators query it.
 - Each row change writes one entry. A true no-op writes no stamps and no entry.
-- The triggers compare JSONB text, so a change of numeric scale alone is a change. It moves the stamps and writes an entry, and the generated `update` bumps the revision.
 - The per-row position orders entries. The transaction timestamp does not order concurrent changes and repeats within one transaction.
 - A rolled-back change leaves no entry. A failure while writing the entry rolls back the change. An idempotent replay that returns the original result appends nothing.
 

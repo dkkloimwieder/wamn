@@ -5713,6 +5713,7 @@ dependencies = [
  "wamn-event-wire",
  "wamn-pg-core",
  "wamn-project-state",
+ "wamn-record-history",
  "wamn-run-state",
  "wamn-schema-control",
  "wamn-schema-generator",
@@ -6165,6 +6166,10 @@ dependencies = [
  "wamn-client-tui",
  "wamn-generated-receiving-tui",
 ]
+
+[[package]]
+name = "wamn-record-history"
+version = "0.1.0"
 
 [[package]]
 name = "wamn-router"

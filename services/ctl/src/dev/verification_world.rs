@@ -582,14 +582,20 @@ mod tests {
             .into_iter()
             .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
             .collect::<Vec<_>>();
-        let expected = ["apply-package", "executor", "materializer", "provisioning"]
-            .map(|component| {
-                (
-                    format!("wamn:{component}"),
-                    format!("{component}@{platform_domain}"),
-                )
-            })
-            .to_vec();
+        let expected = [
+            "apply-package",
+            "audit-retention",
+            "executor",
+            "materializer",
+            "provisioning",
+        ]
+        .map(|component| {
+            (
+                format!("wamn:{component}"),
+                format!("{component}@{platform_domain}"),
+            )
+        })
+        .to_vec();
         assert_eq!(platform_rows, expected);
         assert!(first.management_admitter_connect_granted);
         let verification_database = database_name(url);
