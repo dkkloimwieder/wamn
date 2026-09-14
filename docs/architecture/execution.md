@@ -74,7 +74,7 @@ A node binds the operation token that it runs, so a nested call binds its own to
 A registration delivery binds the token of its handler.
 An executor queue claim, reap, renew, or complete transaction binds `wamn:executor`.
 An absent operation binds an empty value, so a pooled connection keeps no earlier operation.
-The [record history plan](../plan/record-history-spec.md) describes the log that records the operation.
+The [record history log](data-access.md#history-tables-and-the-log-trigger) records the operation in each entry.
 
 A platform claims transaction that only reads binds no principal and no operation.
 A bound principal alone does not move a read out of the autocommit path.

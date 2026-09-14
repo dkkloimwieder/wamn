@@ -180,6 +180,7 @@ Every stamp in one transaction carries the same instant, and that instant is not
 
 The function reads no users row, and no stamp column has a foreign key.
 Only the platform trigger functions read `app.user_id`, and no authorization or row policy reads it.
+The [claims fence](../../tests/conformance/tests/session_claims.rs) admits those readers by name, and it admits `wamn_history.log_row_change` as the reader of `app.operation`.
 
 After the migrations apply, apply-package installs one `record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
 The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes `wamn_history.stamp_row` with the selected columns.
@@ -196,7 +197,47 @@ The history table is `<relation>_history` in the schema of the relation.
 `wamn_history.create_history_table` in `record-history.sql` is the one definition of the table shape.
 A package relation gets no `tenant_id` column.
 `wamn_history.log_row_change` is the `AFTER INSERT OR UPDATE OR DELETE` row trigger function that writes one entry for each row change.
-The [record history plan](../plan/record-history-spec.md#42-log-trigger) describes the entry columns and contents.
+It writes the entry in the same transaction as the change.
+It writes with the authority of the writer, so the `current_user` tenant floor also governs the entry.
+
+An entry has these columns:
+
+- `position`: the per-row position, a `bigint` identity value that the function allocates under the row lock. Positions rise for each row, and gaps are allowed.
+- `tenant_id`: the tenant of the row, only in a history table under a tenant floor.
+- `row_key`: a JSONB object of the primary key columns.
+- `kind`: `insert`, `update`, or `delete`.
+- `operation`: the source of the write, from `app.operation`.
+- `changed_by`: the actor, from `app.user_id`.
+- `changed_at`: the one time of the entry, from `transaction_timestamp()`. Retention expires entries by this time.
+- `transaction_id`: the 64-bit value of `pg_current_xact_id()`, stored as `bigint`.
+- `before` and `after`: the JSONB images, rendered by `wamn_history.row_image`.
+
+Every column is `NOT NULL`, and the primary key is `(row_key, position)`.
+A CHECK on `operation` accepts three shapes only: an operation token, `wamn:<component>`, and `admin:<kebab-purpose>`.
+The CHECK matches each shape by its grammar pattern.
+The platform binding owns the closed component list, so a new component needs no change to a history table.
+
+The function refuses a write that it cannot log:
+
+- A write with no bound `app.user_id` raises SQLSTATE `55000` with the message `actor-required`, as the stamp function does.
+- A write with no bound `app.operation` raises SQLSTATE `55000` with the message `operation-required`.
+- A write to a relation with no primary key raises SQLSTATE `55000` with the message `history-key-required`.
+
+Entry contents:
+
+- An insert records the complete resulting row, including defaults, in `after`, and its `before` is `{}`. That row is the starting state for reconstruction.
+- An update records the prior and resulting values of the changed columns, including changes to the stamps and the revision column.
+- A delete records the full row in `before`, and its `after` is `{}`.
+- An update that changes a primary key column writes a delete entry under the old key and an insert entry under the new key. The shared transaction id links the two entries.
+- On a shared relation, the trigger reads `OLD` and `NEW`, which hold the effective base and overlay row. An overlay change therefore captures the complete row without a change to the public input or result of the operation.
+- An overlay change to a base relation writes to the history table of that relation, and the overlay declares nothing.
+- Every entry records an actor and an operation. The `columns` selection controls row metadata only, not log contents.
+- The per-row position orders entries. The transaction timestamp does not order concurrent changes and repeats within one transaction.
+- A rolled-back change leaves no entry. A failure while the function writes the entry rolls back the change. An idempotent replay that returns the original result appends nothing.
+
+The event envelope `txid` holds the low 32 bits of the entry transaction id.
+The join from an event to its entries is therefore exact within one transaction id epoch.
+Causation stays on the event, and the entry does not record it.
 
 `wamn_history.row_image(record)` renders both images of an entry and the current row of a [history read](#history-read).
 It sets `TimeZone` to UTC inside the function.
@@ -218,6 +259,8 @@ Generation refuses these declarations:
 - A model table, an internal relation table or key, or a custom operation relation whose name ends with `_history`. A custom operation can read a history table, but it cannot declare an insert, an update, or a row lock on one.
 - A logged relation whose longest derived history object name has 64 bytes or more. The longest name is `<relation>_history_transaction_id_not_null`, so the name of a logged relation has 31 bytes or fewer. The refusal names the relation.
 - A logged relation with no primary key. Each entry keys the row by its primary key columns.
+
+No generated `update` or `delete` exists over a history table, so no application operation can alter an entry.
 
 After the migrations apply, apply-package creates the history table of each owned logged relation as `wamn_db_owner`.
 apply-package never drops a history table.
@@ -314,6 +357,8 @@ A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id
 `wamn_app` holds no other privilege on a history table, so a guest reads no `app_system` history and cannot set `position`.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
 A foreign key cascade writes its delete entries with the actor and the operation of the deleting transaction.
+The log copies full rows, including `api_keys.key_hash`.
+A column that is secret at rest does not belong in a stamped relation.
 An applier installs `record-history.sql` and then `record-history-app-grants.sql` before `app-schema.sql`.
 
 ### System database
@@ -323,6 +368,7 @@ These relations are `identity.principals`, `identity.project_roles`, `identity.p
 Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `record_history_stamp` trigger.
 The registry, the sagas, the session keys, the operations tables, and the control store carry no stamps.
 In the system database, the actor is an `identity.principals` id.
+The system database keeps stamps only and no history table, as its [limits](#limits) state.
 
 The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/control/provision/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
 `record-history.sql` grants to `wamn_db_owner`, so an applier that runs as `wamn_system` creates that role first.
@@ -348,6 +394,7 @@ The trigger keeps `created_at`, so an expired-token fixture moves `expires_at` t
 
 A history read is an ordinary public custom projection with its own operation token and grant.
 Its authored fields decide which prior data it shows.
+The log carries copied business values, so a grant of a history read is a new read surface.
 The [generator fixture package](../../crates/schema/generator/tests/fixtures/record_history/wamn.json) shows the pattern.
 
 The read is one flat `bounded_list` over the history table of one relation:
@@ -381,14 +428,33 @@ It keeps each column value as raw JSON text and replaces whole values, so numeri
 Every position before the oldest retained entry is unavailable.
 The fold refuses rows with different head positions, positions that do not rise, and a read that ends before the head position.
 
+The guarantee is bounded historical state:
+
+- If a complete chain and a starting state remain, the fold reconstructs the state at a retained per-row position.
+- A live row whose insert entry expired still reconstructs across its retained diffs.
+- After the `before` image of a deleted row expires, the contents of that row are unavailable.
+- If the oldest retained entry of a row is its insert, the history of that row is complete. Otherwise, the history of that row is incomplete.
+- No wall-clock "as of" read exists, because transaction timestamps do not order concurrent changes.
+- An intermediate state inside one transaction was never visible to another caller.
+
 ### Limits
 
-Stamps are correct for writes through the supported platform paths.
-On those paths, the triggers exist and every writer binds its executing principal.
+Stamps and log entries are correct for writes through the supported platform paths.
+On those paths, the triggers exist and every writer binds its executing principal and its operation.
 No production code applies `app-schema.sql` or writes person, service, or platform rows today.
 Beads `wamn-0h0g.9` owns that production application, the person and service rows, and the refusal of a credential for a principal without a users row.
-Until `wamn-0h0g.22` replaces caller-settable authority, modified application SQL can forge actor attribution.
+Until `wamn-0h0g.22` replaces caller-settable authority, modified application SQL can forge actor attribution and `app.operation`.
+Within its tenant, a guest can insert a `configurations_history` entry directly, because it holds `INSERT` on the entry columns.
 Record history gives no tamper resistance against modified application code or administrative SQL.
+
+A very large `"P<n>D"` day count stops the retention verb at that relation, and the verb prunes no later relation of that database.
+Deferred Beads `wamn-emtx.27` records that defect.
+
+The statement check of one package runs under the grants of that package alone.
+If an overlay adds a column that no installed operation reads, a whole-row read of that relation fails at run time with permission denied.
+No current statement reaches that case.
+Beads `wamn-emtx.29` is the closed record of this limit.
+Its reopen trigger is a package statement that reads a relation whole while another package extends that relation.
 
 The history read has two more limits:
 
@@ -398,7 +464,7 @@ The history read has two more limits:
 The system database has two more limits:
 
 - The issuer and the revoker of a token read `wamn:provisioning` until Beads `wamn-0h0g.9` gives issuance a person caller.
-- A delete gets no stamp. Role and membership removals therefore stay unattributed until Beads `wamn-emtx.24` adds the system database log.
+- The system database keeps stamps only. A delete gets no stamp, so role, membership, and PAT removals stay unattributed. Beads `wamn-emtx.24` is the closed record of the system database log. Its reopen trigger is a need to attribute those removals beyond the stamps, for example a security review that asks for revoke history.
 
 ## Canonical values and SQL names
 

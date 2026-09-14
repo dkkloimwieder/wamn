@@ -48,7 +48,7 @@ It does not grant runtime credentials permission to reconfigure streams.
 
 Every tenant database needs its platform principal rows before any stamped write.
 `wamn-ctl print-platform-principals --tenant "$TENANT" --platform-domain "$PLATFORM_DOMAIN"` prints their SQL.
-Pipe that SQL into `psql --single-transaction` against the tenant database after `record-history.sql` and `app-schema.sql`.
+Pipe that SQL into `psql --single-transaction` against the tenant database after `record-history.sql`, `record-history-app-grants.sql`, and `app-schema.sql`.
 Production provisioning does not run this step yet, as the [record history limits](../architecture/data-access.md#limits) state.
 
 Apply the selected package migrations to a fresh target with `wamn-ctl apply-package`.
