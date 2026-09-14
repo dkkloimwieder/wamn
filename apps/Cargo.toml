@@ -20,6 +20,7 @@ members = [
     "platform/execution/materializer",
     "platform/data/postgres-statements",
     "platform/data/postgres-sqlx",
+    "platform/data/record-history",
     "client_acme_receiving/data",
     "wamn_receiving/data",
     "wamn_wms/data",
@@ -111,6 +112,7 @@ wamn-execution-contract = { path = "platform/execution/contract", version = "0.1
 wamn-materializer = { path = "platform/events/materializer", version = "0.1.0" }
 wamn-postgres-statements = { path = "platform/data/postgres-statements", version = "0.1.0" }
 wamn-postgres-sqlx = { path = "platform/data/postgres-sqlx", version = "0.1.0" }
+wamn-record-history = { path = "platform/data/record-history", version = "0.1.0" }
 wamn-client-acme-receiving-data-access = { path = "client_acme_receiving/data", version = "0.1.0" }
 wamn-receiving-data-access = { path = "wamn_receiving/data", version = "0.1.0" }
 wamn-wms-data-access = { path = "wamn_wms/data", version = "0.1.0" }

@@ -1026,9 +1026,10 @@ fn the_stamp_trigger_stamps_guest_writes_on_postgres() {
         ),
     );
     assert_eq!(
-        shape, "t t f f f f search_path=pg_catalog",
-        "wamn_db_owner must hold schema USAGE and function EXECUTE, the guest \
-         must hold neither, and the function must be SECURITY INVOKER with a \
+        shape, "t t t f f f search_path=pg_catalog",
+        "wamn_db_owner must hold schema USAGE and function EXECUTE, wamn_app must \
+         hold schema USAGE for wamn_history.row_image, neither wamn_app nor the \
+         guest must hold EXECUTE, and the function must be SECURITY INVOKER with a \
          pinned search_path (order: owner usage, owner execute, wamn_app usage, \
          wamn_app execute, guest execute, security definer, config)"
     );
@@ -1291,7 +1292,8 @@ fn record_history_log_fixture(admin: &str) -> (String, String) {
 
 /// One guest transaction with `app.user_id` and `app.operation` bound, the way
 /// the host claims transaction binds them. The session time zone is not UTC,
-/// so an image that matches a UTC read shows the time zone of the function.
+/// so an image that matches a later `wamn_history.row_image` read shows that
+/// the image does not depend on the session time zone.
 fn logged_guest_transaction(guest: &str, actor: &str, operation: &str, body: &str) -> String {
     format!(
         "BEGIN;\n\
@@ -1378,10 +1380,11 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
     assert_eq!(
         config,
         "create_history_table f search_path=pg_catalog; \
-         log_row_change f search_path=pg_catalog,TimeZone=UTC; \
+         log_row_change f search_path=pg_catalog; \
+         row_image f search_path=pg_catalog,TimeZone=UTC; \
          stamp_row f search_path=pg_catalog",
         "every record-history function must be SECURITY INVOKER with a pinned \
-         search_path, and the log function must pin TimeZone to UTC"
+         search_path, and the row image function must pin TimeZone to UTC"
     );
 
     let columns = |relation: &str| {
@@ -1501,8 +1504,8 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
     };
     let (db_url, guest) = record_history_log_fixture(&admin);
 
-    // An insert writes the full row in after and '{}' in before. The UTC read
-    // of the row matches the image. A tenant history table copies tenant_id.
+    // An insert writes the full row in after and '{}' in before. The row image
+    // of the row matches the entry. A tenant history table copies tenant_id.
     let insert = logged_guest_transaction(
         &guest,
         ACTOR_A,
@@ -1515,7 +1518,6 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
         &db_url,
         &format!(
             "{insert}\
-             SET TimeZone = 'UTC';\n\
              DO $$ BEGIN\n\
                ASSERT (SELECT count(*) FROM rh_probe.logged_history) = 1, \
                       'one insert must write one entry';\n\
@@ -1523,7 +1525,7 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
                           AND h.operation = '{CREATE_OPERATION}' AND h.changed_by = '{ACTOR_A}' \
                           AND h.changed_at = l.created_at \
                           AND h.transaction_id = current_setting('rh.first_xact')::bigint \
-                          AND h.before = '{{}}' AND h.after = to_jsonb(l) \
+                          AND h.before = '{{}}' AND h.after = wamn_history.row_image(l) \
                         FROM rh_probe.logged_history h, rh_probe.logged l WHERE l.id = 1), \
                       'an insert entry must hold the key, the actor, the operation, the \
                        transaction time and id, an empty before, and the full row';\n\
@@ -1556,7 +1558,6 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
         &format!(
             "SELECT pg_sleep(0.01);\n\
              {updates}\
-             SET TimeZone = 'UTC';\n\
              DO $$ BEGIN\n\
                ASSERT (SELECT array_agg(kind ORDER BY position) FROM rh_probe.logged_history) \
                         = ARRAY['insert', 'update', 'update'], \
@@ -1569,7 +1570,8 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
                ASSERT (SELECT u.before = jsonb_build_object('note', 'first', 'revision', 1, \
                             'updated_at', i.after -> 'updated_at', 'updated_by', '{ACTOR_A}') \
                           AND u.after = jsonb_build_object('note', 'second', 'revision', 2, \
-                            'updated_at', to_jsonb(l) -> 'updated_at', 'updated_by', '{ACTOR_B}') \
+                            'updated_at', wamn_history.row_image(l) -> 'updated_at', \
+                            'updated_by', '{ACTOR_B}') \
                         FROM rh_probe.logged_history u, rh_probe.logged_history i, rh_probe.logged l \
                         WHERE u.kind = 'update' AND i.kind = 'insert' AND l.id = 1 \
                         ORDER BY u.position LIMIT 1), \
@@ -1981,6 +1983,464 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
                       'the second entry must start from the first result at a later position';\n\
              END $$;\n"
         ),
+    );
+
+    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+/// Spec test 18, the stamp half of Beads `wamn-emtx.25`. `stamp_row` compares
+/// JSONB text, so a numeric scale-only update moves the updated pair. A true
+/// no-op keeps every stamp.
+#[test]
+fn a_numeric_scale_only_update_moves_the_stamps_on_postgres() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping a_numeric_scale_only_update_moves_the_stamps_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let (db_url, guest) = record_history_fixture(&admin);
+    apply(
+        &db_url,
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_db_owner;\n\
+         CREATE TABLE rh_probe.measured (\n\
+             id integer PRIMARY KEY, amount numeric NOT NULL,\n\
+             created_at timestamptz NOT NULL, created_by uuid NOT NULL,\n\
+             updated_at timestamptz NOT NULL, updated_by uuid NOT NULL);\n\
+         CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.measured\n\
+             FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(\n\
+                 'created_at', 'created_by', 'updated_at', 'updated_by');\n\
+         GRANT SELECT, INSERT, UPDATE ON rh_probe.measured TO wamn_app;\n\
+         COMMIT;\n",
+    );
+    as_guest(
+        &db_url,
+        &guest,
+        ACTOR_A,
+        "INSERT INTO rh_probe.measured (id, amount) VALUES (1, 1.0);\nSELECT pg_sleep(0.01);",
+    );
+    as_guest(
+        &db_url,
+        &guest,
+        ACTOR_B,
+        &format!(
+            "UPDATE rh_probe.measured SET amount = 1.00 WHERE id = 1;\n\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT amount::text = '1.00' AND created_by = '{ACTOR_A}' \
+                          AND created_at < transaction_timestamp() \
+                          AND updated_by = '{ACTOR_B}' \
+                          AND updated_at = transaction_timestamp() \
+                        FROM rh_probe.measured WHERE id = 1), \
+                      'a scale-only update must keep the created pair and move the updated pair';\n\
+             END $$;\n\
+             SELECT pg_sleep(0.01);"
+        ),
+    );
+    as_guest(
+        &db_url,
+        &guest,
+        ACTOR_C,
+        &format!(
+            "UPDATE rh_probe.measured SET amount = amount WHERE id = 1;\n\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT amount::text = '1.00' AND updated_by = '{ACTOR_B}' \
+                          AND updated_at < transaction_timestamp() \
+                        FROM rh_probe.measured WHERE id = 1), \
+                      'a true no-op must keep every stamp';\n\
+             END $$;"
+        ),
+    );
+
+    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+/// Spec test 18, the log half of Beads `wamn-emtx.25`. `log_row_change`
+/// compares JSONB text, so a numeric scale-only update writes an entry with
+/// both spellings. A true no-op writes none. The relation has no stamp
+/// trigger, so only the amount changes.
+#[test]
+fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping a_numeric_scale_only_update_writes_a_log_entry_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let (db_url, guest) = record_history_fixture(&admin);
+    apply(
+        &db_url,
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_db_owner;\n\
+         CREATE TABLE rh_probe.amounts (id integer PRIMARY KEY, amount numeric NOT NULL);\n\
+         SELECT wamn_history.create_history_table('rh_probe', 'amounts', false);\n\
+         CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.amounts\n\
+             FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
+         GRANT SELECT, INSERT, UPDATE ON rh_probe.amounts TO wamn_app;\n\
+         GRANT INSERT ON rh_probe.amounts_history TO wamn_app;\n\
+         COMMIT;\n",
+    );
+    apply(
+        &db_url,
+        &format!(
+            "{}{}\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT array_agg(kind ORDER BY position) FROM rh_probe.amounts_history) \
+                        = ARRAY['insert', 'update'], \
+                      'a scale-only update must write one entry, and a no-op none';\n\
+               ASSERT (SELECT before::text = '{{\"amount\": 1.0}}' \
+                          AND after::text = '{{\"amount\": 1.00}}' \
+                        FROM rh_probe.amounts_history WHERE kind = 'update'), \
+                      'the entry must hold both spellings of the amount';\n\
+             END $$;\n",
+            logged_guest_transaction(
+                &guest,
+                ACTOR_A,
+                CREATE_OPERATION,
+                "INSERT INTO rh_probe.amounts (id, amount) VALUES (1, 1.0);",
+            ),
+            logged_guest_transaction(
+                &guest,
+                ACTOR_B,
+                UPDATE_OPERATION,
+                "UPDATE rh_probe.amounts SET amount = 1.00 WHERE id = 1;\n\
+                 UPDATE rh_probe.amounts SET amount = amount WHERE id = 1;",
+            ),
+        ),
+    );
+
+    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+/// The record history fold, compiled from the source of its crate. The fold
+/// has no dependencies, so this test reads it without a crate dependency.
+#[path = "../../../../apps/platform/data/record-history/src/lib.rs"]
+#[expect(dead_code, reason = "the history read test reads no fold refusal")]
+mod record_history_fold;
+
+/// The generator fixture package that declares a logged relation and its
+/// history read.
+const HISTORY_FIXTURE_MANIFEST: &[u8] =
+    include_bytes!("../../../schema/generator/tests/fixtures/record_history/wamn.json");
+const HISTORY_FIXTURE_MIGRATION: &str = include_str!(
+    "../../../schema/generator/tests/fixtures/record_history/migrations/0001_initial.sql"
+);
+const HISTORY_FIXTURE_READ: &str = include_str!(
+    "../../../schema/generator/tests/fixtures/record_history/query/load_stock_item_history.sql"
+);
+const HISTORY_ITEM: &str = "7a1c0a4e-2b9d-4f3e-8a61-0c5d2e9b4f17";
+
+/// Run `sql` as the guest under the fixture schema and return its rows, with
+/// the unit separator between fields and the record separator between rows.
+fn guest_rows(db_url: &str, guest: &str, sql: &str) -> Vec<Vec<String>> {
+    let out = Command::new("psql")
+        .arg(db_url)
+        .args([
+            "-X",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-Atq",
+            "-F",
+            "\u{1f}",
+            "-R",
+            "\u{1e}",
+        ])
+        .arg("-c")
+        .arg(format!(
+            "SET ROLE \"{guest}\"; SET search_path = history_probe; {sql}"
+        ))
+        .output()
+        .expect("psql runs");
+    assert!(
+        out.status.success(),
+        "the guest read failed:\n{}\n--- script ---\n{sql}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8(out.stdout)
+        .expect("psql output is UTF-8")
+        .trim_end_matches('\n')
+        .split('\u{1e}')
+        .filter(|record| !record.is_empty())
+        .map(|record| record.split('\u{1f}').map(str::to_owned).collect())
+        .collect()
+}
+
+/// Every page of the fixture history read of `item`, two entries a page.
+fn history_pages(db_url: &str, guest: &str, item: &str) -> Vec<Vec<String>> {
+    let read = HISTORY_FIXTURE_READ.trim_end().trim_end_matches(';');
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    loop {
+        let after = rows.last().map_or("0", |row| row[0].as_str()).to_owned();
+        let page = guest_rows(
+            db_url,
+            guest,
+            &format!(
+                "PREPARE history_page (uuid, bigint, bigint) AS {read}; \
+                 EXECUTE history_page ('{item}', {after}, 2)"
+            ),
+        );
+        assert!(page.len() <= 2, "a page must hold at most its limit");
+        if page.is_empty() {
+            return rows;
+        }
+        rows.extend(page);
+    }
+}
+
+/// Whether a JSON plan has a node that writes or takes a row lock, the two
+/// nodes for which generation classifies a statement as transactional.
+fn writes_or_locks(plan: &serde_json::Value) -> bool {
+    match plan {
+        serde_json::Value::Object(node) => {
+            matches!(
+                node.get("Node Type").and_then(serde_json::Value::as_str),
+                Some("ModifyTable" | "LockRows")
+            ) || node.values().any(writes_or_locks)
+        }
+        serde_json::Value::Array(nodes) => nodes.iter().any(writes_or_locks),
+        _ => false,
+    }
+}
+
+/// The columns of `image` as the fold splits them.
+fn image_columns(image: &str) -> Vec<(String, String)> {
+    let row = record_history_fold::HistoryRow {
+        position: 1,
+        kind: "insert",
+        before: "{}",
+        current: image,
+        head_position: 1,
+    };
+    match record_history_fold::state_at(&[row], 1) {
+        Ok(record_history_fold::RowState::Present(image)) => image
+            .columns()
+            .map(|(name, value)| (name.to_owned(), value.to_owned()))
+            .collect(),
+        other => panic!("{image} is not a row image: {other:?}"),
+    }
+}
+
+/// The reconstruction half of spec test 1, over the generator fixture package.
+/// The guest holds the grants that generation derives for the fixture, writes
+/// an insert, two updates, and a delete, and reads the history through the
+/// fixture SQL. The fold then shows the row at each retained position.
+#[test]
+fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_history_read_reconstructs_a_row_at_retained_positions_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let (db_url, guest) = record_history_fixture(&admin);
+    apply(
+        &db_url,
+        &format!(
+            "BEGIN;\n\
+             SET LOCAL ROLE wamn_db_owner;\n\
+             CREATE SCHEMA history_probe;\n\
+             {HISTORY_FIXTURE_MIGRATION}\
+             CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON history_probe.stock_item\n\
+                 FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(\n\
+                     'created_at', 'created_by', 'updated_at', 'updated_by');\n\
+             SELECT wamn_history.create_history_table('history_probe', 'stock_item', false);\n\
+             CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE \
+                 ON history_probe.stock_item\n\
+                 FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
+             COMMIT;\n"
+        ),
+    );
+
+    // The grants that generation derives from the fixture manifest and the
+    // server catalog. The fixture declares no generated write, so the guest
+    // gets its writes from the test.
+    let relation_fields = psql(
+        &db_url,
+        None,
+        "SELECT c.relname || ':' || string_agg(a.attname, ',' ORDER BY a.attnum) \
+           FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid \
+          WHERE c.relnamespace = 'history_probe'::regnamespace AND c.relkind = 'r' \
+            AND a.attnum > 0 AND NOT a.attisdropped \
+          GROUP BY c.relname ORDER BY c.relname",
+    )
+    .lines()
+    .map(|line| {
+        let (table, fields) = line.split_once(':').expect("table and fields");
+        wamn_schema_generator::DataAccessRelationFields::new(
+            "history_probe",
+            table,
+            fields.split(',').map(str::to_owned).collect(),
+        )
+    })
+    .collect::<Vec<_>>();
+    let overlay = wamn_schema_generator::derive_data_access_overlay_from_relation_fields(
+        &relation_fields,
+        HISTORY_FIXTURE_MANIFEST,
+    )
+    .expect("the fixture manifest derives its data access");
+    let grants = wamn_schema_generator::render_effective_data_access_sql(
+        &wamn_schema_generator::derive_effective_data_access(&relation_fields, &[overlay])
+            .expect("the fixture data access is one installed set"),
+    )
+    .expect("the fixture data access renders");
+    apply(
+        &db_url,
+        &format!(
+            "BEGIN;\n{grants}\
+             GRANT INSERT, UPDATE, DELETE ON history_probe.stock_item TO wamn_app;\n\
+             COMMIT;\n"
+        ),
+    );
+
+    // The server plans the history read as a read, so it runs without a transaction.
+    let plan = guest_rows(
+        &db_url,
+        &guest,
+        &format!(
+            "EXPLAIN (GENERIC_PLAN, FORMAT JSON) {}",
+            HISTORY_FIXTURE_READ.trim_end().trim_end_matches(';')
+        ),
+    );
+    let plan: serde_json::Value =
+        serde_json::from_str(&plan[0][0]).expect("EXPLAIN returns a JSON plan");
+    assert!(
+        !writes_or_locks(&plan),
+        "the history read must not write or lock: {plan}"
+    );
+
+    // A row with no retained entries returns an empty page.
+    let unknown = history_pages(&db_url, &guest, "00000000-0000-4000-8000-000000000999");
+    assert!(unknown.is_empty(), "an unknown row must return no entries");
+    assert_eq!(
+        record_history_fold::state_at(&[], 1),
+        Ok(record_history_fold::RowState::Unavailable)
+    );
+
+    // An insert, a scale-only update, an update of a text and a time, and a
+    // delete, each in its own transaction. After each write, the row image of
+    // the row is the state that the fold must reconstruct.
+    let image = || {
+        psql(
+            &db_url,
+            None,
+            &format!(
+                "SELECT COALESCE((SELECT wamn_history.row_image(s)::text \
+                   FROM history_probe.stock_item s WHERE id = '{HISTORY_ITEM}'), '{{}}')"
+            ),
+        )
+    };
+    let mut images = Vec::new();
+    for (actor, operation, write) in [
+        (
+            ACTOR_A,
+            CREATE_OPERATION,
+            format!(
+                "INSERT INTO stock_item (id, sku, quantity, counted_at) \
+                   VALUES ('{HISTORY_ITEM}', 'bolt', 12.3400, '2026-10-01T09:07:00+02:00');"
+            ),
+        ),
+        (
+            ACTOR_B,
+            UPDATE_OPERATION,
+            format!("UPDATE stock_item SET quantity = 12.34 WHERE id = '{HISTORY_ITEM}';"),
+        ),
+        (
+            ACTOR_B,
+            UPDATE_OPERATION,
+            format!(
+                "UPDATE stock_item SET sku = 'bolt-m8', \
+                   counted_at = '2026-10-02T10:00:00.250001Z' WHERE id = '{HISTORY_ITEM}';"
+            ),
+        ),
+        (
+            ACTOR_C,
+            REPAIR_OPERATION,
+            format!("DELETE FROM stock_item WHERE id = '{HISTORY_ITEM}';"),
+        ),
+    ] {
+        apply(
+            &db_url,
+            &format!(
+                "SELECT pg_sleep(0.01);\n{}",
+                logged_guest_transaction(
+                    &guest,
+                    actor,
+                    operation,
+                    &format!("SET LOCAL search_path = history_probe;\n{write}"),
+                )
+            ),
+        );
+        images.push(image());
+    }
+
+    let pages = history_pages(&db_url, &guest, HISTORY_ITEM);
+    let rows = pages
+        .iter()
+        .map(|row| record_history_fold::HistoryRow {
+            position: row[0].parse().expect("position is a bigint"),
+            kind: &row[1],
+            before: &row[6],
+            current: &row[8],
+            head_position: row[9].parse().expect("head position is a bigint"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows.iter().map(|row| row.kind).collect::<Vec<_>>(),
+        ["insert", "update", "update", "delete"],
+        "the read must return every entry of the row in position order"
+    );
+    assert!(
+        rows.iter().all(|row| row.current == "{}"),
+        "the current image of a deleted row must be '{{}}'"
+    );
+    assert_eq!(
+        pages.iter().map(|row| row[2].as_str()).collect::<Vec<_>>(),
+        [
+            CREATE_OPERATION,
+            UPDATE_OPERATION,
+            UPDATE_OPERATION,
+            REPAIR_OPERATION
+        ]
+    );
+
+    let state = |position: i64| match record_history_fold::state_at(&rows, position)
+        .expect("the read folds")
+    {
+        record_history_fold::RowState::Present(image) => Some(
+            image
+                .columns()
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
+                .collect::<Vec<_>>(),
+        ),
+        record_history_fold::RowState::Absent => None,
+        record_history_fold::RowState::Unavailable => {
+            panic!("position {position} is retained")
+        }
+    };
+    for (row, expected) in rows.iter().zip(&images) {
+        assert_eq!(
+            state(row.position),
+            (expected != "{}").then(|| image_columns(expected)),
+            "the fold must reconstruct the row after the {} at position {}",
+            row.kind,
+            row.position
+        );
+    }
+    let quantity = |position| {
+        state(position)
+            .expect("the row is present")
+            .into_iter()
+            .find(|(name, _)| name == "quantity")
+            .map(|(_, value)| value)
+    };
+    assert_eq!(quantity(rows[0].position).as_deref(), Some("12.3400"));
+    assert_eq!(quantity(rows[1].position).as_deref(), Some("12.34"));
+    assert_eq!(
+        record_history_fold::state_at(&rows, rows[0].position - 1),
+        Ok(record_history_fold::RowState::Unavailable)
     );
 
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));

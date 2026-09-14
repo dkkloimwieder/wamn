@@ -221,6 +221,7 @@ wamn-materializer = { path = "apps/platform/events/materializer", version = "0.1
 wamn-pg-core = { path = "crates/platform/pg-core", version = "0.1.0" }
 wamn-platform-identity = { path = "crates/identity/platform", version = "0.1.0" }
 wamn-project-state = { path = "crates/identity/project-state", version = "0.1.0" }
+wamn-record-history = { path = "apps/platform/data/record-history", version = "0.1.0" }
 wamn-conformance-tests = { path = "tests/conformance", version = "0.1.0" }
 wamn-integration-tests = { path = "tests/integration", version = "0.1.0" }
 wamn-system-tests = { path = "tests/system", version = "0.1.0" }

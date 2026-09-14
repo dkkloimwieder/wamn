@@ -1,0 +1,277 @@
+{
+  "package": {
+    "id": "history_probe",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "history_probe_data_access",
+    "state": "unsatisfied"
+  },
+  "models": {
+    "stock_item": {
+      "schema": "history_probe",
+      "table": "stock_item",
+      "owner": "history_probe",
+      "server_owned_fields": [],
+      "enum_fields": {},
+      "audit_log": {
+        "columns": [
+          "created_at",
+          "created_by",
+          "updated_at",
+          "updated_by"
+        ],
+        "retention": "unlimited"
+      },
+      "operations": {}
+    }
+  },
+  "custom_operations": {
+    "history.load_stock_item_history": {
+      "kind": "projection",
+      "visibility": "public",
+      "permission": "history.load_stock_item_history",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "after_position",
+            "type": "int64",
+            "nullable": false
+          },
+          {
+            "path": "limit",
+            "type": "int64",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "bounded_list",
+        "fields": [
+          {
+            "path": "position",
+            "type": "int64",
+            "nullable": false
+          },
+          {
+            "path": "kind",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "insert",
+              "update",
+              "delete"
+            ]
+          },
+          {
+            "path": "operation",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "changed_by",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "changed_at",
+            "type": "timestamptz",
+            "nullable": false
+          },
+          {
+            "path": "transaction_id",
+            "type": "int64",
+            "nullable": false
+          },
+          {
+            "path": "before",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "after",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "current",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "head_position",
+            "type": "int64",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "not_found",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "not_found": {
+          "required": [
+            "field",
+            "id"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "history_probe",
+          "table": "stock_item",
+          "select_fields": [
+            "counted_at",
+            "created_at",
+            "created_by",
+            "id",
+            "quantity",
+            "sku",
+            "updated_at",
+            "updated_by"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "history_probe",
+          "table": "stock_item_history",
+          "select_fields": [
+            "after",
+            "before",
+            "changed_at",
+            "changed_by",
+            "kind",
+            "operation",
+            "position",
+            "row_key",
+            "transaction_id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "load_stock_item_history": {
+          "path": "query/load_stock_item_history.sql",
+          "fetch": "bounded_list",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "after_position",
+              "type": "int64",
+              "nullable": false
+            },
+            {
+              "name": "limit",
+              "type": "int64",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "position",
+              "type": "int64",
+              "nullable": false
+            },
+            {
+              "name": "kind",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "operation",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "changed_by",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "changed_at",
+              "type": "timestamptz",
+              "nullable": false
+            },
+            {
+              "name": "transaction_id",
+              "type": "int64",
+              "nullable": false
+            },
+            {
+              "name": "before",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "after",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "current",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "head_position",
+              "type": "int64",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    }
+  },
+  "connections": {
+    "postgres": {
+      "interface": "wamn:postgres@0.1.0"
+    }
+  },
+  "components": {
+    "history_probe": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}

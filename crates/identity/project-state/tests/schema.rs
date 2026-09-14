@@ -647,3 +647,52 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
     expected.extend(stamps);
     assert_eq!(output.lines().collect::<Vec<_>>(), expected);
 }
+
+/// Record history spec test 19. `wamn_history.row_image` spells each
+/// `timestamptz` exactly as the platform canonicalizer spells the value that
+/// PostgreSQL holds. The session time zone is not UTC, and the values have
+/// zero and non-zero microseconds. Set `WAMN_SYSSCHEMA_PG_URL` to a superuser
+/// URL. Skipped when unset.
+#[test]
+fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
+        eprintln!(
+            "skipping row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres \
+             (set WAMN_SYSSCHEMA_PG_URL to run)"
+        );
+        return;
+    };
+    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+
+    let mut script = sql::ensure_app_acl_role_sql();
+    script.push('\n');
+    script.push_str(&record_history_sql());
+    // One line per timestamptz value: the microseconds since the epoch that
+    // PostgreSQL holds, then the spelling in the row image.
+    script.push_str(
+        "\nSET TimeZone = 'America/St_Johns';\n\
+         CREATE TEMPORARY TABLE spelled (id integer PRIMARY KEY, at timestamptz NOT NULL);\n\
+         INSERT INTO spelled VALUES \
+             (1, '2026-10-01T09:07:00+02:00'), \
+             (2, '2026-10-01T09:07:00.25Z'), \
+             (3, '2026-10-01T09:07:00.123456-03:30'), \
+             (4, '1969-12-31T23:59:59.999999Z');\n\
+         SELECT (extract(epoch FROM at) * 1000000)::bigint || '|' \
+                || (wamn_history.row_image(spelled) ->> 'at') \
+           FROM spelled ORDER BY id;\n",
+    );
+
+    let output = run(&url, &script);
+    let lines = output.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 4, "every value must render: {output}");
+    for line in lines {
+        let (micros, spelled) = line.split_once('|').expect("microseconds and spelling");
+        let held = chrono::DateTime::from_timestamp_micros(micros.parse().expect("bigint"))
+            .expect("the value is in range");
+        assert_eq!(
+            spelled,
+            wamn_runtime::plugins::wamn_postgres::canonical_timestamptz(held),
+            "the row image must spell the held value as the canonicalizer does"
+        );
+    }
+}

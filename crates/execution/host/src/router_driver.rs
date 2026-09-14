@@ -1988,6 +1988,25 @@ mod tests {
         assert_eq!(denial.operation(), operation);
     }
 
+    /// Spec test 9. The host refuses the history read of the generator fixture
+    /// to a caller without its operation grant.
+    #[test]
+    fn the_history_read_refuses_a_caller_without_its_grant() {
+        let tokens = wamn_control_provision::operation_grants::operation_grant_tokens(
+            include_bytes!("../../../schema/generator/tests/fixtures/record_history/wamn.json"),
+        )
+        .expect("parse the history read fixture");
+        let [operation] = tokens.iter().collect::<Vec<_>>()[..] else {
+            panic!("the fixture has one public operation: {tokens:?}");
+        };
+        let denial = authorize_registered_operation(None, Some(operation), false)
+            .expect_err("a caller without the grant is refused");
+        assert_eq!(
+            (denial.kind(), denial.operation()),
+            (OperationRefusalKind::PermissionDenied, operation.as_str())
+        );
+    }
+
     #[test]
     fn nested_acquisition_preserves_causation_and_root_origin() {
         let causation = Causation {

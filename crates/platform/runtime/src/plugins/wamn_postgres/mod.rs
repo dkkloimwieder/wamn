@@ -95,6 +95,7 @@ pub use statements::{
     PreparedStatementSet, StatementField, StatementValueType, VerifiedStatement,
     VerifiedStatementSet,
 };
+pub use types::canonical_timestamptz;
 /// Re-exported because [`ClassCredentials::with_class`] and
 /// [`ClassCredentials::without_class`] TAKE one: a composer outside this
 /// workspace crate cannot name a family's credential without the class, and

@@ -83,7 +83,6 @@ Entry contents:
 - JSONB fits because PostgreSQL compresses large values without custom encoding, a diff keeps ordinary entries small, and the normal JSON operators query it.
 - Each row change writes one entry. A true no-op writes no stamps and no entry.
 - The triggers compare JSONB text, so a change of numeric scale alone is a change. It moves the stamps and writes an entry, and the generated `update` bumps the revision.
-- `wamn_history.row_image(record)` is the one rendering of a row image. It runs with `TimeZone` set to UTC inside the function and spells each `timestamptz` as the platform canonicalizer spells it.
 - The per-row position orders entries. The transaction timestamp does not order concurrent changes and repeats within one transaction.
 - A rolled-back change leaves no entry. A failure while writing the entry rolls back the change. An idempotent replay that returns the original result appends nothing.
 
@@ -138,25 +137,9 @@ The fold reports every position before the oldest retained entry as unavailable.
 
 ### 4.6 History read
 
-The history read is an ordinary public projection with its own token, and a grant of it works like any other grant.
-The authored fields of the projection decide which prior data it shows.
+[Data access](../architecture/data-access.md#history-read) describes the history read pattern and the fold.
 The log carries copied business values, so a grant of the read is a new read surface.
-
-The read is one flat `bounded_list` projection, driven by the typed key inputs, with the inputs `after_position` and `limit`.
-It returns the entries of one row in ascending position order.
-Each result row carries one entry, the current row image, and the head position, so one snapshot serves the fold.
-No side of the result is nullable.
-The current image of a deleted row is `'{}'`, the same as the `after` of its last entry.
-The fold reads the `kind` of that entry to know that the row is gone.
-A row with no retained entries returns an empty page, and the current row is one ordinary read away.
-
-Images and the current row travel as text fields that hold JSONB text.
-The current row comes from `wamn_history.row_image`, so it has the same spelling as the images.
-
-One pure Rust fold in a shared platform crate returns the state of a row at a per-row position, or unavailable.
-The fold keeps each column value as raw JSON text and replaces whole values, so numeric scale and every other spelling survive.
-Guests, the client, and tests use that fold.
-Beads `wamn-emtx.14` tests the read against a generator fixture, and Beads `wamn-emtx.15` authors the first application history read in Receiving.
+Beads `wamn-emtx.15` authors the first application history read in Receiving, with its grant and its use of the fold in the client.
 
 Level 2 adds no application delete path.
 Beads `wamn-cy2q` owns application row deletes.

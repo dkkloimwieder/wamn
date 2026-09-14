@@ -10,6 +10,10 @@ uuid = { workspace = true, features = ["v5"] }
 
 [dev-dependencies]
 wamn-control-provision = { workspace = true }
+# The row image test compares wamn_history.row_image with the one platform
+# timestamptz canonicalizer, which lives in the runtime.
+chrono = { workspace = true }
+wamn-runtime = { workspace = true }
 
 [lints]
 workspace = true

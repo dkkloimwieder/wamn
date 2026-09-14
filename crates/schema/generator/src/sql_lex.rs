@@ -115,6 +115,29 @@ pub(crate) fn relation_access(
         }
     }
 
+    // `wamn_history.row_image(<relation>)` renders the whole row, so it reads
+    // every column of the relation that the argument names.
+    for window in tokens.windows(6) {
+        if let [
+            Token::Identifier(schema),
+            Token::Dot,
+            Token::Identifier(function),
+            Token::LeftParen,
+            Token::Identifier(argument),
+            Token::RightParen,
+        ] = window
+            && schema.as_ref() == "wamn_history"
+            && function.as_ref() == "row_image"
+            && let Some(relation) = aliases.get(argument.as_ref())
+        {
+            access
+                .get_mut(relation)
+                .expect("known relation has an access row")
+                .select_fields
+                .extend(relations[relation].iter().cloned());
+        }
+    }
+
     for index in 0..tokens.len() {
         if identifier(&tokens[index]) == Some("select") {
             parse_select(
@@ -931,6 +954,24 @@ mod tests {
                 ..RelationAccess::default()
             }
         );
+    }
+
+    #[test]
+    fn row_image_reads_every_column_of_the_relation_it_names() {
+        let every_column = RelationAccess {
+            select_fields: ["id".to_owned(), "status".to_owned()].into_iter().collect(),
+            ..RelationAccess::default()
+        };
+        for sql in [
+            b"SELECT wamn_history.row_image(item) FROM item WHERE item.id = $1".as_slice(),
+            b"SELECT wamn_history.row_image(current_item) FROM item AS current_item".as_slice(),
+            b"SELECT \"wamn_history\".\"row_image\"(i) FROM item i".as_slice(),
+        ] {
+            assert_eq!(
+                relation_access(sql, &relations()).unwrap()["item"],
+                every_column
+            );
+        }
     }
 
     #[test]

@@ -204,7 +204,7 @@ impl<'a> tokio_postgres::types::FromSql<'a> for SqlCell {
 /// `docs/architecture/data-access.md#canonical-values-and-sql-names` rules this form and every writer
 /// already emits it. This read path is the single emitter, so nothing below it
 /// gets to decide the spelling by omission.
-fn canonical_timestamptz(value: DateTime<Utc>) -> String {
+pub fn canonical_timestamptz(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 

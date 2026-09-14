@@ -2131,6 +2131,110 @@ fn a_custom_operation_reads_a_history_table() {
     );
 }
 
+/// The record history fixture package: a logged relation and its history read.
+const HISTORY_FIXTURE_MANIFEST: &[u8] = include_bytes!("fixtures/record_history/wamn.json");
+const HISTORY_FIXTURE_READ: AuthoredSql<'static> = AuthoredSql::new(
+    "query/load_stock_item_history.sql",
+    include_bytes!("fixtures/record_history/query/load_stock_item_history.sql"),
+);
+
+/// The catalog that `fixtures/record_history/migrations/0001_initial.sql` creates.
+fn history_fixture_catalog() -> CatalogIr {
+    let column = |name, ty| Column::new(name, ty, false, None, None);
+    CatalogIr::new(vec![Table::new(
+        "history_probe",
+        "stock_item",
+        vec![
+            column("id", ColumnType::Uuid),
+            column("sku", ColumnType::Text),
+            column("quantity", ColumnType::Numeric),
+            column("counted_at", ColumnType::Timestamptz),
+            column("created_at", ColumnType::Timestamptz),
+            column("created_by", ColumnType::Uuid),
+            column("updated_at", ColumnType::Timestamptz),
+            column("updated_by", ColumnType::Uuid),
+        ],
+        vec![Constraint::primary_key("stock_item_id_pkey", ["id"]).unwrap()],
+        Vec::new(),
+    )])
+}
+
+/// The history read generates, and its whole-row image reads every column of the relation.
+#[test]
+fn the_history_read_fixture_generates_and_reads_the_whole_row() {
+    let manifest: Value = serde_json::from_slice(HISTORY_FIXTURE_MANIFEST).unwrap();
+    let package = run(
+        &history_fixture_catalog(),
+        &manifest,
+        &[HISTORY_FIXTURE_READ],
+    )
+    .expect("the history read fixture generates");
+    let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
+    let relations = overlay["relations"].as_array().unwrap();
+    assert_eq!(
+        object_named(relations, "table", "stock_item")["select_fields"],
+        json!([
+            "counted_at",
+            "created_at",
+            "created_by",
+            "id",
+            "quantity",
+            "sku",
+            "updated_at",
+            "updated_by"
+        ])
+    );
+    let history = object_named(relations, "table", "stock_item_history");
+    assert_eq!(
+        history["select_fields"],
+        json!([
+            "after",
+            "before",
+            "changed_at",
+            "changed_by",
+            "kind",
+            "operation",
+            "position",
+            "row_key",
+            "transaction_id"
+        ])
+    );
+    assert_eq!(
+        history["insert_fields"],
+        json!([
+            "after",
+            "before",
+            "changed_at",
+            "changed_by",
+            "kind",
+            "operation",
+            "row_key",
+            "transaction_id"
+        ])
+    );
+
+    // A declaration that leaves out one column of the whole row refuses.
+    let mut narrowed = manifest;
+    narrowed["custom_operations"]["history.load_stock_item_history"]["relations"][0]
+        ["select_fields"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|field| field != "sku");
+    let refusal = run(
+        &history_fixture_catalog(),
+        &narrowed,
+        &[HISTORY_FIXTURE_READ],
+    )
+    .expect_err("the whole-row image reads sku");
+    assert_eq!(
+        (refusal.kind(), refusal.object()),
+        (
+            GenerateErrorKind::InvalidOperation,
+            Some("history_probe.stock_item")
+        )
+    );
+}
+
 /// Spec test 17: generation refuses an authored history name and an overlong relation.
 #[test]
 fn history_names_are_reserved_and_fit_in_a_postgres_name() {

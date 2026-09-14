@@ -173,6 +173,17 @@ A package relation gets no `tenant_id` column.
 `wamn_history.log_row_change` is the `AFTER INSERT OR UPDATE OR DELETE` row trigger function that writes one entry for each row change.
 The [record history plan](../plan/record-history-spec.md#42-log-trigger) describes the entry columns and contents.
 
+`wamn_history.row_image(record)` renders both images of an entry and the current row of a [history read](#history-read).
+It sets `TimeZone` to UTC inside the function.
+It spells each `timestamptz` column as the platform canonicalizer spells it: UTC RFC 3339 with exactly six fractional digits and a `Z`.
+Every other value keeps the `to_jsonb` spelling.
+The log function and the stamp function compare row values as JSONB text, so a change of numeric scale alone is a change.
+Such a change moves the stamps and writes an entry. A true no-op moves no stamp and writes no entry.
+
+The log function calls `row_image` with the authority of the writer.
+`record-history.sql` therefore grants `EXECUTE` on `row_image` to `wamn_db_owner` and `wamn_app`, and `USAGE` on `wamn_history` to both.
+An applier with no `wamn_app` role, such as the system database, gets no `wamn_app` grant.
+
 Generation refuses these declarations:
 
 - A model table, an internal relation table or key, or a custom operation relation whose name ends with `_history`. A custom operation can read a history table, but it cannot declare an insert, an update, or a row lock on one.
@@ -262,6 +273,33 @@ wamn-ctl creates service principals, assigns project roles, grants and revokes m
 Test fixtures bind `wamn:provisioning` for platform setup, or a principal row that they insert.
 The trigger keeps `created_at`, so an expired-token fixture moves `expires_at` to just after `created_at`.
 
+### History read
+
+A history read is an ordinary public custom projection with its own operation token and grant.
+Its authored fields decide which prior data it shows.
+The [generator fixture package](../../crates/schema/generator/tests/fixtures/record_history/wamn.json) shows the pattern.
+
+The read is one flat `bounded_list` over the history table of one relation:
+
+- Typed key inputs build `row_key` with `jsonb_build_object`, because the client refuses a JSON input.
+- The inputs `after_position` and `limit` select one page in ascending position order.
+- An authored `LIMIT` caps the `limit` input, and the host row limit also applies.
+- Each result row carries one entry, the current row image, and the head position of the row. No field is nullable.
+- `before`, `after`, and the current row are text fields that hold JSONB text, so the host and the client keep their spelling.
+- The current row comes from `wamn_history.row_image` with the alias of the relation. A deleted row has the current image `{}`.
+- A row with no retained entries returns an empty page.
+
+The SQL lexer reads `wamn_history.row_image(<alias>)` as a read of every column of the relation that the alias names.
+The read therefore declares every column of that relation, and the generated grant covers the whole-row reference.
+The lexer reads no column from any other whole-row reference.
+
+The [`wamn-record-history`](../../apps/platform/data/record-history/src/lib.rs) crate holds the one fold, and both workspaces register it for guests, the client, and tests.
+`state_at` takes every row of every page and returns `Present`, `Absent`, or `Unavailable` at a per-row position.
+It folds backward from the current row, or from the `before` image of a final delete.
+It keeps each column value as raw JSON text and replaces whole values, so numeric scale and every other spelling survive.
+Every position before the oldest retained entry is unavailable.
+The fold refuses rows with different head positions, positions that do not rise, and a read that ends before the head position.
+
 ### Limits
 
 Stamps are correct for writes through the supported platform paths.
@@ -270,6 +308,11 @@ No production code applies `app-schema.sql` or writes person, service, or platfo
 Beads `wamn-0h0g.9` owns that production application, the person and service rows, and the refusal of a credential for a principal without a users row.
 Until `wamn-0h0g.22` replaces caller-settable authority, modified application SQL can forge actor attribution.
 Record history gives no tamper resistance against modified application code or administrative SQL.
+
+The history read has two more limits:
+
+- The fold does not compare the current row with the newest entry. It cannot see a change that the log did not record, such as a change while the retention was `"none"`.
+- The fold does not follow a column that a migration adds or drops between entries.
 
 The system database has two more limits:
 

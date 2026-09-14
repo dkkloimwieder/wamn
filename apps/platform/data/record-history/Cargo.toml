@@ -1,0 +1,9 @@
+[package]
+name = "wamn-record-history"
+description = "The record history fold: the state of one row at a per-row position, from the rows of a history read."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

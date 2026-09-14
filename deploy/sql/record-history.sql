@@ -12,9 +12,13 @@
 -- reads no users row and takes no authorization decision.
 --
 -- wamn_history.create_history_table(schema, relation, tenant) is the one
--- definition of the history table shape. wamn_history.log_row_change() is an
--- AFTER INSERT OR UPDATE OR DELETE row trigger that writes one entry into the
--- history table of the changed relation, in the same transaction.
+-- definition of the history table shape. wamn_history.row_image(record) is the
+-- one rendering of a row image. wamn_history.log_row_change() is an AFTER
+-- INSERT OR UPDATE OR DELETE row trigger that writes one entry into the history
+-- table of the changed relation, in the same transaction.
+--
+-- Both trigger functions compare JSONB text, so a change of numeric scale alone
+-- is a change.
 
 -- The file names wamn_db_owner, and a grant to a missing role fails the whole
 -- apply. The attributes match ensure_db_owner_role_sql in provisioning.
@@ -55,7 +59,7 @@ BEGIN
     );
     IF TG_OP = 'INSERT' THEN
         stamps := fresh;
-    ELSIF (to_jsonb(NEW) - TG_ARGV) IS DISTINCT FROM (to_jsonb(OLD) - TG_ARGV) THEN
+    ELSIF (to_jsonb(NEW) - TG_ARGV)::text IS DISTINCT FROM (to_jsonb(OLD) - TG_ARGV)::text THEN
         -- A changed row keeps the created pair and moves the updated pair.
         stamps := to_jsonb(OLD) || (fresh - 'created_at' - 'created_by');
     ELSE
@@ -138,23 +142,47 @@ END
 $create_history_table$;
 REVOKE ALL ON FUNCTION wamn_history.create_history_table(text, text, boolean) FROM PUBLIC;
 
+-- The JSONB image of one row. to_jsonb spells a timestamptz with an offset and
+-- trims trailing zeros. The function spells each finite timestamptz column as
+-- the platform canonicalizer spells it: UTC RFC 3339 with exactly six
+-- fractional digits and a Z. Every other value keeps the to_jsonb spelling.
+CREATE OR REPLACE FUNCTION wamn_history.row_image(item record)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SET search_path = pg_catalog
+SET TimeZone = 'UTC'
+AS $row_image$
+DECLARE
+    image jsonb := to_jsonb(item);
+BEGIN
+    RETURN image || COALESCE((
+        SELECT jsonb_object_agg(a.attname, to_char((image ->> a.attname)::timestamptz,
+                                                   'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))
+          FROM pg_type AS t
+          JOIN pg_attribute AS a ON a.attrelid = t.typrelid
+         WHERE t.oid = pg_typeof(item) AND a.attnum > 0 AND NOT a.attisdropped
+           AND a.atttypid = 'timestamptz'::regtype
+           AND isfinite((image ->> a.attname)::timestamptz)), '{}');
+END
+$row_image$;
+REVOKE ALL ON FUNCTION wamn_history.row_image(record) FROM PUBLIC;
+
 -- The log trigger function. The trigger argument carries the retention, and
 -- the function ignores it. The entry keys the row by its primary key columns.
 -- A relation with no primary key raises SQLSTATE 55000 with the message
--- history-key-required. TimeZone is UTC, so every timestamptz in an image has
--- one spelling.
+-- history-key-required. wamn_history.row_image renders both images.
 CREATE OR REPLACE FUNCTION wamn_history.log_row_change()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog
-SET TimeZone = 'UTC'
 AS $log_row_change$
 DECLARE
     actor uuid := NULLIF(current_setting('app.user_id', true), '')::uuid;
     operation text := NULLIF(current_setting('app.operation', true), '');
     history text := format('%I.%I', TG_TABLE_SCHEMA, TG_TABLE_NAME || '_history');
-    old_row jsonb := COALESCE(to_jsonb(OLD), '{}');
-    new_row jsonb := COALESCE(to_jsonb(NEW), '{}');
+    old_row jsonb := COALESCE(wamn_history.row_image(OLD), '{}');
+    new_row jsonb := COALESCE(wamn_history.row_image(NEW), '{}');
     key_columns text[];
     old_key jsonb;
     new_key jsonb;
@@ -179,7 +207,7 @@ BEGIN
     END IF;
 
     -- A true no-op writes no entry.
-    IF old_row = new_row THEN
+    IF old_row::text = new_row::text THEN
         RETURN NULL;
     END IF;
 
@@ -204,7 +232,7 @@ BEGIN
         SELECT jsonb_object_agg(o.key, o.value), jsonb_object_agg(o.key, new_row -> o.key)
           INTO changed_before, changed_after
           FROM jsonb_each(old_row) AS o
-         WHERE o.value IS DISTINCT FROM new_row -> o.key;
+         WHERE o.value::text IS DISTINCT FROM (new_row -> o.key)::text;
         EXECUTE write_entry USING new_row ->> 'tenant_id', new_key, 'update'::text,
             operation, actor, changed_before, changed_after;
         RETURN NULL;
@@ -228,8 +256,21 @@ REVOKE ALL ON FUNCTION wamn_history.log_row_change() FROM PUBLIC;
 -- apply-package runs package DDL as wamn_db_owner. It creates the history
 -- tables and the triggers. CREATE TRIGGER needs EXECUTE on the trigger
 -- function, and a trigger that fires needs no EXECUTE, so wamn_app gets none.
+-- The log function calls wamn_history.row_image with the authority of the
+-- writer, so every writer of a logged relation needs EXECUTE on it.
 GRANT USAGE ON SCHEMA wamn_history TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.stamp_row() TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.create_history_table(text, text, boolean)
     TO wamn_db_owner;
+GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.log_row_change() TO wamn_db_owner;
+
+-- wamn_app writes logged relations, and a history read renders the current row
+-- through wamn_history.row_image. The system database has no wamn_app, so an
+-- applier without that role skips these grants.
+DO $wamn_app$ BEGIN
+  IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN
+    GRANT USAGE ON SCHEMA wamn_history TO wamn_app;
+    GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_app;
+  END IF;
+END $wamn_app$;

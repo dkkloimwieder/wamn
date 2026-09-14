@@ -6086,8 +6086,10 @@ dependencies = [
 name = "wamn-project-state"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "uuid",
  "wamn-control-provision",
+ "wamn-runtime",
 ]
 
 [[package]]
