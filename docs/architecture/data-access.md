@@ -96,7 +96,15 @@ Commands keep network effects outside transactions that hold database locks.
 Post-commit work uses the [event path](capabilities.md#events).
 
 Generated queries return bounded pages.
-Named projections declare `one`, `optional_one`, `page`, or `bounded_list` results with row and byte limits.
+The generated `query` action declares a `limit` that defaults to 100 and accepts 1 to 100, with a keyset cursor.
+A custom projection declares its result class and typed result fields, and no row or byte limit.
+Its authored SQL decides how many rows it returns.
+The host refuses a statement that returns more rows than its row limit.
+The row limit is `WAMN_PG_ROW_LIMIT`, default 100,000, or the `row_limit` of the project.
+The limit applies to each statement, and a projection runs one statement for each envelope item, up to 100 items.
+The host truncates nothing, and the refused item returns `internal_error`.
+No limit bounds the bytes of a result.
+Each guest linear memory is capped at 256 MiB, and the statement timeout bounds the duration of a statement.
 Unbounded JSON materialization is not a streaming or export interface.
 Arbitrary tenant SQL remains subject to runtime authority and execution limits.
 Compile-time checking for arbitrary tenant components remains demand-gated.
