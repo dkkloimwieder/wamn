@@ -2169,6 +2169,16 @@ fn the_history_read_fixture_generates_and_reads_the_whole_row() {
         &[HISTORY_FIXTURE_READ],
     )
     .expect("the history read fixture generates");
+    // The provision test the_history_read_fixture_yields_its_own_operation_grant
+    // derives the same token with operation_grant_tokens.
+    let operation = artifact_json(
+        &package,
+        "generated/contracts/history/load_stock_item_history.operation.json",
+    );
+    assert_eq!(
+        operation["grant"],
+        "history-probe:history/load-stock-item-history@1.0.0"
+    );
     let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
     let relations = overlay["relations"].as_array().unwrap();
     assert_eq!(
