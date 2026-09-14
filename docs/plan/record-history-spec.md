@@ -51,8 +51,6 @@ An intermediate state inside one transaction was never visible to another caller
 
 `wamn_history.log_row_change()` is an `AFTER INSERT OR UPDATE OR DELETE` row trigger function in [`deploy/sql/record-history.sql`](../../deploy/sql/record-history.sql).
 The function is `SECURITY INVOKER`, so it writes with the authority of the caller and keeps the `current_user` tenant floor.
-Generation derives an `INSERT` grant on the history table for `wamn_app` from the declaration.
-Generation refuses a declared operation that inserts into or updates a history table.
 The function writes the entry in the same transaction as the change.
 
 Each logged relation has its own history table, as section 4.4 describes.
