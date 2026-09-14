@@ -1038,7 +1038,7 @@ async fn assert_record_history_stamp_admission(admin: &Client, reader: &Client) 
         .expect("read the catalog before the stamp trigger");
     admin
         .batch_execute(
-            "CREATE TRIGGER record_history_stamp \
+            "CREATE TRIGGER wamn_record_history_stamp \
                BEFORE INSERT OR UPDATE ON receiving.purchase_order \
                FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at')",
         )
@@ -1068,81 +1068,81 @@ async fn assert_record_history_stamp_admission(admin: &Client, reader: &Client) 
         (
             "after timing",
             format!(
-                "CREATE TRIGGER record_history_stamp AFTER INSERT OR UPDATE ON receiving.item \
+                "CREATE TRIGGER wamn_record_history_stamp AFTER INSERT OR UPDATE ON receiving.item \
                    FOR EACH ROW {stamp}"
             ),
-            "record_history_stamp",
+            "wamn_record_history_stamp",
             "t.tgtype & 2 = 0",
         ),
         (
             "insert only",
             format!(
-                "CREATE TRIGGER record_history_stamp BEFORE INSERT ON receiving.item \
+                "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT ON receiving.item \
                    FOR EACH ROW {stamp}"
             ),
-            "record_history_stamp",
+            "wamn_record_history_stamp",
             "t.tgtype & 16 = 0",
         ),
         (
             "statement level",
             format!(
-                "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+                "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
                    FOR EACH STATEMENT {stamp}"
             ),
-            "record_history_stamp",
+            "wamn_record_history_stamp",
             "t.tgtype & 1 = 0",
         ),
         (
             "column list",
             format!(
-                "CREATE TRIGGER record_history_stamp \
+                "CREATE TRIGGER wamn_record_history_stamp \
                    BEFORE INSERT OR UPDATE OF item_number ON receiving.item \
                    FOR EACH ROW {stamp}"
             ),
-            "record_history_stamp",
+            "wamn_record_history_stamp",
             "pg_catalog.cardinality(t.tgattr::pg_catalog.int2[]) > 0",
         ),
         (
             "condition",
             format!(
-                "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+                "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
                    FOR EACH ROW WHEN (NEW.item_number <> '') {stamp}"
             ),
-            "record_history_stamp",
+            "wamn_record_history_stamp",
             "t.tgqual IS NOT NULL",
         ),
         (
             "disabled",
             format!(
-                "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+                "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
                    FOR EACH ROW {stamp}; \
-                 ALTER TABLE receiving.item DISABLE TRIGGER record_history_stamp"
+                 ALTER TABLE receiving.item DISABLE TRIGGER wamn_record_history_stamp"
             ),
-            "record_history_stamp",
+            "wamn_record_history_stamp",
             "t.tgenabled = 'D'",
         ),
         (
             "unreserved argument",
-            "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+            "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
                FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('item_number')"
                 .to_owned(),
-            "record_history_stamp",
+            "wamn_record_history_stamp",
             "t.tgnargs = 1",
         ),
         (
             "repeated argument",
-            "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+            "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
                FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_at')"
                 .to_owned(),
-            "record_history_stamp",
+            "wamn_record_history_stamp",
             "t.tgnargs = 2",
         ),
         (
             "no argument",
-            "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+            "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
                FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row()"
                 .to_owned(),
-            "record_history_stamp",
+            "wamn_record_history_stamp",
             "t.tgnargs = 0",
         ),
         (
@@ -1158,10 +1158,10 @@ async fn assert_record_history_stamp_admission(admin: &Client, reader: &Client) 
             "other function",
             "CREATE FUNCTION wamn_introspection_fixture.stamp_row() RETURNS trigger \
                LANGUAGE plpgsql AS 'BEGIN RETURN NEW; END'; \
-             CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+             CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
                FOR EACH ROW EXECUTE FUNCTION wamn_introspection_fixture.stamp_row('created_at')"
                 .to_owned(),
-            "record_history_stamp",
+            "wamn_record_history_stamp",
             "t.tgfoid = 'wamn_introspection_fixture.stamp_row()'::pg_catalog.regprocedure",
         ),
     ];
@@ -1221,7 +1221,7 @@ async fn assert_record_history_log_admission(admin: &Client, reader: &Client) {
     );
     admin
         .batch_execute(
-            "CREATE TRIGGER record_history_log \
+            "CREATE TRIGGER wamn_record_history_log \
                AFTER INSERT OR UPDATE OR DELETE ON receiving.purchase_order \
                FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
         )
@@ -1252,13 +1252,13 @@ async fn assert_record_history_log_admission(admin: &Client, reader: &Client) {
                JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid \
                JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
               WHERE n.nspname='receiving' AND c.relname='{table}' \
-                AND t.tgname='record_history_log' AND {condition})"
+                AND t.tgname='wamn_record_history_log' AND {condition})"
         )
     };
     let history = "receiving.purchase_order_history";
     let log = |timing: &str, arguments: &str| {
         format!(
-            "CREATE TRIGGER record_history_log {timing} ON receiving.item \
+            "CREATE TRIGGER wamn_record_history_log {timing} ON receiving.item \
                FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change({arguments})"
         )
     };
@@ -1345,46 +1345,46 @@ async fn assert_record_history_log_admission(admin: &Client, reader: &Client) {
         (
             "log trigger on a history table",
             format!(
-                "CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON {history} \
+                "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON {history} \
                    FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D')"
             ),
             trigger_on("purchase_order_history", "true"),
-            format!("DROP TRIGGER record_history_log ON {history}"),
+            format!("DROP TRIGGER wamn_record_history_log ON {history}"),
             PostgresIntrospectionErrorKind::UnsupportedTrigger,
         ),
         (
             "log trigger without its history table",
             log("AFTER INSERT OR UPDATE OR DELETE", "'P30D'"),
             trigger_on("item", "true"),
-            "DROP TRIGGER record_history_log ON receiving.item".to_owned(),
+            "DROP TRIGGER wamn_record_history_log ON receiving.item".to_owned(),
             PostgresIntrospectionErrorKind::UnsupportedTrigger,
         ),
         (
             "log retention none",
             log("AFTER INSERT OR UPDATE OR DELETE", "'none'"),
             trigger_on("item", "t.tgnargs = 1"),
-            "DROP TRIGGER record_history_log ON receiving.item".to_owned(),
+            "DROP TRIGGER wamn_record_history_log ON receiving.item".to_owned(),
             PostgresIntrospectionErrorKind::UnsupportedTrigger,
         ),
         (
             "log with two arguments",
             log("AFTER INSERT OR UPDATE OR DELETE", "'P30D', 'unlimited'"),
             trigger_on("item", "t.tgnargs = 2"),
-            "DROP TRIGGER record_history_log ON receiving.item".to_owned(),
+            "DROP TRIGGER wamn_record_history_log ON receiving.item".to_owned(),
             PostgresIntrospectionErrorKind::UnsupportedTrigger,
         ),
         (
             "log before timing",
             log("BEFORE INSERT OR UPDATE OR DELETE", "'P30D'"),
             trigger_on("item", "t.tgtype & 2 = 2"),
-            "DROP TRIGGER record_history_log ON receiving.item".to_owned(),
+            "DROP TRIGGER wamn_record_history_log ON receiving.item".to_owned(),
             PostgresIntrospectionErrorKind::UnsupportedTrigger,
         ),
         (
             "log without delete",
             log("AFTER INSERT OR UPDATE", "'P30D'"),
             trigger_on("item", "t.tgtype & 8 = 0"),
-            "DROP TRIGGER record_history_log ON receiving.item".to_owned(),
+            "DROP TRIGGER wamn_record_history_log ON receiving.item".to_owned(),
             PostgresIntrospectionErrorKind::UnsupportedTrigger,
         ),
     ];

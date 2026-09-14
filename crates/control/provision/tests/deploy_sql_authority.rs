@@ -1080,13 +1080,13 @@ fn record_history_fixture(admin: &str) -> (String, String) {
              id integer PRIMARY KEY, note text NOT NULL,\n\
              created_at timestamptz NOT NULL, created_by uuid NOT NULL,\n\
              updated_at timestamptz NOT NULL, updated_by uuid NOT NULL);\n\
-         CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.stamped\n\
+         CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.stamped\n\
              FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(\n\
                  'created_at', 'created_by', 'updated_at', 'updated_by');\n\
          CREATE TABLE rh_probe.timestamps_only (\n\
              id integer PRIMARY KEY, note text NOT NULL,\n\
              created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL);\n\
-         CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.timestamps_only\n\
+         CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.timestamps_only\n\
              FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at');\n\
          GRANT USAGE ON SCHEMA rh_probe TO wamn_app;\n\
          GRANT SELECT, INSERT, UPDATE ON rh_probe.stamped, rh_probe.timestamps_only TO wamn_app;\n\
@@ -1377,22 +1377,22 @@ fn record_history_log_fixture(admin: &str) -> (String, String) {
              created_at timestamptz NOT NULL, created_by uuid NOT NULL,\n\
              updated_at timestamptz NOT NULL, updated_by uuid NOT NULL);\n\
          ALTER TABLE rh_probe.logged ADD COLUMN overlay_grade text;\n\
-         CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.logged\n\
+         CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.logged\n\
              FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(\n\
                  'created_at', 'created_by', 'updated_at', 'updated_by');\n\
          SELECT wamn_history.create_history_table('rh_probe', 'logged', false);\n\
          SELECT wamn_history.create_history_table('rh_probe', 'logged', false);\n\
-         CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.logged\n\
+         CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.logged\n\
              FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
          CREATE TABLE rh_probe.tenanted (\n\
              tenant_id text NOT NULL, id integer NOT NULL, note text NOT NULL,\n\
              PRIMARY KEY (tenant_id, id));\n\
          SELECT wamn_history.create_history_table('rh_probe', 'tenanted', true);\n\
-         CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.tenanted\n\
+         CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.tenanted\n\
              FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D');\n\
          CREATE TABLE rh_probe.keyless (id integer NOT NULL, note text NOT NULL);\n\
          SELECT wamn_history.create_history_table('rh_probe', 'keyless', false);\n\
-         CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.keyless\n\
+         CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.keyless\n\
              FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
          GRANT SELECT, INSERT, UPDATE, DELETE\n\
              ON rh_probe.logged, rh_probe.tenanted, rh_probe.keyless TO wamn_app;\n\
@@ -2292,7 +2292,7 @@ fn a_numeric_scale_only_update_moves_the_stamps_on_postgres() {
              id integer PRIMARY KEY, amount numeric NOT NULL,\n\
              created_at timestamptz NOT NULL, created_by uuid NOT NULL,\n\
              updated_at timestamptz NOT NULL, updated_by uuid NOT NULL);\n\
-         CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.measured\n\
+         CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.measured\n\
              FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(\n\
                  'created_at', 'created_by', 'updated_at', 'updated_by');\n\
          GRANT SELECT, INSERT, UPDATE ON rh_probe.measured TO wamn_app;\n\
@@ -2359,7 +2359,7 @@ fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
          SET LOCAL ROLE wamn_db_owner;\n\
          CREATE TABLE rh_probe.amounts (id integer PRIMARY KEY, amount numeric NOT NULL);\n\
          SELECT wamn_history.create_history_table('rh_probe', 'amounts', false);\n\
-         CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.amounts\n\
+         CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.amounts\n\
              FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
          GRANT SELECT, INSERT, UPDATE ON rh_probe.amounts TO wamn_app;\n\
          GRANT INSERT ON rh_probe.amounts_history TO wamn_app;\n\
@@ -2520,11 +2520,11 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
              SET LOCAL ROLE wamn_db_owner;\n\
              CREATE SCHEMA history_probe;\n\
              {HISTORY_FIXTURE_MIGRATION}\
-             CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON history_probe.stock_item\n\
+             CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON history_probe.stock_item\n\
                  FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(\n\
                      'created_at', 'created_by', 'updated_at', 'updated_by');\n\
              SELECT wamn_history.create_history_table('history_probe', 'stock_item', false);\n\
-             CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE \
+             CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE \
                  ON history_probe.stock_item\n\
                  FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
              COMMIT;\n"
@@ -2720,7 +2720,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
 
 /// Spec test 20 for the `app_system` log (epic rulings 40, 42, 43, and 58).
 /// `deploy/sql/app-schema.sql` gives each `app_system` relation a
-/// `record_history_log` trigger with the argument `unlimited`. After
+/// `wamn_record_history_log` trigger with the argument `unlimited`. After
 /// apply-package converges the audit retention grants, the audit retention
 /// role holds no privilege on `app_system` or on any object in it. The
 /// `P30D` fixture relation is the control: the same convergence grants the
@@ -2751,7 +2751,7 @@ fn the_app_system_history_stays_out_of_audit_retention_reach_on_postgres() {
                            ORDER BY c.relname COLLATE \"C\") \
            FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid \
           WHERE c.relnamespace = 'app_system'::regnamespace \
-            AND t.tgname = 'record_history_log' AND NOT t.tgisinternal",
+            AND t.tgname = 'wamn_record_history_log' AND NOT t.tgisinternal",
     );
     assert_eq!(
         logs,

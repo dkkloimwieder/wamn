@@ -1546,10 +1546,10 @@ async fn record_history_triggers_follow_the_declaration() {
     assert_eq!(
         trigger_definitions(&installed),
         [
-            "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE \
+            "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE \
              ON receiving.purchase_order FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at')",
-            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+            "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
              ON receiving.purchase_order_line FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
         ],
@@ -1591,10 +1591,10 @@ async fn record_history_triggers_follow_the_declaration() {
     assert_eq!(
         trigger_definitions(&receiving_triggers(&client).await),
         [
-            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+            "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
              ON receiving.purchase_order_line FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
-            "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE \
+            "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE \
              ON receiving.receipt FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.stamp_row('created_at')",
         ],
@@ -1605,7 +1605,7 @@ async fn record_history_triggers_follow_the_declaration() {
     set_package_identity(&package, "1.0.2", Some("1.0.1"));
     std::fs::write(
         package.join("migrations/0002_trigger.sql"),
-        "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
+        "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON receiving.item \
            FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row('created_at');",
     )
     .expect("write a migration that carries a trigger");
@@ -1664,7 +1664,7 @@ async fn receiving_log_triggers(client: &Client) -> Vec<String> {
         .await
         .into_iter()
         .map(|(definition, _)| definition)
-        .filter(|definition| definition.contains("record_history_log"))
+        .filter(|definition| definition.contains("wamn_record_history_log"))
         .collect()
 }
 
@@ -1770,10 +1770,10 @@ async fn record_history_log_follows_the_declaration() {
     assert_eq!(
         receiving_log_triggers(&client).await,
         [
-            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+            "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
              ON receiving.purchase_order FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.log_row_change('unlimited')",
-            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+            "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
              ON receiving.purchase_order_line FOR EACH ROW \
              EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
         ]
@@ -1856,7 +1856,7 @@ async fn record_history_log_follows_the_declaration() {
     assert_eq!(
         receiving_log_triggers(&client).await,
         [
-            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+            "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
           ON receiving.purchase_order FOR EACH ROW \
           EXECUTE FUNCTION wamn_history.log_row_change('P90D')"
         ]
@@ -1890,7 +1890,7 @@ async fn record_history_log_follows_the_declaration() {
     // apply-package compares the installed retention with the declaration.
     client
         .batch_execute(
-            "CREATE OR REPLACE TRIGGER record_history_log \
+            "CREATE OR REPLACE TRIGGER wamn_record_history_log \
                AFTER INSERT OR UPDATE OR DELETE ON receiving.purchase_order \
                FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P1D')",
         )
@@ -1902,7 +1902,7 @@ async fn record_history_log_follows_the_declaration() {
     assert_eq!(
         receiving_log_triggers(&client).await,
         [
-            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+            "CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
           ON receiving.purchase_order FOR EACH ROW \
           EXECUTE FUNCTION wamn_history.log_row_change('P90D')"
         ]

@@ -255,7 +255,7 @@ struct IndexRow {
 pub type RecordHistoryStamps = BTreeMap<(String, String), Vec<String>>;
 
 /// The one trigger name that introspection admits.
-const RECORD_HISTORY_STAMP_TRIGGER: &str = "record_history_stamp";
+const RECORD_HISTORY_STAMP_TRIGGER: &str = "wamn_record_history_stamp";
 /// The reserved record-history columns that a stamp trigger can select.
 const RECORD_HISTORY_COLUMNS: [&str; 4] = ["created_at", "created_by", "updated_at", "updated_by"];
 /// `pg_trigger.tgtype` bits for BEFORE INSERT OR UPDATE FOR EACH ROW.
@@ -1077,10 +1077,10 @@ struct RecordHistoryTriggers {
 
 /// Admit only the platform record-history triggers and read their arguments.
 ///
-/// The stamp shape is `record_history_stamp BEFORE INSERT OR UPDATE FOR EACH
+/// The stamp shape is `wamn_record_history_stamp BEFORE INSERT OR UPDATE FOR EACH
 /// ROW EXECUTE FUNCTION wamn_history.stamp_row(<columns>)`. Its arguments are
 /// distinct reserved record-history column names. The log shape is
-/// `record_history_log AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW EXECUTE
+/// `wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW EXECUTE
 /// FUNCTION wamn_history.log_row_change(<retention>)`. Its one argument is a log
 /// retention. Both are enabled, with no column list, condition, constraint, or
 /// transition table. Every other trigger refuses.
@@ -1149,9 +1149,9 @@ async fn load_record_history_triggers(
                 PostgresIntrospectionErrorKind::UnsupportedTrigger,
                 Some(&schema),
                 Some(&format!("{table}.{trigger}")),
-                "only the record_history_stamp trigger that runs BEFORE INSERT OR UPDATE \
+                "only the wamn_record_history_stamp trigger that runs BEFORE INSERT OR UPDATE \
                  FOR EACH ROW and executes wamn_history.stamp_row with distinct \
-                 record-history columns, and the record_history_log trigger that runs \
+                 record-history columns, and the wamn_record_history_log trigger that runs \
                  AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW and executes \
                  wamn_history.log_row_change with one log retention, are inside the \
                  supported catalog set",

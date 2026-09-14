@@ -26,7 +26,7 @@
 --
 -- RECORD HISTORY: the four identity authority relations carry created_at,
 -- created_by, updated_at, and updated_by as NOT NULL columns, and a
--- record_history_stamp trigger that calls wamn_history.stamp_row(). An applier
+-- wamn_record_history_stamp trigger that calls wamn_history.stamp_row(). An applier
 -- installs deploy/sql/record-history.sql first. The SYSTEM_SCHEMA_SQL
 -- composition in wamn-control-provision carries it. That file grants to
 -- wamn_db_owner, so an applier that runs as wamn_system creates that role
@@ -251,7 +251,7 @@ CREATE TABLE identity.principals (
                     ELSE display_name NOT LIKE 'wamn:%'
                END)
 );
-CREATE TRIGGER record_history_stamp
+CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.principals
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
@@ -281,7 +281,7 @@ CREATE TABLE identity.project_roles (
     CONSTRAINT project_roles_role_check
         CHECK (role ~ '^[a-z0-9][a-z0-9-]*$' AND char_length(role) <= 64)
 );
-CREATE TRIGGER record_history_stamp
+CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.project_roles
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
@@ -325,7 +325,7 @@ CREATE TABLE identity.pats (
         CHECK (expires_at > created_at)
 );
 
-CREATE TRIGGER record_history_stamp
+CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.pats
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
@@ -449,7 +449,7 @@ CREATE TABLE identity.project_env_memberships (
     CONSTRAINT project_env_memberships_human_check
         CHECK (principal_kind = 'human')
 );
-CREATE TRIGGER record_history_stamp
+CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON identity.project_env_memberships
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');

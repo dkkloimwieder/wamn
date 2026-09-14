@@ -488,7 +488,7 @@ fn verify_dispatch_reader_grants(
 /// (`wamn-emtx.13`).
 ///
 /// The role holds schema `USAGE`, `DELETE`, and `SELECT` on the three read
-/// columns of each history table whose `record_history_log` argument is
+/// columns of each history table whose `wamn_record_history_log` argument is
 /// `P<n>D`, and nothing else in the database. `retention_targets` lists those
 /// history tables as `(schema, history table)`, from the same query that the
 /// retention verb runs. So a grant on an `unlimited` history table, a wider

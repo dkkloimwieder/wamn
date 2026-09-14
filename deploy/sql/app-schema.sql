@@ -28,13 +28,13 @@
 -- production and as the live-apply gate provisions.
 --
 -- RECORD HISTORY: every table carries created_at, created_by, updated_at, and
--- updated_by as NOT NULL columns, and a record_history_stamp trigger that calls
+-- updated_by as NOT NULL columns, and a wamn_record_history_stamp trigger that calls
 -- wamn_history.stamp_row(). An applier installs deploy/sql/record-history.sql
 -- first. CATALOG_SCHEMA_SQL carries it, so an applier that applies the catalog
 -- schema first already has it. Every write binds app.user_id: provisioning
 -- binds wamn:provisioning, apply-package binds wamn:apply-package, and
 -- administrative SQL and test fixtures bind a provisioned principal.
--- Every table also keeps an unlimited log. Its record_history_log trigger
+-- Every table also keeps an unlimited log. Its wamn_record_history_log trigger
 -- writes each row change to <table>_history, so every write also binds
 -- app.operation. The HISTORY TABLES section at the end creates them.
 --
@@ -214,7 +214,7 @@ CREATE TABLE app_system.users (
                     ELSE display_name IS NULL OR display_name NOT LIKE 'wamn:%'
                END)
 );
-CREATE TRIGGER record_history_stamp
+CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON app_system.users
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
@@ -249,7 +249,7 @@ CREATE TABLE app_system.roles (
     updated_by  uuid NOT NULL,
     PRIMARY KEY (tenant_id, name)
 );
-CREATE TRIGGER record_history_stamp
+CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON app_system.roles
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
@@ -286,7 +286,7 @@ CREATE TABLE app_system.user_roles (
     FOREIGN KEY (tenant_id, role_name)
         REFERENCES app_system.roles (tenant_id, name) ON DELETE CASCADE
 );
-CREATE TRIGGER record_history_stamp
+CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON app_system.user_roles
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
@@ -321,7 +321,7 @@ CREATE TABLE app_system.permissions (
     FOREIGN KEY (tenant_id, role_name)
         REFERENCES app_system.roles (tenant_id, name) ON DELETE CASCADE
 );
-CREATE TRIGGER record_history_stamp
+CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON app_system.permissions
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
@@ -354,7 +354,7 @@ CREATE TABLE app_system.configurations (
     updated_by   uuid NOT NULL,
     PRIMARY KEY (tenant_id, config_key)
 );
-CREATE TRIGGER record_history_stamp
+CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON app_system.configurations
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
@@ -398,7 +398,7 @@ CREATE TABLE app_system.api_keys (
     FOREIGN KEY (tenant_id, user_id)
         REFERENCES app_system.users (tenant_id, id) ON DELETE CASCADE
 );
-CREATE TRIGGER record_history_stamp
+CREATE TRIGGER wamn_record_history_stamp
     BEFORE INSERT OR UPDATE ON app_system.api_keys
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by');
@@ -423,7 +423,7 @@ GRANT SELECT ON app_system.api_keys TO wamn_app;
 -- floor of its base table: FORCEd RLS, a <table>_history_tenant policy TO
 -- wamn_app, a <table>_history_platform arm TO wamn_platform, and a
 -- <table>_history_tkey index. A wamn_platform member that writes a table
--- needs the platform arm to append an entry. Each record_history_log trigger
+-- needs the platform arm to append an entry. Each wamn_record_history_log trigger
 -- has the argument 'unlimited', the shape that apply-package installs, so the
 -- audit retention role gets no grant on these history tables.
 -- ---------------------------------------------------------------------------
@@ -445,7 +445,7 @@ CREATE POLICY users_history_platform ON app_system.users_history
     WITH CHECK (true);
 CREATE INDEX users_history_tkey
     ON app_system.users_history ((wamn_authority.tenant_key(tenant_id)));
-CREATE TRIGGER record_history_log
+CREATE TRIGGER wamn_record_history_log
     AFTER INSERT OR UPDATE OR DELETE ON app_system.users
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
@@ -462,7 +462,7 @@ CREATE POLICY roles_history_platform ON app_system.roles_history
     WITH CHECK (true);
 CREATE INDEX roles_history_tkey
     ON app_system.roles_history ((wamn_authority.tenant_key(tenant_id)));
-CREATE TRIGGER record_history_log
+CREATE TRIGGER wamn_record_history_log
     AFTER INSERT OR UPDATE OR DELETE ON app_system.roles
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
@@ -479,7 +479,7 @@ CREATE POLICY user_roles_history_platform ON app_system.user_roles_history
     WITH CHECK (true);
 CREATE INDEX user_roles_history_tkey
     ON app_system.user_roles_history ((wamn_authority.tenant_key(tenant_id)));
-CREATE TRIGGER record_history_log
+CREATE TRIGGER wamn_record_history_log
     AFTER INSERT OR UPDATE OR DELETE ON app_system.user_roles
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
@@ -496,7 +496,7 @@ CREATE POLICY permissions_history_platform ON app_system.permissions_history
     WITH CHECK (true);
 CREATE INDEX permissions_history_tkey
     ON app_system.permissions_history ((wamn_authority.tenant_key(tenant_id)));
-CREATE TRIGGER record_history_log
+CREATE TRIGGER wamn_record_history_log
     AFTER INSERT OR UPDATE OR DELETE ON app_system.permissions
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
@@ -513,7 +513,7 @@ CREATE POLICY configurations_history_platform ON app_system.configurations_histo
     WITH CHECK (true);
 CREATE INDEX configurations_history_tkey
     ON app_system.configurations_history ((wamn_authority.tenant_key(tenant_id)));
-CREATE TRIGGER record_history_log
+CREATE TRIGGER wamn_record_history_log
     AFTER INSERT OR UPDATE OR DELETE ON app_system.configurations
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
@@ -534,7 +534,7 @@ CREATE POLICY api_keys_history_platform ON app_system.api_keys_history
     WITH CHECK (true);
 CREATE INDEX api_keys_history_tkey
     ON app_system.api_keys_history ((wamn_authority.tenant_key(tenant_id)));
-CREATE TRIGGER record_history_log
+CREATE TRIGGER wamn_record_history_log
     AFTER INSERT OR UPDATE OR DELETE ON app_system.api_keys
     FOR EACH ROW
     EXECUTE FUNCTION wamn_history.log_row_change('unlimited');

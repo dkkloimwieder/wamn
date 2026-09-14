@@ -571,7 +571,7 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
 
 /// Spec test 11, for the relations that `deploy/sql/app-schema.sql` owns. Every
 /// `app_system` relation carries the four stamp columns as `NOT NULL`, one
-/// `record_history_stamp` trigger, one `record_history_log` trigger with the
+/// `wamn_record_history_stamp` trigger, one `wamn_record_history_log` trigger with the
 /// argument `unlimited`, and its history table. The provisioning SQL binds
 /// `wamn:provisioning` for its writes, every platform row stamps that
 /// principal, and the `wamn:provisioning` row stamps itself. The binding ends
@@ -661,12 +661,12 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
     expected.extend(names.iter().flat_map(|name| {
         [
             format!(
-                "trigger|CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+                "trigger|CREATE TRIGGER wamn_record_history_log AFTER INSERT OR DELETE OR UPDATE \
                  ON {SCHEMA_NAME}.{name} FOR EACH ROW EXECUTE FUNCTION \
                  wamn_history.log_row_change('unlimited')"
             ),
             format!(
-                "trigger|CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE \
+                "trigger|CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE \
                  ON {SCHEMA_NAME}.{name} FOR EACH ROW EXECUTE FUNCTION \
                  wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
             ),

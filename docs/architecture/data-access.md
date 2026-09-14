@@ -182,7 +182,7 @@ The function reads no users row, and no stamp column has a foreign key.
 Only the platform trigger functions read `app.user_id`, and no authorization or row policy reads it.
 The [claims fence](../../tests/conformance/tests/session_claims.rs) admits those readers by name, and it admits `wamn_history.log_row_change` as the reader of `app.operation`.
 
-After the migrations apply, apply-package installs one `record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
+After the migrations apply, apply-package installs one `wamn_record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
 The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes `wamn_history.stamp_row` with the selected columns.
 apply-package installs no trigger for `"columns": []`, and it removes a stamp trigger that the declaration no longer selects.
 It then reads the installed triggers through introspection and refuses a result that differs from the declarations.
@@ -268,7 +268,7 @@ It records the CDC exclusion of each history table in `wamn_cdc_exclusions`, as 
 The exclusion row names the package that owns the relation, and its relation id is the history table name.
 A migration that creates a table whose name ends with `_history` refuses with `history-table-name-reserved`.
 
-apply-package installs one `record_history_log` trigger on each owned logged relation.
+apply-package installs one `wamn_record_history_log` trigger on each owned logged relation.
 The trigger runs `AFTER INSERT OR UPDATE OR DELETE` for each row and executes `wamn_history.log_row_change` with one argument, the retention.
 The function derives the history table name from the relation and ignores the argument.
 A retention of `"none"` removes the trigger, and the history table and its entries stay.
@@ -280,7 +280,7 @@ The catalog reader leaves every table whose name ends with `_history` out of the
 It admits such a table only in the shape that the function creates for a package relation.
 That shape has the fixed columns, the named constraints over their columns, the identity sequence, and no ordinary index, row security, trigger, rule, or policy.
 The reader does not compare the CHECK expressions.
-It admits a `record_history_log` trigger only on a relation that has its history table.
+It admits a `wamn_record_history_log` trigger only on a relation that has its history table.
 The schema state id therefore stays the same when a relation starts or stops logging.
 
 When a package logs, the generator adds a fixed description of each history table to the catalog that it validates and generates from.
@@ -305,7 +305,7 @@ The family is not a `wamn_platform` member, because no reader needs the edge.
 `catalog-schema-prefix.sql` creates the stable role under the role bootstrap lock, beside `wamn_platform`.
 The system database schema creates no audit retention role.
 
-The verb reads the retention of each relation from the `record_history_log` trigger argument in `pg_trigger`.
+The verb reads the retention of each relation from the `wamn_record_history_log` trigger argument in `pg_trigger`.
 It skips an `unlimited` relation.
 Each relation runs in its own transaction, which binds `wamn:audit-retention` as the actor and the operation.
 The transaction takes the audit retention advisory lock before it reads `pg_trigger`.
@@ -347,9 +347,9 @@ It refuses a platform domain that is not a valid domain name.
 Its SQL binds `wamn:provisioning` first, so the `wamn:provisioning` row stamps itself.
 The development environment, the verification world, and `tools/identity-jwks-journey-run` apply that SQL.
 
-Every relation in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carries the four stamp columns as `NOT NULL` and a `record_history_stamp` trigger.
+Every relation in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carries the four stamp columns as `NOT NULL` and a `wamn_record_history_stamp` trigger.
 These relations are `users`, `roles`, `user_roles`, `permissions`, `configurations`, and `api_keys`.
-Each relation also has a `record_history_log` trigger with the retention `unlimited`, and a history table.
+Each relation also has a `wamn_record_history_log` trigger with the retention `unlimited`, and a history table.
 The file creates each history table with the tenant flag, so the table has a `tenant_id` column.
 Each history table has the tenant floor of its relation: forced row security, a `wamn_app` tenant policy, a `wamn_platform` policy, and a tenant key index.
 A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id` from its row.
@@ -365,7 +365,7 @@ An applier installs `record-history.sql` and then `record-history-app-grants.sql
 
 The system database (`wamn_system`) stamps its identity authority relations.
 These relations are `identity.principals`, `identity.project_roles`, `identity.project_env_memberships`, and `identity.pats`.
-Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `record_history_stamp` trigger.
+Each relation carries the four stamp columns as `NOT NULL` with no default, and a static `wamn_record_history_stamp` trigger.
 The registry, the sagas, the session keys, the operations tables, and the control store carry no stamps.
 In the system database, the actor is an `identity.principals` id.
 The system database keeps stamps only and no history table, as its [limits](#limits) state.

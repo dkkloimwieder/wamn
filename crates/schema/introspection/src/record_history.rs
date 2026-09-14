@@ -12,7 +12,7 @@ use crate::ir::{Column, ColumnGeneration, ColumnType, Constraint, IdentityMode, 
 pub const HISTORY_TABLE_SUFFIX: &str = "_history";
 
 /// The log trigger that apply-package installs on a logged relation.
-pub const RECORD_HISTORY_LOG_TRIGGER: &str = "record_history_log";
+pub const RECORD_HISTORY_LOG_TRIGGER: &str = "wamn_record_history_log";
 
 /// The retention of a relation that keeps no log.
 pub const NO_LOG_RETENTION: &str = "none";

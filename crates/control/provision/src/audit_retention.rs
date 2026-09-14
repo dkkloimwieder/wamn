@@ -1,7 +1,7 @@
 //! The record history retention surface of the audit retention family.
 //!
 //! A relation keeps its log entries for n whole days when its
-//! `record_history_log` trigger argument is `P<n>D`. `pg_trigger` is the one
+//! `wamn_record_history_log` trigger argument is `P<n>D`. `pg_trigger` is the one
 //! retention source. The retention verb reads it to find the history tables to
 //! prune. apply-package reads it to grant [`AUDIT_RETENTION_ROLE`] exactly the
 //! privileges that the verb needs, and the provisioning verifier reads it to
@@ -25,7 +25,7 @@ pub const AUDIT_RETENTION_READ_COLUMNS: [&str; 3] = ["row_key", "position", "cha
 
 /// Each relation of the current database whose log keeps its entries for n days.
 ///
-/// The query reads every `record_history_log` trigger that runs
+/// The query reads every `wamn_record_history_log` trigger that runs
 /// `wamn_history.log_row_change` with the one argument `P<n>D` on a relation
 /// that has its history table. It returns `schema_name`, `relation_name`,
 /// `history_name`, and `days`, the text of n, in byte order of schema and
@@ -48,7 +48,7 @@ SELECT log.schema_name, log.relation_name, log.history_name, log.days
           JOIN pg_catalog.pg_namespace AS routine_namespace
             ON routine_namespace.oid = routine.pronamespace
          WHERE NOT trigger.tgisinternal
-           AND trigger.tgname = 'record_history_log'
+           AND trigger.tgname = 'wamn_record_history_log'
            AND trigger.tgnargs = 1
            AND routine_namespace.nspname = 'wamn_history'
            AND routine.proname = 'log_row_change'

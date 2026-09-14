@@ -739,7 +739,7 @@ mod tests {
             model.log_retention().map(|retention| {
                 format!(
                     "SELECT wamn_history.create_history_table('{schema}', '{table}', false); \
-                     CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE \
+                     CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE \
                      ON {schema}.{table} FOR EACH ROW \
                      EXECUTE FUNCTION wamn_history.log_row_change('{retention}');",
                     schema = model.schema,
@@ -756,7 +756,7 @@ mod tests {
                 .collect::<Vec<_>>();
             (!columns.is_empty()).then(|| {
                 format!(
-                    "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON {}.{} \
+                    "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON {}.{} \
                      FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({});",
                     model.schema,
                     model.table,

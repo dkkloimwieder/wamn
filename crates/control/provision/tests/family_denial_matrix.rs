@@ -568,9 +568,9 @@ CREATE TABLE retention_fixture.entry (id uuid CONSTRAINT entry_id_pkey PRIMARY K
 CREATE TABLE retention_fixture.ledger (id uuid CONSTRAINT ledger_id_pkey PRIMARY KEY);
 SELECT wamn_history.create_history_table('retention_fixture', 'entry', false);
 SELECT wamn_history.create_history_table('retention_fixture', 'ledger', false);
-CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON retention_fixture.entry
+CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON retention_fixture.entry
   FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D');
-CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON retention_fixture.ledger
+CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON retention_fixture.ledger
   FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
 ";
 

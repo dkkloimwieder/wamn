@@ -796,10 +796,10 @@ async fn reconcile_record_history_triggers(
         }
         let quoted = quoted_relation(relation)?;
         statements.push(if columns.is_empty() {
-            format!("DROP TRIGGER record_history_stamp ON {quoted}")
+            format!("DROP TRIGGER wamn_record_history_stamp ON {quoted}")
         } else {
             format!(
-                "CREATE OR REPLACE TRIGGER record_history_stamp \
+                "CREATE OR REPLACE TRIGGER wamn_record_history_stamp \
                  BEFORE INSERT OR UPDATE ON {quoted} \
                  FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({})",
                 columns

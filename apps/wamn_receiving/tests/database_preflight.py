@@ -42,7 +42,7 @@ try:
     for model in json.loads((tree / 'apps/wamn_receiving/wamn.json').read_text())['models'].values():
         columns = model['audit_log']['columns']
         if columns:
-            db.sql('00-trigger-' + model['table'], f"CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON {model['schema']}.{model['table']} FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({', '.join(repr(column) for column in columns)});")
+            db.sql('00-trigger-' + model['table'], f"CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON {model['schema']}.{model['table']} FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({', '.join(repr(column) for column in columns)});")
     # The seed provisions its principal beside the platform rows, so the preflight installs the project system schema.
     db.sql('00-app-schema', 'CREATE ROLE wamn_app NOLOGIN;\n' + (tree / 'deploy/sql/app-schema.sql').read_text())
     # record-history-app-grants.sql grants to wamn_app, so it follows the step that creates that role.

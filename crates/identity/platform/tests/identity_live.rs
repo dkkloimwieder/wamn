@@ -469,7 +469,7 @@ async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
     let expected_triggers = RELATIONS
         .map(|relation| {
             format!(
-                "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON identity.{relation} \
+                "CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON identity.{relation} \
                  FOR EACH ROW EXECUTE FUNCTION \
                  wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
             )

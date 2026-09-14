@@ -2,7 +2,7 @@
 //!
 //! The verb removes expired log entries from the history tables of one tenant
 //! database. A relation keeps its entries for n whole days when its
-//! `record_history_log` trigger argument is `P<n>D`, and the verb reads that
+//! `wamn_record_history_log` trigger argument is `P<n>D`, and the verb reads that
 //! argument from `pg_trigger`. It skips an `unlimited` relation.
 //!
 //! **Role:** the verb connects as a scoped `wamn_audit_retention` credential
