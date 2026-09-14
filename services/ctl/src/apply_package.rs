@@ -14,7 +14,7 @@ use wamn_control_provision::operation_grants::{
     OperationGrantReconcileResult, operation_grant_floor_check_sql, reconcile_operation_grants_sql,
 };
 use wamn_control_provision::{
-    AUDIT_RETENTION_ROLE, DB_OWNER_ROLE, PlatformComponent, bind_platform_principal_sql,
+    AUDIT_RETENTION_ROLE, PlatformComponent, bind_platform_principal_sql,
 };
 use wamn_event_reg::{
     DELETE_STALE_CATALOG_REGISTRATIONS_SQL, EventRegistration, RegistrationInput,
@@ -33,7 +33,10 @@ use wamn_schema_introspection::migration_policy::{
     MigrationPolicyErrorKind, inspect_migration_definition_mutations,
 };
 
+use roles::{assert_host_role, reset_host_role, set_package_owner_role};
+
 mod error;
+mod roles;
 
 pub use error::{
     APPLY_PACKAGE_REFUSAL, ApplyPackageError, ApplyPackageErrorKind,
@@ -44,7 +47,6 @@ pub use error::{
 };
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
-const SELECT_ROLE_CONTEXT_SQL: &str = "SELECT current_user::text, session_user::text";
 pub(crate) const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.lineage:' || $1 || ':' || $2, 0))";
 const SELECT_PACKAGE_SQL: &str = "\
@@ -756,34 +758,6 @@ async fn reconcile_audit_retention_grants(tx: &Transaction<'_>) -> anyhow::Resul
     reset_host_role(tx).await?;
     Ok(read_grants().await? != before)
 }
-
-async fn set_package_owner_role(tx: &Transaction<'_>) -> anyhow::Result<()> {
-    tx.batch_execute(&format!("SET LOCAL ROLE \"{DB_OWNER_ROLE}\""))
-        .await
-        .context("narrow package migration authority to wamn_db_owner")
-}
-
-async fn reset_host_role(tx: &Transaction<'_>) -> anyhow::Result<()> {
-    tx.batch_execute("RESET ROLE")
-        .await
-        .context("reset package migration authority before trusted writes")?;
-    assert_host_role(tx).await
-}
-
-async fn assert_host_role(tx: &Transaction<'_>) -> anyhow::Result<()> {
-    let row = tx
-        .query_one(SELECT_ROLE_CONTEXT_SQL, &[])
-        .await
-        .context("read server role context before trusted package writes")?;
-    let current_role = row.get::<_, String>(0);
-    let session_role = row.get::<_, String>(1);
-    ensure!(
-        current_role == session_role,
-        "package-role-reset-refused: current role {current_role:?} differs from session role {session_role:?}"
-    );
-    Ok(())
-}
-
 fn derive_catalog_registrations(
     manifest: &wamn_schema_generator::PackageManifest,
 ) -> BTreeMap<String, EventRegistration> {
