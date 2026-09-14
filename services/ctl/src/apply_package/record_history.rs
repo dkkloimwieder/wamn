@@ -9,7 +9,7 @@ use wamn_control_provision::audit_retention::{
 use wamn_record_history::{LOG_TRIGGER, STAMP_TRIGGER, history_table_name};
 use wamn_schema_generator::{PackageManifest, RecordHistoryColumn};
 
-use super::SELECT_RELATION_PRESENT_SQL;
+use super::definition_ownership::SELECT_RELATION_PRESENT_SQL;
 use super::roles::{reset_host_role, set_package_owner_role};
 
 /// Each non-internal trigger of the named relations, as the server renders it.
