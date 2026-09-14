@@ -6,10 +6,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, ensure};
 use clap::Args;
 use tokio_postgres::{NoTls, Transaction, error::SqlState};
-use wamn_control_provision::operation_grants::{
-    OPERATION_GRANT_LOCK_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
-    OperationGrantReconcileResult, operation_grant_floor_check_sql, reconcile_operation_grants_sql,
-};
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_event_reg::{
     DELETE_STALE_CATALOG_REGISTRATIONS_SQL, EventRegistration, RegistrationInput,
@@ -27,11 +23,13 @@ use wamn_schema_introspection::migration_policy::{
 };
 
 use entity_maps::reconcile_entity_maps;
+use operation_grants::reconcile_package_operation_grants;
 use record_history::{create_history_tables, reconcile_record_history_triggers};
 use roles::{assert_host_role, reset_host_role, set_package_owner_role};
 
 mod entity_maps;
 mod error;
+mod operation_grants;
 mod record_history;
 mod roles;
 
@@ -618,33 +616,6 @@ async fn bind_apply_package_principal(tx: &Transaction<'_>) -> anyhow::Result<()
     ))
     .await
     .context("bind wamn:apply-package as the transaction actor and operation")
-}
-
-async fn reconcile_package_operation_grants(
-    tx: &Transaction<'_>,
-    manifest_bytes: &[u8],
-    tenant: &str,
-) -> anyhow::Result<OperationGrantReconcileResult> {
-    tx.query_one(OPERATION_GRANT_LOCK_SQL, &[&tenant])
-        .await
-        .context("lock the tenant operation-grant carrier")?;
-    tx.batch_execute(OPERATION_GRANT_TRANSACTION_PRELUDE_SQL)
-        .await
-        .context("disable row filtering for package operation-grant reconciliation")?;
-    tx.batch_execute(&operation_grant_floor_check_sql())
-        .await
-        .context("verify the application authorization floor")?;
-    let statement = reconcile_operation_grants_sql(manifest_bytes, tenant)
-        .context("derive exact package operation grants")?;
-    let row = tx
-        .query_one(&statement, &[])
-        .await
-        .context("reconcile exact package operation grants")?;
-    Ok(OperationGrantReconcileResult::new(
-        row.get("role_rows_changed"),
-        row.get("grants_added"),
-        row.get("grants_removed"),
-    ))
 }
 
 /// Register a package while retaining its lineage lock through the caller's transaction.
