@@ -417,18 +417,6 @@ mod tests {
         );
     }
 
-    /// Spec test 9. The history read of the generator fixture is an ordinary
-    /// public projection, so it becomes its own operation grant.
-    #[test]
-    fn the_history_read_fixture_yields_its_own_operation_grant() {
-        let manifest =
-            include_bytes!("../../../schema/generator/tests/fixtures/record_history/wamn.json");
-        assert_eq!(
-            operation_grant_tokens(manifest).expect("parse the history read fixture"),
-            BTreeSet::from(["history-probe:history/load-stock-item-history@1.0.0".to_owned()])
-        );
-    }
-
     #[test]
     fn server_counts_define_the_closing_predicate() {
         assert!(!OperationGrantReconcileResult::new(1, 5, 1).is_noop());

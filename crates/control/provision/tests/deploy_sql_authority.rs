@@ -2397,19 +2397,15 @@ fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
 }
 
-/// The generator fixture package that declares a logged relation and its
-/// history read.
-const HISTORY_FIXTURE_MANIFEST: &[u8] =
-    include_bytes!("../../../schema/generator/tests/fixtures/record_history/wamn.json");
-const HISTORY_FIXTURE_MIGRATION: &str = include_str!(
-    "../../../schema/generator/tests/fixtures/record_history/migrations/0001_initial.sql"
-);
-const HISTORY_FIXTURE_READ: &str = include_str!(
-    "../../../schema/generator/tests/fixtures/record_history/query/load_stock_item_history.sql"
-);
-const HISTORY_ITEM: &str = "7a1c0a4e-2b9d-4f3e-8a61-0c5d2e9b4f17";
+/// Receiving, which logs `purchase_order` and declares its history read.
+const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
+const RECEIVING_MIGRATION: &str =
+    include_str!("../../../../apps/wamn_receiving/migrations/0001_initial.sql");
+const RECEIVING_HISTORY_READ: &str =
+    include_str!("../../../../apps/wamn_receiving/query/load_purchase_order_history.sql");
+const HISTORY_PURCHASE_ORDER: &str = "7a1c0a4e-2b9d-4f3e-8a61-0c5d2e9b4f17";
 
-/// Run `sql` as the guest under the fixture schema and return its rows, with
+/// Run `sql` as the guest under the Receiving schema and return its rows, with
 /// the unit separator between fields and the record separator between rows.
 fn guest_rows(db_url: &str, guest: &str, sql: &str) -> Vec<Vec<String>> {
     let out = Command::new("psql")
@@ -2426,7 +2422,7 @@ fn guest_rows(db_url: &str, guest: &str, sql: &str) -> Vec<Vec<String>> {
         ])
         .arg("-c")
         .arg(format!(
-            "SET ROLE \"{guest}\"; SET search_path = history_probe; {sql}"
+            "SET ROLE \"{guest}\"; SET search_path = receiving; {sql}"
         ))
         .output()
         .expect("psql runs");
@@ -2444,9 +2440,9 @@ fn guest_rows(db_url: &str, guest: &str, sql: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// Every page of the fixture history read of `item`, two entries a page.
+/// Every page of the Receiving history read of `item`, two entries a page.
 fn history_pages(db_url: &str, guest: &str, item: &str) -> Vec<Vec<String>> {
-    let read = HISTORY_FIXTURE_READ.trim_end().trim_end_matches(';');
+    let read = RECEIVING_HISTORY_READ.trim_end().trim_end_matches(';');
     let mut rows: Vec<Vec<String>> = Vec::new();
     loop {
         let after = rows.last().map_or("0", |row| row[0].as_str()).to_owned();
@@ -2499,10 +2495,10 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
     }
 }
 
-/// The reconstruction half of spec test 1, over the generator fixture package.
-/// The guest holds the grants that generation derives for the fixture, writes
-/// an insert, two updates, and a delete, and reads the history through the
-/// fixture SQL. The fold then shows the row at each retained position.
+/// The reconstruction half of spec test 1, over Receiving. The guest holds the
+/// grants that generation derives for Receiving, writes an insert, two updates,
+/// and a delete of a purchase order, and reads the history through the
+/// Receiving SQL. The fold then shows the row at each retained position.
 #[test]
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
@@ -2518,28 +2514,29 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
         &format!(
             "BEGIN;\n\
              SET LOCAL ROLE wamn_db_owner;\n\
-             CREATE SCHEMA history_probe;\n\
-             {HISTORY_FIXTURE_MIGRATION}\
-             CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON history_probe.stock_item\n\
+             CREATE SCHEMA receiving;\n\
+             {RECEIVING_MIGRATION}\
+             CREATE TRIGGER wamn_record_history_stamp BEFORE INSERT OR UPDATE ON receiving.purchase_order\n\
                  FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(\n\
                      'created_at', 'created_by', 'updated_at', 'updated_by');\n\
-             SELECT wamn_history.create_history_table('history_probe', 'stock_item', false);\n\
+             SELECT wamn_history.create_history_table('receiving', 'purchase_order', false);\n\
+             SELECT wamn_history.create_history_table('receiving', 'purchase_order_line', false);\n\
              CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE \
-                 ON history_probe.stock_item\n\
+                 ON receiving.purchase_order\n\
                  FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
              COMMIT;\n"
         ),
     );
 
-    // The grants that generation derives from the fixture manifest and the
-    // server catalog. The fixture declares no generated write, so the guest
-    // gets its writes from the test.
+    // The grants that generation derives from the Receiving manifest and the
+    // server catalog. Receiving declares no generated insert or delete of a
+    // purchase order, so the guest gets its writes from the test.
     let relation_fields = psql(
         &db_url,
         None,
         "SELECT c.relname || ':' || string_agg(a.attname, ',' ORDER BY a.attnum) \
            FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid \
-          WHERE c.relnamespace = 'history_probe'::regnamespace AND c.relkind = 'r' \
+          WHERE c.relnamespace = 'receiving'::regnamespace AND c.relkind = 'r' \
             AND a.attnum > 0 AND NOT a.attisdropped \
           GROUP BY c.relname ORDER BY c.relname",
     )
@@ -2547,7 +2544,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     .map(|line| {
         let (table, fields) = line.split_once(':').expect("table and fields");
         wamn_schema_generator::DataAccessRelationFields::new(
-            "history_probe",
+            "receiving",
             table,
             fields.split(',').map(str::to_owned).collect(),
         )
@@ -2555,19 +2552,19 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     .collect::<Vec<_>>();
     let overlay = wamn_schema_generator::derive_data_access_overlay_from_relation_fields(
         &relation_fields,
-        HISTORY_FIXTURE_MANIFEST,
+        RECEIVING_MANIFEST,
     )
-    .expect("the fixture manifest derives its data access");
+    .expect("the Receiving manifest derives its data access");
     let grants = wamn_schema_generator::render_effective_data_access_sql(
         &wamn_schema_generator::derive_effective_data_access(&relation_fields, &[overlay])
-            .expect("the fixture data access is one installed set"),
+            .expect("the Receiving data access is one installed set"),
     )
-    .expect("the fixture data access renders");
+    .expect("the Receiving data access renders");
     apply(
         &db_url,
         &format!(
             "BEGIN;\n{grants}\
-             GRANT INSERT, UPDATE, DELETE ON history_probe.stock_item TO wamn_app;\n\
+             GRANT INSERT, UPDATE, DELETE ON receiving.purchase_order TO wamn_app;\n\
              COMMIT;\n"
         ),
     );
@@ -2578,7 +2575,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
         &guest,
         &format!(
             "EXPLAIN (GENERIC_PLAN, FORMAT JSON) {}",
-            HISTORY_FIXTURE_READ.trim_end().trim_end_matches(';')
+            RECEIVING_HISTORY_READ.trim_end().trim_end_matches(';')
         ),
     );
     let plan: serde_json::Value =
@@ -2593,16 +2590,16 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     assert!(unknown.is_empty(), "an unknown row must return no entries");
     assert_eq!(state_at(&[], 1), Ok(RowState::Unavailable));
 
-    // An insert, a scale-only update, an update of a text and a time, and a
-    // delete, each in its own transaction. After each write, the row image of
+    // An insert, an update of the status and the revision, an update of a
+    // text and a uuid, and a delete, each in its own transaction. After each write, the row image of
     // the row is the state that the fold must reconstruct.
     let image = || {
         psql(
             &db_url,
             None,
             &format!(
-                "SELECT COALESCE((SELECT wamn_history.row_image(s)::text \
-                   FROM history_probe.stock_item s WHERE id = '{HISTORY_ITEM}'), '{{}}')"
+                "SELECT COALESCE((SELECT wamn_history.row_image(p)::text \
+                   FROM receiving.purchase_order p WHERE id = '{HISTORY_PURCHASE_ORDER}'), '{{}}')"
             ),
         )
     };
@@ -2612,27 +2609,32 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
             ACTOR_A,
             CREATE_OPERATION,
             format!(
-                "INSERT INTO stock_item (id, sku, quantity, counted_at) \
-                   VALUES ('{HISTORY_ITEM}', 'bolt', 12.3400, '2026-10-01T09:07:00+02:00');"
+                "INSERT INTO purchase_order (id, purchase_order_number, supplier_id) \
+                   VALUES ('{HISTORY_PURCHASE_ORDER}', 'PO-history', \
+                           '00000000-0000-4000-8000-000000000501');"
             ),
-        ),
-        (
-            ACTOR_B,
-            UPDATE_OPERATION,
-            format!("UPDATE stock_item SET quantity = 12.34 WHERE id = '{HISTORY_ITEM}';"),
         ),
         (
             ACTOR_B,
             UPDATE_OPERATION,
             format!(
-                "UPDATE stock_item SET sku = 'bolt-m8', \
-                   counted_at = '2026-10-02T10:00:00.250001Z' WHERE id = '{HISTORY_ITEM}';"
+                "UPDATE purchase_order SET status = 'complete', row_version = 2 \
+                   WHERE id = '{HISTORY_PURCHASE_ORDER}';"
+            ),
+        ),
+        (
+            ACTOR_B,
+            UPDATE_OPERATION,
+            format!(
+                "UPDATE purchase_order SET purchase_order_number = 'PO-history-2', \
+                   supplier_id = '00000000-0000-4000-8000-000000000502' \
+                   WHERE id = '{HISTORY_PURCHASE_ORDER}';"
             ),
         ),
         (
             ACTOR_C,
             REPAIR_OPERATION,
-            format!("DELETE FROM stock_item WHERE id = '{HISTORY_ITEM}';"),
+            format!("DELETE FROM purchase_order WHERE id = '{HISTORY_PURCHASE_ORDER}';"),
         ),
     ] {
         apply(
@@ -2643,14 +2645,14 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
                     &guest,
                     actor,
                     operation,
-                    &format!("SET LOCAL search_path = history_probe;\n{write}"),
+                    &format!("SET LOCAL search_path = receiving;\n{write}"),
                 )
             ),
         );
         images.push(image());
     }
 
-    let pages = history_pages(&db_url, &guest, HISTORY_ITEM);
+    let pages = history_pages(&db_url, &guest, HISTORY_PURCHASE_ORDER);
     let rows = pages
         .iter()
         .map(|row| HistoryRow {
@@ -2701,15 +2703,6 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
             row.position
         );
     }
-    let quantity = |position| {
-        state(position)
-            .expect("the row is present")
-            .into_iter()
-            .find(|(name, _)| name == "quantity")
-            .map(|(_, value)| value)
-    };
-    assert_eq!(quantity(rows[0].position).as_deref(), Some("12.3400"));
-    assert_eq!(quantity(rows[1].position).as_deref(), Some("12.34"));
     assert_eq!(
         state_at(&rows, rows[0].position - 1),
         Ok(RowState::Unavailable)

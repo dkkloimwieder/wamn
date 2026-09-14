@@ -1988,17 +1988,17 @@ mod tests {
         assert_eq!(denial.operation(), operation);
     }
 
-    /// Spec test 9. The host refuses the history read of the generator fixture
-    /// to a caller without its operation grant.
+    /// Spec test 9. The host refuses the Receiving history read to a caller
+    /// without its operation grant.
     #[test]
     fn the_history_read_refuses_a_caller_without_its_grant() {
         let tokens = wamn_control_provision::operation_grants::operation_grant_tokens(
-            include_bytes!("../../../schema/generator/tests/fixtures/record_history/wamn.json"),
+            include_bytes!("../../../../apps/wamn_receiving/wamn.json"),
         )
-        .expect("parse the history read fixture");
-        let [operation] = tokens.iter().collect::<Vec<_>>()[..] else {
-            panic!("the fixture has one public operation: {tokens:?}");
-        };
+        .expect("parse the Receiving manifest");
+        let operation = tokens
+            .get("wamn-receiving:receiving/load-purchase-order-history@1.0.0")
+            .expect("the history read is its own operation grant");
         let denial = authorize_registered_operation(None, Some(operation), false)
             .expect_err("a caller without the grant is refused");
         assert_eq!(
