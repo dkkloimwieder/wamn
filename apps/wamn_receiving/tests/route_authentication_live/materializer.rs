@@ -91,10 +91,12 @@ pub(super) async fn assert_materializer_causation(
         .await
         .context("read the production reader's event stream")?;
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
-    let (receipt_sequence, receipt_causation, inspection_causation) = loop {
+    let (receipt_sequence, receipt_causation, inspection_causation, receipt_txid, history_events) = loop {
         let info = stream.info().await.context("read event-stream state")?;
         let mut receipt = None;
         let mut inspection = None;
+        let mut receipt_txid = None;
+        let mut history_events = Vec::new();
         if info.state.messages > 0 {
             for sequence in info.state.first_sequence..=info.state.last_sequence {
                 let message = stream
@@ -106,6 +108,9 @@ pub(super) async fn assert_materializer_causation(
                 else {
                     continue;
                 };
+                if envelope.table.ends_with("_history") {
+                    history_events.push(envelope.table.clone());
+                }
                 if envelope.op == wamn_event_wire::Op::Insert
                     && envelope.package_id == BASE_PACKAGE_ID
                     && envelope.entity == "receipt"
@@ -116,6 +121,7 @@ pub(super) async fn assert_materializer_causation(
                         .and_then(Value::as_str)
                         == Some(receipt_id.as_str())
                 {
+                    receipt_txid = Some(envelope.txid);
                     receipt = envelope.causation.map(|causation| (sequence, causation));
                 } else if envelope.op == wamn_event_wire::Op::Insert
                     && envelope.package_id == OVERLAY_PACKAGE_ID
@@ -131,8 +137,10 @@ pub(super) async fn assert_materializer_causation(
                 }
             }
         }
-        if let (Some((sequence, receipt)), Some(inspection)) = (receipt, inspection) {
-            break (sequence, receipt, inspection);
+        if let (Some((sequence, receipt)), Some(inspection), Some(txid)) =
+            (receipt, inspection, receipt_txid)
+        {
+            break (sequence, receipt, inspection, txid, history_events);
         }
         anyhow::ensure!(
             std::time::Instant::now() < deadline,
@@ -150,6 +158,32 @@ pub(super) async fn assert_materializer_causation(
             && inspection_causation.depth == receipt_causation.depth + 1,
         "materializer-to-handler causation did not preserve root and advance depth: \
          receipt={receipt_causation:?} inspection={inspection_causation:?}"
+    );
+
+    // Record history spec tests 11 and 13. The receipt transaction logged the
+    // purchase order and its line, CDC published no history entry, and the
+    // low 32 bits of each entry transaction id equal the event txid.
+    anyhow::ensure!(
+        history_events.is_empty(),
+        "CDC published history table rows: {history_events:?}"
+    );
+    let logged = project
+        .query_one(
+            "SELECT (SELECT count(*) FROM receiving.purchase_order_history AS entry \
+                      JOIN receiving.receipt ON receipt.id = $1::text::uuid \
+                     WHERE entry.row_key = jsonb_build_object('id', receipt.purchase_order_id) \
+                       AND (entry.transaction_id & 4294967295) = $2), \
+                    (SELECT count(*) FROM receiving.purchase_order_line_history AS entry \
+                      JOIN receiving.receipt_line AS line ON line.receipt_id = $1::text::uuid \
+                     WHERE entry.row_key = jsonb_build_object('id', line.purchase_order_line_id) \
+                       AND (entry.transaction_id & 4294967295) = $2)",
+            &[&receipt_id, &i64::from(receipt_txid)],
+        )
+        .await
+        .context("read the history entries of the receipt transaction")?;
+    anyhow::ensure!(
+        logged.get::<_, i64>(0) == 1 && logged.get::<_, i64>(1) == 1,
+        "the receipt transaction txid {receipt_txid} did not match one purchase order entry and one line entry"
     );
 
     let inspection_rows = project

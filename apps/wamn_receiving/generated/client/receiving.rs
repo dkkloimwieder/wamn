@@ -7,6 +7,42 @@ use wamn_client::{ClientError, FieldDescriptor, RouteMetadata, WamnClient};
 /// Every field the `receiving` model projects.
 pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
     FieldDescriptor {
+        path: "after",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "before",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "changed_at",
+        type_name: "timestamptz",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "changed_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "current",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "head_position",
+        type_name: "int64",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "item_id",
         type_name: "uuid",
         nullable: true,
@@ -17,6 +53,16 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
         type_name: "text",
         nullable: true,
         values: &[],
+    },
+    FieldDescriptor {
+        path: "kind",
+        type_name: "text",
+        nullable: false,
+        values: &[
+            "delete",
+            "insert",
+            "update",
+        ],
     },
     FieldDescriptor {
         path: "line_id",
@@ -31,9 +77,21 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
         values: &[],
     },
     FieldDescriptor {
+        path: "operation",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
         path: "ordered_quantity",
         type_name: "numeric",
         nullable: true,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "position",
+        type_name: "int64",
+        nullable: false,
         values: &[],
     },
     FieldDescriptor {
@@ -88,7 +146,254 @@ pub const RECEIVING_FIELDS: &[FieldDescriptor] = &[
         nullable: false,
         values: &[],
     },
+    FieldDescriptor {
+        path: "transaction_id",
+        type_name: "int64",
+        nullable: false,
+        values: &[],
+    },
 ];
+
+
+/// Input for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReceivingLoadPurchaseOrderHistoryRequest {
+    /// `int64`
+    pub after_position: i64,
+    /// `uuid`
+    pub id: uuid::Uuid,
+    /// `int64`
+    pub limit: i64,
+    /// `text`
+    pub request_id: String,
+}
+
+/// Result of `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReceivingLoadPurchaseOrderHistoryResult {
+    /// `text`
+    pub after: String,
+    /// `text`
+    pub before: String,
+    /// `timestamptz`
+    pub changed_at: chrono::DateTime<chrono::Utc>,
+    /// `uuid`
+    pub changed_by: uuid::Uuid,
+    /// `text`
+    pub current: String,
+    /// `int64`
+    pub head_position: i64,
+    /// `text`
+    pub kind: String,
+    /// `text`
+    pub operation: String,
+    /// `int64`
+    pub position: i64,
+    /// `int64`
+    pub transaction_id: i64,
+}
+
+/// Input descriptors for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
+pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT: &[FieldDescriptor] = &[
+    FieldDescriptor {
+        path: "after_position",
+        type_name: "int64",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "id",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "limit",
+        type_name: "int64",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "request_id",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+];
+
+/// Result descriptors for `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
+pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT: &[FieldDescriptor] = &[
+    FieldDescriptor {
+        path: "after",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "before",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "changed_at",
+        type_name: "timestamptz",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "changed_by",
+        type_name: "uuid",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "current",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "head_position",
+        type_name: "int64",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "kind",
+        type_name: "text",
+        nullable: false,
+        values: &[
+            "delete",
+            "insert",
+            "update",
+        ],
+    },
+    FieldDescriptor {
+        path: "operation",
+        type_name: "text",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "position",
+        type_name: "int64",
+        nullable: false,
+        values: &[],
+    },
+    FieldDescriptor {
+        path: "transaction_id",
+        type_name: "int64",
+        nullable: false,
+        values: &[],
+    },
+];
+
+pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "after_position", type_name: "int64", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "id", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "limit", type_name: "int64", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "request_id", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_SCHEMA: &[wamn_client::descriptor::FieldSchema] = &[
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "after", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "before", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "changed_at", type_name: "timestamptz", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "changed_by", type_name: "uuid", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "current", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "head_position", type_name: "int64", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "kind", type_name: "text", nullable: false, values: &["delete", "insert", "update"] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "operation", type_name: "text", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "position", type_name: "int64", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+wamn_client::descriptor::FieldSchema {
+field: FieldDescriptor { path: "transaction_id", type_name: "int64", nullable: false, values: &[] },
+required: true, minimum: None, maximum: None, children: &[
+], },
+];
+
+pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_KIND: &str = "projection";
+pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_REQUIRES_COMPOSITION: bool = false;
+pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_REPLAY: Option<&str> = None;
+pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESPONSE_CONTRACT: Option<&str> = Some("{\"type\":\"array\"}");
+pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_OPAQUE: bool = false;
+/// The grant a caller presents to invoke `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
+pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_GRANT: &str = "wamn-receiving:receiving/load-purchase-order-history@1.0.0";
+
+/// Typed refusals `wamn-receiving:receiving/load-purchase-order-history@1.0.0` declares.
+pub const RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_ERRORS: &[&str] = &[
+    "internal_error",
+    "invalid_input",
+    "permission_denied",
+    "retry",
+    "timeout",
+];
+
+/// Where the release publishes `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
+///
+/// Method and template only — the host and base URL are the client's
+/// deployment config, not this release's facts.
+#[must_use]
+pub fn load_purchase_order_history_route() -> RouteMetadata {
+    RouteMetadata {
+        method: "POST".to_owned(),
+        template: "/receiving/load_purchase_order_history".to_owned(),
+    }
+}
+
+/// Invoke `wamn-receiving:receiving/load-purchase-order-history@1.0.0` through a bound client.
+///
+/// # Errors
+///
+/// [`ClientError`] for a transport failure, a refusal, or a response that
+/// does not match the operation's envelope.
+pub async fn load_purchase_order_history(
+    client: &WamnClient,
+    items: &[serde_json::Value],
+) -> Result<Vec<wamn_client::ItemOutcome>, ClientError> {
+    client
+        .invoke(&load_purchase_order_history_route(), &std::collections::BTreeMap::new(), items)
+        .await
+}
 
 
 /// Input for `wamn-receiving:receiving/load-receipt-screen@1.0.0`.

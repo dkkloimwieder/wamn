@@ -434,6 +434,61 @@
     },
     "registered-operation": "wamn-receiving:receiving/load-receipt-screen@1.0.0"
   },
+  "receiving-load-purchase-order-history-http": {
+    "kind": "http",
+    "package-id": "wamn_receiving",
+    "wiring-id": "receiving_load_purchase_order_history",
+    "wiring-version": 1,
+    "definition-hash": "sha256:9046f7eaf06b326a102fcba03e9e1d69b5de810c168b40d547e80050eabc264f",
+    "definition": {
+      "id": "receiving-load-purchase-order-history-http",
+      "kind": "http",
+      "route": {
+        "path": "/receiving/load_purchase_order_history",
+        "method": "POST"
+      },
+      "raw-body-bytes": {
+        "maximum": 1048576
+      },
+      "input-schema": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "object",
+          "required": [
+            "request_id",
+            "id",
+            "after_position",
+            "limit"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            },
+            "after_position": {
+              "type": "string",
+              "pattern": "^-?(0|[1-9][0-9]*)$"
+            },
+            "limit": {
+              "type": "string",
+              "pattern": "^-?(0|[1-9][0-9]*)$"
+            }
+          }
+        }
+      }
+    },
+    "auth-policy": {
+      "modes": ["pat"]
+    },
+    "registered-operation": "wamn-receiving:receiving/load-purchase-order-history@1.0.0"
+  },
   "location-list-http": {
     "kind": "http",
     "package-id": "wamn_receiving",

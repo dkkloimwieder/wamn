@@ -21,7 +21,7 @@ use support::{
 };
 
 const RECEIVING_MANIFEST: &[u8] = include_bytes!("../wamn.json");
-const RECEIVING_SOURCES: [AuthoredSql<'static>; 17] = [
+const RECEIVING_SOURCES: [AuthoredSql<'static>; 18] = [
     AuthoredSql::new(
         "command/record_receipt/claim_command.sql",
         include_bytes!("../command/record_receipt/claim_command.sql"),
@@ -103,6 +103,10 @@ const RECEIVING_SOURCES: [AuthoredSql<'static>; 17] = [
         include_bytes!(
             "../query/open_purchase_order_by_created_at_descending.sql"
         ),
+    ),
+    AuthoredSql::new(
+        "query/load_purchase_order_history.sql",
+        include_bytes!("../query/load_purchase_order_history.sql"),
     ),
     AuthoredSql::new(
         "query/load_receipt_screen.sql",

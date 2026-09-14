@@ -1,7 +1,7 @@
 //! The fold over the rows of a history read, with rows in the shape that the
 //! log trigger and `wamn_history.row_image` write.
 
-use wamn_record_history::{FoldErrorKind, HistoryRow, RowState, state_at};
+use wamn_record_history::{FoldErrorKind, HistoryRow, RowState, retain_columns, state_at};
 
 const INSERTED: &str =
     r#"{"id": 1, "note": "first", "amount": 12.3400, "updated_at": "2026-10-01T09:07:00.000000Z"}"#;
@@ -273,5 +273,55 @@ fn the_fold_refuses_rows_that_do_not_form_one_read() {
             row(3, "delete", CURRENT, "{}", 3),
         ]),
         (FoldErrorKind::BrokenChain, 2)
+    );
+}
+
+#[test]
+fn retained_columns_keep_their_raw_spelling_and_order() {
+    let image = r#"{"id": 1, "a\"b": "x", "doc": {"k": [1.50, "}", ","]}, "amount": 12.3400, "acme_note": "overlay"}"#;
+    assert_eq!(
+        retain_columns(image, &["amount", "doc", "id", "a\"b", "absent"]).as_deref(),
+        Some(r#"{"id": 1, "a\"b": "x", "doc": {"k": [1.50, "}", ","]}, "amount": 12.3400}"#)
+    );
+    assert_eq!(retain_columns(image, &[]).as_deref(), Some("{}"));
+    assert_eq!(retain_columns("{}", &["id"]).as_deref(), Some("{}"));
+    assert_eq!(
+        retain_columns(r#" { "id" : 1 } "#, &["id"]).as_deref(),
+        Some(r#"{"id" : 1}"#)
+    );
+}
+
+#[test]
+fn retained_columns_refuse_text_that_is_not_one_object() {
+    for text in [
+        "",
+        "[]",
+        "null",
+        r#"{"id": 1"#,
+        r#"{"id": 1} {}"#,
+        r#"{"id" 1}"#,
+    ] {
+        assert_eq!(retain_columns(text, &["id"]), None, "{text}");
+    }
+}
+
+#[test]
+fn a_fold_over_retained_columns_shows_only_those_columns() {
+    let declared = ["id", "note", "updated_at"];
+    let current = r#"{"id": 1, "note": "second", "overlay": true, "updated_at": "2026-10-02T10:00:00.250000Z"}"#;
+    let before = r#"{"note": "first", "overlay": false}"#;
+    let current = retain_columns(current, &declared).unwrap();
+    let before = retain_columns(before, &declared).unwrap();
+    let rows = [
+        row(1, "insert", "{}", &current, 2),
+        row(2, "update", &before, &current, 2),
+    ];
+    assert_eq!(
+        present(state_at(&rows, 1).unwrap()),
+        columns(&[
+            ("id", "1"),
+            ("note", "\"first\""),
+            ("updated_at", "\"2026-10-02T10:00:00.250000Z\""),
+        ])
     );
 }

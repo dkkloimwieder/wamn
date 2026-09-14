@@ -39,6 +39,13 @@ mod native {
             "/../../../apps/wamn_receiving/generated/native-verifier/receiving_load_receipt_screen.rs"
         ));
     }
+
+    pub mod receiving_load_purchase_order_history {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../apps/wamn_receiving/generated/native-verifier/receiving_load_purchase_order_history.rs"
+        ));
+    }
 }
 
 #[test]
@@ -189,5 +196,12 @@ fn native_verifier_compiles_the_exact_runtime_sql_files() {
         native::receiving_load_receipt_screen::LoadReceiptScreenRow,
         "../../../apps/wamn_receiving/query/load_receipt_screen.sql",
         native::receiving_load_receipt_screen::load_receipt_screen_purchase_order_id_bind_fixture()
+    );
+    let _ = sqlx::query_file_as!(
+        native::receiving_load_purchase_order_history::LoadPurchaseOrderHistoryRow,
+        "../../../apps/wamn_receiving/query/load_purchase_order_history.sql",
+        native::receiving_load_purchase_order_history::load_purchase_order_history_id_bind_fixture(),
+        native::receiving_load_purchase_order_history::load_purchase_order_history_after_position_bind_fixture(),
+        native::receiving_load_purchase_order_history::load_purchase_order_history_limit_bind_fixture()
     );
 }

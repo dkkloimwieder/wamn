@@ -26,6 +26,7 @@ pub fn screens(binding: SessionBinding) -> Vec<Screen> {
         screens::purchase_order::update(binding.clone()),
         screens::receipt::get(binding.clone()),
         screens::receipt::query(binding.clone()),
+        screens::receiving::load_purchase_order_history(binding.clone()),
         screens::receiving::load_receipt_screen(binding.clone()),
         screens::receiving::record_receipt(binding),
     ]

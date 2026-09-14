@@ -47,6 +47,8 @@ DRAFT_REFERENCE = "restart-reference-" + uuid.uuid4().hex
 ORDER_ID = str(uuid.uuid4())
 LOCATION_ID = str(uuid.uuid4())
 ORDER_NUMBER = "RESTART-" + uuid.uuid4().hex[:12]
+# The record history triggers attribute each owned row write to this test principal.
+FIXTURE_PRINCIPAL = "00000000-0000-4000-8000-0000000000f1"
 BINDING_KEYS = {b"WAMN_BASE_URL", b"WAMN_HOST", b"WAMN_TARGET_INSTANCE"}
 CHILD_SETUP = (
     "import fcntl, os, sys, termios; "
@@ -316,6 +318,8 @@ class SourceEdit:
 def owned_rows(config, remove=False):
     if remove:
         sql = f"""BEGIN;
+SET LOCAL app.user_id = '{FIXTURE_PRINCIPAL}';
+SET LOCAL app.operation = 'admin:remove-generated-operator-fixture';
 DELETE FROM receiving.purchase_order WHERE id = '{ORDER_ID}';
 DELETE FROM receiving.location WHERE id = '{LOCATION_ID}';
 COMMIT;
@@ -323,6 +327,8 @@ SELECT (SELECT count(*) FROM receiving.purchase_order WHERE id = '{ORDER_ID}')
      + (SELECT count(*) FROM receiving.location WHERE id = '{LOCATION_ID}');"""
     else:
         sql = f"""BEGIN;
+SET LOCAL app.user_id = '{FIXTURE_PRINCIPAL}';
+SET LOCAL app.operation = 'admin:seed-generated-operator-fixture';
 INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id, created_at)
 SELECT '{ORDER_ID}', '{ORDER_NUMBER}', '{ORDER_ID}',
        COALESCE(MIN(created_at), CURRENT_TIMESTAMP) - interval '1 second'

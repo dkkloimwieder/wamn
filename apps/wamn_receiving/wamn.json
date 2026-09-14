@@ -63,7 +63,7 @@
           "updated_at",
           "updated_by"
         ],
-        "retention": "none"
+        "retention": "unlimited"
       },
       "operations": {
         "get": {
@@ -242,7 +242,7 @@
       "enum_fields": {},
       "audit_log": {
         "columns": [],
-        "retention": "none"
+        "retention": "P30D"
       },
       "operations": {}
     },
@@ -1164,6 +1164,234 @@
             {
               "name": "remaining_quantity",
               "type": "numeric",
+              "nullable": true
+            }
+          ]
+        }
+      }
+    },
+    "receiving.load_purchase_order_history": {
+      "kind": "projection",
+      "visibility": "public",
+      "permission": "receiving.load_purchase_order_history",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "after_position",
+            "type": "int64",
+            "nullable": false
+          },
+          {
+            "path": "limit",
+            "type": "int64",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "bounded_list",
+        "fields": [
+          {
+            "path": "position",
+            "type": "int64",
+            "nullable": false
+          },
+          {
+            "path": "kind",
+            "type": "text",
+            "nullable": false,
+            "values": [
+              "insert",
+              "update",
+              "delete"
+            ]
+          },
+          {
+            "path": "operation",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "changed_by",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "changed_at",
+            "type": "timestamptz",
+            "nullable": false
+          },
+          {
+            "path": "transaction_id",
+            "type": "int64",
+            "nullable": false
+          },
+          {
+            "path": "before",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "after",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "current",
+            "type": "text",
+            "nullable": false
+          },
+          {
+            "path": "head_position",
+            "type": "int64",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "receiving",
+          "table": "purchase_order",
+          "select_fields": [
+            "id",
+            "purchase_order_number",
+            "supplier_id",
+            "status",
+            "row_version",
+            "created_at",
+            "created_by",
+            "updated_at",
+            "updated_by"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        },
+        {
+          "schema": "receiving",
+          "table": "purchase_order_history",
+          "select_fields": [
+            "position",
+            "row_key",
+            "kind",
+            "operation",
+            "changed_by",
+            "changed_at",
+            "transaction_id",
+            "before",
+            "after"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "load_purchase_order_history": {
+          "path": "query/load_purchase_order_history.sql",
+          "fetch": "bounded_list",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "after_position",
+              "type": "int64",
+              "nullable": false
+            },
+            {
+              "name": "limit",
+              "type": "int64",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "position",
+              "type": "int64",
+              "nullable": false
+            },
+            {
+              "name": "kind",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "operation",
+              "type": "text",
+              "nullable": false
+            },
+            {
+              "name": "changed_by",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "changed_at",
+              "type": "timestamptz",
+              "nullable": false
+            },
+            {
+              "name": "transaction_id",
+              "type": "int64",
+              "nullable": false
+            },
+            {
+              "name": "before",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "after",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "current",
+              "type": "text",
+              "nullable": true
+            },
+            {
+              "name": "head_position",
+              "type": "int64",
               "nullable": true
             }
           ]

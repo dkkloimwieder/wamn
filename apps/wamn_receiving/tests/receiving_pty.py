@@ -36,7 +36,8 @@ FIXTURE_PRINCIPAL = "00000000-0000-4000-8000-0000000000f1"
 def seed(db, ids, prefix):
     # The fixture writes as its test principal in the tenant of the platform rows.
     db.sql("01-seed", f"""BEGIN;
-SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true);
+SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true),
+       set_config('app.operation', 'admin:seed-receiving-pty-fixture', true);
 INSERT INTO app_system.users (tenant_id, id, type, email)
 SELECT tenant_id, '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid'
 FROM app_system.users WHERE display_name = 'wamn:provisioning'
@@ -85,7 +86,10 @@ def snapshot(db, name, ids):
 
 
 def cleanup(db, ids):
+    # The log trigger records the fixture principal and the cleanup purpose.
     db.sql("90-cleanup", f"""BEGIN;
+SET LOCAL app.user_id = '{FIXTURE_PRINCIPAL}';
+SET LOCAL app.operation = 'admin:remove-receiving-pty-fixture';
 DELETE FROM receiving.receipt_line WHERE receipt_id IN
   (SELECT id FROM receiving.receipt WHERE purchase_order_id = '{ids.order}');
 DELETE FROM receiving.receipt WHERE purchase_order_id = '{ids.order}';

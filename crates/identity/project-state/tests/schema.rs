@@ -898,3 +898,70 @@ fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
         );
     }
 }
+
+/// `wamn_history.timestamptz_image` spells a `timestamptz` value exactly as the
+/// platform canonicalizer spells it, and exactly as `wamn_history.row_image`
+/// spells the same column. A history read builds its current row image with
+/// this function. The session time zone is not UTC, and the values include
+/// zero and non-zero microseconds and infinity. Set `WAMN_SYSSCHEMA_PG_URL` to
+/// a superuser URL. Skipped when unset.
+#[test]
+fn timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
+    let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
+        eprintln!(
+            "skipping timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres \
+             (set WAMN_SYSSCHEMA_PG_URL to run)"
+        );
+        return;
+    };
+    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+
+    let mut script = sql::ensure_app_acl_role_sql();
+    script.push('\n');
+    script.push_str(&record_history_sql());
+    // One line per value: the microseconds since the epoch that PostgreSQL
+    // holds, the spelling of the value image, and whether the row image
+    // spells the same JSONB value.
+    script.push_str(
+        "\nSET TimeZone = 'America/St_Johns';\n\
+         CREATE TEMPORARY TABLE spelled (id integer PRIMARY KEY, at timestamptz NOT NULL);\n\
+         INSERT INTO spelled VALUES \
+             (1, '2026-10-01T09:07:00+02:00'), \
+             (2, '2026-10-01T09:07:00.25Z'), \
+             (3, '2026-10-01T09:07:00.123456-03:30'), \
+             (4, '1969-12-31T23:59:59.999999Z'), \
+             (5, 'infinity');\n\
+         SELECT CASE WHEN isfinite(at) THEN (extract(epoch FROM at) * 1000000)::bigint::text \
+                     ELSE 'infinite' END \
+                || '|' || (wamn_history.timestamptz_image(at) #>> '{}') \
+                || '|' || (wamn_history.timestamptz_image(at) \
+                           = wamn_history.row_image(spelled) -> 'at')::text \
+           FROM spelled ORDER BY id;\n",
+    );
+
+    let output = run(&url, &script);
+    let lines = output.lines().collect::<Vec<_>>();
+    assert_eq!(lines.len(), 5, "every value must render: {output}");
+    for line in lines {
+        let mut parts = line.split('|');
+        let (Some(micros), Some(spelled), Some(same), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            panic!("microseconds, spelling, and row image agreement: {line}");
+        };
+        assert_eq!(
+            same, "true",
+            "the value image must equal the row image: {line}"
+        );
+        if micros == "infinite" {
+            continue;
+        }
+        let held = chrono::DateTime::from_timestamp_micros(micros.parse().expect("bigint"))
+            .expect("the value is in range");
+        assert_eq!(
+            spelled,
+            wamn_runtime::plugins::wamn_postgres::canonical_timestamptz(held),
+            "the value image must spell the held value as the canonicalizer does"
+        );
+    }
+}

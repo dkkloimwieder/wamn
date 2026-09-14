@@ -1,4 +1,4 @@
-//! Shared wire adapter for the eight operations exported by the Receiving component.
+//! Shared wire adapter for the nine operations exported by the Receiving component.
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -8,11 +8,29 @@ use wamn_postgres_statements::{Connection, Uuid as WamnUuid};
 use crate::error::{AccessError, AccessErrorKind, AllowedConstraints};
 use crate::record_receipt::{RecordReceiptError, RecordReceiptErrorKind};
 use crate::{
-    generated::wamn::{location_list as location_sql, receiving_load_receipt_screen as screen_sql},
+    generated::wamn::{
+        location_list as location_sql, receiving_load_purchase_order_history as history_sql,
+        receiving_load_receipt_screen as screen_sql,
+    },
     purchase_order, receipt, record_receipt,
 };
 
 const MAX_ENVELOPE_ITEMS: usize = 100;
+/// The largest page of one purchase order history read.
+const MAX_HISTORY_PAGE: i64 = 100;
+/// The `purchase_order` columns that `receiving.load_purchase_order_history`
+/// declares. Every image that the read returns keeps only these columns.
+const PURCHASE_ORDER_HISTORY_COLUMNS: [&str; 9] = [
+    "id",
+    "purchase_order_number",
+    "supplier_id",
+    "status",
+    "row_version",
+    "created_at",
+    "created_by",
+    "updated_at",
+    "updated_by",
+];
 
 /// Envelope-level refusal translated to the frozen `wamn:node` invalid-input arm.
 #[derive(Debug)]
@@ -93,6 +111,14 @@ struct ListInput {}
 #[serde(deny_unknown_fields)]
 struct LoadReceiptScreenInput {
     purchase_order_id: Box<str>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoadPurchaseOrderHistoryInput {
+    id: Box<str>,
+    after_position: Box<str>,
+    limit: Box<str>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -489,6 +515,50 @@ impl From<screen_sql::LoadReceiptScreenRow> for ReceiptScreenValue {
     }
 }
 
+#[derive(Debug, Serialize)]
+struct PurchaseOrderHistoryValue {
+    position: Box<str>,
+    kind: Box<str>,
+    operation: Box<str>,
+    changed_by: Box<str>,
+    changed_at: Box<str>,
+    transaction_id: Box<str>,
+    before: Box<str>,
+    after: Box<str>,
+    current: Box<str>,
+    head_position: Box<str>,
+}
+
+impl TryFrom<history_sql::LoadPurchaseOrderHistoryRow> for PurchaseOrderHistoryValue {
+    type Error = AccessError;
+
+    fn try_from(row: history_sql::LoadPurchaseOrderHistoryRow) -> Result<Self, AccessError> {
+        let image = |text: Option<String>| {
+            text.and_then(|text| {
+                wamn_record_history::retain_columns(&text, &PURCHASE_ORDER_HISTORY_COLUMNS)
+            })
+            .map(String::into_boxed_str)
+            .ok_or_else(|| AccessError::internal("history read returned no JSON object image"))
+        };
+        Ok(Self {
+            position: row.position.to_string().into_boxed_str(),
+            kind: row.kind.into_boxed_str(),
+            operation: row.operation.into_boxed_str(),
+            changed_by: row.changed_by.0.into_boxed_str(),
+            changed_at: row.changed_at.0.into_boxed_str(),
+            transaction_id: row.transaction_id.to_string().into_boxed_str(),
+            before: image(row.before)?,
+            after: image(row.after)?,
+            current: image(row.current)?,
+            head_position: row
+                .head_position
+                .ok_or_else(|| AccessError::internal("history read returned no head position"))?
+                .to_string()
+                .into_boxed_str(),
+        })
+    }
+}
+
 impl From<receipt::ReceiptRow> for ReceiptValue {
     fn from(row: receipt::ReceiptRow) -> Self {
         Self {
@@ -768,6 +838,86 @@ pub async fn receiving_load_receipt_screen(input: &str) -> Result<String, Invoca
                     Some(("purchase_order_id", &parsed.purchase_order_id)),
                     None,
                 ),
+            ),
+        });
+    }
+    Ok(serialized(&output))
+}
+
+/// Execute only `receiving.load_purchase_order_history`.
+///
+/// A purchase order with no retained entries returns an empty page.
+pub async fn receiving_load_purchase_order_history(input: &str) -> Result<String, InvocationError> {
+    let items = prepare_envelope(input)?;
+    let mut connection = Connection::new();
+    let mut output: Vec<ItemResult<RowsValue<PurchaseOrderHistoryValue>>> =
+        Vec::with_capacity(items.len());
+    for item in items.into_vec() {
+        let parsed = match parse_item::<LoadPurchaseOrderHistoryInput>(&item) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                output.push(refused(item.request_id, error));
+                continue;
+            }
+        };
+        let Ok(after_position) = parse_int64(&parsed.after_position) else {
+            output.push(refused(item.request_id, invalid_input("after_position")));
+            continue;
+        };
+        let Some(limit) = parse_int64(&parsed.limit)
+            .ok()
+            .filter(|limit| (1..=MAX_HISTORY_PAGE).contains(limit))
+        else {
+            output.push(refused(item.request_id, invalid_input("limit")));
+            continue;
+        };
+        let result = async {
+            let id = parse_uuid(&parsed.id, "id")?;
+            let mut transaction = connection.begin().await.map_err(|source| {
+                AccessError::from_statement(
+                    "begin purchase order history load",
+                    &source,
+                    AllowedConstraints::NONE,
+                )
+            })?;
+            let rows = history_sql::load_purchase_order_history(
+                &mut transaction,
+                id,
+                after_position,
+                limit,
+            )
+            .await
+            .map_err(|source| {
+                AccessError::from_statement(
+                    "load purchase order history",
+                    &source,
+                    AllowedConstraints::NONE,
+                )
+            })?;
+            transaction.commit().await.map_err(|source| {
+                AccessError::from_statement(
+                    "commit purchase order history load",
+                    &source,
+                    AllowedConstraints::NONE,
+                )
+            })?;
+            Ok(RowsValue {
+                rows: rows
+                    .into_iter()
+                    .map(PurchaseOrderHistoryValue::try_from)
+                    .collect::<Result<Vec<_>, _>>()?
+                    .into_boxed_slice(),
+            })
+        }
+        .await;
+        output.push(match result {
+            Ok(value) => ItemResult::Succeeded {
+                request_id: item.request_id,
+                value,
+            },
+            Err(error) => refused(
+                item.request_id,
+                access_error(&error, "receiving.load_purchase_order_history", None, None),
             ),
         });
     }
@@ -1244,6 +1394,66 @@ mod tests {
                 }
             })
         );
+    }
+
+    /// The column list of the history read is the `purchase_order` select set
+    /// that the manifest declares for it.
+    #[test]
+    fn history_columns_are_the_declared_purchase_order_columns() {
+        let manifest: Value = serde_json::from_str(include_str!("../../wamn.json")).unwrap();
+        let declared =
+            manifest["custom_operations"]["receiving.load_purchase_order_history"]["relations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|relation| relation["table"] == "purchase_order")
+                .unwrap()["select_fields"]
+                .clone();
+        assert_eq!(declared, serde_json::json!(PURCHASE_ORDER_HISTORY_COLUMNS));
+    }
+
+    #[test]
+    fn history_rows_keep_declared_columns_with_raw_values() {
+        let row = |current: Option<&str>, head_position: Option<i64>| {
+            history_sql::LoadPurchaseOrderHistoryRow {
+                position: 2,
+                kind: "update".to_owned(),
+                operation: "client-acme-receiving:purchase-order/update@3.0.0".to_owned(),
+                changed_by: Uuid("00000000-0000-0000-0000-000000000004".to_owned()),
+                changed_at: TimestampTz("2026-08-31T12:01:00.000000Z".to_owned()),
+                transaction_id: 4_294_967_297,
+                before: Some(r#"{"row_version": 1, "acme_quality_status": "pending"}"#.to_owned()),
+                after: Some(r#"{"row_version": 2, "acme_quality_status": "approved"}"#.to_owned()),
+                current: current.map(str::to_owned),
+                head_position,
+            }
+        };
+        let value = PurchaseOrderHistoryValue::try_from(row(
+            Some(r#"{"id": "00000000-0000-0000-0000-000000000001", "row_version": 2, "acme_inspection_required": true}"#),
+            Some(2),
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(value).unwrap(),
+            serde_json::json!({
+                "position": "2",
+                "kind": "update",
+                "operation": "client-acme-receiving:purchase-order/update@3.0.0",
+                "changed_by": "00000000-0000-0000-0000-000000000004",
+                "changed_at": "2026-08-31T12:01:00.000000Z",
+                "transaction_id": "4294967297",
+                "before": r#"{"row_version": 1}"#,
+                "after": r#"{"row_version": 2}"#,
+                "current": r#"{"id": "00000000-0000-0000-0000-000000000001", "row_version": 2}"#,
+                "head_position": "2",
+            })
+        );
+        for (current, head_position) in [(None, Some(2)), (Some("[]"), Some(2)), (Some("{}"), None)]
+        {
+            let error = PurchaseOrderHistoryValue::try_from(row(current, head_position))
+                .expect_err("a null or malformed field refuses");
+            assert_eq!(error.kind(), AccessErrorKind::InternalError);
+        }
     }
 
     #[test]

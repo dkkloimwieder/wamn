@@ -57,6 +57,7 @@ wasmtime-wasi = { workspace = true }
 async-trait = { workspace = true }
 wamn-client = { workspace = true }
 wamn-receiving-tui = { workspace = true }
+wamn-record-history = { workspace = true }
 wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wat = "=1.252.0"

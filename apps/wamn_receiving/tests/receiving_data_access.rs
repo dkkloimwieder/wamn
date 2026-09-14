@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use anyhow::{Context as _, Result, bail, ensure};
     use chrono::{DateTime, Utc};
@@ -22,6 +22,10 @@ mod tests {
     const FIXTURE_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f1);
     /// A second principal, so a stamp shows which write set it.
     const COMMAND_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f2);
+    /// The administrative operation that every fixture write logs.
+    const FIXTURE_OPERATION: &str = "admin:receiving-data-access-fixture";
+    const HISTORY_SQL: &str =
+        include_str!("../../../apps/wamn_receiving/query/load_purchase_order_history.sql");
     const UPDATE_SQL: &str =
         include_str!("../../../apps/wamn_receiving/generated/sql/purchase_order/update.sql");
     const CLAIM_COMMAND_SQL: &str =
@@ -161,6 +165,7 @@ mod tests {
         row_version: i64,
         purchase_order_stamps: Stamps,
         receipt_stamps: Value,
+        history_entries: i64,
     }
 
     #[tokio::test]
@@ -177,8 +182,14 @@ mod tests {
         assert_postgres_18(&client).await?;
         assert_fresh_receiving_schema(&client).await?;
         // All fixture DDL, grants, role creation, and row changes roll back.
+        // record-history.sql grants the log function's image rendering to an
+        // existing wamn_app, so the role comes first.
         client
-            .batch_execute("BEGIN; CREATE SCHEMA receiving")
+            .batch_execute(
+                "BEGIN; CREATE SCHEMA receiving; \
+             CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS",
+            )
             .await?;
         client.batch_execute(MIGRATION).await?;
         install_record_history(&client, MANIFEST).await?;
@@ -186,9 +197,7 @@ mod tests {
         client.batch_execute(OVERLAY_INSPECTION_MIGRATION).await?;
         client
             .batch_execute(
-                "ALTER TABLE receiving.purchase_order ADD COLUMN overlay_compatibility_note text; \
-             CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS",
+                "ALTER TABLE receiving.purchase_order ADD COLUMN overlay_compatibility_note text",
             )
             .await?;
         select_receiving_schema(&client).await?;
@@ -325,6 +334,247 @@ mod tests {
                 && stored.get::<_, String>(2) == "untouched",
             "updates changed unrelated stored state"
         );
+        client.batch_execute("ROLLBACK").await?;
+        assert_fresh_receiving_schema(&client).await?;
+        Ok(())
+    }
+
+    /// Record history spec test 8. An Acme overlay update on the shared
+    /// purchase order logs a changed-column diff, and the fold reconstructs the
+    /// effective base and overlay row at each position. The Receiving history
+    /// read, run as `wamn_app`, returns only the base columns that it declares.
+    #[tokio::test]
+    #[ignore = "requires a fresh disposable PostgreSQL 18 URL in WAMN_RECEIVING_PG_URL"]
+    async fn an_overlay_update_logs_a_diff_that_folds_to_the_effective_row() -> Result<()> {
+        use wamn_record_history::{HistoryRow, RowState, retain_columns, state_at};
+        use wamn_schema_generator::{
+            DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
+            render_effective_data_access_sql,
+        };
+
+        let url = std::env::var("WAMN_RECEIVING_PG_URL")
+            .context("WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database")?;
+        let client = connect(&url).await?;
+        assert_postgres_18(&client).await?;
+        assert_fresh_receiving_schema(&client).await?;
+        // All fixture DDL, grants, role creation, and row changes roll back.
+        client
+            .batch_execute(
+                "BEGIN; CREATE SCHEMA receiving; \
+             CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS",
+            )
+            .await?;
+        client.batch_execute(MIGRATION).await?;
+        install_record_history(&client, MANIFEST).await?;
+        client.batch_execute(OVERLAY_FIELDS_MIGRATION).await?;
+        client.batch_execute(OVERLAY_INSPECTION_MIGRATION).await?;
+        install_record_history(&client, OVERLAY_MANIFEST).await?;
+        select_receiving_schema(&client).await?;
+        let id = Uuid::from_u128(0x800);
+        insert_purchase_order(
+            &client,
+            id,
+            "PO-overlay-history",
+            Uuid::from_u128(0x801),
+            "open",
+        )
+        .await?;
+
+        let mut fields = BTreeMap::<String, Vec<String>>::new();
+        for row in client
+            .query(
+                wamn_schema_control::select_schema_columns_sql(),
+                &[&"receiving"],
+            )
+            .await?
+        {
+            fields.entry(row.get(0)).or_default().push(row.get(1));
+        }
+        let relation_fields = fields
+            .into_iter()
+            .map(|(table, fields)| DataAccessRelationFields::new("receiving", table, fields))
+            .collect::<Vec<_>>();
+        let overlays = [
+            DataAccessOverlay::from_slice(include_bytes!(
+                "../../../apps/wamn_receiving/generated/platform-policy/data-access.json"
+            ))?,
+            DataAccessOverlay::from_slice(include_bytes!(
+                "../../../apps/client_acme_receiving/generated/platform-policy/data-access.json"
+            ))?,
+        ];
+        let authority = derive_effective_data_access(&relation_fields, &overlays)?;
+        client
+            .batch_execute(&render_effective_data_access_sql(&authority)?)
+            .await?;
+
+        client.batch_execute("SET LOCAL ROLE wamn_app").await?;
+        bind_actor(&client, COMMAND_PRINCIPAL).await?;
+        let updated = client
+            .query_one(
+                OVERLAY_UPDATE_SQL,
+                &[&id, &1_i64, &true, &Some(true), &false, &None::<String>],
+            )
+            .await
+            .context("execute exact Acme purchase_order.update SQL as wamn_app")?;
+        bind_actor(&client, FIXTURE_PRINCIPAL).await?;
+        ensure!(
+            updated.get::<_, String>("outcome") == "updated"
+                && updated.get::<_, Option<i64>>("row_version") == Some(2)
+                && updated.get::<_, Option<bool>>("acme_inspection_required") == Some(true),
+            "Acme purchase_order.update returned the wrong row"
+        );
+        let read = client
+            .query(HISTORY_SQL, &[&id, &0_i64, &100_i64])
+            .await
+            .context("execute the Receiving history read as wamn_app")?;
+        client.batch_execute("RESET ROLE").await?;
+
+        let entries = client
+            .query(
+                "SELECT position, kind, before::text, after::text, \
+                        wamn_history.row_image(purchase_order)::text AS current \
+                   FROM purchase_order_history \
+                   JOIN purchase_order ON purchase_order.id = $1::uuid \
+                  WHERE row_key = jsonb_build_object('id', $1::uuid) \
+                  ORDER BY position",
+                &[&id],
+            )
+            .await
+            .context("read the logged entries and the effective row")?;
+        let [insert, update] = entries.as_slice() else {
+            bail!(
+                "the insert and the overlay update logged {} entries",
+                entries.len()
+            );
+        };
+        let keys = |text: String| -> Result<BTreeSet<String>> {
+            let Value::Object(object) = serde_json::from_str(&text)? else {
+                bail!("an image is not a JSON object");
+            };
+            Ok(object.keys().cloned().collect())
+        };
+        // The fixture transaction holds both writes, so updated_at keeps its
+        // instant and only the actor, the revision, and the overlay column change.
+        let changed = ["acme_inspection_required", "row_version", "updated_by"]
+            .map(str::to_owned)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let (before, after) = (keys(update.get("before"))?, keys(update.get("after"))?);
+        ensure!(
+            insert.get::<_, String>("kind") == "insert"
+                && update.get::<_, String>("kind") == "update"
+                && before == changed
+                && after == changed,
+            "the overlay update did not log a changed-column diff: {before:?} {after:?}"
+        );
+
+        let current = update.get::<_, String>("current");
+        let history = entries
+            .iter()
+            .map(|row| {
+                (
+                    row.get::<_, i64>("position"),
+                    row.get::<_, String>("kind"),
+                    row.get::<_, String>("before"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let head = history.last().map_or(0, |(position, _, _)| *position);
+        let rows = history
+            .iter()
+            .map(|(position, kind, before)| HistoryRow {
+                position: *position,
+                kind,
+                before,
+                current: &current,
+                head_position: head,
+            })
+            .collect::<Vec<_>>();
+        let image = |text: &str| -> Result<BTreeMap<String, String>> {
+            let Value::Object(object) = serde_json::from_str(text)? else {
+                bail!("an image is not a JSON object");
+            };
+            Ok(object
+                .into_iter()
+                .map(|(name, value)| (name, value.to_string()))
+                .collect())
+        };
+        let state = |position: i64| -> Result<BTreeMap<String, String>> {
+            let RowState::Present(image) = state_at(&rows, position)? else {
+                bail!("the purchase order is not present at position {position}");
+            };
+            Ok(image
+                .columns()
+                .map(|(name, value)| {
+                    let value = serde_json::from_str::<Value>(value).map(|value| value.to_string());
+                    value.map(|value| (name.to_owned(), value))
+                })
+                .collect::<std::result::Result<_, _>>()?)
+        };
+        ensure!(
+            state(insert.get("position"))? == image(&insert.get::<_, String>("after"))?
+                && state(head)? == image(&current)?,
+            "the fold did not reconstruct the effective row at each position"
+        );
+
+        let manifest = serde_json::from_slice::<Value>(MANIFEST)?;
+        let declared =
+            manifest["custom_operations"]["receiving.load_purchase_order_history"]["relations"]
+                .as_array()
+                .and_then(|relations| {
+                    relations
+                        .iter()
+                        .find(|relation| relation["table"] == "purchase_order")
+                })
+                .and_then(|relation| relation["select_fields"].as_array())
+                .context("the history read declares its purchase_order columns")?
+                .iter()
+                .map(|field| field.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+                .context("every declared column is a name")?;
+        let declared = declared.iter().map(String::as_str).collect::<Vec<_>>();
+        let filtered = read
+            .iter()
+            .map(|row| {
+                let declared_image = |column: &str| {
+                    row.get::<_, Option<String>>(column)
+                        .and_then(|text| retain_columns(&text, &declared))
+                        .context("the history read returned an image")
+                };
+                Ok((
+                    row.get::<_, i64>("position"),
+                    row.get::<_, String>("kind"),
+                    declared_image("before")?,
+                    declared_image("current")?,
+                    row.get::<_, Option<i64>>("head_position")
+                        .context("the history read returned its head position")?,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let base_rows = filtered
+            .iter()
+            .map(
+                |(position, kind, before, current, head_position)| HistoryRow {
+                    position: *position,
+                    kind,
+                    before,
+                    current,
+                    head_position: *head_position,
+                },
+            )
+            .collect::<Vec<_>>();
+        let RowState::Present(base) = state_at(&base_rows, head)? else {
+            bail!("the base history read does not show the purchase order");
+        };
+        let base_columns = base.columns().map(|(name, _)| name).collect::<Vec<_>>();
+        let mut expected = declared.clone();
+        expected.sort_unstable();
+        ensure!(
+            base_rows.len() == 2 && base_columns == expected,
+            "the base history read returned columns it does not declare: {base_columns:?}"
+        );
+
         client.batch_execute("ROLLBACK").await?;
         assert_fresh_receiving_schema(&client).await?;
         Ok(())
@@ -472,11 +722,24 @@ mod tests {
         Ok(())
     }
 
-    /// Install the platform stamp function and the triggers that apply-package
-    /// derives from the `audit_log` declarations of one package manifest.
+    /// Install the platform record-history functions, and the history tables and
+    /// triggers that apply-package derives from the `audit_log` declarations of
+    /// one package manifest.
     async fn install_record_history(client: &Client, manifest: &[u8]) -> Result<()> {
         let manifest: wamn_schema_generator::PackageManifest =
             serde_json::from_slice(manifest).context("parse package manifest")?;
+        let logs = manifest.models.values().filter_map(|model| {
+            model.log_retention().map(|retention| {
+                format!(
+                    "SELECT wamn_history.create_history_table('{schema}', '{table}', false); \
+                     CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE \
+                     ON {schema}.{table} FOR EACH ROW \
+                     EXECUTE FUNCTION wamn_history.log_row_change('{retention}');",
+                    schema = model.schema,
+                    table = model.table,
+                )
+            })
+        });
         let triggers = manifest.models.values().filter_map(|model| {
             let audit_log = model.audit_log.as_ref()?;
             let columns = wamn_schema_generator::RecordHistoryColumn::ALL
@@ -496,6 +759,7 @@ mod tests {
         });
         let sql = std::iter::once(RECORD_HISTORY_SQL.to_owned())
             .chain(triggers)
+            .chain(logs)
             .collect::<Vec<_>>()
             .join("\n");
         client
@@ -507,8 +771,9 @@ mod tests {
     async fn bind_actor(client: &Client, actor: Uuid) -> Result<()> {
         client
             .execute(
-                "SELECT set_config('app.user_id', $1, false)",
-                &[&actor.hyphenated().to_string()],
+                "SELECT set_config('app.user_id', $1, false), \
+                        set_config('app.operation', $2, false)",
+                &[&actor.hyphenated().to_string(), &FIXTURE_OPERATION],
             )
             .await
             .context("bind the fixture actor")?;
@@ -890,6 +1155,10 @@ mod tests {
         .await?;
 
         let inserted = stamps(client, purchase_order_id).await?;
+        let uncommitted_entries =
+            command_snapshot(client, first_line_id, second_line_id, purchase_order_id)
+                .await?
+                .history_entries;
         bind_actor(client, COMMAND_PRINCIPAL).await?;
         let committed = execute_record_receipt(client, &base)
             .await?
@@ -929,6 +1198,11 @@ mod tests {
                 && committed_snapshot.second_received == "5.0000",
             "record_receipt commit did not preserve exact quantities"
         );
+        // The order and its two lines each log one update entry.
+        ensure!(
+            committed_snapshot.history_entries == uncommitted_entries + 3,
+            "record_receipt did not log one entry for each changed row"
+        );
 
         let mut reordered = base.clone();
         reordered.line.reverse();
@@ -936,6 +1210,8 @@ mod tests {
             .await?
             .map_err(|refusal| anyhow::anyhow!(refusal.code))?;
         ensure!(replay == committed, "immutable replay changed its result");
+        // Record history spec test 5: the snapshot counts history entries, so
+        // an idempotent replay appends no entry.
         ensure!(
             command_snapshot(client, first_line_id, second_line_id, purchase_order_id).await?
                 == committed_snapshot,
@@ -1459,7 +1735,9 @@ mod tests {
                  (SELECT status FROM purchase_order WHERE id = $3) AS purchase_order_status, \
                  (SELECT row_version FROM purchase_order WHERE id = $3) AS row_version, \
                  (SELECT COALESCE(jsonb_agg(jsonb_build_array(id, created_at, created_by) ORDER BY id), '[]') \
-                  FROM receipt) AS receipt_stamps",
+                  FROM receipt) AS receipt_stamps, \
+                 ((SELECT count(*) FROM purchase_order_history) \
+                  + (SELECT count(*) FROM purchase_order_line_history))::int8 AS history_entries",
                 &[&first_line_id, &second_line_id, &purchase_order_id],
             )
             .await
@@ -1474,6 +1752,7 @@ mod tests {
             row_version: row.get("row_version"),
             purchase_order_stamps: stamps(client, purchase_order_id).await?,
             receipt_stamps: row.get("receipt_stamps"),
+            history_entries: row.get("history_entries"),
         })
     }
 

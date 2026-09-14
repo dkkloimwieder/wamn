@@ -476,6 +476,7 @@ mod tests {
             "purchase_order/update",
             "receipt/get",
             "receipt/query",
+            "receiving/load_purchase_order_history",
             "receiving/load_receipt_screen",
             "receiving/record_receipt",
         ];

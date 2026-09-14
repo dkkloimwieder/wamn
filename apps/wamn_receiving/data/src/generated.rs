@@ -41,4 +41,12 @@ pub(crate) mod wamn {
             "/../generated/wamn/receiving_load_receipt_screen.rs"
         ));
     }
+
+    /// Generated `receiving.load_purchase_order_history` projection.
+    pub(crate) mod receiving_load_purchase_order_history {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../generated/wamn/receiving_load_purchase_order_history.rs"
+        ));
+    }
 }

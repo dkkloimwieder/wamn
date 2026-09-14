@@ -6139,6 +6139,7 @@ dependencies = [
  "wamn-integration-tests",
  "wamn-platform-identity",
  "wamn-receiving-tui",
+ "wamn-record-history",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
@@ -6165,6 +6166,7 @@ dependencies = [
  "wamn-client-terminal",
  "wamn-client-tui",
  "wamn-generated-receiving-tui",
+ "wamn-record-history",
 ]
 
 [[package]]

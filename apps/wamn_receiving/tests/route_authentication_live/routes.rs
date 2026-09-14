@@ -5,13 +5,13 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts"]
-async fn production_two_package_release_serves_all_thirteen_pat_routes() -> anyhow::Result<()> {
+async fn production_two_package_release_serves_all_fourteen_pat_routes() -> anyhow::Result<()> {
     receiving_pat_journey(&JourneyDocument::required()?, &journey_scenario_worker_binary()?, false).await.map(|_| ())
 }
 
 #[tokio::test]
 #[ignore = "requires the dedicated fresh-only disposable journey and copied package directory"]
-async fn production_two_package_fresh_only_fixture_serves_all_thirteen_pat_routes()
+async fn production_two_package_fresh_only_fixture_serves_all_fourteen_pat_routes()
 -> anyhow::Result<()> {
     receiving_pat_journey(&JourneyDocument::required()?, &journey_scenario_worker_binary()?, true).await.map(|_| ())
 }
@@ -655,6 +655,16 @@ async fn receiving_release_journey(
         "client-acme-receiving:purchase-order/update@3.0.0",
         OVERLAY_PACKAGE_ID,
     ));
+    assert_route_history_read(
+        &engine,
+        &flow_http,
+        &routing,
+        &bridge,
+        &inputs.route_host,
+        &route.token,
+        project.as_ref(),
+    )
+    .await?;
 
     let (trace_id, traceparent) = journey_trace(10);
     let response = invoke_journey_route(
@@ -717,6 +727,41 @@ async fn receiving_release_journey(
         "client-acme-receiving:quality/approve-inspection@3.0.0",
         OVERLAY_PACKAGE_ID,
     ));
+
+    // Ruling 71: the route caller holds every other grant, so only the missing
+    // history token refuses, before the component runs.
+    let removed = project
+        .execute(
+            "DELETE FROM app_system.permissions \
+             WHERE tenant_id = $1 AND role_name = $2 AND permission = $3",
+            &[&TENANT, &ROUTE_CALLER_ROLE, &HISTORY_OPERATION],
+        )
+        .await
+        .context("remove only the purchase order history permission")?;
+    anyhow::ensure!(
+        removed == 1,
+        "history denial setup removed {removed} permission rows instead of one"
+    );
+    let (denied_history_trace, denied_history_parent) = journey_trace(22);
+    let denied_history = invoke_journey_route(
+        &engine,
+        &flow_http,
+        Arc::clone(&routing),
+        Arc::clone(&bridge),
+        &inputs.route_host,
+        "/receiving/load_purchase_order_history",
+        Some(&route.token),
+        &denied_history_parent,
+        Bytes::from_static(
+            br#"[{"request_id":"history-permission-denied","id":"00000000-0000-0000-0000-000000000302","after_position":"0","limit":"100"}]"#,
+        ),
+    )
+    .await?;
+    super::sessions::assert_operation_refusal(
+        &denied_history,
+        "permission-denied",
+        HISTORY_OPERATION,
+    )?;
 
     let removed = project
         .execute(
@@ -866,6 +911,7 @@ async fn receiving_release_journey(
     );
     assert_no_component_trace(&spans, &unauthorized_trace);
     assert_no_component_trace(&spans, &oversized_trace);
+    assert_no_component_trace(&spans, &denied_history_trace);
 
     // The denial arm mutates one operation grant deliberately. Its package is
     // the author of that grant, so reapply the exact coordinate before handing
@@ -997,6 +1043,144 @@ async fn assert_route_update_record_history(
                 }),
         "a supplied stamp was not refused at its JSON pointer: status={} body={body}",
         response.status()
+    );
+    Ok(())
+}
+
+/// The base history read over served bytes (rulings 73 and 74).
+///
+/// The purchase order that the nested receipt and the Acme update changed has
+/// an insert and two update entries. No served image carries an Acme column.
+/// The fold over the served rows reconstructs the base columns that the
+/// database holds, with each timestamp in the platform canonical spelling.
+async fn assert_route_history_read(
+    engine: &wash_runtime::engine::Engine,
+    flow_http: &Component,
+    routing: &Arc<FlowHttpRouting>,
+    bridge: &Arc<RouterDeliveryBridge>,
+    route_host: &str,
+    token: &str,
+    project: &Client,
+) -> anyhow::Result<()> {
+    use wamn_record_history::{HistoryRow, RowState, state_at};
+    use wamn_runtime::plugins::wamn_postgres::canonical_timestamptz;
+
+    const ORDER: &str = "00000000-0000-0000-0000-000000000302";
+    const ACME_COLUMNS: [&str; 2] = ["acme_inspection_required", "acme_quality_status"];
+    let (_, traceparent) = journey_trace(21);
+    let response = invoke_journey_route(
+        engine,
+        flow_http,
+        Arc::clone(routing),
+        Arc::clone(bridge),
+        route_host,
+        "/receiving/load_purchase_order_history",
+        Some(token),
+        &traceparent,
+        Bytes::from_static(
+            br#"[{"request_id":"purchase-order-history","id":"00000000-0000-0000-0000-000000000302","after_position":"0","limit":"100"}]"#,
+        ),
+    )
+    .await?;
+    let value = successful_value(&response, "purchase-order-history")?;
+    let served = value["rows"]
+        .as_array()
+        .context("the history read returned no rows")?;
+    let text = |row: &'_ Value, field: &str| -> anyhow::Result<String> {
+        row[field]
+            .as_str()
+            .map(str::to_owned)
+            .with_context(|| format!("the history row carries no text {field}: {row}"))
+    };
+    let int64 = |row: &Value, field: &str| -> anyhow::Result<i64> {
+        text(row, field)?
+            .parse()
+            .with_context(|| format!("the history row carries no int64 {field}: {row}"))
+    };
+    let mut fields = Vec::with_capacity(served.len());
+    for row in served {
+        for image in ["before", "after", "current"] {
+            let columns: serde_json::Map<String, Value> = serde_json::from_str(&text(row, image)?)?;
+            anyhow::ensure!(
+                ACME_COLUMNS
+                    .iter()
+                    .all(|column| !columns.contains_key(*column)),
+                "the base history read served an Acme column in {image}: {row}"
+            );
+        }
+        fields.push((
+            int64(row, "position")?,
+            text(row, "kind")?,
+            text(row, "before")?,
+            text(row, "current")?,
+            int64(row, "head_position")?,
+        ));
+    }
+    let rows = fields
+        .iter()
+        .map(
+            |(position, kind, before, current, head_position)| HistoryRow {
+                position: *position,
+                kind,
+                before,
+                current,
+                head_position: *head_position,
+            },
+        )
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        rows.iter().map(|row| row.kind).collect::<Vec<_>>() == ["insert", "update", "update"],
+        "the purchase order history has the wrong entries: {value}"
+    );
+    let folded = |position: i64| -> anyhow::Result<serde_json::Map<String, Value>> {
+        let RowState::Present(image) = state_at(&rows, position)? else {
+            anyhow::bail!("the purchase order is not present at position {position}");
+        };
+        image
+            .columns()
+            .map(|(name, value)| Ok((name.to_owned(), serde_json::from_str(value)?)))
+            .collect()
+    };
+    for row in &rows {
+        let state = folded(row.position)?;
+        anyhow::ensure!(
+            ACME_COLUMNS
+                .iter()
+                .all(|column| !state.contains_key(*column)),
+            "the fold showed an Acme column at position {}",
+            row.position
+        );
+    }
+    let held = project
+        .query_one(
+            "SELECT id, purchase_order_number, supplier_id, status, row_version, \
+                    created_at, created_by, updated_at, updated_by \
+               FROM receiving.purchase_order WHERE id = $1::text::uuid",
+            &[&ORDER],
+        )
+        .await
+        .context("read the purchase order that the history folds to")?;
+    let uuid = |index: usize| Value::String(held.get::<_, uuid::Uuid>(index).to_string());
+    let instant = |index: usize| {
+        Value::String(canonical_timestamptz(
+            held.get::<_, chrono::DateTime<chrono::Utc>>(index),
+        ))
+    };
+    let expected = serde_json::json!({
+        "id": uuid(0),
+        "purchase_order_number": held.get::<_, String>(1),
+        "supplier_id": uuid(2),
+        "status": held.get::<_, String>(3),
+        "row_version": held.get::<_, i64>(4),
+        "created_at": instant(5),
+        "created_by": uuid(6),
+        "updated_at": instant(7),
+        "updated_by": uuid(8),
+    });
+    let newest = rows.last().map_or(0, |row| row.position);
+    anyhow::ensure!(
+        Value::Object(folded(newest)?) == expected,
+        "the fold over the served history differs from the held purchase order: {value}"
     );
     Ok(())
 }

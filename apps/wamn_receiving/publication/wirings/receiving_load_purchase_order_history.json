@@ -1,0 +1,14 @@
+{
+  "format-version": "0.1",
+  "wiring-id": "receiving_load_purchase_order_history",
+  "version": 1,
+  "entry": "operation",
+  "nodes": {
+    "operation": {
+      "component": "receiving",
+      "interface-version": "0.1.0",
+      "operation": "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
+      "terminal": "respond"
+    }
+  }
+}

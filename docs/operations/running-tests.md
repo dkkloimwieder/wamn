@@ -268,8 +268,15 @@ psql -d wamn_receiving -v ON_ERROR_STOP=1 \
 ```
 
 Repeat the third command for each logged relation, with its schema and relation name.
+Receiving logs `purchase_order` and `purchase_order_line`, so its generation database also needs this command:
+
+```bash
+psql -d wamn_receiving -v ON_ERROR_STOP=1 \
+  -c "SELECT wamn_history.create_history_table('receiving', 'purchase_order_line', false)"
+```
+
 Introspection leaves each history table out of the schema description.
-Receiving, Acme, and WMS declare no log, so their generation databases need no history table.
+Acme and WMS declare no log of their own, so their generation databases need no history table.
 
 `check` compares the complete generated path and byte set without changing it.
 For an intended declaration or SQL change, replace `check` with `write`.

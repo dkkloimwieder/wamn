@@ -166,8 +166,8 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
     );
     assert_eq!(
         observed.len(),
-        8,
-        "Receiving declares exactly eight operations"
+        9,
+        "Receiving declares exactly nine operations"
     );
     assert!(
         !observed.contains(RESIDUE),

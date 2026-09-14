@@ -575,7 +575,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
         .expect("apply a relation whose manifest identity differs from its table");
     let mapping = client
         .query_one(
-            "SELECT relation_id, table_name FROM receiving.wamn_cdc_exclusions",
+            "SELECT relation_id, table_name FROM receiving.wamn_cdc_exclusions \
+              WHERE table_name NOT LIKE '%\\_history'",
             &[],
         )
         .await
@@ -773,7 +774,8 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
     let exclusion = client
         .query_one(
             "SELECT package_id, relation_id, table_name \
-               FROM receiving.wamn_cdc_exclusions",
+               FROM receiving.wamn_cdc_exclusions \
+              WHERE table_name NOT LIKE '%\\_history'",
             &[],
         )
         .await
@@ -1546,9 +1548,13 @@ async fn record_history_triggers_follow_the_declaration() {
         [
             "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE \
              ON receiving.purchase_order FOR EACH ROW \
-             EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at')"
+             EXECUTE FUNCTION wamn_history.stamp_row('created_at', 'updated_at')",
+            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+             ON receiving.purchase_order_line FOR EACH ROW \
+             EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
         ],
-        "one trigger for the relation that selects columns, and none for []"
+        "one stamp trigger for the relation that selects columns, none for [], \
+         and the declared log trigger"
     );
     // Spec test 11: the operation grants stamp wamn:apply-package.
     let grant_stamps = client
@@ -1585,9 +1591,12 @@ async fn record_history_triggers_follow_the_declaration() {
     assert_eq!(
         trigger_definitions(&receiving_triggers(&client).await),
         [
+            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+             ON receiving.purchase_order_line FOR EACH ROW \
+             EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
             "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE \
              ON receiving.receipt FOR EACH ROW \
-             EXECUTE FUNCTION wamn_history.stamp_row('created_at')"
+             EXECUTE FUNCTION wamn_history.stamp_row('created_at')",
         ],
         "the trigger that the declaration no longer needs is removed"
     );

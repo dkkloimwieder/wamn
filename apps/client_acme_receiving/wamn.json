@@ -7,7 +7,7 @@
     "base_receiving": {
       "package": "wamn_receiving",
       "version": "1.0.0",
-      "digest": "sha256:6b905c7ad6b2d8e577b179d9e0a2cf6139226561db15da5ddd69f9ef51c2c314",
+      "digest": "sha256:714814276fdb9583e7386ffffb0b14612f17bd5ce8de9bfc45160b7c379330bf",
       "operations": [
         "receiving.record_receipt"
       ]

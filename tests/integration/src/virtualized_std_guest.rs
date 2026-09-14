@@ -37,13 +37,14 @@ mod tests {
     };
 
     const SENTINEL_KEY: &str = "WAMN_STD_VIRTUALIZATION_SENTINEL";
-    const RECEIVING_EXPORTS: [&str; 8] = [
+    const RECEIVING_EXPORTS: [&str; 9] = [
         "wamn-receiving:location/list@1.0.0",
         "wamn-receiving:purchase-order/get@1.0.0",
         "wamn-receiving:purchase-order/query@1.0.0",
         "wamn-receiving:purchase-order/update@1.0.0",
         "wamn-receiving:receipt/get@1.0.0",
         "wamn-receiving:receipt/query@1.0.0",
+        "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
         "wamn-receiving:receiving/load-receipt-screen@1.0.0",
         "wamn-receiving:receiving/record-receipt@1.0.0",
     ];

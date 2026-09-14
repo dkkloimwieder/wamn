@@ -101,7 +101,7 @@ const RAW_BODY_LIMIT: usize = 1024 * 1024;
 /// Domain of the platform principal emails in every test tenant.
 const PLATFORM_DOMAIN: &str = "example.invalid";
 const REGISTRY_IO_TIMEOUT: Duration = Duration::from_secs(30);
-const BASE_OPERATIONS: [(&str, &str); 8] = [
+const BASE_OPERATIONS: [(&str, &str); 9] = [
     ("location_list", "wamn-receiving:location/list@1.0.0"),
     (
         "purchase_order_get",
@@ -117,6 +117,7 @@ const BASE_OPERATIONS: [(&str, &str); 8] = [
     ),
     ("receipt_get", "wamn-receiving:receipt/get@1.0.0"),
     ("receipt_query", "wamn-receiving:receipt/query@1.0.0"),
+    ("receiving_load_purchase_order_history", HISTORY_OPERATION),
     (
         "receiving_load_receipt_screen",
         "wamn-receiving:receiving/load-receipt-screen@1.0.0",
@@ -153,6 +154,7 @@ const OVERLAY_OPERATIONS: [(&str, &str); 6] = [
     ),
 ];
 const BASE_RECORD_RECEIPT: &str = "wamn-receiving:receiving/record-receipt@1.0.0";
+const HISTORY_OPERATION: &str = "wamn-receiving:receiving/load-purchase-order-history@1.0.0";
 const OVERLAY_RECORD_RECEIPT: &str = "client-acme-receiving:receiving/record-receipt@3.0.0";
 const PREEXISTING_QUALITY_RECEIPT_ID: &str = "00000000-0000-0000-0000-000000000603";
 const MATERIALIZER_STREAM: &str = "EVT_4_acme_9_receiving_3_dev";
@@ -170,7 +172,7 @@ struct JourneyAttachment {
 
 // Deployment-owned route spellings live in this one publication table rather
 // than leaking into operation or component identity.
-const JOURNEY_ATTACHMENTS: [JourneyAttachment; 13] = [
+const JOURNEY_ATTACHMENTS: [JourneyAttachment; 14] = [
     JourneyAttachment {
         id: "location-list-http",
         package_id: BASE_PACKAGE_ID,
@@ -226,6 +228,13 @@ const JOURNEY_ATTACHMENTS: [JourneyAttachment; 13] = [
         wiring_id: "receiving_load_receipt_screen",
         path: "/receiving/load_receipt_screen",
         operation: "wamn-receiving:receiving/load-receipt-screen@1.0.0",
+    },
+    JourneyAttachment {
+        id: "receiving-load-purchase-order-history-http",
+        package_id: BASE_PACKAGE_ID,
+        wiring_id: "receiving_load_purchase_order_history",
+        path: "/receiving/load_purchase_order_history",
+        operation: HISTORY_OPERATION,
     },
     JourneyAttachment {
         id: "client-acme-receiving-purchase-order-get-http",

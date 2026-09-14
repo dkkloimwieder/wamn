@@ -2,6 +2,46 @@
 
 use wamn_client_tui::{screen, submission};
 
+pub static LOAD_PURCHASE_ORDER_HISTORY_SPEC: screen::ScreenSpec = screen::ScreenSpec {
+    model: "receiving",
+    name: "load_purchase_order_history",
+    operation: "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
+    kind: "projection",
+    input: crate::receiving::RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_INPUT_SCHEMA,
+    input_schema: Some("{\"items\":{\"additionalProperties\":false,\"properties\":{\"after_position\":{\"pattern\":\"^-?(0|[1-9][0-9]*)$\",\"type\":\"string\"},\"id\":{\"pattern\":\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\",\"type\":\"string\"},\"limit\":{\"pattern\":\"^-?(0|[1-9][0-9]*)$\",\"type\":\"string\"},\"request_id\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"request_id\",\"id\",\"after_position\",\"limit\"],\"type\":\"object\"},\"maxItems\":100,\"minItems\":1,\"type\":\"array\"}"),
+    response: submission::ResponseContract {
+        schema: Some("{\"type\":\"array\"}"),
+        partial_schema: None,
+        fields: crate::receiving::RECEIVING_LOAD_PURCHASE_ORDER_HISTORY_RESULT_SCHEMA,
+        result_class: Some("bounded_list"),
+        errors: &[
+            submission::ErrorCase { literal: "internal_error", required: &[], sources: &["query_error", "row_limit_exceeded", "undeclared_constraint"] },
+            submission::ErrorCase { literal: "invalid_input", required: &["field"], sources: &["malformed_input"] },
+            submission::ErrorCase { literal: "permission_denied", required: &["operation"], sources: &["permission_denied"] },
+            submission::ErrorCase { literal: "retry", required: &[], sources: &["connection_unavailable", "serialization_failure"] },
+            submission::ErrorCase { literal: "timeout", required: &[], sources: &["statement_timeout"] },
+        ],
+        kind: "projection",
+        transaction: None,
+        direct: true,
+        replay: submission::Replay::Unknown,
+    },
+    route: Some(crate::receiving::load_purchase_order_history_route),
+    fresh_only: false,
+    record: None,
+    revision: None,
+    revision_inputs: &[],
+    requires_composition: false,
+    supplied: &[
+        screen::SuppliedField { path: "request_id", kind: screen::SuppliedKind::RequestId },
+    ],
+};
+
+#[must_use]
+pub fn load_purchase_order_history(binding: submission::SessionBinding) -> screen::Screen {
+    screen::Screen::new(&LOAD_PURCHASE_ORDER_HISTORY_SPEC, binding)
+}
+
 pub static LOAD_RECEIPT_SCREEN_SPEC: screen::ScreenSpec = screen::ScreenSpec {
     model: "receiving",
     name: "load_receipt_screen",

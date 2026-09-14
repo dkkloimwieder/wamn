@@ -319,7 +319,7 @@ mod tests {
     const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
 
     #[test]
-    fn receiving_manifest_yields_the_eight_canonical_operation_grants() {
+    fn receiving_manifest_yields_the_nine_canonical_operation_grants() {
         assert_eq!(
             operation_grant_tokens(RECEIVING_MANIFEST).expect("parse strict Receiving manifest"),
             [
@@ -329,6 +329,7 @@ mod tests {
                 "wamn-receiving:purchase-order/update@1.0.0",
                 "wamn-receiving:receipt/get@1.0.0",
                 "wamn-receiving:receipt/query@1.0.0",
+                "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
                 "wamn-receiving:receiving/load-receipt-screen@1.0.0",
                 "wamn-receiving:receiving/record-receipt@1.0.0",
             ]
@@ -364,7 +365,7 @@ mod tests {
                 .iter()
                 .any(|grant| grant == "wamn-receiving:receiving/record-receipt@1.0.0")
         );
-        assert_eq!(grants.len(), 7);
+        assert_eq!(grants.len(), 8);
     }
 
     #[test]

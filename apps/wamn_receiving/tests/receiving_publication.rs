@@ -20,7 +20,7 @@ struct Operation {
     route: &'static str,
 }
 
-const OPERATIONS: [Operation; 8] = [
+const OPERATIONS: [Operation; 9] = [
     Operation {
         wiring: "purchase_order_get",
         token: "wamn-receiving:purchase-order/get@1.0.0",
@@ -56,6 +56,12 @@ const OPERATIONS: [Operation; 8] = [
         token: "wamn-receiving:receiving/load-receipt-screen@1.0.0",
         attachment: "receiving-load-receipt-screen-http",
         route: "/receiving/load_receipt_screen",
+    },
+    Operation {
+        wiring: "receiving_load_purchase_order_history",
+        token: "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
+        attachment: "receiving-load-purchase-order-history-http",
+        route: "/receiving/load_purchase_order_history",
     },
     Operation {
         wiring: "location_list",
@@ -105,7 +111,7 @@ fn wiring(operation: &Operation) -> WiringDocument {
 }
 
 #[test]
-fn package_owned_inputs_declare_the_exact_eight_route_closure() {
+fn package_owned_inputs_declare_the_exact_nine_route_closure() {
     let package_manifest = read_json(&repository_root().join("apps/wamn_receiving/wamn.json"));
     let attachments: BTreeMap<String, wamn_catalog::ServingAttachment> =
         serde_json::from_value(read_json(&publication_root().join("attachments.json")))

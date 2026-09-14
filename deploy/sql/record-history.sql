@@ -168,6 +168,23 @@ END
 $row_image$;
 REVOKE ALL ON FUNCTION wamn_history.row_image(record) FROM PUBLIC;
 
+-- The JSONB image of one timestamptz value, in the spelling of
+-- wamn_history.row_image. A history read that names its columns builds the
+-- current row image with this function and needs no whole-row reference.
+CREATE OR REPLACE FUNCTION wamn_history.timestamptz_image(value timestamptz)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+SET search_path = pg_catalog
+SET TimeZone = 'UTC'
+AS $timestamptz_image$
+    SELECT CASE WHEN isfinite(value)
+                THEN to_jsonb(to_char(value, 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))
+                ELSE to_jsonb(value)
+           END
+$timestamptz_image$;
+REVOKE ALL ON FUNCTION wamn_history.timestamptz_image(timestamptz) FROM PUBLIC;
+
 -- The log trigger function. The trigger argument carries the retention, and
 -- the function ignores it. The entry keys the row by its primary key columns.
 -- A relation with no primary key raises SQLSTATE 55000 with the message
@@ -263,14 +280,16 @@ GRANT EXECUTE ON FUNCTION wamn_history.stamp_row() TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.create_history_table(text, text, boolean)
     TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_db_owner;
+GRANT EXECUTE ON FUNCTION wamn_history.timestamptz_image(timestamptz) TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.log_row_change() TO wamn_db_owner;
 
 -- wamn_app writes logged relations, and a history read renders the current row
--- through wamn_history.row_image. The system database has no wamn_app, so an
--- applier without that role skips these grants.
+-- through wamn_history.row_image or wamn_history.timestamptz_image. The system
+-- database has no wamn_app, so an applier without that role skips these grants.
 DO $wamn_app$ BEGIN
   IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN
     GRANT USAGE ON SCHEMA wamn_history TO wamn_app;
     GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_app;
+    GRANT EXECUTE ON FUNCTION wamn_history.timestamptz_image(timestamptz) TO wamn_app;
   END IF;
 END $wamn_app$;

@@ -28,13 +28,14 @@ const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-const BASE_WIRINGS: [&str; 8] = [
+const BASE_WIRINGS: [&str; 9] = [
     "location_list",
     "purchase_order_get",
     "purchase_order_query",
     "purchase_order_update",
     "receipt_get",
     "receipt_query",
+    "receiving_load_purchase_order_history",
     "receiving_load_receipt_screen",
     "receiving_record_receipt",
 ];

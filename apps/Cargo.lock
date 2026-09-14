@@ -1224,6 +1224,7 @@ dependencies = [
  "uuid",
  "wamn-execution-contract",
  "wamn-postgres-statements",
+ "wamn-record-history",
 ]
 
 [[package]]

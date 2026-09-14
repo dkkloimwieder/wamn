@@ -24,10 +24,22 @@ The public operations are declared in the manifest:
 | `receiving.record_receipt` | Commit one atomic receipt for each input item. |
 | `receiving.load_receipt_screen` | Read the order and line information needed for entry. |
 | `location.list` | Read a bounded list of available locations. |
+| `receiving.load_purchase_order_history` | Read one page of the change log of a purchase order. |
+
+Each public operation has its own operation grant, and the `route-caller` role holds every grant.
+The history read has the grant `wamn-receiving:receiving/load-purchase-order-history@1.0.0`.
 
 The query filters on `supplier_id` and `status`.
 Its declared sort fields are `purchase_order_number`, `status`, and `created_at`.
 The update operation grants no create or delete authority over purchase orders.
+
+## Record history
+
+`purchase_order` keeps its log with retention `unlimited`, and `purchase_order_line` keeps its log for 30 days (`P30D`).
+`item`, `location`, `receipt`, and `receipt_line` keep no log.
+The history read returns the entries of one purchase order after `after_position`, with at most `limit` entries from 1 through 100.
+A purchase order with no retained entries returns an empty page.
+Every image in the result holds only the nine `purchase_order` columns that the read declares, so the Acme columns never appear.
 
 ## Receipt transaction
 
@@ -56,6 +68,10 @@ A stale `purchase_order.update` returns `concurrency_conflict` without changing 
 The [operator application](ui/) composes generated screens with ordinary Rust.
 It uses generated request types and the shared submission state machine.
 The terminal owns no transaction or authorization decision.
+The `h` key on the order list opens the history panel of the selected order.
+The panel reads every page up to the head position, and it reads again from the start when the head position changes.
+It folds the rows with [`wamn-record-history`](../platform/data/record-history/src/lib.rs) and shows the order at the selected entry as present, absent, or unavailable.
+If the fold refuses the rows, the panel shows the refusal.
 
 A confirmed refusal keeps the draft available for correction.
 Success consumes that submission.
@@ -75,7 +91,13 @@ The lost-response case withholds a received application response after observing
 It does not establish a TCP-loss or process-kill result.
 
 [Route tests](tests/route_authentication_live.rs) exercise the deployed application and its exact release.
+The PAT journey folds the served history of a purchase order that the Acme update changed, and it finds no Acme column.
+A route caller that holds every other grant but not the history grant gets `403` `permission-denied`.
+The [data access tests](tests/receiving_data_access.rs) show that an idempotent replay appends no history entry.
+They also show that an Acme update logs a changed-column diff, and that the fold rebuilds the effective row.
 [Postcommit tests](tests/postcommit.rs) exercise the private Acme consumer through the native event broker.
+The materializer case shows that CDC publishes no history entry.
+It also shows that the low 32 bits of each entry transaction id of the receipt equal the event `txid`.
 [Terminal tests](tests/operator_pty.py) cover the Receiving workflow at the terminal boundary.
 The [test methods](../../docs/testing/application-tests.md#receiving-commands) distinguish these observations from compilation or an unexecuted case.
 

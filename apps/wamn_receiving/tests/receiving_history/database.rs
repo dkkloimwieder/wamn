@@ -11,15 +11,17 @@ use uuid::Uuid;
 /// The provisioned test principal that Receiving fixtures write as.
 pub const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 
-/// Bind the fixture test principal as `app.user_id` for this session.
+/// Bind the fixture test principal as `app.user_id` and the fixture purpose as
+/// `app.operation` for this session.
 ///
-/// The record-history triggers stamp each fixture write with this principal.
-/// The first binding in a tenant creates its users row, and that row stamps
-/// itself.
+/// The record-history triggers stamp and log each fixture write with this
+/// principal and operation. The first binding in a tenant creates its users
+/// row, and that row stamps itself.
 pub async fn bind_fixture_principal(client: &Client, tenant: &str) -> Result<()> {
     client
         .execute(
-            "SELECT set_config('app.user_id', $1, false)",
+            "SELECT set_config('app.user_id', $1, false), \
+                    set_config('app.operation', 'admin:seed-receiving-test-fixture', false)",
             &[&FIXTURE_PRINCIPAL],
         )
         .await

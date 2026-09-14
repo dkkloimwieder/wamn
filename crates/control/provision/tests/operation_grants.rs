@@ -153,7 +153,7 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
 
     let changed = result(&run(&url, "reconcile operation grants", &reconcile));
     assert_eq!(changed.role_rows_changed(), 1, "role was not hardened");
-    assert_eq!(changed.grants_added(), 7, "missing grants were not exact");
+    assert_eq!(changed.grants_added(), 8, "missing grants were not exact");
     assert_eq!(
         changed.grants_removed(),
         1,
@@ -176,11 +176,12 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
             "wamn-receiving:purchase-order/update@1.0.0",
             "wamn-receiving:receipt/get@1.0.0",
             "wamn-receiving:receipt/query@1.0.0",
+            "wamn-receiving:receiving/load-purchase-order-history@1.0.0",
             "wamn-receiving:receiving/load-receipt-screen@1.0.0",
             "wamn-receiving:receiving/record-receipt@1.0.0",
         ]
         .join("\n"),
-        "server did not retain exactly the manifest's eight operation grants"
+        "server did not retain exactly the manifest's nine operation grants"
     );
     assert_eq!(
         query(

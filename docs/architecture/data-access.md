@@ -334,8 +334,19 @@ The read is one flat `bounded_list` over the history table of one relation:
 - An authored `LIMIT` caps the `limit` input, and the host row limit also applies.
 - Each result row carries one entry, the current row image, and the head position of the row. No field is nullable.
 - `before`, `after`, and the current row are text fields that hold JSONB text, so the host and the client keep their spelling.
-- The current row comes from `wamn_history.row_image` with the alias of the relation. A deleted row has the current image `{}`.
+- The current row comes from `wamn_history.row_image` with the alias of the relation, or from the declared columns on a relation that an overlay extends. A deleted row has the current image `{}`.
 - A row with no retained entries returns an empty page.
+
+The authored fields of a history read decide which prior data it shows.
+An overlay can add columns to a shared relation, and the images of the log carry them.
+A history read on such a relation therefore shows only the columns that it declares:
+
+- Its SQL builds the current row with `jsonb_build_object` from the declared columns, so the read needs no grant on an overlay column.
+- `wamn_history.timestamptz_image` spells each `timestamptz` column as `wamn_history.row_image` spells it. `record-history.sql` grants `EXECUTE` on it to `wamn_db_owner` and `wamn_app`.
+- The guest keeps only the declared columns of `before`, `after`, and the current row with `retain_columns` from `wamn-record-history`. Each kept member keeps its raw text.
+
+[Receiving](../../apps/wamn_receiving/query/load_purchase_order_history.sql) reads `purchase_order` this way, and its read shows no Acme column.
+An overlay history read uses the same rule with its own columns.
 
 The SQL lexer reads `wamn_history.row_image(<alias>)` as a read of every column of the relation that the alias names.
 The read therefore declares every column of that relation, and the generated grant covers the whole-row reference.

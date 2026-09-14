@@ -180,23 +180,49 @@ fn kind(row: &HistoryRow<'_>) -> Result<Kind, FoldError> {
     }
 }
 
-/// Split the top-level members of one JSON object without parsing the values.
-fn image(text: &str, position: i64) -> Result<RowImage, FoldError> {
-    members(text).ok_or(FoldError::new(FoldErrorKind::MalformedImage, position))
+/// The image text with only the named top-level columns, or `None` when the
+/// text is not one JSON object.
+///
+/// Each kept member keeps its raw name and value text in image order, so every
+/// value keeps the spelling that the database holds. For the text of a JSONB
+/// object, the result is the text of that object without the other columns. A
+/// history read uses it to return only the columns that its projection
+/// declares.
+pub fn retain_columns(text: &str, columns: &[&str]) -> Option<String> {
+    let mut kept = Vec::new();
+    members(text, |name, member, _| {
+        if columns.contains(&name.as_str()) {
+            kept.push(member);
+        }
+    })?;
+    Some(format!("{{{}}}", kept.join(", ")))
 }
 
-fn members(text: &str) -> Option<RowImage> {
+/// Split the top-level members of one JSON object without parsing the values.
+fn image(text: &str, position: i64) -> Result<RowImage, FoldError> {
+    let mut columns = BTreeMap::new();
+    members(text, |name, _, value| {
+        columns.insert(name, value.to_owned());
+    })
+    .ok_or(FoldError::new(FoldErrorKind::MalformedImage, position))?;
+    Ok(RowImage { columns })
+}
+
+/// Visit the decoded name, the raw member text, and the raw value text of each
+/// top-level member of one JSON object. The member text runs from the opening
+/// quote of the name to the end of the value.
+fn members<'a>(text: &'a str, mut visit: impl FnMut(String, &'a str, &'a str)) -> Option<()> {
     let bytes = text.as_bytes();
     let mut cursor = space(bytes, 0);
     if bytes.get(cursor) != Some(&b'{') {
         return None;
     }
     cursor = space(bytes, cursor + 1);
-    let mut columns = BTreeMap::new();
     if bytes.get(cursor) == Some(&b'}') {
         cursor += 1;
     } else {
         loop {
+            let member = cursor;
             let (name, end) = string(text, cursor)?;
             cursor = space(bytes, end);
             if bytes.get(cursor) != Some(&b':') {
@@ -204,7 +230,7 @@ fn members(text: &str) -> Option<RowImage> {
             }
             let start = space(bytes, cursor + 1);
             let end = value_end(bytes, start)?;
-            columns.insert(name, text[start..end].to_owned());
+            visit(name, &text[member..end], &text[start..end]);
             cursor = space(bytes, end);
             match bytes.get(cursor) {
                 Some(b',') => cursor = space(bytes, cursor + 1),
@@ -216,7 +242,7 @@ fn members(text: &str) -> Option<RowImage> {
             }
         }
     }
-    (space(bytes, cursor) == bytes.len()).then_some(RowImage { columns })
+    (space(bytes, cursor) == bytes.len()).then_some(())
 }
 
 fn space(bytes: &[u8], mut cursor: usize) -> usize {
