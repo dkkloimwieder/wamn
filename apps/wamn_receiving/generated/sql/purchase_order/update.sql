@@ -9,7 +9,7 @@ updated AS (
     SET
         supplier_id = CASE WHEN $3::boolean THEN $4::uuid ELSE model.supplier_id END,
         row_version = CASE
-            WHEN ($3::boolean AND $4::uuid IS DISTINCT FROM model.supplier_id)
+            WHEN ($3::boolean AND $4::uuid::text IS DISTINCT FROM model.supplier_id::text)
             THEN model.row_version + 1
             ELSE model.row_version
         END

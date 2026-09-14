@@ -2327,11 +2327,75 @@ fn generated_update_keeps_the_revision_on_a_true_no_op() {
             "        supplier_id = CASE WHEN $3::boolean THEN $4::uuid ELSE model.supplier_id END,\n",
             "        note = CASE WHEN $5::boolean THEN $6::text ELSE model.note END,\n",
             "        row_version = CASE\n",
-            "            WHEN ($3::boolean AND $4::uuid IS DISTINCT FROM model.supplier_id)\n",
-            "            OR ($5::boolean AND $6::text IS DISTINCT FROM model.note)\n",
+            "            WHEN ($3::boolean AND $4::uuid::text IS DISTINCT FROM model.supplier_id::text)\n",
+            "            OR ($5::boolean AND $6::text::text IS DISTINCT FROM model.note::text)\n",
             "            THEN model.row_version + 1\n",
             "            ELSE model.row_version\n",
             "        END",
+        )
+    );
+}
+
+/// A generated update compares by text, so a numeric scale-only change moves the revision.
+#[test]
+fn generated_update_counts_a_numeric_scale_only_change() {
+    let mut manifest = manifest();
+    manifest["models"]["purchase_order"]["operations"]["update"]["writable_fields"] =
+        json!(["received_quantity"]);
+    let catalog = catalog_with_columns(&[("received_quantity", ColumnType::Numeric, false)]);
+    let package = run(&catalog, &manifest, &QUERY_SOURCES).unwrap();
+    assert_eq!(
+        std::str::from_utf8(
+            package
+                .file("generated/sql/purchase_order/update.sql")
+                .unwrap()
+                .bytes(),
+        )
+        .unwrap(),
+        concat!(
+            "WITH target AS MATERIALIZED (\n",
+            "    SELECT id, row_version\n",
+            "    FROM purchase_order\n",
+            "    WHERE id = $1::uuid\n",
+            "    FOR UPDATE\n",
+            "),\n",
+            "updated AS (\n",
+            "    UPDATE purchase_order AS model\n",
+            "    SET\n",
+            "        received_quantity = CASE WHEN $3::boolean THEN $4::numeric ELSE model.received_quantity END,\n",
+            "        row_version = CASE\n",
+            "            WHEN ($3::boolean AND $4::numeric::text IS DISTINCT FROM model.received_quantity::text)\n",
+            "            THEN model.row_version + 1\n",
+            "            ELSE model.row_version\n",
+            "        END\n",
+            "    FROM target\n",
+            "    WHERE model.id = target.id\n",
+            "      AND target.row_version = $2::int8\n",
+            "    RETURNING\n",
+            "    model.created_at,\n",
+            "    model.id,\n",
+            "    model.purchase_order_number,\n",
+            "    model.received_quantity,\n",
+            "    model.row_version,\n",
+            "    model.status,\n",
+            "    model.supplier_id\n",
+            ")\n",
+            "SELECT\n",
+            "    CASE\n",
+            "        WHEN NOT EXISTS (SELECT 1 FROM target) THEN 'not_found'\n",
+            "        WHEN NOT EXISTS (SELECT 1 FROM updated) THEN 'concurrency_conflict'\n",
+            "        ELSE 'updated'\n",
+            "    END AS outcome,\n",
+            "    (SELECT target.row_version FROM target) AS observed_row_version,\n",
+            "    updated.created_at,\n",
+            "    updated.id,\n",
+            "    updated.purchase_order_number,\n",
+            "    updated.received_quantity,\n",
+            "    updated.row_version,\n",
+            "    updated.status,\n",
+            "    updated.supplier_id\n",
+            "FROM (SELECT 1) AS singleton\n",
+            "LEFT JOIN updated ON TRUE;\n",
         )
     );
 }

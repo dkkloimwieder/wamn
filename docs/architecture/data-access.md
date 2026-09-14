@@ -283,6 +283,8 @@ Input canonicalization precedes idempotency hashing.
 It normalizes representation without changing values.
 Timestamp spelling, UUID case, and key order normalize, while PostgreSQL numeric scale remains significant.
 A changed numeric scale remains a changed command body.
+A generated update compares each supplied field with its current value as PostgreSQL text.
+A numeric scale-only change, such as `1.0` to `1.00`, is therefore a change that increases the revision.
 
 Keyset pagination uses `id` as the total-order tie-breaker in the primary sort direction.
 Descending order reverses the compound order.

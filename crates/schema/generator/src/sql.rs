@@ -119,10 +119,11 @@ pub(crate) fn update(table: &Table, operation: &OperationDeclaration) -> String 
         })
         .collect::<Vec<_>>();
     // A true no-op keeps its revision, so the stamp trigger sees no change.
+    // The comparison uses text, so a numeric scale-only change is a change.
     let changed = binds
         .iter()
         .map(|(field, present, value)| {
-            format!("(${present}::boolean AND {value} IS DISTINCT FROM model.{field})")
+            format!("(${present}::boolean AND {value}::text IS DISTINCT FROM model.{field}::text)")
         })
         .collect::<Vec<_>>()
         .join("\n            OR ");

@@ -10,8 +10,8 @@ updated AS (
         acme_inspection_required = CASE WHEN $3::boolean THEN $4::boolean ELSE model.acme_inspection_required END,
         acme_quality_status = CASE WHEN $5::boolean THEN $6::text ELSE model.acme_quality_status END,
         row_version = CASE
-            WHEN ($3::boolean AND $4::boolean IS DISTINCT FROM model.acme_inspection_required)
-            OR ($5::boolean AND $6::text IS DISTINCT FROM model.acme_quality_status)
+            WHEN ($3::boolean AND $4::boolean::text IS DISTINCT FROM model.acme_inspection_required::text)
+            OR ($5::boolean AND $6::text::text IS DISTINCT FROM model.acme_quality_status::text)
             THEN model.row_version + 1
             ELSE model.row_version
         END

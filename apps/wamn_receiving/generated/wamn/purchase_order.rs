@@ -37,7 +37,7 @@ pub(crate) const QUERY_2_DIGEST: &str = "sha256:ba31a18e45b651d8897812a8ba261392
 pub(crate) const QUERY_3_DIGEST: &str = "sha256:c39f74894247cfa16c18acb8c43c463b7bd37f39a53b76f325c05b1b04b2a177";
 pub(crate) const QUERY_4_DIGEST: &str = "sha256:69e14cbd3cc603aeb3bb33fbf82c6499b952454cbddac8103d547b9c38555127";
 pub(crate) const QUERY_5_DIGEST: &str = "sha256:b00b6afd3a821a4e0ae4cb67371453bb122863c690015753ddfe8e5a46a63cf8";
-pub(crate) const UPDATE_DIGEST: &str = "sha256:1be727b7302658f76ea31ee13b87bd24de12ebe17041f7272be79d8f6fe2544f";
+pub(crate) const UPDATE_DIGEST: &str = "sha256:3fa55cbeab65f425936a22bc3fe824b683c80a80c837a3ac616587ee42f85cec";
 
 pub(crate) const UPDATE_UNIQUE_CONSTRAINTS: &[&str] = &[];
 pub(crate) const UPDATE_FOREIGN_KEY_CONSTRAINTS: &[&str] = &[];

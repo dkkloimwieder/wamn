@@ -35,7 +35,7 @@ pub struct PurchaseOrderUpdateRow {
 }
 
 pub(crate) const GET_DIGEST: &str = "sha256:39b89be8cfeb1ad9031416d2aac96a6fdcfa092e0f1300f7ed1dfd8799cd415c";
-pub(crate) const UPDATE_DIGEST: &str = "sha256:256d52a514807dd1821c53727abe235c0b8bea7f58b7885e0b5f201082d294b7";
+pub(crate) const UPDATE_DIGEST: &str = "sha256:09f969f5adda1cbaf63ccc3c6f034e2b44a4a199509cef2085e5a06e14bbbf13";
 
 pub(crate) const UPDATE_UNIQUE_CONSTRAINTS: &[&str] = &[];
 pub(crate) const UPDATE_FOREIGN_KEY_CONSTRAINTS: &[&str] = &[];
