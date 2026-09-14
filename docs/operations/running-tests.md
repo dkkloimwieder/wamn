@@ -249,17 +249,25 @@ WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
   -- check apps/wamn_receiving
 ```
 
+`check` and `write` plan every authored and generated statement as `wamn_app` under the grants that the package declaration derives.
+They do this in one transaction and roll it back, so the database keeps its roles and privileges.
+If the server has no `wamn_app` role, that transaction creates it.
+Connect as a role that can create roles, grant privileges, and set the role, such as the superuser of the fresh server.
+
 If a model declares a retention other than `"none"`, create the history table of that relation after the migrations.
 Do this before `check`, `write`, and SQLx prepare, so that `EXPLAIN` and SQLx prepare resolve authored SQL that names the history table.
-The first command installs the history table function, and the second command creates one history table:
+If the server has no `wamn_app` role, `record-history.sql` grants no history read function to it.
+The first command creates that role, so run it once for each server before the other two commands.
+The second command installs the history table function, and the third command creates one history table:
 
 ```bash
+psql -d wamn_receiving -v ON_ERROR_STOP=1 -c 'CREATE ROLE wamn_app NOLOGIN'
 psql -d wamn_receiving -v ON_ERROR_STOP=1 -f deploy/sql/record-history.sql
 psql -d wamn_receiving -v ON_ERROR_STOP=1 \
   -c "SELECT wamn_history.create_history_table('receiving', 'purchase_order', false)"
 ```
 
-Repeat the second command for each logged relation, with its schema and relation name.
+Repeat the third command for each logged relation, with its schema and relation name.
 Introspection leaves each history table out of the schema description.
 Receiving, Acme, and WMS declare no log, so their generation databases need no history table.
 

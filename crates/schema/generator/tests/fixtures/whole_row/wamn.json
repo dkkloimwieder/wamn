@@ -1,0 +1,444 @@
+{
+  "package": {
+    "id": "whole_row_probe",
+    "version": "1.0.0"
+  },
+  "required_platform_policy_contract": {
+    "id": "whole_row_probe_data_access",
+    "state": "unsatisfied"
+  },
+  "models": {
+    "item": {
+      "schema": "whole_row_probe",
+      "table": "item",
+      "owner": "whole_row_probe",
+      "server_owned_fields": [],
+      "enum_fields": {},
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
+      "operations": {}
+    },
+    "line": {
+      "schema": "whole_row_probe",
+      "table": "line",
+      "owner": "whole_row_probe",
+      "server_owned_fields": [],
+      "enum_fields": {},
+      "audit_log": {
+        "columns": [],
+        "retention": "none"
+      },
+      "operations": {}
+    }
+  },
+  "custom_operations": {
+    "item.list_skus": {
+      "kind": "projection",
+      "visibility": "public",
+      "permission": "item.list_skus",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "bounded_list",
+        "fields": [
+          {
+            "path": "id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "sku",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "whole_row_probe",
+          "table": "item",
+          "select_fields": [
+            "id",
+            "sku"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "list_skus": {
+          "path": "query/item_sku.sql",
+          "fetch": "bounded_list",
+          "parameters": [],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "sku",
+              "type": "text",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    },
+    "item.list_images": {
+      "kind": "projection",
+      "visibility": "public",
+      "permission": "item.list_images",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "bounded_list",
+        "fields": [
+          {
+            "path": "image",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "whole_row_probe",
+          "table": "item",
+          "select_fields": [
+            "id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "list_images": {
+          "path": "query/item_image.sql",
+          "fetch": "bounded_list",
+          "parameters": [],
+          "row": [
+            {
+              "name": "image",
+              "type": "text",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    },
+    "item.list_fields": {
+      "kind": "projection",
+      "visibility": "public",
+      "permission": "item.list_fields",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "bounded_list",
+        "fields": [
+          {
+            "path": "sku",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "whole_row_probe",
+          "table": "item",
+          "select_fields": [
+            "id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "list_fields": {
+          "path": "query/item_field.sql",
+          "fetch": "bounded_list",
+          "parameters": [],
+          "row": [
+            {
+              "name": "sku",
+              "type": "text",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    },
+    "line.list_items": {
+      "kind": "projection",
+      "visibility": "public",
+      "permission": "line.list_items",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "request_id",
+            "type": "text",
+            "nullable": false
+          }
+        ]
+      },
+      "result": {
+        "class": "bounded_list",
+        "fields": [
+          {
+            "path": "id",
+            "type": "uuid",
+            "nullable": false
+          },
+          {
+            "path": "item",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "permission_denied",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "permission_denied": {
+          "required": [
+            "operation"
+          ]
+        },
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "whole_row_probe",
+          "table": "line",
+          "select_fields": [
+            "id"
+          ],
+          "insert_fields": [],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "list_items": {
+          "path": "query/line_item.sql",
+          "fetch": "bounded_list",
+          "parameters": [],
+          "row": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            },
+            {
+              "name": "item",
+              "type": "uuid",
+              "nullable": false
+            }
+          ]
+        }
+      }
+    },
+    "item.copy_item": {
+      "kind": "event_handler",
+      "visibility": "private",
+      "connection": "postgres",
+      "input": {
+        "fields": [
+          {
+            "path": "new.id",
+            "type": "uuid",
+            "nullable": false
+          }
+        ]
+      },
+      "errors": [
+        "invalid_input",
+        "retry",
+        "timeout",
+        "internal_error"
+      ],
+      "error_details": {
+        "invalid_input": {
+          "required": [
+            "field"
+          ]
+        },
+        "retry": {},
+        "timeout": {},
+        "internal_error": {}
+      },
+      "constraint_errors": {},
+      "relations": [
+        {
+          "schema": "whole_row_probe",
+          "table": "item",
+          "select_fields": [],
+          "insert_fields": [
+            "id",
+            "note",
+            "sku"
+          ],
+          "update_fields": [],
+          "lock": false,
+          "constraints": []
+        }
+      ],
+      "statements": {
+        "insert_item": {
+          "path": "command/insert_item.sql",
+          "fetch": "optional_one",
+          "parameters": [
+            {
+              "name": "id",
+              "type": "uuid",
+              "nullable": false
+            }
+          ],
+          "row": [
+            {
+              "name": "item",
+              "type": "text",
+              "nullable": false
+            }
+          ]
+        }
+      },
+      "registration": {
+        "source_package": "whole_row_probe",
+        "entity": "item",
+        "ops": [
+          "insert"
+        ]
+      }
+    }
+  },
+  "connections": {
+    "postgres": {
+      "interface": "wamn:postgres@0.1.0"
+    }
+  },
+  "components": {
+    "whole_row_probe": {
+      "connections": [
+        "postgres"
+      ]
+    }
+  }
+}
