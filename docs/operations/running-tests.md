@@ -231,6 +231,20 @@ WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
   -- check apps/wamn_receiving
 ```
 
+If a model declares a retention other than `"none"`, create the history table of that relation after the migrations.
+Do this before `check`, `write`, and SQLx prepare, so that `EXPLAIN` and SQLx prepare resolve authored SQL that names the history table.
+The first command installs the history table function, and the second command creates one history table:
+
+```bash
+psql -d wamn_receiving -v ON_ERROR_STOP=1 -f deploy/sql/record-history.sql
+psql -d wamn_receiving -v ON_ERROR_STOP=1 \
+  -c "SELECT wamn_history.create_history_table('receiving', 'purchase_order', false)"
+```
+
+Repeat the second command for each logged relation, with its schema and relation name.
+Introspection leaves each history table out of the schema description.
+Receiving, Acme, and WMS declare no log, so their generation databases need no history table.
+
 `check` compares the complete generated path and byte set without changing it.
 For an intended declaration or SQL change, replace `check` with `write`.
 Review the generated files before building the guest and operator.

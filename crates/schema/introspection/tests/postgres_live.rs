@@ -20,7 +20,7 @@ use wamn_schema_introspection::migration_policy::{
 };
 use wamn_schema_introspection::postgres::{
     PostgresIntrospectionError, PostgresIntrospectionErrorKind, read_catalog,
-    read_catalog_excluding_relations, read_record_history_stamps,
+    read_catalog_excluding_relations, read_record_history_logs, read_record_history_stamps,
 };
 
 const APPLICATION_SCHEMA: &str = "receiving";
@@ -433,8 +433,10 @@ async fn assert_additive_columns(client: &Client) {
         client
             .execute(
                 "INSERT INTO receiving.purchase_order \
-                    (purchase_order_number, supplier_id, acme_quality_status) \
-                 VALUES ($1, gen_random_uuid(), $2)",
+                    (purchase_order_number, supplier_id, acme_quality_status, \
+                     created_at, created_by, updated_at, updated_by) \
+                 VALUES ($1, gen_random_uuid(), $2, now(), gen_random_uuid(), \
+                         now(), gen_random_uuid())",
                 &[&purchase_order_number, &quality_status],
             )
             .await
@@ -445,8 +447,10 @@ async fn assert_additive_columns(client: &Client) {
     let invalid_status = client
         .execute(
             "INSERT INTO receiving.purchase_order \
-                (purchase_order_number, supplier_id, acme_quality_status) \
-             VALUES ('quality-status-invalid', gen_random_uuid(), 'unknown')",
+                (purchase_order_number, supplier_id, acme_quality_status, \
+                 created_at, created_by, updated_at, updated_by) \
+             VALUES ('quality-status-invalid', gen_random_uuid(), 'unknown', \
+                     now(), gen_random_uuid(), now(), gen_random_uuid())",
             &[],
         )
         .await
@@ -1192,6 +1196,219 @@ async fn assert_record_history_stamp_admission(admin: &Client, reader: &Client) 
     );
 }
 
+/// Introspection admits the platform history table and the log trigger, keeps
+/// both out of the catalog IR, and refuses every other shape (level-2 spec
+/// tests 13 and 14 read this admission through apply-package).
+async fn assert_record_history_log_admission(admin: &Client, reader: &Client) {
+    let before = read_catalog(reader, &[APPLICATION_SCHEMA])
+        .await
+        .expect("read the catalog before the history table");
+    admin
+        .batch_execute(
+            "SELECT wamn_history.create_history_table('receiving', 'purchase_order', false); \
+             GRANT SELECT ON receiving.purchase_order_history TO PUBLIC; \
+             GRANT INSERT (row_key, kind) ON receiving.purchase_order_history TO PUBLIC",
+        )
+        .await
+        .expect("create the platform history table with grants");
+    let with_table = read_catalog(reader, &[APPLICATION_SCHEMA])
+        .await
+        .expect("introspection admits the platform history table and its grants");
+    assert_eq!(
+        with_table.canonical_json_bytes(),
+        before.canonical_json_bytes(),
+        "the catalog IR does not carry the history table"
+    );
+    admin
+        .batch_execute(
+            "CREATE TRIGGER record_history_log \
+               AFTER INSERT OR UPDATE OR DELETE ON receiving.purchase_order \
+               FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
+        )
+        .await
+        .expect("install the platform log trigger");
+    let logged = read_catalog(reader, &[APPLICATION_SCHEMA])
+        .await
+        .expect("introspection admits the platform log trigger");
+    assert_eq!(
+        logged.canonical_json_bytes(),
+        before.canonical_json_bytes(),
+        "the catalog IR does not carry the log trigger"
+    );
+    assert_eq!(
+        read_record_history_logs(reader, &[APPLICATION_SCHEMA])
+            .await
+            .expect("read the log triggers alone"),
+        BTreeMap::from([(
+            (APPLICATION_SCHEMA.to_owned(), "purchase_order".to_owned()),
+            "P30D".to_owned()
+        )])
+    );
+
+    let exists = |relation: &str| format!("SELECT to_regclass('{relation}') IS NOT NULL");
+    let trigger_on = |table: &str, condition: &str| {
+        format!(
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t \
+               JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid \
+               JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
+              WHERE n.nspname='receiving' AND c.relname='{table}' \
+                AND t.tgname='record_history_log' AND {condition})"
+        )
+    };
+    let history = "receiving.purchase_order_history";
+    let log = |timing: &str, arguments: &str| {
+        format!(
+            "CREATE TRIGGER record_history_log {timing} ON receiving.item \
+               FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change({arguments})"
+        )
+    };
+    let cases = [
+        (
+            "authored history table",
+            "CREATE TABLE receiving.item_history (id bigint)".to_owned(),
+            exists("receiving.item_history"),
+            "DROP TABLE receiving.item_history".to_owned(),
+            PostgresIntrospectionErrorKind::UnsupportedTable,
+        ),
+        (
+            "history table without its relation",
+            "SELECT wamn_history.create_history_table('receiving', 'orphan', false)".to_owned(),
+            exists("receiving.orphan_history"),
+            "DROP TABLE receiving.orphan_history".to_owned(),
+            PostgresIntrospectionErrorKind::UnsupportedTable,
+        ),
+        (
+            "tenant history table",
+            "SELECT wamn_history.create_history_table('receiving', 'location', true)".to_owned(),
+            exists("receiving.location_history"),
+            "DROP TABLE receiving.location_history".to_owned(),
+            PostgresIntrospectionErrorKind::UnsupportedTable,
+        ),
+        (
+            "history table with an extra column",
+            format!("ALTER TABLE {history} ADD COLUMN note text"),
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_attribute \
+               WHERE attrelid = 'receiving.purchase_order_history'::regclass \
+                 AND attname = 'note' AND NOT attisdropped)"
+                .to_owned(),
+            format!("ALTER TABLE {history} DROP COLUMN note"),
+            PostgresIntrospectionErrorKind::UnsupportedTable,
+        ),
+        (
+            "history table with a renamed constraint",
+            format!(
+                "ALTER TABLE {history} RENAME CONSTRAINT purchase_order_history_kind_check \
+                   TO purchase_order_history_entry_check"
+            ),
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_constraint \
+               WHERE conname = 'purchase_order_history_entry_check')"
+                .to_owned(),
+            format!(
+                "ALTER TABLE {history} RENAME CONSTRAINT purchase_order_history_entry_check \
+                   TO purchase_order_history_kind_check"
+            ),
+            PostgresIntrospectionErrorKind::UnsupportedTable,
+        ),
+        (
+            "history table with an ordinary index",
+            format!("CREATE INDEX purchase_order_history_changed_at ON {history} (changed_at)"),
+            exists("receiving.purchase_order_history_changed_at"),
+            "DROP INDEX receiving.purchase_order_history_changed_at".to_owned(),
+            PostgresIntrospectionErrorKind::UnsupportedTable,
+        ),
+        (
+            "unlogged history table",
+            format!("ALTER TABLE {history} SET UNLOGGED"),
+            "SELECT relpersistence = 'u' FROM pg_catalog.pg_class \
+               WHERE oid = 'receiving.purchase_order_history'::regclass"
+                .to_owned(),
+            format!("ALTER TABLE {history} SET LOGGED"),
+            PostgresIntrospectionErrorKind::UnsupportedTable,
+        ),
+        (
+            "history table with row security",
+            format!("ALTER TABLE {history} ENABLE ROW LEVEL SECURITY"),
+            "SELECT relrowsecurity FROM pg_catalog.pg_class \
+               WHERE oid = 'receiving.purchase_order_history'::regclass"
+                .to_owned(),
+            format!("ALTER TABLE {history} DISABLE ROW LEVEL SECURITY"),
+            PostgresIntrospectionErrorKind::UnsupportedTable,
+        ),
+        (
+            "policy on a history table",
+            format!("CREATE POLICY history_policy ON {history} USING (true)"),
+            "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_policy WHERE polname = 'history_policy')"
+                .to_owned(),
+            format!("DROP POLICY history_policy ON {history}"),
+            PostgresIntrospectionErrorKind::UnsupportedPolicy,
+        ),
+        (
+            "log trigger on a history table",
+            format!(
+                "CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON {history} \
+                   FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D')"
+            ),
+            trigger_on("purchase_order_history", "true"),
+            format!("DROP TRIGGER record_history_log ON {history}"),
+            PostgresIntrospectionErrorKind::UnsupportedTrigger,
+        ),
+        (
+            "log trigger without its history table",
+            log("AFTER INSERT OR UPDATE OR DELETE", "'P30D'"),
+            trigger_on("item", "true"),
+            "DROP TRIGGER record_history_log ON receiving.item".to_owned(),
+            PostgresIntrospectionErrorKind::UnsupportedTrigger,
+        ),
+        (
+            "log retention none",
+            log("AFTER INSERT OR UPDATE OR DELETE", "'none'"),
+            trigger_on("item", "t.tgnargs = 1"),
+            "DROP TRIGGER record_history_log ON receiving.item".to_owned(),
+            PostgresIntrospectionErrorKind::UnsupportedTrigger,
+        ),
+        (
+            "log with two arguments",
+            log("AFTER INSERT OR UPDATE OR DELETE", "'P30D', 'unlimited'"),
+            trigger_on("item", "t.tgnargs = 2"),
+            "DROP TRIGGER record_history_log ON receiving.item".to_owned(),
+            PostgresIntrospectionErrorKind::UnsupportedTrigger,
+        ),
+        (
+            "log before timing",
+            log("BEFORE INSERT OR UPDATE OR DELETE", "'P30D'"),
+            trigger_on("item", "t.tgtype & 2 = 2"),
+            "DROP TRIGGER record_history_log ON receiving.item".to_owned(),
+            PostgresIntrospectionErrorKind::UnsupportedTrigger,
+        ),
+        (
+            "log without delete",
+            log("AFTER INSERT OR UPDATE", "'P30D'"),
+            trigger_on("item", "t.tgtype & 8 = 0"),
+            "DROP TRIGGER record_history_log ON receiving.item".to_owned(),
+            PostgresIntrospectionErrorKind::UnsupportedTrigger,
+        ),
+    ];
+    let matrix = &mut RefusalMatrix::new(admin, reader);
+    for (case, create_sql, probe_sql, cleanup_sql, expected) in &cases {
+        refusal_case(matrix, case, create_sql, probe_sql, cleanup_sql, *expected).await;
+    }
+    assert_eq!(matrix.ran, cases.len());
+    assert!(
+        matrix.failures.is_empty(),
+        "{} of {} history refusal cases failed:\n{}",
+        matrix.failures.len(),
+        cases.len(),
+        matrix.failures.join("\n")
+    );
+    assert_eq!(
+        read_catalog(reader, &[APPLICATION_SCHEMA])
+            .await
+            .expect("every refusal input was removed")
+            .canonical_json_bytes(),
+        before.canonical_json_bytes()
+    );
+}
+
 async fn run_gate(admin_config: Config, fixture: Fixture) {
     validate_migration_file(&fixture.migration_path, APPLICATION_SCHEMA)
         .expect("pre-apply policy admits the real Receiving migration");
@@ -1226,6 +1443,7 @@ async fn run_gate(admin_config: Config, fixture: Fixture) {
     assert_additive_columns(&migration).await;
     assert_refusal_matrix(&target_admin, &migration).await;
     assert_record_history_stamp_admission(&target_admin, &migration).await;
+    assert_record_history_log_admission(&target_admin, &migration).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

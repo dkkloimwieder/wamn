@@ -31,7 +31,7 @@ Managed schemas refuse foreign tables, authored views, materialized views, unsup
 Nontransactional operations and mutations outside the selected schemas refuse.
 The platform alone installs its declared extension list, currently `btree_gist`, before application migration SQL.
 
-The platform installs the only admitted trigger, as [record history](#record-history) describes.
+The platform installs the only admitted triggers and the history tables, as [record history](#record-history) describes.
 
 Each managed relation, field, and constraint records its owning package.
 An overlay can add a field only where the base permits that extension.
@@ -97,7 +97,8 @@ Compile-time checking for arbitrary tenant components remains demand-gated.
 ## Record history
 
 Record history stamps who created a row, who last changed it, and when.
-[Naming](naming.md#reserved-names) reserves the four stamp column names and the platform principal names.
+A relation that keeps a log also has a history table, and a log trigger writes an entry to it for each row change.
+[Naming](naming.md#reserved-names) reserves the four stamp column names, the platform principal names, and the `_history` suffix.
 
 ### Declaration
 
@@ -111,13 +112,28 @@ Every relation-owning model declares `audit_log`:
 ```
 
 `columns` selects some of the four reserved names, and `[]` turns stamping off.
+`retention` is `"none"`, `"unlimited"`, or `"P<n>D"`.
+`"P<n>D"` keeps entries for n whole days, and n is a positive integer with no leading zero.
+`"none"` keeps no log.
+`columns` and `retention` are independent, so a relation with `"columns": []` can keep a log.
 An overlay model inherits the declaration of the relation owner and does not declare its own.
+
+A 30-day log with no stamp columns:
+
+```json
+"audit_log": {
+  "columns": [],
+  "retention": "P30D"
+}
+```
+
 The [manifest validation](../../crates/schema/generator/src/manifest.rs) refuses a missing key, a key on an overlay model, and a repeated name.
 It also refuses an actor without its time: `created_by` requires `created_at`, and `updated_by` requires `updated_at`.
-`retention` must be `"none"`, because the audit log is unbuilt work in the [record history plan](../plan/record-history-spec.md).
+It refuses every other retention, including `P0D`, weeks, months, years, time parts, fractions, and signs.
+The retention task that removes expired entries is unbuilt work in the [record history plan](../plan/record-history-spec.md).
 
 [Generation validation](../../crates/schema/generator/src/generate/validation.rs) compares the declaration with the schema.
-It refuses a selected column that is absent or nullable.
+It refuses a selected column that is absent or nullable, and a logged relation with no primary key.
 A selected time column must be `timestamptz`, and a selected actor column must be `uuid`, the type of `app_system.users.id`.
 Generation also refuses a column with a reserved name that the declaration does not select.
 Every stamp column is server-owned, so generation refuses a writable declaration of it and omits it from generated input.
@@ -145,8 +161,52 @@ The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes `wamn_histo
 apply-package installs no trigger for `"columns": []`, and it removes a stamp trigger that the declaration no longer selects.
 It then reads the installed triggers through introspection and refuses a result that differs from the declarations.
 Development package reconciliation runs the same step.
-The catalog reader admits only that trigger shape and leaves it out of the schema description.
+The catalog reader admits only that trigger shape and the log trigger shape below, and it leaves both out of the schema description.
 Every other trigger refuses.
+
+### History tables and the log trigger
+
+Each relation whose retention is not `"none"` keeps a log in its own history table.
+The history table is `<relation>_history` in the schema of the relation.
+`wamn_history.create_history_table` in `record-history.sql` is the one definition of the table shape.
+A package relation gets no `tenant_id` column.
+`wamn_history.log_row_change` is the `AFTER INSERT OR UPDATE OR DELETE` row trigger function that writes one entry for each row change.
+The [record history plan](../plan/record-history-spec.md#42-log-trigger) describes the entry columns and contents.
+
+Generation refuses these declarations:
+
+- A model table, an internal relation table or key, or a custom operation relation whose name ends with `_history`. A custom operation can read a history table, but it cannot declare an insert, an update, or a row lock on one.
+- A logged relation whose longest derived history object name has 64 bytes or more. The longest name is `<relation>_history_transaction_id_not_null`, so the name of a logged relation has 31 bytes or fewer. The refusal names the relation.
+- A logged relation with no primary key. Each entry keys the row by its primary key columns.
+
+After the migrations apply, apply-package creates the history table of each owned logged relation as `wamn_db_owner`.
+apply-package never drops a history table.
+It records the CDC exclusion of each history table in `wamn_cdc_exclusions`, as it records an internal relation.
+The exclusion row names the package that owns the relation, and its relation id is the history table name.
+A migration that creates a table whose name ends with `_history` refuses with `history-table-name-reserved`.
+
+apply-package installs one `record_history_log` trigger on each owned logged relation.
+The trigger runs `AFTER INSERT OR UPDATE OR DELETE` for each row and executes `wamn_history.log_row_change` with one argument, the retention.
+The function derives the history table name from the relation and ignores the argument.
+A retention of `"none"` removes the trigger, and the history table and its entries stay.
+apply-package reads the installed log triggers through introspection and repairs a retention argument that differs from the declaration.
+It then refuses a result that still differs.
+Development package reconciliation runs the same steps.
+
+The catalog reader leaves every table whose name ends with `_history` out of the schema description.
+It admits such a table only in the shape that the function creates for a package relation.
+That shape has the fixed columns, the named constraints over their columns, the identity sequence, and no ordinary index, row security, trigger, rule, or policy.
+The reader does not compare the CHECK expressions.
+It admits a `record_history_log` trigger only on a relation that has its history table.
+The schema state id therefore stays the same when a relation starts or stops logging.
+
+When a package logs, the generator adds a fixed description of each history table to the catalog that it validates and generates from.
+The description carries the columns and the primary key, and the verified schema state id does not include it.
+Authored SQL, the SQL lexer, and grant derivation use the description.
+The generated data-access evidence grants `wamn_app` `INSERT` on every entry column of the history table, and no read, update, or row lock.
+The log function is `SECURITY INVOKER`, so the writer needs that grant.
+The reconciler reads the history table like any other package relation and keeps that grant.
+The generation database creates the history tables before `EXPLAIN` and SQLx prepare, as [running tests](../operations/running-tests.md#application-generation-and-sqlx) describes.
 
 ### Actors
 

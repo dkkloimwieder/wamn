@@ -1871,14 +1871,6 @@ fn audit_log_shape_refuses_without_a_catalog() {
             "updated_by without updated_at",
             with_audit_log(json!(["created_at", "created_by", "updated_by"]), "none"),
         ),
-        ("no column with a log", with_audit_log(json!([]), "P90D")),
-        (
-            "a log before level 2",
-            with_audit_log(
-                json!(["created_at", "created_by", "updated_at", "updated_by"]),
-                "unlimited",
-            ),
-        ),
     ];
     for (label, manifest) in cases {
         assert_eq!(
@@ -1975,6 +1967,318 @@ fn audit_log_columns_refuse_against_the_catalog() {
             .kind(),
         GenerateErrorKind::InvalidOperation
     );
+}
+
+// ---------------------------------------------------------------------------
+// Record history, level 2: retention, history tables, and the log trigger.
+// ---------------------------------------------------------------------------
+
+const ALL_STAMP_COLUMNS: [&str; 4] = ["created_at", "created_by", "updated_at", "updated_by"];
+
+/// Spec test 12: a retention is none, unlimited, or whole days, with or without stamp columns.
+#[test]
+fn audit_log_retention_is_none_unlimited_or_whole_days() {
+    for retention in ["none", "unlimited", "P1D", "P30D", "P365D"] {
+        for columns in [json!([]), json!(ALL_STAMP_COLUMNS)] {
+            validate_operation_vocabulary(&parsed_manifest(&with_audit_log(
+                columns.clone(),
+                retention,
+            )))
+            .unwrap_or_else(|error| panic!("{retention} with {columns} refused: {error:?}"));
+        }
+        run(
+            &all_stamps_catalog(),
+            &with_audit_log(json!(ALL_STAMP_COLUMNS), retention),
+            &QUERY_SOURCES,
+        )
+        .unwrap_or_else(|error| panic!("{retention} did not generate: {error:?}"));
+    }
+    for retention in [
+        "",
+        "forever",
+        "P0D",
+        "P01D",
+        "P-1D",
+        "P+1D",
+        "P1.5D",
+        "P1W",
+        "P1M",
+        "P1Y",
+        "PT24H",
+        "P1DT1H",
+        "p30d",
+        "UNLIMITED",
+    ] {
+        let manifest = with_audit_log(json!(ALL_STAMP_COLUMNS), retention);
+        assert_eq!(
+            validate_operation_vocabulary(&parsed_manifest(&manifest))
+                .expect_err(retention)
+                .kind(),
+            GenerateErrorKind::InvalidModel,
+            "{retention}"
+        );
+        assert_eq!(
+            run(&all_stamps_catalog(), &manifest, &QUERY_SOURCES)
+                .expect_err(retention)
+                .kind(),
+            GenerateErrorKind::InvalidModel,
+            "{retention}"
+        );
+    }
+}
+
+/// A logged relation keeps the schema description and grants the insert of each entry.
+#[test]
+fn a_logged_relation_keeps_the_schema_description_and_grants_its_history_insert() {
+    let unlogged = run(
+        &all_stamps_catalog(),
+        &all_stamps_manifest(),
+        &QUERY_SOURCES,
+    )
+    .unwrap();
+    let logged = run(
+        &all_stamps_catalog(),
+        &with_audit_log(json!(ALL_STAMP_COLUMNS), "P90D"),
+        &QUERY_SOURCES,
+    )
+    .unwrap();
+    assert_eq!(
+        artifact_json(&logged, "generated/package-weld.json"),
+        artifact_json(&unlogged, "generated/package-weld.json"),
+        "the verified schema state id and the required schema contract stay"
+    );
+    let other_files = |package: &GeneratedPackage| {
+        package
+            .files()
+            .iter()
+            .filter(|file| file.path() != DATA_ACCESS_OVERLAY_PATH)
+            .map(|file| (file.path().to_owned(), file.bytes().to_vec()))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(other_files(&logged), other_files(&unlogged));
+
+    let unlogged_overlay = artifact_json(&unlogged, DATA_ACCESS_OVERLAY_PATH);
+    assert!(
+        unlogged_overlay["relations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|relation| relation["table"] != "purchase_order_history")
+    );
+    let overlay = artifact_json(&logged, DATA_ACCESS_OVERLAY_PATH);
+    assert_eq!(
+        object_named(
+            overlay["relations"].as_array().unwrap(),
+            "table",
+            "purchase_order_history"
+        ),
+        &json!({
+            "schema": "receiving",
+            "table": "purchase_order_history",
+            "all_fields": [
+                "after", "before", "changed_at", "changed_by", "kind", "operation", "position",
+                "row_key", "transaction_id"
+            ],
+            "select_fields": [],
+            "insert_fields": [
+                "after", "before", "changed_at", "changed_by", "kind", "operation", "row_key",
+                "transaction_id"
+            ],
+            "update_fields": [],
+            "lock": false
+        })
+    );
+}
+
+/// A custom operation reads a history table, and the read adds only its select grant.
+#[test]
+fn a_custom_operation_reads_a_history_table() {
+    let mut manifest = with_audit_log(json!(ALL_STAMP_COLUMNS), "unlimited");
+    let mut operation = projection_operation();
+    operation["relations"][0]["table"] = json!("purchase_order_history");
+    operation["relations"][0]["select_fields"] = json!(["changed_by", "kind"]);
+    operation["statements"]["load_purchase_order_detail"]["row"] =
+        json!([{"name": "changed_by", "type": "uuid", "nullable": false}]);
+    operation["result"]["fields"] =
+        json!([{"path": "changed_by", "type": "uuid", "nullable": false}]);
+    manifest["custom_operations"]["quality.load_purchase_order_detail"] = operation;
+    let mut sources = QUERY_SOURCES.to_vec();
+    sources.push(AuthoredSql::new(
+        "query/quality_purchase_order_detail.sql",
+        b"SELECT changed_by FROM purchase_order_history WHERE kind = $1;\n",
+    ));
+
+    let package = run(&all_stamps_catalog(), &manifest, &sources)
+        .expect("a declared read of a history table generates");
+    let overlay = artifact_json(&package, DATA_ACCESS_OVERLAY_PATH);
+    let history = object_named(
+        overlay["relations"].as_array().unwrap(),
+        "table",
+        "purchase_order_history",
+    );
+    assert_eq!(history["select_fields"], json!(["changed_by", "kind"]));
+    assert_eq!(history["update_fields"], json!([]));
+    assert_eq!(history["lock"], json!(false));
+
+    let unlogged = with_audit_log(json!(ALL_STAMP_COLUMNS), "none");
+    let mut reads_unlogged = unlogged.clone();
+    reads_unlogged["custom_operations"] = manifest["custom_operations"].clone();
+    assert_eq!(
+        run(&all_stamps_catalog(), &reads_unlogged, &sources)
+            .expect_err("a relation that keeps no log has no history table to read")
+            .kind(),
+        GenerateErrorKind::UnknownRelation
+    );
+}
+
+/// Spec test 17: generation refuses an authored history name and an overlong relation.
+#[test]
+fn history_names_are_reserved_and_fit_in_a_postgres_name() {
+    let mut model_table = all_stamps_manifest();
+    model_table["models"]["purchase_order"]["table"] = json!("purchase_order_history");
+    let mut internal_table = manifest();
+    internal_table["internal_relations"] =
+        json!({"command": {"schema": "receiving", "table": "command_history", "cdc": "excluded"}});
+    let mut internal_id = manifest();
+    internal_id["internal_relations"] =
+        json!({"command_history": {"schema": "receiving", "table": "command", "cdc": "excluded"}});
+    let mut cases = vec![
+        (
+            "a model table",
+            model_table,
+            GenerateErrorKind::InvalidManifest,
+            "receiving.purchase_order_history",
+        ),
+        (
+            "an internal relation table",
+            internal_table,
+            GenerateErrorKind::InvalidManifest,
+            "receiving.command_history",
+        ),
+        (
+            "an internal relation id",
+            internal_id,
+            GenerateErrorKind::InvalidManifest,
+            "receiving.command",
+        ),
+    ];
+    for (label, insert, update, lock) in [
+        ("a declared insert", json!(["kind"]), json!([]), false),
+        ("a declared update", json!([]), json!(["kind"]), false),
+        ("a declared row lock", json!([]), json!([]), true),
+    ] {
+        let mut writes = with_audit_log(json!(ALL_STAMP_COLUMNS), "unlimited");
+        // An event handler can write, so the refusal is the history reservation.
+        writes["custom_operations"]["purchase_order.record_history"] = json!({
+            "kind": "event_handler",
+            "visibility": "private",
+            "connection": "postgres",
+            "input": {"fields": [{"path": "new.id", "type": "uuid", "nullable": false}]},
+            "errors": ["invalid_input", "retry", "timeout", "internal_error"],
+            "error_details": {
+                "invalid_input": {"required": ["field"]},
+                "retry": {},
+                "timeout": {},
+                "internal_error": {}
+            },
+            "relations": [{
+                "schema": "receiving",
+                "table": "purchase_order_history",
+                "select_fields": [],
+                "insert_fields": insert,
+                "update_fields": update,
+                "lock": lock,
+                "constraints": []
+            }],
+            "statements": {
+                "write_history": {
+                    "path": "command/record_history/write_history.sql",
+                    "fetch": "optional_one",
+                    "parameters": [{"name": "id", "type": "uuid", "nullable": false}],
+                    "row": [{"name": "kind", "type": "text", "nullable": false}]
+                }
+            },
+            "registration": {
+                "source_package": "wamn_receiving",
+                "entity": "purchase_order",
+                "ops": ["insert"]
+            }
+        });
+        cases.push((
+            label,
+            writes,
+            GenerateErrorKind::InvalidOperation,
+            "receiving.purchase_order_history",
+        ));
+    }
+    let long_relation = "r".repeat(32);
+    let mut overlong = with_audit_log(json!([]), "P30D");
+    overlong["models"]["purchase_order"]["table"] = json!(long_relation);
+    let long_object = format!("receiving.{long_relation}");
+    cases.push((
+        "a logged relation of 32 bytes",
+        overlong,
+        GenerateErrorKind::InvalidModel,
+        &long_object,
+    ));
+    for (label, manifest, kind, object) in cases {
+        let refusal = validate_operation_vocabulary(&parsed_manifest(&manifest)).expect_err(label);
+        assert_eq!(refusal.kind(), kind, "{label}");
+        assert_eq!(refusal.object(), Some(object), "{label}");
+        assert_eq!(
+            run(&all_stamps_catalog(), &manifest, &QUERY_SOURCES)
+                .expect_err(label)
+                .kind(),
+            kind,
+            "{label}"
+        );
+    }
+
+    let mut fits = with_audit_log(json!([]), "P30D");
+    fits["models"]["purchase_order"]["table"] = json!("r".repeat(31));
+    validate_operation_vocabulary(&parsed_manifest(&fits))
+        .expect("a logged relation of 31 bytes fits its history names");
+    let mut unlogged_long = with_audit_log(json!([]), "none");
+    unlogged_long["models"]["purchase_order"]["table"] = json!("r".repeat(32));
+    validate_operation_vocabulary(&parsed_manifest(&unlogged_long))
+        .expect("a relation that keeps no log derives no history name");
+}
+
+/// A logged relation needs a primary key, and its history name stays free in the catalog.
+#[test]
+fn a_logged_relation_needs_a_primary_key_and_a_free_history_name() {
+    let logged = with_audit_log(json!(ALL_STAMP_COLUMNS), "P30D");
+    let stamped = all_stamps_catalog();
+    let purchase_order = table(&stamped, "purchase_order");
+    let keyless = replacing_table(
+        &stamped,
+        rebuilt_table(
+            purchase_order,
+            purchase_order.columns().to_vec(),
+            purchase_order
+                .constraints()
+                .iter()
+                .filter(|constraint| constraint.name() != "purchase_order_id_pkey")
+                .cloned()
+                .collect(),
+        ),
+    );
+    let refusal = run(&keyless, &logged, &QUERY_SOURCES).expect_err("a keyless logged relation");
+    assert_eq!(refusal.kind(), GenerateErrorKind::InvalidModel);
+    assert_eq!(refusal.object(), Some("receiving.purchase_order"));
+
+    let mut tables = stamped.tables().to_vec();
+    tables.push(Table::new(
+        "receiving",
+        "purchase_order_history",
+        vec![Column::new("id", ColumnType::Uuid, false, None, None)],
+        Vec::new(),
+        Vec::new(),
+    ));
+    let refusal = run(&CatalogIr::new(tables), &logged, &QUERY_SOURCES)
+        .expect_err("a catalog table that takes the history name");
+    assert_eq!(refusal.kind(), GenerateErrorKind::InvalidModel);
+    assert_eq!(refusal.object(), Some("receiving.purchase_order_history"));
 }
 
 #[test]

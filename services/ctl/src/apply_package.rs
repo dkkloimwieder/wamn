@@ -26,7 +26,10 @@ use wamn_schema_introspection::migration_policy::{
     DefinitionAction, DefinitionKind, DefinitionMutation, MigrationPolicyError,
     MigrationPolicyErrorKind, inspect_migration_definition_mutations,
 };
-use wamn_schema_introspection::postgres::read_record_history_stamps;
+use wamn_schema_introspection::postgres::{read_record_history_logs, read_record_history_stamps};
+use wamn_schema_introspection::record_history::{
+    HISTORY_TABLE_SUFFIX, RECORD_HISTORY_LOG_TRIGGER, history_table_name, is_history_table_name,
+};
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 const SELECT_ROLE_CONTEXT_SQL: &str = "SELECT current_user::text, session_user::text";
@@ -437,6 +440,10 @@ fn validate_relation_classifications(
         })
         .collect::<Vec<_>>();
     for (schema, relation, path) in &created {
+        ensure!(
+            !is_history_table_name(relation),
+            "history-table-name-reserved: {path} creates {schema}.{relation}, but the {HISTORY_TABLE_SUFFIX} suffix is reserved for the history tables that apply-package creates"
+        );
         let modeled = plan
             .models
             .iter()
@@ -450,7 +457,12 @@ fn validate_relation_classifications(
             "{DEFINITION_OWNER_DECLARATION_MISSING_REFUSAL}: {path} creates {schema}.{relation}, but wamn.json declares it as neither a model nor an internal relation with cdc excluded"
         );
     }
-    for excluded in &plan.cdc_excluded_relations {
+    // apply-package creates each history table, so no migration creates one.
+    for excluded in plan
+        .cdc_excluded_relations
+        .iter()
+        .filter(|excluded| !is_history_table_name(&excluded.table))
+    {
         ensure!(
             created.iter().any(|(schema, relation, _)| {
                 *schema == excluded.schema && *relation == excluded.table
@@ -604,6 +616,7 @@ async fn apply(
         &pending_mutations,
     )
     .await?;
+    let history_changed = create_history_tables(&tx, manifest).await?;
     reconcile_entity_maps(&tx, &plan, manifest).await?;
     let triggers_changed = reconcile_record_history_triggers(&tx, manifest).await?;
     let operation_grants =
@@ -616,6 +629,7 @@ async fn apply(
         changed: package_inserted
             || migration_changed
             || ownership_changed
+            || history_changed
             || triggers_changed
             || !operation_grants.is_noop()
             || registrations_changed,
@@ -653,6 +667,8 @@ pub(crate) async fn reconcile_local_package_configuration(
         "local schema inputs changed; recreate the owned disposable target"
     );
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)?;
+    create_history_tables(tx, &manifest).await?;
+    reconcile_entity_maps(tx, &plan, &manifest).await?;
     reconcile_record_history_triggers(tx, &manifest).await?;
     reconcile_package_operation_grants(tx, &directory.manifest_bytes, tenant).await?;
     reconcile_package_registrations(
@@ -665,17 +681,57 @@ pub(crate) async fn reconcile_local_package_configuration(
     Ok(())
 }
 
-/// Make each owned relation carry exactly the stamp trigger that its declaration selects.
+/// Create the history table of each owned relation whose declaration keeps a log.
 ///
-/// The trigger is derived state, like the operation grants. A declaration that
-/// selects no column has no trigger, and a trigger that a declaration no longer
-/// needs is removed. The installed triggers are then read back through
-/// introspection and compared with the declarations.
+/// `wamn_history.create_history_table` is the one definition of the table
+/// shape. apply-package never drops a history table, so a relation whose
+/// retention becomes `none` keeps its table and its entries.
+async fn create_history_tables(
+    tx: &Transaction<'_>,
+    manifest: &PackageManifest,
+) -> anyhow::Result<bool> {
+    let mut changed = false;
+    for model in manifest
+        .models
+        .values()
+        .filter(|model| model.owner == manifest.package.id && model.log_retention().is_some())
+    {
+        let history = history_table_name(&model.table);
+        let present = tx
+            .query_one(SELECT_RELATION_PRESENT_SQL, &[&model.schema, &history])
+            .await
+            .with_context(|| format!("read history table {}.{history}", model.schema))?
+            .get::<_, bool>(0);
+        if present {
+            continue;
+        }
+        // The package-owner role owns the relation, so it owns its history table.
+        set_package_owner_role(tx).await?;
+        tx.execute(
+            "SELECT wamn_history.create_history_table($1, $2, false)",
+            &[&model.schema, &model.table],
+        )
+        .await
+        .with_context(|| format!("create history table {}.{history}", model.schema))?;
+        reset_host_role(tx).await?;
+        changed = true;
+    }
+    Ok(changed)
+}
+
+/// Make each owned relation carry exactly the record-history triggers that its declaration names.
+///
+/// The triggers are derived state, like the operation grants. A declaration
+/// that selects no column has no stamp trigger, and a retention of `none` has
+/// no log trigger. A trigger that a declaration no longer needs is removed. The
+/// log trigger carries the retention as its one argument. The installed
+/// triggers are then read back through introspection and compared with the
+/// declarations.
 async fn reconcile_record_history_triggers(
     tx: &Transaction<'_>,
     manifest: &PackageManifest,
 ) -> anyhow::Result<bool> {
-    let declared = manifest
+    let owned = manifest
         .models
         .iter()
         .filter(|(_, model)| model.owner == manifest.package.id)
@@ -683,14 +739,28 @@ async fn reconcile_record_history_triggers(
             let audit_log = model.audit_log.as_ref().with_context(|| {
                 format!("{model_id} owns its relation and must declare audit_log")
             })?;
+            Ok((
+                (model.schema.clone(), model.table.clone()),
+                model,
+                audit_log,
+            ))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let declared = owned
+        .iter()
+        .map(|(relation, _, audit_log)| {
             let columns = RecordHistoryColumn::ALL
                 .into_iter()
                 .filter(|column| audit_log.columns.contains(column))
                 .map(|column| column.as_str().to_owned())
                 .collect::<Vec<_>>();
-            Ok(((model.schema.clone(), model.table.clone()), columns))
+            (relation.clone(), columns)
         })
-        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+        .collect::<BTreeMap<_, _>>();
+    let declared_logs = owned
+        .iter()
+        .map(|(relation, model, _)| (relation.clone(), model.log_retention().map(str::to_owned)))
+        .collect::<BTreeMap<_, _>>();
     let schemas = declared
         .keys()
         .map(|(schema, _)| schema.as_str())
@@ -700,18 +770,17 @@ async fn reconcile_record_history_triggers(
     let installed = read_record_history_stamps(tx, &schemas)
         .await
         .context("read installed record-history triggers")?;
+    let installed_logs = read_record_history_logs(tx, &schemas)
+        .await
+        .context("read installed record-history log triggers")?;
 
-    let mut changed = false;
+    let mut statements = Vec::new();
     for (relation, columns) in &declared {
         if installed.get(relation).map_or(&[][..], Vec::as_slice) == columns.as_slice() {
             continue;
         }
-        let quoted = QualifiedName::new(
-            Identifier::new(relation.0.as_str())?,
-            Identifier::new(relation.1.as_str())?,
-        )
-        .quoted();
-        let statement = if columns.is_empty() {
+        let quoted = quoted_relation(relation)?;
+        statements.push(if columns.is_empty() {
             format!("DROP TRIGGER record_history_stamp ON {quoted}")
         } else {
             format!(
@@ -724,14 +793,30 @@ async fn reconcile_record_history_triggers(
                     .collect::<Vec<_>>()
                     .join(", ")
             )
-        };
+        });
+    }
+    for (relation, retention) in &declared_logs {
+        if installed_logs.get(relation) == retention.as_ref() {
+            continue;
+        }
+        let quoted = quoted_relation(relation)?;
+        statements.push(match retention {
+            None => format!("DROP TRIGGER {RECORD_HISTORY_LOG_TRIGGER} ON {quoted}"),
+            Some(retention) => format!(
+                "CREATE OR REPLACE TRIGGER {RECORD_HISTORY_LOG_TRIGGER} \
+                 AFTER INSERT OR UPDATE OR DELETE ON {quoted} \
+                 FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('{}')",
+                retention.replace('\'', "''")
+            ),
+        });
+    }
+    for statement in &statements {
         // The package-owner role owns the relation, so it creates the trigger.
         set_package_owner_role(tx).await?;
-        tx.batch_execute(&statement)
+        tx.batch_execute(statement)
             .await
-            .with_context(|| format!("reconcile the record-history trigger on {quoted}"))?;
+            .with_context(|| format!("reconcile a record-history trigger: {statement}"))?;
         reset_host_role(tx).await?;
-        changed = true;
     }
 
     let installed = read_record_history_stamps(tx, &schemas)
@@ -746,7 +831,27 @@ async fn reconcile_record_history_triggers(
             relation.1
         );
     }
-    Ok(changed)
+    let installed_logs = read_record_history_logs(tx, &schemas)
+        .await
+        .context("read reconciled record-history log triggers")?;
+    for (relation, retention) in &declared_logs {
+        let observed = installed_logs.get(relation);
+        ensure!(
+            observed == retention.as_ref(),
+            "record-history-log-mismatch: {}.{} declares retention {retention:?}, but its installed log trigger carries {observed:?}",
+            relation.0,
+            relation.1
+        );
+    }
+    Ok(!statements.is_empty())
+}
+
+fn quoted_relation(relation: &(String, String)) -> anyhow::Result<String> {
+    Ok(QualifiedName::new(
+        Identifier::new(relation.0.as_str())?,
+        Identifier::new(relation.1.as_str())?,
+    )
+    .quoted())
 }
 
 async fn set_package_owner_role(tx: &Transaction<'_>) -> anyhow::Result<()> {

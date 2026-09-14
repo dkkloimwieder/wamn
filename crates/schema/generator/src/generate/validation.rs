@@ -634,11 +634,12 @@ fn require_column(
     }
 }
 
-/// Refuse a record-history column that the stamp trigger cannot stamp.
+/// Refuse a record-history declaration that the relation cannot carry.
 ///
 /// Every selected column exists as a non-null `timestamptz` time or `uuid`
 /// actor. Every reserved-name column is selected, except a base column under
-/// an overlay, which the relation owner's declaration selects.
+/// an overlay, which the relation owner's declaration selects. A relation that
+/// keeps a log has a primary key, because each entry keys the row by it.
 fn validate_audit_log_columns(
     manifest: &PackageManifest,
     model_name: &str,
@@ -679,6 +680,18 @@ fn validate_audit_log_columns(
                 format!("{}.{}.{name}", table.schema(), table.name()),
             ));
         }
+    }
+    if model.log_retention().is_some()
+        && !table
+            .constraints()
+            .iter()
+            .any(|constraint| matches!(constraint.kind(), ConstraintKind::PrimaryKey { .. }))
+    {
+        return Err(GenerateError::for_object(
+            GenerateErrorKind::InvalidModel,
+            format!("{context} keeps a log, so its relation must have a primary key"),
+            format!("{}.{}", table.schema(), table.name()),
+        ));
     }
     Ok(())
 }

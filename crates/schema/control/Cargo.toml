@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 wamn-catalog = { workspace = true }
 wamn-schema-generator = { workspace = true }
+wamn-schema-introspection = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-pg-core = { workspace = true }

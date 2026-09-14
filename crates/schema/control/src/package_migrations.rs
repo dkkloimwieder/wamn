@@ -13,6 +13,7 @@ use std::fmt;
 use sha2::{Digest as _, Sha256};
 use wamn_catalog::PackageCoordinate;
 use wamn_schema_generator::{PackageManifest, validate_operation_vocabulary};
+use wamn_schema_introspection::record_history::history_table_name;
 
 use crate::{SqlStatement, Value};
 
@@ -62,7 +63,10 @@ pub struct ManagedModel {
     pub table: String,
 }
 
-/// Package-owned mechanism relation explicitly excluded from CDC publication.
+/// Package-owned relation excluded from CDC publication.
+///
+/// An internal relation is excluded by its declaration. The history table of a
+/// logged relation is excluded by the declaration of that relation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CdcExcludedRelation {
     pub relation_id: String,
@@ -355,6 +359,7 @@ pub fn plan_package_migrations(
     validate_recorded_prefix(&coordinate, recorded, &migrations)?;
 
     let mut models = Vec::with_capacity(manifest.models.len());
+    let mut history_exclusions = Vec::new();
     for (model_id, model) in manifest.models {
         for (field, value) in [
             ("model-id", model_id.as_str()),
@@ -368,6 +373,16 @@ pub fn plan_package_migrations(
                 )
                 .at_path(PACKAGE_MANIFEST_PATH));
             }
+        }
+        // The history table of a logged relation is excluded from CDC. Its
+        // table name is its relation id, and the relation owner owns it.
+        if model.log_retention().is_some() {
+            let history = history_table_name(&model.table);
+            history_exclusions.push(CdcExcludedRelation {
+                relation_id: history.clone(),
+                schema: model.schema.clone(),
+                table: history,
+            });
         }
         models.push(ManagedModel {
             model_id,
@@ -383,6 +398,7 @@ pub fn plan_package_migrations(
             schema: relation.schema,
             table: relation.table,
         })
+        .chain(history_exclusions)
         .collect();
     let pending_sources = &migrations[recorded.len()..];
     let pending = pending_sources
@@ -1099,6 +1115,28 @@ mod tests {
                 expected
             );
         }
+    }
+
+    /// Spec test 13: a logged relation derives the CDC exclusion of its history table.
+    #[test]
+    fn a_logged_relation_derives_the_cdc_exclusion_of_its_history_table() {
+        let unlogged = plan_package_migrations(&directory(), None).unwrap();
+        assert_eq!(unlogged.cdc_excluded_relations, Vec::new());
+
+        let mut logged = directory();
+        let manifest = String::from_utf8(logged.manifest_bytes).expect("manifest is UTF-8");
+        logged.manifest_bytes = manifest
+            .replacen(r#""retention":"none""#, r#""retention":"P30D""#, 1)
+            .into_bytes();
+        let plan = plan_package_migrations(&logged, None).unwrap();
+        assert_eq!(
+            plan.cdc_excluded_relations,
+            [CdcExcludedRelation {
+                relation_id: "purchase_order_history".into(),
+                schema: "receiving".into(),
+                table: "purchase_order_history".into(),
+            }]
+        );
     }
 
     #[test]

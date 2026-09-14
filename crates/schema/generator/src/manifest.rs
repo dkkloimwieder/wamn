@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use wamn_schema_introspection::record_history::{
+    HISTORY_TABLE_SUFFIX, NO_LOG_RETENTION, history_object_names_fit, is_history_table_name,
+    is_log_retention,
+};
 
 use crate::{GenerateError, GenerateErrorKind};
 
@@ -568,14 +572,19 @@ fn validate_audit_log(
             ));
         }
     }
-    if selected.is_empty() && audit_log.retention != "none" {
+    if audit_log.retention != NO_LOG_RETENTION && !is_log_retention(&audit_log.retention) {
         return refuse(format!(
-            "{model_name} audit_log selects no column, so its retention must be none"
+            "{model_name} audit_log retention must be none, unlimited, or P<n>D with a positive whole number of days"
         ));
     }
-    if audit_log.retention != "none" {
-        return refuse(format!(
-            "{model_name} audit_log retention must be none until the record-history log exists"
+    if model.log_retention().is_some() && !history_object_names_fit(&model.table) {
+        return Err(GenerateError::for_object(
+            GenerateErrorKind::InvalidModel,
+            format!(
+                "{model_name} logs {}.{}, and a history object name of that relation has 64 bytes or more",
+                model.schema, model.table
+            ),
+            format!("{}.{}", model.schema, model.table),
         ));
     }
     Ok(())
@@ -591,6 +600,13 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
                     "model {model_id} uses reserved control relation {}.{}",
                     model.schema, model.table
                 ),
+            ));
+        }
+        if is_history_table_name(&model.table) {
+            return Err(reserved_history_name(
+                &format!("model {model_id}"),
+                &model.schema,
+                &model.table,
             ));
         }
         if let Some(existing) = coordinates.insert(
@@ -619,6 +635,14 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
                 ),
             ));
         }
+        // A history table takes its table name as its CDC exclusion relation id.
+        if is_history_table_name(relation_id) || is_history_table_name(&relation.table) {
+            return Err(reserved_history_name(
+                &format!("internal relation {relation_id}"),
+                &relation.schema,
+                &relation.table,
+            ));
+        }
         if manifest.models.contains_key(relation_id) {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidManifest,
@@ -639,6 +663,17 @@ fn validate_internal_relation_vocabulary(manifest: &PackageManifest) -> Result<(
         }
     }
     Ok(())
+}
+
+/// Refuse an authored name that ends with the reserved history suffix.
+fn reserved_history_name(subject: &str, schema: &str, table: &str) -> GenerateError {
+    GenerateError::for_object(
+        GenerateErrorKind::InvalidManifest,
+        format!(
+            "{subject} uses {schema}.{table}, but the {HISTORY_TABLE_SUFFIX} suffix is reserved for history tables"
+        ),
+        format!("{schema}.{table}"),
+    )
 }
 
 fn validate_component_groups(
@@ -1493,6 +1528,21 @@ fn validate_static_sql_declarations(
                 ),
             ));
         }
+        // A history table admits a declared read. Only the log trigger writes it.
+        if is_history_table_name(&relation.table)
+            && (!relation.insert_fields.is_empty()
+                || !relation.update_fields.is_empty()
+                || relation.lock)
+        {
+            return Err(GenerateError::for_object(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{operation_name} declares a write or a row lock on {}.{}, but the {HISTORY_TABLE_SUFFIX} suffix is reserved for history tables, which only the log trigger writes",
+                    relation.schema, relation.table
+                ),
+                format!("{}.{}", relation.schema, relation.table),
+            ));
+        }
         if !relations.insert((relation.schema.as_str(), relation.table.as_str())) {
             return Err(GenerateError::new(
                 GenerateErrorKind::InvalidOperation,
@@ -1984,7 +2034,7 @@ pub struct ModelDeclaration {
 #[serde(deny_unknown_fields)]
 pub struct AuditLogDeclaration {
     pub columns: Vec<RecordHistoryColumn>,
-    /// An ISO 8601 duration, `unlimited`, or `none`. Level 1 admits only `none`.
+    /// `none`, `unlimited`, or `P<n>D` with a positive whole number of days.
     pub retention: String,
 }
 
@@ -2035,6 +2085,17 @@ pub enum CdcDisposition {
 }
 
 impl ModelDeclaration {
+    /// The retention of a model whose declaration keeps a log.
+    ///
+    /// Only a relation-owning model declares `audit_log`, so an overlay model
+    /// and a model with the retention `none` return `None`.
+    pub fn log_retention(&self) -> Option<&str> {
+        self.audit_log
+            .as_ref()
+            .map(|audit_log| audit_log.retention.as_str())
+            .filter(|retention| *retention != NO_LOG_RETENTION)
+    }
+
     /// Definition owner for one field, inheriting the relation owner when omitted.
     pub fn field_owner(&self, field: &str) -> &str {
         self.field_owners

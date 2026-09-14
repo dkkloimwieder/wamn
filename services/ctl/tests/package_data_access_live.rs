@@ -11,6 +11,10 @@ use wamn_control_provision::{
 };
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
+use wamn_schema_generator::{
+    DataAccessOverlay, DataAccessRelationFields, derive_data_access_overlay_from_relation_fields,
+};
+use wamn_schema_introspection::record_history::history_table;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
@@ -684,4 +688,252 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
             .get::<_, bool>(0),
         "reconciliation revoked the seeded platform-schema column grant"
     );
+}
+
+/// Stage Receiving with `purchase_order_line` logging and no stamp columns.
+///
+/// The staged evidence is the generated overlay of the staged manifest. The
+/// shipped relation fields gain the history table description, as generation
+/// adds it for a logged relation.
+fn stage_logged_receiving() -> PathBuf {
+    let (root, _) = stage_package_root(&receiving_package_root(), "receiving-logged", None);
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("wamn.json")).expect("read manifest"))
+            .expect("parse manifest");
+    assert_eq!(
+        manifest["models"]["purchase_order_line"]["audit_log"],
+        serde_json::json!({"columns": [], "retention": "none"}),
+        "the fixture relation carries no stamp columns"
+    );
+    manifest["models"]["purchase_order_line"]["audit_log"]["retention"] = serde_json::json!("P30D");
+    let manifest_bytes = wamn_execution_contract::canonical_json_bytes(&manifest);
+    std::fs::write(root.join("wamn.json"), &manifest_bytes).expect("write logged manifest");
+
+    let shipped = DataAccessOverlay::from_slice(
+        &std::fs::read(receiving_package_root().join(OVERLAY_EVIDENCE_PATH))
+            .expect("read shipped evidence"),
+    )
+    .expect("parse shipped evidence");
+    let history = history_table("receiving", "purchase_order_line");
+    let relation_fields = shipped
+        .relations()
+        .iter()
+        .map(|relation| {
+            DataAccessRelationFields::new(
+                relation.schema(),
+                relation.table(),
+                relation.all_fields().to_vec(),
+            )
+        })
+        .chain([DataAccessRelationFields::new(
+            history.schema(),
+            history.name(),
+            history
+                .columns()
+                .iter()
+                .map(|column| column.name().to_owned())
+                .collect(),
+        )])
+        .collect::<Vec<_>>();
+    let overlay =
+        derive_data_access_overlay_from_relation_fields(&relation_fields, &manifest_bytes)
+            .expect("derive the logged package evidence");
+    std::fs::write(root.join(OVERLAY_EVIDENCE_PATH), overlay.canonical_bytes())
+        .expect("write logged package evidence");
+    root
+}
+
+/// Level-2 spec test 12 and ruling 28: a logged relation with no stamp columns
+/// writes history entries through the production App role, and the reconciler
+/// keeps the derived history insert grant.
+#[tokio::test]
+#[ignore = "requires disposable PG18 named by WAMN_CTL_PG_URL"]
+async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
+    let Some(url) = support::LockedUrl::optional() else {
+        eprintln!("skipping package_data_access_live; WAMN_CTL_PG_URL is unset");
+        return;
+    };
+    let admin = install_lineage_fixture(&url).await;
+    let database: String = admin
+        .query_one("SELECT current_database()::text", &[])
+        .await
+        .expect("read disposable database")
+        .get(0);
+    let package = stage_logged_receiving();
+    apply(&url, package.clone()).await;
+    let generation = workload_generation_role(
+        WorkloadRoleFamily::App,
+        WorkloadRoleScope::Tenant {
+            tenant: TENANT,
+            database: &database,
+        },
+        CredentialGeneration::A,
+    )
+    .expect("App generation accepts tenant scope");
+    admin
+        .batch_execute(&sql::prepare_workload_generation_sql(
+            WorkloadRoleFamily::App,
+            &database,
+            &generation,
+            PASSWORD,
+            "2099-01-01T00:00:00Z",
+        ))
+        .await
+        .expect("prepare production App generation");
+    let first = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        vec![package.clone()],
+    ))
+    .await
+    .expect("reconcile the logged package");
+    assert!(!first.is_noop(), "the logged package needed its grants");
+
+    let history_privileges = || async {
+        admin
+            .query(
+                "SELECT held FROM ( \
+                   SELECT attribute.attname::text || ':' || privilege AS held \
+                     FROM pg_catalog.pg_attribute AS attribute \
+                     CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']) \
+                          AS privilege \
+                    WHERE attribute.attrelid = 'receiving.purchase_order_line_history'::regclass \
+                      AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+                      AND pg_catalog.has_column_privilege( \
+                            'wamn_app', attribute.attrelid, attribute.attnum, privilege) \
+                 ) AS observed ORDER BY held COLLATE \"C\"",
+                &[],
+            )
+            .await
+            .expect("read App authority on the history table")
+            .into_iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect::<Vec<_>>()
+    };
+    let expected_privileges = [
+        "after:INSERT",
+        "before:INSERT",
+        "changed_at:INSERT",
+        "changed_by:INSERT",
+        "kind:INSERT",
+        "operation:INSERT",
+        "row_key:INSERT",
+        "transaction_id:INSERT",
+    ];
+    assert_eq!(history_privileges().await, expected_privileges);
+
+    admin
+        .batch_execute(
+            "BEGIN; \
+             SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f1', true), \
+                    set_config('app.operation', 'admin:seed-history-fixture', true); \
+             INSERT INTO receiving.item (id, item_number) \
+               VALUES ('00000000-0000-4000-8000-00000000b001', 'history-item'); \
+             INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id) \
+               VALUES ('00000000-0000-4000-8000-00000000b002', 'history-po', gen_random_uuid()); \
+             INSERT INTO receiving.purchase_order_line \
+               (id, purchase_order_id, line_number, item_id, ordered_quantity) \
+               VALUES ('00000000-0000-4000-8000-00000000b003', \
+                       '00000000-0000-4000-8000-00000000b002', 1, \
+                       '00000000-0000-4000-8000-00000000b001', 5); \
+             COMMIT;",
+        )
+        .await
+        .expect("seed the logged relation as the fixture principal");
+
+    let guest = connect(&generation_url(&url, &generation)).await;
+    guest
+        .batch_execute(
+            "BEGIN; \
+             SELECT set_config('app.user_id', '00000000-0000-4000-8000-0000000000f2', true), \
+                    set_config('app.operation', 'wamn-receiving:receiving/record-receipt@1.0.0', true); \
+             UPDATE receiving.purchase_order_line SET received_quantity = received_quantity + 2 \
+              WHERE id = '00000000-0000-4000-8000-00000000b003'; \
+             COMMIT;",
+        )
+        .await
+        .expect("the App role writes a logged relation with its reconciled grants");
+    let entries = admin
+        .query(
+            "SELECT kind, operation, changed_by::text, row_key::text, before::text, after::text \
+               FROM receiving.purchase_order_line_history ORDER BY position",
+            &[],
+        )
+        .await
+        .expect("read the history entries")
+        .into_iter()
+        .map(|row| {
+            (
+                row.get::<_, String>(0),
+                row.get::<_, String>(1),
+                row.get::<_, String>(2),
+                row.get::<_, String>(3),
+                row.get::<_, String>(4),
+                row.get::<_, String>(5),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        entries.len(),
+        2,
+        "one entry for each row change: {entries:?}"
+    );
+    assert_eq!(
+        (
+            entries[0].0.as_str(),
+            entries[0].1.as_str(),
+            entries[0].4.as_str()
+        ),
+        ("insert", "admin:seed-history-fixture", "{}")
+    );
+    assert_eq!(
+        entries[1],
+        (
+            "update".to_owned(),
+            "wamn-receiving:receiving/record-receipt@1.0.0".to_owned(),
+            "00000000-0000-4000-8000-0000000000f2".to_owned(),
+            r#"{"id": "00000000-0000-4000-8000-00000000b003"}"#.to_owned(),
+            r#"{"received_quantity": 0}"#.to_owned(),
+            r#"{"received_quantity": 2}"#.to_owned(),
+        )
+    );
+    let stamps = admin
+        .query_one(
+            "SELECT count(*) FROM pg_catalog.pg_attribute \
+              WHERE attrelid = 'receiving.purchase_order_line'::regclass \
+                AND attname IN ('created_at', 'created_by', 'updated_at', 'updated_by') \
+                AND NOT attisdropped",
+            &[],
+        )
+        .await
+        .expect("read stamp columns")
+        .get::<_, i64>(0);
+    assert_eq!(stamps, 0, "the logged relation carries no stamp column");
+
+    for statement in [
+        "SELECT kind FROM receiving.purchase_order_line_history",
+        "UPDATE receiving.purchase_order_line_history SET kind = kind",
+        "DELETE FROM receiving.purchase_order_line_history",
+    ] {
+        let denied = guest
+            .execute(statement, &[])
+            .await
+            .expect_err("the App role reached a history entry outside the log trigger");
+        assert_eq!(
+            denied.as_db_error().map(|error| error.code().code()),
+            Some("42501"),
+            "{statement}"
+        );
+    }
+
+    let again = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        vec![package],
+    ))
+    .await
+    .expect("replay the logged package reconciliation");
+    assert!(again.is_noop(), "the reconciler changed the history grant");
+    assert_eq!(history_privileges().await, expected_privileges);
+
+    std::fs::remove_dir_all(lineage_fixture_directory().join("receiving-logged"))
+        .expect("remove the logged package fixture");
 }

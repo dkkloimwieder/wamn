@@ -41,15 +41,17 @@ Beads `wamn-0h0g.10.15` owns the unresolved effect-writer consumer and permissio
 ## Record history
 
 Record-history tests bind `app.user_id` to a test principal before each write.
+Log tests also bind `app.operation`.
 They compare stamp times by order and by equality inside one transaction, not by exact value.
 Stamp writes run as the production `wamn_app` guest role where the role is the subject.
 The [stamp rules](../architecture/data-access.md#record-history) define the expected results.
 
 - The [deploy SQL test](../../crates/control/provision/tests/deploy_sql_authority.rs) writes through the stamp function as the guest role, including the `actor-required` refusal.
-- The [apply-package test](../../services/ctl/tests/apply_package_live.rs) installs and removes triggers from declarations, and it makes sure that operation grants stamp `wamn:apply-package`.
-- The [introspection test](../../crates/schema/introspection/tests/postgres_live.rs) admits only the stamp trigger shape and makes sure that the schema description bytes do not change.
+- The [apply-package test](../../services/ctl/tests/apply_package_live.rs) installs and removes triggers from declarations, and it makes sure that operation grants stamp `wamn:apply-package`. It also creates history tables, moves log triggers with their retention arguments, keeps a history table when its retention becomes `"none"`, and reads the CDC exclusion rows.
+- The [introspection test](../../crates/schema/introspection/tests/postgres_live.rs) admits only the stamp trigger, log trigger, and history table shapes, and it makes sure that the schema description bytes do not change.
+- The [package data-access test](../../services/ctl/tests/package_data_access_live.rs) writes a logged relation with no stamp columns through the production App role, and it makes sure that the reconciler keeps the history insert grant.
 - The [app_system schema test](../../crates/identity/project-state/tests/schema.rs) tests the platform rows, their pinned ids, and the provisioning stamps.
-- The [generation tests](../../crates/schema/generator/tests/generation.rs) refuse each invalid declaration and keep the revision on a true no-op.
+- The [generation tests](../../crates/schema/generator/tests/generation.rs) refuse each invalid declaration, retention, and history name, and keep the revision on a true no-op. They also make sure that a logged relation keeps the schema state id.
 - The [claims conformance test](../../tests/conformance/tests/session_claims.rs) refuses every reader of `app.user_id` and `app.operation` except the named trigger functions.
 - The [claims tests](../../crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs) test the principal and operation bindings and the refusal before PostgreSQL. A pooled connection keeps no earlier operation.
 - The [identity live test](../../crates/identity/platform/tests/identity_live.rs) reads the system database stamp columns and triggers from the server. It also tests the seeded `wamn:provisioning` row, the platform CHECK, and the `actor-required` refusal.

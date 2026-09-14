@@ -6305,6 +6305,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-pg-core",
  "wamn-schema-generator",
+ "wamn-schema-introspection",
 ]
 
 [[package]]

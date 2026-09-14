@@ -169,6 +169,20 @@ fn set_audit_log_columns(root: &Path, model_id: &str, columns: &[&str]) {
     .expect("write audit_log manifest");
 }
 
+fn set_audit_log_retention(root: &Path, model_id: &str, retention: &str) {
+    let manifest_path = root.join("wamn.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manifest_path).expect("read retention manifest"))
+            .expect("parse retention manifest");
+    manifest["models"][model_id]["audit_log"]["retention"] =
+        serde_json::Value::String(retention.to_owned());
+    std::fs::write(
+        manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("serialize retention manifest"),
+    )
+    .expect("write retention manifest");
+}
+
 /// Every user trigger in the receiving schema, as the server renders it, with
 /// the identity of its catalog row.
 async fn receiving_triggers(client: &Client) -> Vec<(String, String)> {
@@ -1517,6 +1531,7 @@ async fn record_history_triggers_follow_the_declaration() {
     ));
     copy_receiving_package(&package);
     set_audit_log_columns(&package, "purchase_order", &["updated_at", "created_at"]);
+    set_audit_log_columns(&package, "receipt", &[]);
 
     apply(&url, &package)
         .await
@@ -1628,4 +1643,249 @@ async fn record_history_triggers_follow_the_declaration() {
         .await
         .expect("clean record-history schemas");
     std::fs::remove_dir_all(package).expect("remove record-history package fixture");
+}
+
+/// The log triggers in the receiving schema, as the server renders them.
+async fn receiving_log_triggers(client: &Client) -> Vec<String> {
+    receiving_triggers(client)
+        .await
+        .into_iter()
+        .map(|(definition, _)| definition)
+        .filter(|definition| definition.contains("record_history_log"))
+        .collect()
+}
+
+/// Each history table in the receiving schema with its owner and entry count.
+async fn receiving_history_tables(client: &Client) -> Vec<(String, String, i64)> {
+    let tables = client
+        .query(
+            "SELECT c.relname::text, pg_catalog.pg_get_userbyid(c.relowner)::text \
+               FROM pg_catalog.pg_class AS c \
+               JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+              WHERE n.nspname = 'receiving' AND c.relkind = 'r' \
+                AND c.relname LIKE '%\\_history' \
+              ORDER BY c.relname",
+            &[],
+        )
+        .await
+        .expect("read receiving history tables");
+    let mut observed = Vec::new();
+    for table in tables {
+        let name = table.get::<_, String>(0);
+        let entries = client
+            .query_one(&format!("SELECT count(*) FROM receiving.{name}"), &[])
+            .await
+            .expect("count history entries")
+            .get::<_, i64>(0);
+        observed.push((name, table.get(1), entries));
+    }
+    observed
+}
+
+/// Every CDC exclusion row in the receiving schema, with whether its OID names its table.
+async fn receiving_cdc_exclusions(client: &Client) -> Vec<(String, String, String, bool)> {
+    client
+        .query(
+            "SELECT table_name, package_id, relation_id, \
+                    relation_oid = pg_catalog.to_regclass('receiving.' || table_name)::oid \
+               FROM receiving.wamn_cdc_exclusions ORDER BY table_name",
+            &[],
+        )
+        .await
+        .expect("read receiving CDC exclusions")
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+        .collect()
+}
+
+/// Level-2 spec tests 13 and 14: the declaration derives the history table,
+/// the log trigger with its retention, and the CDC exclusion.
+#[tokio::test]
+async fn record_history_log_follows_the_declaration() {
+    let Some(url) = support::LockedUrl::optional() else {
+        eprintln!("skipping apply-package record-history log test; WAMN_CTL_PG_URL is unset");
+        return;
+    };
+    let client = connect(&url).await;
+    install(&client).await;
+    let package = fixture_root().with_file_name(format!(
+        "apply-package-record-history-log-{}",
+        std::process::id()
+    ));
+    copy_receiving_package(&package);
+    set_audit_log_retention(&package, "purchase_order", "unlimited");
+    set_audit_log_retention(&package, "purchase_order_line", "P30D");
+
+    apply(&url, &package)
+        .await
+        .expect("apply declarations that keep a log");
+    assert_eq!(
+        receiving_log_triggers(&client).await,
+        [
+            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+             ON receiving.purchase_order FOR EACH ROW \
+             EXECUTE FUNCTION wamn_history.log_row_change('unlimited')",
+            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+             ON receiving.purchase_order_line FOR EACH ROW \
+             EXECUTE FUNCTION wamn_history.log_row_change('P30D')",
+        ]
+    );
+    let owner = wamn_control_provision::DB_OWNER_ROLE.to_owned();
+    assert_eq!(
+        receiving_history_tables(&client).await,
+        [
+            ("purchase_order_history".to_owned(), owner.clone(), 0),
+            ("purchase_order_line_history".to_owned(), owner.clone(), 0),
+        ]
+    );
+    let exclusions = [
+        (
+            "purchase_order_history".to_owned(),
+            "wamn_receiving".to_owned(),
+            "purchase_order_history".to_owned(),
+            true,
+        ),
+        (
+            "purchase_order_line_history".to_owned(),
+            "wamn_receiving".to_owned(),
+            "purchase_order_line_history".to_owned(),
+            true,
+        ),
+        (
+            "record_receipt_command".to_owned(),
+            "wamn_receiving".to_owned(),
+            "record_receipt_command".to_owned(),
+            true,
+        ),
+    ];
+    assert_eq!(receiving_cdc_exclusions(&client).await, exclusions);
+
+    // A fixture write binds a test principal and an administrative operation.
+    client
+        .batch_execute(&format!(
+            "BEGIN; \
+             SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
+                    set_config('app.operation', 'admin:seed-history-fixture', true); \
+             INSERT INTO receiving.item (id, item_number) \
+               VALUES ('00000000-0000-4000-8000-00000000a001', 'history-item'); \
+             INSERT INTO receiving.purchase_order (id, purchase_order_number, supplier_id) \
+               VALUES ('00000000-0000-4000-8000-00000000a002', 'history-po', gen_random_uuid()); \
+             INSERT INTO receiving.purchase_order_line \
+               (id, purchase_order_id, line_number, item_id, ordered_quantity) \
+               VALUES ('00000000-0000-4000-8000-00000000a003', \
+                       '00000000-0000-4000-8000-00000000a002', 1, \
+                       '00000000-0000-4000-8000-00000000a001', 5); \
+             COMMIT;"
+        ))
+        .await
+        .expect("write logged rows as the fixture principal");
+    assert_eq!(
+        receiving_history_tables(&client).await,
+        [
+            ("purchase_order_history".to_owned(), owner.clone(), 1),
+            ("purchase_order_line_history".to_owned(), owner.clone(), 1),
+        ]
+    );
+
+    let installed = receiving_triggers(&client).await;
+    apply(&url, &package)
+        .await
+        .expect("an exact replay keeps the log triggers and the history tables");
+    assert_eq!(receiving_triggers(&client).await, installed);
+
+    // Spec test 14: a retention of none removes the trigger and keeps the table.
+    set_package_identity(&package, "1.0.1", Some("1.0.0"));
+    set_audit_log_retention(&package, "purchase_order", "P90D");
+    set_audit_log_retention(&package, "purchase_order_line", "none");
+    apply(&url, &package)
+        .await
+        .expect("an upgrade moves the log triggers with the declarations");
+    assert_eq!(
+        receiving_log_triggers(&client).await,
+        [
+            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+          ON receiving.purchase_order FOR EACH ROW \
+          EXECUTE FUNCTION wamn_history.log_row_change('P90D')"
+        ]
+    );
+    client
+        .batch_execute(&format!(
+            "BEGIN; \
+             SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
+                    set_config('app.operation', 'admin:seed-history-fixture', true); \
+             UPDATE receiving.purchase_order_line SET received_quantity = 1 \
+              WHERE id = '00000000-0000-4000-8000-00000000a003'; \
+             COMMIT;"
+        ))
+        .await
+        .expect("write a relation that no longer keeps a log");
+    assert_eq!(
+        receiving_history_tables(&client).await,
+        [
+            ("purchase_order_history".to_owned(), owner.clone(), 1),
+            ("purchase_order_line_history".to_owned(), owner.clone(), 1),
+        ],
+        "the history table and its entries stay, and the relation writes no new entry"
+    );
+    assert_eq!(receiving_cdc_exclusions(&client).await, exclusions);
+
+    // apply-package compares the installed retention with the declaration.
+    client
+        .batch_execute(
+            "CREATE OR REPLACE TRIGGER record_history_log \
+               AFTER INSERT OR UPDATE OR DELETE ON receiving.purchase_order \
+               FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P1D')",
+        )
+        .await
+        .expect("change the installed retention outside apply-package");
+    apply(&url, &package)
+        .await
+        .expect("a replay repairs the installed retention");
+    assert_eq!(
+        receiving_log_triggers(&client).await,
+        [
+            "CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+          ON receiving.purchase_order FOR EACH ROW \
+          EXECUTE FUNCTION wamn_history.log_row_change('P90D')"
+        ]
+    );
+
+    // A migration cannot create a table with the reserved history suffix.
+    set_package_identity(&package, "1.0.2", Some("1.0.1"));
+    std::fs::write(
+        package.join("migrations/0002_history.sql"),
+        "CREATE TABLE receiving.receipt_history (\
+           id uuid CONSTRAINT receipt_history_id_pkey PRIMARY KEY);",
+    )
+    .expect("write a migration that creates a history name");
+    let refused = apply(&url, &package)
+        .await
+        .expect_err("a migration that creates a history name refuses");
+    assert!(
+        format!("{refused:#}").contains("history-table-name-reserved"),
+        "unexpected history name refusal: {refused:#}"
+    );
+    assert!(
+        client
+            .query_one(
+                "SELECT pg_catalog.to_regclass('receiving.receipt_history') IS NULL",
+                &[],
+            )
+            .await
+            .expect("read the refused history name")
+            .get::<_, bool>(0),
+        "the refused migration left no history name"
+    );
+
+    client
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
+        )
+        .await
+        .expect("clean record-history log schemas");
+    std::fs::remove_dir_all(package).expect("remove record-history log package fixture");
 }

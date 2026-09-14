@@ -51,6 +51,12 @@ A model column with one of these names carries record history, and the model sel
 A column with another meaning takes another name.
 [Data access](data-access.md#record-history) owns the declaration and the stamp rules.
 
+The platform reserves the relation name suffix `_history`.
+The history table of a logged relation is `<relation>_history`.
+Generation refuses a model table, an internal relation, or a custom operation write target whose name ends with `_history`.
+apply-package refuses a migration that creates such a table.
+[Data access](data-access.md#history-tables-and-the-log-trigger) owns the history table rules.
+
 The platform reserves the package id `wamn`, because its operation tokens start with `wamn:`.
 The catalog and the generator refuse it.
 

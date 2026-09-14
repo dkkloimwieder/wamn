@@ -15,17 +15,8 @@ No platform record shows what a row looked like before a change.
 
 ## 2. Retention
 
-[Data access](../architecture/data-access.md#declaration) owns the `audit_log` declaration and its level-1 refusals.
-Level 2 uses the `retention` value of that declaration.
+[Data access](../architecture/data-access.md#declaration) owns the `retention` value of the `audit_log` declaration and its refusals.
 
-- `retention` is always one of three values: `"P<n>D"`, `"unlimited"`, or `"none"`.
-- `"P<n>D"` keeps entries for n whole days. The value n is a positive integer with no leading zero.
-- Generation refuses `P0D`, weeks, months, years, time parts, fractions, and signs.
-- `"unlimited"` keeps every entry, and `"none"` means no log.
-- `columns` and `retention` are independent. A relation with `"columns": []` can keep a log, and a relation with stamp columns can have no log.
-
-Until level 2 exists, generation refuses every retention value other than `"none"`.
-Level 2 removes that refusal and the refusal of a log with `"columns": []`.
 No model scaffold exists today.
 A future scaffold writes all four columns and `"retention": "none"` for a new model.
 
@@ -33,33 +24,6 @@ A declared retention is a minimum keep window.
 The retention task removes an expired entry on its next daily run.
 The declaration promises nothing about removal time, backups, holds, or erasure.
 Beads `wamn-0h0g.13` owns those promises.
-
-Timestamps only, with a 90-day log:
-
-```json
-"audit_log": {
-  "columns": ["created_at", "updated_at"],
-  "retention": "P90D"
-}
-```
-
-Every column, with the log kept indefinitely:
-
-```json
-"audit_log": {
-  "columns": ["created_at", "created_by", "updated_at", "updated_by"],
-  "retention": "unlimited"
-}
-```
-
-A 30-day log with no stamp columns:
-
-```json
-"audit_log": {
-  "columns": [],
-  "retention": "P30D"
-}
-```
 
 The retention task writes as the platform component `audit-retention`, named `wamn:audit-retention` under the [naming rules](../architecture/naming.md#reserved-names).
 Level 2 adds that component to the closed component list.
@@ -142,27 +106,12 @@ The platform binding owns the closed component list, so a new component needs no
 
 ### 4.4 History tables and trigger installation
 
-Each logged relation has one history table, named `<relation>_history`, in the schema of the relation.
-[Naming](../architecture/naming.md#reserved-names) reserves the `_history` suffix, and generation refuses an authored relation whose name ends with it.
-Generation refuses a relation whose longest derived history object name has 64 bytes or more, and the refusal names that relation.
-`wamn_history.create_history_table` in `deploy/sql/record-history.sql` is the one definition of the table shape.
-apply-package, `app-schema.sql`, `system-schema.sql`, and the generation and test setups call it.
-Its tenant flag adds `tenant_id` for a relation under a tenant floor, and a package relation in its own database gets no tenant column.
-
-apply-package creates the history table of each owned relation whose retention is not `"none"`, and it never drops a history table automatically.
-Introspection leaves history tables out of the schema description bytes and admits only their platform shape.
-When a package logs, the generator adds one fixed platform description of the history table for authored SQL, grant derivation, and the history projection.
-The generation database creates the history tables before the EXPLAIN and SQLx prepare steps.
-Generation derives the CDC exclusion of each history table through the existing exclusion path, and the exclusion row keeps the package that owns the relation.
+[Data access](../architecture/data-access.md#history-tables-and-the-log-trigger) describes the history tables of package relations, the log trigger installation, and the generator description.
+`app-schema.sql` also calls `wamn_history.create_history_table`, with the tenant flag, as section 4.7 describes.
+`system-schema.sql` calls it without the tenant flag, as section 3 describes.
+The history read of section 4.6 uses the generator description of the history table.
 An overlay change to a base relation writes to the history table of that relation without declaring anything.
-
 No generated `update` or `delete` exists over a history table, so no application operation can alter an entry.
-
-apply-package installs a `record_history_log` trigger on each owned relation whose retention is not `"none"`.
-The one trigger argument carries the retention value, and the function derives the history table name from the relation.
-A retention of `"none"` removes that trigger, and the history table and its entries stay.
-Introspection admits exactly the `record_history_log` shape and compares its argument with the declaration.
-The log function ignores the argument.
 
 ### 4.5 Retention task
 
