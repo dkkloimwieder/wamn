@@ -52,6 +52,7 @@ use std::sync::OnceLock;
 use url::Url;
 
 use wamn_control_provision::CredentialGeneration;
+use wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql;
 use wamn_control_provision::sql;
 use wamn_control_provision::workload_role::{
     PLATFORM_GROUP_ROLE, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
@@ -106,10 +107,11 @@ const SCENARIO_AUTHOR_PROBE: &str = "wamn_matrix_author_probe";
 
 /// Every relation any matrix family holds, or could plausibly be widened onto.
 ///
-/// The denial matrix is a claim about THESE objects: the run plane plus the
-/// catalog relations the platform families read. A family reaching one it does
-/// not own is what the pairwise arms below name.
-const MATRIX_RELATIONS: [&str; 24] = [
+/// The denial matrix is a claim about THESE objects: the run plane, the
+/// catalog relations the platform families read, and a package-shaped logged
+/// relation pair with its history tables. A family reaching one it does not own
+/// is what the pairwise arms below name.
+const MATRIX_RELATIONS: [&str; 28] = [
     "app_system.permissions",
     "app_system.user_roles",
     "app_system.users",
@@ -127,6 +129,10 @@ const MATRIX_RELATIONS: [&str; 24] = [
     "catalog.wiring_activation",
     "catalog.wiring_tombstones",
     "catalog.wirings",
+    "retention_fixture.entry",
+    "retention_fixture.entry_history",
+    "retention_fixture.ledger",
+    "retention_fixture.ledger_history",
     "wamn_run.effect_attempt_dispatches",
     "wamn_run.effect_attempt_outcomes",
     "wamn_run.effect_attempts",
@@ -173,7 +179,7 @@ struct FamilyReach {
     routines: &'static [&'static str],
 }
 
-/// The ten families whose credentials reach a project-environment database.
+/// The eleven families whose credentials reach a project-environment database.
 ///
 /// `ControlAuthor`, `RegistryReader` and `IdentityReader` are absent because
 /// their scope is [`WorkloadRoleScopeKind::Control`]: their credentials reach
@@ -181,7 +187,7 @@ struct FamilyReach {
 /// different plane. `wamn_scenario_author` is absent because it is a host group,
 /// not a [`WorkloadRoleFamily`] — it has no generation lifecycle to mint a
 /// principal from.
-const MATRIX: [FamilyReach; 10] = [
+const MATRIX: [FamilyReach; 11] = [
     FamilyReach {
         family: WorkloadRoleFamily::App,
         relations: &[
@@ -305,6 +311,16 @@ const MATRIX: [FamilyReach; 10] = [
         relations: &[
             "catalog.event_registrations|SELECT|table",
             "catalog.packages|SELECT|table",
+        ],
+        routines: &[],
+    },
+    // Only the history table of the P30D relation. The unlimited relation's
+    // history table and both logged relations stay out of reach.
+    FamilyReach {
+        family: WorkloadRoleFamily::AuditRetention,
+        relations: &[
+            "retention_fixture.entry_history|DELETE|table",
+            "retention_fixture.entry_history|SELECT|column",
         ],
         routines: &[],
     },
@@ -541,6 +557,23 @@ END LOOP;
 END $seed$;
 ";
 
+/// A package-shaped schema with two logged relations and their history tables.
+///
+/// apply-package creates this shape: the history tables come from the platform
+/// function, and each log trigger carries its retention. `entry` keeps its
+/// entries for 30 days, and `ledger` keeps them without limit.
+const RETENTION_FIXTURE: &str = "\
+CREATE SCHEMA retention_fixture;
+CREATE TABLE retention_fixture.entry (id uuid CONSTRAINT entry_id_pkey PRIMARY KEY);
+CREATE TABLE retention_fixture.ledger (id uuid CONSTRAINT ledger_id_pkey PRIMARY KEY);
+SELECT wamn_history.create_history_table('retention_fixture', 'entry', false);
+SELECT wamn_history.create_history_table('retention_fixture', 'ledger', false);
+CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON retention_fixture.entry
+  FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D');
+CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON retention_fixture.ledger
+  FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');
+";
+
 static FIXTURE: OnceLock<Fixture> = OnceLock::new();
 
 /// Build the world once per process: the real artifacts, the real convergent
@@ -558,6 +591,17 @@ fn build(admin: String) -> Fixture {
         apply(&db_url, "apply a schema artifact", artifact);
     }
     apply(&db_url, "seed two tenants", SEED);
+    apply(
+        &db_url,
+        "create the logged fixture relations",
+        RETENTION_FIXTURE,
+    );
+    // The apply-package grant path, as it runs after the log triggers.
+    apply(
+        &db_url,
+        "converge the audit retention grants",
+        &reconcile_audit_retention_grants_sql(),
+    );
 
     for reach in &MATRIX {
         mint(&db_url, reach.family);
@@ -869,6 +913,11 @@ fn the_service_reader_family_is_refused_the_other_families_operations() {
 #[test]
 fn the_event_materializer_family_is_refused_the_other_families_operations() {
     assert_family_row(WorkloadRoleFamily::EventMaterializer);
+}
+
+#[test]
+fn the_audit_retention_family_is_refused_the_other_families_operations() {
+    assert_family_row(WorkloadRoleFamily::AuditRetention);
 }
 
 /// The matrix is PAIRWISE, and this is what makes that literally true.
@@ -1194,6 +1243,53 @@ fn the_tenant_scoped_platform_member_reads_nothing_outside_its_grants() {
             Some("42501"),
             "the retention family reached {relation} while holding platform \
              membership: the shared arm must buy it nothing beyond its grants"
+        );
+    }
+}
+
+/// The audit retention family reads only the retention columns of a history
+/// table whose log keeps entries for n days (`wamn-emtx.13`).
+///
+/// The minted login counts the P30D history table and reads its three columns.
+/// The server refuses an image column, the unlimited history table, and the
+/// logged relation itself. The family holds no `wamn_platform` edge.
+#[test]
+fn the_audit_retention_family_reads_only_the_retention_columns_of_its_history_tables() {
+    let Some(fixture) =
+        armed("the_audit_retention_family_reads_only_the_retention_columns_of_its_history_tables")
+    else {
+        return;
+    };
+    let family = WorkloadRoleFamily::AuditRetention;
+    let login = generation(family);
+    assert_eq!(
+        query(
+            &fixture.db_url,
+            &format!("SELECT pg_has_role('{login}', '{PLATFORM_GROUP_ROLE}', 'MEMBER')::text"),
+        ),
+        "false",
+        "the audit retention generation reaches {PLATFORM_GROUP_ROLE}"
+    );
+    let as_retention = login_url(&fixture.admin, &login);
+    assert_eq!(
+        query(
+            &as_retention,
+            "SELECT count(*) FROM retention_fixture.entry_history \
+              WHERE row_key IS NOT NULL AND position > 0 AND changed_at IS NOT NULL",
+        ),
+        "0",
+        "the audit retention family cannot read the retention columns of the P30D history table"
+    );
+    for statement in [
+        "SELECT before FROM retention_fixture.entry_history;\n",
+        "SELECT count(*) FROM retention_fixture.ledger_history;\n",
+        "DELETE FROM retention_fixture.ledger_history;\n",
+        "SELECT count(*) FROM retention_fixture.entry;\n",
+    ] {
+        assert_eq!(
+            sqlstate(&as_retention, statement).as_deref(),
+            Some("42501"),
+            "the audit retention family ran {statement}"
         );
     }
 }

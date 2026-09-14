@@ -50,6 +50,7 @@
 //! pure tests do NOT cover; the live half is the throwaway-PG gates over the
 //! real prepared-statement path (SR12b).
 
+pub mod audit_retention;
 #[cfg(feature = "ops")]
 pub mod backup;
 pub mod control_author;
@@ -147,10 +148,10 @@ pub use wamn_run_state::{
     effect_writer_scope_hash, parse_effect_writer_credential, validate_effect_writer_credential,
 };
 pub use workload_role::{
-    CONTROL_AUTHOR_ROLE, MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE, RETENTION_ROLE,
-    SERVICE_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeError,
-    WorkloadRoleScopeKind, WorkloadSecretBodyKind, legacy_effect_writer_generation_role,
-    workload_generation_role, workload_role_scope_hash,
+    AUDIT_RETENTION_ROLE, CONTROL_AUTHOR_ROLE, MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE,
+    RETENTION_ROLE, SERVICE_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
+    WorkloadRoleScopeError, WorkloadRoleScopeKind, WorkloadSecretBodyKind,
+    legacy_effect_writer_generation_role, workload_generation_role, workload_role_scope_hash,
 };
 
 /// Core control-database schema, applied first by a fresh bootstrap.

@@ -36,6 +36,8 @@ pub mod provision;
 pub mod provision_org;
 pub mod provision_project_env;
 #[cfg(feature = "ops")]
+pub mod prune_record_history;
+#[cfg(feature = "ops")]
 pub mod prune_run_history;
 pub mod publish_release;
 pub mod push_component;

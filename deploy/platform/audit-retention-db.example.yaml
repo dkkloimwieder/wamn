@@ -1,0 +1,42 @@
+# EXAMPLE per-project-env AUDIT RETENTION DB Secret for the record history
+# retention CronJob (deploy/platform/audit-retention.example.yaml). The CronJob
+# reads it as `WAMN_PG_URL` through a secretKeyRef. It is a separate manifest,
+# so a new apply of the CronJob does not replace a customized Secret.
+#
+# `url` is a scoped `wamn_audit_retention` credential generation: a LOGIN for
+# one (tenant, database) pair. Its stable role holds `DELETE` and
+# `SELECT (row_key, position, changed_at)` on the history tables of P<n>D
+# relations and nothing else. It is not a `wamn_platform` member.
+#
+# In a provisioned environment, provisioning mints the generation, its
+# password, its `VALID UNTIL`, and the Secret together:
+#
+#   wamn-ctl provision-project-env --org <org> --project <p> --env <e> \
+#     --tenant <tenant> --system-database-url <t1-superuser-url> \
+#     --target-admin-database-url <project-env-superuser-url> \
+#     --prepare-audit-retention-generation a \
+#     --emit-audit-retention-secret ./audit-retention-secret.json
+#
+# That command writes a Secret named
+# `wamn-audit-retention-<org>--<project>--<env>` with the same `url` key.
+# Rotation is the A/B lifecycle: prepare the other generation, apply its
+# Secret, let the CronJob use it on the next tick, and then run
+# `--retire-audit-retention-generation` for the old generation.
+#
+# The login name carries the digest of (tenant, database).
+# `prune-record-history` refuses unless that digest matches `--tenant` and the
+# `current_database()` of the server. The demo value below is the derived name
+# for tenant `poc-f1` in the `wamn` database. Substitute the prepared password.
+#
+# Apply this Secret BEFORE the CronJob.
+#
+#   kubectl -n wamn-system apply -f deploy/platform/audit-retention-db.example.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-audit-retention-poc-f1
+  namespace: wamn-system
+  labels: { app: audit-retention, project-env: poc-f1 }
+type: Opaque
+stringData:
+  url: "postgres://wamn_audit_retention_8fc1d359d97b7d23ece8dd364e6c5e2cbd6ff876_a:REPLACE-WITH-THE-PREPARED-PASSWORD@postgres.wamn-system.svc.cluster.local:5432/wamn"

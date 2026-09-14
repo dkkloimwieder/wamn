@@ -150,6 +150,24 @@ The source owners declare additional credentials, artifact paths, and selected a
 Do not substitute shared services for missing test inputs.
 For deployed runs, use [cluster commands](cluster-tests.md).
 
+### Record history retention gate
+
+The `record-history-retention` subcommand of `wamn-gates` tests the record history retention verb.
+It needs a superuser URL to a disposable PostgreSQL 18 database, because it creates roles and replaces the catalog schemas.
+Build the ctl binaries with the `ops` feature, and then build the gate binary:
+
+```bash
+cargo build --locked --offline -p wamn-ctl --features ops --bins
+cargo build --locked --offline -p wamn-gates
+"${CARGO_TARGET_DIR:-target}/debug/wamn-gates" record-history-retention \
+  --admin-database-url "$WAMN_PG_ADMIN_URL"
+```
+
+The gate finds `wamn-ctl` and `wamn-ctl-ops` beside its own binary, or at `WAMN_CTL_BIN` and `WAMN_CTL_OPS_BIN`.
+It applies a fixture package through `wamn-ctl apply-package` and mints the audit retention and run retention generations.
+It prints `overall PASS: true` only when every arm passes, and a failed arm returns a nonzero status.
+It drops its schemas and its generation roles when it ends.
+
 ### Local saved-edit acceptance
 
 Use a clean linked worktree reserved for this test.

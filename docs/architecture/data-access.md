@@ -219,6 +219,37 @@ The log function is `SECURITY INVOKER`, so the writer needs that grant.
 The reconciler reads the history table like any other package relation and keeps that grant.
 The generation database creates the history tables before `EXPLAIN` and SQLx prepare, as [running tests](../operations/running-tests.md#application-generation-and-sqlx) describes.
 
+### Retention task
+
+A declared `"P<n>D"` retention is a minimum keep window.
+It promises nothing about removal time, backups, holds, or erasure, and Beads `wamn-0h0g.13` owns those promises.
+The retention task removes an expired entry on its next daily run, so its schedule sets the retention precision.
+[`audit-retention.example.yaml`](../../deploy/platform/audit-retention.example.yaml) is an example daily CronJob.
+
+The [`prune-record-history`](../../services/ctl/src/prune_record_history.rs) verb of `wamn-ctl-ops` runs the task.
+It connects as a scoped generation of the tenant-scoped audit retention family, whose stable role is `wamn_audit_retention`.
+It refuses any login that is not an audit retention generation for `--tenant` in the connected database.
+The family is not a `wamn_platform` member, because no reader needs the edge.
+`postgres-init.sql` and `record-history.sql` create the stable role under the role bootstrap lock.
+An applier of `record-history.sql` without CREATEROLE creates no role.
+
+The verb reads the retention of each relation from the `record_history_log` trigger argument in `pg_trigger`.
+It skips an `unlimited` relation.
+Each relation runs in its own transaction, which binds `wamn:audit-retention` as the actor and the operation.
+The transaction takes the audit retention advisory lock before it reads `pg_trigger`.
+apply-package takes the same lock before it reconciles the log triggers, so a retention change waits for a running delete.
+The cutoff is `transaction_timestamp()` less n days, in UTC.
+The verb deletes an entry older than the cutoff only when no earlier entry of the same row is at or after the cutoff.
+It therefore removes a prefix of the history of a row, never an interior entry, and it writes no marker.
+
+apply-package owns the grants of the role.
+It grants them in the transaction that reconciles the log triggers.
+The role holds schema `USAGE`, `DELETE`, and `SELECT (row_key, position, changed_at)` on each history table whose log trigger carries `"P<n>D"`.
+It revokes every other privilege of the role, so a change to `"unlimited"` or `"none"` revokes the grants.
+It changes nothing in a database that has no role.
+The provisioning grant verifier reads `pg_trigger` in each database with the query that the verb runs.
+It refuses any other grant, a grant on an `unlimited` history table, and a grant in a reserved schema or `app_system`.
+
 ### Actors
 
 The actor is the `app_system.users` id of the executing principal, never the credential.
@@ -226,6 +257,7 @@ The [execution page](execution.md#native-dispatch) lists the principal that the 
 A writer outside the host binds `app.user_id` with `set_config` in its own transaction.
 Provisioning binds `wamn:provisioning`.
 apply-package binds `wamn:apply-package` for package writes and operation grants.
+The retention task binds `wamn:audit-retention`.
 The binding of a platform component also sets `app.operation` to the same `wamn:<component>` name.
 Administrative SQL must bind the operator's person row, and test fixtures must bind a provisioned test principal.
 

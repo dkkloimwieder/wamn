@@ -7,11 +7,16 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context as _, bail, ensure};
 use clap::Args;
 use tokio_postgres::{NoTls, Transaction, error::SqlState};
+use wamn_control_provision::audit_retention::{
+    AUDIT_RETENTION_LOCK_SQL, reconcile_audit_retention_grants_sql,
+};
 use wamn_control_provision::operation_grants::{
     OPERATION_GRANT_LOCK_SQL, OPERATION_GRANT_TRANSACTION_PRELUDE_SQL,
     OperationGrantReconcileResult, operation_grant_floor_check_sql, reconcile_operation_grants_sql,
 };
-use wamn_control_provision::{DB_OWNER_ROLE, PlatformComponent, bind_platform_principal_sql};
+use wamn_control_provision::{
+    AUDIT_RETENTION_ROLE, DB_OWNER_ROLE, PlatformComponent, bind_platform_principal_sql,
+};
 use wamn_event_reg::{
     DELETE_STALE_CATALOG_REGISTRATIONS_SQL, EventRegistration, RegistrationInput,
     UPSERT_CATALOG_REGISTRATION_SQL, project_catalog_registrations,
@@ -727,10 +732,17 @@ async fn create_history_tables(
 /// log trigger carries the retention as its one argument. The installed
 /// triggers are then read back through introspection and compared with the
 /// declarations.
+///
+/// The step takes the audit retention lock first, so a retention run never
+/// sees a retention change between its read and its delete. It ends with the
+/// audit retention grants, which follow the installed log triggers.
 async fn reconcile_record_history_triggers(
     tx: &Transaction<'_>,
     manifest: &PackageManifest,
 ) -> anyhow::Result<bool> {
+    tx.query_one(AUDIT_RETENTION_LOCK_SQL, &[])
+        .await
+        .context("lock the audit retention source")?;
     let owned = manifest
         .models
         .iter()
@@ -843,7 +855,43 @@ async fn reconcile_record_history_triggers(
             relation.1
         );
     }
-    Ok(!statements.is_empty())
+    let grants_changed = reconcile_audit_retention_grants(tx).await?;
+    Ok(!statements.is_empty() || grants_changed)
+}
+
+/// Grant the audit retention role exactly its privileges on the history tables
+/// whose log trigger carries `P<n>D`, and revoke every other privilege.
+///
+/// The package-owner role owns the history tables, so it issues the grants.
+/// The result reports whether the grants of the role changed.
+async fn reconcile_audit_retention_grants(tx: &Transaction<'_>) -> anyhow::Result<bool> {
+    let read_grants = || async {
+        tx.query(
+            wamn_control_provision::sql::role_database_grants_sql(),
+            &[&AUDIT_RETENTION_ROLE],
+        )
+        .await
+        .context("read the audit retention grants")
+        .map(|rows| {
+            rows.iter()
+                .map(|row| {
+                    (
+                        row.get::<_, String>("object_kind"),
+                        row.get::<_, String>("schema_name"),
+                        row.get::<_, String>("object_name"),
+                        row.get::<_, String>("privilege_type"),
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+    };
+    let before = read_grants().await?;
+    set_package_owner_role(tx).await?;
+    tx.batch_execute(&reconcile_audit_retention_grants_sql())
+        .await
+        .context("reconcile the audit retention grants")?;
+    reset_host_role(tx).await?;
+    Ok(read_grants().await? != before)
 }
 
 fn quoted_relation(relation: &(String, String)) -> anyhow::Result<String> {

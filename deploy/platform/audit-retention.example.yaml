@@ -1,0 +1,73 @@
+# EXAMPLE per-project-env RECORD HISTORY retention CronJob (wamn-emtx.13).
+# It runs the `wamn-ctl-ops prune-record-history` verb on one tenant database
+# once a day. The verb removes the expired entries of each history table whose
+# relation declares `"retention": "P<n>D"`. It skips an `unlimited` relation.
+#
+# A declared retention is a minimum keep window. An expired entry goes on the
+# next daily run, so this schedule sets the retention precision. The verb
+# removes the oldest entries of a row and never an interior entry. It writes
+# no marker.
+#
+# ROLE: the verb connects as a scoped `wamn_audit_retention` credential
+# generation. apply-package grants that role `DELETE` and
+# `SELECT (row_key, position, changed_at)` only on the history tables of P<n>D
+# relations. The verb refuses any other login and any tenant that the
+# credential was not minted for, so a CronJob with the wrong Secret fails.
+#
+# Deploy ONE CronJob per project-env. Substitute the tenant and the audit
+# retention Secret (deploy/platform/audit-retention-db.example.yaml).
+#
+#   kubectl -n wamn-system apply -f deploy/platform/audit-retention.example.yaml
+#   kubectl -n wamn-system get cronjob audit-retention-poc-f1
+#   # run one tick now:
+#   kubectl -n wamn-system create job --from=cronjob/audit-retention-poc-f1 audit-retention-manual
+#   kubectl -n wamn-system logs job/audit-retention-manual
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: audit-retention-poc-f1
+  namespace: wamn-system
+  labels: { app: audit-retention, project-env: poc-f1 }
+spec:
+  # Daily at 04:00. An expired entry goes on the next run after it expires.
+  schedule: "0 4 * * *"
+  # A slow run finishes before the next tick starts.
+  concurrencyPolicy: Forbid
+  # A tick that the controller missed still runs when it is less than 10 minutes late.
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels: { app: audit-retention, project-env: poc-f1 }
+        spec:
+          restartPolicy: Never
+          # The Job does not call the Kubernetes API.
+          automountServiceAccountToken: false
+          containers:
+            - name: prune
+              image: wamn-ctl:dev
+              imagePullPolicy: IfNotPresent
+              command: ["/usr/local/bin/wamn-ctl-ops"]
+              args:
+                [
+                  "--log-level", "error",
+                  "prune-record-history",
+                  "--tenant", "poc-f1",
+                ]
+              env:
+                # The audit retention generation connection, from a Secret
+                # reference and never inline. Apply
+                # deploy/platform/audit-retention-db.example.yaml first, or the
+                # Job Pod does not start.
+                - name: WAMN_PG_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: wamn-audit-retention-poc-f1
+                      key: url
+              resources:
+                requests: { cpu: "100m", memory: "128Mi" }
+                limits: { memory: "256Mi" }

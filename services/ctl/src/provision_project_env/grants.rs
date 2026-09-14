@@ -1,6 +1,9 @@
 //! Observed database privileges and exact workload role grant checks.
 
 use anyhow::Context as _;
+use wamn_control_provision::audit_retention::{
+    AUDIT_RETENTION_READ_COLUMNS, AUDIT_RETENTION_TARGETS_SQL,
+};
 
 use super::{
     BTreeMap, BTreeSet, GenericClient, PgConfig, SystemReader, WorkloadRoleFamily, connect_config, sql,
@@ -57,6 +60,10 @@ pub(super) fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrant
         WorkloadRoleFamily::ExecutorPlatform => Some(StableGrantSet::ExecutorPlatform),
         WorkloadRoleFamily::HttpAdmitter => Some(StableGrantSet::HttpAdmitter),
         WorkloadRoleFamily::EventMaterializer => Some(StableGrantSet::EventMaterializer),
+        // `wamn-emtx.13`: apply-package converges these grants from the
+        // retention source, and the family acquires its denial matrix row with
+        // them.
+        WorkloadRoleFamily::AuditRetention => Some(StableGrantSet::AuditRetention),
         _ => None,
     }
 }
@@ -74,6 +81,7 @@ pub(super) enum StableGrantSet {
     ExecutorPlatform,
     HttpAdmitter,
     EventMaterializer,
+    AuditRetention,
 }
 
 impl StableGrantSet {
@@ -83,6 +91,7 @@ impl StableGrantSet {
         database: &str,
         required_database: &str,
         grants: &[RoleAcl],
+        retention_targets: &[(String, String)],
     ) -> anyhow::Result<()> {
         match self {
             Self::EffectWriter => {
@@ -140,6 +149,9 @@ impl StableGrantSet {
                 required_database,
                 grants,
             ),
+            Self::AuditRetention => {
+                verify_audit_retention_grants(role, database, grants, retention_targets)
+            }
         }
     }
 }
@@ -207,7 +219,28 @@ pub(super) async fn verify_role_grants(
                 grant_set,
                 required_database,
             } => {
-                grant_set.verify(role, &database, required_database, &grants)?;
+                // The audit retention grants follow the retention source that
+                // the retention verb reads, in this same database.
+                let retention_targets = if grant_set == StableGrantSet::AuditRetention {
+                    client
+                        .query(AUDIT_RETENTION_TARGETS_SQL, &[])
+                        .await
+                        .with_context(|| {
+                            format!("read retention targets in database {database:?}")
+                        })?
+                        .into_iter()
+                        .map(|row| (row.get("schema_name"), row.get("history_name")))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                grant_set.verify(
+                    role,
+                    &database,
+                    required_database,
+                    &grants,
+                    &retention_targets,
+                )?;
             }
             expectation => {
                 for acl in &grants {
@@ -448,6 +481,72 @@ fn verify_dispatch_reader_grants(
             "stable role {role:?} ACLs in database {database:?} schema {schema:?} are not the exact dispatch-reader grant set"
         );
     }
+    Ok(())
+}
+
+/// The exact audit retention grant set, measured against `pg_trigger`
+/// (`wamn-emtx.13`).
+///
+/// The role holds schema `USAGE`, `DELETE`, and `SELECT` on the three read
+/// columns of each history table whose `record_history_log` argument is
+/// `P<n>D`, and nothing else in the database. `retention_targets` lists those
+/// history tables as `(schema, history table)`, from the same query that the
+/// retention verb runs. So a grant on an `unlimited` history table, a wider
+/// grant, and a missing grant all refuse. A reserved schema or `app_system`
+/// refuses in the grants and in the targets.
+pub(super) fn verify_audit_retention_grants(
+    role: &str,
+    database: &str,
+    grants: &[RoleAcl],
+    retention_targets: &[(String, String)],
+) -> anyhow::Result<()> {
+    let mut expected = BTreeSet::new();
+    for (schema, history) in retention_targets {
+        expected.insert((
+            "schema".to_string(),
+            schema.clone(),
+            schema.clone(),
+            "USAGE".to_string(),
+        ));
+        expected.insert((
+            "relation".to_string(),
+            schema.clone(),
+            history.clone(),
+            "DELETE".to_string(),
+        ));
+        for column in AUDIT_RETENTION_READ_COLUMNS {
+            expected.insert((
+                "column".to_string(),
+                schema.clone(),
+                format!("{history}.{column}"),
+                "SELECT".to_string(),
+            ));
+        }
+    }
+    let actual = acl_tuples(grants);
+    for (kind, schema, _, _) in actual.iter().chain(&expected) {
+        anyhow::ensure!(
+            matches!(kind.as_str(), "schema" | "relation" | "column"),
+            "stable role {role:?} carries non-retention {kind} ACL in database {database:?}"
+        );
+        anyhow::ensure!(
+            !schema.starts_with("pg_")
+                && !matches!(
+                    schema.as_str(),
+                    "public"
+                        | "information_schema"
+                        | "wamn_system"
+                        | "catalog"
+                        | "app"
+                        | "app_system"
+                ),
+            "stable role {role:?} carries audit-retention ACLs in reserved schema {schema:?} in database {database:?}"
+        );
+    }
+    anyhow::ensure!(
+        actual == expected,
+        "stable role {role:?} ACLs in database {database:?} are not the exact audit-retention grant set"
+    );
     Ok(())
 }
 

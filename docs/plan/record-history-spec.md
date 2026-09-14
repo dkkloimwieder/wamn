@@ -25,9 +25,6 @@ The retention task removes an expired entry on its next daily run.
 The declaration promises nothing about removal time, backups, holds, or erasure.
 Beads `wamn-0h0g.13` owns those promises.
 
-The retention task writes as the platform component `audit-retention`, named `wamn:audit-retention` under the [naming rules](../architecture/naming.md#reserved-names).
-Level 2 adds that component to the closed component list.
-
 ## 3. System database
 
 The system database stamps its identity authority relations, as [data access](../architecture/data-access.md#system-database) describes.
@@ -114,21 +111,7 @@ No generated `update` or `delete` exists over a history table, so no application
 
 ### 4.5 Retention task
 
-The retention task is the only writer that removes entries.
-
-- A 14th tenant-scoped workload role family runs the task. It has a stable role, an exact grant verifier, and a denial matrix row. The family is not a `wamn_platform` member.
-- The role holds schema `USAGE`, `DELETE`, and `SELECT (row_key, position, changed_at)`. It holds them only on history tables whose `record_history_log` argument is `P<n>D`. The task does not widen `wamn_run_retention`.
-- apply-package grants and revokes these privileges in the same transaction that installs, changes, or removes the log trigger. The deploy SQL applier creates the stable role under the bootstrap lock, like `wamn_run_retention`.
-- The grant verifier reads `pg_trigger`, the same source that the verb reads, so the grants and the verb cannot disagree.
-- The verb and the apply-package trigger reconciliation take one shared per-database advisory lock. A retention change therefore cannot land between the read of the verb and its delete.
-- A wamn-ctl-ops verb runs the task, and the verb refuses any other login.
-- The verb binds `wamn:audit-retention` as the actor and as the operation.
-- The verb reads the retention of each relation from the `record_history_log` trigger argument in `pg_trigger`.
-- The verb removes entries older than n whole days by entry time.
-- Retention removes a prefix of a row's history, never an interior entry. The per-row sequence decides the oldest removable prefix.
-
-An example CronJob and Secret go beside [`run-retention.example.yaml`](../../deploy/platform/run-retention.example.yaml) and [`run-retention-db.example.yaml`](../../deploy/platform/run-retention-db.example.yaml).
-The schedule sets the retention precision: an expired entry goes on the next daily run.
+[Data access](../architecture/data-access.md#retention-task) describes the retention task, its credential, its grants, and its lock.
 
 Truncation has no stored marker.
 If the oldest retained entry of a row is its insert, the history of that row is complete.

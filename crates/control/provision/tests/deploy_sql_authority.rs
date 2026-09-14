@@ -263,6 +263,9 @@ fn reset(admin_url: &str) {
         "wamn_run_retention",
         // `record-history.sql` creates this one because it grants to it.
         "wamn_db_owner",
+        // `postgres-init.sql` and `record-history.sql` create the stable audit
+        // retention role (`wamn-emtx.13`).
+        "wamn_audit_retention",
         "wamn_platform",
         // Probe roles this file's live arms mint. A leftover one fails the next
         // run's `CREATE ROLE` rather than masking anything, but the gate is
@@ -917,6 +920,87 @@ fn the_two_scenario_author_emitters_agree_at_zero_memberships() {
         [converge_only.as_str(), install_over_converge.as_str()],
         ["<none>", "<none>"],
         "the emitters must agree at ZERO GRANTS in either application order"
+    );
+}
+
+/// The appliers of the stable audit retention role (`wamn-emtx.13`).
+///
+/// `postgres-init.sql` and `record-history.sql` each create the role as a
+/// NOLOGIN grant carrier with no `wamn_platform` edge. An applier without
+/// CREATEROLE applies `record-history.sql` without error and creates no role,
+/// as the system database applies it as `wamn_system`.
+#[test]
+fn the_audit_retention_role_comes_from_its_deploy_sql_appliers_on_postgres() {
+    const ROLE: &str = "wamn_audit_retention";
+    const APPLIER: &str = "wamn_floor_system_applier";
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_audit_retention_role_comes_from_its_deploy_sql_appliers_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let shape = |url: &str| {
+        psql(
+            url,
+            None,
+            &format!(
+                "SELECT coalesce((SELECT concat_ws(' ', rolcanlogin, rolsuper, rolinherit, \
+                          rolcreaterole, rolcreatedb, rolreplication, rolbypassrls, \
+                          rolpassword IS NOT NULL, \
+                          EXISTS (SELECT FROM pg_catalog.pg_auth_members \
+                                   WHERE member = pg_authid.oid)) \
+                   FROM pg_catalog.pg_authid WHERE rolname = '{ROLE}'), '<absent>')"
+            ),
+        )
+    };
+    let stable = "f f f f f f f f f";
+
+    reset(&admin);
+    apply(&admin, POSTGRES_INIT);
+    assert_eq!(
+        shape(&admin),
+        stable,
+        "postgres-init.sql does not create the stable audit retention role \
+         (order: login, super, inherit, createrole, createdb, replication, \
+         bypassrls, password set, any membership)"
+    );
+
+    let base = admin.rsplit_once('/').expect("url names a database").0;
+    let db_url = format!("{base}/wamn");
+    apply(&admin, &format!("DROP ROLE {ROLE};\n"));
+    apply(&db_url, RECORD_HISTORY);
+    assert_eq!(
+        shape(&db_url),
+        stable,
+        "record-history.sql does not create the stable audit retention role"
+    );
+
+    apply(
+        &db_url,
+        &format!(
+            "DROP SCHEMA wamn_history CASCADE;\n\
+             DROP ROLE {ROLE};\n\
+             CREATE ROLE {APPLIER} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;\n\
+             GRANT CREATE ON DATABASE wamn TO {APPLIER};\n"
+        ),
+    );
+    apply(
+        &db_url,
+        &format!("SET ROLE {APPLIER};\n{RECORD_HISTORY}\nRESET ROLE;\n"),
+    );
+    assert_eq!(
+        shape(&db_url),
+        "<absent>",
+        "an applier without CREATEROLE created the audit retention role"
+    );
+    apply(
+        &db_url,
+        &format!(
+            "DROP SCHEMA wamn_history CASCADE;\n\
+             DROP OWNED BY {APPLIER};\n\
+             DROP ROLE {APPLIER};\n"
+        ),
     );
 }
 

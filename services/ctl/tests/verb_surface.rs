@@ -22,6 +22,7 @@ const OPS_VERBS: &[&str] = &[
     "restore-project-env",
     "copy-project-env",
     "prune-run-history",
+    "prune-record-history",
     "event-advisories",
 ];
 

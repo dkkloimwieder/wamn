@@ -64,7 +64,7 @@ The platform reserves the principal namespace `wamn:`.
 A platform component writes under the `app_system.users` row named `wamn:<component>`.
 The component is kebab-case and carries no action and no version.
 The row names the component, never the invocation.
-The closed component list is `provisioning`, `apply-package`, `materializer`, and `executor`.
+The closed component list is `provisioning`, `apply-package`, `materializer`, `executor`, and `audit-retention`.
 A tenant or application cannot create a `wamn:` name.
 
 The id of a platform row is `uuid5(WAMN_NAMESPACE, "wamn:<component>")`.

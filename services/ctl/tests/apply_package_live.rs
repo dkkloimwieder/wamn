@@ -441,27 +441,30 @@ async fn assert_concurrent_package_grants_share_one_carrier(url: &str) {
     let beta_task =
         tokio::spawn(async move { apply_for_tenant(&beta_url, &beta, RACE_TENANT).await });
 
+    // The per-database audit retention lock also serializes the two log
+    // trigger reconciliations. So one package waits on the carrier while it
+    // holds that lock, and the other package waits on that lock.
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
-            let waiting: i64 = observer
+            let waiting = observer
                 .query_one(
-                    "SELECT count(*) FROM pg_stat_activity \
+                    "SELECT count(*) FILTER (WHERE query LIKE '%wamn.operation-grants:%'), \
+                            count(*) FILTER (WHERE query LIKE '%wamn.audit-retention%') \
+                       FROM pg_stat_activity \
                       WHERE datname = current_database() \
-                        AND wait_event_type = 'Lock' AND wait_event = 'advisory' \
-                        AND query LIKE '%wamn.operation-grants:%'",
+                        AND wait_event_type = 'Lock' AND wait_event = 'advisory'",
                     &[],
                 )
                 .await
-                .expect("observe package grant lock waiters")
-                .get(0);
-            if waiting == 2 {
+                .expect("observe package grant lock waiters");
+            if (waiting.get::<_, i64>(0), waiting.get::<_, i64>(1)) == (1, 1) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
-    .expect("both package families must wait on the shared carrier lock");
+    .expect("one package family must wait on the shared carrier lock and one on the audit retention lock");
 
     blocker_tx
         .commit()
@@ -1698,8 +1701,43 @@ async fn receiving_cdc_exclusions(client: &Client) -> Vec<(String, String, Strin
         .collect()
 }
 
+/// The direct grants of the audit retention role in the current database.
+async fn audit_retention_grants(client: &Client) -> Vec<String> {
+    client
+        .query(
+            wamn_control_provision::sql::role_database_grants_sql(),
+            &[&wamn_control_provision::AUDIT_RETENTION_ROLE],
+        )
+        .await
+        .expect("read the audit retention grants")
+        .into_iter()
+        .map(|row| {
+            format!(
+                "{} {}.{} {}",
+                row.get::<_, String>("object_kind"),
+                row.get::<_, String>("schema_name"),
+                row.get::<_, String>("object_name"),
+                row.get::<_, String>("privilege_type"),
+            )
+        })
+        .collect()
+}
+
+/// The audit retention grants on the history table of one P<n>D relation.
+fn retention_grants_on(history: &str) -> Vec<String> {
+    vec![
+        format!("column receiving.{history}.changed_at SELECT"),
+        format!("column receiving.{history}.position SELECT"),
+        format!("column receiving.{history}.row_key SELECT"),
+        format!("relation receiving.{history} DELETE"),
+        "schema receiving.receiving USAGE".to_owned(),
+    ]
+}
+
 /// Level-2 spec tests 13 and 14: the declaration derives the history table,
-/// the log trigger with its retention, and the CDC exclusion.
+/// the log trigger with its retention, and the CDC exclusion. apply-package
+/// grants the audit retention role its privileges only on the history table of
+/// a P<n>D relation, and revokes them when the retention changes.
 #[tokio::test]
 async fn record_history_log_follows_the_declaration() {
     let Some(url) = support::LockedUrl::optional() else {
@@ -1759,6 +1797,11 @@ async fn record_history_log_follows_the_declaration() {
         ),
     ];
     assert_eq!(receiving_cdc_exclusions(&client).await, exclusions);
+    // Spec test 20: the unlimited history table carries no retention grant.
+    assert_eq!(
+        audit_retention_grants(&client).await,
+        retention_grants_on("purchase_order_line_history")
+    );
 
     // A fixture write binds a test principal and an administrative operation.
     client
@@ -1828,6 +1871,11 @@ async fn record_history_log_follows_the_declaration() {
         "the history table and its entries stay, and the relation writes no new entry"
     );
     assert_eq!(receiving_cdc_exclusions(&client).await, exclusions);
+    // unlimited to P90D grants, and P30D to none revokes.
+    assert_eq!(
+        audit_retention_grants(&client).await,
+        retention_grants_on("purchase_order_history")
+    );
 
     // apply-package compares the installed retention with the declaration.
     client
@@ -1850,8 +1898,32 @@ async fn record_history_log_follows_the_declaration() {
         ]
     );
 
-    // A migration cannot create a table with the reserved history suffix.
+    // A grant outside the exact set does not survive a replay.
+    client
+        .batch_execute(
+            "GRANT SELECT ON receiving.purchase_order_line_history TO wamn_audit_retention; \
+             GRANT UPDATE (after) ON receiving.purchase_order_history TO wamn_audit_retention;",
+        )
+        .await
+        .expect("widen the audit retention grants outside apply-package");
+    apply(&url, &package)
+        .await
+        .expect("a replay repairs the audit retention grants");
+    assert_eq!(
+        audit_retention_grants(&client).await,
+        retention_grants_on("purchase_order_history")
+    );
+
+    // P90D to unlimited revokes.
     set_package_identity(&package, "1.0.2", Some("1.0.1"));
+    set_audit_log_retention(&package, "purchase_order", "unlimited");
+    apply(&url, &package)
+        .await
+        .expect("an upgrade to unlimited retention revokes the retention grants");
+    assert_eq!(audit_retention_grants(&client).await, Vec::<String>::new());
+
+    // A migration cannot create a table with the reserved history suffix.
+    set_package_identity(&package, "1.0.3", Some("1.0.2"));
     std::fs::write(
         package.join("migrations/0002_history.sql"),
         "CREATE TABLE receiving.receipt_history (\

@@ -165,15 +165,18 @@ pub enum PlatformComponent {
     Materializer,
     /// Executor queue delivery and management candidate cases.
     Executor,
+    /// The record history retention task, which removes expired log entries.
+    AuditRetention,
 }
 
 impl PlatformComponent {
     /// Every component. Order is presentational.
-    pub const ALL: [PlatformComponent; 4] = [
+    pub const ALL: [PlatformComponent; 5] = [
         PlatformComponent::Provisioning,
         PlatformComponent::ApplyPackage,
         PlatformComponent::Materializer,
         PlatformComponent::Executor,
+        PlatformComponent::AuditRetention,
     ];
 
     /// The kebab-case component name, for example `apply-package`.
@@ -183,6 +186,7 @@ impl PlatformComponent {
             PlatformComponent::ApplyPackage => "apply-package",
             PlatformComponent::Materializer => "materializer",
             PlatformComponent::Executor => "executor",
+            PlatformComponent::AuditRetention => "audit-retention",
         }
     }
 
@@ -193,6 +197,7 @@ impl PlatformComponent {
             PlatformComponent::ApplyPackage => "wamn:apply-package",
             PlatformComponent::Materializer => "wamn:materializer",
             PlatformComponent::Executor => "wamn:executor",
+            PlatformComponent::AuditRetention => "wamn:audit-retention",
         }
     }
 
@@ -341,6 +346,10 @@ mod tests {
             (
                 PlatformComponent::Executor,
                 "d318d033-29ea-5cb0-ab56-24340413fbcc",
+            ),
+            (
+                PlatformComponent::AuditRetention,
+                "34cbd151-990e-5800-93be-4fba8878b943",
             ),
         ];
         assert_eq!(

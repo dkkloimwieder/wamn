@@ -52,6 +52,8 @@ Pipe that SQL into `psql --single-transaction` against the tenant database after
 Production provisioning does not run this step yet, as the [record history limits](../architecture/data-access.md#limits) state.
 
 Apply the selected package migrations to a fresh target with `wamn-ctl apply-package`.
+apply-package owns the grants of the `wamn_audit_retention` role on history tables.
+It grants and revokes them in the transaction that writes the log triggers.
 Reconcile generated data privileges with `wamn-ctl reconcile-package-data-access`.
 Publish the selected component bytes with `wamn-ctl push-component`.
 Submit their wiring with `wamn-ctl author-wiring`, and bind declared connection aliases with `wamn-ctl bind-connection`.
@@ -72,6 +74,11 @@ The reconciler requires the registry-derived target and administrative database 
 Its `--dry-run` form prints the proposed changes without applying them.
 Existing reconciliation code does not establish support for post-install application schema upgrades.
 That design remains in [upgrades](../plan/upgrades.md).
+
+Schedule record history retention for each tenant database that has a relation with a `"P<n>D"` retention.
+Prepare an audit retention credential generation with `wamn-ctl provision-project-env --prepare-audit-retention-generation`.
+Apply its Secret and a CronJob like [`audit-retention.example.yaml`](../../deploy/platform/audit-retention.example.yaml).
+The CronJob runs `wamn-ctl-ops prune-record-history --tenant "$TENANT"` once a day.
 
 ## Publish and select a release
 

@@ -1,6 +1,7 @@
 use super::*;
 use super::grants::{
-    RoleAcl, StableGrantSet, stable_grant_set, verify_effect_writer_grants,
+    RoleAcl, StableGrantSet, stable_grant_set, verify_audit_retention_grants,
+    verify_effect_writer_grants,
     verify_event_materializer_grants, verify_http_admitter_grants, verify_management_admitter_grants,
     verify_session_role_reader_grants, verify_system_reader_grants,
 };
@@ -1164,6 +1165,10 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
             WorkloadRoleFamily::RegistryReader,
             WorkloadRoleFamily::IdentityReader,
             WorkloadRoleFamily::SessionRoleReader,
+            // `wamn-emtx.13`: audit retention acquired DELETE and a
+            // three-column SELECT on P<n>D history tables, with its denial
+            // matrix row.
+            WorkloadRoleFamily::AuditRetention,
         ],
         "a family acquired a grant set without acquiring authority"
     );
@@ -1172,6 +1177,8 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
     assert!(sql::stable_surface_sql(WorkloadRoleFamily::EffectWriter).is_none());
     assert!(sql::stable_surface_sql(WorkloadRoleFamily::Retention).is_none());
     assert!(sql::stable_surface_sql(WorkloadRoleFamily::DispatchReader).is_none());
+    // apply-package converges the audit retention grants, not this batch.
+    assert!(sql::stable_surface_sql(WorkloadRoleFamily::AuditRetention).is_none());
     for family in [
         WorkloadRoleFamily::ManagementAdmitter,
         // `wamn-0h0g.22.37`: this batch applies both new surfaces, so the
@@ -1454,6 +1461,74 @@ fn session_reader_requires_exact_grants() {
         )
         .is_ok()
     );
+}
+
+/// The audit retention grants follow the P<n>D history tables exactly.
+#[test]
+fn audit_retention_requires_exact_grants_on_the_retention_targets() {
+    let targets = vec![
+        ("orders".to_string(), "purchase_order_history".to_string()),
+        ("orders".to_string(), "receipt_history".to_string()),
+    ];
+    let mut exact = vec![role_acl("schema", "orders", "orders", "USAGE")];
+    for history in ["purchase_order_history", "receipt_history"] {
+        exact.push(role_acl("relation", "orders", history, "DELETE"));
+        for column in ["row_key", "position", "changed_at"] {
+            exact.push(role_acl(
+                "column",
+                "orders",
+                &format!("{history}.{column}"),
+                "SELECT",
+            ));
+        }
+    }
+    let verify = |rows: &[RoleAcl], targets: &[(String, String)]| {
+        verify_audit_retention_grants("wamn_audit_retention", "project-db", rows, targets)
+    };
+    assert!(verify(&exact, &targets).is_ok());
+    assert!(verify(&[], &[]).is_ok());
+    for index in 0..exact.len() {
+        let mut missing = exact.clone();
+        missing.remove(index);
+        assert!(verify(&missing, &targets).is_err());
+    }
+    for extra in [
+        role_acl("relation", "orders", "purchase_order_history", "SELECT"),
+        role_acl(
+            "column",
+            "orders",
+            "purchase_order_history.before",
+            "SELECT",
+        ),
+        role_acl("relation", "orders", "purchase_order_history", "INSERT"),
+        role_acl("relation", "orders", "purchase_order", "DELETE"),
+        // The history table of an unlimited relation is not a target.
+        role_acl("relation", "orders", "ledger_history", "DELETE"),
+        role_acl("schema", "app_system", "app_system", "USAGE"),
+        role_acl("routine", "wamn_history", "log_row_change", "EXECUTE"),
+    ] {
+        let mut widened = exact.clone();
+        widened.push(extra);
+        assert!(verify(&widened, &targets).is_err());
+    }
+    // A target in a reserved schema refuses, even with its exact grants.
+    let reserved = vec![("app_system".to_string(), "users_history".to_string())];
+    let mut app_system = vec![role_acl("schema", "app_system", "app_system", "USAGE")];
+    app_system.push(role_acl(
+        "relation",
+        "app_system",
+        "users_history",
+        "DELETE",
+    ));
+    for column in ["row_key", "position", "changed_at"] {
+        app_system.push(role_acl(
+            "column",
+            "app_system",
+            &format!("users_history.{column}"),
+            "SELECT",
+        ));
+    }
+    assert!(verify(&app_system, &reserved).is_err());
 }
 
 #[test]
@@ -1762,7 +1837,8 @@ fn the_management_admitter_action_is_one_more_stamp_of_the_workload_lifecycle() 
 #[test]
 fn every_workload_family_carries_a_distinct_frozen_label() {
     // `wamn-0fqa` takes the vocabulary to ten and `wamn-0h0g.13.63` to
-    // twelve. `wamn-ctc8.15.2` adds the session-role reader as the thirteenth.
+    // twelve. `wamn-ctc8.15.2` adds the session-role reader as the thirteenth,
+    // and `wamn-emtx.13` adds audit retention as the fourteenth.
     // `label` reads only the family, so the scope is deliberately uniform.
     let expected = [
         (WorkloadRoleFamily::EffectWriter, "effect-writer"),
@@ -1781,6 +1857,7 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
         (WorkloadRoleFamily::RegistryReader, "registry-reader"),
         (WorkloadRoleFamily::IdentityReader, "identity-reader"),
         (WorkloadRoleFamily::SessionRoleReader, "session-role-reader"),
+        (WorkloadRoleFamily::AuditRetention, "audit-retention"),
     ];
     assert_eq!(expected.len(), WorkloadRoleFamily::ALL.len());
     let mut seen = Vec::new();

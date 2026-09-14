@@ -58,6 +58,8 @@ pub const IDENTITY_READER_ROLE: &str = "wamn_identity_reader";
 pub const SESSION_ROLE_READER_ROLE: &str = "wamn_session_role_reader";
 /// Keep the 40-hex scope digest and A/B suffix within PostgreSQL's 63 bytes.
 const SESSION_ROLE_READER_GENERATION_PREFIX: &str = "wamn_session_roles";
+/// Stable NOLOGIN role used by record history retention generations.
+pub const AUDIT_RETENTION_ROLE: &str = "wamn_audit_retention";
 
 /// The shared NOLOGIN group role every non-guest tenant-floor arm targets
 /// (`wamn-0h0g.22.17`).
@@ -99,6 +101,8 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 /// families land here; the grants, Secrets and consumers are those two beads.
 /// `wamn-ctc8.15.2` adds a dedicated project-environment session role reader;
 /// it carries no runtime authority class and no operation-permission read.
+/// `wamn-emtx.13` adds the tenant-scoped audit retention family, which removes
+/// expired record history entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
     EffectWriter,
@@ -114,6 +118,7 @@ pub enum WorkloadRoleFamily {
     RegistryReader,
     IdentityReader,
     SessionRoleReader,
+    AuditRetention,
 }
 
 impl WorkloadRoleFamily {
@@ -123,7 +128,7 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::EffectWriter,
         Self::ControlAuthor,
         Self::ManagementAdmitter,
@@ -137,6 +142,7 @@ impl WorkloadRoleFamily {
         Self::RegistryReader,
         Self::IdentityReader,
         Self::SessionRoleReader,
+        Self::AuditRetention,
     ];
 
     /// Stable NOLOGIN ACL role inherited by this family's generations.
@@ -155,6 +161,7 @@ impl WorkloadRoleFamily {
             Self::RegistryReader => REGISTRY_READER_ROLE,
             Self::IdentityReader => IDENTITY_READER_ROLE,
             Self::SessionRoleReader => SESSION_ROLE_READER_ROLE,
+            Self::AuditRetention => AUDIT_RETENTION_ROLE,
         }
     }
 
@@ -183,7 +190,9 @@ impl WorkloadRoleFamily {
     /// Exact scope class used to derive generation identities.
     pub const fn scope_kind(self) -> WorkloadRoleScopeKind {
         match self {
-            Self::EffectWriter | Self::App | Self::Retention => WorkloadRoleScopeKind::Tenant,
+            Self::EffectWriter | Self::App | Self::Retention | Self::AuditRetention => {
+                WorkloadRoleScopeKind::Tenant
+            }
             Self::ManagementAdmitter
             | Self::DispatchReader
             | Self::ServiceReader
@@ -213,6 +222,9 @@ impl WorkloadRoleFamily {
     ///   (`deploy/sql/control-portable-store.sql`). None of them holds a grant
     ///   on any relation carrying the project-plane floor, so membership would
     ///   be authority without a reader.
+    /// * [`Self::AuditRetention`] is not a member either (`wamn-emtx` ruling
+    ///   61), and for the same reason: no reader needs the edge. Its grants
+    ///   reach only package history tables, which carry no row security.
     ///
     /// * [`Self::EffectWriter`] holds a STABLE ROLE UNDER A SHAPE GUARD that
     ///   forbids it (`wamn-0h0g.22.32`). `RunPlaneActionKind::VerifyEffectWriterRole`
@@ -237,7 +249,7 @@ impl WorkloadRoleFamily {
     /// cross-tenant on the relations it holds grants on; the tenant predicate it
     /// keeps in its own statements is what re-narrows it.
     pub const fn is_platform_grain(self) -> bool {
-        !matches!(self, Self::App | Self::EffectWriter)
+        !matches!(self, Self::App | Self::EffectWriter | Self::AuditRetention)
             && !matches!(self.scope_kind(), WorkloadRoleScopeKind::Control)
     }
 
@@ -329,6 +341,7 @@ impl WorkloadRoleFamily {
             Self::RegistryReader => b"wamn.registry-reader.scope.v0.1",
             Self::IdentityReader => b"wamn.identity-reader.scope.v0.1",
             Self::SessionRoleReader => b"wamn.session-role-reader.scope.v0.1",
+            Self::AuditRetention => b"wamn.audit-retention.scope.v0.1",
         }
     }
 }
@@ -665,8 +678,9 @@ mod tests {
     }
 
     /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten;
-    /// `wamn-0h0g.13.63`: ten to twelve; `wamn-ctc8.15.2`: thirteen).
-    const FAMILIES: [WorkloadRoleFamily; 13] = [
+    /// `wamn-0h0g.13.63`: ten to twelve; `wamn-ctc8.15.2`: thirteen;
+    /// `wamn-emtx.13`: fourteen).
+    const FAMILIES: [WorkloadRoleFamily; 14] = [
         WorkloadRoleFamily::EffectWriter,
         WorkloadRoleFamily::ControlAuthor,
         WorkloadRoleFamily::ManagementAdmitter,
@@ -680,11 +694,12 @@ mod tests {
         WorkloadRoleFamily::RegistryReader,
         WorkloadRoleFamily::IdentityReader,
         WorkloadRoleFamily::SessionRoleReader,
+        WorkloadRoleFamily::AuditRetention,
     ];
 
     #[test]
     fn family_set_and_scope_classes_are_closed() {
-        // A fourteenth variant fails to compile here as well as in the
+        // A fifteenth variant fails to compile here as well as in the
         // implementation, so the pinned vocabulary cannot silently grow.
         for (index, family) in FAMILIES.into_iter().enumerate() {
             let pinned = match family {
@@ -701,6 +716,7 @@ mod tests {
                 WorkloadRoleFamily::RegistryReader => 10,
                 WorkloadRoleFamily::IdentityReader => 11,
                 WorkloadRoleFamily::SessionRoleReader => 12,
+                WorkloadRoleFamily::AuditRetention => 13,
             };
             assert_eq!(index, pinned, "{family:?}");
         }
@@ -720,6 +736,7 @@ mod tests {
                 WorkloadRoleScopeKind::Control,
                 WorkloadRoleScopeKind::Control,
                 WorkloadRoleScopeKind::ProjectEnvironment,
+                WorkloadRoleScopeKind::Tenant,
             ],
         );
         assert_eq!(
@@ -738,6 +755,7 @@ mod tests {
                 "wamn_registry_reader",
                 "wamn_identity_reader",
                 "wamn_session_role_reader",
+                "wamn_audit_retention",
             ],
         );
     }
@@ -873,6 +891,13 @@ mod tests {
                     database: "db",
                 },
             ),
+            (
+                WorkloadRoleFamily::AuditRetention,
+                WorkloadRoleScope::Tenant {
+                    tenant: "t",
+                    database: "db",
+                },
+            ),
         ];
         assert_eq!(scopes.len(), FAMILIES.len());
         for (family, scope) in scopes {
@@ -909,6 +934,7 @@ mod tests {
             WorkloadRoleFamily::App,
             WorkloadRoleFamily::EffectWriter,
             WorkloadRoleFamily::Retention,
+            WorkloadRoleFamily::AuditRetention,
         ] {
             for generation in [CredentialGeneration::A, CredentialGeneration::B] {
                 let from_short = workload_generation_role(family, short, generation).unwrap();
@@ -1135,6 +1161,34 @@ mod tests {
             )
             .unwrap(),
         );
+    }
+
+    /// The audit retention family (`wamn-emtx.13`). The derived login was
+    /// computed independently of this module. The 20-byte role name mints a
+    /// 63-byte login, so the family keeps its role name as the prefix.
+    #[test]
+    fn the_audit_retention_family_freezes_its_strings_and_identity() {
+        let family = WorkloadRoleFamily::AuditRetention;
+        assert_eq!(family.acl_role(), "wamn_audit_retention");
+        assert_eq!(family.label(), "audit-retention");
+        assert_eq!(family.scope_domain(), b"wamn.audit-retention.scope.v0.1");
+        assert_eq!(family.scope_kind(), WorkloadRoleScopeKind::Tenant);
+        assert_eq!(family.generation_prefix(), family.acl_role());
+        assert!(!family.is_platform_grain());
+        let derived = workload_generation_role(
+            family,
+            WorkloadRoleScope::Tenant {
+                tenant: "acme-prod",
+                database: "wamn-db-acme--billing--dev--k3m9x2p7",
+            },
+            CredentialGeneration::A,
+        )
+        .unwrap();
+        assert_eq!(
+            derived,
+            "wamn_audit_retention_bd22eb963b03bd528015fd2fba92768578166321_a"
+        );
+        assert_eq!(derived.len(), 63);
     }
 
     #[test]
