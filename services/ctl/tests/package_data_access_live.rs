@@ -11,10 +11,6 @@ use wamn_control_provision::{
 };
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
-use wamn_record_history::{HISTORY_COLUMNS, history_table_name};
-use wamn_schema_generator::{
-    DataAccessOverlay, DataAccessRelationFields, derive_data_access_overlay_from_relation_fields,
-};
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
@@ -690,54 +686,17 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
     );
 }
 
-/// Stage Receiving with `purchase_order_line` logging and no stamp columns.
-///
-/// The staged evidence is the generated overlay of the staged manifest. The
-/// shipped relation fields gain the fixed history table columns, as generation
-/// adds them for a logged relation.
+/// Stage Receiving, whose `purchase_order_line` logs with no stamp columns.
 fn stage_logged_receiving() -> PathBuf {
     let (root, _) = stage_package_root(&receiving_package_root(), "receiving-logged", None);
-    let mut manifest: serde_json::Value =
+    let manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(root.join("wamn.json")).expect("read manifest"))
             .expect("parse manifest");
     assert_eq!(
         manifest["models"]["purchase_order_line"]["audit_log"],
-        serde_json::json!({"columns": [], "retention": "none"}),
-        "the fixture relation carries no stamp columns"
+        serde_json::json!({"columns": [], "retention": "P30D"}),
+        "the relation logs and carries no stamp columns"
     );
-    manifest["models"]["purchase_order_line"]["audit_log"]["retention"] = serde_json::json!("P30D");
-    let manifest_bytes = wamn_execution_contract::canonical_json_bytes(&manifest);
-    std::fs::write(root.join("wamn.json"), &manifest_bytes).expect("write logged manifest");
-
-    let shipped = DataAccessOverlay::from_slice(
-        &std::fs::read(receiving_package_root().join(OVERLAY_EVIDENCE_PATH))
-            .expect("read shipped evidence"),
-    )
-    .expect("parse shipped evidence");
-    let relation_fields = shipped
-        .relations()
-        .iter()
-        .map(|relation| {
-            DataAccessRelationFields::new(
-                relation.schema(),
-                relation.table(),
-                relation.all_fields().to_vec(),
-            )
-        })
-        .chain([DataAccessRelationFields::new(
-            "receiving",
-            history_table_name("purchase_order_line"),
-            HISTORY_COLUMNS
-                .iter()
-                .map(|(column, _)| (*column).to_owned())
-                .collect(),
-        )])
-        .collect::<Vec<_>>();
-    let overlay =
-        derive_data_access_overlay_from_relation_fields(&relation_fields, &manifest_bytes)
-            .expect("derive the logged package evidence");
-    std::fs::write(root.join(OVERLAY_EVIDENCE_PATH), overlay.canonical_bytes())
-        .expect("write logged package evidence");
     root
 }
 
