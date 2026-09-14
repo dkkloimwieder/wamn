@@ -6,10 +6,10 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
+use wamn_record_history::{HISTORY_COLUMNS, POSITION_COLUMN};
 use wamn_schema_introspection::ir::CatalogIr;
-use wamn_schema_introspection::record_history::{history_entry_columns, history_table_name};
 
-use crate::generate::{CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN};
+use crate::generate::{CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN, logged_history_tables};
 use crate::{CrudAction, GenerateError, GenerateErrorKind, PackageManifest};
 
 /// Package-relative canonical data-access evidence artifact.
@@ -585,6 +585,17 @@ pub(crate) fn derive_data_access_overlay(
                     .collect(),
             )
         })
+        // A history table stays out of the catalog, and its columns are fixed.
+        .chain(logged_history_tables(manifest).map(|(schema, history)| {
+            DataAccessRelationFields::new(
+                schema,
+                history,
+                HISTORY_COLUMNS
+                    .iter()
+                    .map(|(column, _)| (*column).to_owned())
+                    .collect(),
+            )
+        }))
         .collect::<Vec<_>>();
     derive_data_access_overlay_for_manifest(&relation_fields, manifest_bytes, manifest)
 }
@@ -683,18 +694,15 @@ fn derive_data_access_overlay_for_manifest(
     // The log trigger runs with the authority of the writer, so the App role
     // inserts every entry column of each logged relation's history table. It
     // gets no read, and no update or delete.
-    for model in manifest.models.values() {
-        if model.log_retention().is_none() {
-            continue;
-        }
-        let relation = desired_relation(
-            &mut desired,
-            &model.schema,
-            &history_table_name(&model.table),
-        )?;
-        relation
-            .insert
-            .extend(history_entry_columns().map(str::to_owned));
+    for (schema, history) in logged_history_tables(manifest) {
+        let relation = desired_relation(&mut desired, schema, &history)?;
+        relation.insert.extend(
+            HISTORY_COLUMNS
+                .iter()
+                .map(|(column, _)| *column)
+                .filter(|column| *column != POSITION_COLUMN)
+                .map(str::to_owned),
+        );
     }
     // The claim relation is the create's own mechanism state: it reads the key,
     // the canonical command and the identities it minted, and writes only the

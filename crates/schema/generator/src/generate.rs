@@ -13,10 +13,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::canonical_json_bytes;
+use wamn_record_history::history_table_name;
 use wamn_schema_introspection::ir::{
     CatalogIr, Column, ColumnDefault, ColumnType, Constraint, ConstraintKind, Exclusion, Table,
 };
-use wamn_schema_introspection::record_history::history_table;
 
 use crate::manifest::{
     AccessOperationErrorLiteral, AuthoredSqlDeclaration, CommandIdempotence,
@@ -361,15 +361,6 @@ fn valid_sha256(value: &str) -> bool {
 /// Generate a package without filesystem, database, clock, or environment I/O.
 pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, GenerateError> {
     let manifest = PackageManifest::from_slice(input.manifest_json)?;
-    // History tables stay out of the schema description. The verified schema
-    // state id hashes the input catalog, and every other step also sees the
-    // history table of each logged relation.
-    let schema_description = input.catalog;
-    let catalog = with_history_tables(input.catalog, &manifest)?;
-    let input = &GenerationInput {
-        catalog: &catalog,
-        ..*input
-    };
     validate(input, &manifest)?;
 
     let mut files = BTreeMap::<String, Vec<u8>>::new();
@@ -413,7 +404,7 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
 
     let metadata = GeneratedPackageMetadata {
         verified_schema_state_id: sha256(&canonical_json_bytes(
-            &serde_json::to_value(schema_description).expect("schema IR always serializes"),
+            &serde_json::to_value(input.catalog).expect("schema IR always serializes"),
         ))
         .into(),
         required_schema_contract: required_schema_contract(input.catalog, &manifest),
@@ -447,33 +438,18 @@ pub fn generate(input: &GenerationInput<'_>) -> Result<GeneratedPackage, Generat
     Ok(GeneratedPackage { files, metadata })
 }
 
-/// The catalog with the fixed description of each logged relation's history table.
+/// The schema and history table name of each logged model.
 ///
-/// A catalog that already carries a table with that name refuses, because the
-/// history suffix is reserved.
-fn with_history_tables(
-    catalog: &CatalogIr,
+/// A history table stays out of the catalog. Generation recognizes it by the
+/// history suffix, and its columns are [`wamn_record_history::HISTORY_COLUMNS`].
+pub(crate) fn logged_history_tables(
     manifest: &PackageManifest,
-) -> Result<CatalogIr, GenerateError> {
-    let mut tables = catalog.tables().to_vec();
-    for model in manifest.models.values() {
-        if model.log_retention().is_none() {
-            continue;
-        }
-        let history = history_table(&model.schema, &model.table);
-        if tables
-            .iter()
-            .any(|table| table.schema() == history.schema() && table.name() == history.name())
-        {
-            return Err(GenerateError::for_object(
-                GenerateErrorKind::InvalidModel,
-                "the catalog already carries the history table of a logged relation",
-                format!("{}.{}", history.schema(), history.name()),
-            ));
-        }
-        tables.push(history);
-    }
-    Ok(CatalogIr::new(tables))
+) -> impl Iterator<Item = (&str, String)> {
+    manifest
+        .models
+        .values()
+        .filter(|model| model.log_retention().is_some())
+        .map(|model| (model.schema.as_str(), history_table_name(&model.table)))
 }
 
 /// Hash sorted path/byte entries with unambiguous big-endian length framing.

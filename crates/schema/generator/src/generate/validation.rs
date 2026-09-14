@@ -3,14 +3,15 @@
 use super::{
     AccessOperationErrorLiteral, AuthoredSql, AuthoredSqlDeclaration, BTreeMap, BTreeSet,
     CLAIM_COMMAND_COLUMN, CLAIM_KEY_COLUMN, CURSOR_VERSION, CatalogIr, Column, ColumnDefault,
-    ColumnType, ConstraintKind, CrudAction, CursorDirection, CustomOperationDeclaration,
-    GenerateError, GenerateErrorKind, GenerationInput, ModelDeclaration, OperationDeclaration,
-    POSTGRES_INTERFACE, PackageManifest, QUERY_LIMIT, RecordHistoryColumn, ResultClass,
-    SortDeclaration, StaticSqlFetch, Table, column, constraint_error_code,
-    contains_schema_qualified_reference, custom_operation_constraint_origin, operation_constraints,
-    operation_exclusions, relation, rust_identifier, server_owned_fields, sql, validate_identifier,
-    validate_operation_vocabulary,
+    ColumnType, Constraint, ConstraintKind, CrudAction, CursorDirection,
+    CustomOperationDeclaration, GenerateError, GenerateErrorKind, GenerationInput,
+    ModelDeclaration, OperationDeclaration, POSTGRES_INTERFACE, PackageManifest, QUERY_LIMIT,
+    RecordHistoryColumn, ResultClass, SortDeclaration, StaticSqlFetch, Table, column,
+    constraint_error_code, contains_schema_qualified_reference, custom_operation_constraint_origin,
+    logged_history_tables, operation_constraints, operation_exclusions, relation, rust_identifier,
+    server_owned_fields, sql, validate_identifier, validate_operation_vocabulary,
 };
+use wamn_record_history::HISTORY_COLUMNS;
 
 pub(super) fn validate(
     input: &GenerationInput<'_>,
@@ -61,6 +62,7 @@ pub(super) fn validate(
     for (operation_name, operation) in &manifest.custom_operations {
         validate_custom_operation_sql(
             input.catalog,
+            manifest,
             input.authored_sql,
             operation_name,
             operation,
@@ -916,6 +918,7 @@ fn claim_statement_row<'a>(
 
 fn validate_custom_operation_sql(
     catalog: &CatalogIr,
+    manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
     operation: &str,
     declaration: &CustomOperationDeclaration,
@@ -924,27 +927,39 @@ fn validate_custom_operation_sql(
         let table = catalog
             .tables()
             .iter()
-            .find(|table| table.schema() == relation.schema && table.name() == relation.table)
-            .ok_or_else(|| {
-                GenerateError::for_object(
+            .find(|table| table.schema() == relation.schema && table.name() == relation.table);
+        // A history table has the fixed columns and no constraint that an operation maps.
+        let (columns, constraints) = match table {
+            Some(table) => (
+                table.columns().iter().map(Column::name).collect(),
+                table.constraints().iter().map(Constraint::name).collect(),
+            ),
+            None if logged_history_tables(manifest).any(|(schema, history)| {
+                schema == relation.schema && history == relation.table
+            }) =>
+            {
+                (
+                    HISTORY_COLUMNS.iter().map(|(name, _)| *name).collect(),
+                    BTreeSet::new(),
+                )
+            }
+            None => {
+                return Err(GenerateError::for_object(
                     GenerateErrorKind::UnknownRelation,
                     format!("{operation} references an unknown relation"),
                     format!("{}.{}", relation.schema, relation.table),
-                )
-            })?;
+                ));
+            }
+        };
         for fields in [
             &relation.select_fields,
             &relation.insert_fields,
             &relation.update_fields,
         ] {
-            validate_static_sql_relation_fields(operation, relation, table, fields)?;
+            validate_static_sql_relation_fields(operation, relation, &columns, fields)?;
         }
         for name in &relation.constraints {
-            if !table
-                .constraints()
-                .iter()
-                .any(|constraint| constraint.name() == name)
-            {
+            if !constraints.contains(name.as_str()) {
                 return Err(GenerateError::for_object(
                     GenerateErrorKind::InvalidOperation,
                     format!("{operation} requires named constraint {name}"),
@@ -954,18 +969,18 @@ fn validate_custom_operation_sql(
         }
     }
     validate_constraint_error_mappings(catalog, operation, declaration)?;
-    validate_static_sql_relation_access(catalog, authored_sql, operation, declaration)
+    validate_static_sql_relation_access(catalog, manifest, authored_sql, operation, declaration)
 }
 
 fn validate_static_sql_relation_fields(
     operation: &str,
     relation: &crate::manifest::StaticSqlRelationDeclaration,
-    table: &Table,
+    columns: &BTreeSet<&str>,
     fields: &[String],
 ) -> Result<(), GenerateError> {
     if let Some(field) = fields
         .iter()
-        .find(|field| !table.columns().iter().any(|column| column.name() == *field))
+        .find(|field| !columns.contains(field.as_str()))
     {
         return Err(GenerateError::for_object(
             GenerateErrorKind::UnknownColumn,
@@ -995,6 +1010,7 @@ fn validate_constraint_error_mappings(
 
 fn validate_static_sql_relation_access(
     catalog: &CatalogIr,
+    manifest: &PackageManifest,
     authored_sql: &[AuthoredSql<'_>],
     operation: &str,
     declaration: &CustomOperationDeclaration,
@@ -1018,6 +1034,19 @@ fn validate_static_sql_relation_access(
                     .collect::<BTreeSet<_>>(),
             )
         })
+        .chain(
+            logged_history_tables(manifest)
+                .filter(|(schema, _)| schemas.contains(schema))
+                .map(|(_, history)| {
+                    (
+                        history,
+                        HISTORY_COLUMNS
+                            .iter()
+                            .map(|(name, _)| (*name).to_owned())
+                            .collect(),
+                    )
+                }),
+        )
         .collect::<BTreeMap<_, _>>();
     let mut actual = BTreeMap::<String, crate::sql_lex::RelationAccess>::new();
     for statement in declaration.statements.values() {

@@ -6335,6 +6335,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-record-history",
  "wamn-schema-introspection",
 ]
 

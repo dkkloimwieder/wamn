@@ -2358,9 +2358,9 @@ fn history_names_are_reserved_and_fit_in_a_postgres_name() {
         .expect("a relation that keeps no log derives no history name");
 }
 
-/// A logged relation needs a primary key, and its history name stays free in the catalog.
+/// A logged relation needs a primary key.
 #[test]
-fn a_logged_relation_needs_a_primary_key_and_a_free_history_name() {
+fn a_logged_relation_needs_a_primary_key() {
     let logged = with_audit_log(json!(ALL_STAMP_COLUMNS), "P30D");
     let stamped = all_stamps_catalog();
     let purchase_order = table(&stamped, "purchase_order");
@@ -2380,19 +2380,6 @@ fn a_logged_relation_needs_a_primary_key_and_a_free_history_name() {
     let refusal = run(&keyless, &logged, &QUERY_SOURCES).expect_err("a keyless logged relation");
     assert_eq!(refusal.kind(), GenerateErrorKind::InvalidModel);
     assert_eq!(refusal.object(), Some("receiving.purchase_order"));
-
-    let mut tables = stamped.tables().to_vec();
-    tables.push(Table::new(
-        "receiving",
-        "purchase_order_history",
-        vec![Column::new("id", ColumnType::Uuid, false, None, None)],
-        Vec::new(),
-        Vec::new(),
-    ));
-    let refusal = run(&CatalogIr::new(tables), &logged, &QUERY_SOURCES)
-        .expect_err("a catalog table that takes the history name");
-    assert_eq!(refusal.kind(), GenerateErrorKind::InvalidModel);
-    assert_eq!(refusal.object(), Some("receiving.purchase_order_history"));
 }
 
 #[test]

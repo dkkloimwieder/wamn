@@ -20,6 +20,7 @@ wamn-schema-introspection = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-execution-contract = { workspace = true }
 wamn-event-wire = { workspace = true }
+wamn-record-history = { workspace = true }
 
 [dev-dependencies]
 proptest.workspace = true

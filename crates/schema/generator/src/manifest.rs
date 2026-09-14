@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
-use wamn_schema_introspection::record_history::{
+use wamn_record_history::{
     HISTORY_TABLE_SUFFIX, NO_LOG_RETENTION, history_object_names_fit, is_history_table_name,
     is_log_retention,
 };

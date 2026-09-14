@@ -21,6 +21,7 @@ use super::{
     insert_json_line, json, operation_constraints, operation_exclusions, query_variants, relation,
     rust_type_identifier, server_owned_fields, sha256, sql,
 };
+use wamn_record_history::HISTORY_COLUMNS;
 
 #[expect(
     clippy::too_many_arguments,
@@ -1246,13 +1247,14 @@ pub(super) fn required_schema_contract(
     catalog: &CatalogIr,
     manifest: &PackageManifest,
 ) -> RequiredSchemaContract {
+    // A history table stays out of the catalog, so its entry carries no table.
     let mut consumed =
-        BTreeMap::<(String, String), (&Table, BTreeSet<String>, BTreeSet<String>)>::new();
+        BTreeMap::<(String, String), (Option<&Table>, BTreeSet<String>, BTreeSet<String>)>::new();
     for model in manifest.models.values() {
         let table = relation(catalog, model).expect("validation resolved relation");
         let entry = consumed
             .entry((model.schema.clone(), model.table.clone()))
-            .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
+            .or_insert_with(|| (Some(table), BTreeSet::new(), BTreeSet::new()));
         entry.1.extend(
             table
                 .columns()
@@ -1285,7 +1287,7 @@ pub(super) fn required_schema_contract(
             .expect("create validation resolved the claim relation");
         let entry = consumed
             .entry((model.schema.clone(), claim.table.clone()))
-            .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
+            .or_insert_with(|| (Some(table), BTreeSet::new(), BTreeSet::new()));
         entry.1.insert(CLAIM_KEY_COLUMN.to_owned());
         entry.1.insert(CLAIM_COMMAND_COLUMN.to_owned());
         entry.1.extend(claim.identities.values().cloned());
@@ -1316,15 +1318,14 @@ pub(super) fn required_schema_contract(
             .expect("internal-relation validation resolved relation");
         consumed
             .entry((relation.schema.clone(), relation.table.clone()))
-            .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
+            .or_insert_with(|| (Some(table), BTreeSet::new(), BTreeSet::new()));
     }
     for operation in manifest.custom_operations.values() {
         for relation in &operation.relations {
             let table = catalog
                 .tables()
                 .iter()
-                .find(|table| table.schema() == relation.schema && table.name() == relation.table)
-                .expect("custom-operation validation resolved relation");
+                .find(|table| table.schema() == relation.schema && table.name() == relation.table);
             let entry = consumed
                 .entry((relation.schema.clone(), relation.table.clone()))
                 .or_insert_with(|| (table, BTreeSet::new(), BTreeSet::new()));
@@ -1340,32 +1341,52 @@ pub(super) fn required_schema_contract(
         }
     }
     let tables = consumed
-        .into_values()
-        .map(|(table, fields, constraints)| RequiredTable {
-            schema: table.schema().into(),
-            table: table.name().into(),
-            fields: table
-                .columns()
-                .iter()
-                .filter(|column| fields.contains(column.name()))
-                .map(|column| RequiredField {
-                    name: column.name().into(),
-                    ty: column.column_type().as_str().into(),
-                    nullable: column.nullable(),
-                })
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
-            constraints: table
-                .constraints()
-                .iter()
-                .filter(|constraint| constraints.contains(constraint.name()))
-                .map(|constraint| RequiredConstraint {
-                    name: constraint.name().into(),
-                    definition: serde_json::to_value(constraint.kind())
-                        .expect("constraint IR always serializes"),
-                })
-                .collect::<Vec<_>>()
-                .into_boxed_slice(),
+        .into_iter()
+        .map(|((schema, name), (table, fields, constraints))| {
+            let Some(table) = table else {
+                // The fixed history columns in name order, as the catalog orders
+                // columns. Every history column is NOT NULL.
+                return RequiredTable {
+                    schema: schema.into(),
+                    table: name.into(),
+                    fields: BTreeMap::from(HISTORY_COLUMNS)
+                        .into_iter()
+                        .filter(|(column, _)| fields.contains(*column))
+                        .map(|(column, ty)| RequiredField {
+                            name: column.into(),
+                            ty: ty.into(),
+                            nullable: false,
+                        })
+                        .collect(),
+                    constraints: Box::default(),
+                };
+            };
+            RequiredTable {
+                schema: table.schema().into(),
+                table: table.name().into(),
+                fields: table
+                    .columns()
+                    .iter()
+                    .filter(|column| fields.contains(column.name()))
+                    .map(|column| RequiredField {
+                        name: column.name().into(),
+                        ty: column.column_type().as_str().into(),
+                        nullable: column.nullable(),
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+                constraints: table
+                    .constraints()
+                    .iter()
+                    .filter(|constraint| constraints.contains(constraint.name()))
+                    .map(|constraint| RequiredConstraint {
+                        name: constraint.name().into(),
+                        definition: serde_json::to_value(constraint.kind())
+                            .expect("constraint IR always serializes"),
+                    })
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
+            }
         })
         .collect::<Vec<_>>()
         .into_boxed_slice();

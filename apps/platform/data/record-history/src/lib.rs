@@ -14,10 +14,93 @@
 //! no rows is unavailable at every position. The fold does not compare the
 //! current row with the newest entry, so it does not see a change that the log
 //! did not record.
+//!
+//! The crate also holds the names of the record history platform fixtures.
+//! Every component recognizes a fixture by these names.
 
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
+
+/// The suffix of every history table name. Naming reserves it.
+pub const HISTORY_TABLE_SUFFIX: &str = "_history";
+
+/// The trigger that stamps the selected columns of a relation.
+pub const STAMP_TRIGGER: &str = "wamn_record_history_stamp";
+
+/// The trigger that writes one history entry for each changed row of a logged relation.
+pub const LOG_TRIGGER: &str = "wamn_record_history_log";
+
+/// The retention of a relation that keeps no log.
+pub const NO_LOG_RETENTION: &str = "none";
+
+/// The identity column that orders the entries of one row.
+pub const POSITION_COLUMN: &str = "position";
+
+/// The history table columns in creation order, each with its schema column type.
+///
+/// The history table of a package relation has no `tenant_id` column. Every
+/// column is `NOT NULL`. The log trigger writes every column except
+/// [`POSITION_COLUMN`], which PostgreSQL generates.
+pub const HISTORY_COLUMNS: [(&str, &str); 9] = [
+    (POSITION_COLUMN, "int64"),
+    ("row_key", "json"),
+    ("kind", "text"),
+    ("operation", "text"),
+    ("changed_by", "uuid"),
+    ("changed_at", "timestamptz"),
+    ("transaction_id", "int64"),
+    ("before", "json"),
+    ("after", "json"),
+];
+
+/// PostgreSQL truncates an object name of 64 bytes or more.
+const NAME_BYTE_LIMIT: usize = 64;
+
+/// The history table name of a relation.
+pub fn history_table_name(relation: &str) -> String {
+    format!("{relation}{HISTORY_TABLE_SUFFIX}")
+}
+
+/// Whether a relation name ends with the reserved history suffix.
+pub fn is_history_table_name(name: &str) -> bool {
+    name.ends_with(HISTORY_TABLE_SUFFIX)
+}
+
+/// Whether every object name that the history table of `relation` derives fits in a PostgreSQL name.
+///
+/// The names are the NOT NULL constraint of each column, the primary key, the
+/// CHECK constraints of `kind` and `operation`, and the identity sequence.
+pub fn history_object_names_fit(relation: &str) -> bool {
+    let history = history_table_name(relation);
+    HISTORY_COLUMNS
+        .iter()
+        .map(|(column, _)| format!("{history}_{column}_not_null"))
+        .chain([
+            format!("{history}_pkey"),
+            format!("{history}_kind_check"),
+            format!("{history}_operation_check"),
+            format!("{history}_{POSITION_COLUMN}_seq"),
+        ])
+        .all(|name| name.len() < NAME_BYTE_LIMIT)
+}
+
+/// Whether `value` is the retention of a relation that keeps a log.
+///
+/// The value is `unlimited` or `P<n>D`, where n is a positive whole number of
+/// days with no leading zero.
+pub fn is_log_retention(value: &str) -> bool {
+    if value == "unlimited" {
+        return true;
+    }
+    value
+        .strip_prefix('P')
+        .and_then(|rest| rest.strip_suffix('D'))
+        .is_some_and(|days| {
+            days.bytes().next().is_some_and(|first| first != b'0')
+                && days.bytes().all(|byte| byte.is_ascii_digit())
+        })
+}
 
 /// One result row of a history read, with the fields that the fold reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

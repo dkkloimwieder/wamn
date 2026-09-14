@@ -161,7 +161,8 @@ The [retention task](#retention-task) removes expired entries.
 It refuses a selected column that is absent or nullable, and a logged relation with no primary key.
 A selected time column must be `timestamptz`, and a selected actor column must be `uuid`, the type of `app_system.users.id`.
 Generation also refuses a column with a reserved name that the declaration does not select.
-Every stamp column is server-owned, so generation refuses a writable declaration of it and omits it from generated input.
+Generation makes each column with a reserved stamp name server-owned by its name.
+It therefore refuses a writable declaration of that column and omits it from generated input.
 A stamp column needs no default, because the trigger sets every selected value.
 
 ### Stamp trigger
@@ -285,9 +286,10 @@ The reader does not compare the CHECK expressions.
 It admits a `wamn_record_history_log` trigger only on a relation that has its history table.
 The schema state id therefore stays the same when a relation starts or stops logging.
 
-When a package logs, the generator adds a fixed description of each history table to the catalog that it validates and generates from.
-The description carries the columns and the primary key, and the verified schema state id does not include it.
-Authored SQL, the SQL lexer, and grant derivation use the description.
+The generator recognizes the history table of each logged model by its name, and it adds no history table to the catalog.
+It takes the history columns from `HISTORY_COLUMNS` in the [`wamn-record-history`](../../apps/platform/data/record-history/src/lib.rs) crate.
+Authored SQL validation, the SQL lexer, the required schema contract, and grant derivation use that column list.
+A custom operation cannot require or map a constraint of a history table.
 The generated data-access evidence grants `wamn_app` `INSERT` on every entry column of the history table, and no read, update, or row lock.
 The log function is `SECURITY INVOKER`, so the writer needs that grant.
 The reconciler reads the history table like any other package relation and keeps that grant.
