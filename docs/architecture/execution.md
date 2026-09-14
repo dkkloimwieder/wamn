@@ -69,7 +69,14 @@ The host binds the executing principal as `app.user_id` in each claims transacti
 - A post-commit registration delivery binds `wamn:materializer`.
 - An executor queue delivery and a management candidate case bind `wamn:executor`.
 
-A platform claims transaction that only reads binds no principal.
+The same transaction binds the executing operation as `app.operation`.
+A node binds the operation token that it runs, so a nested call binds its own token.
+A registration delivery binds the token of its handler.
+An executor queue claim, reap, renew, or complete transaction binds `wamn:executor`.
+An absent operation binds an empty value, so a pooled connection keeps no earlier operation.
+The [record history plan](../plan/record-history-spec.md) describes the log that records the operation.
+
+A platform claims transaction that only reads binds no principal and no operation.
 A bound principal alone does not move a read out of the autocommit path.
 The [claims owner](../../crates/platform/runtime/src/plugins/wamn_postgres/claims.rs) refuses a transactional statement with no executing principal before it reaches PostgreSQL.
 That refusal carries SQLSTATE `55000` and the message `actor-required`, as the stamp trigger does.

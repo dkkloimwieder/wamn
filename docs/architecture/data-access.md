@@ -155,6 +155,7 @@ The [execution page](execution.md#native-dispatch) lists the principal that the 
 A writer outside the host binds `app.user_id` with `set_config` in its own transaction.
 Provisioning binds `wamn:provisioning`.
 apply-package binds `wamn:apply-package` for package writes and operation grants.
+The binding of a platform component also sets `app.operation` to the same `wamn:<component>` name.
 Administrative SQL must bind the operator's person row, and test fixtures must bind a provisioned test principal.
 
 `app_system.users.type` is `person`, `service`, or `platform`, and it has no default.

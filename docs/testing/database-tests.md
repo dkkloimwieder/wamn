@@ -50,8 +50,10 @@ The [stamp rules](../architecture/data-access.md#record-history) define the expe
 - The [introspection test](../../crates/schema/introspection/tests/postgres_live.rs) admits only the stamp trigger shape and makes sure that the schema description bytes do not change.
 - The [app_system schema test](../../crates/identity/project-state/tests/schema.rs) tests the platform rows, their pinned ids, and the provisioning stamps.
 - The [generation tests](../../crates/schema/generator/tests/generation.rs) refuse each invalid declaration and keep the revision on a true no-op.
-- The [claims conformance test](../../tests/conformance/tests/session_claims.rs) refuses every reader of `app.user_id` except the named trigger functions.
-- The [claims tests](../../crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs) test the principal binding and the refusal before PostgreSQL.
+- The [claims conformance test](../../tests/conformance/tests/session_claims.rs) refuses every reader of `app.user_id` and `app.operation` except the named trigger functions.
+- The [claims tests](../../crates/platform/runtime/src/plugins/wamn_postgres/claims/tests.rs) test the principal and operation bindings and the refusal before PostgreSQL. A pooled connection keeps no earlier operation.
+- The [identity live test](../../crates/identity/platform/tests/identity_live.rs) reads the system database stamp columns and triggers from the server. It also tests the seeded `wamn:provisioning` row, the platform CHECK, and the `actor-required` refusal.
+- The [PAT test](../../crates/identity/platform/tests/pat_live.rs) makes sure that issuance and revocation stamp `wamn:provisioning` and that a token refuses a platform principal.
 
 A fixture that installs triggers with its own SQL does not test installation by apply-package.
 These tests run only where test setup applies `app-schema.sql`, so they do not test production provisioning.
