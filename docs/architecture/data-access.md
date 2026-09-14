@@ -107,6 +107,16 @@ Record history stamps who created a row, who last changed it, and when.
 A relation that keeps a log also has a history table, and a log trigger writes an entry to it for each row change.
 [Naming](naming.md#reserved-names) reserves the four stamp column names, the platform principal names, and the `_history` suffix.
 
+### Platform fixtures
+
+The system fields and system tables of record history are platform fixtures, not application schema.
+They are the four stamp columns, the `wamn_record_history_stamp` and `wamn_record_history_log` triggers, and each `<relation>_history` table.
+Each fixture has one definition in [`deploy/sql`](../../deploy/sql).
+The applier installs a fixture by name, and every other component recognizes it by name.
+No component models a fixture, introspects it as a declaration, or projects it into the schema description.
+No component derives grants for a fixture as it does for user fields.
+Verification of an installed fixture is a string comparison against `pg_catalog`, not a typed round trip.
+
 ### Declaration
 
 Every relation-owning model declares `audit_log`:
