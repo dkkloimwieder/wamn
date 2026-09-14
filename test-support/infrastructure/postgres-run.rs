@@ -8,6 +8,8 @@ use wamn_schema_generator::PackageManifest;
 use wamn_test_infrastructure::postgres;
 
 const RECORD_HISTORY_SQL: &str = include_str!("../../deploy/sql/record-history.sql");
+const RECORD_HISTORY_APP_GRANTS_SQL: &str =
+    include_str!("../../deploy/sql/record-history-app-grants.sql");
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<std::process::ExitCode> {
@@ -161,7 +163,7 @@ async fn apply_migrations(
 /// Create the history table of each relation that the package declares a log for.
 ///
 /// This follows the generation database step of `docs/operations/running-tests.md`.
-/// `wamn_app` exists first, so `record-history.sql` grants the history read functions to it.
+/// `wamn_app` exists first, because `record-history-app-grants.sql` grants the history read functions to it.
 async fn create_history_tables(client: &tokio_postgres::Client, path: &Path) -> anyhow::Result<()> {
     let manifest = PackageManifest::from_slice(
         &std::fs::read(path).with_context(|| format!("read manifest {}", path.display()))?,
@@ -183,6 +185,10 @@ async fn create_history_tables(client: &tokio_postgres::Client, path: &Path) -> 
         .batch_execute(RECORD_HISTORY_SQL)
         .await
         .context("apply record-history.sql")?;
+    client
+        .batch_execute(RECORD_HISTORY_APP_GRANTS_SQL)
+        .await
+        .context("apply record-history-app-grants.sql")?;
     for model in logged {
         client
             .execute(

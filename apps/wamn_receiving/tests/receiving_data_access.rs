@@ -17,6 +17,8 @@ mod tests {
         include_bytes!("../../../apps/client_acme_receiving/wamn.json");
     const MIGRATION: &str = include_str!("../../../apps/wamn_receiving/migrations/0001_initial.sql");
     const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
+    const RECORD_HISTORY_APP_GRANTS_SQL: &str =
+        include_str!("../../../deploy/sql/record-history-app-grants.sql");
     /// The test principal that the fixture writes as. This SQL-only fixture has
     /// no `app_system` schema, and no stamp column reads a users row.
     const FIXTURE_PRINCIPAL: Uuid = Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_00f1);
@@ -182,8 +184,8 @@ mod tests {
         assert_postgres_18(&client).await?;
         assert_fresh_receiving_schema(&client).await?;
         // All fixture DDL, grants, role creation, and row changes roll back.
-        // record-history.sql grants the log function's image rendering to an
-        // existing wamn_app, so the role comes first.
+        // record-history-app-grants.sql grants the log function's image
+        // rendering to wamn_app, so the role comes first.
         client
             .batch_execute(
                 "BEGIN; CREATE SCHEMA receiving; \
@@ -588,10 +590,15 @@ mod tests {
         let mut client = connect(&url).await?;
         assert_postgres_18(&client).await?;
         assert_fresh_receiving_schema(&client).await?;
+        // record-history-app-grants.sql grants to wamn_app, so the role comes first.
         client
-            .batch_execute("CREATE SCHEMA receiving")
+            .batch_execute(
+                "CREATE SCHEMA receiving; \
+                 CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS",
+            )
             .await
-            .context("create the Receiving schema")?;
+            .context("create the Receiving schema and the application role")?;
         client
             .batch_execute(MIGRATION)
             .await
@@ -757,7 +764,9 @@ mod tests {
                 )
             })
         });
-        let sql = std::iter::once(RECORD_HISTORY_SQL.to_owned())
+        let sql = [RECORD_HISTORY_SQL, RECORD_HISTORY_APP_GRANTS_SQL]
+            .into_iter()
+            .map(str::to_owned)
             .chain(triggers)
             .chain(logs)
             .collect::<Vec<_>>()

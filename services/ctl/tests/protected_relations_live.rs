@@ -21,6 +21,8 @@ const SYSTEM_SCHEMA_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const OPS_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/ops-schema.sql");
 const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 const RECORD_HISTORY_SQL: &str = include_str!("../../../deploy/sql/record-history.sql");
+const RECORD_HISTORY_APP_GRANTS_SQL: &str =
+    include_str!("../../../deploy/sql/record-history-app-grants.sql");
 const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
@@ -174,7 +176,9 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
         .await
         .expect("remove same-qualified control portable schemas before project install");
     client
-        .batch_execute(&format!("{RECORD_HISTORY_SQL}\n{APP_SCHEMA_SQL}"))
+        .batch_execute(&format!(
+            "{RECORD_HISTORY_SQL}\n{RECORD_HISTORY_APP_GRANTS_SQL}\n{APP_SCHEMA_SQL}"
+        ))
         .await
         .expect("install canonical application schema");
 

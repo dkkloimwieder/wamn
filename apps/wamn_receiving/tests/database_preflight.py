@@ -45,6 +45,8 @@ try:
             db.sql('00-trigger-' + model['table'], f"CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON {model['schema']}.{model['table']} FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({', '.join(repr(column) for column in columns)});")
     # The seed provisions its principal beside the platform rows, so the preflight installs the project system schema.
     db.sql('00-app-schema', 'CREATE ROLE wamn_app NOLOGIN;\n' + (tree / 'deploy/sql/app-schema.sql').read_text())
+    # record-history-app-grants.sql grants to wamn_app, so it follows the step that creates that role.
+    db.sql('00-record-history-app-grants', (tree / 'deploy/sql/record-history-app-grants.sql').read_text())
     ids = SimpleNamespace(**{key: str(uuid.uuid4()) for key in ('order','supplier','item','dock1','dock2','line1','line2')})
     navigation = driver.seed(db, ids, 'PREFLIGHT-' + uuid.uuid4().hex[:8])
     observed = driver.snapshot(db, '03-observation', ids)

@@ -275,6 +275,7 @@ REVOKE ALL ON FUNCTION wamn_history.log_row_change() FROM PUBLIC;
 -- function, and a trigger that fires needs no EXECUTE, so wamn_app gets none.
 -- The log function calls wamn_history.row_image with the authority of the
 -- writer, so every writer of a logged relation needs EXECUTE on it.
+-- record-history-app-grants.sql grants it to wamn_app.
 GRANT USAGE ON SCHEMA wamn_history TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.stamp_row() TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.create_history_table(text, text, boolean)
@@ -282,14 +283,3 @@ GRANT EXECUTE ON FUNCTION wamn_history.create_history_table(text, text, boolean)
 GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.timestamptz_image(timestamptz) TO wamn_db_owner;
 GRANT EXECUTE ON FUNCTION wamn_history.log_row_change() TO wamn_db_owner;
-
--- wamn_app writes logged relations, and a history read renders the current row
--- through wamn_history.row_image or wamn_history.timestamptz_image. The system
--- database has no wamn_app, so an applier without that role skips these grants.
-DO $wamn_app$ BEGIN
-  IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app') THEN
-    GRANT USAGE ON SCHEMA wamn_history TO wamn_app;
-    GRANT EXECUTE ON FUNCTION wamn_history.row_image(record) TO wamn_app;
-    GRANT EXECUTE ON FUNCTION wamn_history.timestamptz_image(timestamptz) TO wamn_app;
-  END IF;
-END $wamn_app$;

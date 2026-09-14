@@ -262,6 +262,11 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
         .batch_execute(include_str!("../../../deploy/sql/record-history.sql"))
         .await?;
     project
+        .batch_execute(include_str!(
+            "../../../deploy/sql/record-history-app-grants.sql"
+        ))
+        .await?;
+    project
         .batch_execute(include_str!("../../../deploy/sql/app-schema.sql"))
         .await?;
     project.batch_execute("CREATE SCHEMA catalog; CREATE SCHEMA wamn_run; CREATE TABLE catalog.probe (id int); CREATE TABLE wamn_run.probe (id int);").await?;

@@ -188,8 +188,12 @@ The log function and the stamp function compare row values as JSONB text, so a c
 Such a change moves the stamps and writes an entry. A true no-op moves no stamp and writes no entry.
 
 The log function calls `row_image` with the authority of the writer.
-`record-history.sql` therefore grants `EXECUTE` on `row_image` and `timestamptz_image` to `wamn_db_owner` and `wamn_app`, and `USAGE` on `wamn_history` to both.
-An applier with no `wamn_app` role, such as the system database, gets no `wamn_app` grant.
+`record-history.sql` therefore grants `USAGE` on `wamn_history` and `EXECUTE` on `row_image` and `timestamptz_image` to `wamn_db_owner`.
+[`deploy/sql/record-history-app-grants.sql`](../../deploy/sql/record-history-app-grants.sql) grants the same three privileges to `wamn_app`.
+`CATALOG_SCHEMA_SQL` composes it after `record-history.sql`.
+Every other tenant or package applier applies it after `record-history.sql`.
+The file names `wamn_app`, so an applier without that role fails.
+The system database never applies it, so the system database has no `wamn_app` grant.
 
 Generation refuses these declarations:
 
@@ -292,7 +296,7 @@ A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id
 `wamn_app` holds no other privilege on a history table, so a guest reads no `app_system` history and cannot set `position`.
 The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
 A foreign key cascade writes its delete entries with the actor and the operation of the deleting transaction.
-An applier installs `record-history.sql` before `app-schema.sql`.
+An applier installs `record-history.sql` and then `record-history-app-grants.sql` before `app-schema.sql`.
 
 ### System database
 
@@ -304,6 +308,7 @@ In the system database, the actor is an `identity.principals` id.
 
 The `SYSTEM_SCHEMA_SQL` composition in [provisioning](../../crates/control/provision/src/lib.rs) installs `record-history.sql` before [`deploy/sql/system-schema.sql`](../../deploy/sql/system-schema.sql).
 `record-history.sql` grants to `wamn_db_owner`, so an applier that runs as `wamn_system` creates that role first.
+`SYSTEM_SCHEMA_SQL` does not carry `record-history-app-grants.sql`.
 
 `identity.principals.kind` is `human`, `service`, or `platform`.
 A `platform` row carries its `wamn:<component>` name in `subject` and in `display_name`, and its derived id.
@@ -341,7 +346,7 @@ An overlay can add columns to a shared relation, and the images of the log carry
 A history read on such a relation therefore shows only the columns that it declares:
 
 - Its SQL builds the current row with `jsonb_build_object` from the declared columns, so the read needs no grant on an overlay column.
-- `wamn_history.timestamptz_image` spells each `timestamptz` column as `wamn_history.row_image` spells it. `record-history.sql` grants `EXECUTE` on it to `wamn_db_owner` and `wamn_app`.
+- `wamn_history.timestamptz_image` spells each `timestamptz` column as `wamn_history.row_image` spells it. `record-history.sql` grants `EXECUTE` on it to `wamn_db_owner`, and `record-history-app-grants.sql` grants it to `wamn_app`.
 - The guest keeps only the declared columns of `before`, `after`, and the current row with `retain_columns` from `wamn-record-history`. Each kept member keeps its raw text.
 
 [Receiving](../../apps/wamn_receiving/query/load_purchase_order_history.sql) reads `purchase_order` this way, and its read shows no Acme column.

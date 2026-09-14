@@ -40,15 +40,17 @@ const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 /// (cargo runs the tests in one binary on parallel threads).
 static LIVE_DB: Mutex<()> = Mutex::new(());
 
-/// `deploy/sql/record-history.sql` followed by `deploy/sql/app-schema.sql`,
-/// the order every applier uses.
+/// `deploy/sql/record-history.sql`, `deploy/sql/record-history-app-grants.sql`,
+/// and `deploy/sql/app-schema.sql`, the order every tenant applier uses.
 fn app_schema_sql() -> String {
     let deploy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy");
     let record_history = std::fs::read_to_string(deploy.join("sql/record-history.sql"))
         .expect("read deploy/sql/record-history.sql");
+    let app_grants = std::fs::read_to_string(deploy.join("sql/record-history-app-grants.sql"))
+        .expect("read deploy/sql/record-history-app-grants.sql");
     let app_schema = std::fs::read_to_string(deploy.join("sql/app-schema.sql"))
         .expect("read deploy/sql/app-schema.sql");
-    format!("{record_history}\n{app_schema}")
+    format!("{record_history}\n{app_grants}\n{app_schema}")
 }
 
 /// The live gate's URL, or `None` after printing the skip notice.

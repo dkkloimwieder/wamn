@@ -39,6 +39,8 @@ try:
     db.sql('00-migration', (tree / 'apps/wamn_wms/migrations/0001_initial.sql').read_text())
     # apply-package installs these stamp triggers from the declarations. The preflight installs them the same way.
     db.sql('00-record-history', (tree / 'deploy/sql/record-history.sql').read_text())
+    # A package database grants the record history image functions to wamn_app, so the preflight creates that role.
+    db.sql('00-record-history-app-grants', 'CREATE ROLE wamn_app NOLOGIN;\n' + (tree / 'deploy/sql/record-history-app-grants.sql').read_text())
     for model in json.loads((tree / 'apps/wamn_wms/wamn.json').read_text())['models'].values():
         columns = model['audit_log']['columns']
         if columns:

@@ -43,6 +43,13 @@ fn record_history_sql() -> String {
         .expect("read deploy/sql/record-history.sql")
 }
 
+/// The `wamn_app` record history grants that every tenant applier installs
+/// after `deploy/sql/record-history.sql`.
+fn record_history_app_grants_sql() -> String {
+    std::fs::read_to_string(deploy_dir().join("sql/record-history-app-grants.sql"))
+        .expect("read deploy/sql/record-history-app-grants.sql")
+}
+
 /// The SQL with `--` line comments stripped, so text assertions test the actual
 /// DDL and not the explanatory prose (the header names the app.user_id/app.role
 /// claims to explain the integration, but they do not appear in the DDL itself).
@@ -289,6 +296,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     );
     // The schema itself (deploy/sql/app-schema.sql, applied verbatim as the superuser).
     script.push_str(&record_history_sql());
+    script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
     script.push('\n');
     // Seed as the superuser (bypasses RLS): two tenants for the isolation test,
@@ -438,6 +446,7 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
     script.push_str(&record_history_sql());
+    script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
     script.push_str("\nBEGIN;\n");
     script.push_str(
@@ -585,6 +594,7 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
     script.push_str(&record_history_sql());
+    script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
     // The stamp columns and their types, from the server catalogs.
     script.push_str(
@@ -716,6 +726,7 @@ fn app_system_relations_log_every_row_change_on_postgres() {
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
     script.push_str(&record_history_sql());
+    script.push_str(&record_history_app_grants_sql());
     script.push_str(&app_schema_sql());
     // The wamn_app privileges of every relation, from the server ACLs.
     script.push_str(

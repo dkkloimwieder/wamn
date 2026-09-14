@@ -177,7 +177,7 @@ sha256sum Cargo.lock Dockerfile tools/identity-jwks-journey-run \
   deploy/platform/identity/templates/deployment.yaml deploy/platform/identity/templates/service.yaml \
   >"$evidence_dir/source-inputs.sha256"
 if [[ "$session_exchange" == true ]]; then
-  sha256sum deploy/sql/record-history.sql deploy/sql/app-schema.sql >>"$evidence_dir/source-inputs.sha256"
+  sha256sum deploy/sql/record-history.sql deploy/sql/record-history-app-grants.sql deploy/sql/app-schema.sql >>"$evidence_dir/source-inputs.sha256"
 fi
 identity_owned=true
 run docker build --platform=linux/amd64 --provenance=false --file "$repo_root/Dockerfile" \
@@ -370,7 +370,9 @@ session_target() {
   run "${kube[@]}" -n "$namespace" exec "deployment/$postgres" -- psql -U postgres -d wamn_system -v ON_ERROR_STOP=1 \
     -c "CREATE DATABASE \"$database\"" >"$evidence_dir/session-$label-create.log" 2>&1
   # The stamp function comes first, because every app_system table has a stamp trigger.
-  cat "$repo_root/deploy/sql/record-history.sql" "$repo_root/deploy/sql/app-schema.sql" \
+  # The wamn_app history grants follow it, because this database is a tenant database.
+  cat "$repo_root/deploy/sql/record-history.sql" "$repo_root/deploy/sql/record-history-app-grants.sql" \
+    "$repo_root/deploy/sql/app-schema.sql" \
     | run "${kube[@]}" -n "$namespace" exec -i "deployment/$postgres" -- psql -U postgres -d "$database" -v ON_ERROR_STOP=1 \
       --single-transaction >"$evidence_dir/session-$label-schema.log" 2>&1
   # The one provisioning function renders the tenant's platform rows. Its

@@ -256,18 +256,21 @@ Connect as a role that can create roles, grant privileges, and set the role, suc
 
 If a model declares a retention other than `"none"`, create the history table of that relation after the migrations.
 Do this before `check`, `write`, and SQLx prepare, so that `EXPLAIN` and SQLx prepare resolve authored SQL that names the history table.
-If the server has no `wamn_app` role, `record-history.sql` grants no history read function to it.
-The first command creates that role, so run it once for each server before the other two commands.
-The second command installs the history table function, and the third command creates one history table:
+`record-history-app-grants.sql` grants the history read functions to `wamn_app`, and it fails if the server has no `wamn_app` role.
+The first command creates that role, so run it once for each server before the other commands.
+The second command installs the history table function.
+The third command grants the history read functions to `wamn_app`.
+The fourth command creates one history table:
 
 ```bash
 psql -d wamn_receiving -v ON_ERROR_STOP=1 -c 'CREATE ROLE wamn_app NOLOGIN'
 psql -d wamn_receiving -v ON_ERROR_STOP=1 -f deploy/sql/record-history.sql
+psql -d wamn_receiving -v ON_ERROR_STOP=1 -f deploy/sql/record-history-app-grants.sql
 psql -d wamn_receiving -v ON_ERROR_STOP=1 \
   -c "SELECT wamn_history.create_history_table('receiving', 'purchase_order', false)"
 ```
 
-Repeat the third command for each logged relation, with its schema and relation name.
+Repeat the fourth command for each logged relation, with its schema and relation name.
 Receiving logs `purchase_order` and `purchase_order_line`, so its generation database also needs this command:
 
 ```bash

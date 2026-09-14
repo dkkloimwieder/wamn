@@ -51,6 +51,8 @@ const RUN_STATE: &str = include_str!("../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history.sql");
+const RECORD_HISTORY_APP_GRANTS: &str =
+    include_str!("../../../../deploy/sql/record-history-app-grants.sql");
 
 /// The role this file's live arm mints as its control probe. Named here so
 /// `reset` can drop it: roles are CLUSTER-wide, and the arm's whole point is
@@ -1601,6 +1603,175 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
     );
 
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+/// Every grant on schema `wamn_history` and its functions, except the grants
+/// of the owner, from the server ACLs.
+fn history_grants(url: &str) -> String {
+    psql(
+        url,
+        None,
+        "SELECT coalesce(string_agg(entry, '; ' ORDER BY entry COLLATE \"C\"), '<none>') FROM ( \
+           SELECT 'wamn_history ' || acl.grantee::regrole::text || ' ' || acl.privilege_type \
+                  AS entry \
+             FROM pg_catalog.pg_namespace n, pg_catalog.aclexplode(n.nspacl) acl \
+            WHERE n.nspname = 'wamn_history' AND acl.grantee <> n.nspowner \
+           UNION ALL \
+           SELECT p.proname || ' ' || acl.grantee::regrole::text || ' ' || acl.privilege_type \
+             FROM pg_catalog.pg_proc p, pg_catalog.aclexplode(p.proacl) acl \
+            WHERE p.pronamespace = 'wamn_history'::regnamespace \
+              AND acl.grantee <> p.proowner) entries",
+    )
+}
+
+/// Ruling 78 (`wamn-emtx.31`). The `wamn_app` record history grants come from
+/// `record-history-app-grants.sql` alone. `CATALOG_SCHEMA_SQL` composes that
+/// file, so the guest writes a logged relation, and the write fails without the
+/// `row_image` grant. `SYSTEM_SCHEMA_SQL` grants nothing to `wamn_app`, as the
+/// NOCREATEROLE `wamn_system` owner and as a superuser, with and without the
+/// role. The grant file refuses a database without `wamn_app`.
+#[test]
+fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
+    const SYSTEM_DATABASE: &str = "wamn_floor_history_system";
+    const OWNER_GRANTS: [&str; 6] = [
+        "create_history_table wamn_db_owner EXECUTE",
+        "log_row_change wamn_db_owner EXECUTE",
+        "row_image wamn_db_owner EXECUTE",
+        "stamp_row wamn_db_owner EXECUTE",
+        "timestamptz_image wamn_db_owner EXECUTE",
+        "wamn_history wamn_db_owner USAGE",
+    ];
+    const APP_GRANTS: [&str; 3] = [
+        "row_image wamn_app EXECUTE",
+        "timestamptz_image wamn_app EXECUTE",
+        "wamn_history wamn_app USAGE",
+    ];
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let joined = |grants: &[&str]| {
+        let mut grants = grants.to_vec();
+        grants.sort_unstable();
+        grants.join("; ")
+    };
+
+    let (db_url, guest) = record_history_log_fixture(&admin);
+    assert_eq!(
+        history_grants(&db_url),
+        joined(&[OWNER_GRANTS.as_slice(), APP_GRANTS.as_slice()].concat()),
+        "CATALOG_SCHEMA_SQL must give wamn_app exactly schema USAGE and EXECUTE on \
+         row_image and timestamptz_image, and record-history.sql applied again must \
+         keep them"
+    );
+    apply(
+        &db_url,
+        &format!(
+            "{}\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT count(*) FROM rh_probe.logged_history WHERE kind = 'insert') = 1, \
+                      'a guest insert must write one entry';\n\
+             END $$;\n",
+            logged_guest_transaction(
+                &guest,
+                ACTOR_A,
+                CREATE_OPERATION,
+                "INSERT INTO rh_probe.logged (id, note, revision) VALUES (1, 'first', 1);",
+            )
+        ),
+    );
+    let refused = apply_refused(
+        &db_url,
+        &format!(
+            "REVOKE EXECUTE ON FUNCTION wamn_history.row_image(record) FROM wamn_app; \
+             SET ROLE \"{guest}\"; \
+             SELECT set_config('app.user_id', '{ACTOR_A}', true), \
+                    set_config('app.operation', '{CREATE_OPERATION}', true); \
+             INSERT INTO rh_probe.logged (id, note, revision) VALUES (2, 'second', 1);"
+        ),
+    );
+    assert!(
+        refused.contains("42501") && refused.contains("row_image"),
+        "a guest write to a logged relation must fail without the row_image grant:\n{refused}"
+    );
+    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+
+    reset(&admin);
+    let base = admin.rsplit_once('/').expect("url names a database").0;
+    let system_url = format!("{base}/{SYSTEM_DATABASE}");
+    apply(
+        &admin,
+        &format!(
+            "DROP DATABASE IF EXISTS {SYSTEM_DATABASE};\n\
+             DO $$ BEGIN \
+               IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') THEN \
+                 DROP ROLE wamn_system; END IF; \
+             END $$;\n\
+             CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOREPLICATION NOBYPASSRLS;\n"
+        ),
+    );
+    for applier in ["wamn_system", "postgres"] {
+        for app_role in [false, true] {
+            apply(
+                &admin,
+                &format!(
+                    "DROP DATABASE IF EXISTS {SYSTEM_DATABASE};\n\
+                     DROP ROLE IF EXISTS wamn_app;\n\
+                     CREATE DATABASE {SYSTEM_DATABASE};\n\
+                     GRANT CREATE ON DATABASE {SYSTEM_DATABASE} TO wamn_system;\n"
+                ),
+            );
+            if app_role {
+                apply(&admin, &sql::ensure_app_acl_role_sql());
+            }
+            apply(&system_url, sql::ensure_db_owner_role_sql());
+            apply(
+                &system_url,
+                &format!(
+                    "SET ROLE {applier};\n{}\nRESET ROLE;\n",
+                    wamn_control_provision::SYSTEM_SCHEMA_SQL
+                ),
+            );
+            assert_eq!(
+                history_grants(&system_url),
+                joined(&OWNER_GRANTS),
+                "SYSTEM_SCHEMA_SQL applied as {applier} (wamn_app present: {app_role}) \
+                 must grant wamn_history to wamn_db_owner alone"
+            );
+            if app_role {
+                assert_eq!(
+                    psql(
+                        &system_url,
+                        None,
+                        "SELECT concat_ws(' ', \
+                           has_schema_privilege('wamn_app', 'wamn_history', 'USAGE'), \
+                           has_function_privilege('wamn_app', \
+                             'wamn_history.row_image(record)', 'EXECUTE'), \
+                           has_function_privilege('wamn_app', \
+                             'wamn_history.timestamptz_image(timestamptz)', 'EXECUTE'))"
+                    ),
+                    "f f f",
+                    "SYSTEM_SCHEMA_SQL applied as {applier} gave an existing wamn_app a \
+                     history privilege (order: usage, row_image, timestamptz_image)"
+                );
+            } else {
+                let refused = apply_refused(&system_url, RECORD_HISTORY_APP_GRANTS);
+                assert!(
+                    refused.contains("42704")
+                        && refused.contains("role \"wamn_app\" does not exist"),
+                    "the grant file must refuse a database without wamn_app:\n{refused}"
+                );
+            }
+        }
+    }
+    apply(
+        &admin,
+        &format!("DROP DATABASE {SYSTEM_DATABASE};\nDROP ROLE wamn_app;\nDROP ROLE wamn_system;\n"),
+    );
 }
 
 /// Level-2 spec tests 2, 5, 8, and 16, the '{}' images, the tenant flag, and

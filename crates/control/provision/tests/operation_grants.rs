@@ -13,6 +13,8 @@ use wamn_control_provision::operation_grants::{
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 
 const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history.sql");
+const RECORD_HISTORY_APP_GRANTS: &str =
+    include_str!("../../../../deploy/sql/record-history-app-grants.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 /// The test principal that the fixture seed writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
@@ -127,7 +129,7 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
     run(
         &url,
         "install application authority floor",
-        &format!("{RECORD_HISTORY}\n{APP_SCHEMA}"),
+        &format!("{RECORD_HISTORY}\n{RECORD_HISTORY_APP_GRANTS}\n{APP_SCHEMA}"),
     );
     run(
         &url,

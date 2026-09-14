@@ -70,6 +70,7 @@ pub const CATALOG_SCHEMA_SQL: &str = concat!(
     include_str!("../../../../deploy/sql/catalog-schema-prefix.sql"),
     include_str!("../../../../deploy/sql/reject-immutable-row-change.sql"),
     include_str!("../../../../deploy/sql/record-history.sql"),
+    include_str!("../../../../deploy/sql/record-history-app-grants.sql"),
     include_str!("../../../../deploy/sql/catalog-schema.sql"),
 );
 
