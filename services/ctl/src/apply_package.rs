@@ -21,7 +21,6 @@ use wamn_event_reg::{
     DELETE_STALE_CATALOG_REGISTRATIONS_SQL, EventRegistration, RegistrationInput,
     UPSERT_CATALOG_REGISTRATION_SQL, project_catalog_registrations,
 };
-use wamn_pg_core::{Identifier, QualifiedName};
 use wamn_schema_control::{
     AppliedPackage, MigrationSource, PackageDirectory, PackageMigrationError, RecordedMigration,
     SqlStatement, plan_package_migrations, plan_package_registration,
@@ -31,7 +30,6 @@ use wamn_schema_introspection::migration_policy::{
     DefinitionAction, DefinitionKind, DefinitionMutation, MigrationPolicyError,
     MigrationPolicyErrorKind, inspect_migration_definition_mutations,
 };
-use wamn_schema_introspection::postgres::{read_record_history_logs, read_record_history_stamps};
 use wamn_schema_introspection::record_history::{
     HISTORY_TABLE_SUFFIX, RECORD_HISTORY_LOG_TRIGGER, history_table_name, is_history_table_name,
 };
@@ -110,6 +108,22 @@ SELECT definition_kind, definition_name FROM (\
      WHERE namespace.nspname = $1 AND relation.relname = $2 \
        AND relation.relkind = 'r' AND definition.contype IN ('p', 'u', 'f', 'c')\
 ) AS definitions ORDER BY ordering, definition_kind, definition_name COLLATE \"C\"";
+
+/// Each non-internal trigger of the named relations, as the server renders it.
+///
+/// Every named relation yields a row with its quoted name, and a relation with
+/// triggers yields one row for each trigger.
+const SELECT_RELATION_TRIGGERS_SQL: &str = "\
+SELECT owned.schema_name, owned.relation_name, owned.quoted, \
+       installed.tgname::text, pg_catalog.pg_get_triggerdef(installed.oid) \
+  FROM (SELECT schema_name, relation_name, \
+               pg_catalog.format('%I.%I', schema_name, relation_name) AS quoted \
+          FROM unnest($1::text[], $2::text[]) AS named (schema_name, relation_name)\
+       ) AS owned \
+  LEFT JOIN pg_catalog.pg_trigger AS installed \
+    ON installed.tgrelid = pg_catalog.to_regclass(owned.quoted) AND NOT installed.tgisinternal";
+/// The stamp trigger that apply-package installs on a relation that selects stamp columns.
+const RECORD_HISTORY_STAMP_TRIGGER: &str = "wamn_record_history_stamp";
 
 /// Stable apply-package refusal prefix.
 pub const APPLY_PACKAGE_REFUSAL: &str = "apply-package-refused";
@@ -732,9 +746,10 @@ async fn create_history_tables(
 /// The triggers are derived state, like the operation grants. A declaration
 /// that selects no column has no stamp trigger, and a retention of `none` has
 /// no log trigger. A trigger that a declaration no longer needs is removed. The
-/// log trigger carries the retention as its one argument. The installed
-/// triggers are then read back through introspection and compared with the
-/// declarations.
+/// log trigger carries the retention as its one argument. One format string
+/// gives the text that creates each trigger and the text that PostgreSQL
+/// renders for it. The installed triggers of the owned relations are then read
+/// as `pg_get_triggerdef` text and compared with the declared text.
 ///
 /// The step takes the audit retention lock first, so a retention run never
 /// sees a retention change between its read and its delete. It ends with the
@@ -750,80 +765,54 @@ async fn reconcile_record_history_triggers(
         .models
         .iter()
         .filter(|(_, model)| model.owner == manifest.package.id)
-        .map(|(model_id, model)| {
-            let audit_log = model.audit_log.as_ref().with_context(|| {
-                format!("{model_id} owns its relation and must declare audit_log")
-            })?;
-            Ok((
-                (model.schema.clone(), model.table.clone()),
-                model,
-                audit_log,
-            ))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let declared = owned
-        .iter()
-        .map(|(relation, _, audit_log)| {
-            let columns = RecordHistoryColumn::ALL
-                .into_iter()
-                .filter(|column| audit_log.columns.contains(column))
-                .map(|column| column.as_str().to_owned())
-                .collect::<Vec<_>>();
-            (relation.clone(), columns)
-        })
-        .collect::<BTreeMap<_, _>>();
-    let declared_logs = owned
-        .iter()
-        .map(|(relation, model, _)| (relation.clone(), model.log_retention().map(str::to_owned)))
-        .collect::<BTreeMap<_, _>>();
-    let schemas = declared
-        .keys()
-        .map(|(schema, _)| schema.as_str())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
         .collect::<Vec<_>>();
-    let installed = read_record_history_stamps(tx, &schemas)
-        .await
-        .context("read installed record-history triggers")?;
-    let installed_logs = read_record_history_logs(tx, &schemas)
-        .await
-        .context("read installed record-history log triggers")?;
+    let relations = owned
+        .iter()
+        .map(|(_, model)| (model.schema.clone(), model.table.clone()))
+        .collect::<Vec<_>>();
+    let installed = read_relation_triggers(tx, &relations).await?;
 
     let mut statements = Vec::new();
-    for (relation, columns) in &declared {
-        if installed.get(relation).map_or(&[][..], Vec::as_slice) == columns.as_slice() {
-            continue;
-        }
-        let quoted = quoted_relation(relation)?;
-        statements.push(if columns.is_empty() {
-            format!("DROP TRIGGER wamn_record_history_stamp ON {quoted}")
-        } else {
-            format!(
-                "CREATE OR REPLACE TRIGGER wamn_record_history_stamp \
-                 BEFORE INSERT OR UPDATE ON {quoted} \
-                 FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row({})",
-                columns
-                    .iter()
-                    .map(|column| format!("'{column}'"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        });
-    }
-    for (relation, retention) in &declared_logs {
-        if installed_logs.get(relation) == retention.as_ref() {
-            continue;
-        }
-        let quoted = quoted_relation(relation)?;
-        statements.push(match retention {
-            None => format!("DROP TRIGGER {RECORD_HISTORY_LOG_TRIGGER} ON {quoted}"),
-            Some(retention) => format!(
-                "CREATE OR REPLACE TRIGGER {RECORD_HISTORY_LOG_TRIGGER} \
-                 AFTER INSERT OR UPDATE OR DELETE ON {quoted} \
-                 FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('{}')",
-                retention.replace('\'', "''")
+    let mut expected = BTreeSet::new();
+    for ((model_id, model), relation) in owned.into_iter().zip(&relations) {
+        let audit_log = model
+            .audit_log
+            .as_ref()
+            .with_context(|| format!("{model_id} owns its relation and must declare audit_log"))?;
+        let columns = RecordHistoryColumn::ALL
+            .into_iter()
+            .filter(|column| audit_log.columns.contains(column))
+            .map(|column| format!("'{}'", column.as_str()))
+            .collect::<Vec<_>>();
+        let (quoted, definitions) = &installed[relation];
+        for (name, timing, call) in [
+            (
+                RECORD_HISTORY_STAMP_TRIGGER,
+                "BEFORE INSERT OR UPDATE",
+                (!columns.is_empty()).then(|| format!("stamp_row({})", columns.join(", "))),
             ),
-        });
+            (
+                RECORD_HISTORY_LOG_TRIGGER,
+                "AFTER INSERT OR DELETE OR UPDATE",
+                model.log_retention().map(|retention| {
+                    format!("log_row_change('{}')", retention.replace('\'', "''"))
+                }),
+            ),
+        ] {
+            let Some(call) = call else {
+                if definitions.contains_key(name) {
+                    statements.push(format!("DROP TRIGGER {name} ON {quoted}"));
+                }
+                continue;
+            };
+            let definition = format!(
+                "TRIGGER {name} {timing} ON {quoted} FOR EACH ROW EXECUTE FUNCTION wamn_history.{call}"
+            );
+            if definitions.get(name) != Some(&format!("CREATE {definition}")) {
+                statements.push(format!("CREATE OR REPLACE {definition}"));
+            }
+            expected.insert(format!("CREATE {definition}"));
+        }
     }
     for statement in &statements {
         // The package-owner role owns the relation, so it creates the trigger.
@@ -834,32 +823,45 @@ async fn reconcile_record_history_triggers(
         reset_host_role(tx).await?;
     }
 
-    let installed = read_record_history_stamps(tx, &schemas)
-        .await
-        .context("read reconciled record-history triggers")?;
-    for (relation, columns) in &declared {
-        let observed = installed.get(relation).map_or(&[][..], Vec::as_slice);
-        ensure!(
-            observed == columns.as_slice(),
-            "record-history-trigger-mismatch: {}.{} declares {columns:?}, but its installed trigger selects {observed:?}",
-            relation.0,
-            relation.1
-        );
-    }
-    let installed_logs = read_record_history_logs(tx, &schemas)
-        .await
-        .context("read reconciled record-history log triggers")?;
-    for (relation, retention) in &declared_logs {
-        let observed = installed_logs.get(relation);
-        ensure!(
-            observed == retention.as_ref(),
-            "record-history-log-mismatch: {}.{} declares retention {retention:?}, but its installed log trigger carries {observed:?}",
-            relation.0,
-            relation.1
-        );
-    }
+    let observed = read_relation_triggers(tx, &relations)
+        .await?
+        .into_values()
+        .flat_map(|(_, definitions)| definitions.into_values())
+        .collect::<BTreeSet<_>>();
+    ensure!(
+        observed == expected,
+        "record-history-trigger-mismatch: the owned relations carry {observed:?}, but the declarations derive {expected:?}"
+    );
     let grants_changed = reconcile_audit_retention_grants(tx).await?;
     Ok(!statements.is_empty() || grants_changed)
+}
+
+/// Read the non-internal triggers of each relation as `pg_get_triggerdef` renders them.
+///
+/// The result maps each relation to its name as PostgreSQL quotes it and to
+/// its trigger definitions by trigger name.
+async fn read_relation_triggers(
+    tx: &Transaction<'_>,
+    relations: &[(String, String)],
+) -> anyhow::Result<BTreeMap<(String, String), (String, BTreeMap<String, String>)>> {
+    let (schemas, tables): (Vec<&str>, Vec<&str>) = relations
+        .iter()
+        .map(|(schema, table)| (schema.as_str(), table.as_str()))
+        .unzip();
+    let rows = tx
+        .query(SELECT_RELATION_TRIGGERS_SQL, &[&schemas, &tables])
+        .await
+        .context("read the installed record-history triggers")?;
+    let mut triggers = BTreeMap::<_, (String, BTreeMap<_, _>)>::new();
+    for row in rows {
+        let (_, definitions) = triggers
+            .entry((row.get(0), row.get(1)))
+            .or_insert_with(|| (row.get(2), BTreeMap::new()));
+        if let Some(name) = row.get::<_, Option<String>>(3) {
+            definitions.insert(name, row.get(4));
+        }
+    }
+    Ok(triggers)
 }
 
 /// Grant the audit retention role exactly its privileges on the history tables
@@ -895,14 +897,6 @@ async fn reconcile_audit_retention_grants(tx: &Transaction<'_>) -> anyhow::Resul
         .context("reconcile the audit retention grants")?;
     reset_host_role(tx).await?;
     Ok(read_grants().await? != before)
-}
-
-fn quoted_relation(relation: &(String, String)) -> anyhow::Result<String> {
-    Ok(QualifiedName::new(
-        Identifier::new(relation.0.as_str())?,
-        Identifier::new(relation.1.as_str())?,
-    )
-    .quoted())
 }
 
 async fn set_package_owner_role(tx: &Transaction<'_>) -> anyhow::Result<()> {

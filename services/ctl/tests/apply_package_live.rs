@@ -11,9 +11,6 @@ use wamn_control_provision::PlatformComponent;
 use wamn_control_provision::operation_grants::{OPERATION_GRANT_LOCK_SQL, operation_grant_tokens};
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_schema_introspection::migration_policy::{MigrationPolicyError, MigrationPolicyErrorKind};
-use wamn_schema_introspection::postgres::{
-    PostgresIntrospectionError, PostgresIntrospectionErrorKind,
-};
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
@@ -1635,12 +1632,9 @@ async fn record_history_triggers_follow_the_declaration() {
         .expect("install a trigger outside the platform shape");
     let refused = apply(&url, &package)
         .await
-        .expect_err("apply-package reads triggers through introspection");
-    assert_eq!(
-        refused
-            .downcast_ref::<PostgresIntrospectionError>()
-            .map(PostgresIntrospectionError::kind),
-        Some(PostgresIntrospectionErrorKind::UnsupportedTrigger),
+        .expect_err("apply-package refuses a trigger that the declarations do not derive");
+    assert!(
+        format!("{refused:#}").contains("record-history-trigger-mismatch"),
         "unexpected trigger refusal: {refused:#}"
     );
 

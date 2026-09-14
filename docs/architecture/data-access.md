@@ -185,7 +185,9 @@ The [claims fence](../../tests/conformance/tests/session_claims.rs) admits those
 After the migrations apply, apply-package installs one `wamn_record_history_stamp` trigger on each owned relation whose declaration selects at least one column.
 The trigger runs `BEFORE INSERT OR UPDATE` for each row and executes `wamn_history.stamp_row` with the selected columns.
 apply-package installs no trigger for `"columns": []`, and it removes a stamp trigger that the declaration no longer selects.
-It then reads the installed triggers through introspection and refuses a result that differs from the declarations.
+It then reads each trigger of the owned relations as the text that `pg_get_triggerdef` renders.
+It refuses with `record-history-trigger-mismatch` when that text differs from the text that the declarations derive.
+A trigger that no declaration derives also refuses.
 Development package reconciliation runs the same step.
 The catalog reader admits only that trigger shape and the log trigger shape below, and it leaves both out of the schema description.
 Every other trigger refuses.
@@ -272,7 +274,7 @@ apply-package installs one `wamn_record_history_log` trigger on each owned logge
 The trigger runs `AFTER INSERT OR UPDATE OR DELETE` for each row and executes `wamn_history.log_row_change` with one argument, the retention.
 The function derives the history table name from the relation and ignores the argument.
 A retention of `"none"` removes the trigger, and the history table and its entries stay.
-apply-package reads the installed log triggers through introspection and repairs a retention argument that differs from the declaration.
+apply-package compares the text of each installed log trigger with the declared text, and it replaces a trigger whose retention argument differs.
 It then refuses a result that still differs.
 Development package reconciliation runs the same steps.
 
