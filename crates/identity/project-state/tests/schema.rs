@@ -521,8 +521,12 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     ));
 
     let output = run(&url, &script);
-    // The provisioning SQL first binds its principal, and psql prints that result.
-    let mut expected = vec![PlatformComponent::Provisioning.principal_id().to_string()];
+    // The provisioning SQL first binds its actor and operation, and psql prints that result.
+    let mut expected = vec![format!(
+        "{}|{}",
+        PlatformComponent::Provisioning.principal_id(),
+        PlatformComponent::Provisioning.principal_name()
+    )];
     let mut rows = PlatformComponent::ALL
         .map(|component| {
             format!(
@@ -623,9 +627,12 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
              wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
         )
     }));
-    // The provisioning SQL first binds its principal, and psql prints that result.
+    // The provisioning SQL first binds its actor and operation, and psql prints that result.
     let provisioning = PlatformComponent::Provisioning.principal_id();
-    expected.push(provisioning.to_string());
+    expected.push(format!(
+        "{provisioning}|{}",
+        PlatformComponent::Provisioning.principal_name()
+    ));
     expected.push("actor|".to_owned());
     let mut stamps = PlatformComponent::ALL
         .map(|component| {
