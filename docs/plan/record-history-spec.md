@@ -64,7 +64,7 @@ An entry has these columns:
 - `changed_by`: the actor, from `app.user_id`.
 - `changed_at`: the one time of the entry, from `transaction_timestamp()`. Retention expires entries by this time.
 - `transaction_id`: the 64-bit value of `pg_current_xact_id()`, stored as `bigint`.
-- `before` and `after`: the JSONB images.
+- `before` and `after`: the JSONB images, rendered by `wamn_history.row_image`.
 
 Every column is `NOT NULL`, and the primary key is `(row_key, position)`.
 
@@ -82,6 +82,8 @@ Entry contents:
 - Every entry records an actor, because every write has one. The `columns` selection controls row metadata only, not log contents.
 - JSONB fits because PostgreSQL compresses large values without custom encoding, a diff keeps ordinary entries small, and the normal JSON operators query it.
 - Each row change writes one entry. A true no-op writes no stamps and no entry.
+- The triggers compare JSONB text, so a change of numeric scale alone is a change. It moves the stamps and writes an entry, and the generated `update` bumps the revision.
+- `wamn_history.row_image(record)` is the one rendering of a row image. It runs with `TimeZone` set to UTC inside the function and spells each `timestamptz` as the platform canonicalizer spells it.
 - The per-row position orders entries. The transaction timestamp does not order concurrent changes and repeats within one transaction.
 - A rolled-back change leaves no entry. A failure while writing the entry rolls back the change. An idempotent replay that returns the original result appends nothing.
 
@@ -115,8 +117,11 @@ No generated `update` or `delete` exists over a history table, so no application
 
 The retention task is the only writer that removes entries.
 
-- A 14th tenant-scoped workload role family runs the task. It has a stable role, an exact grant verifier, and a denial matrix row.
-- The role holds only `DELETE` and column `SELECT` on the history tables. The task does not widen `wamn_run_retention`.
+- A 14th tenant-scoped workload role family runs the task. It has a stable role, an exact grant verifier, and a denial matrix row. The family is not a `wamn_platform` member.
+- The role holds schema `USAGE`, `DELETE`, and `SELECT (row_key, position, changed_at)`. It holds them only on history tables whose `record_history_log` argument is `P<n>D`. The task does not widen `wamn_run_retention`.
+- apply-package grants and revokes these privileges in the same transaction that installs, changes, or removes the log trigger. The deploy SQL applier creates the stable role under the bootstrap lock, like `wamn_run_retention`.
+- The grant verifier reads `pg_trigger`, the same source that the verb reads, so the grants and the verb cannot disagree.
+- The verb and the apply-package trigger reconciliation take one shared per-database advisory lock. A retention change therefore cannot land between the read of the verb and its delete.
 - A wamn-ctl-ops verb runs the task, and the verb refuses any other login.
 - The verb binds `wamn:audit-retention` as the actor and as the operation.
 - The verb reads the retention of each relation from the `record_history_log` trigger argument in `pg_trigger`.
@@ -134,12 +139,24 @@ The fold reports every position before the oldest retained entry as unavailable.
 ### 4.6 History read
 
 The history read is an ordinary public projection with its own token, and a grant of it works like any other grant.
-The read returns bounded pages of the entries of one row in position order, plus the current row.
 The authored fields of the projection decide which prior data it shows.
 The log carries copied business values, so a grant of the read is a new read surface.
 
+The read is one flat `bounded_list` projection, driven by the typed key inputs, with the inputs `after_position` and `limit`.
+It returns the entries of one row in ascending position order.
+Each result row carries one entry, the current row image, and the head position, so one snapshot serves the fold.
+No side of the result is nullable.
+The current image of a deleted row is `'{}'`, the same as the `after` of its last entry.
+The fold reads the `kind` of that entry to know that the row is gone.
+A row with no retained entries returns an empty page, and the current row is one ordinary read away.
+
+Images and the current row travel as text fields that hold JSONB text.
+The current row comes from `wamn_history.row_image`, so it has the same spelling as the images.
+
 One pure Rust fold in a shared platform crate returns the state of a row at a per-row position, or unavailable.
+The fold keeps each column value as raw JSON text and replaces whole values, so numeric scale and every other spelling survive.
 Guests, the client, and tests use that fold.
+Beads `wamn-emtx.14` tests the read against a generator fixture, and Beads `wamn-emtx.15` authors the first application history read in Receiving.
 
 Level 2 adds no application delete path.
 Beads `wamn-cy2q` owns application row deletes.
@@ -189,6 +206,9 @@ Beads epic `wamn-emtx` records the owner rulings for level 2 and the system data
 15. The retention verb refuses a login that is not in the audit retention role family.
 16. An update that changes a primary key column writes a delete entry under the old key and an insert entry under the new key. Both entries carry one transaction id.
 17. Generation refuses an authored relation whose name ends with `_history`, and a relation whose derived history object name has 64 bytes or more.
+18. A numeric scale-only update bumps the revision, moves the stamps, and writes an entry.
+19. The output of `wamn_history.row_image` spells each `timestamptz` exactly as the platform canonicalizer spells it.
+20. The retention role holds no grant on a history table whose retention is `unlimited`, and the audit retention family is not a `wamn_platform` member.
 
 ## 7. Work
 
