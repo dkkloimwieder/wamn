@@ -19,6 +19,9 @@
 //! The record-history cases (`wamn-emtx.2`) apply `deploy/sql/record-history.sql`
 //! through `CATALOG_SCHEMA_SQL` and write as the production `wamn_app` guest.
 //! They test `wamn_history.stamp_row()` against spec tests 1, 3, 4, 8, 9, and 12.
+//! The record-history log cases (`wamn-emtx.11`) test
+//! `wamn_history.create_history_table` and `wamn_history.log_row_change()`
+//! against level-2 spec tests 2, 3, 4, 5, 7, 8, 10, and 16.
 //! Run the file with `--test-threads=1`, because every case owns the server.
 //!
 //! ```bash
@@ -44,6 +47,7 @@ const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const RUN_STATE: &str = include_str!("../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+const RECORD_HISTORY: &str = include_str!("../../../../deploy/sql/record-history.sql");
 
 /// The role this file's live arm mints as its control probe. Named here so
 /// `reset` can drop it: roles are CLUSTER-wide, and the arm's whole point is
@@ -1231,6 +1235,751 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
                       'administrative SQL must not keep a supplied stamp value';\n\
              END $$;\n\
              COMMIT;\n"
+        ),
+    );
+
+    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+/// The operations the record-history log cases bind.
+const CREATE_OPERATION: &str = "wamn-probe:logged/create@1.0.0";
+const UPDATE_OPERATION: &str = "wamn-probe:logged/update@1.0.0";
+const REPAIR_OPERATION: &str = "admin:repair-grades";
+
+/// Apply `record-history.sql` a second time, then create three logged
+/// relations the way apply-package does, as `wamn_db_owner`. `logged` has the
+/// stamp trigger and a column that an overlay migration adds. `tenanted` has a
+/// tenant history table. `keyless` has no primary key. The guest holds only
+/// INSERT on each history table.
+fn record_history_log_fixture(admin: &str) -> (String, String) {
+    let (db_url, guest) = record_history_fixture(admin);
+    apply(&db_url, RECORD_HISTORY);
+    apply(
+        &db_url,
+        "BEGIN;\n\
+         SET LOCAL ROLE wamn_db_owner;\n\
+         CREATE TABLE rh_probe.logged (\n\
+             id integer PRIMARY KEY, note text NOT NULL, revision integer NOT NULL,\n\
+             created_at timestamptz NOT NULL, created_by uuid NOT NULL,\n\
+             updated_at timestamptz NOT NULL, updated_by uuid NOT NULL);\n\
+         ALTER TABLE rh_probe.logged ADD COLUMN overlay_grade text;\n\
+         CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON rh_probe.logged\n\
+             FOR EACH ROW EXECUTE FUNCTION wamn_history.stamp_row(\n\
+                 'created_at', 'created_by', 'updated_at', 'updated_by');\n\
+         SELECT wamn_history.create_history_table('rh_probe', 'logged', false);\n\
+         SELECT wamn_history.create_history_table('rh_probe', 'logged', false);\n\
+         CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.logged\n\
+             FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
+         CREATE TABLE rh_probe.tenanted (\n\
+             tenant_id text NOT NULL, id integer NOT NULL, note text NOT NULL,\n\
+             PRIMARY KEY (tenant_id, id));\n\
+         SELECT wamn_history.create_history_table('rh_probe', 'tenanted', true);\n\
+         CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.tenanted\n\
+             FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('P30D');\n\
+         CREATE TABLE rh_probe.keyless (id integer NOT NULL, note text NOT NULL);\n\
+         SELECT wamn_history.create_history_table('rh_probe', 'keyless', false);\n\
+         CREATE TRIGGER record_history_log AFTER INSERT OR UPDATE OR DELETE ON rh_probe.keyless\n\
+             FOR EACH ROW EXECUTE FUNCTION wamn_history.log_row_change('unlimited');\n\
+         GRANT SELECT, INSERT, UPDATE, DELETE\n\
+             ON rh_probe.logged, rh_probe.tenanted, rh_probe.keyless TO wamn_app;\n\
+         GRANT INSERT ON rh_probe.logged_history, rh_probe.tenanted_history,\n\
+             rh_probe.keyless_history TO wamn_app;\n\
+         COMMIT;\n",
+    );
+    (db_url, guest)
+}
+
+/// One guest transaction with `app.user_id` and `app.operation` bound, the way
+/// the host claims transaction binds them. The session time zone is not UTC,
+/// so an image that matches a UTC read shows the time zone of the function.
+fn logged_guest_transaction(guest: &str, actor: &str, operation: &str, body: &str) -> String {
+    format!(
+        "BEGIN;\n\
+         SET LOCAL ROLE \"{guest}\";\n\
+         SET LOCAL TimeZone = 'Pacific/Auckland';\n\
+         SELECT set_config('app.user_id', '{actor}', true), \
+                set_config('app.operation', '{operation}', true);\n\
+         {body}\n\
+         COMMIT;\n"
+    )
+}
+
+/// A DO block that asserts that `statement` raises `condition` and that
+/// `check` holds in the handler. The handler sees the state after the
+/// subtransaction rolls back, and `refused_constraint` names the constraint.
+fn refuses_log_write(statement: &str, condition: &str, check: &str) -> String {
+    format!(
+        "DO $$ DECLARE refused_constraint text; BEGIN\n\
+           {statement};\n\
+           RAISE EXCEPTION 'the write succeeded: {}';\n\
+         EXCEPTION WHEN {condition} THEN\n\
+           GET STACKED DIAGNOSTICS refused_constraint = CONSTRAINT_NAME;\n\
+           ASSERT {check}, 'wrong refusal: ' || SQLERRM;\n\
+         END $$;\n",
+        statement.replace('\'', "''")
+    )
+}
+
+/// Run `sql` and expect psql to stop on an error. Returns the verbose error
+/// output, which carries the SQLSTATE.
+fn apply_refused(url: &str, sql: &str) -> String {
+    let out = Command::new("psql")
+        .arg(url)
+        .args(["-v", "VERBOSITY=verbose", "-Atqc", sql])
+        .output()
+        .expect("psql runs");
+    assert!(
+        !out.status.success(),
+        "the script succeeded, but it must fail:\n{sql}"
+    );
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// The history table shape, the function configuration and grants, and the
+/// 64-byte refusal, from the server catalogs.
+#[test]
+fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_history_table_function_creates_one_fixed_shape_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let (db_url, guest) = record_history_log_fixture(&admin);
+
+    let functions = psql(
+        &db_url,
+        None,
+        &format!(
+            "SELECT concat_ws(' ', \
+               has_function_privilege('wamn_db_owner', \
+                 'wamn_history.create_history_table(text, text, boolean)', 'EXECUTE'), \
+               has_function_privilege('wamn_db_owner', 'wamn_history.log_row_change()', 'EXECUTE'), \
+               has_function_privilege('wamn_app', \
+                 'wamn_history.create_history_table(text, text, boolean)', 'EXECUTE'), \
+               has_function_privilege('wamn_app', 'wamn_history.log_row_change()', 'EXECUTE'), \
+               has_function_privilege('{guest}', 'wamn_history.log_row_change()', 'EXECUTE'))"
+        ),
+    );
+    assert_eq!(
+        functions, "t t f f f",
+        "wamn_db_owner must hold EXECUTE on both functions after the second apply, \
+         and wamn_app and the guest must hold neither (order: owner create, owner \
+         log, wamn_app create, wamn_app log, guest log)"
+    );
+    let config = psql(
+        &db_url,
+        None,
+        "SELECT string_agg(concat_ws(' ', p.proname, p.prosecdef, \
+                 array_to_string(p.proconfig, ',')), '; ' ORDER BY p.proname) \
+           FROM pg_proc p WHERE p.pronamespace = 'wamn_history'::regnamespace",
+    );
+    assert_eq!(
+        config,
+        "create_history_table f search_path=pg_catalog; \
+         log_row_change f search_path=pg_catalog,TimeZone=UTC; \
+         stamp_row f search_path=pg_catalog",
+        "every record-history function must be SECURITY INVOKER with a pinned \
+         search_path, and the log function must pin TimeZone to UTC"
+    );
+
+    let columns = |relation: &str| {
+        psql(
+            &db_url,
+            None,
+            &format!(
+                "SELECT string_agg(concat_ws(':', attname, format_type(atttypid, atttypmod), \
+                         attnotnull, attidentity), ', ' ORDER BY attnum) \
+                   FROM pg_attribute \
+                  WHERE attrelid = 'rh_probe.{relation}'::regclass \
+                    AND attnum > 0 AND NOT attisdropped"
+            ),
+        )
+    };
+    let fixed = "row_key:jsonb:t:, kind:text:t:, operation:text:t:, changed_by:uuid:t:, \
+                 changed_at:timestamp with time zone:t:, transaction_id:bigint:t:, \
+                 before:jsonb:t:, after:jsonb:t:";
+    assert_eq!(
+        columns("logged_history"),
+        format!("position:bigint:t:a, {fixed}"),
+        "a history table without the tenant flag must have the fixed shape and no tenant_id"
+    );
+    assert_eq!(
+        columns("tenanted_history"),
+        format!("position:bigint:t:a, tenant_id:text:t:, {fixed}"),
+        "the tenant flag must add tenant_id NOT NULL after position"
+    );
+
+    let objects = psql(
+        &db_url,
+        None,
+        "SELECT concat_ws(' | ', \
+           (SELECT string_agg(conname || ':' || contype::text, ', ' ORDER BY conname) \
+              FROM pg_constraint WHERE conrelid = 'rh_probe.logged_history'::regclass), \
+           (SELECT pg_get_constraintdef(oid) FROM pg_constraint \
+             WHERE conname = 'logged_history_pkey'), \
+           pg_get_serial_sequence('rh_probe.logged_history', 'position'), \
+           (SELECT string_agg(DISTINCT relowner::regrole::text, ',') FROM pg_class \
+             WHERE oid IN ('rh_probe.logged_history'::regclass, \
+                           'rh_probe.logged_history_position_seq'::regclass)))",
+    );
+    assert_eq!(
+        objects,
+        "logged_history_after_not_null:n, logged_history_before_not_null:n, \
+         logged_history_changed_at_not_null:n, logged_history_changed_by_not_null:n, \
+         logged_history_kind_check:c, logged_history_kind_not_null:n, \
+         logged_history_operation_check:c, logged_history_operation_not_null:n, \
+         logged_history_pkey:p, logged_history_position_not_null:n, \
+         logged_history_row_key_not_null:n, logged_history_transaction_id_not_null:n \
+         | PRIMARY KEY (row_key, \"position\") \
+         | rh_probe.logged_history_position_seq \
+         | wamn_db_owner",
+        "the function must name every derived object, key the table by (row_key, \
+         position), and leave the table and its sequence with the caller"
+    );
+
+    // The kind CHECK accepts only insert, update, and delete.
+    apply(
+        &db_url,
+        &refuses_log_write(
+            "INSERT INTO rh_probe.logged_history (row_key, kind, operation, changed_by, \
+               changed_at, transaction_id, before, after) \
+             VALUES ('{\"id\": 1}', 'upsert', 'admin:probe', \
+               '00000000-0000-4000-8000-00000000000a', now(), 1, '{}', '{}')",
+            "check_violation",
+            "refused_constraint = 'logged_history_kind_check'",
+        ),
+    );
+
+    // The longest derived name is <relation>_history_transaction_id_not_null,
+    // 32 bytes longer than the relation. A 31-byte relation fits, and a 32-byte
+    // relation refuses by bytes, not characters.
+    let refusal = |relation: &str| {
+        refuses_log_write(
+            &format!("PERFORM wamn_history.create_history_table('rh_probe', {relation}, true)"),
+            "invalid_parameter_value",
+            &format!("SQLERRM = 'history-name-too-long: ' || {relation}"),
+        )
+    };
+    apply(
+        &db_url,
+        &format!(
+            "BEGIN;\n\
+             SET LOCAL ROLE wamn_db_owner;\n\
+             {}{}\
+             SELECT wamn_history.create_history_table('rh_probe', repeat('r', 31), false);\n\
+             COMMIT;\n\
+             DO $$ BEGIN\n\
+               ASSERT to_regclass('rh_probe.' || repeat('r', 32) || '_history') IS NULL \
+                  AND to_regclass('rh_probe.' || repeat('é', 16) || '_history') IS NULL, \
+                      'a refused relation must get no history table';\n\
+               ASSERT (SELECT max(octet_length(conname)) = 63 \
+                          AND bool_or(conname = repeat('r', 31) || '_history_transaction_id_not_null') \
+                        FROM pg_constraint \
+                        WHERE conrelid = ('rh_probe.' || repeat('r', 31) || '_history')::regclass), \
+                      'a 31-byte relation must get untruncated names up to 63 bytes';\n\
+             END $$;\n",
+            refusal("repeat('r', 32)"),
+            refusal("repeat('é', 16)"),
+        ),
+    );
+
+    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+/// Level-2 spec tests 2, 5, 8, and 16, the '{}' images, the tenant flag, and
+/// the transaction id, over the production guest.
+#[test]
+fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_log_trigger_writes_one_entry_per_row_change_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let (db_url, guest) = record_history_log_fixture(&admin);
+
+    // An insert writes the full row in after and '{}' in before. The UTC read
+    // of the row matches the image. A tenant history table copies tenant_id.
+    let insert = logged_guest_transaction(
+        &guest,
+        ACTOR_A,
+        CREATE_OPERATION,
+        "INSERT INTO rh_probe.logged (id, note, revision) VALUES (1, 'first', 1);\n\
+         INSERT INTO rh_probe.tenanted (tenant_id, id, note) VALUES ('t1', 1, 'first');\n\
+         SELECT set_config('rh.first_xact', pg_current_xact_id()::text, false);",
+    );
+    apply(
+        &db_url,
+        &format!(
+            "{insert}\
+             SET TimeZone = 'UTC';\n\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT count(*) FROM rh_probe.logged_history) = 1, \
+                      'one insert must write one entry';\n\
+               ASSERT (SELECT h.row_key = '{{\"id\": 1}}' AND h.kind = 'insert' \
+                          AND h.operation = '{CREATE_OPERATION}' AND h.changed_by = '{ACTOR_A}' \
+                          AND h.changed_at = l.created_at \
+                          AND h.transaction_id = current_setting('rh.first_xact')::bigint \
+                          AND h.before = '{{}}' AND h.after = to_jsonb(l) \
+                        FROM rh_probe.logged_history h, rh_probe.logged l WHERE l.id = 1), \
+                      'an insert entry must hold the key, the actor, the operation, the \
+                       transaction time and id, an empty before, and the full row';\n\
+               ASSERT (SELECT h.tenant_id = 't1' AND h.kind = 'insert' \
+                          AND h.row_key = '{{\"id\": 1, \"tenant_id\": \"t1\"}}' \
+                          AND h.before = '{{}}' AND h.after = to_jsonb(t) \
+                        FROM rh_probe.tenanted_history h, rh_probe.tenanted t), \
+                      'a tenant history entry must copy tenant_id from the row';\n\
+             END $$;\n"
+        ),
+    );
+
+    // 2 and 5. Two changes write two update entries of the changed columns in
+    // position order. A no-op, a replayed claim, and a no-op upsert write none.
+    let updates = logged_guest_transaction(
+        &guest,
+        ACTOR_B,
+        UPDATE_OPERATION,
+        "UPDATE rh_probe.logged SET note = 'second', revision = revision + 1 WHERE id = 1;\n\
+         UPDATE rh_probe.logged SET note = 'third', revision = revision + 1 WHERE id = 1;\n\
+         UPDATE rh_probe.logged SET note = note WHERE id = 1;\n\
+         INSERT INTO rh_probe.logged (id, note, revision) VALUES (1, 'replayed', 1) \
+           ON CONFLICT (id) DO NOTHING;\n\
+         INSERT INTO rh_probe.logged (id, note, revision) VALUES (1, 'third', 3) \
+           ON CONFLICT (id) DO UPDATE SET note = EXCLUDED.note, revision = EXCLUDED.revision;\n\
+         SELECT set_config('rh.second_xact', pg_current_xact_id()::text, false);",
+    );
+    apply(
+        &db_url,
+        &format!(
+            "SELECT pg_sleep(0.01);\n\
+             {updates}\
+             SET TimeZone = 'UTC';\n\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT array_agg(kind ORDER BY position) FROM rh_probe.logged_history) \
+                        = ARRAY['insert', 'update', 'update'], \
+                      'two changes must write two entries in position order, and a no-op \
+                       and a replay must write none';\n\
+               ASSERT (SELECT bool_and(changed_by = '{ACTOR_B}' AND operation = '{UPDATE_OPERATION}' \
+                          AND transaction_id = current_setting('rh.second_xact')::bigint) \
+                        FROM rh_probe.logged_history WHERE kind = 'update'), \
+                      'each update entry must carry its actor, operation, and transaction id';\n\
+               ASSERT (SELECT u.before = jsonb_build_object('note', 'first', 'revision', 1, \
+                            'updated_at', i.after -> 'updated_at', 'updated_by', '{ACTOR_A}') \
+                          AND u.after = jsonb_build_object('note', 'second', 'revision', 2, \
+                            'updated_at', to_jsonb(l) -> 'updated_at', 'updated_by', '{ACTOR_B}') \
+                        FROM rh_probe.logged_history u, rh_probe.logged_history i, rh_probe.logged l \
+                        WHERE u.kind = 'update' AND i.kind = 'insert' AND l.id = 1 \
+                        ORDER BY u.position LIMIT 1), \
+                      'the first update must record the changed columns, the stamps and \
+                       the revision included';\n\
+               ASSERT (SELECT before = '{{\"note\": \"second\", \"revision\": 2}}' \
+                          AND after = '{{\"note\": \"third\", \"revision\": 3}}' \
+                        FROM rh_probe.logged_history WHERE kind = 'update' \
+                        ORDER BY position DESC LIMIT 1), \
+                      'the second update in the transaction must record only its changes';\n\
+             END $$;\n"
+        ),
+    );
+
+    // 8 and 16. An overlay column change appears in the entry of the row. A key
+    // change writes a delete under the old key and an insert under the new key.
+    // A delete writes the full row in before and '{}' in after.
+    let repair = logged_guest_transaction(
+        &guest,
+        ACTOR_A,
+        REPAIR_OPERATION,
+        "UPDATE rh_probe.logged SET overlay_grade = 'A' WHERE id = 1;\n\
+         UPDATE rh_probe.logged SET note = 'fourth', overlay_grade = 'B' WHERE id = 1;\n\
+         UPDATE rh_probe.logged SET id = 2 WHERE id = 1;\n\
+         DELETE FROM rh_probe.logged WHERE id = 2;\n\
+         DELETE FROM rh_probe.tenanted WHERE id = 1;\n\
+         SELECT set_config('rh.third_xact', pg_current_xact_id()::text, false);",
+    );
+    apply(
+        &db_url,
+        &format!(
+            "SELECT pg_sleep(0.01);\n\
+             {repair}\
+             DO $$ DECLARE third bigint := current_setting('rh.third_xact')::bigint; BEGIN\n\
+               ASSERT (SELECT array_agg(kind ORDER BY position) FROM rh_probe.logged_history \
+                        WHERE row_key = '{{\"id\": 1}}') \
+                        = ARRAY['insert', 'update', 'update', 'update', 'update', 'delete'] \
+                  AND (SELECT array_agg(kind ORDER BY position) FROM rh_probe.logged_history \
+                        WHERE row_key = '{{\"id\": 2}}') = ARRAY['insert', 'delete'], \
+                      'the entries of each key must follow the changes in position order';\n\
+               ASSERT (SELECT array_agg(k ORDER BY k) = ARRAY['overlay_grade', 'updated_at', 'updated_by'] \
+                          AND bool_and(h.before -> 'overlay_grade' = 'null' \
+                                       AND h.after -> 'overlay_grade' = '\"A\"') \
+                        FROM rh_probe.logged_history h, jsonb_object_keys(h.after) k \
+                        WHERE h.kind = 'update' AND h.transaction_id = third \
+                          AND h.after ? 'updated_by'), \
+                      'an overlay column change must record the overlay column and the stamps';\n\
+               ASSERT (SELECT before = '{{\"note\": \"third\", \"overlay_grade\": \"A\"}}' \
+                          AND after = '{{\"note\": \"fourth\", \"overlay_grade\": \"B\"}}' \
+                        FROM rh_probe.logged_history \
+                        WHERE kind = 'update' AND transaction_id = third \
+                          AND NOT after ? 'updated_by'), \
+                      'a base and an overlay change must share one entry';\n\
+               ASSERT (SELECT d.after = '{{}}' AND d.before ->> 'note' = 'fourth' \
+                          AND (SELECT count(*) FROM jsonb_object_keys(d.before)) = 8 \
+                          AND i.before = '{{}}' AND i.after = d.before || '{{\"id\": 2}}' \
+                          AND d.transaction_id = third AND i.transaction_id = third \
+                          AND d.position < i.position \
+                        FROM rh_probe.logged_history d, rh_probe.logged_history i \
+                        WHERE d.row_key = '{{\"id\": 1}}' AND d.kind = 'delete' \
+                          AND i.row_key = '{{\"id\": 2}}' AND i.kind = 'insert'), \
+                      'a key change must write a full delete under the old key and a full \
+                       insert under the new key in one transaction';\n\
+               ASSERT (SELECT d.before = i.after AND d.after = '{{}}' \
+                          AND d.operation = '{REPAIR_OPERATION}' \
+                        FROM rh_probe.logged_history d, rh_probe.logged_history i \
+                        WHERE d.row_key = '{{\"id\": 2}}' AND d.kind = 'delete' \
+                          AND i.row_key = '{{\"id\": 2}}' AND i.kind = 'insert'), \
+                      'a delete must record the full row in before and an empty after';\n\
+               ASSERT (SELECT d.tenant_id = 't1' AND d.before = i.after AND d.after = '{{}}' \
+                          AND d.transaction_id = third \
+                        FROM rh_probe.tenanted_history d, rh_probe.tenanted_history i \
+                        WHERE d.kind = 'delete' AND i.kind = 'insert'), \
+                      'a tenant delete must copy tenant_id from the deleted row';\n\
+             END $$;\n"
+        ),
+    );
+
+    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+/// Level-2 spec tests 4, 7, and 10, and the refusal of a relation with no
+/// primary key, over the production guest.
+#[test]
+fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_log_trigger_refuses_and_rolls_back_the_write_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let (db_url, guest) = record_history_log_fixture(&admin);
+    apply(
+        &db_url,
+        &logged_guest_transaction(
+            &guest,
+            ACTOR_A,
+            CREATE_OPERATION,
+            "INSERT INTO rh_probe.logged (id, note, revision) VALUES (1, 'first', 1);\n\
+             INSERT INTO rh_probe.tenanted (tenant_id, id, note) VALUES ('t1', 1, 'first');",
+        ),
+    );
+
+    // 10. The operation CHECK accepts an operation token, wamn:<component>, and
+    //     admin:<kebab-purpose>.
+    let accepted = [
+        UPDATE_OPERATION,
+        "acme2:quality-inspection/create@2.1.0-rc.1+build.5",
+        "a:b-2/c3@v1",
+        "wamn:audit-retention",
+        "wamn:apply-package",
+        REPAIR_OPERATION,
+    ];
+    let accepted_writes = accepted
+        .map(|operation| {
+            format!(
+                "SELECT set_config('app.operation', '{operation}', true);\n\
+                 UPDATE rh_probe.logged SET revision = revision + 1 WHERE id = 1;\n"
+            )
+        })
+        .concat();
+    let accepted_list = accepted
+        .map(|operation| format!("'{operation}'"))
+        .join(", ");
+    apply(
+        &db_url,
+        &format!(
+            "{}\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT array_agg(operation ORDER BY position) FROM rh_probe.logged_history \
+                        WHERE kind = 'update') = ARRAY[{accepted_list}], \
+                      'the operation CHECK must accept each operation shape';\n\
+             END $$;\n",
+            logged_guest_transaction(&guest, ACTOR_A, CREATE_OPERATION, &accepted_writes),
+        ),
+    );
+
+    // 4 and 10. The CHECK refuses every other value, and the refusal rolls back
+    // the business write with the entry.
+    let refused = [
+        "wamn-probe:logged/update",
+        "wamn-probe:logged@1.0.0",
+        "wamn-probe:logged/update@",
+        "Wamn-probe:logged/update@1.0.0",
+        "wamn_probe:logged/update@1.0.0",
+        "wamn--probe:logged/update@1.0.0",
+        "wamn-probe-:logged/update@1.0.0",
+        "1wamn:logged/update@1.0.0",
+        "wamn-probe:logged/update@1.0.0/extra",
+        "wamn-probe:logged/update@1.0@2",
+        "wamn-probe:logged/update@ 1.0.0",
+        "wamn-probe:logged/update@1.0.0\u{a0}",
+        "wamn:",
+        "wamn:Audit-retention",
+        "wamn:audit_retention",
+        "wamn:audit-retention/run",
+        "admin:",
+        "admin:fix--grades",
+        "admin:fix-grades ",
+        " admin:fix-grades",
+        "operator:fix-grades",
+    ];
+    let check_refusals = refused
+        .map(|operation| {
+            refuses_log_write(
+                &format!(
+                    "PERFORM set_config('app.operation', '{operation}', true);\n\
+                     UPDATE rh_probe.logged SET note = 'refused' WHERE id = 1"
+                ),
+                "check_violation",
+                "refused_constraint = 'logged_history_operation_check' \
+                 AND (SELECT note FROM rh_probe.logged WHERE id = 1) = 'first'",
+            )
+        })
+        .concat();
+    apply(
+        &db_url,
+        &logged_guest_transaction(&guest, ACTOR_A, CREATE_OPERATION, &check_refusals),
+    );
+    let stopped = apply_refused(
+        &db_url,
+        &logged_guest_transaction(
+            &guest,
+            ACTOR_A,
+            "not an operation",
+            "UPDATE rh_probe.logged SET note = 'lost', revision = revision + 1 WHERE id = 1;",
+        ),
+    );
+    assert!(
+        stopped.contains("23514") && stopped.contains("logged_history_operation_check"),
+        "the refused entry must stop the transaction with the operation CHECK:\n{stopped}"
+    );
+
+    // 10. An unbound operation, and the empty binding the host sends for an
+    //     absent claim, raise operation-required. An unbound actor raises
+    //     actor-required on a relation without the stamp trigger.
+    let operation_required = [
+        "UPDATE rh_probe.logged SET note = 'refused' WHERE id = 1",
+        "INSERT INTO rh_probe.tenanted (tenant_id, id, note) VALUES ('t1', 2, 'second')",
+        "DELETE FROM rh_probe.tenanted WHERE id = 1",
+    ]
+    .map(|statement| {
+        refuses_log_write(
+            statement,
+            "object_not_in_prerequisite_state",
+            "SQLERRM = 'operation-required'",
+        )
+    })
+    .concat();
+    let actor_required = [
+        "INSERT INTO rh_probe.tenanted (tenant_id, id, note) VALUES ('t1', 2, 'second')",
+        "DELETE FROM rh_probe.tenanted WHERE id = 1",
+    ]
+    .map(|statement| {
+        refuses_log_write(
+            statement,
+            "object_not_in_prerequisite_state",
+            "SQLERRM = 'actor-required'",
+        )
+    })
+    .concat();
+    apply(
+        &db_url,
+        &format!(
+            "BEGIN;\n\
+             SET LOCAL ROLE \"{guest}\";\n\
+             SELECT set_config('app.user_id', '{ACTOR_A}', true);\n\
+             {operation_required}\
+             SELECT set_config('app.operation', '', true);\n\
+             {operation_required}\
+             SELECT set_config('app.user_id', '', true), \
+                    set_config('app.operation', '{UPDATE_OPERATION}', true);\n\
+             {actor_required}\
+             COMMIT;\n"
+        ),
+    );
+
+    // A relation with no primary key refuses the write.
+    // 7. The guest holds INSERT on the history table and cannot update or
+    //    delete an entry.
+    let guest_refusals = [
+        refuses_log_write(
+            "INSERT INTO rh_probe.keyless (id, note) VALUES (1, 'first')",
+            "object_not_in_prerequisite_state",
+            "SQLERRM = 'history-key-required'",
+        ),
+        refuses_log_write(
+            "UPDATE rh_probe.logged_history SET kind = 'update'",
+            "insufficient_privilege",
+            "true",
+        ),
+        refuses_log_write(
+            "DELETE FROM rh_probe.logged_history",
+            "insufficient_privilege",
+            "true",
+        ),
+    ]
+    .concat();
+    apply(
+        &db_url,
+        &format!(
+            "{}\
+             DO $$ BEGIN\n\
+               ASSERT (SELECT note = 'first' AND revision = {} FROM rh_probe.logged WHERE id = 1), \
+                      'every refused write must leave the row unchanged';\n\
+               ASSERT (SELECT count(*) FROM rh_probe.logged_history) = {} \
+                  AND (SELECT count(*) FROM rh_probe.tenanted_history) = 1 \
+                  AND NOT EXISTS (SELECT FROM rh_probe.keyless) \
+                  AND NOT EXISTS (SELECT FROM rh_probe.keyless_history), \
+                      'every refused write must leave no entry';\n\
+             END $$;\n",
+            logged_guest_transaction(&guest, ACTOR_A, REPAIR_OPERATION, &guest_refusals),
+            1 + accepted.len(),
+            1 + accepted.len(),
+        ),
+    );
+
+    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+/// Start one psql session that runs the SQL the test writes to its standard
+/// input. `PGAPPNAME` names the session in `pg_stat_activity`.
+fn start_session(url: &str, name: &str) -> std::process::Child {
+    Command::new("psql")
+        .arg(url)
+        .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
+        .env("PGAPPNAME", name)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn psql (is it installed?)")
+}
+
+fn send(session: &mut std::process::Child, sql: &str) {
+    use std::io::Write;
+    let stdin = session.stdin.as_mut().expect("session stdin");
+    stdin.write_all(sql.as_bytes()).expect("write session SQL");
+    stdin.flush().expect("flush session SQL");
+}
+
+/// Wait until `query` returns true on the server.
+fn wait_until(url: &str, query: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while psql(url, None, query) != "t" {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server did not reach the state: {query}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+fn finish(session: std::process::Child) {
+    let out = session.wait_with_output().expect("session completes");
+    assert!(
+        out.status.success(),
+        "session failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// Level-2 spec test 3. The second writer waits on the row lock of the first,
+/// and the entries agree with the serialized row changes.
+#[test]
+fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_log_trigger_serializes_concurrent_changes_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let (db_url, guest) = record_history_log_fixture(&admin);
+    // A third actor inserts, so each update moves updated_by.
+    apply(
+        &db_url,
+        &logged_guest_transaction(
+            &guest,
+            ACTOR_C,
+            CREATE_OPERATION,
+            "INSERT INTO rh_probe.logged (id, note, revision) VALUES (1, 'first', 1);",
+        ),
+    );
+
+    let claims = |actor: &str| {
+        format!(
+            "BEGIN;\n\
+             SET LOCAL ROLE \"{guest}\";\n\
+             SELECT set_config('app.user_id', '{actor}', true), \
+                    set_config('app.operation', '{UPDATE_OPERATION}', true);\n"
+        )
+    };
+    let mut first = start_session(&db_url, "rh-first");
+    send(
+        &mut first,
+        &format!(
+            "{}UPDATE rh_probe.logged SET note = 'from first', revision = revision + 1 \
+               WHERE id = 1;\n\
+             SELECT set_config('application_name', 'rh-first-locked', false);\n",
+            claims(ACTOR_A)
+        ),
+    );
+    wait_until(
+        &db_url,
+        "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE application_name = 'rh-first-locked')",
+    );
+    let mut second = start_session(&db_url, "rh-second");
+    send(
+        &mut second,
+        &format!(
+            "{}UPDATE rh_probe.logged SET note = 'from second', revision = revision + 1 \
+               WHERE id = 1;\n\
+             COMMIT;\n",
+            claims(ACTOR_B)
+        ),
+    );
+    drop(second.stdin.take());
+    wait_until(
+        &db_url,
+        "SELECT EXISTS (SELECT FROM pg_stat_activity \
+                         WHERE application_name = 'rh-second' AND wait_event_type = 'Lock')",
+    );
+    send(&mut first, "COMMIT;\n");
+    drop(first.stdin.take());
+    finish(first);
+    finish(second);
+
+    apply(
+        &db_url,
+        &format!(
+            "DO $$ BEGIN\n\
+               ASSERT (SELECT note = 'from second' AND revision = 3 \
+                        FROM rh_probe.logged WHERE id = 1), \
+                      'both changes must commit in order';\n\
+               ASSERT (SELECT array_agg(kind ORDER BY position) = ARRAY['insert', 'update', 'update'] \
+                          AND count(DISTINCT position) = 3 \
+                          AND count(DISTINCT transaction_id) = 3 \
+                        FROM rh_probe.logged_history), \
+                      'each committed change must write one entry at its own position';\n\
+               ASSERT (SELECT f.changed_by = '{ACTOR_A}' AND s.changed_by = '{ACTOR_B}' \
+                          AND f.position < s.position \
+                          AND f.after ->> 'note' = 'from first' AND f.after -> 'revision' = '2' \
+                          AND s.before = f.after \
+                          AND s.after ->> 'note' = 'from second' AND s.after -> 'revision' = '3' \
+                        FROM rh_probe.logged_history f, rh_probe.logged_history s \
+                        WHERE f.kind = 'update' AND s.kind = 'update' AND f.position < s.position), \
+                      'the second entry must start from the first result at a later position';\n\
+             END $$;\n"
         ),
     );
 
