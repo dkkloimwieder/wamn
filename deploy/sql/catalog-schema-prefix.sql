@@ -23,6 +23,20 @@ DO $platform_group$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $platform_group$;
 
+-- Stable ACL role for record history retention (`wamn-emtx.13`). apply-package
+-- grants it privileges on the history tables of this database, and
+-- provisioning owns its scoped A/B LOGIN generations. It is not a wamn_platform
+-- member.
+DO $audit_retention$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
+                 WHERE rolname = 'wamn_audit_retention') THEN
+    CREATE ROLE wamn_audit_retention NOLOGIN NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $audit_retention$;
+
 GRANT USAGE ON SCHEMA catalog TO wamn_app;
 GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author;
 

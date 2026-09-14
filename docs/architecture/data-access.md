@@ -230,8 +230,8 @@ The [`prune-record-history`](../../services/ctl/src/prune_record_history.rs) ver
 It connects as a scoped generation of the tenant-scoped audit retention family, whose stable role is `wamn_audit_retention`.
 It refuses any login that is not an audit retention generation for `--tenant` in the connected database.
 The family is not a `wamn_platform` member, because no reader needs the edge.
-`postgres-init.sql` and `record-history.sql` create the stable role under the role bootstrap lock.
-An applier of `record-history.sql` without CREATEROLE creates no role.
+`catalog-schema-prefix.sql` creates the stable role under the role bootstrap lock, beside `wamn_platform`.
+The system database schema creates no audit retention role.
 
 The verb reads the retention of each relation from the `record_history_log` trigger argument in `pg_trigger`.
 It skips an `unlimited` relation.

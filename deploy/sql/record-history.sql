@@ -32,22 +32,6 @@ DO $db_owner$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $db_owner$;
 
--- apply-package grants wamn_audit_retention its privileges on the history
--- tables that keep entries for n days, so the role exists before them. An
--- applier without CREATEROLE skips the block. The system database applies this
--- file as wamn_system, and no retention task runs there.
-DO $audit_retention$ BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
-                 WHERE rolname = 'wamn_audit_retention')
-     AND EXISTS (SELECT FROM pg_catalog.pg_roles
-                 WHERE rolname = current_user AND (rolsuper OR rolcreaterole)) THEN
-    CREATE ROLE wamn_audit_retention NOLOGIN NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-  END IF;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $audit_retention$;
-
 -- Test setups drop catalog and apply CATALOG_SCHEMA_SQL again on the same
 -- database. wamn_history stays, so the schema and function DDL is idempotent.
 CREATE SCHEMA IF NOT EXISTS wamn_history;

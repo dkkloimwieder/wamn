@@ -113,20 +113,6 @@ DO $run_retention$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $run_retention$;
 
--- Stable ACL role for record history retention (`wamn-emtx.13`). apply-package
--- grants it privileges on history tables, and provisioning owns its scoped A/B
--- LOGIN generations. It is not a wamn_platform member, so the membership grant
--- below does not name it.
-DO $audit_retention$ BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
-                 WHERE rolname = 'wamn_audit_retention') THEN
-    CREATE ROLE wamn_audit_retention NOLOGIN NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-  END IF;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $audit_retention$;
-
 -- The shared platform group role every non-guest floor arm targets
 -- (`wamn-0h0g.22.17`). PostgreSQL DEFAULT-DENIES when RLS is enabled and no
 -- policy matches the connected role, so narrowing the floor `TO wamn_app` does
