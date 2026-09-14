@@ -3,17 +3,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use tokio_postgres::{Client, GenericClient, Row};
+use tokio_postgres::{Client, Row};
+use wamn_record_history::{LOG_TRIGGER, STAMP_TRIGGER, is_history_table_name};
 
 use crate::ir::{
     CatalogIr, Column, ColumnGeneration, Constraint, Exclusion, ExclusionAccessMethod,
     ExclusionElement, ExclusionKey, ForeignKeyAction, ForeignKeyColumn, IdentityMode, Index,
     IndexColumn, IndexDirection, IrError, IrErrorKind, Table, postgres_default, postgres_type,
-};
-use crate::record_history::{
-    CHECKED_COLUMNS, HISTORY_TABLE_SUFFIX, IDENTITY_COLUMN, PRIMARY_KEY_COLUMNS,
-    RECORD_HISTORY_LOG_TRIGGER, history_columns, history_table_name, is_history_table_name,
-    is_log_retention,
 };
 
 /// Stable class of PostgreSQL catalog refusal.
@@ -251,29 +247,20 @@ struct IndexRow {
     predicate: bool,
 }
 
-/// Columns that the record-history stamp trigger selects, keyed by schema and table.
-pub type RecordHistoryStamps = BTreeMap<(String, String), Vec<String>>;
-
-/// The one trigger name that introspection admits.
-const RECORD_HISTORY_STAMP_TRIGGER: &str = "wamn_record_history_stamp";
-/// The reserved record-history columns that a stamp trigger can select.
-const RECORD_HISTORY_COLUMNS: [&str; 4] = ["created_at", "created_by", "updated_at", "updated_by"];
-/// `pg_trigger.tgtype` bits for BEFORE INSERT OR UPDATE FOR EACH ROW.
-const BEFORE_INSERT_OR_UPDATE_FOR_EACH_ROW: i16 = 1 | 2 | 4 | 16;
-/// Retention argument of each record-history log trigger, keyed by schema and table.
-pub type RecordHistoryLogs = BTreeMap<(String, String), String>;
-/// `pg_trigger.tgtype` bits for AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW.
-const AFTER_INSERT_OR_UPDATE_OR_DELETE_FOR_EACH_ROW: i16 = 1 | 4 | 8 | 16;
-
 type TableKey = (String, String);
 type AttributeKey = (String, String, i16);
 
+/// Whether the reader skips a relation and every catalog row that belongs to it.
+///
+/// The caller names host-owned relations. A record history table is a platform
+/// fixture, so its `_history` name alone skips it.
 fn relation_is_excluded(excluded_relations: &[(&str, &str)], schema: &str, table: &str) -> bool {
-    excluded_relations
-        .iter()
-        .any(|(excluded_schema, excluded_table)| {
-            *excluded_schema == schema && *excluded_table == table
-        })
+    is_history_table_name(table)
+        || excluded_relations
+            .iter()
+            .any(|(excluded_schema, excluded_table)| {
+                *excluded_schema == schema && *excluded_table == table
+            })
 }
 
 const SCHEMAS_SQL: &str = r"
@@ -330,26 +317,12 @@ SELECT namespace.nspname::text AS schema_name,
 const TRIGGERS_SQL: &str = r"
 SELECT namespace.nspname::text AS schema_name,
        relation.relname::text AS table_name,
-       trigger.tgname::text AS trigger_name,
-       routine_namespace.nspname::text AS function_schema,
-       routine.proname::text AS function_name,
-       trigger.tgtype AS trigger_type,
-       trigger.tgenabled::text AS enabled,
-       trigger.tgargs AS arguments,
-       pg_catalog.cardinality(trigger.tgattr::pg_catalog.int2[]) > 0 AS has_column_list,
-       trigger.tgqual IS NOT NULL AS has_condition,
-       trigger.tgconstraint <> 0 AS is_constraint,
-       trigger.tgoldtable IS NOT NULL OR trigger.tgnewtable IS NOT NULL
-           AS has_transition_table
+       trigger.tgname::text AS trigger_name
   FROM pg_catalog.pg_trigger AS trigger
   JOIN pg_catalog.pg_class AS relation
     ON relation.oid = trigger.tgrelid
   JOIN pg_catalog.pg_namespace AS namespace
     ON namespace.oid = relation.relnamespace
-  JOIN pg_catalog.pg_proc AS routine
-    ON routine.oid = trigger.tgfoid
-  JOIN pg_catalog.pg_namespace AS routine_namespace
-    ON routine_namespace.oid = routine.pronamespace
  WHERE namespace.nspname = ANY($1::text[])
    AND NOT trigger.tgisinternal
  ORDER BY namespace.nspname, relation.relname, trigger.tgname
@@ -874,169 +847,6 @@ fn validate_relations(
     Ok(tables)
 }
 
-/// Name each record-history table and refuse one outside the table floor.
-///
-/// A history table is a permanent heap table with no inheritance and no row
-/// security. It carries grants, so its ACL is admitted.
-fn validate_history_relations(
-    relations: &[RelationRow],
-) -> Result<BTreeSet<TableKey>, PostgresIntrospectionError> {
-    let mut history_tables = BTreeSet::new();
-    for relation in relations
-        .iter()
-        .filter(|relation| relation.kind == "r" && is_history_table_name(&relation.name))
-    {
-        if relation.persistence != "p"
-            || relation.access_method.as_deref() != Some("heap")
-            || relation.has_inheritance
-            || relation.row_security
-            || relation.force_row_security
-        {
-            return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedTable,
-                Some(&relation.schema),
-                Some(&relation.name),
-                "a history table is a permanent heap table with no inheritance and no \
-                 row-level security",
-            ));
-        }
-        history_tables.insert((relation.schema.clone(), relation.name.clone()));
-    }
-    Ok(history_tables)
-}
-
-/// Catalog rows that belong to the record-history tables.
-struct HistoryTableRows<'a> {
-    columns: &'a [ColumnRow],
-    constraints: &'a [ConstraintRow],
-    indexes: &'a [IndexRow],
-    sequences: &'a [SequenceRow],
-}
-
-/// Admit each history table only in the platform shape of a package relation.
-///
-/// The shape is the one that `wamn_history.create_history_table` creates with no
-/// tenant column: the columns in [`crate::record_history`], the named NOT NULL,
-/// primary key, and CHECK constraints over their columns, the named identity
-/// sequence, and no other index. The reader does not compare CHECK expressions.
-fn admit_history_tables(
-    history_tables: &BTreeSet<TableKey>,
-    tables: &BTreeMap<TableKey, TableParts>,
-    rows: &HistoryTableRows<'_>,
-) -> Result<(), PostgresIntrospectionError> {
-    for (schema, history) in history_tables {
-        let refuse = |detail: &str| {
-            refusal(
-                PostgresIntrospectionErrorKind::UnsupportedTable,
-                Some(schema),
-                Some(history),
-                format!("history table differs from the platform shape: {detail}"),
-            )
-        };
-        let owned =
-            |row_schema: &str, row_table: &str| row_schema == schema && row_table == history;
-        let relation = history
-            .strip_suffix(HISTORY_TABLE_SUFFIX)
-            .expect("a history table name ends with the history suffix");
-        if !tables.contains_key(&(schema.clone(), relation.to_owned())) {
-            return Err(refuse("no ordinary table carries its relation name"));
-        }
-
-        let columns = rows
-            .columns
-            .iter()
-            .filter(|column| owned(&column.schema, &column.table))
-            .collect::<Vec<_>>();
-        let observed_columns = columns
-            .iter()
-            .map(|column| {
-                (
-                    column.name.as_str(),
-                    postgres_type(&column.type_name).ok(),
-                    column.nullable,
-                    column.identity.as_str(),
-                    column.generated.as_str(),
-                    column.default_expression.is_some(),
-                    column.default_collation,
-                )
-            })
-            .collect::<Vec<_>>();
-        let expected_columns = history_columns()
-            .map(|(name, column_type)| {
-                let identity = if name == IDENTITY_COLUMN { "a" } else { "" };
-                (name, Some(column_type), false, identity, "", false, true)
-            })
-            .collect::<Vec<_>>();
-        if observed_columns != expected_columns {
-            return Err(refuse("its columns differ"));
-        }
-
-        let names = columns
-            .iter()
-            .map(|column| (column.number, column.name.as_str()))
-            .collect::<BTreeMap<_, _>>();
-        let mut observed_constraints = BTreeSet::new();
-        for constraint in rows
-            .constraints
-            .iter()
-            .filter(|constraint| owned(&constraint.schema, &constraint.table))
-        {
-            validate_constraint_shape(constraint)?;
-            if constraint.kind == "p" {
-                validate_constraint_index(constraint)?;
-            }
-            let key_columns = constraint
-                .columns
-                .iter()
-                .map(|number| names.get(number).copied().unwrap_or_default())
-                .collect::<Vec<_>>();
-            observed_constraints.insert((
-                constraint.name.clone(),
-                constraint.kind.as_str(),
-                key_columns,
-            ));
-        }
-        let expected_constraints = history_columns()
-            .map(|(column, _)| (format!("{history}_{column}_not_null"), "n", vec![column]))
-            .chain([(format!("{history}_pkey"), "p", PRIMARY_KEY_COLUMNS.to_vec())])
-            .chain(
-                CHECKED_COLUMNS
-                    .iter()
-                    .map(|column| (format!("{history}_{column}_check"), "c", vec![*column])),
-            )
-            .collect::<BTreeSet<_>>();
-        if observed_constraints != expected_constraints {
-            return Err(refuse("its constraints differ"));
-        }
-
-        if rows
-            .indexes
-            .iter()
-            .any(|index| owned(&index.schema, &index.table))
-        {
-            return Err(refuse("it carries an ordinary index"));
-        }
-        let sequences = rows
-            .sequences
-            .iter()
-            .filter(|sequence| {
-                sequence.table_schema.as_deref() == Some(schema.as_str())
-                    && sequence.table.as_deref() == Some(history.as_str())
-            })
-            .map(|sequence| (sequence.name.as_str(), sequence.column.as_deref()))
-            .collect::<Vec<_>>();
-        if sequences
-            != [(
-                format!("{history}_{IDENTITY_COLUMN}_seq").as_str(),
-                Some(IDENTITY_COLUMN),
-            )]
-        {
-            return Err(refuse("its identity sequence differs"));
-        }
-    }
-    Ok(())
-}
-
 async fn refuse_routines(
     client: &Client,
     schemas: &[String],
@@ -1068,125 +878,37 @@ async fn refuse_routines(
     ))
 }
 
-/// The record-history triggers that introspection admits, by relation.
-#[derive(Debug, Default)]
-struct RecordHistoryTriggers {
-    stamps: RecordHistoryStamps,
-    logs: RecordHistoryLogs,
-}
-
-/// Admit only the platform record-history triggers and read their arguments.
-///
-/// The stamp shape is `wamn_record_history_stamp BEFORE INSERT OR UPDATE FOR EACH
-/// ROW EXECUTE FUNCTION wamn_history.stamp_row(<columns>)`. Its arguments are
-/// distinct reserved record-history column names. The log shape is
-/// `wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW EXECUTE
-/// FUNCTION wamn_history.log_row_change(<retention>)`. Its one argument is a log
-/// retention. Both are enabled, with no column list, condition, constraint, or
-/// transition table. Every other trigger refuses.
-async fn load_record_history_triggers(
-    client: &(impl GenericClient + Sync),
+async fn refuse_triggers(
+    client: &Client,
     schemas: &[String],
     excluded_relations: &[(&str, &str)],
-) -> Result<RecordHistoryTriggers, PostgresIntrospectionError> {
+) -> Result<(), PostgresIntrospectionError> {
     let rows = client
         .query(TRIGGERS_SQL, &[&schemas])
         .await
         .map_err(|error| database_error("query configured-schema triggers", error))?;
-    let mut triggers = RecordHistoryTriggers::default();
-    for row in rows {
-        let schema = row.get::<_, String>("schema_name");
-        let table = row.get::<_, String>("table_name");
-        if relation_is_excluded(excluded_relations, &schema, &table) {
-            continue;
-        }
+    // The record history triggers are platform fixtures, so their names alone skip them.
+    let Some(row) = rows.into_iter().find(|row| {
         let trigger = row.get::<_, String>("trigger_name");
-        let arguments = row.get::<_, Vec<u8>>("arguments");
-        let arguments = arguments
-            .strip_suffix(b"\0")
-            .map(|arguments| {
-                arguments
-                    .split(|byte| *byte == 0)
-                    .map(|argument| String::from_utf8_lossy(argument).into_owned())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let function = (
-            row.get::<_, String>("function_schema"),
-            row.get::<_, String>("function_name"),
-        );
-        let trigger_type = row.get::<_, i16>("trigger_type");
-        let plain_row_trigger = row.get::<_, String>("enabled") == "O"
-            && !row.get::<_, bool>("has_column_list")
-            && !row.get::<_, bool>("has_condition")
-            && !row.get::<_, bool>("is_constraint")
-            && !row.get::<_, bool>("has_transition_table");
-        let stamp = trigger == RECORD_HISTORY_STAMP_TRIGGER
-            && function == ("wamn_history".to_owned(), "stamp_row".to_owned())
-            && trigger_type == BEFORE_INSERT_OR_UPDATE_FOR_EACH_ROW
-            && plain_row_trigger
-            && !arguments.is_empty()
-            && arguments
-                .iter()
-                .all(|column| RECORD_HISTORY_COLUMNS.contains(&column.as_str()))
-            && arguments.iter().collect::<BTreeSet<_>>().len() == arguments.len();
-        let log = trigger == RECORD_HISTORY_LOG_TRIGGER
-            && function == ("wamn_history".to_owned(), "log_row_change".to_owned())
-            && trigger_type == AFTER_INSERT_OR_UPDATE_OR_DELETE_FOR_EACH_ROW
-            && plain_row_trigger
-            && arguments.len() == 1
-            && is_log_retention(&arguments[0]);
-        if stamp {
-            triggers.stamps.insert((schema, table), arguments);
-        } else if log {
-            let retention = arguments
-                .into_iter()
-                .next()
-                .expect("a log trigger has one argument");
-            triggers.logs.insert((schema, table), retention);
-        } else {
-            return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedTrigger,
-                Some(&schema),
-                Some(&format!("{table}.{trigger}")),
-                "only the wamn_record_history_stamp trigger that runs BEFORE INSERT OR UPDATE \
-                 FOR EACH ROW and executes wamn_history.stamp_row with distinct \
-                 record-history columns, and the wamn_record_history_log trigger that runs \
-                 AFTER INSERT OR UPDATE OR DELETE FOR EACH ROW and executes \
-                 wamn_history.log_row_change with one log retention, are inside the \
-                 supported catalog set",
-            ));
-        }
-    }
-    Ok(triggers)
-}
-
-/// Read the record-history stamp triggers in explicitly configured schemas.
-///
-/// This is the trigger admission of [`read_catalog`] without the rest of the
-/// catalog read, so a caller inside its own transaction can compare installed
-/// triggers with the declarations.
-pub async fn read_record_history_stamps(
-    client: &(impl GenericClient + Sync),
-    application_schemas: &[&str],
-) -> Result<RecordHistoryStamps, PostgresIntrospectionError> {
-    load_record_history_triggers(client, &configured_schemas(application_schemas), &[])
-        .await
-        .map(|triggers| triggers.stamps)
-}
-
-/// Read the record-history log triggers in explicitly configured schemas.
-///
-/// This is the trigger admission of [`read_catalog`] without the rest of the
-/// catalog read, so a caller inside its own transaction can compare the
-/// installed retention arguments with the declarations.
-pub async fn read_record_history_logs(
-    client: &(impl GenericClient + Sync),
-    application_schemas: &[&str],
-) -> Result<RecordHistoryLogs, PostgresIntrospectionError> {
-    load_record_history_triggers(client, &configured_schemas(application_schemas), &[])
-        .await
-        .map(|triggers| triggers.logs)
+        trigger != STAMP_TRIGGER
+            && trigger != LOG_TRIGGER
+            && !relation_is_excluded(
+                excluded_relations,
+                &row.get::<_, String>("schema_name"),
+                &row.get::<_, String>("table_name"),
+            )
+    }) else {
+        return Ok(());
+    };
+    let schema = row.get::<_, String>("schema_name");
+    let table = row.get::<_, String>("table_name");
+    let trigger = row.get::<_, String>("trigger_name");
+    Err(refusal(
+        PostgresIntrospectionErrorKind::UnsupportedTrigger,
+        Some(&schema),
+        Some(&format!("{table}.{trigger}")),
+        "user-defined triggers are outside the supported catalog set",
+    ))
 }
 
 async fn refuse_rules(
@@ -1513,7 +1235,7 @@ fn sequence_row(row: &Row) -> SequenceRow {
 
 fn validate_sequences(
     rows: &[SequenceRow],
-    columns: &[&ColumnRow],
+    columns: &[ColumnRow],
     schemas: &[String],
 ) -> Result<(), PostgresIntrospectionError> {
     let configured = schemas.iter().map(String::as_str).collect::<BTreeSet<_>>();
@@ -2249,8 +1971,8 @@ pub async fn read_catalog(
 /// Read configured application schemas while omitting explicitly named
 /// host-owned relations from the package IR.
 ///
-/// A table whose name ends with `_history` is a record-history table. The
-/// reader admits it only in the platform shape and leaves it out of the IR.
+/// The reader also skips each relation whose name ends with `_history` and the
+/// `wamn_record_history_stamp` and `wamn_record_history_log` triggers by name.
 pub async fn read_catalog_excluding_relations(
     client: &Client,
     application_schemas: &[&str],
@@ -2269,60 +1991,12 @@ pub async fn read_catalog_excluding_relations(
             !relation_is_excluded(excluded_relations, &relation.schema, &relation.name)
         })
         .collect::<Vec<_>>();
-    let history_tables = validate_history_relations(&relations)?;
-    // A history table leaves the IR. Triggers, rules, and policies on it still
-    // refuse, so those reads keep the caller's exclusions only.
-    let catalog_excluded = excluded_relations
-        .iter()
-        .copied()
-        .chain(
-            history_tables
-                .iter()
-                .map(|(schema, table)| (schema.as_str(), table.as_str())),
-        )
-        .collect::<Vec<_>>();
-    let catalog_relations = relations
-        .into_iter()
-        .filter(|relation| {
-            !relation_is_excluded(&catalog_excluded, &relation.schema, &relation.name)
-        })
-        .collect::<Vec<_>>();
-    let mut tables = validate_relations(&catalog_relations)?;
+    let mut tables = validate_relations(&relations)?;
     refuse_routines(client, &schemas).await?;
-    let triggers = load_record_history_triggers(client, &schemas, excluded_relations).await?;
-    for ((schema, table), trigger) in triggers
-        .stamps
-        .into_keys()
-        .map(|key| (key, RECORD_HISTORY_STAMP_TRIGGER))
-        .chain(
-            triggers
-                .logs
-                .into_keys()
-                .map(|key| (key, RECORD_HISTORY_LOG_TRIGGER)),
-        )
-    {
-        if !tables.contains_key(&(schema.clone(), table.clone())) {
-            return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedTrigger,
-                Some(&schema),
-                Some(&format!("{table}.{trigger}")),
-                "trigger belongs to a relation that is not an ordinary table",
-            ));
-        }
-        if trigger == RECORD_HISTORY_LOG_TRIGGER
-            && !history_tables.contains(&(schema.clone(), history_table_name(&table)))
-        {
-            return Err(refusal(
-                PostgresIntrospectionErrorKind::UnsupportedTrigger,
-                Some(&schema),
-                Some(&format!("{table}.{trigger}")),
-                "log trigger belongs to a relation that has no history table",
-            ));
-        }
-    }
+    refuse_triggers(client, &schemas, excluded_relations).await?;
     refuse_rules(client, &schemas, excluded_relations).await?;
     refuse_policies(client, &schemas, excluded_relations).await?;
-    validate_types(client, &schemas, &catalog_excluded).await?;
+    validate_types(client, &schemas, excluded_relations).await?;
     refuse_default_acls(client, &schemas).await?;
 
     let columns = load_columns(client, &schemas)
@@ -2330,10 +2004,7 @@ pub async fn read_catalog_excluding_relations(
         .into_iter()
         .filter(|column| !relation_is_excluded(excluded_relations, &column.schema, &column.table))
         .collect::<Vec<_>>();
-    let (history_columns, catalog_columns): (Vec<_>, Vec<_>) = columns
-        .into_iter()
-        .partition(|column| relation_is_excluded(&catalog_excluded, &column.schema, &column.table));
-    let attributes = map_columns(&catalog_columns, &mut tables)?;
+    let attributes = map_columns(&columns, &mut tables)?;
     let sequences = load_sequences(client, &schemas)
         .await?
         .into_iter()
@@ -2347,39 +2018,22 @@ pub async fn read_catalog_excluding_relations(
                 })
         })
         .collect::<Vec<_>>();
-    let identity_columns = catalog_columns
-        .iter()
-        .chain(&history_columns)
-        .collect::<Vec<_>>();
-    validate_sequences(&sequences, &identity_columns, &schemas)?;
+    validate_sequences(&sequences, &columns, &schemas)?;
 
-    let (history_constraints, catalog_constraints): (Vec<_>, Vec<_>) =
-        load_constraints(client, &schemas)
-            .await?
-            .into_iter()
-            .filter(|constraint| {
-                !relation_is_excluded(excluded_relations, &constraint.schema, &constraint.table)
-            })
-            .partition(|constraint| {
-                relation_is_excluded(&catalog_excluded, &constraint.schema, &constraint.table)
-            });
-    map_constraints(&catalog_constraints, &attributes, &mut tables)?;
-    let (history_indexes, catalog_indexes): (Vec<_>, Vec<_>) = load_indexes(client, &schemas)
+    let constraints = load_constraints(client, &schemas)
+        .await?
+        .into_iter()
+        .filter(|constraint| {
+            !relation_is_excluded(excluded_relations, &constraint.schema, &constraint.table)
+        })
+        .collect::<Vec<_>>();
+    map_constraints(&constraints, &attributes, &mut tables)?;
+    let indexes = load_indexes(client, &schemas)
         .await?
         .into_iter()
         .filter(|index| !relation_is_excluded(excluded_relations, &index.schema, &index.table))
-        .partition(|index| relation_is_excluded(&catalog_excluded, &index.schema, &index.table));
-    map_indexes(&catalog_indexes, &attributes, &mut tables)?;
-    admit_history_tables(
-        &history_tables,
-        &tables,
-        &HistoryTableRows {
-            columns: &history_columns,
-            constraints: &history_constraints,
-            indexes: &history_indexes,
-            sequences: &sequences,
-        },
-    )?;
+        .collect::<Vec<_>>();
+    map_indexes(&indexes, &attributes, &mut tables)?;
 
     Ok(CatalogIr::new(
         tables

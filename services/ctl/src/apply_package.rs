@@ -21,6 +21,9 @@ use wamn_event_reg::{
     DELETE_STALE_CATALOG_REGISTRATIONS_SQL, EventRegistration, RegistrationInput,
     UPSERT_CATALOG_REGISTRATION_SQL, project_catalog_registrations,
 };
+use wamn_record_history::{
+    HISTORY_TABLE_SUFFIX, LOG_TRIGGER, STAMP_TRIGGER, history_table_name, is_history_table_name,
+};
 use wamn_schema_control::{
     AppliedPackage, MigrationSource, PackageDirectory, PackageMigrationError, RecordedMigration,
     SqlStatement, plan_package_migrations, plan_package_registration,
@@ -29,9 +32,6 @@ use wamn_schema_generator::{ModelDeclaration, PackageManifest, RecordHistoryColu
 use wamn_schema_introspection::migration_policy::{
     DefinitionAction, DefinitionKind, DefinitionMutation, MigrationPolicyError,
     MigrationPolicyErrorKind, inspect_migration_definition_mutations,
-};
-use wamn_schema_introspection::record_history::{
-    HISTORY_TABLE_SUFFIX, RECORD_HISTORY_LOG_TRIGGER, history_table_name, is_history_table_name,
 };
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
@@ -122,8 +122,6 @@ SELECT owned.schema_name, owned.relation_name, owned.quoted, \
        ) AS owned \
   LEFT JOIN pg_catalog.pg_trigger AS installed \
     ON installed.tgrelid = pg_catalog.to_regclass(owned.quoted) AND NOT installed.tgisinternal";
-/// The stamp trigger that apply-package installs on a relation that selects stamp columns.
-const RECORD_HISTORY_STAMP_TRIGGER: &str = "wamn_record_history_stamp";
 
 /// Stable apply-package refusal prefix.
 pub const APPLY_PACKAGE_REFUSAL: &str = "apply-package-refused";
@@ -787,12 +785,12 @@ async fn reconcile_record_history_triggers(
         let (quoted, definitions) = &installed[relation];
         for (name, timing, call) in [
             (
-                RECORD_HISTORY_STAMP_TRIGGER,
+                STAMP_TRIGGER,
                 "BEFORE INSERT OR UPDATE",
                 (!columns.is_empty()).then(|| format!("stamp_row({})", columns.join(", "))),
             ),
             (
-                RECORD_HISTORY_LOG_TRIGGER,
+                LOG_TRIGGER,
                 "AFTER INSERT OR DELETE OR UPDATE",
                 model.log_retention().map(|retention| {
                     format!("log_row_change('{}')", retention.replace('\'', "''"))

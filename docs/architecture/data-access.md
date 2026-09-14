@@ -31,7 +31,7 @@ Managed schemas refuse foreign tables, authored views, materialized views, unsup
 Nontransactional operations and mutations outside the selected schemas refuse.
 The platform alone installs its declared extension list, currently `btree_gist`, before application migration SQL.
 
-The platform installs the only admitted triggers and the history tables, as [record history](#record-history) describes.
+The platform installs the record history triggers and the history tables, and the catalog reader skips them by name, as [record history](#record-history) describes.
 
 Each managed relation, field, and constraint records its owning package.
 An overlay can add a field only where the base permits that extension.
@@ -190,7 +190,7 @@ It then reads each trigger of the owned relations as the text that `pg_get_trigg
 It refuses with `record-history-trigger-mismatch` when that text differs from the text that the declarations derive.
 A trigger that no declaration derives also refuses.
 Development package reconciliation runs the same step.
-The catalog reader admits only that trigger shape and the log trigger shape below, and it leaves both out of the schema description.
+The catalog reader skips the `wamn_record_history_stamp` and `wamn_record_history_log` triggers by name.
 Every other trigger refuses.
 
 ### History tables and the log trigger
@@ -279,11 +279,8 @@ apply-package compares the text of each installed log trigger with the declared 
 It then refuses a result that still differs.
 Development package reconciliation runs the same steps.
 
-The catalog reader leaves every table whose name ends with `_history` out of the schema description.
-It admits such a table only in the shape that the function creates for a package relation.
-That shape has the fixed columns, the named constraints over their columns, the identity sequence, and no ordinary index, row security, trigger, rule, or policy.
-The reader does not compare the CHECK expressions.
-It admits a `wamn_record_history_log` trigger only on a relation that has its history table.
+The catalog reader skips every relation whose name ends with `_history`.
+It reads none of its columns, constraints, indexes, sequences, triggers, rules, or policies.
 The schema state id therefore stays the same when a relation starts or stops logging.
 
 The generator recognizes the history table of each logged model by its name, and it adds no history table to the catalog.

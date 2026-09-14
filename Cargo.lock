@@ -5763,6 +5763,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-pg-core",
  "wamn-platform-identity",
+ "wamn-record-history",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",
@@ -6313,8 +6314,8 @@ dependencies = [
  "wamn-event-reg",
  "wamn-execution-contract",
  "wamn-pg-core",
+ "wamn-record-history",
  "wamn-schema-generator",
- "wamn-schema-introspection",
 ]
 
 [[package]]
@@ -6347,6 +6348,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-postgres",
+ "wamn-record-history",
 ]
 
 [[package]]

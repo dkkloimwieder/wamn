@@ -12,8 +12,8 @@ use std::fmt;
 
 use sha2::{Digest as _, Sha256};
 use wamn_catalog::PackageCoordinate;
+use wamn_record_history::history_table_name;
 use wamn_schema_generator::{PackageManifest, validate_operation_vocabulary};
-use wamn_schema_introspection::record_history::history_table_name;
 
 use crate::{SqlStatement, Value};
 

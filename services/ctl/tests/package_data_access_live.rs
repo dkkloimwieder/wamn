@@ -11,10 +11,10 @@ use wamn_control_provision::{
 };
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
+use wamn_record_history::{HISTORY_COLUMNS, history_table_name};
 use wamn_schema_generator::{
     DataAccessOverlay, DataAccessRelationFields, derive_data_access_overlay_from_relation_fields,
 };
-use wamn_schema_introspection::record_history::history_table;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
@@ -693,8 +693,8 @@ async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_stand
 /// Stage Receiving with `purchase_order_line` logging and no stamp columns.
 ///
 /// The staged evidence is the generated overlay of the staged manifest. The
-/// shipped relation fields gain the history table description, as generation
-/// adds it for a logged relation.
+/// shipped relation fields gain the fixed history table columns, as generation
+/// adds them for a logged relation.
 fn stage_logged_receiving() -> PathBuf {
     let (root, _) = stage_package_root(&receiving_package_root(), "receiving-logged", None);
     let mut manifest: serde_json::Value =
@@ -714,7 +714,6 @@ fn stage_logged_receiving() -> PathBuf {
             .expect("read shipped evidence"),
     )
     .expect("parse shipped evidence");
-    let history = history_table("receiving", "purchase_order_line");
     let relation_fields = shipped
         .relations()
         .iter()
@@ -726,12 +725,11 @@ fn stage_logged_receiving() -> PathBuf {
             )
         })
         .chain([DataAccessRelationFields::new(
-            history.schema(),
-            history.name(),
-            history
-                .columns()
+            "receiving",
+            history_table_name("purchase_order_line"),
+            HISTORY_COLUMNS
                 .iter()
-                .map(|column| column.name().to_owned())
+                .map(|(column, _)| (*column).to_owned())
                 .collect(),
         )])
         .collect::<Vec<_>>();

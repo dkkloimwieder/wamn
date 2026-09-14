@@ -422,3 +422,44 @@ fn value_end(bytes: &[u8], start: usize) -> Option<usize> {
     }
     (depth == 0 && !in_string && cursor > start).then_some(cursor)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{history_object_names_fit, is_log_retention};
+
+    #[test]
+    fn log_retention_accepts_unlimited_and_whole_days_only() {
+        for accepted in ["unlimited", "P1D", "P30D", "P90D", "P365D", "P1000D"] {
+            assert!(is_log_retention(accepted), "{accepted}");
+        }
+        for refused in [
+            "none",
+            "",
+            "P",
+            "PD",
+            "P0D",
+            "P01D",
+            "P-1D",
+            "P+1D",
+            "P1.5D",
+            "P1W",
+            "P1M",
+            "P1Y",
+            "PT1H",
+            "P1DT1H",
+            "p30d",
+            "P30d",
+            " P30D",
+            "P30D ",
+            "UNLIMITED",
+        ] {
+            assert!(!is_log_retention(refused), "{refused}");
+        }
+    }
+
+    #[test]
+    fn a_relation_name_of_32_bytes_overflows_its_history_names() {
+        assert!(history_object_names_fit(&"r".repeat(31)));
+        assert!(!history_object_names_fit(&"r".repeat(32)));
+    }
+}
