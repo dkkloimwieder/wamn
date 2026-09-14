@@ -306,6 +306,8 @@ async fn qualify_candidate(
         prefix.extend([
             "--migration-dir".to_owned(),
             app_root.join("migrations").display().to_string(),
+            "--history-manifest".to_owned(),
+            app_root.join("wamn.json").display().to_string(),
             "--url-env".to_owned(),
             "WAMN_SCHEMA_INTROSPECTION_PG_URL".to_owned(),
             "--url-env".to_owned(),

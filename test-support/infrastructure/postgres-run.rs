@@ -1,10 +1,13 @@
 //! Run one repository test command against a fresh owned PostgreSQL 18 server.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
+use wamn_schema_generator::PackageManifest;
 use wamn_test_infrastructure::postgres;
+
+const RECORD_HISTORY_SQL: &str = include_str!("../../deploy/sql/record-history.sql");
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<std::process::ExitCode> {
@@ -13,6 +16,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let mut names = Vec::new();
     let mut schema = None;
     let mut migrations = Vec::new();
+    let mut history_manifest = None;
     let mut program: Option<OsString> = None;
     while let Some(arg) = args.next() {
         match arg.to_str() {
@@ -41,13 +45,18 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
             Some("--migration-dir") => migrations.push(PathBuf::from(
                 args.next().context("--migration-dir requires a path")?,
             )),
+            Some("--history-manifest") => {
+                history_manifest = Some(PathBuf::from(
+                    args.next().context("--history-manifest requires a path")?,
+                ))
+            }
             Some("--") => {
                 program = args.next();
                 break;
             }
             Some("--help") => {
                 println!(
-                    "usage: wamn-test-postgres --database NAME --url-env NAME [--url-env NAME...] [--schema NAME] [--migration-dir PATH...] -- COMMAND [ARG...]"
+                    "usage: wamn-test-postgres --database NAME --url-env NAME [--url-env NAME...] [--schema NAME] [--migration-dir PATH...] [--history-manifest PATH] -- COMMAND [ARG...]"
                 );
                 return Ok(std::process::ExitCode::SUCCESS);
             }
@@ -69,7 +78,14 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     command.args(args);
     let mut server = postgres::start()?;
     let owned = server.create_database(&database)?;
-    let setup = apply_migrations(&server, &owned, schema.as_deref(), &migrations).await;
+    let setup = apply_migrations(
+        &server,
+        &owned,
+        schema.as_deref(),
+        &migrations,
+        history_manifest.as_deref(),
+    )
+    .await;
     let result = match setup {
         Ok(()) => server.run(&mut command, &owned, &names).await,
         Err(error) => Err(error),
@@ -87,6 +103,7 @@ async fn apply_migrations(
     database: &postgres::OwnedDatabase,
     schema: Option<&str>,
     directories: &[PathBuf],
+    history_manifest: Option<&Path>,
 ) -> anyhow::Result<()> {
     server.require_url(database.url())?;
     let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
@@ -129,6 +146,9 @@ async fn apply_migrations(
                     .with_context(|| format!("apply owned migration {}", file.display()))?;
             }
         }
+        if let Some(path) = history_manifest {
+            create_history_tables(&client, path).await?;
+        }
         Ok(())
     }
     .await;
@@ -136,4 +156,41 @@ async fn apply_migrations(
     let joined = task.await.context("join the owned migration connection")?;
     result?;
     joined.context("drive the owned migration connection")
+}
+
+/// Create the history table of each relation that the package declares a log for.
+///
+/// This follows the generation database step of `docs/operations/running-tests.md`.
+/// `wamn_app` exists first, so `record-history.sql` grants the history read functions to it.
+async fn create_history_tables(client: &tokio_postgres::Client, path: &Path) -> anyhow::Result<()> {
+    let manifest = PackageManifest::from_slice(
+        &std::fs::read(path).with_context(|| format!("read manifest {}", path.display()))?,
+    )
+    .with_context(|| format!("parse manifest {}", path.display()))?;
+    let logged: Vec<_> = manifest
+        .models
+        .values()
+        .filter(|model| model.owner == manifest.package.id && model.log_retention().is_some())
+        .collect();
+    if logged.is_empty() {
+        return Ok(());
+    }
+    client
+        .batch_execute("CREATE ROLE wamn_app NOLOGIN")
+        .await
+        .context("create the application role")?;
+    client
+        .batch_execute(RECORD_HISTORY_SQL)
+        .await
+        .context("apply record-history.sql")?;
+    for model in logged {
+        client
+            .execute(
+                "SELECT wamn_history.create_history_table($1, $2, false)",
+                &[&model.schema, &model.table],
+            )
+            .await
+            .with_context(|| format!("create history table of {}.{}", model.schema, model.table))?;
+    }
+    Ok(())
 }

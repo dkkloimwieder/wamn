@@ -1943,13 +1943,13 @@ mod tests {
         ])
         .expect("distinct package attachment identities merge");
 
-        assert_eq!(authored.len(), 13);
+        assert_eq!(authored.len(), 14);
         assert_eq!(
             authored
                 .values()
                 .filter(|attachment| attachment.package_id == "wamn_receiving")
                 .count(),
-            8
+            9
         );
         assert_eq!(
             authored

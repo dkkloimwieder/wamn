@@ -1493,7 +1493,8 @@ fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
         "create_history_table f search_path=pg_catalog; \
          log_row_change f search_path=pg_catalog; \
          row_image f search_path=pg_catalog,TimeZone=UTC; \
-         stamp_row f search_path=pg_catalog",
+         stamp_row f search_path=pg_catalog; \
+         timestamptz_image f search_path=pg_catalog,TimeZone=UTC",
         "every record-history function must be SECURITY INVOKER with a pinned \
          search_path, and the row image function must pin TimeZone to UTC"
     );

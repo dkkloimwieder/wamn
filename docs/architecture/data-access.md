@@ -188,7 +188,7 @@ The log function and the stamp function compare row values as JSONB text, so a c
 Such a change moves the stamps and writes an entry. A true no-op moves no stamp and writes no entry.
 
 The log function calls `row_image` with the authority of the writer.
-`record-history.sql` therefore grants `EXECUTE` on `row_image` to `wamn_db_owner` and `wamn_app`, and `USAGE` on `wamn_history` to both.
+`record-history.sql` therefore grants `EXECUTE` on `row_image` and `timestamptz_image` to `wamn_db_owner` and `wamn_app`, and `USAGE` on `wamn_history` to both.
 An applier with no `wamn_app` role, such as the system database, gets no `wamn_app` grant.
 
 Generation refuses these declarations:
@@ -337,7 +337,6 @@ The read is one flat `bounded_list` over the history table of one relation:
 - The current row comes from `wamn_history.row_image` with the alias of the relation, or from the declared columns on a relation that an overlay extends. A deleted row has the current image `{}`.
 - A row with no retained entries returns an empty page.
 
-The authored fields of a history read decide which prior data it shows.
 An overlay can add columns to a shared relation, and the images of the log carry them.
 A history read on such a relation therefore shows only the columns that it declares:
 

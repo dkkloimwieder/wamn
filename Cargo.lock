@@ -6401,6 +6401,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
+ "wamn-schema-generator",
 ]
 
 [[package]]
