@@ -114,7 +114,8 @@ async fn authentication_fixture(admin_url: &str) -> anyhow::Result<(Server, Flow
     // The fixture writes as its test principal, whose row stamps itself.
     admin
         .execute(
-            "SELECT set_config('app.user_id', $1, false)",
+            "SELECT set_config('app.user_id', $1, false), \
+                    set_config('app.operation', 'admin:seed-native-policy-fixture', false)",
             &[&FIXTURE_PRINCIPAL],
         )
         .await?;

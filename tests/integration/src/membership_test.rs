@@ -247,11 +247,12 @@ async fn seed_tenant_role(
     principal: &PrincipalId,
     role: &str,
 ) -> anyhow::Result<()> {
-    // The fixture writes as the test human, whose row stamps itself. The
-    // binding stays on this session for the role restore.
+    // The fixture writes as the test human, whose row stamps itself. Both
+    // bindings stay on this session for the role restore and the cleanup.
     project
         .execute(
-            "SELECT set_config('app.user_id', $1, false)",
+            "SELECT set_config('app.user_id', $1, false), \
+                    set_config('app.operation', 'admin:membership-test-fixture', false)",
             &[&principal.as_str()],
         )
         .await

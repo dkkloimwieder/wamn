@@ -272,7 +272,7 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
         ))
         .await?;
     // The fixture writes as its test principal, whose rows stamp themselves.
-    project.batch_execute("SET app.user_id = '11111111-1111-1111-1111-111111111111'; INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('t1','11111111-1111-1111-1111-111111111111','person','one@example.invalid'),('t2','11111111-1111-1111-1111-111111111111','person','two@example.invalid'); INSERT INTO app_system.roles (tenant_id,name) VALUES ('t1','member'),('t2','other'); INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('t1','11111111-1111-1111-1111-111111111111','member'),('t2','11111111-1111-1111-1111-111111111111','other');").await?;
+    project.batch_execute("SET app.user_id = '11111111-1111-1111-1111-111111111111'; SET app.operation = 'admin:seed-session-audience-fixture'; INSERT INTO app_system.users (tenant_id,id,type,email) VALUES ('t1','11111111-1111-1111-1111-111111111111','person','one@example.invalid'),('t2','11111111-1111-1111-1111-111111111111','person','two@example.invalid'); INSERT INTO app_system.roles (tenant_id,name) VALUES ('t1','member'),('t2','other'); INSERT INTO app_system.user_roles (tenant_id,user_id,role_name) VALUES ('t1','11111111-1111-1111-1111-111111111111','member'),('t2','11111111-1111-1111-1111-111111111111','other');").await?;
     Ok(project)
 }
 

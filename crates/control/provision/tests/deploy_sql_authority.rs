@@ -1,7 +1,7 @@
 //! The hand-written DDL's tenant floor derives from `current_user`.
 //!
 //! `wamn-0h0g.22.6.3` established the guest tenant floor across four artifacts;
-//! the current package-era relation set contains 33 governed relations, all off
+//! the current package-era relation set contains 39 governed relations, all off
 //! the settable `app.tenant` claim and onto
 //! `wamn_authority.tenant_key(tenant_id) = wamn_authority.current_tenant_key()`,
 //! each with the expression index that keeps the predicate sargable.
@@ -22,6 +22,8 @@
 //! The record-history log cases (`wamn-emtx.11`) test
 //! `wamn_history.create_history_table` and `wamn_history.log_row_change()`
 //! against level-2 spec tests 2, 3, 4, 5, 7, 8, 10, and 16.
+//! The `app_system` history case (`wamn-emtx.21`) tests spec test 20 for the
+//! six history tables of `deploy/sql/app-schema.sql`.
 //! Run the file with `--test-threads=1`, because every case owns the server.
 //!
 //! ```bash
@@ -398,8 +400,8 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
           WHERE pg_get_expr(p.polqual, p.polrelid) LIKE '%current_tenant_key%'",
     );
     assert_eq!(
-        governed, "33",
-        "the sweep must cover exactly the 33 governed relations"
+        governed, "39",
+        "the sweep must cover exactly the 39 governed relations"
     );
 
     // 2b. BORN PARKED (wamn-0h0g.20.30 for the attempt record, wamn-0h0g.20.32
@@ -548,7 +550,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
 
     // 2. EVERY GOVERNED RELATION CARRIES EXACTLY ONE ARM OF EACH KIND, counted
     //    PER RELATION rather than in total: a relation with two platform arms and
-    //    one with none sum to the same 33 and leave a silent lockout standing.
+    //    one with none sum to the same 39 and leave a silent lockout standing.
     let missing_arm = psql(
         &db_url,
         None,
@@ -1320,12 +1322,13 @@ fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
 
     // 12. Administrative SQL without app.user_id refuses. Bound to the
     //     operator's person row, it stamps that row and replaces a supplied
-    //     value.
+    //     value. The users insert also binds its operation for the log.
     apply(
         &db_url,
         &format!(
             "BEGIN;\n\
-             SELECT set_config('app.user_id', '{OPERATOR}', true);\n\
+             SELECT set_config('app.user_id', '{OPERATOR}', true), \
+                    set_config('app.operation', 'admin:seed-operator-fixture', true);\n\
              INSERT INTO app_system.users (tenant_id, id, type, email) \
                VALUES ('t1', '{OPERATOR}', 'person', 'operator@example.test');\n\
              COMMIT;\n\
@@ -2538,6 +2541,86 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
     assert_eq!(
         state_at(&rows, rows[0].position - 1),
         Ok(RowState::Unavailable)
+    );
+
+    apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
+}
+
+/// Spec test 20 for the `app_system` log (epic rulings 40, 42, 43, and 58).
+/// `deploy/sql/app-schema.sql` gives each `app_system` relation a
+/// `record_history_log` trigger with the argument `unlimited`. After
+/// apply-package converges the audit retention grants, the audit retention
+/// role holds no privilege on `app_system` or on any object in it. The
+/// `P30D` fixture relation is the control: the same convergence grants the
+/// role its history table.
+#[test]
+fn the_app_system_history_stays_out_of_audit_retention_reach_on_postgres() {
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_app_system_history_stays_out_of_audit_retention_reach_on_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+    let (db_url, guest) = record_history_log_fixture(&admin);
+    apply(
+        &db_url,
+        &format!(
+            "BEGIN;\n{};\n{}\nCOMMIT;\n",
+            wamn_control_provision::audit_retention::AUDIT_RETENTION_LOCK_SQL,
+            wamn_control_provision::audit_retention::reconcile_audit_retention_grants_sql()
+        ),
+    );
+
+    let logs = psql(
+        &db_url,
+        None,
+        "SELECT string_agg(c.relname || ':' || encode(t.tgargs, 'escape'), ' ' \
+                           ORDER BY c.relname COLLATE \"C\") \
+           FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid \
+          WHERE c.relnamespace = 'app_system'::regnamespace \
+            AND t.tgname = 'record_history_log' AND NOT t.tgisinternal",
+    );
+    assert_eq!(
+        logs,
+        "api_keys:unlimited\\000 configurations:unlimited\\000 permissions:unlimited\\000 \
+         roles:unlimited\\000 user_roles:unlimited\\000 users:unlimited\\000",
+        "every app_system relation must log with the retention unlimited"
+    );
+    let targets = psql(
+        &db_url,
+        None,
+        wamn_control_provision::audit_retention::AUDIT_RETENTION_TARGETS_SQL,
+    );
+    assert_eq!(
+        targets, "rh_probe|tenanted|tenanted_history|30",
+        "the retention targets must be the P30D fixture relation alone"
+    );
+    let reach = psql(
+        &db_url,
+        None,
+        "SELECT concat_ws(' ', \
+           has_table_privilege('wamn_audit_retention', 'rh_probe.tenanted_history', 'DELETE'), \
+           has_schema_privilege('wamn_audit_retention', 'app_system', 'USAGE'), \
+           (SELECT count(*) FROM pg_namespace n \
+             CROSS JOIN LATERAL aclexplode(n.nspacl) AS acl \
+             WHERE n.nspname = 'app_system' \
+               AND acl.grantee = 'wamn_audit_retention'::regrole), \
+           (SELECT count(*) FROM pg_class c \
+             CROSS JOIN LATERAL aclexplode(c.relacl) AS acl \
+             WHERE c.relnamespace = 'app_system'::regnamespace \
+               AND acl.grantee = 'wamn_audit_retention'::regrole), \
+           (SELECT count(*) FROM pg_attribute a \
+             JOIN pg_class c ON c.oid = a.attrelid \
+             CROSS JOIN LATERAL aclexplode(a.attacl) AS acl \
+             WHERE c.relnamespace = 'app_system'::regnamespace \
+               AND acl.grantee = 'wamn_audit_retention'::regrole))",
+    );
+    assert_eq!(
+        reach, "t f 0 0 0",
+        "the audit retention role reaches the app_system log (order: control \
+         DELETE on the P30D history table, app_system USAGE, schema ACL \
+         entries, relation ACL entries, column ACL entries)"
     );
 
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));

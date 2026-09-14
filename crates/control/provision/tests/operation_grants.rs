@@ -133,7 +133,8 @@ fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
         &url,
         "seed scoped role and grant residue",
         &format!(
-            "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true); \
+            "BEGIN; SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
+         set_config('app.operation', 'admin:seed-operation-grant-fixture', true); \
          INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
            ('t1', '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid'); \
          INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES \

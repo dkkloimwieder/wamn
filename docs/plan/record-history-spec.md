@@ -130,9 +130,24 @@ Beads `wamn-cy2q` owns application row deletes.
 
 [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) creates the history table of each `app_system` relation with the tenant flag, so each history table sits under the tenant floor.
 These relations are `users`, `roles`, `user_roles`, `permissions`, `configurations`, and `api_keys`.
+Each history table has forced row security, a `wamn_app` tenant policy, a `wamn_platform` policy, and a tenant key index, as its relation has.
 The file installs a static `record_history_log` trigger with the argument `unlimited` on each relation.
 The static triggers have the same shape that apply-package installs, and the project-state Postgres test pins them.
 The `wamn_history` schema keeps functions only.
+
+The log trigger fires as the writer, and a guest writes only `configurations`.
+`wamn_app` therefore holds `INSERT` on the entry columns of `configurations_history`, and no other privilege on an `app_system` history table.
+A table-level `INSERT` lets a caller set `position` with `OVERRIDING SYSTEM VALUE`, so the grant leaves out `position`.
+Within its tenant, a guest can also insert a `configurations_history` entry directly.
+Section 4.8 states this trust boundary.
+No platform role family writes `app_system`, and Beads `wamn-0h0g.9` owns those writers.
+Such a writer needs `EXECUTE` on `wamn_authority.tenant_key`, `USAGE` on `wamn_history`, `EXECUTE` on `wamn_history.row_image`, and `INSERT` on the history table.
+It also needs the `wamn_platform` policy of the history table.
+The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
+
+Every writer of an `app_system` relation binds `app.operation`, including a transaction that only deletes rows.
+A foreign key cascade writes its delete entries with the actor and the operation of the deleting transaction.
+A history table has no `tenant_id <> ''` CHECK. Each entry copies `tenant_id` from its row, and the relation refuses an empty tenant.
 
 The log copies full rows, including `api_keys.key_hash`.
 A column that is secret at rest does not belong in a stamped relation.

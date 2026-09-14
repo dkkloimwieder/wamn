@@ -214,6 +214,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             &format!(
                 "REVOKE TEMPORARY ON DATABASE {DATABASE} FROM PUBLIC; \
             SET app.user_id = '{PRINCIPAL}'; \
+            SET app.operation = 'admin:seed-session-role-reader-fixture'; \
             INSERT INTO app_system.users (tenant_id,id,type,email) VALUES \
               ('fixture-a','{PRINCIPAL}','person','a@fixture.invalid'), ('fixture-b','{PRINCIPAL}','person','b@fixture.invalid'); \
             INSERT INTO app_system.roles (tenant_id,name) VALUES ('fixture-a','receiver'), ('fixture-b','outsider'); \
@@ -310,6 +311,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             &admin,
             &format!(
                 "SET app.user_id = '{PRINCIPAL}'; \
+                 SET app.operation = 'admin:disable-session-role-reader-fixture'; \
                  UPDATE app_system.users SET status = 'disabled' WHERE tenant_id = 'fixture-a'"
             ),
         );
@@ -322,6 +324,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             &admin,
             &format!(
                 "SET app.user_id = '{PRINCIPAL}'; \
+                 SET app.operation = 'admin:enable-session-role-reader-fixture'; \
                  UPDATE app_system.users SET status = 'active' WHERE tenant_id = 'fixture-a'"
             ),
         );

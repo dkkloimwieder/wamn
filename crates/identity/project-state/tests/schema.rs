@@ -69,6 +69,10 @@ fn code_only(sql: &str) -> String {
 ///   then evaluated against.
 /// - `configurations` is tenant business state — nothing in the trust chain reads
 ///   it — so it deliberately keeps full DML.
+/// - The six `<table>_history` tables have no read. The log trigger fires as the
+///   writer, and `wamn_app` writes `configurations` only, so `wamn_app` holds
+///   `INSERT` on the entry columns of `configurations_history` and no other
+///   privilege. The grant leaves out `position`.
 ///
 /// A table the model gains later has no adjudicated class, so this panics rather
 /// than silently defaulting it into one.
@@ -76,6 +80,15 @@ fn wamn_app_privileges(table: &str) -> &'static str {
     match table {
         "users" | "roles" | "user_roles" | "permissions" | "api_keys" => "SELECT",
         "configurations" => "SELECT, INSERT, UPDATE, DELETE",
+        "users_history"
+        | "roles_history"
+        | "user_roles_history"
+        | "permissions_history"
+        | "api_keys_history" => "",
+        "configurations_history" => {
+            "INSERT (tenant_id, row_key, kind, operation, changed_by, changed_at, \
+             transaction_id, before, after)"
+        }
         other => panic!("table {other} has no adjudicated wamn_app grant (R11)"),
     }
 }
@@ -146,14 +159,14 @@ fn tenant_floor_derives_from_the_connected_role() {
         "a settable tenant claim survived in the app schema"
     );
     // The expression index rides the predicate: without it the derivation
-    // sequential-scans every relation. One per table, same count as the CHECKs.
+    // sequential-scans every relation. One per table and one per history table.
     let indexes = sql
         .matches("((wamn_authority.tenant_key(tenant_id)))")
         .count();
     assert_eq!(
         indexes,
-        TABLES.len(),
-        "every table must carry its tenant-key expression index — one per table"
+        2 * TABLES.len(),
+        "every table and its history table must carry a tenant-key expression index"
     );
     // Every table still forbids a ''-tenant row (one CHECK per table). This
     // half of the a45 hardening SURVIVES the re-key: it is what makes a
@@ -283,6 +296,7 @@ fn app_schema_applies_and_enforces_isolation_on_postgres() {
     // The fixture writes as U1, its test principal, whose row stamps itself.
     script.push_str(&format!(
         "SET app.user_id = '{U1}';\n\
+         SET app.operation = 'admin:seed-isolation-fixture';\n\
          INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
            ('t1','{U1}','person','u1@t1'),('t1','{U2}','service','u2@t1'),('t2','{U3}','person','u3@t2');\n\
          INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES ('t1','admin',true);\n\
@@ -430,7 +444,10 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
         &platform_principals_sql(TENANT, DOMAIN).expect("example.invalid is a domain name"),
     );
     // The fixture writes as its first admitted person row below.
-    script.push_str(&format!("COMMIT;\nSET app.user_id = '{FIXTURE_PERSON}';\n"));
+    script.push_str(&format!(
+        "COMMIT;\nSET app.user_id = '{FIXTURE_PERSON}';\n\
+         SET app.operation = 'admin:seed-platform-row-fixture';\n"
+    ));
     // Every refused row sits in its own subtransaction, so the fresh rows
     // above stay as the only rows in the table.
     let refused = [
@@ -544,8 +561,9 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
 }
 
 /// Spec test 11, for the relations that `deploy/sql/app-schema.sql` owns. Every
-/// `app_system` relation carries the four stamp columns as `NOT NULL` and one
-/// `record_history_stamp` trigger. The provisioning SQL binds
+/// `app_system` relation carries the four stamp columns as `NOT NULL`, one
+/// `record_history_stamp` trigger, one `record_history_log` trigger with the
+/// argument `unlimited`, and its history table. The provisioning SQL binds
 /// `wamn:provisioning` for its writes, every platform row stamps that
 /// principal, and the `wamn:provisioning` row stamps itself. The binding ends
 /// with the provisioning transaction. Set `WAMN_SYSSCHEMA_PG_URL` to a
@@ -619,13 +637,30 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
             expected.push(format!("column|{name}|{column}|{column_type}|true"));
         }
     }
-    expected.extend(names.iter().map(|name| format!("relation|{name}")));
-    expected.extend(names.iter().map(|name| {
-        format!(
-            "trigger|CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE \
-             ON {SCHEMA_NAME}.{name} FOR EACH ROW EXECUTE FUNCTION \
-             wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
-        )
+    let mut relations = names
+        .iter()
+        .flat_map(|name| {
+            [
+                format!("relation|{name}"),
+                format!("relation|{name}_history"),
+            ]
+        })
+        .collect::<Vec<_>>();
+    relations.sort_unstable();
+    expected.extend(relations);
+    expected.extend(names.iter().flat_map(|name| {
+        [
+            format!(
+                "trigger|CREATE TRIGGER record_history_log AFTER INSERT OR DELETE OR UPDATE \
+                 ON {SCHEMA_NAME}.{name} FOR EACH ROW EXECUTE FUNCTION \
+                 wamn_history.log_row_change('unlimited')"
+            ),
+            format!(
+                "trigger|CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE \
+                 ON {SCHEMA_NAME}.{name} FOR EACH ROW EXECUTE FUNCTION \
+                 wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
+            ),
+        ]
     }));
     // The provisioning SQL first binds its actor and operation, and psql prints that result.
     let provisioning = PlatformComponent::Provisioning.principal_id();
@@ -645,6 +680,173 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
         .to_vec();
     stamps.sort();
     expected.extend(stamps);
+    assert_eq!(output.lines().collect::<Vec<_>>(), expected);
+}
+
+/// Record history level 2 for the relations that `deploy/sql/app-schema.sql`
+/// owns (epic rulings 14, 40 to 43, and 52 to 57). Administrative SQL writes
+/// each `app_system` relation in three transactions. Each change writes one
+/// entry with the tenant of its row, the bound operation, and the bound actor.
+/// An update that changes a key column writes a delete and an insert entry.
+/// The user delete cascades to `user_roles` and `api_keys`, and those delete
+/// entries carry the actor and the operation of the deleting transaction. The
+/// `api_keys` images carry `key_hash` (ruling 41). The server ACLs show the
+/// `wamn_app` grant of every relation (ruling 76). Set `WAMN_SYSSCHEMA_PG_URL`
+/// to a superuser URL. Skipped when unset.
+#[test]
+fn app_system_relations_log_every_row_change_on_postgres() {
+    const U1: &str = "11111111-1111-1111-1111-111111111111";
+    const U2: &str = "22222222-2222-2222-2222-222222222222";
+    const U3: &str = "33333333-3333-3333-3333-333333333333";
+    const K1: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const K2: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    const SEED: &str = "admin:seed-history-fixture";
+    const CHANGE: &str = "admin:change-history-fixture";
+    const REMOVE: &str = "admin:remove-history-fixture";
+
+    let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
+        eprintln!(
+            "skipping app_system_relations_log_every_row_change_on_postgres \
+             (set WAMN_SYSSCHEMA_PG_URL to run)"
+        );
+        return;
+    };
+    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+
+    let mut script = sql::ensure_app_acl_role_sql();
+    script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
+    script.push_str(&record_history_sql());
+    script.push_str(&app_schema_sql());
+    // The wamn_app privileges of every relation, from the server ACLs.
+    script.push_str(
+        "\nSELECT 'grant|' || c.relname || '|' || concat_ws(', ', \
+                (SELECT string_agg(acl.privilege_type, ', ' ORDER BY array_position( \
+                            ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE'], acl.privilege_type)) \
+                   FROM pg_catalog.aclexplode(c.relacl) AS acl \
+                  WHERE acl.grantee = 'wamn_app'::regrole), \
+                (SELECT string_agg(granted.privilege_type || ' (' || granted.columns || ')', \
+                                   ', ' ORDER BY granted.privilege_type) \
+                   FROM (SELECT acl.privilege_type, \
+                                string_agg(a.attname, ', ' ORDER BY a.attnum) AS columns \
+                           FROM pg_catalog.pg_attribute AS a \
+                          CROSS JOIN LATERAL pg_catalog.aclexplode(a.attacl) AS acl \
+                          WHERE a.attrelid = c.oid AND acl.grantee = 'wamn_app'::regrole \
+                          GROUP BY acl.privilege_type) AS granted)) \
+           FROM pg_catalog.pg_class AS c \
+           JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace \
+          WHERE n.nspname = 'app_system' AND c.relkind = 'r' \
+          ORDER BY c.relname COLLATE \"C\";\n",
+    );
+    script.push_str(&format!(
+        "BEGIN;\n\
+         SET LOCAL app.user_id = '{U1}';\n\
+         SET LOCAL app.operation = '{SEED}';\n\
+         INSERT INTO app_system.users (tenant_id, id, type, email) VALUES \
+           ('t1', '{U1}', 'person', 'u1@t1'), ('t2', '{U2}', 'person', 'u2@t2'), \
+           ('t1', '{U3}', 'service', 'u3@t1');\n\
+         INSERT INTO app_system.roles (tenant_id, name) VALUES ('t1', 'admin'), ('t1', 'auditor');\n\
+         INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES \
+           ('t1', '{U1}', 'admin'), ('t1', '{U3}', 'admin');\n\
+         INSERT INTO app_system.permissions (tenant_id, role_name, permission) VALUES \
+           ('t1', 'admin', 'receipts:read');\n\
+         INSERT INTO app_system.configurations (tenant_id, config_key, config_value) VALUES \
+           ('t1', 'theme', '\"dark\"');\n\
+         INSERT INTO app_system.api_keys (tenant_id, id, user_id, name, key_hash, prefix) VALUES \
+           ('t1', '{K1}', '{U1}', 'ci', 'hash-1', 'wk_a'), ('t1', '{K2}', '{U1}', 'cd', 'hash-2', 'wk_b');\n\
+         COMMIT;\n\
+         BEGIN;\n\
+         SET LOCAL app.user_id = '{U2}';\n\
+         SET LOCAL app.operation = '{CHANGE}';\n\
+         UPDATE app_system.users SET status = 'disabled' WHERE id = '{U2}';\n\
+         UPDATE app_system.roles SET description = 'administrators' WHERE name = 'admin';\n\
+         UPDATE app_system.user_roles SET role_name = 'auditor' WHERE user_id = '{U3}';\n\
+         UPDATE app_system.permissions SET permission = 'receipts:write';\n\
+         UPDATE app_system.configurations SET config_value = '\"light\"';\n\
+         UPDATE app_system.api_keys SET revoked_at = '2026-09-14T00:00:00Z' WHERE id = '{K1}';\n\
+         COMMIT;\n\
+         BEGIN;\n\
+         SET LOCAL app.user_id = '{U3}';\n\
+         SET LOCAL app.operation = '{REMOVE}';\n\
+         DELETE FROM app_system.user_roles WHERE user_id = '{U3}';\n\
+         DELETE FROM app_system.api_keys WHERE id = '{K2}';\n\
+         DELETE FROM app_system.permissions;\n\
+         DELETE FROM app_system.configurations;\n\
+         DELETE FROM app_system.users WHERE id = '{U1}';\n\
+         DELETE FROM app_system.users WHERE id = '{U2}';\n\
+         DELETE FROM app_system.roles WHERE name = 'admin';\n\
+         COMMIT;\n"
+    ));
+    // One line per entry, in relation and position order. The images leave out
+    // the stamp columns, whose times differ in each run.
+    let entries = TABLES
+        .iter()
+        .map(|table| {
+            format!(
+                "SELECT '{name}' AS relation, position, tenant_id, kind, operation, \
+                        changed_by, row_key, before, after \
+                   FROM {qualified}_history",
+                name = table.name,
+                qualified = table.qualified(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
+    script.push_str(&format!(
+        "SELECT 'entry|' || relation || '|' || tenant_id || '|' || kind || '|' || operation \
+                || '|' || changed_by || '|' || row_key::text \
+                || '|' || (before - '{{created_at,created_by,updated_at,updated_by}}'::text[])::text \
+                || '|' || (after - '{{created_at,created_by,updated_at,updated_by}}'::text[])::text \
+           FROM ({entries}) AS entry \
+          ORDER BY relation COLLATE \"C\", position;\n\
+         DROP SCHEMA app_system CASCADE;\n"
+    ));
+
+    let output = run(&url, &script);
+    let mut relations = TABLES
+        .iter()
+        .flat_map(|table| [table.name.to_owned(), format!("{}_history", table.name)])
+        .collect::<Vec<_>>();
+    relations.sort_unstable();
+    let mut expected = relations
+        .iter()
+        .map(|relation| format!("grant|{relation}|{}", wamn_app_privileges(relation)))
+        .collect::<Vec<_>>();
+    // The expected entries name the fixture ids U1, U2, U3, K1, and K2.
+    expected.extend(
+        r#"entry|api_keys|t1|insert|admin:seed-history-fixture|U1|{"id": "K1", "tenant_id": "t1"}|{}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}
+entry|api_keys|t1|insert|admin:seed-history-fixture|U1|{"id": "K2", "tenant_id": "t1"}|{}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}
+entry|api_keys|t1|update|admin:change-history-fixture|U2|{"id": "K1", "tenant_id": "t1"}|{"revoked_at": null}|{"revoked_at": "2026-09-14T00:00:00.000000Z"}
+entry|api_keys|t1|delete|admin:remove-history-fixture|U3|{"id": "K2", "tenant_id": "t1"}|{"id": "K2", "name": "cd", "prefix": "wk_b", "user_id": "U1", "key_hash": "hash-2", "tenant_id": "t1", "expires_at": null, "revoked_at": null, "last_used_at": null}|{}
+entry|api_keys|t1|delete|admin:remove-history-fixture|U3|{"id": "K1", "tenant_id": "t1"}|{"id": "K1", "name": "ci", "prefix": "wk_a", "user_id": "U1", "key_hash": "hash-1", "tenant_id": "t1", "expires_at": null, "revoked_at": "2026-09-14T00:00:00.000000Z", "last_used_at": null}|{}
+entry|configurations|t1|insert|admin:seed-history-fixture|U1|{"tenant_id": "t1", "config_key": "theme"}|{}|{"tenant_id": "t1", "config_key": "theme", "config_value": "dark"}
+entry|configurations|t1|update|admin:change-history-fixture|U2|{"tenant_id": "t1", "config_key": "theme"}|{"config_value": "dark"}|{"config_value": "light"}
+entry|configurations|t1|delete|admin:remove-history-fixture|U3|{"tenant_id": "t1", "config_key": "theme"}|{"tenant_id": "t1", "config_key": "theme", "config_value": "light"}|{}
+entry|permissions|t1|insert|admin:seed-history-fixture|U1|{"role_name": "admin", "tenant_id": "t1", "permission": "receipts:read"}|{}|{"role_name": "admin", "tenant_id": "t1", "permission": "receipts:read"}
+entry|permissions|t1|delete|admin:change-history-fixture|U2|{"role_name": "admin", "tenant_id": "t1", "permission": "receipts:read"}|{"role_name": "admin", "tenant_id": "t1", "permission": "receipts:read"}|{}
+entry|permissions|t1|insert|admin:change-history-fixture|U2|{"role_name": "admin", "tenant_id": "t1", "permission": "receipts:write"}|{}|{"role_name": "admin", "tenant_id": "t1", "permission": "receipts:write"}
+entry|permissions|t1|delete|admin:remove-history-fixture|U3|{"role_name": "admin", "tenant_id": "t1", "permission": "receipts:write"}|{"role_name": "admin", "tenant_id": "t1", "permission": "receipts:write"}|{}
+entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "admin", "tenant_id": "t1"}|{}|{"name": "admin", "is_system": false, "tenant_id": "t1", "description": null}
+entry|roles|t1|insert|admin:seed-history-fixture|U1|{"name": "auditor", "tenant_id": "t1"}|{}|{"name": "auditor", "is_system": false, "tenant_id": "t1", "description": null}
+entry|roles|t1|update|admin:change-history-fixture|U2|{"name": "admin", "tenant_id": "t1"}|{"description": null}|{"description": "administrators"}
+entry|roles|t1|delete|admin:remove-history-fixture|U3|{"name": "admin", "tenant_id": "t1"}|{"name": "admin", "is_system": false, "tenant_id": "t1", "description": "administrators"}|{}
+entry|user_roles|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}
+entry|user_roles|t1|insert|admin:seed-history-fixture|U1|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}
+entry|user_roles|t1|delete|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "admin", "tenant_id": "t1"}|{}
+entry|user_roles|t1|insert|admin:change-history-fixture|U2|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{}|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}
+entry|user_roles|t1|delete|admin:remove-history-fixture|U3|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{"user_id": "U3", "role_name": "auditor", "tenant_id": "t1"}|{}
+entry|user_roles|t1|delete|admin:remove-history-fixture|U3|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{"user_id": "U1", "role_name": "admin", "tenant_id": "t1"}|{}
+entry|users|t1|insert|admin:seed-history-fixture|U1|{"id": "U1", "tenant_id": "t1"}|{}|{"id": "U1", "type": "person", "email": "u1@t1", "status": "active", "tenant_id": "t1", "display_name": null}
+entry|users|t2|insert|admin:seed-history-fixture|U1|{"id": "U2", "tenant_id": "t2"}|{}|{"id": "U2", "type": "person", "email": "u2@t2", "status": "active", "tenant_id": "t2", "display_name": null}
+entry|users|t1|insert|admin:seed-history-fixture|U1|{"id": "U3", "tenant_id": "t1"}|{}|{"id": "U3", "type": "service", "email": "u3@t1", "status": "active", "tenant_id": "t1", "display_name": null}
+entry|users|t2|update|admin:change-history-fixture|U2|{"id": "U2", "tenant_id": "t2"}|{"status": "active"}|{"status": "disabled"}
+entry|users|t1|delete|admin:remove-history-fixture|U3|{"id": "U1", "tenant_id": "t1"}|{"id": "U1", "type": "person", "email": "u1@t1", "status": "active", "tenant_id": "t1", "display_name": null}|{}
+entry|users|t2|delete|admin:remove-history-fixture|U3|{"id": "U2", "tenant_id": "t2"}|{"id": "U2", "type": "person", "email": "u2@t2", "status": "disabled", "tenant_id": "t2", "display_name": null}|{}"#
+            .lines()
+            .map(str::to_owned),
+    );
+    let output = [("U1", U1), ("U2", U2), ("U3", U3), ("K1", K1), ("K2", K2)]
+        .into_iter()
+        .fold(output, |output, (name, id)| output.replace(id, name));
     assert_eq!(output.lines().collect::<Vec<_>>(), expected);
 }
 

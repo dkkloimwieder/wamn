@@ -1223,10 +1223,12 @@ async fn setup() -> Fixture {
                 .expect_redacted("production environment schema");
         }
         // The fixture writes as its test principal, whose row stamps itself.
+        // Both bindings stay for the later fixture writes of this session.
         environment
             .client
             .batch_execute(&format!(
                 "SET app.user_id = '{FIXTURE_PRINCIPAL}'; \
+                 SET app.operation = 'admin:session-exchange-fixture'; \
                  INSERT INTO app_system.users (tenant_id,id,type,email) \
                  VALUES ('{TENANT}','{FIXTURE_PRINCIPAL}','person','fixture@example.invalid');"
             ))

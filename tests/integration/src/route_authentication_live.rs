@@ -102,10 +102,12 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .batch_execute("CREATE SCHEMA wamn_run AUTHORIZATION postgres")
         .await
         .context("create the empty run-plane revoke scope")?;
-    // The fixture writes as its test principal, whose row stamps itself.
+    // The fixture writes as its test principal, whose row stamps itself. Both
+    // bindings stay on this session for the later role and permission changes.
     project
         .execute(
-            "SELECT set_config('app.user_id', $1, false)",
+            "SELECT set_config('app.user_id', $1, false), \
+                    set_config('app.operation', 'admin:route-authentication-fixture', false)",
             &[&FIXTURE_PRINCIPAL],
         )
         .await

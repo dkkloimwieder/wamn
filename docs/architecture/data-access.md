@@ -267,6 +267,7 @@ apply-package binds `wamn:apply-package` for package writes and operation grants
 The retention task binds `wamn:audit-retention`.
 The binding of a platform component also sets `app.operation` to the same `wamn:<component>` name.
 Administrative SQL must bind the operator's person row, and test fixtures must bind a provisioned test principal.
+Administrative SQL and test fixtures also bind `app.operation` as `admin:<kebab-purpose>`, including a transaction that only deletes rows.
 
 `app_system.users.type` is `person`, `service`, or `platform`, and it has no default.
 People have `person` rows, stations and integrations have `service` rows, and platform components have `platform` rows.
@@ -283,6 +284,14 @@ The development environment, the verification world, and `tools/identity-jwks-jo
 
 Every relation in [`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) carries the four stamp columns as `NOT NULL` and a `record_history_stamp` trigger.
 These relations are `users`, `roles`, `user_roles`, `permissions`, `configurations`, and `api_keys`.
+Each relation also has a `record_history_log` trigger with the retention `unlimited`, and a history table.
+The file creates each history table with the tenant flag, so the table has a `tenant_id` column.
+Each history table has the tenant floor of its relation: forced row security, a `wamn_app` tenant policy, a `wamn_platform` policy, and a tenant key index.
+A history table has no `tenant_id <> ''` CHECK, and each entry copies `tenant_id` from its row.
+`wamn_app` holds `INSERT` on the entry columns of `configurations_history`, because a guest writes only `configurations`.
+`wamn_app` holds no other privilege on a history table, so a guest reads no `app_system` history and cannot set `position`.
+The audit retention role holds no grant on these history tables, because their retention is `unlimited`.
+A foreign key cascade writes its delete entries with the actor and the operation of the deleting transaction.
 An applier installs `record-history.sql` before `app-schema.sql`.
 
 ### System database

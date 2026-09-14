@@ -212,7 +212,8 @@ pub(super) async fn seed_fixture(project: &Client) -> anyhow::Result<()> {
     let tenant = crate::environment::TENANT;
     project.batch_execute(&format!(
         "BEGIN;\n\
-         SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true);\n\
+         SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
+                set_config('app.operation', 'admin:seed-wms-fixture', true);\n\
          INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('{tenant}', '{FIXTURE_PRINCIPAL}', 'person', 'fixture@example.invalid');\n\
          INSERT INTO wms.product (id, product_code) VALUES ('{PRODUCT_ID}', 'PROD-101');\n\
          INSERT INTO wms.location (id, location_code) VALUES ('{LOCATION_A_ID}', 'LOC-A'), ('{LOCATION_B_ID}', 'LOC-B');\n\

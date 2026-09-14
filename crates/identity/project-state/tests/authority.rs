@@ -11,7 +11,9 @@
 //!   application cannot create a platform row or a `wamn:` name;
 //! - `configurations` stays fully writable — the class the platform has no
 //!   jurisdiction over, and the control proving the other test fails for the
-//!   revoked privilege rather than for an over-broad narrowing.
+//!   revoked privilege rather than for an over-broad narrowing;
+//! - the six history tables take no read and no direct write from an App
+//!   generation, except the entries that its `configurations` writes append.
 //!
 //! Gated on `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness prepares one
 //! tenant-scoped App generation) and skipped cleanly when unset — the `tests/schema.rs`
@@ -84,8 +86,8 @@ fn current_database(url: &str) -> String {
 /// `app_system` applied verbatim from the DDL of record, and one tenant's rows.
 /// Seeded as the superuser, so the seed itself is unaffected by the grants under
 /// test. The fixture writes as U1, its test principal, whose row stamps itself,
-/// and the binding stays for the probes. Returns the generation name for the
-/// probes' `current_user`.
+/// under an administrative operation, and both bindings stay for the probes.
+/// Returns the generation name for the probes' `current_user`.
 fn prelude(url: &str) -> (String, String) {
     let database = current_database(url);
     let app_generation = workload_generation_role(
@@ -109,6 +111,7 @@ fn prelude(url: &str) -> (String, String) {
     script.push_str(&format!(
         r#"
 SET app.user_id = '{U1}';
+SET app.operation = 'admin:seed-authority-fixture';
 INSERT INTO app_system.users (tenant_id, id, type, email) VALUES ('{TENANT}','{U1}','person','u1@t1');
 INSERT INTO app_system.roles (tenant_id, name, is_system) VALUES ('{TENANT}','admin',true),('{TENANT}','auditor',false);
 INSERT INTO app_system.user_roles (tenant_id, user_id, role_name) VALUES ('{TENANT}','{U1}','admin');
@@ -234,7 +237,9 @@ ROLLBACK;
 /// `configurations` is tenant business state: nothing in the trust chain reads
 /// it, so the platform has no standing to narrow it. This is the over-revocation
 /// tripwire — if a future sweep applies the class-1 treatment schema-wide, this
-/// is the test that fails.
+/// is the test that fails. Each write of the App generation appends one entry
+/// to `configurations_history` through the log trigger, with the tenant, the
+/// bound operation, and the bound actor.
 #[test]
 fn a_project_still_owns_its_own_configuration() {
     let Some(url) = live_url("a_project_still_owns_its_own_configuration") else {
@@ -270,6 +275,136 @@ DO $$ BEGIN
   DELETE FROM app_system.configurations WHERE config_key = 'probe';
   ASSERT (SELECT count(*) FROM app_system.configurations WHERE config_key = 'probe') = 0,
     'a project may remove its own configuration';
+END $$;
+
+RESET ROLE;
+DO $$ BEGIN
+  ASSERT (SELECT array_agg(kind || '|' || tenant_id || '|' || operation || '|' || changed_by
+                           ORDER BY position)
+            FROM app_system.configurations_history
+           WHERE row_key = '{{"tenant_id": "{TENANT}", "config_key": "probe"}}'::jsonb)
+         = ARRAY['insert|{TENANT}|admin:seed-authority-fixture|{U1}',
+                 'update|{TENANT}|admin:seed-authority-fixture|{U1}',
+                 'delete|{TENANT}|admin:seed-authority-fixture|{U1}'],
+    'each configurations write of the App generation appends one entry';
+END $$;
+
+ROLLBACK;
+"#
+    ));
+    script.push_str(TEARDOWN);
+    run(&url, &script);
+}
+
+/// The history tables of `app_system` (epic ruling 76). An App generation
+/// reads no history table and writes none directly, except
+/// `configurations_history`, whose entry columns it inserts when the log
+/// trigger fires on its own `configurations` write. The grant leaves out
+/// `position`, so the generation cannot choose a position with
+/// `OVERRIDING SYSTEM VALUE`.
+///
+/// Each denied insert is RLS-legal for the probe tenant, so `42501` here is
+/// the missing privilege and not a `WITH CHECK` rejection. The configurations
+/// test shows that the same generation appends an entry through the trigger.
+#[test]
+fn author_sql_appends_history_only_through_the_configurations_trigger() {
+    let Some(url) = live_url("author_sql_appends_history_only_through_the_configurations_trigger")
+    else {
+        return;
+    };
+    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+
+    let (app_generation, mut script) = prelude(&url);
+    // One direct entry insert. A position also names the position column.
+    let entry = |history: &str, position: Option<i64>, row_key: &str| {
+        let (column, value, overriding) = match position {
+            None => ("", String::new(), ""),
+            Some(position) => (
+                "position, ",
+                format!("{position}, "),
+                " OVERRIDING SYSTEM VALUE",
+            ),
+        };
+        format!(
+            "'INSERT INTO app_system.{history} ({column}tenant_id, row_key, kind, operation, \
+             changed_by, changed_at, transaction_id, before, after){overriding} VALUES \
+             ({value}''{TENANT}'', ''{row_key}'', ''delete'', ''admin:forge-history'', \
+             ''{U1}'', now(), 1, ''{{}}'', ''{{}}'')'"
+        )
+    };
+    let direct_writes = [
+        entry("users_history", None, &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#)),
+        entry("roles_history", None, &format!(r#"{{"name": "admin", "tenant_id": "{TENANT}"}}"#)),
+        entry(
+            "user_roles_history",
+            None,
+            &format!(r#"{{"user_id": "{U1}", "role_name": "admin", "tenant_id": "{TENANT}"}}"#),
+        ),
+        entry(
+            "permissions_history",
+            None,
+            &format!(
+                r#"{{"role_name": "admin", "tenant_id": "{TENANT}", "permission": "receipts:read"}}"#
+            ),
+        ),
+        entry("api_keys_history", None, &format!(r#"{{"id": "{U2}", "tenant_id": "{TENANT}"}}"#)),
+        entry(
+            "configurations_history",
+            Some(-5),
+            &format!(r#"{{"tenant_id": "{TENANT}", "config_key": "theme"}}"#),
+        ),
+    ]
+    .join(",\n    ");
+    script.push_str(&format!(
+        r#"
+DO $$
+DECLARE history text; operation text;
+BEGIN
+  FOREACH history IN ARRAY ARRAY['users_history','roles_history','user_roles_history',
+                                 'permissions_history','configurations_history',
+                                 'api_keys_history'] LOOP
+    FOREACH operation IN ARRAY ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE'] LOOP
+      ASSERT NOT has_table_privilege('wamn_app'::name, ('app_system.'||history)::text, operation),
+        format('wamn_app holds table %s on %s', operation, history);
+    END LOOP;
+    FOREACH operation IN ARRAY ARRAY['SELECT','UPDATE'] LOOP
+      ASSERT NOT has_any_column_privilege('wamn_app'::name, ('app_system.'||history)::text, operation),
+        format('wamn_app holds column %s on %s', operation, history);
+    END LOOP;
+    ASSERT has_any_column_privilege('wamn_app'::name, ('app_system.'||history)::text, 'INSERT')
+           = (history = 'configurations_history'),
+      format('wamn_app column INSERT on %s does not match its R11 class', history);
+  END LOOP;
+  ASSERT NOT has_column_privilege('wamn_app'::name, 'app_system.configurations_history'::text,
+                                  'position'::text, 'INSERT'::text),
+    'wamn_app can choose the position of a configurations entry';
+END $$;
+
+BEGIN;
+SET LOCAL ROLE {app_generation};
+
+DO $$
+DECLARE probe_sql text;
+BEGIN
+  ASSERT current_user = '{app_generation}',
+    'the tenant authority is the prepared App generation';
+  FOREACH probe_sql IN ARRAY ARRAY[
+    'SELECT count(*) FROM app_system.users_history',
+    'SELECT count(*) FROM app_system.roles_history',
+    'SELECT count(*) FROM app_system.user_roles_history',
+    'SELECT count(*) FROM app_system.permissions_history',
+    'SELECT count(*) FROM app_system.configurations_history',
+    'SELECT count(*) FROM app_system.api_keys_history',
+    {direct_writes},
+    'UPDATE app_system.configurations_history SET operation = ''admin:forge-history''',
+    'DELETE FROM app_system.configurations_history'
+  ] LOOP
+    BEGIN
+      EXECUTE probe_sql;
+      RAISE EXCEPTION 'author SQL reached an app_system history table: %', probe_sql;
+    EXCEPTION WHEN insufficient_privilege THEN NULL;
+    END;
+  END LOOP;
 END $$;
 
 ROLLBACK;
