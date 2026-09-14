@@ -67,7 +67,7 @@ Level 2 adds that component to the closed component list.
 ## 3. System database
 
 The system database stamps its identity authority relations, as [data access](../architecture/data-access.md#system-database) describes.
-After level 2, Beads `wamn-emtx.24` adds a log table in `wamn_system` with the `app_system` log shape.
+After level 2, Beads `wamn-emtx.24` adds a history table for each of the four identity relations, with no tenant column.
 Its static `record_history_log` triggers carry the retention `unlimited`, and no retention task runs against `wamn_system`.
 
 ## 4. Level 2: the audit log
@@ -87,21 +87,24 @@ An intermediate state inside one transaction was never visible to another caller
 
 `wamn_history.log_row_change()` is an `AFTER INSERT OR UPDATE OR DELETE` row trigger function in [`deploy/sql/record-history.sql`](../../deploy/sql/record-history.sql).
 The function is `SECURITY INVOKER`, so it writes with the authority of the caller and keeps the `current_user` tenant floor.
-Generation derives an `INSERT` grant on the log table for `wamn_app` from the declaration.
-Generation refuses a declared operation that inserts into or updates the log table.
+Generation derives an `INSERT` grant on the history table for `wamn_app` from the declaration.
+Generation refuses a declared operation that inserts into or updates a history table.
 The function writes the entry in the same transaction as the change.
 
-An entry has these fields:
+Each logged relation has its own history table, as section 4.4 describes.
+An entry has these columns:
 
-- The relation that changed.
-- The row key.
-- The operation, from `app.operation`. The column is `NOT NULL`.
-- The actor, from `app.user_id`.
-- One time, from `transaction_timestamp()`. Retention expires entries by this time.
-- The transaction id, from `pg_current_xact_id()`. This value has 64 bits.
-- The kind of change: insert, update, or delete.
-- The `before` and `after` images as JSONB.
-- The per-row sequence, from a sequence column that the function allocates under the row lock.
+- `position`: the per-row position, a `bigint` identity value that the function allocates under the row lock. Positions rise for each row, and gaps are allowed.
+- `tenant_id`: the tenant of the row, only in a history table under a tenant floor.
+- `row_key`: a JSONB object of the primary key columns.
+- `kind`: `insert`, `update`, or `delete`.
+- `operation`: the source of the write, from `app.operation`.
+- `changed_by`: the actor, from `app.user_id`.
+- `changed_at`: the one time of the entry, from `transaction_timestamp()`. Retention expires entries by this time.
+- `transaction_id`: the 64-bit value of `pg_current_xact_id()`, stored as `bigint`.
+- `before` and `after`: the JSONB images.
+
+Every column is `NOT NULL`, and the primary key is `(row_key, position)`.
 
 The event envelope `txid` holds the low 32 bits of the entry transaction id.
 The join from an event to its entries is therefore exact within one transaction id epoch.
@@ -109,14 +112,15 @@ Causation stays on the event, and the entry does not record it.
 
 Entry contents:
 
-- An insert records the complete resulting row, including defaults, in `after` and has no `before`. That row is the starting state for reconstruction.
+- An insert records the complete resulting row, including defaults, in `after`, and its `before` is `{}`. That row is the starting state for reconstruction.
 - An update records the prior and resulting values of the changed columns, including changes to the stamps and the revision column.
-- A delete records the full row in `before` and has no `after`.
+- A delete records the full row in `before`, and its `after` is `{}`.
+- An update that changes a primary key column writes a delete entry under the old key and an insert entry under the new key. The shared transaction id links the two entries.
 - On a shared relation, the trigger reads `OLD` and `NEW`, which hold the effective base and overlay row. An overlay change therefore captures the complete row without widening the operation's public input or result.
 - Every entry records an actor, because every write has one. The `columns` selection controls row metadata only, not log contents.
 - JSONB fits because PostgreSQL compresses large values without custom encoding, a diff keeps ordinary entries small, and the normal JSON operators query it.
 - Each row change writes one entry. A true no-op writes no stamps and no entry.
-- The per-row sequence orders entries. The transaction timestamp does not order concurrent changes and repeats within one transaction.
+- The per-row position orders entries. The transaction timestamp does not order concurrent changes and repeats within one transaction.
 - A rolled-back change leaves no entry. A failure while writing the entry rolls back the change. An idempotent replay that returns the original result appends nothing.
 
 ### 4.3 Operation
@@ -133,20 +137,30 @@ The claims fence admits `wamn_history.log_row_change` as a reader of `app.operat
 An unbound `app.operation` raises SQLSTATE `55000` with the message `operation-required`.
 An unbound `app.user_id` raises `actor-required`, as the stamp function does.
 A CHECK on the operation column accepts three shapes only: an operation token, `wamn:<component>`, and `admin:<kebab-purpose>`.
+The CHECK matches each shape by its grammar pattern.
+The platform binding owns the closed component list, so a new component needs no change to a history table.
 
-### 4.4 Log table and trigger installation
+### 4.4 History tables and trigger installation
 
-apply-package derives one platform-shaped log table in the package schema for each package that logs a relation.
-The log table name is reserved, and generation refuses an authored relation with that name.
-Introspection admits only the platform shape of the log table.
-apply-package never drops a log table automatically.
-Generation derives the CDC exclusion of the log table from the declaration through the existing exclusion path.
-An overlay change writes to the log table of the relation owner without declaring anything.
-No generated `update` or `delete` exists over the log table, so no application operation can alter an entry.
+Each logged relation has one history table, named `<relation>_history`, in the schema of the relation.
+[Naming](../architecture/naming.md#reserved-names) reserves the `_history` suffix, and generation refuses an authored relation whose name ends with it.
+Generation refuses a relation whose longest derived history object name has 64 bytes or more, and the refusal names that relation.
+`wamn_history.create_history_table` in `deploy/sql/record-history.sql` is the one definition of the table shape.
+apply-package, `app-schema.sql`, `system-schema.sql`, and the generation and test setups call it.
+Its tenant flag adds `tenant_id` for a relation under a tenant floor, and a package relation in its own database gets no tenant column.
+
+apply-package creates the history table of each owned relation whose retention is not `"none"`, and it never drops a history table automatically.
+Introspection leaves history tables out of the schema description bytes and admits only their platform shape.
+When a package logs, the generator adds one fixed platform description of the history table for authored SQL, grant derivation, and the history projection.
+The generation database creates the history tables before the EXPLAIN and SQLx prepare steps.
+Generation derives the CDC exclusion of each history table through the existing exclusion path, and the exclusion row keeps the package that owns the relation.
+An overlay change to a base relation writes to the history table of that relation without declaring anything.
+
+No generated `update` or `delete` exists over a history table, so no application operation can alter an entry.
 
 apply-package installs a `record_history_log` trigger on each owned relation whose retention is not `"none"`.
-The trigger argument carries the retention value.
-A retention of `"none"` removes that trigger, and the log table and its entries stay.
+The one trigger argument carries the retention value, and the function derives the history table name from the relation.
+A retention of `"none"` removes that trigger, and the history table and its entries stay.
 Introspection admits exactly the `record_history_log` shape and compares its argument with the declaration.
 The log function ignores the argument.
 
@@ -155,13 +169,12 @@ The log function ignores the argument.
 The retention task is the only writer that removes entries.
 
 - A 14th tenant-scoped workload role family runs the task. It has a stable role, an exact grant verifier, and a denial matrix row.
-- The role holds only `DELETE` and column `SELECT` on the log tables. The task does not widen `wamn_run_retention`.
+- The role holds only `DELETE` and column `SELECT` on the history tables. The task does not widen `wamn_run_retention`.
 - A wamn-ctl-ops verb runs the task, and the verb refuses any other login.
 - The verb binds `wamn:audit-retention` as the actor and as the operation.
 - The verb reads the retention of each relation from the `record_history_log` trigger argument in `pg_trigger`.
 - The verb removes entries older than n whole days by entry time.
 - Retention removes a prefix of a row's history, never an interior entry. The per-row sequence decides the oldest removable prefix.
-- Relations with different retention values can share one log table, and each value holds.
 
 An example CronJob and Secret go beside [`run-retention.example.yaml`](../../deploy/platform/run-retention.example.yaml) and [`run-retention-db.example.yaml`](../../deploy/platform/run-retention-db.example.yaml).
 The schedule sets the retention precision: an expired entry goes on the next daily run.
@@ -174,7 +187,7 @@ The fold reports every position before the oldest retained entry as unavailable.
 ### 4.6 History read
 
 The history read is an ordinary public projection with its own token, and a grant of it works like any other grant.
-The read returns bounded pages of the entries of one row in sequence order, plus the current row.
+The read returns bounded pages of the entries of one row in position order, plus the current row.
 The authored fields of the projection decide which prior data it shows.
 The log carries copied business values, so a grant of the read is a new read surface.
 
@@ -186,11 +199,12 @@ Beads `wamn-cy2q` owns application row deletes.
 
 ### 4.7 The app_system log
 
-[`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) adds the `app_system` log table in the `app_system` schema under its tenant floor.
-The `wamn_history` schema keeps functions only.
-The file installs a static `record_history_log` trigger with the argument `unlimited` on each `app_system` relation.
+[`deploy/sql/app-schema.sql`](../../deploy/sql/app-schema.sql) creates the history table of each `app_system` relation with the tenant flag, so each history table sits under the tenant floor.
 These relations are `users`, `roles`, `user_roles`, `permissions`, `configurations`, and `api_keys`.
+The file installs a static `record_history_log` trigger with the argument `unlimited` on each relation.
 The static triggers have the same shape that apply-package installs, and the project-state Postgres test pins them.
+The `wamn_history` schema keeps functions only.
+
 The log copies full rows, including `api_keys.key_hash`.
 A column that is secret at rest does not belong in a stamped relation.
 
@@ -212,20 +226,22 @@ Beads epic `wamn-emtx` records the owner rulings for level 2 and the system data
 
 1. Reconstruct a row's state at three retained positions, including after a delete. Then run retention, and make sure that the log reports the range that it can no longer reconstruct as unavailable.
 1a. A long-lived row: insert it beyond the retention window, update it today, and run retention. The live row still reconstructs backward across its retained diffs. A deleted row whose image expired reports unavailable.
-2. Repeated updates to one row write one entry per change, in per-row sequence order, and none for a true no-op.
+2. Repeated updates to one row write one entry per change, in per-row position order, and none for a true no-op.
 3. Two concurrent changes produce `before` and `after` values and sequence positions that agree with the serialized row changes. No position repeats, and no committed change is missing. Aborted work can leave gaps.
 4. A failure inside the log trigger rolls back the business write.
 5. An idempotent replay appends no entry.
-6. Retention removes expired entries and nothing else, with two relations of different retention values sharing one table. It writes no marker, and the fold reports each position before the oldest retained entry as unavailable.
+6. Retention removes expired entries and nothing else, with two relations of different retention values. It writes no marker, and the fold reports each position before the oldest retained entry as unavailable.
 7. No generated operation can update or delete an entry.
 8. An overlay change on a shared relation reconstructs to the effective base and overlay row. The update entry itself is a changed-column diff, and the operation's public input and result do not change.
 9. The history read refuses a caller without its grant.
 10. A write with no bound `app.operation` raises `operation-required`. The operation CHECK accepts an operation token, `wamn:<component>`, and `admin:<kebab-purpose>`, and it refuses every other value.
 11. The low 32 bits of the entry transaction id equal the `txid` of the event envelope that the same transaction writes.
-12. A relation with `"columns": []` and a non-none retention writes log entries and no stamps.
-13. Generation derives the CDC exclusion of the log table, and CDC publishes no log entry.
-14. A change of retention to `"none"` removes the log trigger. The log table and its entries stay.
+12. A relation with `"columns": []` and a non-none retention writes history entries and no stamps.
+13. Generation derives the CDC exclusion of each history table, and CDC publishes no entry.
+14. A change of retention to `"none"` removes the log trigger. The history table and its entries stay.
 15. The retention verb refuses a login that is not in the audit retention role family.
+16. An update that changes a primary key column writes a delete entry under the old key and an insert entry under the new key. Both entries carry one transaction id.
+17. Generation refuses an authored relation whose name ends with `_history`, and a relation whose derived history object name has 64 bytes or more.
 
 ## 7. Work
 
@@ -233,7 +249,7 @@ Level 2, a separate increment:
 
 - Bind app.operation for every writer (`wamn-emtx.23`).
 - Add the platform log trigger function (`wamn-emtx.11`).
-- Declare the package log relation, retention values, and log trigger (`wamn-emtx.12`).
+- Declare retention values, history tables, and the log trigger (`wamn-emtx.12`).
 - Run log retention as a scheduled platform task (`wamn-emtx.13`).
 - Declare the history read operation and reconstruction (`wamn-emtx.14`).
 - Adopt level 2 in Receiving (`wamn-emtx.15`).
