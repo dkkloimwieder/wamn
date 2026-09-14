@@ -302,9 +302,9 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
     assert_eq!(
         query(
             &as_materializer,
-            "WITH claim AS (SELECT set_config('app.tenant', 't1', false)) \
+            "SET app.tenant = 't1'; \
              SELECT string_agg(package_id || '@' || package_version, ',' ORDER BY package_id) \
-               FROM catalog.packages, claim \
+               FROM catalog.packages \
               WHERE tenant_id = current_setting('app.tenant', true)"
         ),
         "receiving@1.0.0"
@@ -312,9 +312,9 @@ fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
     assert_eq!(
         query(
             &as_materializer,
-            "WITH claim AS (SELECT set_config('app.tenant', 't1', false)) \
+            "SET app.tenant = 't1'; \
              SELECT string_agg(package_id || '::' || registration_id, ',' ORDER BY package_id) \
-               FROM catalog.event_registrations, claim \
+               FROM catalog.event_registrations \
               WHERE tenant_id = current_setting('app.tenant', true)"
         ),
         "overlay::quality.create_inspection"
