@@ -52,6 +52,7 @@ async fn platform_identity_round_trip_on_postgres() {
         )
         .await
         .expect("seed registered project");
+    identity_relations_carry_stamps(&client).await;
     let provisioning = provisioning_principal_is_seeded(&client).await;
     unbound_identity_writes_refuse(&client).await;
     // The fixture is platform setup, so it writes as wamn:provisioning.
@@ -399,6 +400,82 @@ async fn project_environment_membership_round_trip(
             .await
             .expect("principal deletion removes its membership")
     );
+}
+
+/// Each identity authority relation carries the four stamp columns as NOT NULL
+/// with no default, and one static stamp trigger.
+async fn identity_relations_carry_stamps(client: &tokio_postgres::Client) {
+    const RELATIONS: [&str; 4] = [
+        "pats",
+        "principals",
+        "project_env_memberships",
+        "project_roles",
+    ];
+    let columns = client
+        .query(
+            "SELECT table_name::text, column_name::text, data_type::text, is_nullable::text, \
+                    column_default IS NULL \
+             FROM information_schema.columns \
+             WHERE table_schema = 'identity' \
+               AND column_name IN ('created_at', 'created_by', 'updated_at', 'updated_by') \
+             ORDER BY table_name, column_name",
+            &[],
+        )
+        .await
+        .expect("read the identity stamp columns")
+        .iter()
+        .map(|row| {
+            format!(
+                "{}.{} {} nullable={} no_default={}",
+                row.get::<_, String>(0),
+                row.get::<_, String>(1),
+                row.get::<_, String>(2),
+                row.get::<_, String>(3),
+                row.get::<_, bool>(4),
+            )
+        })
+        .collect::<Vec<_>>();
+    let expected_columns = RELATIONS
+        .iter()
+        .flat_map(|relation| {
+            [
+                ("created_at", "timestamp with time zone"),
+                ("created_by", "uuid"),
+                ("updated_at", "timestamp with time zone"),
+                ("updated_by", "uuid"),
+            ]
+            .map(|(column, data_type)| {
+                format!("{relation}.{column} {data_type} nullable=NO no_default=true")
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(columns, expected_columns);
+
+    let triggers = client
+        .query(
+            "SELECT pg_catalog.pg_get_triggerdef(t.oid) \
+             FROM pg_catalog.pg_trigger t \
+             JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid \
+             JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = 'identity' AND NOT t.tgisinternal \
+             ORDER BY c.relname, t.tgname",
+            &[],
+        )
+        .await
+        .expect("read the identity triggers")
+        .iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>();
+    let expected_triggers = RELATIONS
+        .map(|relation| {
+            format!(
+                "CREATE TRIGGER record_history_stamp BEFORE INSERT OR UPDATE ON identity.{relation} \
+                 FOR EACH ROW EXECUTE FUNCTION \
+                 wamn_history.stamp_row('created_at', 'created_by', 'updated_at', 'updated_by')"
+            )
+        })
+        .to_vec();
+    assert_eq!(triggers, expected_triggers);
 }
 
 /// The system schema seeds the wamn:provisioning row with the derived id, and
