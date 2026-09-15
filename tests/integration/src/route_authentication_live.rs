@@ -10,9 +10,9 @@ use anyhow::Context as _;
 use tokio_postgres::Client;
 use wamn_catalog::{SERVING_MANIFEST_FORMAT_VERSION};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::provision_project_env::{self, secret_value};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
 use wamn_ctl::project_env_membership::{self, ProjectEnvMembershipArgs};
-use wamn_ctl::provision_project_env;
 use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
 use wamn_execution_host::{authorize_attachment_for_test};
 use wamn_platform_identity::{PrincipalKind, assign_project_role, create_human, create_service, disable_principal, issue_pat, resolve_subject, revoke_pat, route_caller_subject};
@@ -20,7 +20,7 @@ use wamn_runtime::plugins::flow_http_routing::{FlowHttpRouting, RouteAuthenticat
 use wamn_runtime::plugins::wamn_postgres::{AuthorityClass, CredentialProvider, StaticCredentialProvider, WamnPostgres, WamnPostgresConfig};
 use wamn_runtime::release_manifest::LoadedRelease;
 
-use wamn_ctl::dev::environment::{ENVIRONMENT, ORG, PROJECT, TENANT, connect, generation_args, provision_route, reset_control_store, secret_value};
+use wamn_ctl::dev::environment::{ENVIRONMENT, ORG, PROJECT, TENANT, connect, generation_args, provision_route, reset_control_store};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 
@@ -638,7 +638,7 @@ async fn production_route_caller_authentication_and_operation_authorization() {
         .expect("install and reconcile Receiving");
 
     let identity_secret = root.join("identity-reader.json");
-    provision_project_env::run(generation_args(
+    provision_project_env::run_workload_action(&generation_args(
         WorkloadRoleFamily::IdentityReader,
         &admin_url,
         None,
@@ -647,7 +647,7 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     .await
     .expect("prepare the production identity-reader generation");
     let http_secret = root.join("http-admitter.json");
-    provision_project_env::run(generation_args(
+    provision_project_env::run_workload_action(&generation_args(
         WorkloadRoleFamily::HttpAdmitter,
         &admin_url,
         Some(&route.database_url),

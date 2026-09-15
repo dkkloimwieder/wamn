@@ -17,10 +17,11 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
 use tokio::process::{Child, Command};
 use url::Url;
+use wamn_control::pat_client::PatIssuerConfig;
+use wamn_control::provision_project_env::secret_value;
 use wamn_control_provision::CredentialGeneration;
 
 use crate::identity_issuer::{self, IdentityIssuerArgs};
-use crate::pat_client::PatIssuerArgs;
 
 // These bounds match the identity service's existing I/O timeout. The local
 // certificates cover startup only and are deleted when provisioning ends.
@@ -29,7 +30,7 @@ const CERTIFICATE_LIFETIME: Duration = Duration::from_secs(3600);
 
 /// One temporary identity process and its scoped database authority.
 pub struct Bootstrap {
-    pub args: PatIssuerArgs,
+    pub args: PatIssuerConfig,
     child: Option<Child>,
     issuer: String,
     system_url: String,
@@ -76,8 +77,7 @@ impl Bootstrap {
     }
 
     async fn spawn(&mut self, binary: &Path, bind: std::net::SocketAddr) -> anyhow::Result<()> {
-        let database =
-            super::environment::secret_value(&self.files.0.join("database.json"), "url")?;
+        let database = secret_value(&self.files.0.join("database.json"), "url")?;
         let mut command = Command::new(binary);
         command
             .env("WAMN_IDENTITY_ISSUER", &self.issuer)
@@ -183,7 +183,7 @@ async fn start_with(
         ca_path_length,
     )?;
     let mut bootstrap = Bootstrap {
-        args: PatIssuerArgs {
+        args: PatIssuerConfig {
             endpoint: Some(endpoint),
             client_cert: Some(files.0.join("operator.crt")),
             client_key: Some(files.0.join("operator.key")),

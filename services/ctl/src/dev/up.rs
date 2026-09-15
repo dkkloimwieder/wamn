@@ -209,7 +209,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         package_sources,
     };
 
-    let broker_options = crate::event_streams::connection_options(
+    let broker_options = wamn_control::event_streams::connection_options(
         &args.event_provisioning_username,
         &args.event_provisioning_password_file,
     )?;
@@ -232,7 +232,7 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         &environment.identity.project,
         environment.identity.environment.clone(),
     );
-    crate::event_streams::provision(
+    wamn_control::event_streams::provision(
         &broker,
         &event_scope,
         inputs.stream_replicas,

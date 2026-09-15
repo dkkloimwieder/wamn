@@ -6,7 +6,6 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use chrono::DateTime;
-use clap::Args;
 use serde::Deserialize;
 use url::Url;
 use wamn_platform_identity::{PAT_TOKEN_PREFIX, PrincipalId};
@@ -20,41 +19,25 @@ const UNCERTAIN_ISSUANCE: &str =
     "A PAT can exist without a returned token. The request was not retried.";
 
 /// TLS credentials and the identity service endpoint for operator PAT issuance.
-#[derive(Clone, Default, Args)]
-pub struct PatIssuerArgs {
+#[derive(Clone, Default)]
+pub struct PatIssuerConfig {
     /// HTTPS base URL of the identity service. Its path is preserved.
-    #[arg(long = "pat-issuer", env = "WAMN_PAT_ISSUER", hide_env_values = true)]
     pub endpoint: Option<String>,
 
     /// PEM certificate chain for the provisioning operator.
-    #[arg(
-        long = "pat-client-cert",
-        env = "WAMN_PAT_CLIENT_CERT",
-        hide_env_values = true
-    )]
     pub client_cert: Option<PathBuf>,
 
     /// PEM private key for the provisioning operator.
-    #[arg(
-        long = "pat-client-key",
-        env = "WAMN_PAT_CLIENT_KEY",
-        hide_env_values = true
-    )]
     pub client_key: Option<PathBuf>,
 
     /// PEM roots that replace the default trust roots for this identity service.
-    #[arg(
-        long = "pat-server-ca",
-        env = "WAMN_PAT_SERVER_CA",
-        hide_env_values = true
-    )]
     pub server_ca: Option<PathBuf>,
 }
 
-impl fmt::Debug for PatIssuerArgs {
+impl fmt::Debug for PatIssuerConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PatIssuerArgs")
+            .debug_struct("PatIssuerConfig")
             .field("endpoint", &self.endpoint.as_ref().map(|_| "<redacted>"))
             .field(
                 "client_cert",
@@ -81,7 +64,7 @@ impl fmt::Debug for PatClient {
 }
 
 impl PatClient {
-    pub(crate) fn new(args: &PatIssuerArgs) -> anyhow::Result<Self> {
+    pub(crate) fn new(args: &PatIssuerConfig) -> anyhow::Result<Self> {
         let endpoint = pat_endpoint(
             args.endpoint
                 .as_deref()
@@ -310,8 +293,8 @@ mod tests {
 
     #[test]
     fn issuer_credentials_are_required_and_debug_is_redacted() {
-        assert!(PatClient::new(&PatIssuerArgs::default()).is_err());
-        let mut args = PatIssuerArgs {
+        assert!(PatClient::new(&PatIssuerConfig::default()).is_err());
+        let mut args = PatIssuerConfig {
             endpoint: Some("https://identity.example/private-marker".to_owned()),
             ..Default::default()
         };
@@ -376,7 +359,7 @@ mod tests {
     }
 
     struct HttpsFixture {
-        args: PatIssuerArgs,
+        args: PatIssuerConfig,
         requests: Arc<AtomicUsize>,
         received: tokio::sync::mpsc::UnboundedReceiver<String>,
         task: tokio::task::JoinHandle<()>,
@@ -455,7 +438,7 @@ mod tests {
         let acceptor = TlsAcceptor::from(Arc::new(tls));
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("https://{}/identity", listener.local_addr().unwrap());
-        let args = PatIssuerArgs {
+        let args = PatIssuerConfig {
             endpoint: Some(endpoint.clone()),
             client_cert: Some(write_pem("operator.pem", &client.pem())),
             client_key: Some(write_pem("operator.key", &client_key.serialize_pem())),

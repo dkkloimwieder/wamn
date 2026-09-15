@@ -306,7 +306,7 @@ mod tests {
         let _lock = wamn_test_infrastructure::postgres::lock();
         let database = wamn_test_infrastructure::postgres::database();
         let result: anyhow::Result<()> = async {
-            wamn_ctl::event_streams::provision(
+            wamn_control::event_streams::provision(
                 &jetstream_context,
                 &event_scope,
                 1,

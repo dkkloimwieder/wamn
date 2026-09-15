@@ -18,8 +18,7 @@ use tokio_postgres::{Client, NoTls};
 use url::Url;
 
 use wamn_control::provision_project_env::{
-    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
-    WorkloadGenerationArgs,
+    self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
 };
 use wamn_control_provision::tenant_key::authority_derivations_bootstrap_sql;
 use wamn_control_provision::{
@@ -69,51 +68,32 @@ fn action_args(
     prepare: Option<(CredentialGeneration, &Path)>,
     retire: Option<CredentialGeneration>,
     abort: Option<CredentialGeneration>,
-) -> ProvisionProjectEnvArgs {
+) -> WorkloadActionRequest {
     let mut system_url = Url::parse(target_admin_url).expect("parse target admin URL");
     system_url.set_path("/postgres");
     system_url.set_query(None);
     system_url.set_fragment(None);
-    ProvisionProjectEnvArgs {
-        org: Some(ORG.to_string()),
-        project: Some(PROJECT.to_string()),
-        env: Some(ENVIRONMENT.to_string()),
+    WorkloadActionRequest {
+        org: ORG.to_string(),
+        project: PROJECT.to_string(),
+        env: ENVIRONMENT.to_string(),
         tenant: Some(TENANT.to_string()),
-        disposable: false,
         system_database_url: Some(system_url.into()),
-        cluster: None,
-        connection_limit: None,
-        // wamn-0h0g.12.141 exempts every credential-free action mode from both
-        // role-batch passwords, and this is one, so `None` is what a real
-        // invocation carries.
-        app_password: None,
-        app_host: None,
-        app_port: 5432,
         namespace: "wamn-system".to_string(),
-        secret_namespace: None,
         target_admin_database_url: Some(target_admin_url.to_string()),
-        emit_database: None,
-        emit_role_sql: None,
-        emit_privilege_sql: None,
-        emit_secret: None,
-        pat_issuer: Default::default(),
-        emit_management_author_pat_secret: None,
-        emit_route_caller_pat_secret: None,
-        revoke_pat_prefix: None,
         // wamn-0h0g.22.16: one derived action, not four families of fields.
-        workload: WorkloadGenerationArgs {
-            action: prepare
-                .map(|(generation, _)| (WorkloadActionVerb::Prepare, generation))
-                .or_else(|| retire.map(|generation| (WorkloadActionVerb::Retire, generation)))
-                .or_else(|| abort.map(|generation| (WorkloadActionVerb::Abort, generation)))
-                .map(|(verb, generation)| WorkloadGenerationAction {
-                    family: WorkloadRoleFamily::ManagementAdmitter,
-                    verb,
-                    generation,
-                }),
-            secret: prepare
-                .map(|(_, path)| (WorkloadRoleFamily::ManagementAdmitter, path.to_path_buf())),
-        },
+        action: prepare
+            .map(|(generation, _)| (WorkloadActionVerb::Prepare, generation))
+            .or_else(|| retire.map(|generation| (WorkloadActionVerb::Retire, generation)))
+            .or_else(|| abort.map(|generation| (WorkloadActionVerb::Abort, generation)))
+            .map(|(verb, generation)| WorkloadGenerationAction {
+                family: WorkloadRoleFamily::ManagementAdmitter,
+                verb,
+                generation,
+            })
+            .expect("each call names one workload action"),
+        secret: prepare.map(|(_, path)| path.to_path_buf()),
+        emit_role_sql: None,
     }
 }
 
@@ -453,7 +433,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
     let secret_b = secret_path(CredentialGeneration::B);
 
     // ---- prepare A -------------------------------------------------------
-    provision_project_env::run(action_args(
+    provision_project_env::run_workload_action(&action_args(
         &target_url,
         Some((CredentialGeneration::A, &secret_a)),
         None,
@@ -525,7 +505,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
     let after_first = family_state(&target, &pair).await;
 
     // ---- R55: the SECOND prepare of A is a no-op on the converged state ----
-    provision_project_env::run(action_args(
+    provision_project_env::run_workload_action(&action_args(
         &target_url,
         Some((CredentialGeneration::A, &secret_a)),
         None,
@@ -553,7 +533,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
     }
 
     // ---- prepare B, then retire A: the A/B rotation ------------------------
-    provision_project_env::run(action_args(
+    provision_project_env::run_workload_action(&action_args(
         &target_url,
         Some((CredentialGeneration::B, &secret_b)),
         None,
@@ -579,7 +559,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
     // Without a live session on the replacement, the
     // old credential is never withdrawn.
     let before_refusal = family_state(&target, &pair).await;
-    provision_project_env::run(action_args(
+    provision_project_env::run_workload_action(&action_args(
         &target_url,
         None,
         Some(CredentialGeneration::A),
@@ -604,7 +584,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         .get(0);
     assert_eq!(serving, role_b);
 
-    provision_project_env::run(action_args(
+    provision_project_env::run_workload_action(&action_args(
         &target_url,
         None,
         Some(CredentialGeneration::A),
@@ -637,7 +617,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
     // one-way transition, so the replay refuses fail-closed rather than
     // converging silently — but it must leave the family exactly as it found it.
     let settled = family_state(&target, &pair).await;
-    provision_project_env::run(action_args(
+    provision_project_env::run_workload_action(&action_args(
         &target_url,
         None,
         Some(CredentialGeneration::A),
@@ -656,7 +636,7 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
     await_zero_sessions(&target, &role_b).await;
 
     // ---- abort B: the unpublished-prepare escape hatch ---------------------
-    provision_project_env::run(action_args(
+    provision_project_env::run_workload_action(&action_args(
         &target_url,
         None,
         None,

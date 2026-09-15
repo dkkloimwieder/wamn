@@ -6,11 +6,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use wamn_cdc_reader::EventReaderArgs;
+use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
+use wamn_control::provision_project_env::{self, ProvisionedRoute, read_json, secret_value};
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
-use wamn_ctl::dev::environment::{
-    ProvisionedRoute, connect, generation_args, read_json, secret_value,
-};
-use wamn_ctl::enable_cdc_project_env::EnableCdcProjectEnvArgs;
+use wamn_ctl::dev::environment::{connect, generation_args};
 use wamn_gate_harness::journey::JourneyDocument;
 
 use super::super::{ENVIRONMENT, ORG, PROJECT};
@@ -38,7 +37,7 @@ pub(super) async fn configure(
     let (admin, admin_task) = connect(admin_url.as_str()).await?;
     let (project, project_task) = connect(&route.database_url).await?;
     let configured = wamn_gate_harness::environment::configure_cdc(
-        EnableCdcProjectEnvArgs {
+        EnableCdcProjectEnvRequest {
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),
             env: ENVIRONMENT.to_owned(),
@@ -78,7 +77,7 @@ pub(super) async fn configure(
         &registry_secret,
     );
     generation.namespace = inputs.host_secret_namespace.clone();
-    wamn_ctl::provision_project_env::run(generation).await?;
+    provision_project_env::run_workload_action(&generation).await?;
     for path in [&cdc_secret, &registry_secret] {
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         ensure!(

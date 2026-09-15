@@ -70,7 +70,7 @@ pub struct PruneRunHistoryArgs {
 }
 
 pub async fn run(args: PruneRunHistoryArgs) -> anyhow::Result<()> {
-    if !crate::ident::is_bare_ident(&args.schema) {
+    if !wamn_control::ident::is_bare_ident(&args.schema) {
         bail!(
             "--schema must be a bare identifier [a-z_][a-z0-9_]*: {:?}",
             args.schema

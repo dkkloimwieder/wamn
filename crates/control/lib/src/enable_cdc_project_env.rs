@@ -40,7 +40,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context as _;
-use clap::Args;
+use serde_json::Value;
 use tokio_postgres::NoTls;
 
 use wamn_control_provision::{
@@ -50,116 +50,104 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::Triple;
 
-#[derive(Debug, Args)]
-pub struct EnableCdcProjectEnvArgs {
+use crate::provision_project_env::write_output;
+
+/// Inputs of one CDC overlay onto a provisioned project-env.
+///
+/// An artifact path that is absent or `-` is not written; the outcome carries
+/// every rendered artifact.
+#[derive(Debug)]
+pub struct EnableCdcProjectEnvRequest {
     /// Org id (the project-env must already be provisioned and recorded).
-    #[arg(long)]
     pub org: String,
 
     /// Project id.
-    #[arg(long)]
     pub project: String,
 
     /// Environment slug.
-    #[arg(long)]
     pub env: String,
 
     /// The application DATA schema the publication covers (not the
     /// `app_system` auth schema).
-    #[arg(long, default_value = "public")]
     pub schema: String,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): derive the
     /// target cluster, resolve the stored project-env instance suffix, and record
-    /// the `registry.event_readers` registration. Env `WAMN_SYSTEM_ADMIN_URL`.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    /// the `registry.event_readers` registration.
     pub system_database_url: Option<String>,
 
-    /// Override the target CNPG `Cluster` name. When omitted, it is derived from
-    /// the org's placement in the registry.
-    #[arg(long)]
+    /// Target CNPG `Cluster` name. When absent, it is derived from the org's
+    /// placement in the registry.
     pub cluster: Option<String>,
 
     /// Password for the per-project-env replication role (embedded in the
-    /// emitted URL + role SQL). Supply it with `--replication-password` or the
-    /// env var `WAMN_REPLICATION_PASSWORD`.
-    ///
-    /// **Deliberately has no `default_value`** — the same shape
-    /// `--dispatch-reader-password` takes in `provision-project-env`
-    /// (wamn-0h0g.12.122). A default here minted a `LOGIN REPLICATION` role
-    /// with a publicly known password, and `REPLICATION` authority is
-    /// cluster-wide: it can open a replication session against any database on
-    /// the cluster and decode co-tenant WAL. Provisioning refuses instead
-    /// (wamn-0h0g.12.134).
-    #[arg(
-        long,
-        env = "WAMN_REPLICATION_PASSWORD",
-        value_name = "PASSWORD ($WAMN_REPLICATION_PASSWORD)"
-    )]
+    /// rendered URL + role SQL).
     pub replication_password: String,
 
     /// Host the reader reaches the project-env database at. Defaults to the
     /// target cluster's read-write service `<cluster>-rw`.
-    #[arg(long)]
     pub db_host: Option<String>,
 
     /// Port the reader reaches the database at.
-    #[arg(long, default_value_t = 5432)]
     pub db_port: u16,
 
-    /// Namespace the emitted `Secret` is applied to.
-    #[arg(long, env = "WAMN_NAMESPACE", default_value = "wamn-system")]
+    /// Namespace the rendered `Secret` is applied to.
     pub namespace: String,
 
     /// Secret namespace to RECORD in the registration's replication `SecretRef`.
-    /// Omit to record `NULL` (the resolving service's own namespace).
-    #[arg(long)]
+    /// Absent records `NULL` (the resolving service's own namespace).
     pub secret_namespace: Option<String>,
 
     /// Exact environment source stream. Must match the declared coordinates.
-    #[arg(long)]
     pub stream: Option<String>,
 
     /// Event broker managed by this environment's provisioning credential.
-    #[arg(long, env = "WAMN_EVT_NATS_URL")]
     pub nats_url: String,
 
     /// Provisioning username. Runtime uses a separate restricted credential.
-    #[arg(long, env = "WAMN_EVT_NATS_USERNAME")]
     pub nats_username: String,
 
     /// Private file containing the provisioning password.
-    #[arg(long, env = "WAMN_EVT_NATS_PASSWORD_FILE")]
     pub nats_password_file: PathBuf,
 
     /// NATS stream copies, separate from workload instances.
-    #[arg(long, env = "WAMN_EVT_STREAM_REPLICAS")]
     pub stream_replicas: usize,
 
     /// Declared duplicate detection window in seconds.
-    #[arg(long, env = "WAMN_EVT_DUP_WINDOW_SECS")]
     pub dup_window_secs: u64,
 
-    /// One native NATS pull consumer configuration as JSON. Repeat as needed.
-    #[arg(long, value_name = "JSON")]
+    /// Native NATS pull consumer configurations as JSON.
     pub consumer_config: Vec<String>,
 
-    /// Write the replication-role SQL (psql the TARGET cluster first — roles are
-    /// cluster-global) here; `-` = stdout.
-    #[arg(long)]
+    /// Write the replication-role SQL here.
     pub emit_role_sql: Option<PathBuf>,
 
-    /// Write the CDC SQL (schema guard + publication + failover slot + grants;
-    /// psql the PROJECT-ENV database) here; `-` = stdout.
-    #[arg(long)]
+    /// Write the CDC SQL here.
     pub emit_cdc_sql: Option<PathBuf>,
 
-    /// Write the replication-credential `Secret` (JSON) here; `-` = stdout.
-    #[arg(long)]
+    /// Write the replication-credential `Secret` (JSON) here.
     pub emit_secret: Option<PathBuf>,
 }
 
-pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
+/// The names and rendered artifacts of one CDC overlay.
+#[derive(Debug)]
+pub struct EnableCdcProjectEnvOutcome {
+    pub triple: Triple,
+    /// The shared publication, slot, and replication role name.
+    pub cdc_name: String,
+    pub cluster: String,
+    pub stream: String,
+    pub secret_name: String,
+    pub role_sql: String,
+    pub cdc_sql: String,
+    pub secret: Value,
+}
+
+/// Provision the declared broker objects, write the requested CDC artifacts, and
+/// record the CDC reader registration.
+pub async fn enable_cdc_project_env(
+    args: &EnableCdcProjectEnvRequest,
+) -> anyhow::Result<EnableCdcProjectEnvOutcome> {
     let triple = Triple::new(&args.org, &args.project, args.env.as_str());
     let stream = event_stream_name(&args.org, &args.project, &args.env);
     if args
@@ -254,26 +242,11 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
     let secret_doc =
         render_project_env_cdc_secret_manifest(&triple, &instance, &args.namespace, &cdc_url);
 
-    println!(
-        "cdc for project-env {triple}: publication/slot/role {cdc_name:?} over schema {:?} \
-         on cluster {cluster:?}; stream {stream:?}; replication secret {secret_name:?}",
-        args.schema,
-    );
-
-    emit_text(
-        &args.emit_role_sql,
-        "replication-role SQL (psql the TARGET cluster — roles are cluster-global)",
-        &role_sql,
-    )?;
-    emit_text(
-        &args.emit_cdc_sql,
-        "CDC SQL (psql the PROJECT-ENV database — publication + slot are database-bound)",
-        &cdc_sql,
-    )?;
-    emit_json(
-        &args.emit_secret,
-        "replication-credential Secret (kubectl apply)",
-        &secret_doc,
+    write_output(args.emit_role_sql.as_deref(), &role_sql)?;
+    write_output(args.emit_cdc_sql.as_deref(), &cdc_sql)?;
+    write_output(
+        args.emit_secret.as_deref(),
+        &serde_json::to_string_pretty(&secret_doc)?,
     )?;
 
     record_event_reader(
@@ -285,9 +258,17 @@ pub async fn run(args: EnableCdcProjectEnvArgs) -> anyhow::Result<()> {
         args.secret_namespace.as_deref(),
     )
     .await?;
-    println!("recorded event-reader registration for {triple} in the registry (wamn_system)");
 
-    Ok(())
+    Ok(EnableCdcProjectEnvOutcome {
+        triple,
+        cdc_name,
+        cluster,
+        stream,
+        secret_name,
+        role_sql,
+        cdc_sql,
+        secret: secret_doc,
+    })
 }
 
 /// The CDC SQL the runbook applies connected to the PROJECT-ENV database, in
@@ -360,122 +341,9 @@ async fn record_event_reader(
     result
 }
 
-/// Print a JSON document to a path, or to stdout with a labeled header when the
-/// path is absent (`-` also means stdout).
-fn emit_json(path: &Option<PathBuf>, label: &str, doc: &serde_json::Value) -> anyhow::Result<()> {
-    emit_text(path, label, &serde_json::to_string_pretty(doc)?)
-}
-
-fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyhow::Result<()> {
-    match path {
-        Some(p) if p.as_os_str() != "-" => {
-            std::fs::write(p, text).with_context(|| format!("write {}", p.display()))?;
-            println!("wrote {} ({label})", p.display());
-        }
-        _ => println!("--- {label} ---\n{text}"),
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
-
     use super::*;
-
-    #[derive(Debug, Parser)]
-    struct TestCli {
-        #[command(flatten)]
-        args: EnableCdcProjectEnvArgs,
-    }
-
-    /// No `default_value` on `--replication-password` (wamn-0h0g.12.134). A
-    /// default minted a `LOGIN REPLICATION` role with a publicly known
-    /// password, and `REPLICATION` authority is cluster-wide — a stolen
-    /// credential can open a replication session against any database on the
-    /// cluster and decode co-tenant WAL, which slot/publication naming does not
-    /// constrain. This test exists so the argument cannot quietly re-acquire
-    /// one.
-    #[test]
-    fn the_replication_password_has_no_default() {
-        let base = [
-            "test",
-            "--org",
-            "acme",
-            "--project",
-            "billing",
-            "--env",
-            "dev",
-            "--nats-url",
-            "nats://127.0.0.1:4222",
-            "--nats-username",
-            "test_provision",
-            "--nats-password-file",
-            "/test/private/event-password",
-            "--stream-replicas",
-            "1",
-            "--dup-window-secs",
-            "120",
-        ];
-        assert!(
-            TestCli::try_parse_from(base).is_err(),
-            "CDC enablement accepted a missing --replication-password"
-        );
-        let mut with = base.to_vec();
-        with.extend_from_slice(&["--replication-password", "probe"]);
-        assert_eq!(
-            TestCli::try_parse_from(with)
-                .unwrap()
-                .args
-                .replication_password,
-            "probe"
-        );
-    }
-
-    #[test]
-    fn cdc_command_accepts_explicit_broker_and_native_consumer_declarations() {
-        let consumer = wamn_control_provision::events::materializer_consumer_config(
-            "mat_t_pkg_r1",
-            "evt.acme.billing.dev.invoice.>",
-            Duration::from_secs(30),
-            5,
-        );
-        let json = serde_json::to_string(&consumer).unwrap();
-        let parsed = TestCli::try_parse_from([
-            "test",
-            "--org",
-            "acme",
-            "--project",
-            "billing",
-            "--env",
-            "dev",
-            "--replication-password",
-            "test-password",
-            "--nats-url",
-            "nats://127.0.0.1:4222",
-            "--nats-username",
-            "test_provision",
-            "--nats-password-file",
-            "/test/private/event-password",
-            "--stream-replicas",
-            "1",
-            "--dup-window-secs",
-            "60",
-            "--consumer-config",
-            &json,
-        ])
-        .unwrap()
-        .args;
-        assert_eq!(parsed.stream_replicas, 1);
-        assert_eq!(parsed.dup_window_secs, 60);
-        assert_eq!(
-            serde_json::from_str::<async_nats::jetstream::consumer::pull::Config>(
-                &parsed.consumer_config[0]
-            )
-            .unwrap(),
-            consumer
-        );
-    }
 
     /// The CDC bundle's statements land in dependency order: the schema guard
     /// before the publication (FOR TABLES IN SCHEMA needs the schema), the

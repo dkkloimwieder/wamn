@@ -10,7 +10,7 @@ use anyhow::{Context as _, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::sync::{oneshot, watch};
-use wamn_ctl::dev::environment::secret_value;
+use wamn_control::provision_project_env::secret_value;
 
 use super::{ReceivingCluster, kubectl, materializer_case};
 

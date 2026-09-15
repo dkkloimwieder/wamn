@@ -92,7 +92,7 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
 
     let restore = compact(&source("services/ctl/src/restore_project_env.rs"));
     assert!(restore.contains(
-        "let instance = crate::provision_project_env::read_project_env_instance(system_url, &triple).await?; restore_in_place(&args, &triple, &instance,"
+        "let instance = read_project_env_instance(system_url, &triple).await?; restore_in_place(&args, &triple, &instance,"
     ));
     assert!(restore.contains(
         "let db_name = project_env_database_name(&args.org, &args.project, triple.env.as_str(), instance);"

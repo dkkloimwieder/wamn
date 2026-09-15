@@ -2985,7 +2985,7 @@ mod tests {
                 .batch_execute("SET ROLE wamn_system")
                 .await
                 .expect("assume production control owner");
-            crate::provision_project_env::project_tenant_environment(
+            wamn_control::provision_project_env::project_tenant_environment(
                 &mut projection,
                 &wamn_control_registry::Triple::new("acme", "receiving", "dev"),
                 Some(&projection_component().scope.tenant_id),

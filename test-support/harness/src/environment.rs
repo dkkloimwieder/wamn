@@ -4,11 +4,12 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Client;
+use wamn_control::enable_cdc_project_env::{self, EnableCdcProjectEnvRequest};
+use wamn_control::provision_project_env::{
+    self, ProvisionProjectEnvRequest, ProvisionedRoute, read_json, secret_value,
+};
 use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
 use wamn_control_provision::{project_env_database_name, sql, validate_instance_suffix};
-use wamn_ctl::dev::environment::{ProvisionedRoute, read_json, secret_value};
-use wamn_ctl::enable_cdc_project_env::{self, EnableCdcProjectEnvArgs};
-use wamn_ctl::provision_project_env::{self, ProvisionProjectEnvArgs};
 use wamn_ctl::push_component::{
     self, AdmitComponentArgs, PublishAdmittedComponentArgs, PushComponentArgs,
 };
@@ -17,7 +18,7 @@ use wamn_ctl::push_component::{
 ///
 /// The caller stops its separate PAT service before applying the database setup.
 pub async fn provision_project(
-    args: ProvisionProjectEnvArgs,
+    args: ProvisionProjectEnvRequest,
     admin_url: &str,
 ) -> anyhow::Result<ProvisionedRoute> {
     let database_path = args
@@ -29,13 +30,8 @@ pub async fn provision_project(
         .clone()
         .context("set the route caller Secret output path")?;
     let management_secret = args.emit_management_author_pat_secret.clone();
-    let database_prefix = project_env_database_name(
-        args.org.as_deref().context("supply the organization")?,
-        args.project.as_deref().context("supply the project")?,
-        args.env.as_deref().context("supply the environment")?,
-        "",
-    );
-    provision_project_env::run(args)
+    let database_prefix = project_env_database_name(&args.org, &args.project, &args.env, "");
+    provision_project_env::provision_project_env(&args)
         .await
         .context("provision the project environment")?;
     let database = read_json(&database_path)?["spec"]["name"]
@@ -176,7 +172,7 @@ pub async fn push_component(args: PushComponentArgs) -> anyhow::Result<String> {
 /// Configure the declared CDC reader and apply the existing SQL statements.
 /// The publication commits before slot creation, as in the psql file caller.
 pub async fn configure_cdc(
-    args: EnableCdcProjectEnvArgs,
+    args: EnableCdcProjectEnvRequest,
     cluster: &Client,
     project: &Client,
 ) -> anyhow::Result<()> {
@@ -189,7 +185,7 @@ pub async fn configure_cdc(
         .clone()
         .context("set the CDC Secret output path")?;
     let schema = args.schema.clone();
-    enable_cdc_project_env::run(args)
+    enable_cdc_project_env::enable_cdc_project_env(&args)
         .await
         .context("configure the declared CDC reader")?;
     let configuration: tokio_postgres::Config = secret_value(&secret_path, "url")?

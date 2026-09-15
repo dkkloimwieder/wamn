@@ -2498,7 +2498,8 @@ pub(crate) async fn claim_environment_instance(
         })?;
     let connection_task = tokio::spawn(connection);
     let claimed =
-        crate::provision_project_env::claim_environment_instance(&client, tenant, instance).await;
+        wamn_control::provision_project_env::claim_environment_instance(&client, tenant, instance)
+            .await;
     drop(client);
     connection_task.abort();
     claimed

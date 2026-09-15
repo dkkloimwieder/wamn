@@ -34,6 +34,7 @@ use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
 
+use wamn_control::provision_project_env::read_project_env_instance;
 use wamn_control_provision::{
     pg_restore_argv, project_env_database_name, restore_scratch_db_name, sql, validate_project_env,
     validate_restore_scratch_name,
@@ -130,8 +131,7 @@ pub async fn run(args: RestoreProjectEnvArgs) -> anyhow::Result<()> {
         let system_url = args.system_database_url.as_deref().context(
             "--in-place requires --system-database-url to resolve the stored instance suffix",
         )?;
-        let instance =
-            crate::provision_project_env::read_project_env_instance(system_url, &triple).await?;
+        let instance = read_project_env_instance(system_url, &triple).await?;
         restore_in_place(&args, &triple, &instance, admin_url, &dump_dir_str).await
     } else {
         restore_into_scratch(&args, &triple, admin_url, &dump_dir_str).await

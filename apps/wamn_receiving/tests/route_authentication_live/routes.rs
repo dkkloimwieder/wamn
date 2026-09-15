@@ -110,14 +110,14 @@ pub(super) async fn receiving_pat_journey(
     inputs: &JourneyDocument,
     scenario_worker: &Path,
     fresh_only: bool,
-) -> anyhow::Result<wamn_ctl::dev::environment::ProvisionedRoute> {
+) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
     receiving_release_journey(inputs, scenario_worker, fresh_only, false).await
 }
 
 pub(super) async fn mint_receiving_release(
     inputs: &JourneyDocument,
     scenario_worker: &Path,
-) -> anyhow::Result<wamn_ctl::dev::environment::ProvisionedRoute> {
+) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
     receiving_release_journey(inputs, scenario_worker, false, true).await
 }
 
@@ -126,7 +126,7 @@ async fn receiving_release_journey(
     scenario_worker: &Path,
     fresh_only: bool,
     mint_only: bool,
-) -> anyhow::Result<wamn_ctl::dev::environment::ProvisionedRoute> {
+) -> anyhow::Result<wamn_control::provision_project_env::ProvisionedRoute> {
     anyhow::ensure!(
         inputs.fresh_only_packages.is_some() == fresh_only,
         "the selected journey must match its fresh-only package fixture"

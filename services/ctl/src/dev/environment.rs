@@ -26,6 +26,11 @@ use std::time::Duration;
 use anyhow::Context as _;
 use reqwest::Url;
 use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
+use wamn_control::pat_client::PatIssuerConfig;
+use wamn_control::provision_project_env::{
+    self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, WorkloadActionVerb,
+    WorkloadGenerationAction, read_json, secret_annotation, secret_value,
+};
 use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
     management_admitter_generation_role, platform_principals_sql, sql as provision_sql,
@@ -34,11 +39,7 @@ use wamn_pg_core::Identifier;
 
 use crate::dev::activation::DevActivationIdentity;
 use crate::provision_org::{self, ProvisionOrgArgs, TemplateArg};
-use crate::provision_project_env::{
-    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
-    WorkloadGenerationArgs, secret_annotation,
-};
-pub use crate::provision_project_env::{ProvisionedRoute, read_json, secret_value};
+use crate::provisioning_verbs;
 use crate::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
 
 /// The deployment-owned inputs a standing development environment needs.
@@ -175,11 +176,11 @@ fn provisioning_args(
     root: &Path,
     route_secret: &Path,
     management_secret: Option<&Path>,
-) -> ProvisionProjectEnvArgs {
-    ProvisionProjectEnvArgs {
-        org: Some(ORG.to_owned()),
-        project: Some(PROJECT.to_owned()),
-        env: Some(ENVIRONMENT.to_owned()),
+) -> ProvisionProjectEnvRequest {
+    ProvisionProjectEnvRequest {
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        env: ENVIRONMENT.to_owned(),
         tenant: Some(TENANT.to_owned()),
         // The development target is disposable, and its registry row is where
         // that is written down (wamn-10yt.38). Admit reads the projection of
@@ -189,21 +190,18 @@ fn provisioning_args(
         system_database_url: Some(system_url.to_owned()),
         cluster: Some("route-auth-pg18".to_owned()),
         connection_limit: None,
-        app_password: Some("unused-legacy-secret".to_owned()),
+        app_password: "unused-legacy-secret".to_owned(),
         app_host: Some("route-auth-pg18.invalid".to_owned()),
         app_port: 5432,
         namespace: "wamn-system".to_owned(),
         secret_namespace: None,
-        target_admin_database_url: None,
-        workload: WorkloadGenerationArgs::default(),
         emit_database: Some(root.join("database.json")),
         emit_role_sql: Some(root.join("roles.sql")),
         emit_privilege_sql: Some(root.join("privileges.sql")),
-        emit_secret: Some(root.join("database-secret.json")),
+        emit_secret: root.join("database-secret.json"),
         emit_management_author_pat_secret: management_secret.map(Path::to_path_buf),
         emit_route_caller_pat_secret: Some(route_secret.to_path_buf()),
-        pat_issuer: crate::pat_client::PatIssuerArgs::default(),
-        revoke_pat_prefix: None,
+        pat_issuer: PatIssuerConfig::default(),
     }
 }
 
@@ -212,40 +210,22 @@ pub fn generation_args(
     system_url: &str,
     target_admin_url: Option<&str>,
     secret: &Path,
-) -> ProvisionProjectEnvArgs {
-    ProvisionProjectEnvArgs {
-        org: Some(ORG.to_owned()),
-        project: Some(PROJECT.to_owned()),
-        env: Some(ENVIRONMENT.to_owned()),
+) -> WorkloadActionRequest {
+    WorkloadActionRequest {
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        env: ENVIRONMENT.to_owned(),
         tenant: Some(TENANT.to_owned()),
-        // A workload generation action returns before provisioning records the
-        // project-env row, so this never reaches the registry.
-        disposable: false,
         system_database_url: Some(system_url.to_owned()),
-        cluster: None,
-        connection_limit: None,
-        app_password: None,
-        app_host: None,
-        app_port: 5432,
-        namespace: "wamn-system".to_owned(),
-        secret_namespace: None,
         target_admin_database_url: target_admin_url.map(str::to_owned),
-        workload: WorkloadGenerationArgs {
-            action: Some(WorkloadGenerationAction {
-                family,
-                verb: WorkloadActionVerb::Prepare,
-                generation: CredentialGeneration::A,
-            }),
-            secret: Some((family, secret.to_path_buf())),
+        namespace: "wamn-system".to_owned(),
+        action: WorkloadGenerationAction {
+            family,
+            verb: WorkloadActionVerb::Prepare,
+            generation: CredentialGeneration::A,
         },
-        emit_database: None,
+        secret: Some(secret.to_path_buf()),
         emit_role_sql: None,
-        emit_privilege_sql: None,
-        emit_secret: None,
-        emit_management_author_pat_secret: None,
-        emit_route_caller_pat_secret: None,
-        pat_issuer: crate::pat_client::PatIssuerArgs::default(),
-        revoke_pat_prefix: None,
     }
 }
 
@@ -332,9 +312,11 @@ pub async fn provision_route(
     let issuer = super::pat_issuer::start(system_url, root).await?;
     let mut args = provisioning_args(system_url, root, &route_secret, management_secret);
     args.pat_issuer = issuer.args.clone();
-    let issued = provision_project_env::run(args).await;
+    let provisioned = provision_project_env::provision_project_env(&args)
+        .await
+        .and_then(|outcome| provisioning_verbs::print_provisioned(&args, &outcome));
     let stopped = issuer.stop().await;
-    if let Err(error) = issued {
+    if let Err(error) = provisioned {
         let context = if stopped.is_err() {
             "project-environment provisioning failed and identity bootstrap cleanup also failed"
         } else {
@@ -589,9 +571,10 @@ pub async fn prepare_journey_credentials(
         let secret = root.join(format!("{name}.json"));
         let mut args = generation_args(family, system_url, target_url, &secret);
         args.namespace = namespace.to_owned();
-        provision_project_env::run(args)
+        let outcome = provision_project_env::run_workload_action(&args)
             .await
             .with_context(|| format!("prepare the production {name} generation"))?;
+        provisioning_verbs::print_workload_action(&args, &outcome);
         secret_value(&secret, "url")
     }
 

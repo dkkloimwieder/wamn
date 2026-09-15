@@ -591,7 +591,7 @@ pub(super) async fn assert_dev_command(
         project: environment.identity.project.clone(),
         env: wamn_control_registry::Env::new(environment.identity.environment.clone()),
     };
-    wamn_ctl::event_streams::provision(
+    wamn_control::event_streams::provision(
         &async_nats::jetstream::new(event_provisioning.clone()), &event_scope,
         inputs.environment.stream_replicas,
         Duration::from_secs(inputs.environment.dup_window_secs), &[],

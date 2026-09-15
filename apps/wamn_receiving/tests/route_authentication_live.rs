@@ -81,7 +81,8 @@ use wash_runtime::wasmtime::component::{Component, Linker};
 use wasmtime_wasi_http::p3::bindings::Service;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
-use wamn_ctl::dev::environment::{DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT, clean_dev_verification_gate_roles, connect, install_journey_platform_floor, prepare_journey_credentials, provision_journey_control, provision_route, read_json, reconcile_journey_run_plane, secret_value, spawn_journey_management_gate, write_dev_config};
+use wamn_control::provision_project_env::{read_json, secret_value};
+use wamn_ctl::dev::environment::{DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT, clean_dev_verification_gate_roles, connect, install_journey_platform_floor, prepare_journey_credentials, provision_journey_control, provision_route, reconcile_journey_run_plane, spawn_journey_management_gate, write_dev_config};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 use runtime::{TraceHarness, journey_trace, span_attribute, span_descends_from, trace_component_invocations, assert_invocation_identity, assert_postgres_descendants, assert_direct_route_trace, assert_nested_record_receipt_trace, assert_native_nested_acquisition, assert_nested_permission_denial_trace, assert_no_component_trace, build_journey_runtime, JourneyGuestMemory, invoke_journey_route, invoke_journey_request, successful_value};
 use routes::copy_fresh_only_package;

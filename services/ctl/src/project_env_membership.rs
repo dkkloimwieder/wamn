@@ -6,12 +6,11 @@
 use anyhow::Context as _;
 use clap::Args;
 use tokio_postgres::NoTls;
+use wamn_control::provision_project_env::provisioning_transaction;
 use wamn_control_provision::validate_project_env;
 use wamn_platform_identity::{
     PrincipalId, grant_project_env_membership, revoke_project_env_membership,
 };
-
-use crate::provision_project_env::provisioning_transaction;
 
 /// Arguments that name one existing human and one existing project environment.
 #[derive(Debug, Args)]

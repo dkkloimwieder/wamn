@@ -15,7 +15,7 @@ pub(super) fn args(
     username: &str,
     password_file: &Path,
 ) -> anyhow::Result<EventReaderArgs> {
-    use wamn_ctl::dev::environment::secret_value;
+    use wamn_control::provision_project_env::secret_value;
     Ok(EventReaderArgs {
         org: crate::environment::ORG.into(),
         project: crate::environment::PROJECT.into(),

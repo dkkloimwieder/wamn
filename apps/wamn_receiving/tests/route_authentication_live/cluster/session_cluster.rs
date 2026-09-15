@@ -11,11 +11,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, BufReader};
 use tokio::process::Command;
+use wamn_control::provision_project_env::{
+    self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
+};
 use wamn_control_provision::{CredentialGeneration, WorkloadRoleFamily, workload_secret_name};
 use wamn_ctl::print_release_env::ReleaseCarrier;
-use wamn_ctl::provision_project_env::{
-    ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction, WorkloadGenerationArgs,
-};
 use wamn_test_infrastructure::rendering::{HttpClaims, HttpWorkloadInput, render_http_workload};
 use wamn_test_infrastructure::workload;
 
@@ -78,37 +78,21 @@ pub(super) async fn prepare(
     );
     let mut target_url = reqwest::Url::parse(&cluster.inputs.system_pg_url)?;
     target_url.set_path(&format!("/{database}"));
-    wamn_ctl::provision_project_env::run(ProvisionProjectEnvArgs {
-        org: Some(ORG.to_owned()),
-        project: Some(PROJECT.to_owned()),
-        env: Some(ENVIRONMENT.to_owned()),
+    provision_project_env::run_workload_action(&WorkloadActionRequest {
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        env: ENVIRONMENT.to_owned(),
         tenant: Some(TENANT.to_owned()),
-        disposable: false,
         system_database_url: Some(cluster.inputs.system_pg_url.clone()),
-        cluster: None,
-        connection_limit: None,
-        app_password: None,
-        app_host: None,
-        app_port: 5432,
-        namespace: resources.name.clone(),
-        secret_namespace: None,
         target_admin_database_url: Some(target_url.to_string()),
-        workload: WorkloadGenerationArgs {
-            action: Some(WorkloadGenerationAction {
-                family: WorkloadRoleFamily::SessionRoleReader,
-                verb: WorkloadActionVerb::Prepare,
-                generation: CredentialGeneration::A,
-            }),
-            secret: Some((WorkloadRoleFamily::SessionRoleReader, target_file.clone())),
+        namespace: resources.name.clone(),
+        action: WorkloadGenerationAction {
+            family: WorkloadRoleFamily::SessionRoleReader,
+            verb: WorkloadActionVerb::Prepare,
+            generation: CredentialGeneration::A,
         },
-        emit_database: None,
+        secret: Some(target_file.clone()),
         emit_role_sql: None,
-        emit_privilege_sql: None,
-        emit_secret: None,
-        pat_issuer: Default::default(),
-        emit_management_author_pat_secret: None,
-        emit_route_caller_pat_secret: None,
-        revoke_pat_prefix: None,
     })
     .await?;
     for (path, name, key) in [

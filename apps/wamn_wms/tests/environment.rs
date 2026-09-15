@@ -11,18 +11,19 @@ use serde_json::{Value, json};
 use wamn_authoring_model::AuthoringScope;
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
+use wamn_control::pat_client::PatIssuerConfig;
+use wamn_control::provision_project_env::{
+    self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, read_json,
+    secret_value,
+};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_ctl::author_wiring::{self, AuthorWiringArgs};
 use wamn_ctl::bind_connection::{self, BindConnectionArgs, RequirementType};
-use wamn_ctl::dev::environment::{
-    JourneyCredentials, ProvisionedRoute, connect, read_json, secret_value,
-};
-use wamn_ctl::enable_cdc_project_env::EnableCdcProjectEnvArgs;
-use wamn_ctl::pat_client::PatIssuerArgs;
+use wamn_ctl::dev::environment::{JourneyCredentials, connect};
 use wamn_ctl::print_release_env::{self, ReleaseCarrier};
 use wamn_ctl::provision_org::{self, TemplateArg};
-use wamn_ctl::provision_project_env::{self, ProvisionProjectEnvArgs, WorkloadGenerationArgs};
 use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
 use wamn_ctl::push_component::PushComponentArgs;
 use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
@@ -92,7 +93,7 @@ pub async fn provision_project(
     inputs: &JourneyDocument,
     work: &Path,
     admin_url: &str,
-    pat_issuer: PatIssuerArgs,
+    pat_issuer: PatIssuerConfig,
 ) -> anyhow::Result<ProvisionedRoute> {
     provision_org::run(provision_org::provision_org_args(
         ORG.to_owned(),
@@ -108,30 +109,27 @@ pub async fn provision_project(
         _ => anyhow::bail!("WMS provisioning requires one TCP database host"),
     };
     let port = database_config.get_ports().first().copied().unwrap_or(5432);
-    let args = ProvisionProjectEnvArgs {
-        org: Some(ORG.into()),
-        project: Some(PROJECT.into()),
-        env: Some(ENVIRONMENT.into()),
+    let args = ProvisionProjectEnvRequest {
+        org: ORG.into(),
+        project: PROJECT.into(),
+        env: ENVIRONMENT.into(),
         tenant: Some(TENANT.into()),
         disposable: false,
         system_database_url: Some(inputs.system_pg_url.clone()),
         cluster: Some(CLUSTER.into()),
         connection_limit: None,
-        app_password: Some("unused-legacy-secret".into()),
+        app_password: "unused-legacy-secret".into(),
         app_host: Some(host),
         app_port: port,
         namespace: inputs.host_secret_namespace.clone(),
         secret_namespace: None,
-        target_admin_database_url: None,
-        workload: WorkloadGenerationArgs::default(),
         emit_database: Some(work.join("database.json")),
         emit_role_sql: Some(work.join("roles.sql")),
         emit_privilege_sql: Some(work.join("privileges.sql")),
-        emit_secret: Some(work.join("project-db.json")),
+        emit_secret: work.join("project-db.json"),
         pat_issuer,
         emit_management_author_pat_secret: Some(work.join("management-author-pat.json")),
         emit_route_caller_pat_secret: Some(inputs.route_caller_secret_output.clone()),
-        revoke_pat_prefix: None,
     };
     shared::provision_project(args, admin_url).await
 }
@@ -274,12 +272,12 @@ fn generation_args(
     target: Option<&str>,
     secret: &Path,
     namespace: &str,
-) -> ProvisionProjectEnvArgs {
+) -> WorkloadActionRequest {
     let mut args =
         wamn_ctl::dev::environment::generation_args(family, &inputs.system_pg_url, target, secret);
-    args.org = Some(ORG.into());
-    args.project = Some(PROJECT.into());
-    args.env = Some(ENVIRONMENT.into());
+    args.org = ORG.into();
+    args.project = PROJECT.into();
+    args.env = ENVIRONMENT.into();
     args.tenant = Some(TENANT.into());
     args.namespace = namespace.to_owned();
     args
@@ -293,7 +291,7 @@ async fn prepare_family(
     namespace: &str,
     project_database: bool,
 ) -> anyhow::Result<String> {
-    provision_project_env::run(generation_args(
+    provision_project_env::run_workload_action(&generation_args(
         inputs,
         family,
         project_database.then_some(route.database_url.as_str()),
@@ -646,7 +644,7 @@ pub async fn configure_cdc(
     let cdc_path = work.join("cdc.sql");
     let secret_path = work.join("cdc-reader.json");
     let registry_path = work.join("registry-reader.json");
-    let args = EnableCdcProjectEnvArgs {
+    let args = EnableCdcProjectEnvRequest {
         org: ORG.into(),
         project: PROJECT.into(),
         env: ENVIRONMENT.into(),
@@ -674,7 +672,7 @@ pub async fn configure_cdc(
     drop(project);
     task.abort();
     result?;
-    provision_project_env::run(generation_args(
+    provision_project_env::run_workload_action(&generation_args(
         inputs,
         WorkloadRoleFamily::RegistryReader,
         None,

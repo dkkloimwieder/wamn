@@ -3,10 +3,19 @@
 use anyhow::Context as _;
 
 use super::{
-    Client, Duration, IdentityErrorKind, NoTls, PatClient, Path, Principal, PrincipalKind,
+    Client, Duration, IdentityErrorKind, NoTls, PatClient, Path, PathBuf, Principal, PrincipalKind,
     PrincipalStatus, Triple, Value, assign_project_role, authenticate_pat, create_service, json,
     provisioning_transaction, resolve_subject, revoke_pat, route_caller_subject, write_secret_json,
 };
+
+/// One PAT `Secret` that provisioning issued and wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssuedPatSecret {
+    /// The PAT purpose, such as `management-author`.
+    pub purpose: &'static str,
+    /// The file the `Secret` JSON was written to.
+    pub path: PathBuf,
+}
 
 /// Provisioning PATs retain their existing 30-day lifetime.
 pub(super) const PAT_TTL: Duration = Duration::from_secs(2_592_000);
@@ -70,7 +79,7 @@ pub(super) async fn issue_pat_secrets(
     namespace: &str,
     management_author_path: Option<&Path>,
     route_caller_path: Option<&Path>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<IssuedPatSecret>> {
     let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect for PAT issuance")?;
@@ -80,29 +89,34 @@ pub(super) async fn issue_pat_secrets(
             .batch_execute("SET ROLE wamn_system")
             .await
             .context("SET ROLE wamn_system for PAT issuance")?;
+        let mut issued = Vec::new();
         if let Some(path) = management_author_path {
-            issue_pat_secret(
-                &mut client,
-                pat_client,
-                triple,
-                namespace,
-                MANAGEMENT_AUTHOR,
-                path,
-            )
-            .await?;
+            issued.push(
+                issue_pat_secret(
+                    &mut client,
+                    pat_client,
+                    triple,
+                    namespace,
+                    MANAGEMENT_AUTHOR,
+                    path,
+                )
+                .await?,
+            );
         }
         if let Some(path) = route_caller_path {
-            issue_pat_secret(
-                &mut client,
-                pat_client,
-                triple,
-                namespace,
-                ROUTE_CALLER,
-                path,
-            )
-            .await?;
+            issued.push(
+                issue_pat_secret(
+                    &mut client,
+                    pat_client,
+                    triple,
+                    namespace,
+                    ROUTE_CALLER,
+                    path,
+                )
+                .await?,
+            );
         }
-        Ok::<(), anyhow::Error>(())
+        Ok::<_, anyhow::Error>(issued)
     }
     .await;
     drop(client);
@@ -117,7 +131,7 @@ async fn issue_pat_secret(
     namespace: &str,
     purpose: PatPurpose,
     path: &Path,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<IssuedPatSecret> {
     let subject = purpose.subject(triple)?;
     let display_name = purpose.display_name(triple);
     let principal = resolve_or_create_service(client, &subject, &display_name).await?;
@@ -164,12 +178,10 @@ async fn issue_pat_secret(
         &issued.expires_at,
     )?;
     write_secret_json(path, &secret)?;
-    println!(
-        "wrote {} ({} PAT Secret; kubectl apply)",
-        path.display(),
-        purpose.purpose
-    );
-    Ok(())
+    Ok(IssuedPatSecret {
+        purpose: purpose.purpose,
+        path: path.to_path_buf(),
+    })
 }
 
 async fn resolve_or_create_service(
@@ -207,7 +219,7 @@ async fn resolve_or_create_service(
     }
 }
 
-pub(super) async fn revoke_provisioning_pat(system_url: &str, prefix: &str) -> anyhow::Result<()> {
+pub async fn revoke_provisioning_pat(system_url: &str, prefix: &str) -> anyhow::Result<()> {
     let (mut client, connection) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect for PAT revocation")?;
@@ -273,7 +285,7 @@ pub(super) fn render_pat_secret(
     }))
 }
 
-pub(super) fn parse_pat_prefix(value: &str) -> Result<String, String> {
+pub fn parse_pat_prefix(value: &str) -> Result<String, String> {
     let valid = value.len() == 16
         && value
             .bytes()

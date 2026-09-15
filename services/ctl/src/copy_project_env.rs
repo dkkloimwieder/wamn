@@ -162,9 +162,9 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
         .as_deref()
         .context("copy requires --system-database-url to resolve both stored instance suffixes")?;
     let src_instance =
-        crate::provision_project_env::read_project_env_instance(system_url, &src).await?;
+        wamn_control::provision_project_env::read_project_env_instance(system_url, &src).await?;
     let dst_instance =
-        crate::provision_project_env::read_project_env_instance(system_url, &dst).await?;
+        wamn_control::provision_project_env::read_project_env_instance(system_url, &dst).await?;
     let src_db = project_env_database_name(&src.org, &src.project, src.env.as_str(), &src_instance);
     let dst_db = project_env_database_name(&dst.org, &dst.project, dst.env.as_str(), &dst_instance);
     let saga_id = args.saga_id.clone().unwrap_or_else(|| {

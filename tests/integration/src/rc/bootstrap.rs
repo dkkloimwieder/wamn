@@ -6,10 +6,10 @@ use std::time::Duration;
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
+use wamn_control::provision_project_env::{self, ProvisionProjectEnvRequest};
 use wamn_control_provision::sql;
 use wamn_ctl::dev::{environment::connect, pat_issuer};
 use wamn_ctl::provision_org::{self, TemplateArg};
-use wamn_ctl::provision_project_env::{self, ProvisionProjectEnvArgs, WorkloadGenerationArgs};
 
 use super::{NAMESPACE, Resources, TENANT, apply, command_json, kubectl, save};
 
@@ -96,30 +96,27 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
     let secret_path = resources.work.join("bootstrap-database-secret.json");
     let management_path = resources.work.join("management-pat.json");
     let route_path = resources.work.join("route-pat.json");
-    let provisioned = provision_project_env::run(ProvisionProjectEnvArgs {
-        org: Some("rc".into()),
-        project: Some("app".into()),
-        env: Some("dev".into()),
+    let provisioned = provision_project_env::provision_project_env(&ProvisionProjectEnvRequest {
+        org: "rc".into(),
+        project: "app".into(),
+        env: "dev".into(),
         tenant: Some(TENANT.into()),
         disposable: false,
         system_database_url: Some(system_url),
         cluster: Some("rc-pg".into()),
         connection_limit: None,
-        app_password: Some(password),
+        app_password: password,
         app_host: Some("rc-pg-rw".into()),
         app_port: 5432,
         namespace: NAMESPACE.into(),
         secret_namespace: None,
-        target_admin_database_url: None,
-        workload: WorkloadGenerationArgs::default(),
         emit_database: Some(database_path.clone()),
         emit_role_sql: Some(role_path.clone()),
         emit_privilege_sql: Some(privilege_path.clone()),
-        emit_secret: Some(secret_path.clone()),
+        emit_secret: secret_path.clone(),
         pat_issuer: issuer.args.clone(),
         emit_management_author_pat_secret: Some(management_path.clone()),
         emit_route_caller_pat_secret: Some(route_path.clone()),
-        revoke_pat_prefix: None,
     })
     .await;
     let stopped = issuer.stop().await;

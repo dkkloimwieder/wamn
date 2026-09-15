@@ -177,7 +177,7 @@ async fn execute(
     let server = format!("nats://{nats_host}:4222");
     event_broker::write_binding(&broker, &server, &source)?;
     let client = connect_broker(&broker.provisioning, &server).await?;
-    wamn_ctl::event_streams::provision(
+    wamn_control::event_streams::provision(
         &async_nats::jetstream::new(client),
         &scope,
         source.num_replicas,

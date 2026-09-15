@@ -5706,7 +5706,6 @@ dependencies = [
  "anyhow",
  "async-nats",
  "chrono",
- "clap",
  "hex",
  "rcgen",
  "reqwest",

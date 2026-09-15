@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use wamn_ctl::dev::environment::ProvisionedRoute;
+use wamn_control::provision_project_env::ProvisionedRoute;
 use wamn_test_infrastructure::workload;
 
 use super::{

@@ -26,8 +26,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use tokio::process::Command;
+use wamn_control::provision_project_env::ProvisionedRoute;
 use wamn_control_provision::workload_role::WorkloadRoleFamily;
-use wamn_ctl::dev::environment::ProvisionedRoute;
 use wamn_ctl::print_release_env::{ReleaseCarrier, lookup_release_carrier};
 use wamn_gate_harness::journey::JourneyDocument;
 use wamn_test_infrastructure::rendering::{
@@ -121,7 +121,7 @@ async fn start(
         );
         tokio::time::sleep(Duration::from_secs(1)).await;
     };
-    wamn_ctl::event_streams::provision(
+    wamn_control::event_streams::provision(
         &async_nats::jetstream::new(provisioning),
         &scope,
         source.num_replicas,

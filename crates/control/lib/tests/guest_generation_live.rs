@@ -18,8 +18,7 @@ use tokio_postgres::{Client, NoTls};
 use url::Url;
 
 use wamn_control::provision_project_env::{
-    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
-    WorkloadGenerationArgs,
+    self, WorkloadActionRequest, WorkloadActionVerb, WorkloadGenerationAction,
 };
 use wamn_control_provision::tenant_key::{authority_derivations_bootstrap_sql, tenant_key};
 use wamn_control_provision::{
@@ -70,47 +69,32 @@ fn action_args(
     prepare: Option<(CredentialGeneration, &Path)>,
     retire: Option<CredentialGeneration>,
     abort: Option<CredentialGeneration>,
-) -> ProvisionProjectEnvArgs {
+) -> WorkloadActionRequest {
     let mut system_url = Url::parse(target_admin_url).expect("parse target admin URL");
     system_url.set_path("/postgres");
     system_url.set_query(None);
     system_url.set_fragment(None);
-    ProvisionProjectEnvArgs {
-        org: Some(ORG.to_string()),
-        project: Some(PROJECT.to_string()),
-        env: Some(ENVIRONMENT.to_string()),
+    WorkloadActionRequest {
+        org: ORG.to_string(),
+        project: PROJECT.to_string(),
+        env: ENVIRONMENT.to_string(),
         tenant: Some(TENANT.to_string()),
-        disposable: false,
         system_database_url: Some(system_url.into()),
-        cluster: None,
-        connection_limit: None,
-        app_host: None,
-        app_password: None,
-        app_port: 5432,
         namespace: format!("wamn-{ORG}--{PROJECT}--{ENVIRONMENT}--{INSTANCE}"),
-        secret_namespace: None,
         target_admin_database_url: Some(target_admin_url.to_string()),
-        emit_database: None,
-        emit_role_sql: None,
-        emit_privilege_sql: None,
-        emit_secret: None,
-        pat_issuer: Default::default(),
-        emit_management_author_pat_secret: None,
-        emit_route_caller_pat_secret: None,
-        revoke_pat_prefix: None,
         // wamn-0h0g.22.16: one derived action, not four families of fields.
-        workload: WorkloadGenerationArgs {
-            action: prepare
-                .map(|(generation, _)| (WorkloadActionVerb::Prepare, generation))
-                .or_else(|| retire.map(|generation| (WorkloadActionVerb::Retire, generation)))
-                .or_else(|| abort.map(|generation| (WorkloadActionVerb::Abort, generation)))
-                .map(|(verb, generation)| WorkloadGenerationAction {
-                    family: WorkloadRoleFamily::App,
-                    verb,
-                    generation,
-                }),
-            secret: prepare.map(|(_, path)| (WorkloadRoleFamily::App, path.to_path_buf())),
-        },
+        action: prepare
+            .map(|(generation, _)| (WorkloadActionVerb::Prepare, generation))
+            .or_else(|| retire.map(|generation| (WorkloadActionVerb::Retire, generation)))
+            .or_else(|| abort.map(|generation| (WorkloadActionVerb::Abort, generation)))
+            .map(|(verb, generation)| WorkloadGenerationAction {
+                family: WorkloadRoleFamily::App,
+                verb,
+                generation,
+            })
+            .expect("each call names one workload action"),
+        secret: prepare.map(|(_, path)| path.to_path_buf()),
+        emit_role_sql: None,
     }
 }
 
@@ -269,7 +253,7 @@ async fn guest_generations_are_per_tenant_and_carry_the_predicate_key() {
     let path_b = secret_path(CredentialGeneration::B);
 
     // ---- prepare A --------------------------------------------------------
-    provision_project_env::run(action_args(
+    provision_project_env::run_workload_action(&action_args(
         &target_url,
         Some((CredentialGeneration::A, &path_a)),
         None,
@@ -339,7 +323,7 @@ async fn guest_generations_are_per_tenant_and_carry_the_predicate_key() {
     }
 
     // ---- bounded overlap: prepare B, then retire A ------------------------
-    provision_project_env::run(action_args(
+    provision_project_env::run_workload_action(&action_args(
         &target_url,
         Some((CredentialGeneration::B, &path_b)),
         None,
@@ -370,7 +354,7 @@ async fn guest_generations_are_per_tenant_and_carry_the_predicate_key() {
         .get(0);
     assert_eq!(who_b, role_b);
 
-    provision_project_env::run(action_args(
+    provision_project_env::run_workload_action(&action_args(
         &target_url,
         None,
         Some(CredentialGeneration::A),

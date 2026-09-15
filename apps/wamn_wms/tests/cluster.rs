@@ -427,7 +427,7 @@ async fn run_created(
     event_broker::write_binding(broker, &nats_url, source)?;
     if measure_startup || matches!(case, Case::Delivery) {
         let provisioning = event_broker::connect(&broker.provisioning, &nats_url).await?;
-        wamn_ctl::event_streams::provision(
+        wamn_control::event_streams::provision(
             &async_nats::jetstream::new(provisioning.clone()),
             scope,
             source.num_replicas,

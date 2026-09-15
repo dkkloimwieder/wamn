@@ -9,13 +9,7 @@ use super::{
     AtomicU64, File, OpenOptions, Ordering, OsString, Path, PathBuf, Permissions, Value,
 };
 
-pub(super) fn parse_secret_path(value: &str) -> Result<PathBuf, String> {
-    let path = PathBuf::from(value);
-    ensure_secret_path(&path, "secret output").map_err(|error| error.to_string())?;
-    Ok(path)
-}
-
-pub(super) fn ensure_secret_path(path: &Path, flag: &str) -> anyhow::Result<()> {
+pub fn ensure_secret_path(path: &Path, flag: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         path.as_os_str() != "-",
         "{flag} must name a file; '-' and stdout are forbidden for credentials"
@@ -23,7 +17,7 @@ pub(super) fn ensure_secret_path(path: &Path, flag: &str) -> anyhow::Result<()> 
     Ok(())
 }
 
-pub(super) fn ensure_distinct_secret_paths<const N: usize>(
+pub fn ensure_distinct_secret_paths<const N: usize>(
     paths: [(&str, Option<&Path>); N],
 ) -> anyhow::Result<()> {
     let mut seen = Vec::with_capacity(N);
@@ -114,19 +108,10 @@ pub fn write_secret_json(path: &Path, doc: &Value) -> anyhow::Result<()> {
     result
 }
 
-/// Print a JSON document to a path, or to stdout with a labeled header when the
-/// path is absent (`-` also means stdout).
-pub(super) fn emit_json(path: &Option<PathBuf>, label: &str, doc: &serde_json::Value) -> anyhow::Result<()> {
-    emit_text(path, label, &serde_json::to_string_pretty(doc)?)
-}
-
-pub(super) fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyhow::Result<()> {
-    match path {
-        Some(p) if p.as_os_str() != "-" => {
-            std::fs::write(p, text).with_context(|| format!("write {}", p.display()))?;
-            println!("wrote {} ({label})", p.display());
-        }
-        _ => println!("--- {label} ---\n{text}"),
+/// Write a rendered artifact to a path. An absent path or `-` writes nothing.
+pub(crate) fn write_output(path: Option<&Path>, text: &str) -> anyhow::Result<()> {
+    if let Some(path) = path.filter(|path| path.as_os_str() != "-") {
+        std::fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
     }
     Ok(())
 }

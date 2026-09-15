@@ -8,14 +8,15 @@ use super::grants::{
 };
 use super::{
     CredentialGeneration, DateTime, EffectWriterCredentialScope, EffectWriterCredentialValidity,
-    GenericClient, PLATFORM_GROUP_ROLE, PgConfig, ProvisionProjectEnvArgs, SecondsFormat,
-    SessionTarget, SystemRandom, Triple, Utc, WorkloadActionVerb, WorkloadGenerationAction,
-    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody,
-    WorkloadSecretBodyKind, connect_config, effect_writer_credential, emit_text, ensure_secret_path,
-    exact_project_database_config, json, legacy_effect_writer_generation_role, named_database_config,
-    project_env_database_name, read_project_env_instance, render_workload_secret_manifest, role_sql,
-    sql, tenant_key, validate_project_env, validate_session_tenant_id, workload_action_flag,
-    workload_config, workload_generation_role, workload_secret_flag, workload_url, write_secret_json,
+    GenericClient, PLATFORM_GROUP_ROLE, PgConfig, SecondsFormat, SessionTarget, SystemRandom,
+    Triple, Utc, WorkloadActionOutcome, WorkloadActionRequest, WorkloadActionVerb,
+    WorkloadGenerationAction, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
+    WorkloadSecretBody, WorkloadSecretBodyKind, connect_config, effect_writer_credential,
+    ensure_secret_path, exact_project_database_config, json, legacy_effect_writer_generation_role,
+    named_database_config, project_env_database_name, read_project_env_instance,
+    render_workload_secret_manifest, role_sql, sql, tenant_key, validate_project_env,
+    validate_session_tenant_id, workload_action_flag, workload_config, workload_generation_role,
+    workload_secret_flag, workload_url, write_output, write_secret_json,
 };
 
 const WORKLOAD_CREDENTIAL_TTL_DAYS: i64 = 30;
@@ -284,20 +285,12 @@ pub(super) struct WorkloadActionIdentity<'a> {
 }
 
 fn workload_action_identity<'a>(
-    args: &'a ProvisionProjectEnvArgs,
+    args: &'a WorkloadActionRequest,
     label: &str,
 ) -> anyhow::Result<WorkloadActionIdentity<'a>> {
-    let org = args
-        .org
-        .as_deref()
-        .expect("clap parser invariant: --org is required unless --revoke-pat-prefix is present");
-    let project = args.project.as_deref().expect(
-        "clap parser invariant: --project is required unless --revoke-pat-prefix is present",
-    );
-    let environment = args
-        .env
-        .as_deref()
-        .expect("clap parser invariant: --env is required unless --revoke-pat-prefix is present");
+    let org = args.org.as_str();
+    let project = args.project.as_str();
+    let environment = args.env.as_str();
     let tenant = args
         .tenant
         .as_deref()
@@ -415,28 +408,19 @@ async fn converge_stable_workload_memberships(
 /// Secret body shape picks what the published Secret carries. What is
 /// deliberately NOT derived is the GRANT SET, which is where a family's
 /// authority actually lives.
-pub(super) async fn run_workload_action(
-    args: &ProvisionProjectEnvArgs,
-    action: WorkloadGenerationAction,
-) -> anyhow::Result<()> {
+pub async fn run_workload_action(
+    args: &WorkloadActionRequest,
+) -> anyhow::Result<WorkloadActionOutcome> {
     let WorkloadGenerationAction {
         family,
         verb,
         generation,
-    } = action;
+    } = args.action;
     let label = family.label();
     let emits_app_retirement_sql =
         family == WorkloadRoleFamily::App && verb == WorkloadActionVerb::Prepare;
     anyhow::ensure!(
-        args.cluster.is_none()
-            && args.connection_limit.is_none()
-            && args.app_host.is_none()
-            && args.emit_database.is_none()
-            && (args.emit_role_sql.is_none() || emits_app_retirement_sql)
-            && args.emit_privilege_sql.is_none()
-            && args.emit_secret.is_none()
-            && args.emit_management_author_pat_secret.is_none()
-            && args.emit_route_caller_pat_secret.is_none(),
+        args.emit_role_sql.is_none() || emits_app_retirement_sql,
         "{label} generation actions cannot render ordinary provisioning or PAT artifacts; only \
          App prepare may emit the canonical shared-login retirement role SQL"
     );
@@ -486,7 +470,7 @@ pub(super) async fn run_workload_action(
 
     match verb {
         WorkloadActionVerb::Prepare => {
-            let secret_path = args.workload_secret_path(family).with_context(|| {
+            let secret_path = args.secret.as_deref().with_context(|| {
                 format!(
                     "--{} requires --{} PATH",
                     workload_action_flag(family, verb),
@@ -582,18 +566,18 @@ pub(super) async fn run_workload_action(
                 },
             )
             .await?;
-            println!(
-                "prepared and authenticated {label} credential generation {} for {org}/{project}/{environment}; wrote {}",
-                generation.as_str(),
-                secret_path.display()
-            );
-            if family == WorkloadRoleFamily::App && args.emit_role_sql.is_some() {
-                emit_text(
-                    &args.emit_role_sql,
-                    "shared App-login retirement role SQL (apply once after every replacement carrier is verified)",
-                    &role_sql(""),
-                )?;
-            }
+            let app_retirement_role_sql =
+                if family == WorkloadRoleFamily::App && args.emit_role_sql.is_some() {
+                    let retirement_sql = role_sql("");
+                    write_output(args.emit_role_sql.as_deref(), &retirement_sql)?;
+                    Some(retirement_sql)
+                } else {
+                    None
+                };
+            Ok(WorkloadActionOutcome::Prepared {
+                secret: secret_path.to_path_buf(),
+                app_retirement_role_sql,
+            })
         }
         WorkloadActionVerb::Retire => {
             let (legacy_old_role, _) =
@@ -605,20 +589,13 @@ pub(super) async fn run_workload_action(
                 generation,
             )
             .await?;
-            println!(
-                "retired {label} credential generation {} for {org}/{project}/{environment}",
-                generation.as_str()
-            );
+            Ok(WorkloadActionOutcome::Retired)
         }
         WorkloadActionVerb::Abort => {
             abort_workload_generation(&admin_config, lifecycle, generation).await?;
-            println!(
-                "aborted unpublished {label} credential generation {} for {org}/{project}/{environment}",
-                generation.as_str()
-            );
+            Ok(WorkloadActionOutcome::Aborted)
         }
     }
-    Ok(())
 }
 
 /// Prepare one generation, then verify it and publish its Secret.

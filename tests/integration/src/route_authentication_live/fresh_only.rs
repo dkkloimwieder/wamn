@@ -9,10 +9,10 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 use wamn_catalog::{ComponentDeclaration, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::provision_project_env::secret_value;
 use wamn_ctl::author_wiring::{self, AuthorWiringArgs};
 use wamn_ctl::dev::environment::{
-    ENVIRONMENT, JourneyCredentials, ORG, PROJECT, TENANT, connect, secret_value,
-    spawn_journey_management_gate,
+    ENVIRONMENT, JourneyCredentials, ORG, PROJECT, TENANT, connect, spawn_journey_management_gate,
 };
 use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
 use wamn_ctl::push_component::{self, PushComponentArgs};

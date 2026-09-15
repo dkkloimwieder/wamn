@@ -97,7 +97,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         &environment.identity.project,
         environment.identity.environment.as_str(),
     );
-    wamn_ctl::event_streams::provision(
+    wamn_control::event_streams::provision(
         &async_nats::jetstream::new(provisioning.clone()),
         &scope,
         inputs.environment.stream_replicas,

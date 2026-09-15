@@ -275,7 +275,7 @@ async fn recreate_stream(
     let _ = js
         .delete_stream(wamn_event_wire::delivery_advisory_stream(&name))
         .await;
-    wamn_ctl::event_streams::provision(
+    wamn_control::event_streams::provision(
         js,
         &wamn_control_registry::Triple::new(&args.org, &args.project, args.env.as_str()),
         args.replicas,

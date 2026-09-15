@@ -31,7 +31,7 @@ pub(super) async fn prepare_application(
     evidence: &Path,
     mint_only: bool,
 ) -> anyhow::Result<(
-    wamn_ctl::dev::environment::ProvisionedRoute,
+    wamn_control::provision_project_env::ProvisionedRoute,
     wamn_ctl::print_release_env::ReleaseCarrier,
 )> {
     crate::environment::install_control(admin_url, &inputs.system_pg_url).await?;
@@ -305,8 +305,10 @@ pub(super) async fn generated_terminal(
     store: &AmazonS3,
 ) -> anyhow::Result<()> {
     use sha2::{Digest as _, Sha256};
-    let token =
-        wamn_ctl::dev::environment::secret_value(&inputs.route_caller_secret_output, "token")?;
+    let token = wamn_control::provision_project_env::secret_value(
+        &inputs.route_caller_secret_output,
+        "token",
+    )?;
     let token_path = work.join(format!("generated-tui-{mode}-pat"));
     let database_path = work.join(format!("generated-tui-{mode}-database-url"));
     super::deployment::write_private(&token_path, token.as_bytes())?;
