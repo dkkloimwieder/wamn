@@ -28,6 +28,7 @@ Run the reading package's tests for such a change.
 `tools/test-changes dry-run` prints the selected commands.
 `tools/test-changes run` runs each command, reports each workspace, and returns a nonzero status if any command fails.
 It records no result.
+`tools/test-changes` is the broad check before integration, and a single edit runs its covering exact case through [`wamn dev clean-check`](delivery.md#change-checks).
 
 The following commands select individual test targets:
 

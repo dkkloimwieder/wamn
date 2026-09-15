@@ -14,6 +14,8 @@ wamn-ctl check-changes --repository "$SOURCE" \
 ```
 
 Replace the package, target, and case with the existing test for the change.
+The package must be a member of exactly one of the root and apps workspaces.
+The command builds and runs the test in that workspace.
 For an ignored case, add `--include-ignored`.
 A case that uses PostgreSQL takes its database from the [test server](running-tests.md#test-database-isolation) and needs no database input.
 A change result records its source state and cannot substitute for release qualification.

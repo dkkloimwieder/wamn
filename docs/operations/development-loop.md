@@ -39,6 +39,17 @@ Use its emitted configuration:
   --overlay-root "$PWD/apps/client_acme_receiving" --watch --tui receiving
 ```
 
+Use this Acme overlay command for an Acme change.
+For a Receiving change, give `wamn dev up` only `--package "$PWD/apps/wamn_receiving"` as its package root.
+Then run the loop with Receiving as the overlay:
+
+```bash
+"$CARGO_TARGET_DIR/debug/wamn" dev --config "$WAMN_DEV_ENV_DIR/dev.json" \
+  --overlay-root "$PWD/apps/wamn_receiving" --watch --tui receiving
+```
+
+This loop migrates, generates, builds, and releases only the Receiving package.
+
 For `[RECEIVING-TUI]` and `[GENERATED-TUI]`, `--tui receiving` opens the app-owned operator.
 Bare `--tui` opens the developer console. Without a terminal, `--hold` keeps the activation alive until interruption.
 The loop supplies the route, target instance, and private personal access token.
@@ -128,20 +139,9 @@ Restart the loop with the same configuration after reset.
 
 ## Clean correctness checks
 
-Run selected existing tests independently of the retained developer database:
-
-```bash
-"$CARGO_TARGET_DIR/debug/wamn" dev clean-check --repository "$PWD" \
-  --package wamn-client-tui --test screen \
-  --case unchanged_activation_preserves_state_but_same_schema_target_replacement_resets_everything \
-  --result "$CHANGE_RESULT"
-```
-
-Use an unused result path and replace the package, target, and case with the test that covers the change.
-For an ignored case, add `--include-ignored`.
-A case that uses PostgreSQL takes its database from the [test server](running-tests.md#test-database-isolation) and needs no database input.
-Failed, skipped, ignored, or empty test selections cannot produce a passing result.
-Local reuse and these change checks do not establish [release qualification](delivery.md#candidate-qualification).
+`wamn dev clean-check` runs the existing exact test for a change, independent of the retained developer database.
+It takes the arguments and result rules of the [change checks](delivery.md#change-checks).
+Local reuse does not establish [release qualification](delivery.md#candidate-qualification).
 
 The local Receiving terminal test uses an HTTP fixture and requires its built operator:
 
