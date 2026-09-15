@@ -233,10 +233,9 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     run_ok(
         url,
         &format!(
-            "{app}\n{owner}\n{effect}\n{reader}\n",
+            "{app}\n{owner}\n{reader}\n",
             app = sql::ensure_app_role_sql(APP_ROLE),
             owner = sql::ensure_db_owner_role_sql(),
-            effect = sql::ensure_effect_writer_acl_role_sql(),
             reader = sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
         ),
     );
