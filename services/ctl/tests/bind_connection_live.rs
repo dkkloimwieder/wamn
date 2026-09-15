@@ -35,7 +35,8 @@ use wamn_runtime::plugins::wamn_postgres::{
     ClassCredentials, ConnectionEffectLookup, DEFAULT_PROJECT, WamnPostgres, WamnPostgresConfig,
 };
 use wamn_schema_control::connections::{
-    ComponentConnectionRequirement, insert_component_connection_requirement_sql,
+    ComponentConnectionRequirement, activate_connection_generation_sql,
+    insert_component_connection_requirement_sql,
 };
 
 const TENANT: &str = "bind-connection-tenant";
@@ -689,6 +690,53 @@ async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
         .await
         .expect_err("a second bind of the same instance and alias is refused");
     assert_eq!(rows(&project).await, (1, 1, 1));
+
+    // A STALE ACTIVATION CHANGES NOTHING. The bind left generation 1 active at
+    // revision 2. An activation that expects any other state matches no row,
+    // and the instance row stays exactly as it was.
+    let instance = || async {
+        project
+            .query_one(
+                "SELECT active_generation, revision, row_to_json(instance)::text \
+                   FROM catalog.connection_instances AS instance \
+                  WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3",
+                &[&TENANT, &ENVIRONMENT, &"labels-store"],
+            )
+            .await
+            .map(|row| {
+                (
+                    row.get::<_, Option<i64>>(0),
+                    row.get::<_, i64>(1),
+                    row.get::<_, String>(2),
+                )
+            })
+            .expect("read the bound instance")
+    };
+    let current = instance().await;
+    assert_eq!((current.0, current.1), (Some(1), 2));
+    for (expected_active_generation, expected_revision) in
+        [(None::<i64>, 1_i64), (Some(1), 1), (None, 2)]
+    {
+        let activated = project
+            .execute(
+                activate_connection_generation_sql(),
+                &[
+                    &TENANT,
+                    &ENVIRONMENT,
+                    &"labels-store",
+                    &1_i64,
+                    &expected_active_generation,
+                    &expected_revision,
+                ],
+            )
+            .await
+            .expect("a stale activation is not an error");
+        assert_eq!(
+            activated, 0,
+            "expecting ({expected_active_generation:?}, {expected_revision}) is stale"
+        );
+        assert_eq!(instance().await, current);
+    }
 
     assert_nested_effect_snapshot(&project, &postgres, lookup).await;
 

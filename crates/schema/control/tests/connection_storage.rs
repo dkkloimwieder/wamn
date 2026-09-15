@@ -85,7 +85,9 @@ fn component_storage_sql_uses_component_and_effective_release_grains() {
 /// `revision`. Activation is the one update the product issues, so its builder
 /// must carry the advance; the live round trip in wamn-ctl's
 /// bind_connection_live checks the trigger accepts it, and this pins the
-/// property offline so a builder that stops advancing fails here first.
+/// property offline so a builder that stops advancing fails here first. The
+/// update also compares the expected active generation and revision, so a stale
+/// caller matches no row.
 #[test]
 fn activation_advances_the_instance_revision() {
     let sql = activate_connection_generation_sql();
@@ -93,4 +95,5 @@ fn activation_advances_the_instance_revision() {
     assert!(sql.contains("SET active_generation = $4"));
     assert!(sql.contains("revision = revision + 1"));
     assert!(sql.contains("WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3"));
+    assert!(sql.contains("AND active_generation IS NOT DISTINCT FROM $5 AND revision = $6"));
 }

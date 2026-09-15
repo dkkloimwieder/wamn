@@ -177,14 +177,19 @@ pub fn insert_connection_generation_sql() -> &'static str {
      VALUES ($1, $2, $3, $4, $5::text::jsonb, $6, $7)"
 }
 
-/// Activate one generation on its instance. The instance-update guard requires
-/// every update to advance `revision`, so activation is a revision, not an
-/// edit: the row's identity columns are immutable and the trigger refuses a
-/// stale revision with `connection-instance-revision-must-advance`.
+/// Activate one generation on its instance, but only while the instance is
+/// still in the state the caller read. `$5` is the expected `active_generation`
+/// (NULL when none is active) and `$6` is the expected `revision`. A stale
+/// expectation matches no row, so the caller sees 0 rows and the instance is
+/// unchanged. The instance-update guard requires every update to advance
+/// `revision`, so activation is a revision, not an edit: the row's identity
+/// columns are immutable and the trigger refuses a stale revision with
+/// `connection-instance-revision-must-advance`.
 pub fn activate_connection_generation_sql() -> &'static str {
     "UPDATE catalog.connection_instances \
         SET active_generation = $4, revision = revision + 1 \
-      WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3"
+      WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 \
+        AND active_generation IS NOT DISTINCT FROM $5 AND revision = $6"
 }
 
 /// Insert one immutable component release binding to an environment instance.

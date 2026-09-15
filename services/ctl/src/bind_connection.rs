@@ -529,11 +529,22 @@ async fn insert_instance_generation(
         .await
         .context("insert the connection generation")?;
     // Activation advances the instance's revision: the schema's own guard
-    // refuses an update that does not, so the builder is the library's.
+    // refuses an update that does not, so the builder is the library's. The
+    // instance was inserted above in this transaction, so the expected state is
+    // no active generation at the first revision.
+    let expected_active_generation: Option<i64> = None;
+    let expected_revision: i64 = 1;
     let activated = client
         .execute(
             activate_connection_generation_sql(),
-            &[&tenant, &environment, &instance_id, &FIRST_GENERATION],
+            &[
+                &tenant,
+                &environment,
+                &instance_id,
+                &FIRST_GENERATION,
+                &expected_active_generation,
+                &expected_revision,
+            ],
         )
         .await
         .context("activate the connection generation")?;
