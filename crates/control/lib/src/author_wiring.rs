@@ -32,7 +32,7 @@
 //! other document, hash, or gate scope refuses rather than being replaced,
 //! because the stored definition is immutable.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls, Transaction};
@@ -214,6 +214,41 @@ pub async fn author_wiring_in_databases(
             Err(error)
         }
     }
+}
+
+/// Inputs of one wiring authorship from a document on disk.
+#[derive(Debug)]
+pub struct AuthorWiringDocumentRequest {
+    /// Owner URL to the project-environment database holding the catalog facts.
+    pub database_url: String,
+    /// Owner URL to the control database holding `wamn_run.gate_reports`.
+    pub control_database_url: String,
+    /// Tenant claim carried by the authored wiring.
+    pub tenant: String,
+    /// Package identity the wiring is authored into.
+    pub package_id: String,
+    /// Exact package version whose component facts gate this wiring.
+    pub package_version: String,
+    /// The wiring document to submit; it carries its own id and version.
+    pub wiring_document: PathBuf,
+}
+
+/// Read one wiring document and author it over its project and control connections.
+pub async fn author_wiring_document(
+    request: AuthorWiringDocumentRequest,
+) -> anyhow::Result<DefinitionHash> {
+    let document = read_wiring_document(&request.wiring_document)?;
+    author_wiring_in_databases(
+        &request.database_url,
+        &request.control_database_url,
+        &AuthorWiringRequest {
+            tenant_id: &request.tenant,
+            package_id: &request.package_id,
+            package_version: &request.package_version,
+            document: &document,
+        },
+    )
+    .await
 }
 
 async fn author_in_transaction(

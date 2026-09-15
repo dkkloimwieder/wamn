@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use clap::Args;
 use wamn_catalog::PackageCoordinate;
-use wamn_control::author_wiring::{self, AuthorWiringRequest};
+use wamn_control::author_wiring::{self, AuthorWiringDocumentRequest};
 use wamn_control::promote::{self, PromoteRequest};
 use wamn_control::publish_release::{
     self, PublishReleaseRequest, ReleaseWiringTarget, parse_package,
@@ -165,17 +165,14 @@ pub struct ReconcileRunPlaneArgs {
 
 /// Author one gated wiring version and print its definition hash.
 pub async fn author(args: AuthorWiringArgs) -> anyhow::Result<()> {
-    let document = author_wiring::read_wiring_document(&args.wiring_document)?;
-    let hash = author_wiring::author_wiring_in_databases(
-        &args.database_url,
-        &args.control_database_url,
-        &AuthorWiringRequest {
-            tenant_id: &args.tenant,
-            package_id: &args.package_id,
-            package_version: &args.package_version,
-            document: &document,
-        },
-    )
+    let hash = author_wiring::author_wiring_document(AuthorWiringDocumentRequest {
+        database_url: args.database_url,
+        control_database_url: args.control_database_url,
+        tenant: args.tenant,
+        package_id: args.package_id,
+        package_version: args.package_version,
+        wiring_document: args.wiring_document,
+    })
     .await?;
     println!("{hash}");
     Ok(())
