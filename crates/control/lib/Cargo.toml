@@ -1,0 +1,9 @@
+[package]
+name = "wamn-control"
+description = "Control operations that the wamn-ctl CLI, the dev loop, and test support call."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true

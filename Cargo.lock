@@ -5699,6 +5699,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "wamn-control"
+version = "0.1.0"
+
+[[package]]
 name = "wamn-control-provision"
 version = "0.1.0"
 dependencies = [

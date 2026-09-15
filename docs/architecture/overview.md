@@ -37,6 +37,7 @@ The development command selects the operator from its Cargo declaration.
 | `wamn-control-provision` | Provisioning SQL, credential roles, and native broker declarations |
 | `wamn-schema-control` | Package migration decisions and run storage declarations |
 | `wamn-catalog` | Component, wiring, and release facts |
+| `wamn-control` | Control operations that the CLI, the dev loop, and test support call |
 | `wamn-ctl` | Database and broker operations through these libraries |
 | `wamn-scenario-worker` | The authoring admission API |
 
