@@ -1,5 +1,5 @@
-//! Adaptive poll cadence shared by the dispatcher and executor services. Pure:
-//! each driver owns its clock and sleep and folds these interval decisions.
+//! Adaptive poll cadence for the dispatcher. Pure: the driver owns its clock
+//! and sleep and folds these interval decisions.
 //!
 //! The cadence: each project's sweep interval TIGHTENS to `min` the moment a
 //! sweep finds work and DECAYS exponentially toward `max` while idle, so a busy

@@ -1,6 +1,6 @@
 [package]
 name = "wamn-scheduler"
-description = "Adaptive polling cadence shared by execution services."
+description = "Adaptive polling cadence for the dispatcher."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,4 +1,4 @@
-//! Adaptive polling cadence shared by execution services.
+//! Adaptive polling cadence for the dispatcher.
 //!
 //! MVP outcome: wake-from-zero.
 
