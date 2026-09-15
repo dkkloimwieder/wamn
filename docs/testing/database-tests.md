@@ -33,10 +33,8 @@ For rollback, observe an intermediate write before forcing failure and then insp
 ## Runtime claim coverage
 
 The [standard claim test](../../crates/platform/runtime/tests/production_claim_live.rs) exercises claims with a declared executor credential.
-The [durable claim test](../../crates/platform/runtime/tests/production_claim_durable_live.rs) stops at `executor-platform-authority-required` before its first effect attempt.
-Its assertions about effect order, final caller responses, retries, and fixed release records remain unexecuted.
-The fixture keeps writer and executor credentials separate.
-Beads `wamn-0h0g.10.15` owns the unresolved effect-writer consumer and permission decision.
+The [durable claim test](../../crates/platform/runtime/tests/production_claim_durable_live.rs) exercises the durable class with the same executor credential.
+No effect writer exists, so the fixture superuser takes the effect-intent fence and records each effect attempt.
 
 ## Record history
 
