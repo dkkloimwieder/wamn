@@ -35,9 +35,18 @@ It uses only the root workspace, because the other workspaces hold no ignored te
 It adds `-- --ignored --test-threads=1` to the root workspace command, so the tests run one at a time.
 `--name FILTER` is valid only with `--cluster`.
 The tool passes the filter to Cargo as the test name filter, which selects the tests whose full names contain it.
-Before `run` starts the tests, the tool lists the ignored tests that match the filter.
+The filter matches only tests in the packages that the change set selects.
+If the change set selects no package, `run` and `dry-run` fail and name the filter.
+Otherwise, before `run` starts the tests, the tool lists the ignored tests that match the filter.
 If no ignored test in the selected packages matches, the tool fails and names the filter.
-`dry-run` compiles nothing, so it does not check the filter.
+`dry-run` compiles nothing, so it does not list the tests.
+
+To run a named ignored test on an unchanged tree, add `--base <revision>` with a revision before a change to its package.
+You can also run the test through Cargo in its package:
+
+```bash
+cargo test --locked --offline -p <package> <test> -- --ignored --test-threads=1
+```
 
 The following commands select individual test targets:
 

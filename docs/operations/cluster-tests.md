@@ -22,6 +22,15 @@ Run one installation at a time when cases share fixed management ports.
 `tools/test-changes --cluster --name <test>` runs one case.
 It runs the ignored tests whose full names contain `<test>`, one test at a time, in the packages that the change set selects.
 [Select the relevant tests](running-tests.md#select-the-relevant-tests) describes that selection.
+Each command below runs its case only for a change set that selects the package of that case.
+If the selected packages hold no matching ignored test, the command fails and names the filter.
+On an unchanged tree, add `--base <revision>` with a revision before a change to the package.
+You can also run the case through Cargo:
+
+```bash
+cargo test --locked --offline -p wamn-receiving-tests --lib <test> -- --ignored --test-threads=1
+cargo test --locked --offline -p wamn-wms-tests --lib <test> -- --ignored --test-threads=1
+```
 
 ### `[RECEIVING-CLUSTER-JOURNEY]` Receiving application tests
 
