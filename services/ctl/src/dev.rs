@@ -1,8 +1,8 @@
 //! Ordered orchestration boundary for the local development loop.
 //!
-//! This module owns stage order and the committed-source boundary only. Stage
-//! implementations remain with their existing migration, build, gate, and
-//! publication owners and enter through [`DevStageRunner`].
+//! This module owns stage order only. Stage implementations remain with their
+//! existing migration, build, gate, and publication owners and enter through
+//! [`DevStageRunner`].
 
 pub mod activation;
 #[cfg(target_os = "linux")]
@@ -43,12 +43,6 @@ async fn execute_preparation(
 ) -> anyhow::Result<std::process::Output> {
     crate::owned_command::execute(command, timeout, Duration::from_secs(5)).await
 }
-
-/// Stable refusal code for a dirty worktree reaching committed-source work.
-pub const DIRTY_WORKTREE_ERROR: &str = "dev-worktree-dirty";
-
-/// Stable remedy for [`DIRTY_WORKTREE_ERROR`].
-pub const COMMIT_WORKTREE_REMEDY: &str = "commit the worktree";
 
 /// Exact stage order of one local development run.
 pub const DEV_STAGE_ORDER: [DevStage; 10] = [
@@ -102,26 +96,6 @@ impl DevStage {
             Self::Activate => "activate",
         }
     }
-
-    /// Source-integrity boundary this stage requires.
-    pub const fn boundary(self) -> DevStageBoundary {
-        match self {
-            // Gate validates and returns a result; it writes nothing, so it
-            // still runs from saved bytes. Admit does not: since the authoring
-            // chain moved to the project-environment database it projects the
-            // admitted component there, which is durable work
-            // (wamn-10yt.10.34).
-            Self::Migrate
-            | Self::Introspect
-            | Self::Generate
-            | Self::Build
-            | Self::Virtualize
-            | Self::Gate => DevStageBoundary::SavedBytes,
-            Self::Admit | Self::Acl | Self::Release | Self::Activate => {
-                DevStageBoundary::CommittedSource
-            }
-        }
-    }
 }
 
 impl fmt::Display for DevStage {
@@ -130,70 +104,11 @@ impl fmt::Display for DevStage {
     }
 }
 
-/// Source-integrity requirement at a stage boundary.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DevStageBoundary {
-    /// Saved worktree bytes may execute against disposable development state.
-    SavedBytes,
-    /// The stage can mint or deploy durable provenance and requires a commit.
-    CommittedSource,
-}
-
-/// Durability of the target a run deploys into.
-///
-/// Provenance protects DURABLE state. A development session deploys into a
-/// database and local candidate files it owns, so nothing it
-/// writes outlives the session and the committed-source refusal has nothing to
-/// protect. The condition is the TARGET, never the stage name: point a run at a
-/// shared environment and the same stages refuse again.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum DevTargetDurability {
-    /// The run deploys into state that outlives it. Committed source required.
-    Durable,
-    /// The run deploys into state it recreates and owns.
-    Disposable,
-}
-
-/// Whether a run must refuse dirty bytes before `stage`.
-///
-/// One condition, two call sites: the engine applies it before every stage, and
-/// Publish applies it again at the moment it reads the source commit it is
-/// about to attach. Keeping the rule in one function is what stops those two
-/// from drifting apart, which is how the second one came to have no test.
-pub const fn refuses_dirty_source(stage: DevStage, durability: DevTargetDurability) -> bool {
-    matches!(stage.boundary(), DevStageBoundary::CommittedSource)
-        && matches!(durability, DevTargetDurability::Durable)
-}
-
-/// Source state supplied by the client at the start of one run.
+/// Whole-worktree source state observed through Git.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DevSourceState {
     Clean,
     Dirty,
-}
-
-/// Supplies the current Git-backed source state at provenance boundaries.
-///
-/// Watch invalidations carry the state observed with the filesystem event, but
-/// a run may itself change governed files. Production callers therefore use
-/// this seam to re-read the worktree immediately before every committed-source
-/// stage.
-pub trait DevSourceStateProvider {
-    type Error: Error + Send + Sync + 'static;
-
-    /// Read the current state of the originating source repository.
-    fn source_state(&mut self) -> impl Future<Output = Result<DevSourceState, Self::Error>> + Send;
-}
-
-#[derive(Clone, Copy, Debug)]
-struct FixedSourceState(DevSourceState);
-
-impl DevSourceStateProvider for FixedSourceState {
-    type Error = std::convert::Infallible;
-
-    async fn source_state(&mut self) -> Result<DevSourceState, Self::Error> {
-        Ok(self.0)
-    }
 }
 
 /// One client-owned invalidation delivered to the watch engine.
@@ -202,16 +117,13 @@ pub enum DevInvalidation {
     /// The event has no effect on generated or deployed development state.
     Ignore,
     /// Re-run the exact stage suffix beginning at `from`.
-    Rerun {
-        from: DevStage,
-        source_state: DevSourceState,
-    },
+    Rerun { from: DevStage },
 }
 
 /// Typed source of watch invalidations.
 ///
 /// Filesystem classification belongs to the client adapter. The engine only
-/// consumes stage identities and source state. `try_next` drains changes that
+/// consumes stage identities. `try_next` drains changes that
 /// accumulated before or during a run without polling the filesystem.
 pub trait DevInvalidationSource {
     type Error: Error + Send + Sync + 'static;
@@ -252,15 +164,6 @@ pub trait DevStageRunner {
     /// Execute exactly one stage.
     fn run(&mut self, stage: DevStage) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
-    /// Durability of the target this runner deploys into.
-    ///
-    /// The engine owns stage order and the committed-source boundary. It does
-    /// not own databases, so the runner is what knows whether its target
-    /// outlives the run. The default is the safe answer.
-    fn target_durability(&self) -> DevTargetDurability {
-        DevTargetDurability::Durable
-    }
-
     /// Report that one stage was skipped because its input is unchanged.
     fn stage_skipped(&mut self, _stage: DevStage) {}
 
@@ -300,7 +203,6 @@ pub trait DevStageRunner {
 /// Stable category of a failed development run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DevRunErrorKind {
-    DirtyWorktree,
     StageFailed,
 }
 
@@ -308,7 +210,6 @@ impl DevRunErrorKind {
     /// Stable diagnostic code for this error category.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::DirtyWorktree => DIRTY_WORKTREE_ERROR,
             Self::StageFailed => "dev-stage-failed",
         }
     }
@@ -357,25 +258,14 @@ impl DevStageFailure {
 pub struct DevRunError {
     kind: DevRunErrorKind,
     stage: DevStage,
-    remedy: Option<&'static str>,
     source: Option<Box<dyn Error + Send + Sync>>,
 }
 
 impl DevRunError {
-    fn dirty_worktree(stage: DevStage) -> Self {
-        Self {
-            kind: DevRunErrorKind::DirtyWorktree,
-            stage,
-            remedy: Some(COMMIT_WORKTREE_REMEDY),
-            source: None,
-        }
-    }
-
     fn stage_failed(stage: DevStage, source: impl Error + Send + Sync + 'static) -> Self {
         Self {
             kind: DevRunErrorKind::StageFailed,
             stage,
-            remedy: None,
             source: Some(Box::new(source)),
         }
     }
@@ -389,19 +279,12 @@ impl DevRunError {
     pub const fn stage(&self) -> DevStage {
         self.stage
     }
-
-    /// Actionable fixed remedy when this error category owns one.
-    pub const fn remedy(&self) -> Option<&'static str> {
-        self.remedy
-    }
 }
 
 impl fmt::Display for DevRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{} at {}", self.kind.as_str(), self.stage)?;
-        if let Some(remedy) = self.remedy {
-            write!(formatter, ": {remedy}")?;
-        } else if let Some(source) = &self.source {
+        if let Some(source) = &self.source {
             write!(formatter, ": {source}")?;
         }
         Ok(())
@@ -537,12 +420,11 @@ pub trait DevWatchObserver {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PendingRun {
     from: DevStage,
-    source_state: DevSourceState,
 }
 
 impl PendingRun {
     fn include(pending: &mut Option<Self>, invalidation: DevInvalidation) {
-        let DevInvalidation::Rerun { from, source_state } = invalidation else {
+        let DevInvalidation::Rerun { from } = invalidation else {
             return;
         };
 
@@ -551,59 +433,25 @@ impl PendingRun {
                 if from.position() < current.from.position() {
                     current.from = from;
                 }
-                // The latest event describes the current worktree state, while
-                // every event contributes to the earliest affected stage.
-                current.source_state = source_state;
             }
             None => {
-                *pending = Some(Self { from, source_state });
+                *pending = Some(Self { from });
             }
         }
     }
 }
 
-/// Run once while re-reading source state at each committed-source boundary.
-pub async fn run_once_with_source_state_provider<R, P>(
-    runner: &mut R,
-    source_state_provider: &mut P,
-) -> Result<DevRunResult, DevRunError>
+/// Run the whole fixed stage sequence once.
+pub async fn run_once<R>(runner: &mut R) -> Result<DevRunResult, DevRunError>
 where
     R: DevStageRunner + Send,
-    P: DevSourceStateProvider + Send,
 {
-    run_suffix_with_source_state_provider(DevStage::Migrate, runner, source_state_provider).await
+    run_suffix(DevStage::Migrate, runner).await
 }
 
-async fn run_once_stages<R>(
-    source_state: DevSourceState,
-    runner: &mut R,
-) -> Result<DevRunResult, DevRunError>
+async fn run_suffix<R>(from: DevStage, runner: &mut R) -> Result<DevRunResult, DevRunError>
 where
     R: DevStageRunner,
-{
-    run_suffix(DevStage::Migrate, source_state, runner).await
-}
-
-async fn run_suffix<R>(
-    from: DevStage,
-    source_state: DevSourceState,
-    runner: &mut R,
-) -> Result<DevRunResult, DevRunError>
-where
-    R: DevStageRunner,
-{
-    let mut source_state_provider = FixedSourceState(source_state);
-    run_suffix_with_source_state_provider(from, runner, &mut source_state_provider).await
-}
-
-async fn run_suffix_with_source_state_provider<R, P>(
-    from: DevStage,
-    runner: &mut R,
-    source_state_provider: &mut P,
-) -> Result<DevRunResult, DevRunError>
-where
-    R: DevStageRunner,
-    P: DevSourceStateProvider,
 {
     let from = runner.first_stage(from);
     let first = from.position();
@@ -639,31 +487,6 @@ where
                 return Err(DevRunError::stage_failed(stage, error));
             }
         }
-        if refuses_dirty_source(stage, runner.target_durability()) {
-            let source_state = match source_state_provider.source_state().await {
-                Ok(source_state) => source_state,
-                Err(error) => {
-                    let failure = DevStageFailure::new(
-                        DevRunErrorKind::StageFailed.as_str(),
-                        error.to_string(),
-                        None,
-                    );
-                    runner.stage_failed(stage, failure);
-                    return Err(DevRunError::stage_failed(stage, error));
-                }
-            };
-            if source_state == DevSourceState::Dirty {
-                runner.stage_failed(
-                    stage,
-                    DevStageFailure::new(
-                        DIRTY_WORKTREE_ERROR,
-                        "committed-source work cannot run from dirty bytes",
-                        Some(COMMIT_WORKTREE_REMEDY),
-                    ),
-                );
-                return Err(DevRunError::dirty_worktree(stage));
-            }
-        }
         if let Err(error) = runner.run(stage).await {
             let failure = runner.classify_error(&error);
             runner.stage_failed(stage, failure);
@@ -682,25 +505,23 @@ where
     })
 }
 
-/// Watch while re-reading Git state at every committed-source boundary.
+/// Watch for invalidations and run each coalesced suffix.
 ///
 /// Events already queued together coalesce to the earliest affected stage. An
 /// event arriving during a run remains queued for the next run, so runs never
 /// overlap. Stage failures are reported and do not terminate the watch loop;
 /// only an invalidation-source failure does.
-pub async fn run_watch_with_source_state_provider<R, S, O, P>(
+pub async fn run_watch<R, S, O>(
     runner: &mut R,
     source: &mut S,
     observer: &mut O,
-    source_state_provider: &mut P,
 ) -> Result<(), S::Error>
 where
     R: DevStageRunner + Send,
     S: DevInvalidationSource + Send,
     O: DevWatchObserver + Send,
-    P: DevSourceStateProvider + Send,
 {
-    run_watch_loop_with_source_state_provider(runner, source, observer, source_state_provider).await
+    run_watch_loop(runner, source, observer).await
 }
 
 async fn run_watch_loop<R, S, O>(
@@ -713,36 +534,6 @@ where
     S: DevInvalidationSource,
     O: DevWatchObserver,
 {
-    run_watch_loop_inner::<R, S, O, FixedSourceState>(runner, source, observer, None).await
-}
-
-async fn run_watch_loop_with_source_state_provider<R, S, O, P>(
-    runner: &mut R,
-    source: &mut S,
-    observer: &mut O,
-    source_state_provider: &mut P,
-) -> Result<(), S::Error>
-where
-    R: DevStageRunner,
-    S: DevInvalidationSource,
-    O: DevWatchObserver,
-    P: DevSourceStateProvider,
-{
-    run_watch_loop_inner(runner, source, observer, Some(source_state_provider)).await
-}
-
-async fn run_watch_loop_inner<R, S, O, P>(
-    runner: &mut R,
-    source: &mut S,
-    observer: &mut O,
-    mut source_state_provider: Option<&mut P>,
-) -> Result<(), S::Error>
-where
-    R: DevStageRunner,
-    S: DevInvalidationSource,
-    O: DevWatchObserver,
-    P: DevSourceStateProvider,
-{
     while let Some(first) = source.next().await? {
         let mut pending = None;
         PendingRun::include(&mut pending, first);
@@ -751,11 +542,7 @@ where
         }
 
         if let Some(pending) = pending {
-            let result = if let Some(provider) = source_state_provider.as_deref_mut() {
-                run_suffix_with_source_state_provider(pending.from, runner, provider).await
-            } else {
-                run_suffix(pending.from, pending.source_state, runner).await
-            };
+            let result = run_suffix(pending.from, runner).await;
             observer.completed(DevWatchOutcome {
                 from: pending.from,
                 result,
@@ -812,10 +599,6 @@ mod tests {
             Ok(())
         }
 
-        fn target_durability(&self) -> DevTargetDurability {
-            DevTargetDurability::Disposable
-        }
-
         fn run_notices(&self) -> Vec<DevRunNotice> {
             vec![DevRunNotice::new(
                 "pin stale",
@@ -831,7 +614,7 @@ mod tests {
     async fn a_run_that_proceeds_past_a_stale_pin_reports_it_in_the_result() {
         let mut runner = NoticingRunner::default();
 
-        let result = run_once_stages(DevSourceState::Dirty, &mut runner)
+        let result = run_once(&mut runner)
             .await
             .expect("a disposable target runs every stage");
 
@@ -850,58 +633,9 @@ mod tests {
     async fn a_run_with_nothing_to_report_carries_no_notices() {
         let mut runner = RecordingRunner::default();
 
-        let result = run_once_stages(DevSourceState::Clean, &mut runner)
-            .await
-            .expect("a clean run completes");
+        let result = run_once(&mut runner).await.expect("a clean run completes");
 
         assert!(result.notices().is_empty());
-    }
-
-    #[derive(Clone, Debug)]
-    struct SharedSourceState(Arc<Mutex<DevSourceState>>);
-
-    impl DevSourceStateProvider for SharedSourceState {
-        type Error = Infallible;
-
-        async fn source_state(&mut self) -> Result<DevSourceState, Self::Error> {
-            Ok(*self.0.lock().expect("shared source-state lock"))
-        }
-    }
-
-    #[derive(Debug)]
-    struct SourceDirtyingRunner {
-        invoked: Vec<DevStage>,
-        source_state: SharedSourceState,
-    }
-
-    impl DevStageRunner for SourceDirtyingRunner {
-        type Error = Infallible;
-
-        async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
-            self.invoked.push(stage);
-            if stage == DevStage::Generate {
-                *self
-                    .source_state
-                    .0
-                    .lock()
-                    .expect("shared source-state lock") = DevSourceState::Dirty;
-            }
-            Ok(())
-        }
-    }
-
-    #[derive(Debug)]
-    struct SequencedSourceState(VecDeque<DevSourceState>);
-
-    impl DevSourceStateProvider for SequencedSourceState {
-        type Error = Infallible;
-
-        async fn source_state(&mut self) -> Result<DevSourceState, Self::Error> {
-            Ok(self
-                .0
-                .pop_front()
-                .expect("one source state exists for every reached boundary"))
-        }
     }
 
     impl DevStageRunner for RecordingRunner {
@@ -1058,7 +792,7 @@ mod tests {
     async fn clean_source_completes_the_exact_stage_order() {
         let mut runner = RecordingRunner::default();
 
-        let result = run_once_stages(DevSourceState::Clean, &mut runner)
+        let result = run_once(&mut runner)
             .await
             .expect("clean semantic runner completes");
 
@@ -1070,13 +804,12 @@ mod tests {
     async fn stage_failure_stops_before_every_later_side_effect() {
         let mut runner = RecordingRunner::failing_at(DevStage::Virtualize);
 
-        let error = run_once_stages(DevSourceState::Clean, &mut runner)
+        let error = run_once(&mut runner)
             .await
             .expect_err("synthetic virtualization failure must stop the run");
 
         assert_eq!(error.kind(), DevRunErrorKind::StageFailed);
         assert_eq!(error.stage(), DevStage::Virtualize);
-        assert_eq!(error.remedy(), None);
         assert_eq!(
             runner.invoked,
             [
@@ -1100,7 +833,7 @@ mod tests {
             fail_at: DevStage::Gate,
         };
 
-        let error = run_suffix(DevStage::Admit, DevSourceState::Clean, &mut runner)
+        let error = run_suffix(DevStage::Admit, &mut runner)
             .await
             .expect_err("the synthetic Gate failure must stop the suffix");
 
@@ -1133,10 +866,6 @@ mod tests {
     impl DevStageRunner for DisposableTargetRunner {
         type Error = SyntheticStageError;
 
-        fn target_durability(&self) -> DevTargetDurability {
-            DevTargetDurability::Disposable
-        }
-
         async fn prepare_run(&mut self) -> Result<(), Self::Error> {
             self.prepared += 1;
             if self.refuse_preparation {
@@ -1148,21 +877,6 @@ mod tests {
         async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
             self.invoked.push(stage);
             Ok(())
-        }
-    }
-
-    #[test]
-    fn one_condition_decides_the_refusal_for_every_stage_and_both_targets() {
-        for stage in DEV_STAGE_ORDER {
-            assert!(
-                !refuses_dirty_source(stage, DevTargetDurability::Disposable),
-                "{stage} must not refuse dirty bytes against a target the run owns"
-            );
-            assert_eq!(
-                refuses_dirty_source(stage, DevTargetDurability::Durable),
-                stage.boundary() == DevStageBoundary::CommittedSource,
-                "{stage} must refuse dirty bytes against a durable target exactly when it can mint durable provenance"
-            );
         }
     }
 
@@ -1198,7 +912,7 @@ mod tests {
             ..SkippingRunner::default()
         };
 
-        let result = run_once_stages(DevSourceState::Clean, &mut runner)
+        let result = run_once(&mut runner)
             .await
             .expect("an unchanged stage does not fail a run");
 
@@ -1220,21 +934,19 @@ mod tests {
     async fn a_run_with_nothing_unchanged_reports_no_skips() {
         let mut runner = SkippingRunner::default();
 
-        let result = run_once_stages(DevSourceState::Clean, &mut runner)
-            .await
-            .expect("a full run succeeds");
+        let result = run_once(&mut runner).await.expect("a full run succeeds");
 
         assert!(result.skipped().is_empty());
         assert_eq!(runner.invoked, DEV_STAGE_ORDER);
     }
 
     #[tokio::test]
-    async fn a_disposable_target_reaches_every_stage_from_dirty_bytes() {
+    async fn the_target_is_prepared_once_before_every_stage_runs() {
         let mut runner = DisposableTargetRunner::default();
 
-        let result = run_once_stages(DevSourceState::Dirty, &mut runner)
+        let result = run_once(&mut runner)
             .await
-            .expect("a disposable target has no durable provenance to protect");
+            .expect("a prepared target runs every stage");
 
         assert_eq!(result.completed(), DEV_STAGE_ORDER);
         assert_eq!(runner.invoked, DEV_STAGE_ORDER);
@@ -1251,7 +963,7 @@ mod tests {
             ..DisposableTargetRunner::default()
         };
 
-        let error = run_once_stages(DevSourceState::Clean, &mut runner)
+        let error = run_once(&mut runner)
             .await
             .expect_err("a target that cannot be prepared must not run a stage against it");
 
@@ -1264,89 +976,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dirty_source_runs_the_disposable_stages_then_refuses_before_the_first_durable_one() {
-        let mut runner = RecordingRunner::default();
-
-        let error = run_once_stages(DevSourceState::Dirty, &mut runner)
-            .await
-            .expect_err("dirty source must not reach durable provenance stages");
-
-        assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
-        assert_eq!(error.stage(), DevStage::Acl);
-        assert_eq!(error.remedy(), Some(COMMIT_WORKTREE_REMEDY));
-        assert_eq!(
-            error.to_string(),
-            "dev-worktree-dirty at acl: commit the worktree"
-        );
-        assert_eq!(
-            runner.invoked,
-            [
-                DevStage::Migrate,
-                DevStage::Introspect,
-                DevStage::Generate,
-                DevStage::Build,
-                DevStage::Virtualize,
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn source_state_is_re_read_after_generate_before_the_first_durable_stage() {
-        let source_state = SharedSourceState(Arc::new(Mutex::new(DevSourceState::Clean)));
-        let mut runner = SourceDirtyingRunner {
-            invoked: Vec::new(),
-            source_state: source_state.clone(),
-        };
-        let mut provider = source_state;
-
-        let error =
-            run_suffix_with_source_state_provider(DevStage::Migrate, &mut runner, &mut provider)
-                .await
-                .expect_err("generated dirty bytes must refuse before publication");
-
-        assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
-        assert_eq!(error.stage(), DevStage::Acl);
-        assert_eq!(runner.invoked, DEV_STAGE_ORDER[..DevStage::Acl.position()]);
-    }
-
-    #[tokio::test]
-    async fn every_reached_committed_stage_rechecks_source_state() {
-        let mut provider = SequencedSourceState(VecDeque::from([
-            DevSourceState::Clean,
-            DevSourceState::Clean,
-            DevSourceState::Dirty,
-        ]));
-        let mut runner = RecordingRunner::default();
-
-        let error =
-            run_suffix_with_source_state_provider(DevStage::Admit, &mut runner, &mut provider)
-                .await
-                .expect_err("a later dirty boundary must refuse before its stage");
-
-        assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
-        assert_eq!(error.stage(), DevStage::Activate);
-        assert_eq!(
-            runner.invoked,
-            [DevStage::Admit, DevStage::Gate, DevStage::Release]
-        );
-        assert!(provider.0.is_empty());
-    }
-
-    #[tokio::test]
-    async fn watch_coalesces_to_earliest_stage_with_latest_source_state() {
+    async fn watch_coalesces_to_earliest_stage() {
         let events = FakeEvents::with([
             DevInvalidation::Ignore,
             DevInvalidation::Rerun {
                 from: DevStage::Release,
-                source_state: DevSourceState::Dirty,
             },
             DevInvalidation::Rerun {
                 from: DevStage::Generate,
-                source_state: DevSourceState::Dirty,
             },
             DevInvalidation::Rerun {
                 from: DevStage::Gate,
-                source_state: DevSourceState::Clean,
             },
         ]);
         let mut source = FakeSource::new(events);
@@ -1367,7 +1007,6 @@ mod tests {
     async fn changes_during_a_run_form_one_serialized_next_suffix() {
         let events = FakeEvents::with([DevInvalidation::Rerun {
             from: DevStage::Build,
-            source_state: DevSourceState::Clean,
         }]);
         let mut source = FakeSource::new(events.clone());
         let mut runner = WatchRunner::inject_during(
@@ -1375,12 +1014,10 @@ mod tests {
             vec![
                 DevInvalidation::Rerun {
                     from: DevStage::Acl,
-                    source_state: DevSourceState::Clean,
                 },
                 DevInvalidation::Ignore,
                 DevInvalidation::Rerun {
                     from: DevStage::Introspect,
-                    source_state: DevSourceState::Clean,
                 },
             ],
             events,
@@ -1412,14 +1049,12 @@ mod tests {
     async fn watch_accepts_a_new_invalidation_after_stage_failure() {
         let events = FakeEvents::with([DevInvalidation::Rerun {
             from: DevStage::Build,
-            source_state: DevSourceState::Clean,
         }]);
         let mut source = FakeSource::new(events.clone());
         let mut runner = WatchRunner::inject_during(
             DevStage::Gate,
             vec![DevInvalidation::Rerun {
                 from: DevStage::Virtualize,
-                source_state: DevSourceState::Clean,
             }],
             events,
         );
@@ -1453,30 +1088,5 @@ mod tests {
         assert_eq!(first.kind(), DevRunErrorKind::StageFailed);
         assert_eq!(first.stage(), DevStage::Gate);
         assert!(observer.outcomes[1].result().is_ok());
-    }
-
-    #[tokio::test]
-    async fn dirty_watch_suffix_refuses_before_its_first_provenance_stage() {
-        let events = FakeEvents::with([DevInvalidation::Rerun {
-            from: DevStage::Acl,
-            source_state: DevSourceState::Dirty,
-        }]);
-        let mut source = FakeSource::new(events);
-        let mut runner = WatchRunner::default();
-        let mut observer = RecordingObserver::default();
-
-        run_watch_loop(&mut runner, &mut source, &mut observer)
-            .await
-            .expect("fake source is infallible");
-
-        assert!(runner.invoked.is_empty());
-        assert_eq!(observer.outcomes.len(), 1);
-        let error = observer.outcomes[0]
-            .result()
-            .as_ref()
-            .expect_err("dirty source must not invoke acl");
-        assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
-        assert_eq!(error.stage(), DevStage::Acl);
-        assert_eq!(error.remedy(), Some(COMMIT_WORKTREE_REMEDY));
     }
 }

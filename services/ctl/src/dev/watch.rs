@@ -22,9 +22,7 @@ use tokio::io::unix::AsyncFd;
 use tokio::process::Command;
 use wamn_schema_generator::PackageManifest;
 
-use super::{
-    DevInvalidation, DevInvalidationSource, DevSourceState, DevSourceStateProvider, DevStage,
-};
+use super::{DevInvalidation, DevInvalidationSource, DevSourceState, DevStage};
 
 const INOTIFY_BUFFER_BYTES: usize = 64 * 1024;
 
@@ -154,12 +152,10 @@ impl GitSourceSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GitSource {
     repository_root: PathBuf,
-    git_dir: PathBuf,
-    metadata_paths: Box<[PathBuf]>,
 }
 
 impl GitSource {
-    /// Discover the repository and its exact worktree metadata from `path`.
+    /// Discover the repository worktree root from `path`.
     pub async fn discover(path: impl AsRef<Path>) -> Result<Self, GitSourceError> {
         let path = path.as_ref();
         let repository_root = git_path_output(
@@ -169,20 +165,8 @@ impl GitSource {
             "discover worktree root",
         )
         .await?;
-        let git_dir = git_path_output(
-            &repository_root,
-            &["rev-parse", "--absolute-git-dir"],
-            GitSourceErrorKind::Discover,
-            "discover worktree Git directory",
-        )
-        .await?;
-        let metadata_paths = discover_metadata_paths(&repository_root, &git_dir).await?;
 
-        Ok(Self {
-            repository_root,
-            git_dir,
-            metadata_paths: metadata_paths.into_boxed_slice(),
-        })
+        Ok(Self { repository_root })
     }
 
     /// Stable root of the originating worktree.
@@ -238,138 +222,6 @@ impl GitSource {
             state,
         })
     }
-
-    async fn refresh_metadata_paths(&mut self) -> Result<(), GitSourceError> {
-        self.metadata_paths = discover_metadata_paths(&self.repository_root, &self.git_dir)
-            .await?
-            .into_boxed_slice();
-        Ok(())
-    }
-
-    fn metadata_paths(&self) -> &[PathBuf] {
-        &self.metadata_paths
-    }
-
-    fn head_path(&self) -> PathBuf {
-        self.git_dir.join("HEAD")
-    }
-}
-
-impl DevSourceStateProvider for GitSource {
-    type Error = GitSourceError;
-
-    async fn source_state(&mut self) -> Result<DevSourceState, Self::Error> {
-        self.snapshot().await.map(|snapshot| snapshot.state())
-    }
-}
-
-/// The commit-metadata paths this worktree may watch: `HEAD`, the `HEAD`
-/// reflog beside it, the current branch ref, and the packed refs that ref can
-/// be folded into. Which of them survive is decided by the retain rule below.
-///
-/// Two paths Git will happily name are deliberately absent.
-///
-/// The INDEX is not among them. It carries nothing about the source that the
-/// rest miss: a commit moves `HEAD` or the current ref, a checkout moves both
-/// of those and the working tree, and staging alone changes neither the
-/// commit nor the cleanliness [`GitSource::snapshot`] reports. What it does
-/// carry is a false positive. A plain `git status` typed in the worktree
-/// rewrites the index whenever a cached stat is stale, and that cost the
-/// author a whole rerun. The loop's own status reads pass
-/// `--no-optional-locks` and never wrote it, so watching the refs instead
-/// loses no invalidation the loop was acting on.
-///
-/// The other absence is the SHARED Git directory, and this is where the rule
-/// changed (wamn-10yt.71, superseding wamn-10yt.60). A path is kept when it
-/// is inside the worktree root OR inside this worktree's own Git directory,
-/// the one `--absolute-git-dir` names, and dropped otherwise. That directory
-/// is safe precisely because it is private: in a LINKED worktree it is
-/// `.git/worktrees/<name>`, which no sibling checkout writes, while the
-/// common directory it sits under — `--git-common-dir`, where `--git-path
-/// packed-refs` and `--git-path refs/<branch>` land — is written by every
-/// sibling, and watching it let one checkout's rebase invalidate an unrelated
-/// session's loop. In a normal checkout the two directories are the same path
-/// inside the worktree, so the added arm admits nothing new there.
-///
-/// A LINKED worktree therefore keeps `HEAD` and `logs/HEAD` and drops
-/// `packed-refs` and `refs/<branch>`, which resolve into the common directory
-/// it must not watch. The REFLOG is what makes that enough: a commit on an
-/// attached branch moves only the shared branch ref, but it appends to the
-/// private `logs/HEAD`, which a checkout and a reset also write and a plain
-/// `git status` does not — the same property that keeps the index out. The
-/// index is inside the private directory too, so the rule names and drops it
-/// for the reason above.
-///
-/// That witness is configurable, so it is checked rather than assumed:
-/// `core.logAllRefUpdates=false` stops Git creating the reflog at all, and
-/// [`FilesystemInvalidationSource::new`] refuses to start watch mode there,
-/// naming the setting. It refuses on the setting rather than probing for the
-/// file, because an existing reflog is still appended to while a worktree
-/// created under that setting gets none.
-async fn discover_metadata_paths(
-    repository_root: &Path,
-    git_dir: &Path,
-) -> Result<Vec<PathBuf>, GitSourceError> {
-    let packed_refs = git_path_output(
-        repository_root,
-        &[
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-path",
-            "packed-refs",
-        ],
-        GitSourceErrorKind::Discover,
-        "discover packed Git refs",
-    )
-    .await?;
-    let mut paths = BTreeSet::from([git_dir.join("HEAD"), git_dir.join("logs/HEAD"), packed_refs]);
-    let symbolic = git_output_allowing_detached(
-        repository_root,
-        &["symbolic-ref", "-q", "HEAD"],
-        GitSourceErrorKind::Discover,
-        "discover current Git ref",
-    )
-    .await?;
-    if let Some(symbolic) = symbolic {
-        let symbolic = one_utf8_line(
-            &symbolic.stdout,
-            GitSourceErrorKind::Discover,
-            "discover current Git ref",
-            repository_root,
-        )?;
-        let reference = Path::new(&symbolic);
-        if !reference.starts_with("refs")
-            || !reference
-                .components()
-                .all(|component| matches!(component, Component::Normal(_)))
-        {
-            return Err(GitSourceError::output(
-                GitSourceErrorKind::Discover,
-                "discover current Git ref",
-                repository_root,
-                "symbolic HEAD is not a safe refs-relative path",
-            ));
-        }
-        paths.insert(
-            git_path_output(
-                repository_root,
-                &[
-                    "rev-parse",
-                    "--path-format=absolute",
-                    "--git-path",
-                    &symbolic,
-                ],
-                GitSourceErrorKind::Discover,
-                "discover current Git ref path",
-            )
-            .await?,
-        );
-    }
-    let index = git_dir.join("index");
-    paths.retain(|path| {
-        *path != index && (path.starts_with(repository_root) || path.starts_with(git_dir))
-    });
-    Ok(paths.into_iter().collect())
 }
 
 async fn git_path_output(
@@ -478,47 +330,6 @@ async fn git_ignored(
             &output,
         )),
     }
-}
-
-async fn git_output_allowing_detached(
-    repository: &Path,
-    args: &[&str],
-    kind: GitSourceErrorKind,
-    operation: &'static str,
-) -> Result<Option<Output>, GitSourceError> {
-    let output = Command::new("git")
-        .arg("--no-optional-locks")
-        .arg("-C")
-        .arg(repository)
-        .args(args)
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|source| GitSourceError::io(kind, operation, repository, source))?;
-    match output.status.code() {
-        Some(0) => Ok(Some(output)),
-        Some(1) => Ok(None),
-        _ => Err(GitSourceError::command(
-            kind, operation, repository, &output,
-        )),
-    }
-}
-
-fn one_utf8_line(
-    output: &[u8],
-    kind: GitSourceErrorKind,
-    operation: &'static str,
-    repository: &Path,
-) -> Result<String, GitSourceError> {
-    let line = one_output_line(output, kind, operation, repository)?;
-    String::from_utf8(line.to_vec()).map_err(|_| {
-        GitSourceError::output(
-            kind,
-            operation,
-            repository,
-            "Git returned non-UTF-8 identity output",
-        )
-    })
 }
 
 fn one_output_line<'a>(
@@ -889,7 +700,6 @@ struct WatchRoots {
     native_build_files: BTreeSet<PathBuf>,
     configuration_files: BTreeSet<PathBuf>,
     watch_generated_native: bool,
-    git_metadata: BTreeSet<PathBuf>,
     excluded: BTreeSet<PathBuf>,
 }
 
@@ -941,7 +751,6 @@ impl WatchRoots {
             native_build_files: BTreeSet::new(),
             configuration_files: BTreeSet::new(),
             watch_generated_native: false,
-            git_metadata: git.metadata_paths().iter().cloned().collect(),
             excluded: BTreeSet::new(),
         })
     }
@@ -1085,30 +894,12 @@ impl WatchRoots {
                     .any(|package| affects_native_output(&package.native_outputs, path)))
     }
 
-    /// An ANCESTOR of a metadata path counts, and that is deliberate.
-    ///
-    /// A metadata path need not exist yet, so the watch is placed on its
-    /// nearest existing ancestor directory instead; the first thing that
-    /// arrives when Git writes a ref under a branch prefix is the CREATE of
-    /// the intermediate directory, named by that ancestor and not by the ref.
-    /// Ancestors above the watched directory are never an event subject, so
-    /// the rule reaches no further than the window it exists for.
-    fn is_git_metadata(&self, path: &Path) -> bool {
-        self.git_metadata
-            .iter()
-            .any(|metadata| metadata == path || metadata.starts_with(path))
-    }
-
     fn refresh_manifest(&mut self, path: &Path) {
         for package in &mut self.packages {
             if path == package.root.join("wamn.json") {
                 package.refresh_authored_inputs();
             }
         }
-    }
-
-    fn refresh_git_metadata(&mut self, git: &GitSource) {
-        self.git_metadata = git.metadata_paths().iter().cloned().collect();
     }
 
     fn watched_roots(&self) -> impl Iterator<Item = &Path> {
@@ -1170,10 +961,6 @@ impl fmt::Debug for FilesystemInvalidationSource {
 
 impl FilesystemInvalidationSource {
     /// Register recursive event watches for exact roots supplied by the caller.
-    ///
-    /// This constructor delegates to [`Self::with_native_inputs`], which checks
-    /// the reflog for both watcher entry points. A one-shot run does not build
-    /// a watcher, so the refusal does not affect it.
     pub async fn new(
         package_roots: impl IntoIterator<Item = PathBuf>,
         component_build_roots: impl IntoIterator<Item = PathBuf>,
@@ -1197,7 +984,6 @@ impl FilesystemInvalidationSource {
         native_files: impl IntoIterator<Item = PathBuf>,
         git: GitSource,
     ) -> Result<Self, FilesystemInvalidationError> {
-        require_head_reflog(git.repository_root()).await?;
         let mut roots = WatchRoots::new(package_roots, component_build_roots, &git)?;
         roots.replace_native_inputs(native_directories, native_files, git.repository_root())?;
         let descriptor =
@@ -1232,10 +1018,6 @@ impl FilesystemInvalidationSource {
             .collect::<Vec<_>>();
         for root in watched_roots {
             source.add_tree(&root).await?;
-        }
-        let metadata_parents = metadata_watch_directories(source.git.metadata_paths());
-        for parent in metadata_parents {
-            source.add_directory(&parent)?;
         }
         source.add_exact_file_parents()?;
         Ok(source)
@@ -1328,22 +1110,11 @@ impl FilesystemInvalidationSource {
     }
 
     /// Drop the ignored candidates, remembering each as permanently unwatched.
-    ///
-    /// Only paths inside the worktree are put to Git. The commit-metadata
-    /// watches deliberately sit in the Git directory, and a LINKED worktree's
-    /// Git directory lives in the main checkout, outside this repository
-    /// entirely; asking Git about a path out there is a fatal refusal rather
-    /// than an answer. Nothing there is ignored, so nothing needs asking.
     async fn retain_watchable(
         &mut self,
         candidates: Vec<PathBuf>,
     ) -> Result<Vec<PathBuf>, FilesystemInvalidationError> {
-        let inside = candidates
-            .iter()
-            .filter(|candidate| candidate.starts_with(self.git.repository_root()))
-            .cloned()
-            .collect::<Vec<_>>();
-        let ignored = git_ignored(self.git.repository_root(), &inside)
+        let ignored = git_ignored(self.git.repository_root(), &candidates)
             .await
             .map_err(|source| {
                 FilesystemInvalidationError::with_source(
@@ -1426,7 +1197,6 @@ impl FilesystemInvalidationSource {
             })
             .collect::<BTreeSet<_>>();
 
-        let mut head_changed = false;
         for change in &changes {
             if change.events.contains(ReadFlags::QUEUE_OVERFLOW) {
                 continue;
@@ -1440,7 +1210,7 @@ impl FilesystemInvalidationSource {
                     .intersects(ReadFlags::CREATE | ReadFlags::MOVED_TO)
                 && path.is_dir()
             {
-                if self.roots.owns_recursive_path(path) || self.roots.is_git_metadata(path) {
+                if self.roots.owns_recursive_path(path) {
                     self.add_tree(path).await?;
                 }
                 if self.roots.exact_file_or_parent(path) {
@@ -1448,22 +1218,6 @@ impl FilesystemInvalidationSource {
                 }
             }
             self.roots.refresh_manifest(path);
-            head_changed |= path == &self.git.head_path();
-        }
-        if head_changed {
-            self.git.refresh_metadata_paths().await.map_err(|source| {
-                FilesystemInvalidationError::with_source(
-                    FilesystemInvalidationErrorKind::Git,
-                    self.git.repository_root(),
-                    "cannot refresh current Git metadata watch",
-                    source,
-                )
-            })?;
-            self.roots.refresh_git_metadata(&self.git);
-            let parents = metadata_watch_directories(self.git.metadata_paths());
-            for parent in parents {
-                self.add_directory(&parent)?;
-            }
         }
 
         let changed_native = self
@@ -1472,30 +1226,6 @@ impl FilesystemInvalidationSource {
             .map(|outputs| outputs.observe_changes(&changes))
             .transpose()?
             .unwrap_or_default();
-        let needs_source_state = changes.iter().enumerate().any(|(index, change)| {
-            change.events.contains(ReadFlags::QUEUE_OVERFLOW)
-                || (!vanished_directories.contains(&index)
-                    && change.path.as_deref().is_some_and(|path| {
-                        self.roots.is_changed_input(path, &changed_native)
-                            || self.roots.is_git_metadata(path)
-                    }))
-        });
-        let source_state = if needs_source_state {
-            self.git
-                .snapshot()
-                .await
-                .map_err(|source| {
-                    FilesystemInvalidationError::with_source(
-                        FilesystemInvalidationErrorKind::Git,
-                        self.git.repository_root(),
-                        "cannot read source state for filesystem invalidation",
-                        source,
-                    )
-                })?
-                .state()
-        } else {
-            DevSourceState::Clean
-        };
 
         for (index, change) in changes.into_iter().enumerate() {
             let invalidation = if change.events.contains(ReadFlags::QUEUE_OVERFLOW) {
@@ -1505,7 +1235,6 @@ impl FilesystemInvalidationSource {
                 );
                 DevInvalidation::Rerun {
                     from: DevStage::Migrate,
-                    source_state,
                 }
             } else if vanished_directories.contains(&index) {
                 DevInvalidation::Ignore
@@ -1516,14 +1245,11 @@ impl FilesystemInvalidationSource {
                 // suffix that started after Apply would run against an empty
                 // one. What a run does not have to redo is decided by each
                 // stage's input digest, not by which file was touched.
-                if self.roots.is_git_metadata(&path)
-                    || self.roots.is_changed_input(&path, &changed_native)
-                {
+                if self.roots.is_changed_input(&path, &changed_native) {
                     tracing::debug!(
                         path = %path.display(),
                         event_mask = change.events.bits(),
                         stage_owner = ?self.roots.stage(&path),
-                        git_metadata = self.roots.is_git_metadata(&path),
                         generated_native_output = self.roots.packages
                             .iter()
                             .filter(|package| changed_native.contains(&package.root))
@@ -1532,7 +1258,6 @@ impl FilesystemInvalidationSource {
                     );
                     DevInvalidation::Rerun {
                         from: DevStage::Migrate,
-                        source_state,
                     }
                 } else {
                     DevInvalidation::Ignore
@@ -1624,47 +1349,6 @@ fn read_subdirectories(directory: &Path) -> Result<Vec<PathBuf>, FilesystemInval
         }
     }
     Ok(children)
-}
-
-/// Refuse watch mode when the repository has turned the `HEAD` reflog off.
-///
-/// `logs/HEAD` is the only per-worktree witness of a commit on an attached
-/// branch, so `core.logAllRefUpdates=false` would leave the loop watching a
-/// file Git never creates and losing commit detection in silence. Naming the
-/// setting turns that into something an operator can act on without reading
-/// this file. Git's default for a non-bare repository is on, so the common
-/// case pays one `git config` read and nothing else.
-///
-/// Only an explicit boolean false disables it, so only a zero exit reporting
-/// `false` refuses. Every non-zero exit means it is not off: 1 is unset, and
-/// 128 is a non-boolean value such as `always`, which logs more, not less.
-async fn require_head_reflog(repository_root: &Path) -> Result<(), FilesystemInvalidationError> {
-    let output = Command::new("git")
-        .arg("--no-optional-locks")
-        .arg("-C")
-        .arg(repository_root)
-        .args(["config", "--bool", "--get", "core.logAllRefUpdates"])
-        .kill_on_drop(true)
-        .output()
-        .await
-        .map_err(|source| {
-            FilesystemInvalidationError::with_source(
-                FilesystemInvalidationErrorKind::Git,
-                repository_root,
-                "cannot read core.logAllRefUpdates",
-                source,
-            )
-        })?;
-    if output.status.success() && trim_ascii(&output.stdout) == b"false" {
-        return Err(FilesystemInvalidationError::new(
-            FilesystemInvalidationErrorKind::Git,
-            repository_root,
-            "core.logAllRefUpdates is false, so Git writes no HEAD reflog and a \
-             commit would not rerun the loop; set core.logAllRefUpdates=true to \
-             watch this repository",
-        ));
-    }
-    Ok(())
 }
 
 fn metadata_watch_directories(paths: &[PathBuf]) -> BTreeSet<PathBuf> {
@@ -1777,16 +1461,11 @@ mod tests {
         events
     }
 
-    fn has_rerun(
-        events: &[DevInvalidation],
-        expected_stage: DevStage,
-        expected_state: DevSourceState,
-    ) -> bool {
+    fn has_rerun(events: &[DevInvalidation], expected_stage: DevStage) -> bool {
         events.iter().any(|event| {
             matches!(
                 event,
-                DevInvalidation::Rerun { from, source_state }
-                    if *from == expected_stage && *source_state == expected_state
+                DevInvalidation::Rerun { from } if *from == expected_stage
             )
         })
     }
@@ -1910,8 +1589,7 @@ mod tests {
             .expect("watch remains open");
         assert!(has_rerun(
             &collect_batch(first, &mut source),
-            DevStage::Migrate,
-            DevSourceState::Dirty
+            DevStage::Migrate
         ));
 
         let configuration = TempRepository::new();
@@ -1948,8 +1626,7 @@ mod tests {
             .expect("watch remains open");
         assert!(has_rerun(
             &collect_batch(first, &mut source),
-            DevStage::Migrate,
-            DevSourceState::Dirty
+            DevStage::Migrate
         ));
         fs::remove_file(&privilege).expect("remove configured file");
         let first = tokio::time::timeout(Duration::from_secs(2), source.next())
@@ -1959,8 +1636,7 @@ mod tests {
             .expect("watch remains open");
         assert!(has_rerun(
             &collect_batch(first, &mut source),
-            DevStage::Migrate,
-            DevSourceState::Dirty
+            DevStage::Migrate
         ));
     }
 
@@ -1992,8 +1668,7 @@ mod tests {
             .expect("watch remains open");
         assert!(has_rerun(
             &collect_batch(first, &mut source),
-            DevStage::Migrate,
-            DevSourceState::Dirty
+            DevStage::Migrate
         ));
         assert!(
             source
@@ -2009,8 +1684,7 @@ mod tests {
             .expect("watch remains open");
         assert!(has_rerun(
             &collect_batch(first, &mut source),
-            DevStage::Migrate,
-            DevSourceState::Dirty
+            DevStage::Migrate
         ));
         assert_eq!(
             source
@@ -2141,14 +1815,12 @@ mod tests {
             fs::write(path, "external output").expect("edit native output externally");
             assert!(has_rerun(
                 &native_output_batch(&mut source).await,
-                DevStage::Migrate,
-                DevSourceState::Dirty,
+                DevStage::Migrate
             ));
             fs::remove_file(path).expect("delete native output externally");
             assert!(has_rerun(
                 &native_output_batch(&mut source).await,
-                DevStage::Migrate,
-                DevSourceState::Dirty,
+                DevStage::Migrate
             ));
         }
         let application = repository.package().join("generated/wamn.rs");
@@ -2219,8 +1891,7 @@ mod tests {
                 .expect("refresh native dependency ownership");
             assert!(has_rerun(
                 &native_output_batch(&mut source).await,
-                DevStage::Migrate,
-                DevSourceState::Dirty,
+                DevStage::Migrate
             ));
         }
     }
@@ -2437,11 +2108,7 @@ mod tests {
         fs::rename(&authored, repository.component().join("ignored"))
             .expect("move watched source into ignored output");
         assert!(
-            has_rerun(
-                &native_output_batch(&mut source).await,
-                DevStage::Migrate,
-                DevSourceState::Dirty
-            ),
+            has_rerun(&native_output_batch(&mut source).await, DevStage::Migrate),
             "a watched source moved into output still disappeared from the build"
         );
 
@@ -2451,22 +2118,14 @@ mod tests {
         )
         .expect("move watched source into watched but ignored generated output");
         assert!(
-            has_rerun(
-                &native_output_batch(&mut source).await,
-                DevStage::Migrate,
-                DevSourceState::Dirty
-            ),
+            has_rerun(&native_output_batch(&mut source).await, DevStage::Migrate),
             "registering the moved inode must not erase its previous source ownership"
         );
 
         fs::remove_file(repository.component().join("src/lib.rs"))
             .expect("delete another tracked source");
         assert!(
-            has_rerun(
-                &native_output_batch(&mut source).await,
-                DevStage::Migrate,
-                DevSourceState::Dirty
-            ),
+            has_rerun(&native_output_batch(&mut source).await, DevStage::Migrate),
             "ordinary source deletion must still invalidate"
         );
 
@@ -2475,40 +2134,9 @@ mod tests {
         fs::write(new_source.join("lib.rs"), "pub fn new_source() {}")
             .expect("write new source with no move into ignored output");
         assert!(
-            has_rerun(
-                &native_output_batch(&mut source).await,
-                DevStage::Migrate,
-                DevSourceState::Dirty
-            ),
+            has_rerun(&native_output_batch(&mut source).await, DevStage::Migrate),
             "a target prefix alone must never hide authored source"
         );
-    }
-
-    /// The commit-metadata watches sit in the Git directory, and for a LINKED
-    /// worktree that directory is in the main checkout, outside this
-    /// repository. Git refuses to answer an ignore question about a path out
-    /// there, and a watch that treated the refusal as a failure died mid
-    /// session the first time another worktree created `.git/sequencer`.
-    #[tokio::test]
-    async fn a_directory_outside_the_worktree_is_watched_without_asking_git() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        let git_source = GitSource::discover(&repository.root)
-            .await
-            .expect("discover source repository");
-        let mut source = FilesystemInvalidationSource::new(
-            [repository.package()],
-            [repository.component()],
-            git_source,
-        )
-        .await
-        .expect("construct filesystem invalidation source");
-
-        let outside = repository.root.with_extension("outside");
-        fs::create_dir(&outside).expect("create a directory outside the worktree");
-        let watched = source.add_tree(&outside).await;
-        fs::remove_dir_all(&outside).expect("remove the outside directory");
-        watched.expect("a path Git cannot be asked about is still watchable");
     }
 
     #[tokio::test]
@@ -2551,8 +2179,7 @@ mod tests {
             .expect("source remains open");
         assert!(has_rerun(
             &collect_batch(first, &mut source),
-            DevStage::Migrate,
-            DevSourceState::Dirty
+            DevStage::Migrate
         ));
 
         fs::write(
@@ -2567,286 +2194,7 @@ mod tests {
             .expect("source remains open");
         assert!(has_rerun(
             &collect_batch(first, &mut source),
-            DevStage::Migrate,
-            DevSourceState::Dirty
+            DevStage::Migrate
         ));
-    }
-
-    #[tokio::test]
-    async fn clean_commit_metadata_reruns_without_another_package_edit() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        let git_source = GitSource::discover(&repository.root)
-            .await
-            .expect("discover source repository");
-        let mut source = FilesystemInvalidationSource::new(
-            [repository.package()],
-            [repository.component()],
-            git_source,
-        )
-        .await
-        .expect("construct filesystem invalidation source");
-
-        fs::write(
-            repository.package().join("query/open_purchase_order.sql"),
-            "SELECT 3",
-        )
-        .expect("edit authored SQL");
-        let dirty = tokio::time::timeout(Duration::from_secs(2), source.next())
-            .await
-            .expect("dirty package event arrived")
-            .expect("read dirty package event")
-            .expect("source remains open");
-        let dirty = collect_batch(dirty, &mut source);
-        assert!(has_rerun(&dirty, DevStage::Migrate, DevSourceState::Dirty));
-
-        git(&repository.root, &["add", "."]);
-        git(&repository.root, &["commit", "--quiet", "-m", "save edit"]);
-        let committed = tokio::time::timeout(Duration::from_secs(2), source.next())
-            .await
-            .expect("commit metadata event arrived")
-            .expect("read commit metadata event")
-            .expect("source remains open");
-        let committed = collect_batch(committed, &mut source);
-        // The property this guards is that a commit is itself an
-        // invalidation carrying CLEAN source state, so a run can reach the
-        // committed-source stages without the author touching the package
-        // again. Which stage it resumes at is no longer part of it: every
-        // relevant change reruns the whole pipeline.
-        assert!(has_rerun(
-            &committed,
-            DevStage::Migrate,
-            DevSourceState::Clean
-        ));
-    }
-
-    /// Every watch a loop registers sits inside the worktree it runs in or
-    /// inside that worktree's own Git directory, and nowhere else.
-    ///
-    /// In a LINKED worktree `--git-path` answers with the MAIN checkout:
-    /// `packed-refs` and the branch ref land in the COMMON directory every
-    /// sibling worktree writes, `HEAD` and the index in the private
-    /// `.git/worktrees/<name>` beside it. Watching the common directory let an
-    /// unrelated checkout's rebase invalidate this session's loop; watching
-    /// the private one cannot, and brings back `HEAD` and the `HEAD` reflog —
-    /// which together see a commit on an attached branch (wamn-10yt.71).
-    #[tokio::test]
-    async fn a_linked_worktree_watches_its_own_git_directory_and_not_the_shared_one() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        let linked = repository.root.with_extension("linked");
-        let linked_argument = linked.to_str().expect("linked worktree path is UTF-8");
-        git(
-            &repository.root,
-            &[
-                "worktree",
-                "add",
-                "--quiet",
-                "-b",
-                "linked",
-                linked_argument,
-            ],
-        );
-
-        let git_source = GitSource::discover(&linked)
-            .await
-            .expect("discover the linked worktree");
-        let worktree_root = git_source.repository_root().to_owned();
-        let mut source = FilesystemInvalidationSource::new(
-            [linked.join("package")],
-            [linked.join("component")],
-            git_source,
-        )
-        .await
-        .expect("construct filesystem invalidation source");
-        let own_git_dir = source.git.git_dir.clone();
-        let shared_git_dir = repository.root.join(".git");
-        let outside = source
-            .watched_directories
-            .values()
-            .filter(|directory| {
-                !directory.starts_with(&worktree_root) && !directory.starts_with(&own_git_dir)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let shared = source
-            .watched_directories
-            .values()
-            .filter(|directory| {
-                directory.starts_with(&shared_git_dir) && !directory.starts_with(&own_git_dir)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let watches_own_git_dir = source
-            .watched_directories
-            .values()
-            .any(|directory| directory.starts_with(&own_git_dir));
-        let metadata = source.git.metadata_paths().to_vec();
-
-        // The exact shape that killed a session: a rebase in the OTHER
-        // checkout writing `.git/sequencer`, beside a status refreshing that
-        // checkout's own index. Neither is this worktree's source.
-        fs::create_dir(repository.root.join(".git/sequencer"))
-            .expect("stage a rebase in the main checkout");
-        fs::write(
-            repository.root.join(".git/sequencer/todo"),
-            "pick deadbeef\n",
-        )
-        .expect("write the rebase plan");
-        fs::write(repository.root.join(".gitignore"), "ignored\n")
-            .expect("restale the main checkout index stat cache");
-        git(&repository.root, &["status", "--porcelain"]);
-        let quiet = tokio::time::timeout(Duration::from_millis(500), source.next())
-            .await
-            .is_err();
-
-        // A commit this worktree makes must reach it, on the ATTACHED branch
-        // that is the ordinary case. That commit moves only the shared branch
-        // ref, which stays unwatched, and touches no working-tree file; the
-        // private `logs/HEAD` it appends to is the whole of the witness.
-        git(
-            &linked,
-            &["commit", "--quiet", "--allow-empty", "-m", "reflog"],
-        );
-        let committed = tokio::time::timeout(Duration::from_secs(2), source.next()).await;
-        let committed = match committed {
-            Ok(event) => {
-                let event = event
-                    .expect("read commit event")
-                    .expect("source remains open");
-                has_rerun(
-                    &collect_batch(event, &mut source),
-                    DevStage::Migrate,
-                    DevSourceState::Clean,
-                )
-            }
-            Err(_elapsed) => false,
-        };
-
-        drop(source);
-        git(
-            &repository.root,
-            &["worktree", "remove", "--force", linked_argument],
-        );
-
-        assert!(
-            shared.is_empty(),
-            "a linked worktree watched {shared:?} under the shared {}",
-            shared_git_dir.display()
-        );
-        assert!(
-            outside.is_empty(),
-            "a linked worktree watched {outside:?}, outside both {} and {}",
-            worktree_root.display(),
-            own_git_dir.display()
-        );
-        assert!(
-            watches_own_git_dir,
-            "a linked worktree must watch its own {}",
-            own_git_dir.display()
-        );
-        assert_eq!(
-            metadata,
-            vec![own_git_dir.join("HEAD"), own_git_dir.join("logs/HEAD")],
-            "only `HEAD` and its reflog in the private Git directory are \
-             watchable from a linked worktree; the shared refs and the private \
-             index are not"
-        );
-        assert!(
-            quiet,
-            "an unrelated checkout's Git activity must not reach this loop"
-        );
-        assert!(
-            committed,
-            "a commit on an attached branch that changed no working-tree file \
-             must rerun the loop"
-        );
-    }
-
-    /// The reflog is the linked worktree's only witness of a commit on an
-    /// attached branch, and `core.logAllRefUpdates` can turn it off. Watch
-    /// mode refuses rather than watching a file Git will never write, and the
-    /// refusal names the setting so an operator can act on it.
-    #[tokio::test]
-    async fn watch_mode_refuses_a_repository_with_the_reflog_turned_off() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        git(
-            &repository.root,
-            &["config", "core.logAllRefUpdates", "false"],
-        );
-        let git_source = GitSource::discover(&repository.root)
-            .await
-            .expect("discover source repository");
-
-        let refusal = FilesystemInvalidationSource::new(
-            [repository.package()],
-            [repository.component()],
-            git_source,
-        )
-        .await
-        .err()
-        .map(|error| (error.kind(), error.to_string()));
-
-        let (kind, rendered) = refusal.expect("watch mode must refuse a disabled reflog");
-        assert_eq!(kind, FilesystemInvalidationErrorKind::Git);
-        assert!(
-            rendered.contains("core.logAllRefUpdates"),
-            "the refusal must name the setting an operator has to change: \
-             {rendered}"
-        );
-    }
-
-    /// The index is not commit metadata, because a plain `git status` typed
-    /// in the worktree rewrites it and a commit is already seen through the
-    /// ref that status does not touch.
-    #[tokio::test]
-    async fn a_refreshed_index_is_not_commit_metadata() {
-        let repository = TempRepository::new();
-        repository.write_fixture();
-        let git_source = GitSource::discover(&repository.root)
-            .await
-            .expect("discover source repository");
-        let mut source = FilesystemInvalidationSource::new(
-            [repository.package()],
-            [repository.component()],
-            git_source,
-        )
-        .await
-        .expect("construct filesystem invalidation source");
-
-        let index = repository.root.join(".git/index");
-        assert!(index.is_file(), "the fixture committed through an index");
-        assert!(
-            !source.roots.is_git_metadata(&index),
-            "the index is not a watched metadata path"
-        );
-        assert!(
-            source
-                .git
-                .metadata_paths()
-                .iter()
-                .any(|path| path.starts_with(repository.root.join(".git/refs/heads"))),
-            "the current branch ref still is: {:?}",
-            source.git.metadata_paths()
-        );
-
-        // Rewriting a tracked file outside every watched root with its own
-        // bytes leaves the source unchanged but the cached stat stale, which
-        // is what makes the next status write the index.
-        fs::write(repository.root.join(".gitignore"), "ignored\n")
-            .expect("restale the index stat cache");
-        git(&repository.root, &["status", "--porcelain"]);
-        if let Ok(event) = tokio::time::timeout(Duration::from_millis(500), source.next()).await {
-            let event = event
-                .expect("read status event")
-                .expect("source remains open");
-            assert!(
-                collect_batch(event, &mut source)
-                    .iter()
-                    .all(|event| *event == DevInvalidation::Ignore),
-                "typing `git status` must not rerun the loop"
-            );
-        }
     }
 }

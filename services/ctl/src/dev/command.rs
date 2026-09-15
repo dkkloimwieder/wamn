@@ -20,7 +20,7 @@ use super::read::{DevReadHandle, DevRuntimeEndpoint};
 use super::watch::{FilesystemInvalidationSource, GitSource};
 use super::{
     DevInvalidation, DevInvalidationSource, DevRunResult, DevStage, DevWatchObserver,
-    DevWatchOutcome, run_once_with_source_state_provider, run_watch_with_source_state_provider,
+    DevWatchOutcome, run_once, run_watch,
 };
 
 const BUILD_COMPONENTS_TOOL: &str = "tools/build-components";
@@ -472,16 +472,17 @@ impl DevSession {
                 &self.config,
                 &self.overlay_root,
                 &mut self.runner,
-                &mut self.git,
+                &self.git,
                 observer,
                 shutdown,
             )
             .await
             .map(|()| None)
         } else {
-            let result = run_once_command(&mut self.runner, &mut self.git)
+            let result = run_once(&mut self.runner)
                 .await
-                .map(Some);
+                .map(Some)
+                .map_err(anyhow::Error::from);
             if hold_after_one_shot {
                 // Report before holding, not after: the whole point of the
                 // hold is that another process acts on these lines while this
@@ -533,18 +534,11 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn run_once_command(
-    runner: &mut ProductionDevStageRunner,
-    git: &mut GitSource,
-) -> anyhow::Result<DevRunResult> {
-    Ok(run_once_with_source_state_provider(runner, git).await?)
-}
-
 async fn run_watch_command(
     config: &DevConfig,
     overlay_root: &std::path::Path,
     runner: &mut ProductionDevStageRunner,
-    git: &mut GitSource,
+    git: &GitSource,
     observer: &mut (impl DevWatchObserver + Send),
     shutdown: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
@@ -594,20 +588,14 @@ async fn run_watch_command(
         package_roots,
         config: config.clone(),
     };
-    let source_state = git
-        .snapshot()
-        .await
-        .context("read the initial Git source state")?
-        .state();
     let mut source = CommandInvalidations {
         initial: Some(DevInvalidation::Rerun {
             from: DevStage::Migrate,
-            source_state,
         }),
         source: native,
         shutdown,
     };
-    run_watch_with_source_state_provider(runner, &mut source, observer, git).await?;
+    run_watch(runner, &mut source, observer).await?;
     Ok(())
 }
 
@@ -873,11 +861,9 @@ mod tests {
     async fn an_initial_full_run_precedes_queued_watch_events() {
         let initial = DevInvalidation::Rerun {
             from: DevStage::Migrate,
-            source_state: super::super::DevSourceState::Clean,
         };
         let queued = DevInvalidation::Rerun {
             from: DevStage::Generate,
-            source_state: super::super::DevSourceState::Dirty,
         };
         let mut source = CommandInvalidations {
             initial: Some(initial),
@@ -989,7 +975,6 @@ mod tests {
         let mut source = CommandInvalidations {
             initial: Some(DevInvalidation::Rerun {
                 from: DevStage::Activate,
-                source_state: super::super::DevSourceState::Clean,
             }),
             source: WaitingSource,
             shutdown: receiver,

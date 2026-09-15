@@ -40,7 +40,7 @@ use super::read::{
 };
 use super::target_database;
 use super::watch::GitSource;
-use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner, DevTargetDurability};
+use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner};
 use crate::print_release_env::ReleaseCarrier;
 
 const BUILD_TOOL: &str = "tools/build-components";
@@ -472,16 +472,7 @@ impl ProductionDevStageRunner {
     }
 
     /// Base component digests THIS RUN built, by package coordinate.
-    ///
-    /// Empty for a durable target, so the authored declaration is admitted
-    /// exactly as written and a durable publish still names the bytes it
-    /// declared.
     fn built_base_digests(&self) -> BTreeMap<Box<str>, Box<str>> {
-        if super::config::refuses_moved_base_digest(<Self as DevStageRunner>::target_durability(
-            self,
-        )) {
-            return BTreeMap::new();
-        }
         self.verified_base_digests
             .iter()
             .map(|verified| (verified.coordinate().into(), verified.digest().into()))
@@ -794,10 +785,6 @@ impl ProductionDevStageRunner {
             &build.plan.virtualization.artifacts,
         )?;
 
-        // Read the durability through the trait so this refusal and the
-        // committed-source refusal keep answering to one definition of the
-        // target, rather than each carrying its own copy of the answer.
-        let durability = <Self as DevStageRunner>::target_durability(self);
         let packages = self
             .packages
             .as_ref()
@@ -810,15 +797,7 @@ impl ProductionDevStageRunner {
                     artifact.package_id.as_ref() == base.manifest().package.id.as_str()
                 })
                 .expect("selected artifacts contain every resolved package");
-            let verified = base
-                .component_digest()
-                .verify(artifact.digest.clone(), durability)
-                .map_err(|source| {
-                    ProductionDevStageError::owner(
-                        "verify the built base component digest",
-                        source.into(),
-                    )
-                })?;
+            let verified = base.component_digest().verify(artifact.digest.clone());
             self.verified_base_digests.push(verified);
         }
         Ok(())
@@ -838,9 +817,8 @@ impl ProductionDevStageRunner {
                 .root
                 .join(PACKAGE_COMPONENTS)
                 .join(format!("{}.json.in", artifact.component));
-            // ONE authored site (wamn-10yt.50): the manifest pin. A disposable
-            // run then layers the digest it actually BUILT over it, which is
-            // empty for a durable target (wamn-10yt.48).
+            // ONE authored site (wamn-10yt.50): the manifest pin. The run then
+            // layers the digest it actually BUILT over it (wamn-10yt.48).
             let mut base_digests =
                 authored_base_digests(&package.root).map_err(base_digests_stage_error)?;
             base_digests.extend(self.built_base_digests());
@@ -1798,11 +1776,6 @@ impl DevStageRunner for ProductionDevStageRunner {
 
     fn classify_error(&self, error: &Self::Error) -> DevStageFailure {
         DevStageFailure::new(error.kind.as_str(), error.to_string(), None)
-    }
-
-    fn target_durability(&self) -> DevTargetDurability {
-        // The owned target and local admissions are disposable session state.
-        DevTargetDurability::Disposable
     }
 
     fn run_notices(&self) -> Vec<DevRunNotice> {

@@ -21,7 +21,6 @@ use url::Url;
 use wamn_pg_core::Identifier;
 use wamn_schema_generator::{PackageManifest, validate_operation_vocabulary};
 
-use super::DevTargetDurability;
 use super::activation::DevActivationIdentity;
 
 /// Whole-startup budget shared by every configured reachability probe.
@@ -235,7 +234,6 @@ pub enum DevPackageErrorKind {
     ManifestInvalid,
     BaseDependencyMissing,
     BaseDependencyAmbiguous,
-    ComponentDigestMismatch,
 }
 
 impl DevPackageErrorKind {
@@ -246,19 +244,17 @@ impl DevPackageErrorKind {
             Self::ManifestInvalid => "dev-package-manifest-invalid",
             Self::BaseDependencyMissing => "dev-base-dependency-missing",
             Self::BaseDependencyAmbiguous => "dev-base-dependency-ambiguous",
-            Self::ComponentDigestMismatch => "dev-base-component-digest-mismatch",
         }
     }
 }
 
-/// Refusal to resolve a manifest-declared package or verify its built component.
+/// Refusal to resolve a manifest-declared package.
 #[derive(Debug)]
 pub struct DevPackageError {
     kind: DevPackageErrorKind,
     manifest_path: Option<PathBuf>,
     coordinate: Option<Box<str>>,
     dependency_digest: Option<Box<str>>,
-    observed_digest: Option<Box<str>>,
     searched_roots: Box<[PathBuf]>,
     source: Option<Box<dyn Error + Send + Sync>>,
 }
@@ -274,7 +270,6 @@ impl DevPackageError {
             manifest_path: Some(manifest_path),
             coordinate: None,
             dependency_digest: None,
-            observed_digest: None,
             searched_roots: Box::new([]),
             source: Some(Box::new(source)),
         }
@@ -291,24 +286,7 @@ impl DevPackageError {
             manifest_path: None,
             coordinate: Some(coordinate.into()),
             dependency_digest: Some(dependency_digest.into()),
-            observed_digest: None,
             searched_roots: searched_roots.into(),
-            source: None,
-        }
-    }
-
-    fn digest_mismatch(
-        coordinate: impl Into<Box<str>>,
-        expected: impl Into<Box<str>>,
-        observed: impl Into<Box<str>>,
-    ) -> Self {
-        Self {
-            kind: DevPackageErrorKind::ComponentDigestMismatch,
-            manifest_path: None,
-            coordinate: Some(coordinate.into()),
-            dependency_digest: Some(expected.into()),
-            observed_digest: Some(observed.into()),
-            searched_roots: Box::new([]),
             source: None,
         }
     }
@@ -333,11 +311,6 @@ impl DevPackageError {
         self.dependency_digest.as_deref()
     }
 
-    /// Built component digest that failed exact comparison.
-    pub fn observed_digest(&self) -> Option<&str> {
-        self.observed_digest.as_deref()
-    }
-
     /// Complete list of candidate roots searched for this dependency.
     pub fn searched_roots(&self) -> &[PathBuf] {
         &self.searched_roots
@@ -355,9 +328,6 @@ impl fmt::Display for DevPackageError {
         }
         if let Some(digest) = &self.dependency_digest {
             write!(formatter, " expecting component digest {digest}")?;
-        }
-        if let Some(observed) = &self.observed_digest {
-            write!(formatter, ", observed {observed}")?;
         }
         if !self.searched_roots.is_empty()
             || matches!(
@@ -380,21 +350,7 @@ impl Error for DevPackageError {
     }
 }
 
-/// Whether a base component digest that moved off its manifest pin must refuse.
-///
-/// The pin shows that a durable target carries the exact base component the
-/// overlay author reviewed. A development run recreates its target before every
-/// run and carries the digest it just built, so the pin has nothing to protect
-/// there, while an author editing a base package would otherwise be stopped
-/// until a human retyped the pin in every dependent overlay.
-///
-/// The condition is the TARGET, never the stage and never an operator flag,
-/// exactly as `refuses_dirty_source` reads it for source state.
-pub const fn refuses_moved_base_digest(durability: DevTargetDurability) -> bool {
-    matches!(durability, DevTargetDurability::Durable)
-}
-
-/// Manifest-owned component digest that a built base component must equal.
+/// Manifest-owned component digest a built base component is compared with.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BaseComponentDigestExpectation {
     coordinate: Box<str>,
@@ -412,32 +368,15 @@ impl BaseComponentDigestExpectation {
         &self.expected
     }
 
-    /// Admit a built component, refusing a moved digest only for a durable target.
-    pub fn verify(
-        &self,
-        observed: impl Into<Box<str>>,
-        durability: DevTargetDurability,
-    ) -> Result<VerifiedBaseComponentDigest, DevPackageError> {
+    /// Carry a built component digest and record the pin it moved off.
+    pub fn verify(&self, observed: impl Into<Box<str>>) -> VerifiedBaseComponentDigest {
         let observed = observed.into();
-        if observed == self.expected {
-            return Ok(VerifiedBaseComponentDigest {
-                coordinate: self.coordinate.clone(),
-                digest: observed,
-                superseded_pin: None,
-            });
-        }
-        if refuses_moved_base_digest(durability) {
-            return Err(DevPackageError::digest_mismatch(
-                self.coordinate.clone(),
-                self.expected.clone(),
-                observed,
-            ));
-        }
-        Ok(VerifiedBaseComponentDigest {
+        let superseded_pin = (observed != self.expected).then(|| self.expected.clone());
+        VerifiedBaseComponentDigest {
             coordinate: self.coordinate.clone(),
             digest: observed,
-            superseded_pin: Some(self.expected.clone()),
-        })
+            superseded_pin,
+        }
     }
 }
 
@@ -496,7 +435,7 @@ impl ResolvedBasePackage {
         &self.manifest
     }
 
-    /// Component digest that the base build must verify before Gate or Publish.
+    /// Component digest the base build is compared with before Gate.
     pub const fn component_digest(&self) -> &BaseComponentDigestExpectation {
         &self.component_digest
     }
@@ -1924,27 +1863,10 @@ pub(crate) mod tests {
 
         let verified = base
             .component_digest()
-            .verify(
-                base.component_digest().expected(),
-                DevTargetDurability::Durable,
-            )
-            .expect("exact built digest verifies");
+            .verify(base.component_digest().expected());
         assert_eq!(verified.coordinate(), "wamn_receiving@1.0.0");
         assert_eq!(verified.digest(), base.component_digest().expected());
         assert_eq!(verified.superseded_pin(), None);
-
-        let observed = format!("sha256:{}", "0".repeat(64));
-        let error = base
-            .component_digest()
-            .verify(observed.as_str(), DevTargetDurability::Durable)
-            .expect_err("a different built component must refuse before Gate or Publish");
-        assert_eq!(error.kind(), DevPackageErrorKind::ComponentDigestMismatch);
-        assert_eq!(error.coordinate(), Some("wamn_receiving@1.0.0"));
-        assert_eq!(
-            error.dependency_digest(),
-            Some(base.component_digest().expected())
-        );
-        assert_eq!(error.observed_digest(), Some(observed.as_str()));
     }
 
     fn moved_digest_expectation() -> (BaseComponentDigestExpectation, String) {
@@ -1957,32 +1879,10 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_durable_target_refuses_a_base_component_digest_that_moved() {
+    fn a_moved_digest_carries_the_observed_digest_and_records_the_drift() {
         let (expectation, observed) = moved_digest_expectation();
 
-        assert!(refuses_moved_base_digest(DevTargetDurability::Durable));
-        let error = expectation
-            .verify(observed.as_str(), DevTargetDurability::Durable)
-            .expect_err("a durable target must refuse a base component it did not review");
-        assert_eq!(error.kind(), DevPackageErrorKind::ComponentDigestMismatch);
-        assert_eq!(
-            error.kind().as_str(),
-            "dev-base-component-digest-mismatch",
-            "the refusal keeps its stable diagnostic code"
-        );
-        assert_eq!(error.coordinate(), Some(expectation.coordinate()));
-        assert_eq!(error.dependency_digest(), Some(expectation.expected()));
-        assert_eq!(error.observed_digest(), Some(observed.as_str()));
-    }
-
-    #[test]
-    fn a_disposable_target_carries_the_observed_digest_and_records_the_drift() {
-        let (expectation, observed) = moved_digest_expectation();
-
-        assert!(!refuses_moved_base_digest(DevTargetDurability::Disposable));
-        let verified = expectation
-            .verify(observed.as_str(), DevTargetDurability::Disposable)
-            .expect("a disposable target proceeds on a base package the author just edited");
+        let verified = expectation.verify(observed.as_str());
         assert_eq!(verified.coordinate(), expectation.coordinate());
         assert_eq!(
             verified.digest(),
@@ -1993,19 +1893,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_unmoved_digest_records_no_drift_for_either_durability() {
+    fn an_unmoved_digest_records_no_drift() {
         let (expectation, _) = moved_digest_expectation();
 
-        for durability in [
-            DevTargetDurability::Durable,
-            DevTargetDurability::Disposable,
-        ] {
-            let verified = expectation
-                .verify(expectation.expected(), durability)
-                .expect("an unmoved digest verifies for every target");
-            assert_eq!(verified.digest(), expectation.expected());
-            assert_eq!(verified.superseded_pin(), None, "{durability:?}");
-        }
+        let verified = expectation.verify(expectation.expected());
+        assert_eq!(verified.digest(), expectation.expected());
+        assert_eq!(verified.superseded_pin(), None);
     }
 
     #[test]

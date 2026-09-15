@@ -44,8 +44,7 @@ Bare `--tui` opens the developer console. Without a terminal, `--hold` keeps the
 The loop supplies the route, target instance, and private personal access token.
 Do not copy that token into command arguments.
 
-The watch loop requires local Git references and a reflog.
-Make sure that `git config core.logAllRefUpdates` reports `true`.
+The loop runs from a Git worktree.
 After changing generator code, rebuild `wamn` and restart the developer process.
 
 ## Saved changes and target state
