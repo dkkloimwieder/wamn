@@ -18,6 +18,10 @@ const RECEIVING_CASES: &[&str] = &[
     "route_authentication_live::cluster::postcommit_case::baseline_overlay_and_materializer_progress",
 ];
 const WMS_CASES: &[&str] = &["cluster::released_wms_routes"];
+const RECEIVING_SCHEMAS: &[(&str, &str)] = &[
+    ("wamn_receiving", "receiving"),
+    ("client_acme_receiving", "receiving"),
+];
 // Existing deployed cases own bounded setup and cleanup inside this outer limit.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(45 * 60);
 
@@ -117,10 +121,7 @@ fn application(candidate: &Candidate) -> anyhow::Result<Application> {
         Ok(Application {
             package: "wamn-receiving-tests",
             cases: RECEIVING_CASES,
-            schemas: &[
-                ("wamn_receiving", "receiving"),
-                ("client_acme_receiving", "receiving"),
-            ],
+            schemas: RECEIVING_SCHEMAS,
             evidence_env: "WAMN_RECEIVING_EVIDENCE_DIR",
         })
     } else {
@@ -250,95 +251,7 @@ async fn qualify_candidate(
         "Rust differs from rust-toolchain.toml"
     );
     let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
-    run(
-        root,
-        &strings(&[
-            "cargo",
-            "build",
-            "--locked",
-            "--offline",
-            "-p",
-            "wamn-test-infrastructure",
-            "--bin",
-            "wamn-test-postgres",
-        ]),
-        &target_env,
-        &mut result.checks,
-    )
-    .await?;
-    if app
-        .schemas
-        .iter()
-        .any(|(package, _)| sqlx::verifier_for(package).is_some())
-    {
-        let sqlx = run(
-            root,
-            &strings(&["cargo", "sqlx", "--version"]),
-            &target_env,
-            &mut result.checks,
-        )
-        .await?;
-        sqlx::require_cli_version(&sqlx.stdout)?;
-    }
-    for &(package, schema) in app.schemas {
-        let app_root = root.join("apps").join(package);
-        let mut prefix = vec![
-            target
-                .join("debug/wamn-test-postgres")
-                .display()
-                .to_string(),
-            "--database".to_owned(),
-            "delivery_schema".to_owned(),
-            "--schema".to_owned(),
-            schema.to_owned(),
-        ];
-        if package == "client_acme_receiving" {
-            prefix.extend([
-                "--migration-dir".to_owned(),
-                root.join("apps/wamn_receiving/migrations")
-                    .display()
-                    .to_string(),
-            ]);
-        }
-        prefix.extend([
-            "--migration-dir".to_owned(),
-            app_root.join("migrations").display().to_string(),
-            "--history-manifest".to_owned(),
-            app_root.join("wamn.json").display().to_string(),
-            "--url-env".to_owned(),
-            "WAMN_SCHEMA_INTROSPECTION_PG_URL".to_owned(),
-            "--url-env".to_owned(),
-            "DATABASE_URL".to_owned(),
-            "--".to_owned(),
-        ]);
-        let mut generate = prefix.clone();
-        generate.extend(strings(&[
-            "cargo",
-            "run",
-            "--locked",
-            "--offline",
-            "-p",
-            "wamn-schema-generator",
-            "--example",
-            "materialize_package",
-            "--",
-            "check",
-        ]));
-        generate.push(app_root.display().to_string());
-        run(root, &generate, &target_env, &mut result.checks).await?;
-        if let Some(verifier) = sqlx::verifier_for(package) {
-            prefix.extend(sqlx::prepare_arguments(verifier, true));
-            let mut prepare_env = target_env.clone();
-            prepare_env.push(("SQLX_OFFLINE".to_owned(), "false".to_owned()));
-            run(
-                &app_root.join("tests"),
-                &prefix,
-                &prepare_env,
-                &mut result.checks,
-            )
-            .await?;
-        }
-    }
+    check_generated_outputs(root, target, app.schemas, &mut result.checks).await?;
     // Existing build owners establish which source produced the candidate.
     run(
         root,
@@ -457,6 +370,107 @@ async fn qualify_candidate(
         "source changed during qualification"
     );
     require_complete_checks(result)
+}
+
+/// Compare generated files and SQLx metadata against a fresh database per package.
+async fn check_generated_outputs(
+    root: &Path,
+    target: &Path,
+    schemas: &[(&str, &str)],
+    checks: &mut Vec<CheckResult>,
+) -> anyhow::Result<()> {
+    let target_env = vec![("CARGO_TARGET_DIR".to_owned(), target.display().to_string())];
+    run(
+        root,
+        &strings(&[
+            "cargo",
+            "build",
+            "--locked",
+            "--offline",
+            "-p",
+            "wamn-test-infrastructure",
+            "--bin",
+            "wamn-test-postgres",
+        ]),
+        &target_env,
+        checks,
+    )
+    .await?;
+    if schemas
+        .iter()
+        .any(|(package, _)| sqlx::verifier_for(package).is_some())
+    {
+        let sqlx = run(
+            root,
+            &strings(&["cargo", "sqlx", "--version"]),
+            &target_env,
+            checks,
+        )
+        .await?;
+        sqlx::require_cli_version(&sqlx.stdout)?;
+    }
+    for &(package, schema) in schemas {
+        let app_root = root.join("apps").join(package);
+        let mut prefix = schema_database_prefix(root, target, package, schema);
+        let mut generate = prefix.clone();
+        generate.extend(strings(&[
+            "cargo",
+            "run",
+            "--locked",
+            "--offline",
+            "-p",
+            "wamn-schema-generator",
+            "--example",
+            "materialize_package",
+            "--",
+            "check",
+        ]));
+        generate.push(app_root.display().to_string());
+        run(root, &generate, &target_env, checks).await?;
+        if let Some(verifier) = sqlx::verifier_for(package) {
+            prefix.extend(sqlx::prepare_arguments(verifier, true));
+            let mut prepare_env = target_env.clone();
+            prepare_env.push(("SQLX_OFFLINE".to_owned(), "false".to_owned()));
+            let output = run(&app_root.join("tests"), &prefix, &prepare_env, checks).await?;
+            sqlx::require_current_metadata(&output.stdout)?;
+        }
+    }
+    Ok(())
+}
+
+/// Start a fresh database with the package's schema, migrations, and history tables.
+fn schema_database_prefix(root: &Path, target: &Path, package: &str, schema: &str) -> Vec<String> {
+    let app_root = root.join("apps").join(package);
+    let mut prefix = vec![
+        target
+            .join("debug/wamn-test-postgres")
+            .display()
+            .to_string(),
+        "--database".to_owned(),
+        "delivery_schema".to_owned(),
+        "--schema".to_owned(),
+        schema.to_owned(),
+    ];
+    if package == "client_acme_receiving" {
+        prefix.extend([
+            "--migration-dir".to_owned(),
+            root.join("apps/wamn_receiving/migrations")
+                .display()
+                .to_string(),
+        ]);
+    }
+    prefix.extend([
+        "--migration-dir".to_owned(),
+        app_root.join("migrations").display().to_string(),
+        "--history-manifest".to_owned(),
+        app_root.join("wamn.json").display().to_string(),
+        "--url-env".to_owned(),
+        "WAMN_SCHEMA_INTROSPECTION_PG_URL".to_owned(),
+        "--url-env".to_owned(),
+        "DATABASE_URL".to_owned(),
+        "--".to_owned(),
+    ]);
+    prefix
 }
 
 /// Execute exact selected tests and distinguish executed success from a skip.
@@ -740,6 +754,72 @@ mod tests {
             output(pass, "", 256),
         ] {
             assert!(require_one_case(&failed).is_err());
+        }
+    }
+
+    #[test]
+    fn sqlx_check_database_applies_base_before_overlay_for_each_receiving_verifier() {
+        let (root, target) = (Path::new("/r"), Path::new("/t"));
+        assert_eq!(
+            schema_database_prefix(root, target, "client_acme_receiving", "receiving"),
+            [
+                "/t/debug/wamn-test-postgres",
+                "--database",
+                "delivery_schema",
+                "--schema",
+                "receiving",
+                "--migration-dir",
+                "/r/apps/wamn_receiving/migrations",
+                "--migration-dir",
+                "/r/apps/client_acme_receiving/migrations",
+                "--history-manifest",
+                "/r/apps/client_acme_receiving/wamn.json",
+                "--url-env",
+                "WAMN_SCHEMA_INTROSPECTION_PG_URL",
+                "--url-env",
+                "DATABASE_URL",
+                "--",
+            ]
+        );
+        let receiving = schema_database_prefix(root, target, "wamn_receiving", "receiving");
+        assert_eq!(
+            receiving
+                .iter()
+                .filter(|argument| argument.as_str() == "--migration-dir")
+                .count(),
+            1
+        );
+        assert!(receiving.contains(&"/r/apps/wamn_receiving/migrations".to_owned()));
+        for (package, _) in RECEIVING_SCHEMAS {
+            assert!(sqlx::verifier_for(package).is_some());
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires cargo-sqlx 0.9.0 and PostgreSQL 18"]
+    async fn sqlx_metadata_check_reaches_fresh_receiving_and_acme_databases() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("resolve the repository root");
+        let target =
+            std::env::var_os("CARGO_TARGET_DIR").map_or_else(|| root.join("target"), PathBuf::from);
+        let mut checks = Vec::new();
+        check_generated_outputs(&root, &target, RECEIVING_SCHEMAS, &mut checks)
+            .await
+            .expect("the committed SQLx metadata matches fresh databases");
+        for (package, _) in RECEIVING_SCHEMAS {
+            let verifier = sqlx::verifier_for(package).expect("the package has a verifier");
+            assert_eq!(
+                checks
+                    .iter()
+                    .filter(|check| check.result == "pass"
+                        && check.command.iter().any(|argument| argument == "--check")
+                        && check.command.iter().any(|argument| argument == verifier))
+                    .count(),
+                1,
+                "one passing SQLx metadata check for {verifier}"
+            );
         }
     }
 }

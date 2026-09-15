@@ -72,6 +72,18 @@ pub fn require_cli_version(output: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Refuse committed metadata that holds query files no query uses.
+///
+/// The pinned CLI fails `prepare --check` for a missing or changed query file,
+/// but it only warns about an unused one.
+pub fn require_current_metadata(stdout: &[u8]) -> anyhow::Result<()> {
+    ensure!(
+        !String::from_utf8_lossy(stdout).contains("potentially unused queries found in .sqlx"),
+        "committed SQLx metadata has unused queries; re-run cargo sqlx prepare"
+    );
+    Ok(())
+}
+
 /// Configure preparation while leaving execution and cleanup to the caller.
 pub fn prepare_command(
     test_dir: &Path,
@@ -128,5 +140,53 @@ mod tests {
                 .get_options(),
             Some("-csearch_path=receiving,public")
         );
+    }
+
+    #[test]
+    fn prepare_and_check_name_each_verifier_and_force_online() {
+        for package in ["wamn_receiving", "client_acme_receiving"] {
+            let verifier = verifier_for(package).expect("the package has a verifier");
+            assert_eq!(
+                prepare_arguments(verifier, false),
+                [
+                    "cargo",
+                    "sqlx",
+                    "prepare",
+                    "--",
+                    "--test",
+                    verifier,
+                    "--locked",
+                    "--offline"
+                ]
+            );
+            assert_eq!(
+                prepare_arguments(verifier, true),
+                [
+                    "cargo",
+                    "sqlx",
+                    "prepare",
+                    "--check",
+                    "--",
+                    "--test",
+                    verifier,
+                    "--locked",
+                    "--offline"
+                ]
+            );
+            let directory = Path::new("/apps/package/tests");
+            let command = prepare_command(directory, "postgresql://verify", verifier, false);
+            let command = command.as_std();
+            assert_eq!(command.get_current_dir(), Some(directory));
+            let envs: Vec<_> = command.get_envs().collect();
+            assert!(envs.contains(&(
+                "DATABASE_URL".as_ref(),
+                Some("postgresql://verify".as_ref())
+            )));
+            assert!(envs.contains(&("SQLX_OFFLINE".as_ref(), Some("false".as_ref()))));
+        }
+        assert_eq!(verifier_for("wamn_wms"), None);
+        let warning = b"warning: potentially unused queries found in .sqlx; you may want to re-run sqlx prepare\n";
+        assert!(require_current_metadata(warning).is_err());
+        assert!(require_current_metadata(b"").is_ok());
     }
 }
