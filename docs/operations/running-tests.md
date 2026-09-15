@@ -122,7 +122,7 @@ Do not restart a stopped sweep or start broad runs at cleanup boundaries.
 If the user requests a workspace sweep, use the retained complete command:
 
 ```bash
-cargo test --workspace --locked --offline --no-fail-fast -- \
+cargo test --workspace --locked --offline --features wamn-ctl/ops --no-fail-fast -- \
   --include-ignored --nocapture --test-threads=1 \
   --skip regenerate_checked_in_journey_schema \
   --skip regenerate_checked_in_dev_config_schema \
@@ -132,6 +132,7 @@ cargo test --workspace --locked --offline --no-fail-fast -- \
 Record its exit status before running another command.
 Do not pipe the command through `tail` or another output filter.
 `--workspace` selects all root members, including members outside Cargo's defaults.
+`--features wamn-ctl/ops` builds the targets that require the `ops` feature.
 `--no-fail-fast` retains later binary results after a failure.
 
 `--include-ignored` selects ignored cases, but their required inputs still control whether they execute.
@@ -269,13 +270,10 @@ These cases test connection reuse and authority isolation without measuring thro
 
 Follow [test-database isolation](#test-database-isolation) before these database-backed commands.
 
-Generate each application against its own migrated database.
-Use a base-only database for Receiving and a separate base-plus-overlay database for Acme.
-Otherwise, introspection can write overlay fields into generated base files.
-Use another database for WMS.
-
 Run the generator under the `wamn-test-postgres` runner.
 Each run starts its own server, so each application gets a separate database.
+Receiving needs a base-only database, and Acme needs a separate base-plus-overlay database.
+Otherwise, introspection can write overlay fields into generated base files.
 The runner creates the schema, sets it as the search path of the database, and applies the migrations in order.
 The example reads the database URL from `DATABASE_URL`.
 To check Receiving, run:
@@ -309,11 +307,11 @@ Review the generated files before building the guest and operator.
 Do not edit generated Rust directly.
 
 For Acme, pass `--migration-dir apps/wamn_receiving/migrations` before `--migration-dir apps/client_acme_receiving/migrations`.
-Use `apps/client_acme_receiving` for `--history-manifest` and as the generation input.
+Pass `--history-manifest apps/client_acme_receiving/wamn.json`, and use `apps/client_acme_receiving` as the generation input.
 For WMS, pass `--schema wms` and only `--migration-dir apps/wamn_wms/migrations`.
-Use `apps/wamn_wms` for `--history-manifest` and as the input.
+Pass `--history-manifest apps/wamn_wms/wamn.json`, and use `apps/wamn_wms` as the input.
 
-`.cargo/config.toml` sets `SQLX_OFFLINE=true`, so SQLx compiles from each application's committed `tests/.sqlx/` directory and needs no database.
+`.cargo/config.toml` sets `SQLX_OFFLINE=true`, so the Receiving and Acme verifiers compile from their committed `tests/.sqlx/` directories and need no database.
 A `DATABASE_URL` in the environment does not change this.
 A query that has no matching metadata fails to compile until the metadata is prepared again.
 `cargo sqlx prepare` sets `SQLX_OFFLINE=false` for its own build, so it still reaches its database.
@@ -331,7 +329,7 @@ At the start of a session, it compares them with the committed files at `HEAD`.
 A failed or interrupted preparation runs again in the next cycle.
 A Rust-only change does not prepare.
 
-To prepare the metadata manually after a Receiving SQL change, run it under the runner.
+To prepare the metadata manually after a Receiving SQL change, run SQLx CLI 0.9.0 under the runner.
 `cargo sqlx prepare` reads the database URL from `DATABASE_URL`:
 
 ```bash
@@ -347,7 +345,19 @@ cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgre
 For Acme, use its runner arguments, `apps/client_acme_receiving/tests`, and the `client_acme_sqlx_verifier` target.
 For an explicit metadata comparison, use the same command with `prepare --check`.
 That comparison writes temporary output under the target and preserves committed metadata.
+The CLI only warns about a query file that no query uses, and it still exits zero.
+Treat `potentially unused queries found in .sqlx` as a failure and prepare again, because release qualification refuses it.
+
 Release qualification runs this comparison against a fresh database for each verifier.
+To run that check without a candidate, run:
+
+```bash
+cargo test --locked --offline -p wamn-ctl --lib \
+  delivery::qualification::tests::sqlx_metadata_check_reaches_fresh_receiving_and_acme_databases \
+  -- --exact --ignored --nocapture
+```
+
+The test requires SQLx CLI 0.9.0 and the PostgreSQL 18 binaries.
 
 ## Cleanup
 
