@@ -190,6 +190,20 @@ Each case applies a fixture package through `wamn-ctl apply-package` and runs `w
 `prune_removes_only_the_expired_prefix_of_each_row` also mints the run retention generation to test the refusals.
 `a_retention_change_waits_for_a_running_prune` holds the audit retention lock while the verb and a retention change wait on it.
 
+### Run history retention test
+
+`services/ctl/tests/prune_run_history_live.rs` tests the run history retention verb.
+It creates roles, so it holds the process lock and starts from the tenant floor.
+It needs the `ops` feature:
+
+```bash
+cargo test --locked --offline -p wamn-ctl --features ops \
+  --test prune_run_history_live -- --nocapture
+```
+
+The case applies `run-state.sql` and `run-queue.sql`, mints the run retention generation, and runs `wamn-ctl-ops prune-run-history`.
+It tests the removed and kept runs, the refusals, and the grants of the generation.
+
 ### Local saved-edit acceptance
 
 Use a clean linked worktree reserved for this test.
