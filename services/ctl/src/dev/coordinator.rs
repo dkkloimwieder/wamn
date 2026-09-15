@@ -583,20 +583,6 @@ impl ProductionDevStageRunner {
             })?;
             crate::package_verbs::print_applied(&outcome);
         }
-        // Recorded only after every package applied, so a restarted session
-        // never keeps a target whose Migrate did not finish.
-        target_database::record_schema_digest(
-            &self.config,
-            self.target_instance
-                .as_deref()
-                .expect("prepare_run claimed the target instance"),
-            self.schema_input_candidate
-                .as_deref()
-                .expect("prepare_run computed the schema inputs"),
-        )
-        .map_err(|source| {
-            ProductionDevStageError::owner("record the target schema digest", source)
-        })?;
         self.schema_input_digest
             .clone_from(&self.schema_input_candidate);
         Ok(())
@@ -616,6 +602,20 @@ impl ProductionDevStageRunner {
             self.catalogs
                 .insert(package.manifest.package.id.clone(), catalog);
         }
+        // Recorded only after Introspect read every package, so a restarted
+        // session never keeps a target whose Migrate or Introspect did not
+        // finish.
+        target_database::record_target_schema(
+            &self.config,
+            self.target_instance
+                .as_deref()
+                .expect("prepare_run claimed the target instance"),
+            self.schema_input_digest
+                .as_deref()
+                .expect("Migrate recorded the schema inputs"),
+            &self.catalogs,
+        )
+        .map_err(|source| ProductionDevStageError::owner("record the target schema", source))?;
         Ok(())
     }
 
@@ -1834,14 +1834,16 @@ impl DevStageRunner for ProductionDevStageRunner {
             self.catalogs.clear();
             let lease = self.target_lease.as_ref().expect("lease acquired");
             // The first run of a session keeps the target a previous session
-            // migrated with the same schema inputs.
+            // migrated with the same schema inputs, and the catalogs that
+            // session introspected from it.
             let retained = if self.target_instance.is_none() {
-                lease.retained_instance(&self.config, &digest).await
+                lease.retained_target(&self.config, &digest).await
             } else {
                 None
             };
-            let instance = if let Some(instance) = retained {
+            let instance = if let Some((instance, catalogs)) = retained {
                 self.schema_input_digest = Some(digest.clone());
+                self.catalogs = catalogs;
                 instance
             } else {
                 lease.recreate(&self.config).await.map_err(|source| {

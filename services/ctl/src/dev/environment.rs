@@ -821,9 +821,10 @@ pub fn write_dev_config(
         .context("create the product-command Wasmtime cache")?;
     let mut config = serde_json::json!({
         "target_database_url": route.database_url.as_str(),
-        // The loop recreates the target before every run, which drops every
-        // per-database privilege with it. This is the file it replays, and it
-        // is the file provision_route already applied, not a second copy.
+        // The loop recreates the target when its schema inputs change, which
+        // drops every per-database privilege with it. This is the file it
+        // replays, and it is the file provision_route already applied, not a
+        // second copy.
         "target_privileges_file": root.join("privileges.sql"),
         // The loop clones this template instead of re-provisioning. It carries
         // everything a drop destroys except the database-level ACL, which is

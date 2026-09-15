@@ -5,6 +5,7 @@
 //! restores its captured database ACL. The lease prevents another session or
 //! reset command from replacing a serving target.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -12,6 +13,7 @@ use std::str::FromStr;
 
 use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
 use wamn_pg_core::Identifier;
+use wamn_schema_introspection::ir::CatalogIr;
 
 use super::activation::DevActivationIdentity;
 use super::config::{DevConfig, POSTGRES_SYSTEM_DATABASES};
@@ -245,14 +247,16 @@ pub(crate) fn prepare_configuration(config: &DevConfig) -> anyhow::Result<Prepar
     })
 }
 
-/// Record the schema inputs a successful Migrate applied to one target creation.
+/// Record the schema inputs of one target creation and the catalogs a successful
+/// Introspect read from it.
 ///
 /// The record names the database instance, so a record left beside a target
 /// that was since recreated or reset matches nothing.
-pub(crate) fn record_schema_digest(
+pub(crate) fn record_target_schema(
     config: &DevConfig,
     instance: &str,
     schema_digest: &str,
+    catalogs: &BTreeMap<String, CatalogIr>,
 ) -> anyhow::Result<()> {
     use anyhow::Context as _;
     let directory = &config.local_artifacts().directory;
@@ -260,12 +264,13 @@ pub(crate) fn record_schema_digest(
     let record = serde_json::json!({
         "database-instance": instance,
         "schema-input-digest": schema_digest,
+        "catalogs": catalogs,
     });
     std::fs::write(
         directory.join(SCHEMA_RECORD_FILE),
         serde_json::to_vec(&record)?,
     )
-    .context("record the target schema digest")
+    .context("record the target schema")
 }
 
 /// Exclusive ownership held while a development session can serve this target.
@@ -353,22 +358,25 @@ impl TargetLease {
         Ok(())
     }
 
-    /// The instance of this target when its last Migrate recorded `schema_digest`.
+    /// The instance of this target and its saved catalogs when the record names
+    /// `schema_digest`.
     ///
-    /// Returns `None` when the record is absent or unreadable, names another
-    /// digest or another creation of the database, or when the local target
-    /// marker no longer matches. The caller then recreates the target.
-    pub(crate) async fn retained_instance(
+    /// Returns `None` when the record is absent or unreadable, holds no
+    /// catalogs, names another digest or another creation of the database, or
+    /// when the local target marker no longer matches. The caller then
+    /// recreates the target.
+    pub(crate) async fn retained_target(
         &self,
         config: &DevConfig,
         schema_digest: &str,
-    ) -> Option<String> {
+    ) -> Option<(String, BTreeMap<String, CatalogIr>)> {
         let bytes =
             std::fs::read(config.local_artifacts().directory.join(SCHEMA_RECORD_FILE)).ok()?;
-        let record: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        let mut record: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
         if record["schema-input-digest"] != schema_digest {
             return None;
         }
+        let catalogs = serde_json::from_value(record["catalogs"].take()).ok()?;
         let instance: u32 = self
             .client
             .query_one(
@@ -390,7 +398,7 @@ impl TargetLease {
         )
         .await
         .ok()?;
-        Some(instance)
+        Some((instance, catalogs))
     }
 
     /// Recreate only the target named by this still-held lease.
@@ -610,6 +618,84 @@ async fn replace_database(
 mod tests {
     use super::*;
     use serde_json::json;
+    use wamn_schema_introspection::ir::{
+        Column, ColumnDefault, ColumnGeneration, ColumnType, Constraint, Exclusion,
+        ExclusionAccessMethod, ExclusionElement, ExclusionKey, ForeignKeyAction, ForeignKeyColumn,
+        IdentityMode, Index, IndexColumn, IndexDirection, Table,
+    };
+
+    /// Catalogs that hold every tagged and flattened IR shape the record carries.
+    fn record_catalogs() -> anyhow::Result<BTreeMap<String, CatalogIr>> {
+        let order = Table::new(
+            "receiving",
+            "purchase_order",
+            vec![
+                Column::new(
+                    "id",
+                    ColumnType::Uuid,
+                    false,
+                    Some(ColumnDefault::GenRandomUuid),
+                    None,
+                ),
+                Column::new(
+                    "number",
+                    ColumnType::Int64,
+                    false,
+                    None,
+                    Some(ColumnGeneration::Identity {
+                        mode: IdentityMode::Always,
+                    }),
+                ),
+                Column::new(
+                    "status",
+                    ColumnType::Text,
+                    false,
+                    Some(ColumnDefault::text("open")),
+                    None,
+                ),
+                Column::new("starts_at", ColumnType::Timestamptz, true, None, None),
+                Column::new("ends_at", ColumnType::Timestamptz, true, None, None),
+            ],
+            vec![
+                Constraint::primary_key("purchase_order_id_pkey", ["id"])?,
+                Constraint::check("purchase_order_status_check", "status <> ''")?,
+            ],
+            vec![Index::new(
+                "purchase_order_number_idx",
+                vec![IndexColumn::new("number", IndexDirection::Desc)],
+            )?],
+        )
+        .with_exclusions(vec![Exclusion::new(
+            "purchase_order_no_overlap",
+            ExclusionAccessMethod::Gist,
+            vec![
+                ExclusionKey::new(ExclusionElement::column("id"), "="),
+                ExclusionKey::new(
+                    ExclusionElement::expression("tstzrange(starts_at, ends_at)"),
+                    "&&",
+                ),
+            ],
+            ["id", "starts_at", "ends_at"],
+        )?]);
+        let line = Table::new(
+            "receiving",
+            "purchase_order_line",
+            vec![Column::new("order_id", ColumnType::Uuid, false, None, None)],
+            vec![Constraint::foreign_key(
+                "purchase_order_line_order_id_fkey",
+                vec![ForeignKeyColumn::new("order_id", "id")],
+                "receiving",
+                "purchase_order",
+                ForeignKeyAction::NoAction,
+                ForeignKeyAction::Cascade,
+            )?],
+            Vec::new(),
+        );
+        Ok(BTreeMap::from([(
+            "wamn-receiving".to_owned(),
+            CatalogIr::new(vec![order, line]),
+        )]))
+    }
 
     #[tokio::test]
     async fn local_lease_retains_data_and_reset_reapplies_exact_configuration() -> anyhow::Result<()>
@@ -843,25 +929,35 @@ mod tests {
         drop(target);
         driver.await??;
 
-        // A restarted session keeps the target its last Migrate recorded, and
-        // a changed schema digest recreates it.
-        record_schema_digest(&config, &first, "sha256:schema-one")?;
+        // A restarted session keeps the target and the catalogs its last
+        // Introspect recorded, and a changed schema digest recreates it.
+        std::fs::write(
+            directory.join(SCHEMA_RECORD_FILE),
+            serde_json::to_vec(&json!({
+                "database-instance": first,
+                "schema-input-digest": "sha256:schema-one",
+            }))?,
+        )?;
         assert_eq!(
-            lease
-                .retained_instance(&config, "sha256:schema-one")
-                .await
-                .as_deref(),
-            Some(first.as_str())
+            lease.retained_target(&config, "sha256:schema-one").await,
+            None,
+            "a record that holds no catalogs recreates the target"
+        );
+        let catalogs = record_catalogs()?;
+        record_target_schema(&config, &first, "sha256:schema-one", &catalogs)?;
+        assert_eq!(
+            lease.retained_target(&config, "sha256:schema-one").await,
+            Some((first.clone(), catalogs))
         );
         assert_eq!(
-            lease.retained_instance(&config, "sha256:schema-two").await,
+            lease.retained_target(&config, "sha256:schema-two").await,
             None
         );
 
         let second = lease.recreate(&config).await?;
         assert_ne!(first, second);
         assert_eq!(
-            lease.retained_instance(&config, "sha256:schema-one").await,
+            lease.retained_target(&config, "sha256:schema-one").await,
             None,
             "a record of the previous creation matches no later one"
         );

@@ -10,7 +10,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 /// A normalized application catalog.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogIr {
     tables: Box<[Table]>,
 }
@@ -39,7 +39,7 @@ impl CatalogIr {
 }
 
 /// One ordinary application table.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Table {
     schema: Box<str>,
     name: Box<str>,
@@ -48,7 +48,7 @@ pub struct Table {
     indexes: Box<[Index]>,
     /// Omitted when empty, so a table that declares no exclusion constraint
     /// keeps the canonical bytes it had before this field existed.
-    #[serde(skip_serializing_if = "<[Exclusion]>::is_empty")]
+    #[serde(default, skip_serializing_if = "<[Exclusion]>::is_empty")]
     exclusions: Box<[Exclusion]>,
 }
 
@@ -117,7 +117,7 @@ impl Table {
 }
 
 /// One supported table column.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Column {
     name: Box<str>,
     #[serde(rename = "type")]
@@ -222,7 +222,7 @@ impl ColumnType {
 /// The allowlist therefore closes over forms. What it still refuses is
 /// unchanged in kind: an expression, a function call other than the two named
 /// here, and a literal whose type is not the column's.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ColumnDefault {
     GenRandomUuid,
@@ -270,7 +270,7 @@ impl ColumnDefault {
 }
 
 /// A PostgreSQL server-generated column property.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ColumnGeneration {
     Identity { mode: IdentityMode },
@@ -287,7 +287,7 @@ impl ColumnGeneration {
 }
 
 /// PostgreSQL identity generation mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IdentityMode {
     Always,
@@ -295,7 +295,7 @@ pub enum IdentityMode {
 }
 
 /// A table constraint with its required authored name.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Constraint {
     name: Box<str>,
     #[serde(flatten)]
@@ -303,7 +303,7 @@ pub struct Constraint {
 }
 
 /// Semantic constraint shape, excluding its authored name.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ConstraintKind {
     PrimaryKey {
@@ -410,7 +410,7 @@ impl Constraint {
 }
 
 /// One local-to-referenced column pair in a foreign key.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ForeignKeyColumn {
     column: Box<str>,
     referenced_column: Box<str>,
@@ -435,7 +435,7 @@ impl ForeignKeyColumn {
 }
 
 /// PostgreSQL foreign-key action.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ForeignKeyAction {
     NoAction,
@@ -453,7 +453,7 @@ pub enum ForeignKeyAction {
 /// Both are nameable refusals: the `wamn:postgres` contract carries SQLSTATE
 /// 23505, 23503 and 23514 as [`Constraint`] violations and 23P01 as an
 /// exclusion violation, each naming the constraint that refused (wamn-10yt.54).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Exclusion {
     name: Box<str>,
     access_method: ExclusionAccessMethod,
@@ -510,14 +510,14 @@ impl Exclusion {
 }
 
 /// Index access method backing an exclusion constraint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExclusionAccessMethod {
     Gist,
 }
 
 /// One key of an exclusion constraint: what is compared, and with which operator.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ExclusionKey {
     #[serde(flatten)]
     element: ExclusionElement,
@@ -549,7 +549,7 @@ impl ExclusionKey {
 /// A range non-overlap invariant needs an expression key, because the frozen
 /// column vocabulary has no range type: the author writes
 /// `tstzrange(starts_at, ends_at) WITH &&` over two `timestamptz` columns.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(tag = "element", rename_all = "snake_case")]
 pub enum ExclusionElement {
     Column { name: Box<str> },
@@ -571,7 +571,7 @@ impl ExclusionElement {
 }
 
 /// One ordinary, non-constraint-backed btree index.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Index {
     name: Box<str>,
     columns: Box<[IndexColumn]>,
@@ -597,7 +597,7 @@ impl Index {
 }
 
 /// One named column key in an ordinary index.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct IndexColumn {
     name: Box<str>,
     direction: IndexDirection,
@@ -621,7 +621,7 @@ impl IndexColumn {
 }
 
 /// Key direction for an ordinary btree index.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IndexDirection {
     Asc,
