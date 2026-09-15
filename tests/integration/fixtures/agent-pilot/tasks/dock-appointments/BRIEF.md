@@ -15,8 +15,6 @@ DONE MEANS ALL OF:
 3. REPORT.md exists at "$WAMN_PILOT_RUN_DIR/REPORT.md" in the format below.
 
 WHAT IS TRUE OF THIS LOOP:
-- Publish through Activate refuse a worktree with uncommitted or untracked
-  changes. Commit locally first. Never push.
 - `wamn dev … --hold` runs once and keeps the activated release reachable until
   you stop it; it prints `run served: <base_url> host=<route_host>`. Send requests
   to <base_url> with `Host: $WAMN_ROUTE_HOST` and `Authorization: Bearer <token>`,

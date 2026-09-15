@@ -81,8 +81,6 @@ DONE MEANS ALL OF:
 3. REPORT.md exists at "$WAMN_PILOT_RUN_DIR/REPORT.md" in the format below.
 
 WHAT IS TRUE OF THIS LOOP:
-- Publish through Activate refuse a worktree with uncommitted or untracked
-  changes. Commit locally first. Never push.
 - `wamn dev … --hold` runs once and keeps the activated release reachable until
   you stop it; it prints `run served: <base_url> host=<route_host>`. Send requests
   to <base_url> with `Host: $WAMN_ROUTE_HOST` and `Authorization: Bearer <token>`,
@@ -113,10 +111,15 @@ own tests; the loop; every operation the scenario names exercised against the
 running release; and what you did not verify, and why.
 ```
 
-Mechanisms the brief names, and why: the commit rule and `--hold` are facts of the
-loop documented nowhere the agent will look (work spec F4, F5); without them the
-task is impossible from a script, which would measure the platform, not the agent.
+Mechanisms the brief names, and why: `--hold` is a fact of the loop documented
+nowhere the agent will look (work spec F5); without it the task is impossible from
+a script, which would measure the platform, not the agent.
 Everything else the agent must find.
+
+[amended 2026-09-15 by owner ruling, recorded on `wamn-t019`. The bullet that said
+Publish through Activate refuse an uncommitted worktree is deleted, because
+`wamn-llst.1` deleted the Publish stage and that refusal. "Do not push" stays under
+CONSTRAINTS. This is an instrument change, so the next run opens series 040.]
 
 ### 4.2 T1 — dock appointments (ratified 2026-09-06)
 
