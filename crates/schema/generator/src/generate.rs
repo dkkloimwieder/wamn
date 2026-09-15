@@ -44,7 +44,7 @@ pub(crate) const CLAIM_KEY_COLUMN: &str = "idempotency_key";
 pub(crate) const CLAIM_COMMAND_COLUMN: &str = "canonical_command";
 /// Mint the claim, or yield nothing because the key already has one.
 const CREATE_CLAIM_STATEMENT: &str = "create_claim";
-/// Read the immutable original for one key. Writes nothing.
+/// Read the current row the claim for one key created. Writes nothing.
 const CREATE_REPLAY_STATEMENT: &str = "create_replay";
 /// Insert the row under the identities the claim already minted.
 const CREATE_STATEMENT: &str = "create";

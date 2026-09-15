@@ -1021,7 +1021,7 @@ fn generated_create_sql(package: &GeneratedPackage, statement: &str) -> String {
 /// Read the three statements together. `create_claim` mints the ids under
 /// `idempotency_key PRIMARY KEY`, so a second call with that key mints nothing.
 /// `create` BINDS them (`$1::uuid`), so it cannot invent a different one.
-/// `create_replay` reads the durable original back through the claim. That is
+/// `create_replay` reads the created row back through the claim. That is
 /// why a replay returns the same id BY CONSTRUCTION and not by an early return.
 #[test]
 fn generated_create_takes_every_identity_from_the_claim() {
@@ -1196,14 +1196,14 @@ fn every_generated_create_carries_the_two_claim_contract_tests() {
             "law": "command-identity-from-claim",
             "cases": [
                 {
-                    "id": "replay_returns_the_immutable_original",
+                    "id": "replay_returns_the_created_row",
                     "given": "the same idempotency_key with the same canonical_command",
                     "first_call": ["create_claim", "create"],
                     "second_call": ["create_claim", "create_replay"],
                     "expect": {
                         "claim": "no_row",
                         "canonical_command": "equal",
-                        "result": "identical_to_the_first_call",
+                        "result": "current_row_the_first_call_created",
                         "writes": "none",
                         "identity_source": "claim",
                     },

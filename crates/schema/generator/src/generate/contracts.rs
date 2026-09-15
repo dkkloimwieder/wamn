@@ -372,7 +372,13 @@ fn emit_custom_operation_contracts(
             insert_json(
                 files,
                 &format!("{root}.claim-tests.json"),
-                &claim_contract_tests(&operation_id, &claim.claim, &claim.finalize, &claim.replay),
+                &claim_contract_tests(
+                    &operation_id,
+                    ClaimReplay::ImmutableOriginal,
+                    &claim.claim,
+                    &claim.finalize,
+                    &claim.replay,
+                ),
             )?;
         }
         Some(CommandIdempotence::State(state)) => {
@@ -460,6 +466,16 @@ fn idempotency_contract(claim: &sql::Claim<'_>) -> Value {
     })
 }
 
+/// What the replay statement of a claim returns on a second call.
+#[derive(Clone, Copy)]
+enum ClaimReplay {
+    /// An authored command: the replay returns the first call's result unchanged.
+    ImmutableOriginal,
+    /// A generated create: the replay returns the current state of the row the
+    /// first call created. The id is the same and nothing is inserted twice.
+    CreatedRow,
+}
+
 /// The two contract tests every claim-bearing command carries.
 ///
 /// The claim law is a property of the emitted statements, so its tests belong
@@ -470,29 +486,45 @@ fn idempotency_contract(claim: &sql::Claim<'_>) -> Value {
 /// Each case names the statements in the order a caller runs them. The first
 /// call mints the claim and finishes it. The second call re-runs the claim
 /// statement, which returns no row under the claim's primary key. The caller
-/// then reads the durable original through the replay statement. Case one
-/// asserts that the original comes back unchanged with no write. Case two
-/// asserts the typed refusal when that original was minted for another request.
+/// then reads back through the replay statement. Case one asserts what that
+/// replay returns, with no write, as [`ClaimReplay`] states it. Case two asserts
+/// the typed refusal when the claim was minted for another request.
 ///
 /// Binds are not repeated here. The input contract states the request shape and
 /// the operation contract states each statement's binds and columns.
 ///
 /// EXECUTING these cases needs a live database. That runner is `wamn-f89v`,
 /// and it opens on its first consumer. What this emits is the case list.
-fn claim_contract_tests(operation_id: &str, claim: &str, finalize: &str, replay: &str) -> Value {
+fn claim_contract_tests(
+    operation_id: &str,
+    replay_returns: ClaimReplay,
+    claim: &str,
+    finalize: &str,
+    replay: &str,
+) -> Value {
+    let (replay_case, replay_result) = match replay_returns {
+        ClaimReplay::ImmutableOriginal => (
+            "replay_returns_the_immutable_original",
+            "identical_to_the_first_call",
+        ),
+        ClaimReplay::CreatedRow => (
+            "replay_returns_the_created_row",
+            "current_row_the_first_call_created",
+        ),
+    };
     json!({
         "operation": operation_id,
         "law": "command-identity-from-claim",
         "cases": [
             {
-                "id": "replay_returns_the_immutable_original",
+                "id": replay_case,
                 "given": "the same idempotency_key with the same canonical_command",
                 "first_call": [claim, finalize],
                 "second_call": [claim, replay],
                 "expect": {
                     "claim": "no_row",
                     "canonical_command": "equal",
-                    "result": "identical_to_the_first_call",
+                    "result": replay_result,
                     "writes": "none",
                     "identity_source": "claim",
                 },
@@ -1024,6 +1056,7 @@ fn emit_operation_contracts(
             &format!("{root}.claim-tests.json"),
             &claim_contract_tests(
                 &operation_id,
+                ClaimReplay::CreatedRow,
                 CREATE_CLAIM_STATEMENT,
                 CREATE_STATEMENT,
                 CREATE_REPLAY_STATEMENT,

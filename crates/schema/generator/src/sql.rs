@@ -37,7 +37,7 @@ pub(crate) fn get(table: &Table) -> String {
 /// The claim row pre-generates every identity the create hands out, so the
 /// replay path reads back the ids the FIRST call minted instead of minting a
 /// second set. Yielding nothing is not a failure: it is the signal that the
-/// caller must read the durable original through [`create_replay`].
+/// caller must read the created row through [`create_replay`].
 pub(crate) fn create_claim(claim: &Claim<'_>) -> String {
     format!(
         "INSERT INTO {} ({CLAIM_KEY_COLUMN}, {CLAIM_COMMAND_COLUMN})\nVALUES ($1::text, $2::bytea)\nON CONFLICT ON CONSTRAINT {} DO NOTHING\nRETURNING\n    {};\n",
@@ -52,11 +52,14 @@ pub(crate) fn create_claim(claim: &Claim<'_>) -> String {
     )
 }
 
-/// Read the immutable original for one key, writing nothing.
+/// Read the current state of the row the claim for one key created, writing
+/// nothing.
 ///
-/// The canonical command comes back beside the row so the caller can refuse a
-/// key rebound to a different request. The join is inner because the claim and
-/// its row are inserted in one transaction: a visible claim always has its row.
+/// The row is read live, so a replay after a later update returns that update.
+/// The id is still the one the claim minted. The canonical command comes back
+/// beside the row so the caller can refuse a key rebound to a different request.
+/// The join is inner because the claim and its row are inserted in one
+/// transaction: a visible claim always has its row.
 pub(crate) fn create_replay(table: &Table, claim: &Claim<'_>) -> String {
     format!(
         "SELECT\n    claim.{CLAIM_COMMAND_COLUMN},\n    {}\nFROM {} AS claim\nJOIN {} AS model\n    ON model.id = claim.{}\nWHERE claim.{CLAIM_KEY_COLUMN} = $1::text;\n",
