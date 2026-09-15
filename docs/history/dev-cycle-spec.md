@@ -1,3 +1,4 @@
+section 6 item 3 completed by `wamn-llst.5`
 # Short development cycles
 
 **Status:** rev 2 · 2026-09-15 · external review applied · measured at

@@ -63,8 +63,8 @@ After changing generator code, rebuild `wamn` and restart the developer process.
 The running loop holds a lease, an exclusive claim on its application database.
 A second loop or reset command cannot take that target while the lease remains active.
 The first run creates the target from the environment template.
-After each successful migration, the loop records the schema inputs beside its local artifacts.
-A restarted developer process keeps the target when that record matches the current schema inputs and the same database creation.
+After each successful introspection, the loop records the schema inputs and the introspected catalogs beside its local artifacts.
+A restarted developer process keeps the target and reuses the catalogs when that record matches the current schema inputs and database creation.
 Otherwise the first run of the new process recreates the target.
 
 Rust code saves reuse the schema, database rows, and unchanged generated files.
