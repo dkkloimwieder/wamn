@@ -45,6 +45,33 @@ fn generation_hash_covers_every_non_secret_field() {
     assert_ne!(baseline.definition_hash(), changed.definition_hash());
 }
 
+/// The golden value is the sha256 of the literal JSON below, computed outside
+/// this code, so a change to the shared hasher or to the field order fails here.
+#[test]
+fn generation_definition_hash_bytes_are_pinned() {
+    let definition = ConnectionGenerationDefinition {
+        primary_authority: "https://erp.example".into(),
+        failover_authorities: vec!["https://backup.example".into()],
+        tls_policy: "verify-authority".into(),
+        redirect_policy: "same-authority".into(),
+        proxy_reference: Some("proxy-a".into()),
+    };
+
+    assert_eq!(
+        serde_json::to_string(&definition).expect("definition serializes"),
+        concat!(
+            r#"{"primary-authority":"https://erp.example","#,
+            r#""failover-authorities":["https://backup.example"],"#,
+            r#""tls-policy":"verify-authority","redirect-policy":"same-authority","#,
+            r#""proxy-reference":"proxy-a"}"#,
+        )
+    );
+    assert_eq!(
+        definition.definition_hash(),
+        "sha256:3ca45493d8f47e200353eb6a88ea4aa16928c30d48753a3e0e79fd029576740b"
+    );
+}
+
 #[test]
 fn component_storage_sql_uses_component_and_effective_release_grains() {
     assert!(insert_component_connection_requirement_sql().contains("component_digest"));

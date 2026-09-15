@@ -276,6 +276,40 @@ mod tests {
         assert_eq!(blobstore.descriptor_version, CONNECTION_DESCRIPTOR_VERSION);
     }
 
+    /// `requirement_hash` is persisted in `catalog.connection_requirements` and
+    /// compared on promotion, so its bytes must never move. The golden value is
+    /// the sha256 of the literal JSON below, computed outside this code.
+    #[test]
+    fn the_requirement_hash_bytes_are_pinned() {
+        let requirement = ComponentConnectionRequirement::new(
+            "sha256:component-a",
+            "erp",
+            ConnectionTypeDescriptor::http_v1(),
+        );
+
+        assert_eq!(
+            String::from_utf8(requirement.canonical_bytes()).expect("utf-8 JSON"),
+            concat!(
+                r#"{"component-digest":"sha256:component-a","store-alias":"erp","#,
+                r#""requirement":{"descriptor-version":"1","requirement-type":"http","#,
+                r#""contract":"wamn:connection/http@0.1.0","authority-model":"http-origin","#,
+                r#""field-ownership":[{"field":"method","owner":"author"},"#,
+                r#"{"field":"relative-target","owner":"author"},"#,
+                r#"{"field":"headers","owner":"author"},{"field":"body","owner":"author"},"#,
+                r#"{"field":"authority","owner":"environment"},"#,
+                r#"{"field":"tls","owner":"environment"},"#,
+                r#"{"field":"redirect","owner":"environment"},"#,
+                r#"{"field":"proxy","owner":"environment"},"#,
+                r#"{"field":"credential","owner":"environment"}],"#,
+                r#""credential-injection":"environment-selected-http-header"}}"#,
+            )
+        );
+        assert_eq!(
+            requirement.requirement_hash(),
+            "sha256:39bc5f123de98ee830fe3aade1121f9ae8b3164c196f5f2d9664810c680bbb7c"
+        );
+    }
+
     /// Adding a variant to a single-variant enum inside a `deny_unknown_fields`
     /// descriptor is a wire change: an older host deserializing the new value
     /// hard-fails rather than degrading. Pin the wire spellings so that change

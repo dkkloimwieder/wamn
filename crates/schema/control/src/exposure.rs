@@ -5,8 +5,9 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest as _, Sha256};
 use wamn_execution_contract::EntryKind;
+
+use crate::connections::prefixed_sha256;
 
 /// One release's authored exposure definitions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -438,15 +439,6 @@ fn error(code: &'static str, subject: &str) -> ExposureError {
     }
 }
 
-fn prefixed_sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let hex = digest
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("sha256:{hex}")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -501,6 +493,17 @@ mod tests {
                 .definition_hash
                 .strip_prefix("sha256:")
                 .is_some_and(|hex| hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        );
+        // The sha256 of the key-sorted resolved JSON, computed outside this code:
+        // {"attachment":{"flow-id":"f1","id":"receive","kind":"http","mappings":
+        // [{"cardinality":"one","from":"body","name":"body","optional":false,"to":""}],
+        // "response-deadline-ms":5000,"route":{"method":"POST","path":"/receipts"},
+        // "run-deadline-ms":10000,"source-id":"erp-keys"},"flow-artifact-hash":
+        // "artifact-f1","resolved-source":{"definition":{"policy":"api-key"},
+        // "id":"erp-keys","kind":"auth"}} with no whitespace.
+        assert_eq!(
+            first[0].definition_hash,
+            "sha256:ec20fb53155b37fe2d63762dbe7add13f31053b4d3e913ed75c8dd7c5cc16dc3"
         );
     }
 
