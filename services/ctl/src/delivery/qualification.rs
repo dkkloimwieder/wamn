@@ -465,8 +465,6 @@ fn schema_database_prefix(root: &Path, target: &Path, package: &str, schema: &st
         "--history-manifest".to_owned(),
         app_root.join("wamn.json").display().to_string(),
         "--url-env".to_owned(),
-        "WAMN_SCHEMA_INTROSPECTION_PG_URL".to_owned(),
-        "--url-env".to_owned(),
         "DATABASE_URL".to_owned(),
         "--".to_owned(),
     ]);
@@ -774,8 +772,6 @@ mod tests {
                 "/r/apps/client_acme_receiving/migrations",
                 "--history-manifest",
                 "/r/apps/client_acme_receiving/wamn.json",
-                "--url-env",
-                "WAMN_SCHEMA_INTROSPECTION_PG_URL",
                 "--url-env",
                 "DATABASE_URL",
                 "--",
