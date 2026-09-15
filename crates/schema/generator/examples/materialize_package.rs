@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Context as _, Result, bail, ensure};
 use wamn_schema_generator::{MaterializeMode, materialize_package_verified};
 
-const DATABASE_URL_ENV: &str = "WAMN_SCHEMA_INTROSPECTION_PG_URL";
+const DATABASE_URL_ENV: &str = "DATABASE_URL";
 
 #[derive(Debug)]
 struct Arguments {
