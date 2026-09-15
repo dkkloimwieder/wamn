@@ -104,6 +104,7 @@ impl Drop for Https {
 #[ignore = "requires: WAMN_SESSION_EXCHANGE_CTL_BIN"]
 async fn session_exchange_uses_fresh_scoped_authority_without_session_state() {
     wamn_test_postgres::require_prerequisites(&["WAMN_SESSION_EXCHANGE_CTL_BIN"]);
+    compiled_ctl_binary();
     let mut postgres =
         wamn_test_postgres::start(&[]).expect_redacted("start the test PostgreSQL server");
     let system = postgres
@@ -980,7 +981,7 @@ async fn retained_successor_allows_real_retirement(
     .expect_redacted("remove exact successor fixture role");
 }
 
-async fn retire_reader_cli(admin: &str, target: &SessionTarget) -> std::process::Output {
+fn compiled_ctl_binary() -> std::path::PathBuf {
     let binary = std::env::var_os("WAMN_SESSION_EXCHANGE_CTL_BIN")
         .expect_redacted("provide this worktree's compiled wamn-ctl binary");
     let binary = std::path::PathBuf::from(binary)
@@ -995,6 +996,11 @@ async fn retire_reader_cli(admin: &str, target: &SessionTarget) -> std::process:
         "WAMN_SESSION_EXCHANGE_CTL_BIN must name this worktree's compiled ctl at {}",
         expected.display()
     );
+    binary
+}
+
+async fn retire_reader_cli(admin: &str, target: &SessionTarget) -> std::process::Output {
+    let binary = compiled_ctl_binary();
     let mut project = url::Url::parse(admin).expect_redacted("administrator URL shape");
     project.set_path(&format!("/{}", target.connection().database()));
     let triple = target.triple();

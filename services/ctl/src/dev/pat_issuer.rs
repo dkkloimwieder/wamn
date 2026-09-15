@@ -216,7 +216,8 @@ pub(super) fn preflight(system_url: &str) -> anyhow::Result<PathBuf> {
     identity_binary()
 }
 
-fn identity_binary() -> anyhow::Result<PathBuf> {
+/// Find `wamn-identity` at `WAMN_IDENTITY_BINARY` or beside the current executable.
+pub fn identity_binary() -> anyhow::Result<PathBuf> {
     let binary = if let Some(path) = std::env::var_os("WAMN_IDENTITY_BINARY") {
         PathBuf::from(path)
     } else {

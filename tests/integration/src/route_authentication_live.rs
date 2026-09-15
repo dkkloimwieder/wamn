@@ -596,6 +596,7 @@ async fn assert_human_environment_membership(
 #[ignore = "requires:"]
 async fn production_route_caller_authentication_and_operation_authorization() {
     wamn_test_postgres::require_prerequisites(&[]);
+    wamn_ctl::dev::pat_issuer::identity_binary().expect("find the wamn-identity binary");
     // Provisioning changes roles and database grants of the whole server, so
     // the test starts its own.
     let mut server =
