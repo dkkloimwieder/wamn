@@ -45,7 +45,6 @@ pub(super) async fn verify_public_access_floor(
 /// edit anywhere, and acquires an entry HERE only when it acquires authority.
 pub(super) fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrantSet> {
     match family {
-        WorkloadRoleFamily::EffectWriter => Some(StableGrantSet::EffectWriter),
         WorkloadRoleFamily::ManagementAdmitter => Some(StableGrantSet::ManagementAdmitter),
         WorkloadRoleFamily::RegistryReader => Some(StableGrantSet::RegistryReader),
         WorkloadRoleFamily::IdentityReader => Some(StableGrantSet::IdentityReader),
@@ -71,7 +70,6 @@ pub(super) fn stable_grant_set(family: WorkloadRoleFamily) -> Option<StableGrant
 /// The per-family denial matrices a stable ACL role is measured against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum StableGrantSet {
-    EffectWriter,
     ManagementAdmitter,
     RegistryReader,
     IdentityReader,
@@ -94,9 +92,6 @@ impl StableGrantSet {
         retention_targets: &[(String, String)],
     ) -> anyhow::Result<()> {
         match self {
-            Self::EffectWriter => {
-                verify_effect_writer_grants(role, database, grants)
-            }
             Self::ManagementAdmitter => verify_management_admitter_grants(
                 role,
                 database,
@@ -282,88 +277,11 @@ pub(super) struct RoleAcl {
     pub(super) grantable: bool,
 }
 
-pub(super) fn verify_effect_writer_grants(
-    role: &str,
-    database: &str,
-    grants: &[RoleAcl],
-) -> anyhow::Result<()> {
-    let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
-    for acl in grants {
-        anyhow::ensure!(
-            matches!(acl.object_kind.as_str(), "schema" | "relation" | "column"),
-            "stable role {role:?} carries non-writer {} ACL in database {database:?}",
-            acl.object_kind
-        );
-        by_schema
-            .entry(acl.schema_name.clone())
-            .or_default()
-            .insert((
-                acl.object_kind.clone(),
-                acl.object_name.clone(),
-                acl.privilege.clone(),
-            ));
-    }
-    for (schema, actual) in by_schema {
-        anyhow::ensure!(
-            !schema.starts_with("pg_")
-                && !matches!(
-                    schema.as_str(),
-                    "public" | "information_schema" | "wamn_system" | "catalog" | "app"
-                ),
-            "stable role {role:?} carries effect-writer ACLs in reserved schema {schema:?} in database {database:?}"
-        );
-        let mut expected =
-            BTreeSet::from([("schema".to_string(), schema.clone(), "USAGE".to_string())]);
-        for table in [
-            "effect_attempts",
-            "effect_attempt_dispatches",
-            "effect_attempt_outcomes",
-        ] {
-            expected.insert((
-                "relation".to_string(),
-                table.to_string(),
-                "SELECT".to_string(),
-            ));
-            expected.insert((
-                "relation".to_string(),
-                table.to_string(),
-                "INSERT".to_string(),
-            ));
-        }
-        for (table, columns) in [
-            ("runs", &["tenant_id", "run_id", "status"][..]),
-            (
-                "run_queue",
-                &[
-                    "tenant_id",
-                    "run_id",
-                    "lease_owner",
-                    "lease_expires_at",
-                    "lease_generation",
-                ][..],
-            ),
-        ] {
-            for column in columns {
-                expected.insert((
-                    "column".to_string(),
-                    format!("{table}.{column}"),
-                    "SELECT".to_string(),
-                ));
-            }
-        }
-        anyhow::ensure!(
-            actual == expected,
-            "stable role {role:?} ACLs in database {database:?} schema {schema:?} are not the exact effect-writer grant set"
-        );
-    }
-    Ok(())
-}
-
 /// The exact run-retention grant set, measured from the SERVER's ACL catalogs
 /// (`wamn-0h0g.12.69`).
 ///
-/// Deliberately the effect writer's shape — iterate whatever schemas the role
-/// holds anything in and require each to be EXACTLY this set — because retention
+/// Deliberately a per-schema shape — iterate whatever schemas the role holds
+/// anything in and require each to be EXACTLY this set — because retention
 /// is likewise a tenant-scoped family whose grants land inside each project-env
 /// database's run-plane schema, and a widened grant in a schema nobody thought
 /// to name is exactly the drift a per-schema allow-list would miss.
@@ -433,7 +351,7 @@ fn verify_retention_grants(
 /// The dispatcher's whole database surface is two `SELECT`s over
 /// [`sql::DISPATCH_READER_RELATIONS`], so the stable ACL role holds schema
 /// `USAGE` plus `SELECT` on exactly those two relations. It is asserted PER
-/// SCHEMA and exactly, the effect writer's shape, because a dispatch-reader
+/// SCHEMA and exactly, because a dispatch-reader
 /// generation now inherits everything this role holds in every database the
 /// role has grants in — and until this bead the family had no denial matrix at
 /// all, because it had no generations to guard.

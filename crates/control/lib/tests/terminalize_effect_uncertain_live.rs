@@ -38,15 +38,8 @@ async fn reset_and_install(client: &Client) -> BareSchemaName {
                    NOINHERIT NOREPLICATION NOBYPASSRLS; ELSE \
                  ALTER ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_effect_writer') THEN \
-                 CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS; ELSE \
-                 ALTER ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                   NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
              END $roles$; \
              DO $database$ BEGIN \
-               EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_effect_writer', \
-                              current_database()); \
                EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_app', current_database()); \
              END $database$;"
         ))
@@ -470,7 +463,7 @@ async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live(
         OperatorTerminalizeResult::RunStateInvariant
     );
 
-    for role in ["wamn_app", "wamn_scenario_author", "wamn_effect_writer"] {
+    for role in ["wamn_app", "wamn_scenario_author"] {
         let privileges: Vec<bool> = client
             .query_one(
                 "SELECT ARRAY[has_table_privilege($1,$2,'INSERT'), \

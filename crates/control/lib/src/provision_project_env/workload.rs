@@ -7,16 +7,15 @@ use super::grants::{
     RoleAclExpectation, stable_grant_set, verify_public_access_floor, verify_role_grants,
 };
 use super::{
-    CredentialGeneration, DateTime, EffectWriterCredentialScope, EffectWriterCredentialValidity,
-    GenericClient, PLATFORM_GROUP_ROLE, PgConfig, SecondsFormat, SessionTarget, SystemRandom,
-    Triple, Utc, WorkloadActionOutcome, WorkloadActionRequest, WorkloadActionVerb,
-    WorkloadGenerationAction, WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind,
-    WorkloadSecretBody, WorkloadSecretBodyKind, connect_config, effect_writer_credential,
-    ensure_secret_path, exact_project_database_config, json, legacy_effect_writer_generation_role,
-    named_database_config, project_env_database_name, read_project_env_instance,
-    render_workload_secret_manifest, role_sql, sql, tenant_key, validate_project_env,
-    validate_session_tenant_id, workload_action_flag, workload_config, workload_generation_role,
-    workload_secret_flag, workload_url, write_output, write_secret_json,
+    CredentialGeneration, DateTime, GenericClient, PLATFORM_GROUP_ROLE, PgConfig, SecondsFormat,
+    SessionTarget, SystemRandom, Triple, Utc, WorkloadActionOutcome, WorkloadActionRequest,
+    WorkloadActionVerb, WorkloadGenerationAction, WorkloadRoleFamily, WorkloadRoleScope,
+    WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind, connect_config,
+    ensure_secret_path, exact_project_database_config, named_database_config,
+    project_env_database_name, read_project_env_instance, render_workload_secret_manifest,
+    role_sql, sql, tenant_key, validate_project_env, validate_session_tenant_id,
+    workload_action_flag, workload_config, workload_generation_role, workload_secret_flag,
+    workload_url, write_output, write_secret_json,
 };
 
 const WORKLOAD_CREDENTIAL_TTL_DAYS: i64 = 30;
@@ -52,15 +51,8 @@ impl WorkloadRoleState {
     }
 
     fn is_migratable_active_for(&self, family: WorkloadRoleFamily, database: &str) -> bool {
-        let memberships_are_known = self.memberships == [family.acl_role()]
-            || (family == WorkloadRoleFamily::EffectWriter
-                && self.memberships
-                    == [
-                        family.acl_role(),
-                        wamn_run_state::RUN_PROJECTION_WRITER_ROLE,
-                    ]);
         self.has_active_shape_for(database)
-            && memberships_are_known
+            && self.memberships == [family.acl_role()]
             && self.membership_options_migratable
     }
 
@@ -80,11 +72,10 @@ impl WorkloadRoleState {
         self.has_inactive_shape() && self.memberships.is_empty() && self.membership_options_exact
     }
 
-    fn is_migratable_inactive_for(&self, family: WorkloadRoleFamily) -> bool {
-        let memberships_are_known = self.memberships.is_empty()
-            || (family == WorkloadRoleFamily::EffectWriter
-                && self.memberships == [wamn_run_state::RUN_PROJECTION_WRITER_ROLE]);
-        self.has_inactive_shape() && memberships_are_known && self.membership_options_migratable
+    fn is_migratable_inactive(&self) -> bool {
+        self.has_inactive_shape()
+            && self.memberships.is_empty()
+            && self.membership_options_migratable
     }
 
     fn has_inactive_shape(&self) -> bool {
@@ -213,10 +204,10 @@ pub(super) fn workload_lifecycle<'a>(
         tenant,
     } = identity;
     let scope = match family.scope_kind() {
-        // Tenant scope for the effect writer and the guest credential alike:
-        // the digest in the role name IS the tenant key, so the login the mint
-        // issues and the key `wamn_authority.tenant_key` computes are the same
-        // string (`wamn-0h0g.22.6.4`).
+        // Tenant scope for the guest credential: the digest in the role name IS
+        // the tenant key, so the login the mint issues and the key
+        // `wamn_authority.tenant_key` computes are the same string
+        // (`wamn-0h0g.22.6.4`).
         WorkloadRoleScopeKind::Tenant => WorkloadRoleScope::Tenant { tenant, database },
         WorkloadRoleScopeKind::ProjectEnvironment => WorkloadRoleScope::ProjectEnvironment {
             org,
@@ -236,44 +227,6 @@ pub(super) fn workload_lifecycle<'a>(
         scope,
         control_tenant: (family.scope_kind() == WorkloadRoleScopeKind::Control).then_some(tenant),
     }
-}
-
-/// The retired project-environment effect-writer identities, migration input
-/// only.
-///
-/// `None` for every other family, including any admitted later: a legacy
-/// identity is a fact about one family's history, not a generic property.
-fn legacy_generation_roles(
-    family: WorkloadRoleFamily,
-    identity: WorkloadActionIdentity<'_>,
-    database: &str,
-    generation: CredentialGeneration,
-) -> (Option<String>, Option<String>) {
-    if family != WorkloadRoleFamily::EffectWriter {
-        return (None, None);
-    }
-    let WorkloadActionIdentity {
-        org,
-        project,
-        environment,
-        ..
-    } = identity;
-    (
-        Some(legacy_effect_writer_generation_role(
-            org,
-            project,
-            environment,
-            database,
-            generation,
-        )),
-        Some(legacy_effect_writer_generation_role(
-            org,
-            project,
-            environment,
-            database,
-            generation.other(),
-        )),
-    )
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -320,7 +273,7 @@ async fn converge_workload_generation_state(
             return Ok(state);
         } else if found.is_migratable_active_for(lifecycle.family, lifecycle.database()) {
             true
-        } else if found.is_migratable_inactive_for(lifecycle.family) {
+        } else if found.is_migratable_inactive() {
             false
         } else {
             return Ok(state);
@@ -478,28 +431,17 @@ pub async fn run_workload_action(
                 )
             })?;
             ensure_secret_path(secret_path, &format!("--{}", workload_secret_flag(family)))?;
-            let validity = workload_validity(Utc::now());
+            let expires_at = workload_expires_at(Utc::now());
             // The key the RLS predicate computes, taken from the ONE Rust
             // definition rather than re-derived here — the Secret's label must
             // name the same tenant the role name's digest does.
             let key = tenant_key(tenant, &database);
-            let scope = EffectWriterCredentialScope {
-                tenant: tenant.to_string(),
-                org: org.to_string(),
-                project: project.to_string(),
-                environment: environment.to_string(),
-                database: database.clone(),
-            };
-            let (legacy_desired, legacy_other) =
-                legacy_generation_roles(family, identity, &database, generation);
             prepare_workload_generation(
                 &admin_config,
                 lifecycle,
-                legacy_desired.as_deref(),
-                legacy_other.as_deref(),
                 generation,
-                &validity.expires_at,
-                |role, password, predecessor_role| {
+                &expires_at,
+                |role, password| {
                     let credential_url = workload_url(admin_url, role, password, &database)?;
                     let secret = match family.secret_body_kind() {
                         WorkloadSecretBodyKind::Url => render_workload_secret_manifest(
@@ -525,31 +467,12 @@ pub async fn run_workload_action(
                                 },
                             )
                         }
-                        WorkloadSecretBodyKind::EffectWriterCredential => {
-                            let credential_id = random_lower_hex(16)?;
-                            let credential = effect_writer_credential(
-                                &scope,
-                                &credential_id,
-                                generation,
-                                &validity,
-                                &credential_url,
-                            );
-                            let mut secret = render_workload_secret_manifest(
-                                family,
-                                &triple,
-                                &args.namespace,
-                                WorkloadSecretBody::EffectWriterCredential(&credential),
-                            );
-                            if let Some(predecessor_role) = predecessor_role {
-                                secret["metadata"]["annotations"]
-                                    ["wamn.io/predecessor-database-role"] = json!(predecessor_role);
-                            }
-                            secret
-                        }
                         WorkloadSecretBodyKind::SessionTarget => {
                             let target = SessionTarget::new(
                                 &triple,
-                                instance.as_deref().expect("session readers use project-environment scope"),
+                                instance
+                                    .as_deref()
+                                    .expect("session readers use project-environment scope"),
                                 tenant,
                                 &credential_url,
                             )?;
@@ -580,15 +503,7 @@ pub async fn run_workload_action(
             })
         }
         WorkloadActionVerb::Retire => {
-            let (legacy_old_role, _) =
-                legacy_generation_roles(family, identity, &database, generation);
-            retire_workload_generation(
-                &admin_config,
-                lifecycle,
-                legacy_old_role.as_deref(),
-                generation,
-            )
-            .await?;
+            retire_workload_generation(&admin_config, lifecycle, generation).await?;
             Ok(WorkloadActionOutcome::Retired)
         }
         WorkloadActionVerb::Abort => {
@@ -622,18 +537,16 @@ pub async fn run_workload_action(
 async fn prepare_workload_generation<F>(
     admin_config: &PgConfig,
     lifecycle: WorkloadLifecycle<'_>,
-    legacy_desired_role: Option<&str>,
-    legacy_other_role: Option<&str>,
     generation: CredentialGeneration,
     expires_at: &str,
     publish: F,
 ) -> anyhow::Result<()>
 where
-    F: FnOnce(&str, &str, Option<&str>) -> anyhow::Result<()>,
+    F: FnOnce(&str, &str) -> anyhow::Result<()>,
 {
     let database = lifecycle.database();
     let role = lifecycle.role(generation);
-    let mut other_role = lifecycle.role(generation.other());
+    let other_role = lifecycle.role(generation.other());
     let (mut admin, admin_task) = connect_config(admin_config, &lifecycle.label()).await?;
     lock_workload_family(&admin, lifecycle).await?;
     let transaction = admin
@@ -647,28 +560,7 @@ where
     verify_public_access_floor(&transaction, &lifecycle.label()).await?;
     converge_stable_workload_memberships(&transaction, admin_config, lifecycle).await?;
     let desired = converge_workload_generation_state(&transaction, lifecycle, &role).await?;
-    if let Some(legacy_role) = legacy_desired_role {
-        if let Some(legacy) =
-            converge_workload_generation_state(&transaction, lifecycle, legacy_role).await?
-        {
-            anyhow::ensure!(
-                legacy.is_inactive(),
-                "legacy effect-writer migration must prepare the opposite generation"
-            );
-        }
-    }
-    let mut other =
-        converge_workload_generation_state(&transaction, lifecycle, &other_role).await?;
-    if other.as_ref().is_none_or(WorkloadRoleState::is_inactive)
-        && let Some(legacy_role) = legacy_other_role
-    {
-        let legacy =
-            converge_workload_generation_state(&transaction, lifecycle, legacy_role).await?;
-        if legacy.as_ref().is_some_and(|state| !state.is_inactive()) {
-            other_role = legacy_role.to_string();
-            other = legacy;
-        }
-    }
+    let other = converge_workload_generation_state(&transaction, lifecycle, &other_role).await?;
     let recovering_active = match (generation, desired.as_ref(), other.as_ref()) {
         (CredentialGeneration::A, desired, None)
             if desired.is_none_or(WorkloadRoleState::is_inactive) =>
@@ -718,12 +610,10 @@ where
         )
         .await?;
     }
-    let predecessor_role = other.as_ref().map(|_| other_role.as_str());
     // Pre-checked ONLY for a family whose stable grant set is converged
-    // elsewhere (schema control owns the effect writer's, because its grants
-    // exist only once the effect tables do). A family whose grant set
-    // THIS batch applies has nothing to assert yet on a first prepare, so the
-    // condition is the absence of a stable surface, not a family name.
+    // elsewhere. A family whose grant set THIS batch applies has nothing to
+    // assert yet on a first prepare, so the condition is the absence of a
+    // stable surface, not a family name.
     if sql::stable_surface_sql(lifecycle.family).is_none()
         && let Some(grant_set) = stable_grant_set(lifecycle.family)
         && read_workload_role_state(
@@ -815,7 +705,7 @@ where
         )
         .await?;
         verify_stable_workload_role(&admin, admin_config, lifecycle).await?;
-        publish(&role, &password, predecessor_role)?;
+        publish(&role, &password)?;
         Ok::<(), anyhow::Error>(())
     }
     .await;
@@ -879,11 +769,10 @@ async fn rollback_prepared_workload_generation(
 async fn retire_workload_generation(
     admin_config: &PgConfig,
     lifecycle: WorkloadLifecycle<'_>,
-    legacy_old_role: Option<&str>,
     generation: CredentialGeneration,
 ) -> anyhow::Result<()> {
     let database = lifecycle.database();
-    let mut old_role = lifecycle.role(generation);
+    let old_role = lifecycle.role(generation);
     let replacement_role = lifecycle.role(generation.other());
     let (mut admin, admin_task) = connect_config(admin_config, &lifecycle.label()).await?;
     lock_workload_family(&admin, lifecycle).await?;
@@ -893,19 +782,9 @@ async fn retire_workload_generation(
         .with_context(|| format!("begin {} generation retirement", lifecycle.label()))?;
     verify_public_access_floor(&transaction, &lifecycle.label()).await?;
     converge_stable_workload_memberships(&transaction, admin_config, lifecycle).await?;
-    let mut old = converge_workload_generation_state(&transaction, lifecycle, &old_role).await?;
-    if old.as_ref().is_none_or(WorkloadRoleState::is_inactive)
-        && let Some(legacy_role) = legacy_old_role
-    {
-        let legacy =
-            converge_workload_generation_state(&transaction, lifecycle, legacy_role).await?;
-        if legacy.as_ref().is_some_and(|state| !state.is_inactive()) {
-            old_role = legacy_role.to_string();
-            old = legacy;
-        }
-    }
-    let old =
-        old.with_context(|| format!("old {} generation does not exist", lifecycle.label()))?;
+    let old = converge_workload_generation_state(&transaction, lifecycle, &old_role)
+        .await?
+        .with_context(|| format!("old {} generation does not exist", lifecycle.label()))?;
     let replacement =
         converge_workload_generation_state(&transaction, lifecycle, &replacement_role)
             .await?
@@ -1053,14 +932,9 @@ async fn abort_workload_generation(
     Ok(())
 }
 
-fn workload_validity(now: DateTime<Utc>) -> EffectWriterCredentialValidity {
-    let expires_at = now + chrono::Duration::days(WORKLOAD_CREDENTIAL_TTL_DAYS);
-    EffectWriterCredentialValidity {
-        issued_at: now.to_rfc3339_opts(SecondsFormat::Secs, true),
-        not_before: now.to_rfc3339_opts(SecondsFormat::Secs, true),
-        expires_at: expires_at.to_rfc3339_opts(SecondsFormat::Secs, true),
-        revoked_at: None,
-    }
+fn workload_expires_at(now: DateTime<Utc>) -> String {
+    (now + chrono::Duration::days(WORKLOAD_CREDENTIAL_TTL_DAYS))
+        .to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 fn random_lower_hex(bytes: usize) -> anyhow::Result<String> {

@@ -1,7 +1,6 @@
 use super::*;
 use super::grants::{
     RoleAcl, StableGrantSet, stable_grant_set, verify_audit_retention_grants,
-    verify_effect_writer_grants,
     verify_event_materializer_grants, verify_http_admitter_grants, verify_management_admitter_grants,
     verify_session_role_reader_grants, verify_system_reader_grants,
 };
@@ -9,7 +8,7 @@ use super::registry::{INSTANCE_SUFFIX_ALPHABET, do_record_project_env};
 use super::workload::{
     WorkloadActionIdentity, WorkloadLifecycle, is_workload_generation_role, workload_lifecycle,
 };
-use wamn_control_provision::{EFFECT_WRITER_ROLE, MANAGEMENT_ADMITTER_ROLE};
+use wamn_control_provision::MANAGEMENT_ADMITTER_ROLE;
 
 /// The mint is the whole non-reuse mechanism (wamn-0h0g.13.57): every draw
 /// must satisfy the pure crate's rule, and the draws must actually differ.
@@ -375,7 +374,6 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
     assert_eq!(
         with_grant_sets,
         [
-            WorkloadRoleFamily::EffectWriter,
             WorkloadRoleFamily::ManagementAdmitter,
             // `wamn-0h0g.22.24`: the dispatch reader acquired GENERATIONS,
             // so its long-standing grant set finally has an inheritor to
@@ -405,7 +403,6 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
     );
     // The pre-prepare grant-set assertion fires for the families whose grant
     // set is converged ELSEWHERE, and not for the ones this batch applies.
-    assert!(sql::stable_surface_sql(WorkloadRoleFamily::EffectWriter).is_none());
     assert!(sql::stable_surface_sql(WorkloadRoleFamily::Retention).is_none());
     assert!(sql::stable_surface_sql(WorkloadRoleFamily::DispatchReader).is_none());
     // apply-package converges the audit retention grants, not this batch.
@@ -427,8 +424,7 @@ fn every_family_derives_a_lifecycle_and_only_a_grant_set_stays_per_family() {
     for family in WorkloadRoleFamily::ALL {
         if !matches!(
             family,
-            WorkloadRoleFamily::EffectWriter
-                | WorkloadRoleFamily::ManagementAdmitter
+            WorkloadRoleFamily::ManagementAdmitter
                 | WorkloadRoleFamily::ExecutorPlatform
                 | WorkloadRoleFamily::HttpAdmitter
                 | WorkloadRoleFamily::EventMaterializer
@@ -597,14 +593,10 @@ fn the_http_admitter_grants_require_fresh_reads_and_refuse_writes() {
 }
 
 /// Every family publishes a Secret whose name, component label and body are
-/// DERIVED, and the four frozen names are unchanged.
+/// DERIVED, and the three frozen names are unchanged.
 #[test]
 fn every_family_derives_its_credential_secret_name() {
     let frozen = [
-        (
-            WorkloadRoleFamily::EffectWriter,
-            "wamn-effect-writer-acme--billing--dev",
-        ),
         (
             WorkloadRoleFamily::ControlAuthor,
             "wamn-authoring-acme--billing--dev",
@@ -801,94 +793,6 @@ fn materializer_grants_cover_exactly_the_two_production_reads() {
 }
 
 #[test]
-fn stable_writer_grants_require_the_complete_schema_set() {
-    let schema = "wamn_runner_demo";
-    let mut exact = vec![role_acl("schema", schema, schema, "USAGE")];
-    for table in [
-        "effect_attempts",
-        "effect_attempt_dispatches",
-        "effect_attempt_outcomes",
-    ] {
-        exact.push(role_acl("relation", schema, table, "SELECT"));
-        exact.push(role_acl("relation", schema, table, "INSERT"));
-    }
-    for (table, columns) in [
-        ("runs", &["tenant_id", "run_id", "status"][..]),
-        (
-            "run_queue",
-            &[
-                "tenant_id",
-                "run_id",
-                "lease_owner",
-                "lease_expires_at",
-                "lease_generation",
-            ][..],
-        ),
-    ] {
-        for column in columns {
-            exact.push(role_acl(
-                "column",
-                schema,
-                &format!("{table}.{column}"),
-                "SELECT",
-            ));
-        }
-    }
-    verify_effect_writer_grants(EFFECT_WRITER_ROLE, "project_db", &exact).unwrap();
-
-    let mut partial = exact.clone();
-    partial.pop();
-    assert!(
-        verify_effect_writer_grants(EFFECT_WRITER_ROLE, "project_db", &partial)
-            .is_err()
-    );
-    let mut unrelated = exact;
-    unrelated.push(role_acl("relation", schema, "other_table", "SELECT"));
-    assert!(
-        verify_effect_writer_grants(EFFECT_WRITER_ROLE, "project_db", &unrelated)
-            .is_err()
-    );
-
-    let mut reserved = vec![role_acl("schema", "app", "app", "USAGE")];
-    for table in [
-        "effect_attempts",
-        "effect_attempt_dispatches",
-        "effect_attempt_outcomes",
-    ] {
-        reserved.push(role_acl("relation", "app", table, "SELECT"));
-        reserved.push(role_acl("relation", "app", table, "INSERT"));
-    }
-    assert!(
-        verify_effect_writer_grants(EFFECT_WRITER_ROLE, "project_db", &reserved)
-            .is_err()
-    );
-}
-
-#[test]
-fn stable_writer_grants_refuse_unrelated_object_kinds() {
-    // The kind filter is this guard's first refusal, and the complete-set test
-    // above cannot observe it: every fixture there is a schema, relation or
-    // column, so admitting one further kind left that test green under the
-    // wamn-0h0g.15.107 mutation run. A database CONNECT ACL is the realistic
-    // out-of-set kind — it is what a scoped generation role is granted — and a
-    // stable role must never hold one. Asserting the named refusal is the
-    // load-bearing part: a widened kind set still fails, but on the exact
-    // grant set instead, and would leave the filter unverified again.
-    let error = verify_effect_writer_grants(
-        EFFECT_WRITER_ROLE,
-        "project_db",
-        &[role_acl("database", "project_db", "project_db", "CONNECT")],
-    )
-    .expect_err("a database ACL is not an effect-writer ACL");
-    assert!(
-        error
-            .to_string()
-            .contains("carries non-writer database ACL"),
-        "refused for the wrong reason: {error}"
-    );
-}
-
-#[test]
 fn management_grants_are_exact_and_required_in_the_target_database() {
     let mut exact = vec![
         role_acl("schema", "catalog", "catalog", "USAGE"),
@@ -1039,9 +943,9 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
     // `wamn-0fqa` takes the vocabulary to ten and `wamn-0h0g.13.63` to
     // twelve. `wamn-ctc8.15.2` adds the session-role reader as the thirteenth,
     // and `wamn-emtx.13` adds audit retention as the fourteenth.
+    // `wamn-0h0g.10.15` removes the effect writer, leaving thirteen.
     // `label` reads only the family, so the scope is deliberately uniform.
     let expected = [
-        (WorkloadRoleFamily::EffectWriter, "effect-writer"),
         (WorkloadRoleFamily::ControlAuthor, "control-author"),
         (
             WorkloadRoleFamily::ManagementAdmitter,
@@ -1082,10 +986,6 @@ fn every_workload_family_carries_a_distinct_frozen_label() {
 #[test]
 fn stable_acl_role_members_are_only_scoped_generation_roles() {
     assert!(is_workload_generation_role(
-        WorkloadRoleFamily::EffectWriter,
-        "wamn_effect_writer_0123456789abcdef0123456789abcdef01234567_a"
-    ));
-    assert!(is_workload_generation_role(
         WorkloadRoleFamily::ControlAuthor,
         "wamn_control_author_0123456789abcdef0123456789abcdef01234567_b"
     ));
@@ -1123,13 +1023,13 @@ fn stable_acl_role_members_are_only_scoped_generation_roles() {
         "wamn_http_admitter_0123456789abcdef0123456789abcdef01234567_a"
     ));
     for invalid in [
-        "wamn_effect_writer_a",
-        "wamn_effect_writer_0123456789ABCDEF0123456789abcdef01234567_a",
-        "wamn_effect_writer_0123456789abcdef0123456789abcdef01234567_c",
+        "wamn_control_author_a",
+        "wamn_control_author_0123456789ABCDEF0123456789abcdef01234567_a",
+        "wamn_control_author_0123456789abcdef0123456789abcdef01234567_c",
         "unrelated_0123456789abcdef0123456789abcdef01234567_a",
     ] {
         assert!(
-            !is_workload_generation_role(WorkloadRoleFamily::EffectWriter, invalid),
+            !is_workload_generation_role(WorkloadRoleFamily::ControlAuthor, invalid),
             "accepted {invalid}"
         );
     }

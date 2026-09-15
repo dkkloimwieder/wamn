@@ -32,11 +32,9 @@ async fn stored_suite_cutover_live() {
 /// against one another's constants.
 ///
 /// Its own entry, and DRY-RUN only, on purpose. `current_noop_leg` makes the
-/// same reading inside `run_plane_reconcile_live`, but that binary's leg chain
-/// aborts long before reaching it on an unrelated pre-existing refusal
-/// (`VerifyEffectWriterRole` / `effect-writer-role-out-of-bounds`), and that is
-/// an APPLY-mode action. Planning never executes it, so this reading stays
-/// reachable while that stands.
+/// same reading inside `run_plane_reconcile_live`, whose leg chain stops at its
+/// first failing leg. Planning executes no action, so this reading stays
+/// reachable on its own.
 #[tokio::test]
 async fn authoring_privileges_at_record_plan_no_repair_live() {
     let url = locked_database::database(wamn_test_postgres::database);
@@ -172,10 +170,9 @@ pub(super) async fn two_plane_residency_leg(su: &Client) {
     install_control_plane_residency(su).await;
 
     // Real drift, so this is an UPGRADE and not a fresh install: a record column
-    // the reconciler must restore, plus schema-level ACL drift it must narrow.
+    // the reconciler must restore.
     su.batch_execute(&format!(
-        "ALTER TABLE {SCHEMA}.run_queue DROP COLUMN lease_owner; \
-         GRANT CREATE ON SCHEMA {SCHEMA} TO wamn_effect_writer;"
+        "ALTER TABLE {SCHEMA}.run_queue DROP COLUMN lease_owner;"
     ))
     .await
     .expect("install converge-path drift");

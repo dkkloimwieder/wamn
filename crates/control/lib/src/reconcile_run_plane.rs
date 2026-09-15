@@ -57,19 +57,16 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::{DurabilityClass, Triple};
 use wamn_schema_control::{
-    BareSchemaName, EffectWriterRoleObservation, RowPolicyObservation, RowSecurityObservation,
-    RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
-    ScenarioAuthorRoleObservation, catalog_schema_present_sql,
-    count_retired_authored_ordering_rows_sql, count_stale_registration_keys_sql, plan_run_plane,
-    select_app_run_queue_authority_sql, select_app_scenario_author_membership_sql,
-    select_authoring_effective_column_privileges_sql,
+    BareSchemaName, RowPolicyObservation, RowSecurityObservation, RunPlaneAction,
+    RunPlaneActionKind, RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation,
+    catalog_schema_present_sql, count_retired_authored_ordering_rows_sql,
+    count_stale_registration_keys_sql, plan_run_plane, select_app_run_queue_authority_sql,
+    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_dispatch_reader_schema_privileges_sql,
     select_dispatch_reader_table_privileges_sql,
     select_effect_table_effective_column_privileges_sql,
     select_effect_table_effective_privileges_sql, select_effect_table_privileges_sql,
-    select_effect_writer_role_sql, select_effect_writer_run_column_privileges_sql,
-    select_effect_writer_run_table_privileges_sql, select_effect_writer_schema_privileges_sql,
     select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
@@ -82,10 +79,9 @@ use wamn_schema_control::{
 /// the role bootstrap in [`reconcile`].
 ///
 /// **This is a permission, not an ordering assertion.** Membership never claims
-/// an action leads the plan; it says the action MAY lead it. Every member either
-/// refuses outright — the `VerifyEffectWriterRole` boundary is a pure `DO`
-/// block that `RAISE`s or does nothing — or opens with an `ACCESS EXCLUSIVE` lock. Most
-/// lock-taking members preflight before migration. `FailureDetailCutover` is
+/// an action leads the plan; it says the action MAY lead it. Every member opens
+/// with an `ACCESS EXCLUSIVE` lock. Most lock-taking members preflight before
+/// migration. `FailureDetailCutover` is
 /// the deliberate exception: its one `ALTER TABLE ... DROP COLUMN ... RESTRICT`
 /// is transactional, so a dependent-object refusal rolls back both column drops.
 /// `ensure_wamn_app_role` is itself a WRITE: it creates or hardens `wamn_app`
@@ -101,7 +97,7 @@ use wamn_schema_control::{
 ///
 /// **The written order is NOT execution order.** The lookup is `contains`, which
 /// is order-insensitive, so the order here is decoration. The planner emits
-/// `VerifyEffectWriterRole` AFTER `PartitionPlaneCutover` and
+/// `FrameIdentityCutover` AFTER `PartitionPlaneCutover` and
 /// `ChildRunCutover` — the reverse of how it is listed.
 /// `pre_role_bootstrap_allowlist_is_exact` pins
 /// this array by equality and so freezes the order: it certifies the SET, and
@@ -114,8 +110,7 @@ use wamn_schema_control::{
 /// 2. A non-allowlisted push interleaved AHEAD of allowlisted ones — the loop
 ///    consumes a PREFIX, so the first non-member truncates it and silently
 ///    strips the pre-bootstrap property from every allowlisted action behind it.
-const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 12] = [
-    RunPlaneActionKind::VerifyEffectWriterRole,
+const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 11] = [
     RunPlaneActionKind::RetireNodeRuns,
     RunPlaneActionKind::RetireExecutionBundles,
     RunPlaneActionKind::FrameIdentityCutover,
@@ -610,32 +605,8 @@ async fn observe(
                 can_replicate: row.get(5),
                 bypasses_rls: row.get(6),
             }),
-        effect_writer_role: client
-            .query_opt(&select_effect_writer_role_sql(), &[])
-            .await
-            .context("read effect-writer role boundary")?
-            .map(|row| EffectWriterRoleObservation {
-                can_login: row.get(0),
-                is_superuser: row.get(1),
-                can_create_database: row.get(2),
-                can_create_role: row.get(3),
-                inherits_roles: row.get(4),
-                can_replicate: row.get(5),
-                bypasses_rls: row.get(6),
-                can_connect: row.get(7),
-                owns_objects: row.get(8),
-                membership_out_of_bounds: row.get(9),
-            }),
         ..Default::default()
     };
-    let writer_schema = client
-        .query_one(
-            select_effect_writer_schema_privileges_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read effect-writer schema privileges")?;
-    obs.effect_writer_schema_privileges = (writer_schema.get(0), writer_schema.get(1));
     for row in client
         .query(
             select_effect_table_privileges_sql(),
@@ -673,32 +644,6 @@ async fn observe(
         .context("read effective effect-table column privileges")?
     {
         obs.effect_table_effective_column_privileges
-            .entry((row.get(0), row.get(1)))
-            .or_default()
-            .insert(row.get(2));
-    }
-    for row in client
-        .query(
-            select_effect_writer_run_table_privileges_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read effect-writer run table privileges")?
-    {
-        obs.effect_writer_run_table_privileges
-            .entry(row.get(0))
-            .or_default()
-            .insert(row.get(1));
-    }
-    for row in client
-        .query(
-            select_effect_writer_run_column_privileges_sql(),
-            &[&schema.as_str()],
-        )
-        .await
-        .context("read effect-writer run column privileges")?
-    {
-        obs.effect_writer_run_column_privileges
             .entry((row.get(0), row.get(1)))
             .or_default()
             .insert(row.get(2));
@@ -1150,7 +1095,6 @@ mod tests {
         assert_eq!(
             PRE_ROLE_BOOTSTRAP_ACTIONS,
             [
-                RunPlaneActionKind::VerifyEffectWriterRole,
                 RunPlaneActionKind::RetireNodeRuns,
                 RunPlaneActionKind::RetireExecutionBundles,
                 RunPlaneActionKind::FrameIdentityCutover,

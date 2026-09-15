@@ -109,8 +109,7 @@ use wamn_control::reconcile_run_plane::{
 use wamn_control::verification_policy::project_environment_policy;
 use wamn_control_provision::{
     CredentialGeneration, DISPATCH_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
-    effect_writer_generation_role, project_env_database_name, sql as provision_sql,
-    workload_generation_role,
+    project_env_database_name, sql as provision_sql, workload_generation_role,
 };
 use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
 use wamn_test_infrastructure::locked_database;
@@ -350,13 +349,6 @@ async fn reset(su: &Client) {
              ALTER ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
                NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
            END IF; \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_effect_writer') THEN \
-             CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           ELSE \
-             ALTER ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB \
-               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_run_projection_writer') THEN \
              CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB \
                NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
@@ -371,7 +363,7 @@ async fn reset(su: &Client) {
              'REVOKE CONNECT ON DATABASE %I FROM wamn_app', current_database() \
            ); \
            EXECUTE format( \
-             'REVOKE CONNECT ON DATABASE %I FROM wamn_effect_writer, wamn_run_projection_writer', current_database() \
+             'REVOKE CONNECT ON DATABASE %I FROM wamn_run_projection_writer', current_database() \
            ); \
          END $$;"
     ))
@@ -476,7 +468,6 @@ async fn run_plane_reconcile_live() {
     frame_identity_cutover_leg(&su).await;
     effect_writer_cutover_leg(&su).await;
     effect_writer_populated_refusal_leg(&su).await;
-    provisioner_minted_generation_leg(&su).await;
     forced_rls_owner_refusal_leg(&su).await;
     partition_plane_authored_ordering_refusal_leg(&su).await;
     partition_plane_cutover_leg(&su).await;
@@ -503,15 +494,6 @@ async fn run_plane_reconcile_live() {
     retired_effect_disposition_cutover_leg(&su).await;
     persisted_literal_check_drift_leg(&su).await;
     dispatch_reader_read_surface_leg(&su, &url).await;
-}
-
-/// Own entry so the provisioner-minted generation contract can be run — and
-/// mutated — alone (wamn-0h0g.12.178).
-#[tokio::test]
-async fn provisioner_minted_generation_live() {
-    let url = locked_database::database(wamn_test_postgres::database);
-    let su = connect(&url).await;
-    provisioner_minted_generation_leg(&su).await;
 }
 
 /// The dispatcher read principal's in-database surface (wamn-0h0g.12.123).
@@ -893,84 +875,6 @@ async fn mint_guest_generation(su: &Client, url: &str, tenant: &str) -> (String,
     );
     let client = connect_as(url, &generation, GUEST_GENERATION_PASSWORD).await;
     (generation, client)
-}
-
-/// wamn-0h0g.12.178: the reconciler must ACCEPT the generation shape its OWN
-/// provisioner mints.
-///
-/// Every other generation leg in this file builds its role by hand with a bare
-/// `GRANT wamn_effect_writer TO <generation>`, which PostgreSQL 16+ defaults to
-/// `SET TRUE`. The prepare path emits `SET FALSE`.
-/// See `docs/architecture/data-access.md#schema-and-definition-ownership`.
-/// The edge production actually carries never reached this check,
-/// and `generation_role_contract_violation_sql` was left demanding the opposite
-/// of what the provisioner writes (`358f6792` flipped the provisioner and its
-/// own check without flipping the reconciler). This leg mints the generation
-/// through the provisioner's OWN batch, so the shape under test is the shape
-/// `provision-project-env --prepare` installs, and then requires the real verb
-/// to converge.
-async fn provisioner_minted_generation_leg(su: &Client) {
-    reset(su).await;
-    let schema = schema();
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply catalog-schema");
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply run-state");
-    su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
-        .await
-        .expect("apply run-queue");
-
-    let database: String = su
-        .query_one("SELECT current_database()", &[])
-        .await
-        .expect("read the reconciled database")
-        .get(0);
-    let generation = effect_writer_generation_role("t1", &database, CredentialGeneration::A);
-    drop_generation_role(su, &generation).await;
-    su.batch_execute(&provision_sql::prepare_effect_writer_generation_sql(
-        &database,
-        &generation,
-        "run-plane-prepared-generation",
-        "2099-01-01T00:00:00Z",
-    ))
-    .await
-    .expect("mint the generation through the real prepare batch");
-
-    // The server's own answer for the edge the provisioner just wrote, pinned
-    // so a later provisioner change cannot silently re-open the disagreement.
-    let edge = su
-        .query_one(
-            "SELECT edge.admin_option, edge.inherit_option, edge.set_option \
-               FROM pg_catalog.pg_auth_members AS edge \
-               JOIN pg_catalog.pg_roles AS parent ON parent.oid = edge.roleid \
-               JOIN pg_catalog.pg_roles AS member ON member.oid = edge.member \
-              WHERE member.rolname = $1 AND parent.rolname = 'wamn_effect_writer'",
-            &[&generation],
-        )
-        .await
-        .expect("read the minted stable-role membership edge");
-    assert_eq!(
-        (
-            edge.get::<_, bool>(0),
-            edge.get::<_, bool>(1),
-            edge.get::<_, bool>(2),
-        ),
-        (false, true, false),
-        "the prepare path grants ADMIN FALSE, INHERIT TRUE, SET FALSE"
-    );
-
-    let plan = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("the reconciler accepts a generation its own provisioner minted");
-    assert!(
-        plan.is_noop(),
-        "a prepared generation is not schema drift: {:#?}",
-        plan.actions
-    );
-
-    drop_generation_role(su, &generation).await;
 }
 
 /// Manifestations 1 + 4: the 2jkm.41-sweep drift set plus the outbox era.

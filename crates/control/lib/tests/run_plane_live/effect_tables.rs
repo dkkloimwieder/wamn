@@ -413,7 +413,7 @@ async fn effect_writer_schema_snapshot(su: &Client) -> String {
         &[&SCHEMA],
     )
     .await
-    .expect("snapshot effect-writer schema")
+    .expect("snapshot effect-table schema")
     .get(0)
 }
 
@@ -453,26 +453,6 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
     .await
     .expect("seed the run the writer cutover reconciles around");
     install_empty_incompatible_effect_writer_shape(su).await;
-
-    su.batch_execute("ALTER ROLE wamn_effect_writer LOGIN")
-        .await
-        .expect("make stable writer role invalid");
-    let before_role_refusal = effect_writer_schema_snapshot(su).await;
-    let error = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect_err("invalid stable role refuses before empty cutover");
-    let postgres: tokio_postgres::Error = error.downcast().expect("role refusal");
-    let database = postgres.as_db_error().expect("typed role refusal");
-    assert_eq!(database.code().code(), "42501");
-    assert_eq!(database.message(), "effect-writer-role-out-of-bounds");
-    assert_eq!(
-        effect_writer_schema_snapshot(su).await,
-        before_role_refusal,
-        "role verification precedes empty structural cutover"
-    );
-    su.batch_execute("ALTER ROLE wamn_effect_writer NOLOGIN")
-        .await
-        .expect("restore stable writer role");
 
     let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
@@ -549,257 +529,91 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
     );
 
     su.batch_execute(&format!(
-        "GRANT CREATE ON SCHEMA {SCHEMA} TO wamn_effect_writer; \
-         GRANT SELECT ON {SCHEMA}.effect_attempts TO wamn_scenario_author; \
+        "GRANT SELECT ON {SCHEMA}.effect_attempts TO wamn_scenario_author; \
          GRANT UPDATE (attempt_input_ref) ON {SCHEMA}.effect_attempts TO wamn_app; \
-         GRANT INSERT ON {SCHEMA}.effect_attempt_dispatches TO wamn_effect_writer; \
-         GRANT INSERT ON {SCHEMA}.effect_attempt_outcomes TO wamn_effect_writer; \
-         GRANT SELECT ON {SCHEMA}.runs TO wamn_effect_writer; \
-         GRANT UPDATE (status) ON {SCHEMA}.runs TO wamn_effect_writer; \
-         ALTER TABLE {SCHEMA}.run_queue DROP COLUMN lease_owner; \
-         REVOKE SELECT (lease_expires_at) ON {SCHEMA}.run_queue FROM wamn_effect_writer; \
-         GRANT SELECT (lease_generation) ON {SCHEMA}.run_queue TO wamn_effect_writer;"
+         GRANT INSERT ON {SCHEMA}.effect_attempt_dispatches TO wamn_app; \
+         GRANT INSERT ON {SCHEMA}.effect_attempt_outcomes TO wamn_app;"
     ))
     .await
-    .expect("install schema/table/column ACL drift");
+    .expect("install table/column ACL drift");
     let repair = reconcile_run_plane::reconcile(su, &schema, true)
         .await
-        .expect("repair effect-writer ACL drift");
+        .expect("repair effect-table ACL drift");
     assert!(repair.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
-            && action.target == format!("{SCHEMA}.usage")
-    }));
-    assert!(repair.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+        action.kind == RunPlaneActionKind::RepairEffectTablePrivilege
             && action.target == format!("{SCHEMA}.effect_attempts")
     }));
     // THE CONVERGE PATH for the two sibling tables (wamn-0h0g.20.32): an append
-    // granted directly to the stable role on an ALREADY-PROVISIONED database is
-    // drift the reconciler must REMOVE. The DDL alone cannot show this — it only
-    // shows birth — so the drift above is installed on purpose.
+    // granted directly on an ALREADY-PROVISIONED database is drift the
+    // reconciler must REMOVE. The DDL alone cannot show this — it only shows
+    // birth — so the drift above is installed on purpose.
     for table in ["effect_attempt_dispatches", "effect_attempt_outcomes"] {
         assert!(
             repair.actions.iter().any(|action| {
-                action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+                action.kind == RunPlaneActionKind::RepairEffectTablePrivilege
                     && action.target == format!("{SCHEMA}.{table}")
             }),
             "the reconciler did not plan to remove the sibling table append on {table}"
         );
     }
-    for table in ["runs", "run_queue"] {
-        assert!(repair.actions.iter().any(|action| {
-            action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
-                && action.target == format!("{SCHEMA}.{table}.effect-read")
-        }));
-    }
-    let add_lease_owner = repair
-        .actions
-        .iter()
-        .position(|action| {
-            action.kind == RunPlaneActionKind::AddColumn && action.target == "run_queue.lease_owner"
-        })
-        .expect("partial queue adds the missing writer-read column");
-    let repair_queue_read = repair
-        .actions
-        .iter()
-        .position(|action| action.target == format!("{SCHEMA}.run_queue.effect-read"))
-        .unwrap();
-    assert!(add_lease_owner < repair_queue_read);
     let privileges = su
         .query_one(
             &format!(
-                "SELECT has_schema_privilege('wamn_effect_writer','{SCHEMA}','USAGE'), \
-                        has_schema_privilege('wamn_effect_writer','{SCHEMA}','CREATE'), \
-                        has_column_privilege('wamn_app','{SCHEMA}.effect_attempts', \
+                "SELECT has_column_privilege('wamn_app','{SCHEMA}.effect_attempts', \
                                              'attempt_input_ref','UPDATE'), \
                         has_table_privilege('wamn_scenario_author', \
                                             '{SCHEMA}.effect_attempts','SELECT'), \
-                        has_table_privilege('wamn_effect_writer', \
+                        has_table_privilege('wamn_app', \
                                             '{SCHEMA}.effect_attempts','INSERT'), \
-                        has_table_privilege('wamn_effect_writer', \
+                        has_table_privilege('wamn_app', \
                                             '{SCHEMA}.effect_attempts','SELECT'), \
-                        has_any_column_privilege('wamn_effect_writer', \
+                        has_any_column_privilege('wamn_app', \
                                                  '{SCHEMA}.effect_attempts','INSERT'), \
-                        has_table_privilege('wamn_effect_writer', \
+                        has_table_privilege('wamn_app', \
                                             '{SCHEMA}.effect_attempt_dispatches','INSERT'), \
-                        has_table_privilege('wamn_effect_writer', \
+                        has_table_privilege('wamn_app', \
                                             '{SCHEMA}.effect_attempt_outcomes','INSERT'), \
-                        EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_effect_writer' \
+                        EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app' \
                                  AND NOT (rolsuper OR rolbypassrls))"
             ),
             &[],
         )
         .await
-        .expect("read converged effect-writer ACL boundary");
-    assert!(privileges.get::<_, bool>(0));
+        .expect("read converged effect-table ACL boundary");
+    assert!(!privileges.get::<_, bool>(0));
     assert!(!privileges.get::<_, bool>(1));
-    assert!(!privileges.get::<_, bool>(2));
-    assert!(!privileges.get::<_, bool>(3));
     // BORN PARKED (wamn-0h0g.20.30). THE SERVER'S OWN ANSWER, not the DDL text:
-    // once the reconciler converges, the stable writer role holds READ on the
-    // attempt table and NO append — at table level or at any column. Every
-    // provisioned generation login inherits this role with INHERIT TRUE, so this
-    // is exactly what a fresh project environment is born holding, and — because
-    // the drift above was installed first — what an UPGRADED one converges to.
+    // once the reconciler converges, the guest role holds READ on the attempt
+    // table and NO append — at table level or at any column. This is exactly
+    // what a fresh project environment is born holding, and — because the drift
+    // above was installed first — what an UPGRADED one converges to.
     assert!(
-        !privileges.get::<_, bool>(4),
+        !privileges.get::<_, bool>(2),
         "the reconciler re-minted a LIVE append authority on a parked table"
     );
-    assert!(privileges.get::<_, bool>(5), "the writer keeps its read");
+    assert!(privileges.get::<_, bool>(3), "the guest keeps its read");
     assert!(
-        !privileges.get::<_, bool>(6),
+        !privileges.get::<_, bool>(4),
         "column-level append survived the table-level park"
     );
     // wamn-0h0g.20.32: both sibling tables are parked on the same footing, and
-    // the append DIRECTLY granted to the stable role above is gone — the
-    // reconciler removed it rather than re-granting it.
+    // the append DIRECTLY granted above is gone — the reconciler removed it
+    // rather than re-granting it.
     assert!(
-        !privileges.get::<_, bool>(7),
+        !privileges.get::<_, bool>(5),
         "the reconciler left a LIVE append on effect_attempt_dispatches"
     );
     assert!(
-        !privileges.get::<_, bool>(8),
+        !privileges.get::<_, bool>(6),
         "the reconciler left a LIVE append on effect_attempt_outcomes"
     );
     // A superuser or RLS-bypassing role would mask every refusal asserted above.
-    assert!(privileges.get::<_, bool>(9));
-    let run_reads = su
-        .query_one(
-            &format!(
-                "SELECT \
-                    has_table_privilege('wamn_effect_writer','{SCHEMA}.runs','SELECT'), \
-                    has_table_privilege('wamn_effect_writer','{SCHEMA}.runs','UPDATE'), \
-                    has_column_privilege('wamn_effect_writer','{SCHEMA}.runs','tenant_id','SELECT') \
-                      AND has_column_privilege('wamn_effect_writer','{SCHEMA}.runs','run_id','SELECT') \
-                      AND has_column_privilege('wamn_effect_writer','{SCHEMA}.runs','status','SELECT'), \
-                    has_column_privilege('wamn_effect_writer','{SCHEMA}.runs','flow_id','SELECT'), \
-                    has_table_privilege('wamn_effect_writer','{SCHEMA}.run_queue','SELECT'), \
-                    has_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','tenant_id','SELECT') \
-                      AND has_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','run_id','SELECT') \
-                      AND has_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','lease_owner','SELECT') \
-                      AND has_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','lease_expires_at','SELECT'), \
-                    has_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','lease_generation','SELECT'), \
-                    has_any_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','INSERT,UPDATE,REFERENCES')"
-            ),
-            &[],
-        )
-        .await
-        .expect("read exact effect-writer runnable-state privileges");
-    assert!(!run_reads.get::<_, bool>(0));
-    assert!(!run_reads.get::<_, bool>(1));
-    assert!(run_reads.get::<_, bool>(2));
-    assert!(!run_reads.get::<_, bool>(3));
-    assert!(!run_reads.get::<_, bool>(4));
-    assert!(run_reads.get::<_, bool>(5));
-    assert!(run_reads.get::<_, bool>(6));
-    assert!(!run_reads.get::<_, bool>(7));
-    // wamn-0h0g.26.3.1 (204220e8) retired the node-runs projection, and with it
-    // the retired projection's ACL target and every rogue-projection-authority
-    // path this leg used to close. `wamn_projection_rogue_member` survives only
-    // as the transitive-membership witness the generation contract below needs.
-    su.batch_execute(
-        "DO $roles$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_projection_rogue_member') THEN \
-             CREATE ROLE wamn_projection_rogue_member NOLOGIN INHERIT; \
-           END IF; \
-         END $roles$;",
-    )
-    .await
-    .expect("install the transitive-membership witness");
-
-    // wamn-0h0g.12.178: both hand-built generations below carry the option shape
-    // the prepare path emits, so each refusal stays attributable to the ONE
-    // cause its assertion names rather than also tripping the edge-option term.
-    let generation = "wamn_effect_writer_0000000000000000000000000000000000000000_a";
-    su.batch_execute(&format!(
-        "DO $generation$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{generation}') THEN \
-             CREATE ROLE {generation} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               INHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
-         END $generation$; \
-         GRANT wamn_effect_writer TO {generation} \
-           WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; \
-         GRANT {generation} TO wamn_projection_rogue_member;"
-    ))
-    .await
-    .expect("install unexpected transitive generation membership");
-    let inherited = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect_err("unexpected stable-role membership must fail closed");
-    assert!(
-        format!("{inherited:#}").contains("effect-writer-role-out-of-bounds"),
-        "wrong inherited-authority refusal: {inherited:#}"
-    );
-    assert!(
-        su.query_one(
-            &format!("SELECT pg_has_role('wamn_projection_rogue_member','{generation}','MEMBER')"),
-            &[],
-        )
-        .await
-        .expect("read retained refused membership")
-        .get::<_, bool>(0),
-        "refusal is atomic and does not silently rewrite role membership"
-    );
-    su.batch_execute(&format!(
-        "REVOKE {generation} FROM wamn_projection_rogue_member; \
-         REVOKE wamn_effect_writer FROM {generation};"
-    ))
-    .await
-    .expect("remove disposable rogue memberships");
-
-    let impostor = "wamn_effect_writer_1111111111111111111111111111111111111111_b";
-    su.batch_execute(&format!(
-        "DO $impostor$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{impostor}') THEN \
-             CREATE ROLE {impostor} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               INHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
-         END $impostor$; \
-         ALTER ROLE {impostor} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-           INHERIT NOREPLICATION NOBYPASSRLS; \
-         GRANT wamn_run_projection_writer TO {impostor} \
-           WITH ADMIN FALSE, INHERIT TRUE, SET FALSE; \
-         DO $connect$ BEGIN EXECUTE format( \
-           'GRANT CONNECT ON DATABASE %I TO {impostor}', current_database()); \
-         END $connect$;"
-    ))
-    .await
-    .expect("install projection-only connected generation impostor");
-    let impostor_refusal = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect_err("projection-only connected generation impostor must fail closed");
-    assert!(
-        format!("{impostor_refusal:#}").contains("effect-writer-role-out-of-bounds"),
-        "wrong connected-generation refusal: {impostor_refusal:#}"
-    );
-    let impostor_retained: bool = su
-        .query_one(
-            &format!(
-                "SELECT has_database_privilege('{impostor}',current_database(),'CONNECT') \
-                    AND pg_has_role('{impostor}','wamn_run_projection_writer','MEMBER') \
-                    AND NOT pg_has_role('{impostor}','wamn_effect_writer','MEMBER')"
-            ),
-            &[],
-        )
-        .await
-        .expect("read atomically retained connected impostor")
-        .get(0);
-    assert!(impostor_retained);
-    su.batch_execute(&format!(
-        "DO $disconnect$ BEGIN EXECUTE format( \
-           'REVOKE CONNECT ON DATABASE %I FROM {impostor}', current_database()); \
-         END $disconnect$; \
-         REVOKE wamn_run_projection_writer FROM {impostor}; \
-         ALTER ROLE {impostor} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';"
-    ))
-    .await
-    .expect("remove disposable connected generation impostor authority");
+    assert!(privileges.get::<_, bool>(7));
     let clean = reconcile_run_plane::reconcile(su, &schema, true)
         .await
-        .expect("the writer ACL converges after authority removal");
+        .expect("the effect-table ACL stays converged");
     assert!(!clean.actions.iter().any(|action| {
-        action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+        action.kind == RunPlaneActionKind::RepairEffectTablePrivilege
             && action.target == format!("{SCHEMA}.effect_attempts")
     }));
 }

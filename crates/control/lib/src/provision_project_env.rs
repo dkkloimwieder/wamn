@@ -76,14 +76,12 @@ use wamn_control_provision::SystemReader;
 use wamn_control_provision::session_target::{SessionTarget, validate_session_tenant_id};
 use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, EffectWriterCredentialScope, EffectWriterCredentialValidity,
-    INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, PlatformComponent, WorkloadRoleFamily,
-    WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody, WorkloadSecretBodyKind,
-    bind_platform_principal_sql, compose_url, effect_writer_credential,
-    legacy_effect_writer_generation_role, project_env_database_name, project_env_namespace,
-    project_env_secret_name, render_project_env_database, render_project_env_secret_manifest,
-    render_workload_secret_manifest, sql, validate_instance_suffix, validate_project_env,
-    workload_generation_role,
+    APP_ROLE, CredentialGeneration, INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, PlatformComponent,
+    WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody,
+    WorkloadSecretBodyKind, bind_platform_principal_sql, compose_url, project_env_database_name,
+    project_env_namespace, project_env_secret_name, render_project_env_database,
+    render_project_env_secret_manifest, render_workload_secret_manifest, sql,
+    validate_instance_suffix, validate_project_env, workload_generation_role,
 };
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_pg_core::quote_ident;
