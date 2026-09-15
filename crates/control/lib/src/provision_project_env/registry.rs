@@ -54,11 +54,7 @@ pub(super) fn mint_instance_suffix() -> anyhow::Result<String> {
 /// pool; a dedicated org owns `<org>-<owner(env)>`. Connects as the `wamn_system`
 /// owner (`SET ROLE`). Shared with the `enable-cdc-project-env` overlay
 /// (wamn-l5i9.9), which targets the same derived cluster.
-pub(crate) async fn resolve_cluster(
-    system_url: &str,
-    org: &str,
-    env: &str,
-) -> anyhow::Result<String> {
+pub async fn resolve_cluster(system_url: &str, org: &str, env: &str) -> anyhow::Result<String> {
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect")?;
@@ -117,7 +113,7 @@ async fn do_resolve_cluster(
 }
 
 /// Read one project-env's stored instance suffix from the registry.
-pub(crate) async fn read_project_env_instance(
+pub async fn read_project_env_instance(
     system_url: &str,
     triple: &Triple,
 ) -> anyhow::Result<String> {
@@ -254,7 +250,7 @@ const CLAIM_PROJECTED_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, tr
 /// it always did. Only a DISPOSABLE environment insists, because for it the
 /// missing projection would be the difference between an author's edit landing
 /// and an author's edit being refused.
-pub(crate) async fn project_tenant_environment(
+pub async fn project_tenant_environment(
     client: &mut tokio_postgres::Client,
     triple: &Triple,
     tenant: Option<&str>,
@@ -328,4 +324,25 @@ pub(crate) async fn project_tenant_environment(
         .commit()
         .await
         .context("commit the project-env control projection")
+}
+
+/// Stamp the creation the recreate just minted onto the tenant's projected
+/// environment, so every control-plane fact this run writes keys to it
+/// (wamn-10yt.52).
+///
+/// The routine refuses a tenant that provisioning never projected — absence
+/// means durable, and a durable environment is never recreated.
+pub async fn claim_environment_instance(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    instance: &str,
+) -> anyhow::Result<()> {
+    let affected_rows = client
+        .execute(
+            wamn_schema_control::claim_environment_instance_sql(),
+            &[&tenant, &instance],
+        )
+        .await?;
+    wamn_schema_control::check_environment_instance_claim(tenant, affected_rows)?;
+    Ok(())
 }

@@ -17,23 +17,24 @@ pub mod dev;
 pub mod dev_gate;
 #[cfg(feature = "ops")]
 pub mod dump_project_env;
-pub mod enable_cdc_project_env;
-mod env_policies;
+pub use wamn_control::enable_cdc_project_env;
+use wamn_control::env_policies;
 #[cfg(feature = "ops")]
 pub mod event_advisories;
-pub mod event_streams;
-mod ident;
+pub use wamn_control::event_streams;
+#[cfg(feature = "ops")]
+use wamn_control::ident;
 pub mod identity_issuer;
 #[cfg(feature = "ops")]
 mod ops_schema;
 mod owned_command;
 pub mod package_verbs;
-pub mod pat_client;
+pub use wamn_control::pat_client;
 pub mod print_release_env;
 pub mod project_env_membership;
 pub mod promote;
 pub mod provision_org;
-pub mod provision_project_env;
+pub use wamn_control::provision_project_env;
 #[cfg(feature = "ops")]
 pub mod prune_record_history;
 #[cfg(feature = "ops")]

@@ -92,7 +92,7 @@ fn create_secret_temp(path: &Path) -> anyhow::Result<(PathBuf, File)> {
     )
 }
 
-pub(crate) fn write_secret_json(path: &Path, doc: &Value) -> anyhow::Result<()> {
+pub fn write_secret_json(path: &Path, doc: &Value) -> anyhow::Result<()> {
     let mut bytes = serde_json::to_vec_pretty(doc).context("serialize Secret JSON")?;
     bytes.push(b'\n');
     let (temp_path, mut file) = create_secret_temp(path)?;
@@ -129,4 +129,38 @@ pub(super) fn emit_text(path: &Option<PathBuf>, label: &str, text: &str) -> anyh
         _ => println!("--- {label} ---\n{text}"),
     }
     Ok(())
+}
+
+#[expect(
+    missing_debug_implementations,
+    reason = "carries minted PATs and password-bearing URLs; no derived formatter may print them"
+)]
+pub struct ProvisionedRoute {
+    pub database_url: String,
+    pub token: String,
+    pub token_prefix: String,
+    pub principal_subject: String,
+    pub management_token: Option<String>,
+    pub management_principal_subject: Option<String>,
+}
+
+pub fn read_json(path: &Path) -> anyhow::Result<Value> {
+    serde_json::from_slice(
+        &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
+    )
+    .with_context(|| format!("parse {}", path.display()))
+}
+
+pub fn secret_value(path: &Path, key: &str) -> anyhow::Result<String> {
+    read_json(path)?["stringData"][key]
+        .as_str()
+        .map(str::to_owned)
+        .with_context(|| format!("{} carries stringData.{key}", path.display()))
+}
+
+pub fn secret_annotation(path: &Path, key: &str) -> anyhow::Result<String> {
+    read_json(path)?["metadata"]["annotations"][key]
+        .as_str()
+        .map(str::to_owned)
+        .with_context(|| format!("{} carries annotation {key}", path.display()))
 }

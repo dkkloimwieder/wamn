@@ -2034,7 +2034,7 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     )
     .await
     .unwrap();
-    crate::dev::coordinator::claim_environment_instance(url, "tenant-a", "16384")
+    claim_environment_instance(&connect().await, "tenant-a", "16384")
         .await
         .unwrap();
     first
@@ -2092,13 +2092,12 @@ async fn tenant_projection_and_instance_claim_hold_on_postgres() {
     assert_eq!(row.get::<_, chrono::DateTime<chrono::Utc>>(1), stable_at);
     assert_eq!(first.query_one("SELECT secret_name FROM registry.project_envs WHERE org='acme' AND project='shipping' AND env='dev'", &[]).await.unwrap().get::<_, String>(0), "db-other", "the earlier registry commit survives projection refusal");
 
-    crate::dev::coordinator::claim_environment_instance(url, "tenant-a", "")
+    claim_environment_instance(&connect().await, "tenant-a", "")
         .await
         .unwrap();
-    let absent =
-        crate::dev::coordinator::claim_environment_instance(url, "tenant-unprojected", "16384")
-            .await
-            .unwrap_err();
+    let absent = claim_environment_instance(&connect().await, "tenant-unprojected", "16384")
+        .await
+        .unwrap_err();
     assert!(
         absent
             .to_string()

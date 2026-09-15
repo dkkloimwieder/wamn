@@ -97,7 +97,6 @@ wamn-control-provision = { workspace = true, features = ["test-util"] }
 wamn-project-state = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
-tokio-rustls = { workspace = true }
 wit-component = { version = "=0.252.0", features = ["dummy-module"] }
 wit-parser = "=0.252.0"
 

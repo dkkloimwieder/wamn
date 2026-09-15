@@ -38,11 +38,11 @@
 
 use tokio_postgres::{Client, NoTls};
 
+use wamn_control::provision_project_env::{privilege_sql, role_posture_sql, role_sql};
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, DISPATCH_READER_ROLE, WorkloadRoleFamily,
     WorkloadRoleScope, sql, workload_generation_role,
 };
-use wamn_ctl::provision_project_env::{privilege_sql, role_posture_sql, role_sql};
 use wamn_test_infrastructure::locked_database;
 
 /// The legacy app-password input remains until `wamn-0h0g.12.185`, but

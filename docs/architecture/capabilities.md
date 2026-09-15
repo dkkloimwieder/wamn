@@ -189,7 +189,7 @@ It requests 30 days and authenticates the returned token as the expected princip
 It writes the credential atomically to a mode-0600 file.
 There is no database issuance fallback or credential output on stdout.
 
-The [PAT client](../../services/ctl/src/pat_client.rs) requires HTTPS and complete explicit TLS inputs before resource writes.
+The [PAT client](../../crates/control/lib/src/pat_client.rs) requires HTTPS and complete explicit TLS inputs before resource writes.
 Its base URL cannot contain user information, a query, or a fragment.
 The request permits five seconds and a 4,096-byte response, with no redirect or retry.
 If the connection is lost after issuance, the token can exist without a recoverable raw value.

@@ -25,7 +25,7 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
         )
     );
 
-    let provision = compact(&source("services/ctl/src/provision_project_env.rs"));
+    let provision = compact(&source("crates/control/lib/src/provision_project_env.rs"));
     let record = provision
         .find("let instance = record_project_env(")
         .expect("ordinary provisioning reads or mints the stored suffix");
@@ -43,7 +43,9 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
     assert!(provision.contains(
         "render_project_env_database(&triple, &instance, &cluster, args.connection_limit)"
     ));
-    let workload = compact(&source("services/ctl/src/provision_project_env/workload.rs"));
+    let workload = compact(&source(
+        "crates/control/lib/src/provision_project_env/workload.rs",
+    ));
     assert!(workload.contains(
         "let instance = read_project_env_instance(system_url, &triple).await?; let database = project_env_database_name(org, project, environment, &instance);"
     ));
@@ -66,7 +68,9 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
         "render_workload_secret_manifest( family, &triple, &args.namespace, \
          WorkloadSecretBody::EffectWriterCredential(&credential), )"
     ));
-    let registry = compact(&source("services/ctl/src/provision_project_env/registry.rs"));
+    let registry = compact(&source(
+        "crates/control/lib/src/provision_project_env/registry.rs",
+    ));
     let stored = registry
         .rfind("let stored: String = row.get(0);")
         .expect("recording consumes the returned stored suffix");
@@ -94,7 +98,7 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
         "let db_name = project_env_database_name(&args.org, &args.project, triple.env.as_str(), instance);"
     ));
 
-    let cdc = compact(&source("services/ctl/src/enable_cdc_project_env.rs"));
+    let cdc = compact(&source("crates/control/lib/src/enable_cdc_project_env.rs"));
     assert!(cdc.contains("read_project_env_instance(system_url, &triple).await?"));
     assert!(
         cdc.contains("project_env_database_name(&args.org, &args.project, &args.env, &instance)")

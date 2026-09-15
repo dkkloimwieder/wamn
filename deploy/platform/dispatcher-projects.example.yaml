@@ -25,7 +25,7 @@
 # session on EVERY environment on the cluster — measured live on PostgreSQL 18
 # for the identical shape on `wamn_app` (wamn-0h0g.12.179). The provisioner's
 # privilege batch now REVOKES that grant, and
-# `services/ctl/tests/dispatch_reader_provisioning_live.rs` asserts a generation
+# `crates/control/lib/tests/dispatch_reader_provisioning_live.rs` asserts a generation
 # minted for one database is refused a session on a neighbouring one.
 #
 # WHERE THE URL COMES FROM, and how it rotates:

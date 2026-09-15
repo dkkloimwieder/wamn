@@ -112,9 +112,12 @@ use pat_secrets::{issue_pat_secrets, parse_pat_prefix, revoke_provisioning_pat};
 use registry::{mint_instance_suffix, record_project_env};
 use workload::run_workload_action;
 
-pub(crate) use registry::{project_tenant_environment, read_project_env_instance, resolve_cluster};
+pub use registry::{
+    claim_environment_instance, project_tenant_environment, read_project_env_instance,
+    resolve_cluster,
+};
 
-pub(crate) use output::write_secret_json;
+pub use output::{ProvisionedRoute, read_json, secret_annotation, secret_value, write_secret_json};
 
 #[cfg(test)]
 use output::SECRET_TEMP_SEQUENCE;
@@ -577,9 +580,7 @@ pub fn privilege_sql(database: &str) -> String {
 ///
 /// The identity relations stamp the bound actor. The binding ends with the
 /// transaction.
-pub(crate) async fn provisioning_transaction(
-    client: &mut Client,
-) -> anyhow::Result<Transaction<'_>> {
+pub async fn provisioning_transaction(client: &mut Client) -> anyhow::Result<Transaction<'_>> {
     let transaction = client
         .transaction()
         .await

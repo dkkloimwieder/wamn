@@ -15,7 +15,7 @@ use wamn_control_registry::{DurabilityClass, Env, EnvPolicy, RecoveryDomain};
 /// Add the env-policy durability selector to a pre-carrier system schema and
 /// converge its persisted literal set. Callers SET ROLE to the registry owner
 /// before invoking this shared migration.
-pub(crate) async fn ensure_env_policy_durability_schema(
+pub async fn ensure_env_policy_durability_schema(
     client: &tokio_postgres::Client,
 ) -> anyhow::Result<()> {
     client
@@ -83,7 +83,7 @@ fn env_policy_from_row(row: &Row) -> anyhow::Result<EnvPolicy> {
 
 /// Read an org's whole env-policy set from the system DB, ordered by
 /// `promotion_rank`. Empty for an org with no stamped policies yet.
-pub(crate) async fn read_env_policies(
+pub async fn read_env_policies(
     client: &tokio_postgres::Client,
     org: &str,
 ) -> anyhow::Result<Vec<EnvPolicy>> {
@@ -99,7 +99,7 @@ pub(crate) async fn read_env_policies(
 
 /// Read one env policy from an org's set, or `None` if the slug names none of
 /// the org's policies.
-pub(crate) async fn read_env_policy(
+pub async fn read_env_policy(
     client: &tokio_postgres::Client,
     org: &str,
     name: &str,
@@ -118,7 +118,7 @@ pub(crate) async fn read_env_policy(
 /// Older rows receive the same `standard` value that the additive carrier
 /// migration would persist, so their canonical policy identity is stable
 /// across that migration.
-pub(crate) async fn observe_env_policy(
+pub async fn observe_env_policy(
     client: &tokio_postgres::Client,
     org: &str,
     name: &str,

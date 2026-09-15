@@ -17,14 +17,14 @@ use std::path::{Path, PathBuf};
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 
+use wamn_control::provision_project_env::{
+    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
+    WorkloadGenerationArgs, privilege_sql, role_posture_sql,
+};
 use wamn_control_provision::tenant_key::authority_derivations_bootstrap_sql;
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DISPATCH_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
     project_env_database_name, sql, workload_generation_role,
-};
-use wamn_ctl::provision_project_env::{
-    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
-    WorkloadGenerationArgs, privilege_sql, role_posture_sql,
 };
 
 const ORG: &str = "pg18order";

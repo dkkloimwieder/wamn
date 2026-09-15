@@ -2497,20 +2497,12 @@ pub(crate) async fn claim_environment_instance(
             )
         })?;
     let connection_task = tokio::spawn(connection);
-    let claimed = client
-        .execute(
-            wamn_schema_control::claim_environment_instance_sql(),
-            &[&tenant, &instance],
-        )
-        .await;
+    let claimed =
+        crate::provision_project_env::claim_environment_instance(&client, tenant, instance).await;
     drop(client);
     connection_task.abort();
-    let affected_rows = claimed.map_err(|source| {
-        ProductionDevStageError::owner("claim the environment instance", source.into())
-    })?;
-    wamn_schema_control::check_environment_instance_claim(tenant, affected_rows).map_err(|source| {
-        ProductionDevStageError::owner("claim the environment instance", source.into())
-    })
+    claimed
+        .map_err(|source| ProductionDevStageError::owner("claim the environment instance", source))
 }
 
 /// `target_instance` names WHICH CREATION of the target database this command

@@ -11,14 +11,14 @@ use std::path::{Path, PathBuf};
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 
+use wamn_control::provision_project_env::{
+    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
+    WorkloadGenerationArgs,
+};
 use wamn_control_provision::{
     CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_ROLE,
     EffectWriterCredentialScope, WorkloadRoleFamily, WorkloadRoleScope,
     effect_writer_generation_role, project_env_database_name, sql, workload_generation_role,
-};
-use wamn_ctl::provision_project_env::{
-    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
-    WorkloadGenerationArgs,
 };
 use wamn_run_state::RUN_PROJECTION_WRITER_ROLE;
 

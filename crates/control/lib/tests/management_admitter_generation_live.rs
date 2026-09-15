@@ -17,6 +17,10 @@ use std::path::{Path, PathBuf};
 use tokio_postgres::{Client, NoTls};
 use url::Url;
 
+use wamn_control::provision_project_env::{
+    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
+    WorkloadGenerationArgs,
+};
 use wamn_control_provision::tenant_key::authority_derivations_bootstrap_sql;
 use wamn_control_provision::{
     CredentialGeneration, MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE, WorkloadRoleFamily,
@@ -25,10 +29,6 @@ use wamn_control_provision::{
     render_management_admitter_secret_manifest, sql,
 };
 use wamn_control_registry::Triple;
-use wamn_ctl::provision_project_env::{
-    self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
-    WorkloadGenerationArgs,
-};
 
 const ORG: &str = "pg18admit";
 const PROJECT: &str = "receiving";

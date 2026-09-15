@@ -25,7 +25,6 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use reqwest::Url;
-use serde_json::Value;
 use tokio_postgres::{Client, Config as PostgresConfig, NoTls};
 use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
@@ -37,8 +36,9 @@ use crate::dev::activation::DevActivationIdentity;
 use crate::provision_org::{self, ProvisionOrgArgs, TemplateArg};
 use crate::provision_project_env::{
     self, ProvisionProjectEnvArgs, WorkloadActionVerb, WorkloadGenerationAction,
-    WorkloadGenerationArgs,
+    WorkloadGenerationArgs, secret_annotation,
 };
+pub use crate::provision_project_env::{ProvisionedRoute, read_json, secret_value};
 use crate::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
 
 /// The deployment-owned inputs a standing development environment needs.
@@ -152,19 +152,6 @@ pub const TENANT: &str = "receiving-route-auth";
 
 pub const RELEASE_ID: u32 = 1;
 
-#[expect(
-    missing_debug_implementations,
-    reason = "carries minted PATs and password-bearing URLs; no derived formatter may print them"
-)]
-pub struct ProvisionedRoute {
-    pub database_url: String,
-    pub token: String,
-    pub token_prefix: String,
-    pub principal_subject: String,
-    pub management_token: Option<String>,
-    pub management_principal_subject: Option<String>,
-}
-
 pub async fn connect(url: &str) -> anyhow::Result<(Arc<Client>, tokio::task::JoinHandle<()>)> {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
         .await
@@ -260,27 +247,6 @@ pub fn generation_args(
         pat_issuer: crate::pat_client::PatIssuerArgs::default(),
         revoke_pat_prefix: None,
     }
-}
-
-pub fn read_json(path: &Path) -> anyhow::Result<Value> {
-    serde_json::from_slice(
-        &std::fs::read(path).with_context(|| format!("read {}", path.display()))?,
-    )
-    .with_context(|| format!("parse {}", path.display()))
-}
-
-pub fn secret_value(path: &Path, key: &str) -> anyhow::Result<String> {
-    read_json(path)?["stringData"][key]
-        .as_str()
-        .map(str::to_owned)
-        .with_context(|| format!("{} carries stringData.{key}", path.display()))
-}
-
-fn secret_annotation(path: &Path, key: &str) -> anyhow::Result<String> {
-    read_json(path)?["metadata"]["annotations"][key]
-        .as_str()
-        .map(str::to_owned)
-        .with_context(|| format!("{} carries annotation {key}", path.display()))
 }
 
 pub async fn reset_control_store(admin: &Client) -> anyhow::Result<()> {
