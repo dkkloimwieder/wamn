@@ -25,6 +25,10 @@ use wamn_authoring_model::{
 };
 use wamn_catalog::{PackageCoordinate, WiringDocument};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::push_component::{
+    AdmitComponentRequest, ComponentAdmission, PublishAdmittedComponentRequest, admit_component,
+    project_admitted_component_for_verification, publish_admitted_component,
+};
 use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
 use wamn_schema_control::BareSchemaName;
 use wamn_schema_generator::{MaterializeMode, PackageManifest};
@@ -44,10 +48,6 @@ use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner, DevTargetDu
 use crate::dev_gate::GateClient;
 use crate::print_release_env::{ReleaseCarrier, lookup_release_snapshot};
 use crate::publish_release::{PublishReleaseArgs, ReleaseWiringTarget};
-use crate::push_component::{
-    AdmitComponentArgs, ComponentAdmission, PublishAdmittedComponentArgs, admit_component,
-    project_admitted_component_for_verification, publish_admitted_component,
-};
 use crate::push_release_manifest::PushReleaseManifestArgs;
 
 const BUILD_TOOL: &str = "tools/build-components";
@@ -870,7 +870,7 @@ impl ProductionDevStageRunner {
                 &self.config.activation_identity().tenant,
                 &base_digests,
             )?;
-            let admission = admit_component(AdmitComponentArgs {
+            let admission = admit_component(AdmitComponentRequest {
                 package: package.root,
                 component_bytes: artifact.path,
                 declaration: declaration.path().to_owned(),
@@ -1080,9 +1080,9 @@ impl ProductionDevStageRunner {
         };
 
         for admission in &self.admissions {
-            publish_admitted_component(
+            let outcome = publish_admitted_component(
                 admission,
-                PublishAdmittedComponentArgs {
+                PublishAdmittedComponentRequest {
                     artifact_base: self.config.component_artifact_base().to_owned(),
                     registry_auth_file: self.config.registry_auth_file().to_owned(),
                     insecure_registry: self.config.insecure_registry(),
@@ -1095,6 +1095,7 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("publish admitted component", source)
             })?;
+            crate::component_verbs::print_published(&outcome);
         }
 
         let scope = self.authoring_scope();

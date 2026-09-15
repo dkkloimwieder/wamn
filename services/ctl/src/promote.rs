@@ -833,8 +833,12 @@ async fn copy_portable_facts(
             .projection_hashes
             .get(&component.component_digest)
             .expect("source snapshot loaded one projection hash per component");
-        crate::push_component::append_or_verify_admitted_component(tx, component, projection_hash)
-            .await?;
+        wamn_control::push_component::append_or_verify_admitted_component(
+            tx,
+            component,
+            projection_hash,
+        )
+        .await?;
     }
     for requirement in &source.requirements {
         persist_requirement(tx, tenant, requirement).await?;

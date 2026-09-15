@@ -10,12 +10,12 @@ use tokio_postgres::Client;
 use wamn_catalog::{ComponentDeclaration, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::provision_project_env::secret_value;
+use wamn_control::push_component::{self, AdmitComponentRequest, PublishAdmittedComponentRequest};
 use wamn_ctl::author_wiring::{self, AuthorWiringArgs};
 use wamn_ctl::dev::environment::{
     ENVIRONMENT, JourneyCredentials, ORG, PROJECT, TENANT, connect, spawn_journey_management_gate,
 };
 use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
-use wamn_ctl::push_component::{self, PushComponentArgs};
 use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
 use wamn_platform_identity::{PrincipalKind, issue_pat, resolve_subject, revoke_pat};
 use wamn_runtime::release_manifest::LoadedRelease;
@@ -165,18 +165,22 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     let parent_digest = wamn_runtime::component_admission::component_digest(&bytes);
     let component_path = root.join("parent.wasm");
     std::fs::write(&component_path, bytes)?;
-    push_component::run(PushComponentArgs {
-        package: package.clone(),
-        component_bytes: component_path,
-        declaration: declaration_path,
-        artifact_base: test.inputs.component_artifact_base.clone(),
-        registry_auth_file: test.inputs.registry_auth_file.clone(),
-        insecure_registry: true,
-        oci_ca_paths: Vec::new(),
-        admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
-        project_database_url: test.project_url.to_owned(),
-        control_database_url: test.inputs.system_pg_url.clone(),
-    })
+    push_component::push_component(
+        AdmitComponentRequest {
+            package: package.clone(),
+            component_bytes: component_path,
+            declaration: declaration_path,
+            admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
+        },
+        PublishAdmittedComponentRequest {
+            artifact_base: test.inputs.component_artifact_base.clone(),
+            registry_auth_file: test.inputs.registry_auth_file.clone(),
+            insecure_registry: true,
+            oci_ca_paths: Vec::new(),
+            project_database_url: test.project_url.to_owned(),
+            control_database_url: test.inputs.system_pg_url.clone(),
+        },
+    )
     .await?;
     let wiring = json!({"format-version": "0.1", "wiring-id": WIRING, "version": 1,
         "entry": "parent", "nodes": {"parent": {"component": WIRING,

@@ -10,6 +10,7 @@
 
 pub mod author_wiring;
 pub mod bind_connection;
+pub mod component_verbs;
 #[cfg(feature = "ops")]
 pub mod copy_project_env;
 pub mod delivery;
@@ -34,7 +35,6 @@ pub mod prune_record_history;
 #[cfg(feature = "ops")]
 pub mod prune_run_history;
 pub mod publish_release;
-pub use wamn_control::push_component;
 pub mod push_release_manifest;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;

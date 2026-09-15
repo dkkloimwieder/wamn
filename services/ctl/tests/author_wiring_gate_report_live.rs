@@ -73,8 +73,8 @@ use wamn_catalog::{
     WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::push_component::admitted_projection_hash;
 use wamn_ctl::author_wiring::{AuthorWiringErrorKind, AuthorWiringRequest, author_wiring};
-use wamn_ctl::push_component::admitted_projection_hash;
 
 const TENANT: &str = "gate-report-tenant";
 const PACKAGE: &str = "wamn_receiving";

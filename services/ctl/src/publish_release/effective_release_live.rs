@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{AdmittedComponent, ComponentDeclaration, PackageCoordinate, ServingAttachment};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::push_component::{admitted_projection_hash, append_or_verify_admitted_component};
 use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
@@ -16,7 +17,6 @@ use super::{
     resolve_route_host_overlay, sha256, validate_package_metadata,
 };
 use crate::author_wiring::{self, AuthorWiringRequest};
-use crate::push_component::{admitted_projection_hash, append_or_verify_admitted_component};
 
 const TENANT: &str = "effective-release-poc";
 const ENVIRONMENT: &str = "dev";

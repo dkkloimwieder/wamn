@@ -36,10 +36,10 @@ use wamn_catalog::{
     SERVING_MANIFEST_FORMAT_VERSION, ServingComponentOperation, WiringDocument, WiringNode,
     WiringTerminal, flip_activation,
 };
+use wamn_control::push_component::admitted_projection_hash;
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, workload_generation_role,
 };
-use wamn_ctl::push_component::admitted_projection_hash;
 use wamn_execution_host::{RouterDriver, RouterDriverConfig, WiringCacheCapacity};
 use wamn_run_state::AuthorityClass;
 use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};

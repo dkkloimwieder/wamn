@@ -8,11 +8,9 @@ use wamn_control::enable_cdc_project_env::{self, EnableCdcProjectEnvRequest};
 use wamn_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, read_json, secret_value,
 };
+use wamn_control::push_component::{self, AdmitComponentRequest, PublishAdmittedComponentRequest};
 use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
 use wamn_control_provision::{project_env_database_name, sql, validate_instance_suffix};
-use wamn_ctl::push_component::{
-    self, AdmitComponentArgs, PublishAdmittedComponentArgs, PushComponentArgs,
-};
 
 /// Provision the declared project and read its emitted connection and credentials.
 ///
@@ -133,40 +131,12 @@ pub async fn reconcile_package_data_access(
 
 /// Publish one component through the existing admission and projection calls.
 /// Return its admitted digest directly for the application's connection binding.
-pub async fn push_component(args: PushComponentArgs) -> anyhow::Result<String> {
-    let PushComponentArgs {
-        package,
-        component_bytes,
-        declaration,
-        artifact_base,
-        registry_auth_file,
-        insecure_registry,
-        oci_ca_paths,
-        admitted_platform_packages,
-        project_database_url,
-        control_database_url,
-    } = args;
-    let admission = push_component::admit_component(AdmitComponentArgs {
-        package,
-        component_bytes,
-        declaration,
-        admitted_platform_packages,
-    })?;
-    push_component::project_admitted_component_for_verification(&admission, &project_database_url)
-        .await?;
-    push_component::publish_admitted_component(
-        &admission,
-        PublishAdmittedComponentArgs {
-            artifact_base,
-            registry_auth_file,
-            insecure_registry,
-            oci_ca_paths,
-            project_database_url,
-            control_database_url,
-        },
-    )
-    .await?;
-    Ok(admission.component_digest().to_owned())
+pub async fn push_component(
+    admit: AdmitComponentRequest,
+    publish: PublishAdmittedComponentRequest,
+) -> anyhow::Result<String> {
+    let outcome = push_component::push_component(admit, publish).await?;
+    Ok(outcome.component_digest)
 }
 
 /// Configure the declared CDC reader and apply the existing SQL statements.

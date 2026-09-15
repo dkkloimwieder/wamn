@@ -11,7 +11,6 @@ use std::path::{Component as PathComponent, Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
-use clap::Args;
 use oci_client::client::{
     Certificate, CertificateEncoding, ClientConfig, ClientProtocol, Config, ImageLayer,
 };
@@ -30,7 +29,7 @@ use wamn_runtime::component_artifact::{
     component_artifact_config_bytes, component_artifact_layout, component_artifact_reference,
 };
 use wamn_runtime::component_artifact_source::{
-    ComponentArtifactSource, ComponentArtifactSourceConfig, OCI_CA_PATHS_ENV, read_ca_bundles,
+    ComponentArtifactSource, ComponentArtifactSourceConfig, read_ca_bundles,
 };
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use wamn_schema_control::connections::ComponentConnectionRequirement;
@@ -276,57 +275,9 @@ impl ProjectionOutcome {
     }
 }
 
-#[derive(Debug, Args)]
-pub struct PushComponentArgs {
-    /// Package root whose strict wamn.json owns this component coordinate.
-    #[arg(long)]
-    pub package: PathBuf,
-
-    /// Exact wasm component bytes to validate and publish.
-    #[arg(long)]
-    pub component_bytes: PathBuf,
-
-    /// JSON declaration of catalog scope, component identity, operation, typed
-    /// input/output ports, and parameters.
-    #[arg(long)]
-    pub declaration: PathBuf,
-
-    /// Explicit `<registry>/<repository>` base. It must not include a tag or
-    /// digest; the admitted component digest derives the immutable tag.
-    #[arg(long)]
-    pub artifact_base: String,
-
-    /// Projected `.dockerconfigjson` file carrying the push credential.
-    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
-    pub registry_auth_file: PathBuf,
-
-    /// Use plain HTTP for exactly the registry host in `--artifact-base`.
-    #[arg(long, default_value_t = false)]
-    pub insecure_registry: bool,
-
-    /// PEM CA bundle trusted for the registry, on top of the compiled-in
-    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
-    #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
-    pub oci_ca_paths: Vec<PathBuf>,
-
-    /// Exact admitted `wamn:<package>` capability. Repeat for each package the
-    /// closed platform registry grants this component.
-    #[arg(long = "admit-platform-package")]
-    pub admitted_platform_packages: Vec<String>,
-
-    /// Owner URL to the already-applied source project database. Env
-    /// `WAMN_PG_ADMIN_URL`.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub project_database_url: String,
-
-    /// Owner URL to the T1 control database. Env `WAMN_SYSTEM_ADMIN_URL`.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
-    pub control_database_url: String,
-}
-
 /// Source-owned inputs for one exact component admission.
 #[derive(Debug)]
-pub struct AdmitComponentArgs {
+pub struct AdmitComponentRequest {
     /// Package root whose strict manifest and generated evidence own the component.
     pub package: PathBuf,
     /// Exact wasm component bytes to admit.
@@ -338,7 +289,7 @@ pub struct AdmitComponentArgs {
 }
 
 /// Deployment-owned effects applied to one completed component admission.
-pub struct PublishAdmittedComponentArgs {
+pub struct PublishAdmittedComponentRequest {
     /// Registry and repository base for the immutable component artifact.
     pub artifact_base: String,
     /// Docker configuration carrying the registry push credential.
@@ -353,10 +304,10 @@ pub struct PublishAdmittedComponentArgs {
     pub control_database_url: String,
 }
 
-impl fmt::Debug for PublishAdmittedComponentArgs {
+impl fmt::Debug for PublishAdmittedComponentRequest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
-            .debug_struct("PublishAdmittedComponentArgs")
+            .debug_struct("PublishAdmittedComponentRequest")
             .field("artifact_base", &self.artifact_base)
             .field("registry_auth_file", &self.registry_auth_file)
             .field("insecure_registry", &self.insecure_registry)
@@ -365,6 +316,17 @@ impl fmt::Debug for PublishAdmittedComponentArgs {
             .field("control_database_url", &"[redacted]")
             .finish()
     }
+}
+
+/// Result of one component publication.
+#[derive(Debug)]
+pub struct PublishAdmittedComponentOutcome {
+    /// SHA-256 identity of the published component bytes.
+    pub component_digest: String,
+    /// Whether the source-project projection was already converged.
+    pub source_project_noop: bool,
+    /// Whether the control projection was already converged.
+    pub control_noop: bool,
 }
 
 /// Exact saved-byte admission reused by later publication.
@@ -429,7 +391,7 @@ impl ComponentAdmission {
 }
 
 /// Validate saved component and package bytes without publication side effects.
-pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmission> {
+pub fn admit_component(args: AdmitComponentRequest) -> anyhow::Result<ComponentAdmission> {
     let directory = crate::apply_package::read_package_directory(&args.package)?;
     let package = plan_package_migrations(&directory, None)
         .context("validate strict package directory before component publication")?;
@@ -455,9 +417,10 @@ pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmi
                 .collect::<BTreeSet<_>>(),
             // Empty is the fail-closed answer, not a stub. A dependency's
             // posture lives in its admitted catalog row, and this function
-            // reads local paths only. `run` opens the project database after
-            // admission returns, so no admitted fact is in reach here and
-            // every declared operation dependency stays effectful.
+            // reads local paths only. `push_component` opens the project
+            // database after admission returns, so no admitted fact is in
+            // reach here and every declared operation dependency stays
+            // effectful.
             effect_free_operation_dependencies: BTreeSet::new(),
         },
     )
@@ -514,8 +477,8 @@ pub async fn project_admitted_component_for_verification(
 /// Publish one exact admission and project its facts without rereading sources.
 pub async fn publish_admitted_component(
     admission: &ComponentAdmission,
-    args: PublishAdmittedComponentArgs,
-) -> anyhow::Result<()> {
+    args: PublishAdmittedComponentRequest,
+) -> anyhow::Result<PublishAdmittedComponentOutcome> {
     let admitted = &admission.component;
     let project_config: PgConfig = args
         .project_database_url
@@ -589,57 +552,21 @@ pub async fn publish_admitted_component(
         )
         .into());
     }
-    println!(
-        "projected {} (source-project: {}; control: {})",
-        admitted.component_digest,
-        if project.is_noop() {
-            "already converged"
-        } else {
-            "changed"
-        },
-        if control.is_noop() {
-            "already converged"
-        } else {
-            "changed"
-        }
-    );
-    println!("{}", admitted.component_digest);
-    Ok(())
+    Ok(PublishAdmittedComponentOutcome {
+        component_digest: admitted.component_digest.clone(),
+        source_project_noop: project.is_noop(),
+        control_noop: control.is_noop(),
+    })
 }
 
 /// Validate, publish, verify, and finally record one admitted component.
-pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
-    let PushComponentArgs {
-        package,
-        component_bytes,
-        declaration,
-        artifact_base,
-        registry_auth_file,
-        insecure_registry,
-        oci_ca_paths,
-        admitted_platform_packages,
-        project_database_url,
-        control_database_url,
-    } = args;
-    let admission = admit_component(AdmitComponentArgs {
-        package,
-        component_bytes,
-        declaration,
-        admitted_platform_packages,
-    })?;
-    project_admitted_component_for_verification(&admission, &project_database_url).await?;
-    publish_admitted_component(
-        &admission,
-        PublishAdmittedComponentArgs {
-            artifact_base,
-            registry_auth_file,
-            insecure_registry,
-            oci_ca_paths,
-            project_database_url,
-            control_database_url,
-        },
-    )
-    .await
+pub async fn push_component(
+    admit: AdmitComponentRequest,
+    publish: PublishAdmittedComponentRequest,
+) -> anyhow::Result<PublishAdmittedComponentOutcome> {
+    let admission = admit_component(admit)?;
+    project_admitted_component_for_verification(&admission, &publish.project_database_url).await?;
+    publish_admitted_component(&admission, publish).await
 }
 
 /// Translate one admitted connection into its platform-owned portable record.
@@ -2053,6 +1980,7 @@ mod tests {
     use wamn_catalog::{
         AdmittedComponentOperation, ComponentOperationDeclaration, ComponentPackageScope,
     };
+    use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
     use super::*;
 
@@ -2603,7 +2531,7 @@ mod tests {
             manifest_sha256: package.manifest_sha256.clone().into_boxed_str(),
             projection_hash: projection_hash.clone().into_boxed_str(),
         };
-        let publish_args = || PublishAdmittedComponentArgs {
+        let publish_args = || PublishAdmittedComponentRequest {
             artifact_base: artifact_base.clone(),
             registry_auth_file: PathBuf::from(&registry_auth_file),
             insecure_registry: true,

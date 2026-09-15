@@ -294,15 +294,15 @@ mod tests {
 
     use serde_json::json;
     use wamn_control::apply_package::{self, ApplyPackageRequest};
+    use wamn_control::push_component::{
+        AdmitComponentRequest, admit_component, project_admitted_component_for_verification,
+    };
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
     use super::*;
     use crate::dev::config::{DevConfig, parse_config};
     use crate::dev::verification_database;
-    use crate::push_component::{
-        AdmitComponentArgs, admit_component, project_admitted_component_for_verification,
-    };
 
     const TENANT: &str = "dev-verification-bootstrap";
 
@@ -633,7 +633,7 @@ mod tests {
         assert_eq!(package_count, 2);
 
         let (scratch, component_bytes, declaration) = receiving_admission_files(&root);
-        let admission = admit_component(AdmitComponentArgs {
+        let admission = admit_component(AdmitComponentRequest {
             package: root.join("apps/wamn_receiving"),
             component_bytes,
             declaration,

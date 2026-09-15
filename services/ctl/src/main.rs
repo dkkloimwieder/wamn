@@ -6,9 +6,9 @@ mod print_platform_principals;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    author_wiring, bind_connection, delivery, identity_issuer, package_verbs, print_release_env,
-    project_env_membership, promote, provision_org, provisioning_verbs, publish_release,
-    push_component, reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
+    author_wiring, bind_connection, component_verbs, delivery, identity_issuer, package_verbs,
+    print_release_env, project_env_membership, promote, provision_org, provisioning_verbs,
+    publish_release, reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
 };
 
 #[derive(Parser)]
@@ -54,7 +54,7 @@ enum Command {
     /// Reconcile generated package data privileges after apply-package.
     ReconcilePackageDataAccess(package_verbs::ReconcilePackageDataAccessArgs),
     /// Validate/publish component bytes, then exact-project their facts to both planes
-    PushComponent(push_component::PushComponentArgs),
+    PushComponent(component_verbs::PushComponentArgs),
     /// Submit one authored wiring document as an immutable gated wiring version (wamn-1xb5)
     AuthorWiring(author_wiring::AuthorWiringArgs),
     /// Bind one admitted component's declared connection alias to an
@@ -112,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
         Command::ReconcilePackageDataAccess(args) => {
             package_verbs::reconcile_data_access(args).await
         }
-        Command::PushComponent(args) => push_component::run(args).await,
+        Command::PushComponent(args) => component_verbs::push(args).await,
         Command::AuthorWiring(args) => author_wiring::run(args).await,
         Command::PublishRelease(args) => publish_release::run(args).await,
         Command::PrintReleaseEnv(args) => print_release_env::run(args).await,

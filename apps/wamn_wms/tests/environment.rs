@@ -17,6 +17,7 @@ use wamn_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, read_json,
     secret_value,
 };
+use wamn_control::push_component::{AdmitComponentRequest, PublishAdmittedComponentRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
 use wamn_ctl::author_wiring::{self, AuthorWiringArgs};
@@ -25,7 +26,6 @@ use wamn_ctl::dev::environment::{JourneyCredentials, connect};
 use wamn_ctl::print_release_env::{self, ReleaseCarrier};
 use wamn_ctl::provision_org::{self, TemplateArg};
 use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
-use wamn_ctl::push_component::PushComponentArgs;
 use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
 use wamn_ctl::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
@@ -375,35 +375,46 @@ pub async fn publish(
         &package,
         "labels",
     )?;
-    let component_args = |component_bytes, declaration, admitted: &[&str]| PushComponentArgs {
+    let admit_request = |component_bytes, declaration, admitted: &[&str]| AdmitComponentRequest {
         package: root.clone(),
         component_bytes,
         declaration,
+        admitted_platform_packages: admitted.iter().map(|value| (*value).to_owned()).collect(),
+    };
+    let publish_request = || PublishAdmittedComponentRequest {
         artifact_base: inputs.component_artifact_base.clone(),
         registry_auth_file: inputs.registry_auth_file.clone(),
         insecure_registry: true,
         oci_ca_paths: Vec::new(),
-        admitted_platform_packages: admitted.iter().map(|value| (*value).to_owned()).collect(),
         project_database_url: route.database_url.clone(),
         control_database_url: inputs.system_pg_url.clone(),
     };
-    let wms_digest = shared::push_component(component_args(
-        inputs.component_directory.join("wms.wasm"),
-        wms_declaration,
-        &["wamn:node", "wamn:postgres"],
-    ))
+    let wms_digest = shared::push_component(
+        admit_request(
+            inputs.component_directory.join("wms.wasm"),
+            wms_declaration,
+            &["wamn:node", "wamn:postgres"],
+        ),
+        publish_request(),
+    )
     .await?;
-    let label_digest = shared::push_component(component_args(
-        label_render_wasm.to_path_buf(),
-        label_declaration,
-        &["wamn:node"],
-    ))
+    let label_digest = shared::push_component(
+        admit_request(
+            label_render_wasm.to_path_buf(),
+            label_declaration,
+            &["wamn:node"],
+        ),
+        publish_request(),
+    )
     .await?;
-    let blob_digest = shared::push_component(component_args(
-        inputs.component_directory.join("blob_put.wasm"),
-        blob_declaration,
-        &["wamn:node", "wasmcloud:blobstore"],
-    ))
+    let blob_digest = shared::push_component(
+        admit_request(
+            inputs.component_directory.join("blob_put.wasm"),
+            blob_declaration,
+            &["wamn:node", "wasmcloud:blobstore"],
+        ),
+        publish_request(),
+    )
     .await?;
     fs::write(
         evidence.join("component-digests.json"),

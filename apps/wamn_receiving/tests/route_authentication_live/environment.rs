@@ -247,20 +247,27 @@ pub(super) async fn push_journey_components(
 ) -> anyhow::Result<()> {
     for declaration in declarations {
         let package = declaration.package;
-        wamn_gate_harness::environment::push_component(PushComponentArgs {
-            package: journey_package_root(package, Some(inputs)),
-            component_bytes: inputs
-                .component_directory
-                .join(format!("{}.wasm", package.component)),
-            declaration: declaration.path.clone(),
-            artifact_base: inputs.component_artifact_base.clone(),
-            registry_auth_file: inputs.registry_auth_file.clone(),
-            insecure_registry: true,
-            oci_ca_paths: Vec::new(),
-            admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
-            project_database_url: project_url.to_owned(),
-            control_database_url: system_url.to_owned(),
-        })
+        wamn_gate_harness::environment::push_component(
+            AdmitComponentRequest {
+                package: journey_package_root(package, Some(inputs)),
+                component_bytes: inputs
+                    .component_directory
+                    .join(format!("{}.wasm", package.component)),
+                declaration: declaration.path.clone(),
+                admitted_platform_packages: vec![
+                    "wamn:node".to_owned(),
+                    "wamn:postgres".to_owned(),
+                ],
+            },
+            PublishAdmittedComponentRequest {
+                artifact_base: inputs.component_artifact_base.clone(),
+                registry_auth_file: inputs.registry_auth_file.clone(),
+                insecure_registry: true,
+                oci_ca_paths: Vec::new(),
+                project_database_url: project_url.to_owned(),
+                control_database_url: system_url.to_owned(),
+            },
+        )
         .await
         .with_context(|| {
             format!(

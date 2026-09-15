@@ -429,7 +429,7 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
 /// Assemble a candidate only in a provisioned disposable target, without publication.
 pub(crate) async fn mint_local(
     mut args: PublishReleaseArgs,
-    admissions: &[crate::push_component::ComponentAdmission],
+    admissions: &[wamn_control::push_component::ComponentAdmission],
     documents: Vec<(ComponentPackageScope, WiringDocument)>,
 ) -> anyhow::Result<(
     MintedReleaseManifest,
