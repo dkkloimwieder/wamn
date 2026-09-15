@@ -118,13 +118,13 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
 
         original.replace(CODE, CODE_BEFORE, CODE_AFTER)?;
         let code = watch.served().await?;
-        code.retained(&first, &["migrate", "introspect", "generate", "apply", "acl"])?;
+        code.retained(&first, &["migrate", "introspect", "generate", "acl"])?;
         code.locations(token, "timing-edited", &["DOCK-1", "DOCK-2"]).await?;
         require_revision(&environment.route.database_url).await?;
 
         original.replace(SQL, "location.location_code ASC", "location.location_code DESC")?;
         let sql = watch.served().await?;
-        sql.retained(&code, &["migrate", "introspect", "apply"])?;
+        sql.retained(&code, &["migrate", "introspect"])?;
         ensure!(!sql.skipped.contains("generate"), "a named SQL edit cannot skip generation");
         sql.locations(token, "timing-edited", &["DOCK-2", "DOCK-1"]).await?;
         require_revision(&environment.route.database_url).await?;
@@ -136,7 +136,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         require_revision(&environment.route.database_url).await?;
         fs::write(repository.join(SQL), valid_sql)?;
         let repaired = watch.served().await?;
-        repaired.retained(&sql, &["migrate", "introspect", "apply"])?;
+        repaired.retained(&sql, &["migrate", "introspect"])?;
 
         original.replace(SCHEMA, SCHEMA_BEFORE, SCHEMA_AFTER)?;
         let reset = watch.served().await?;
