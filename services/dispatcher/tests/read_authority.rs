@@ -194,7 +194,6 @@ fn assert_permitted_to(url: &str, role: &str, label: &str, statement: &str) {
 }
 
 #[test]
-#[ignore = "existing failure wamn-ijhb: the management-admitter replay of the run_queue INSERT arm gets relation \"run_queue\" does not exist, because that generation has no access to the run schema"]
 fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     let _lock = wamn_test_postgres::lock();
     let test_database = wamn_test_postgres::database();
@@ -619,32 +618,6 @@ END $$;
     let insert_attempt =
         format!("INSERT INTO effect_attempts (tenant_id, run_id) VALUES ('{TENANT}','run-a1')");
 
-    // The management admitter is the ONE principal the schema of record grants a
-    // queue write to (`grant_management_admitter_surface_sql`: column-scoped
-    // INSERT on `tenant_id, run_id, available_at, stream_seq`). It is a NOLOGIN
-    // stable ACL role like every other, so the replay dials a GENERATION of it —
-    // minted here by the real builder, exactly as the dispatch reader's is.
-    let admitter_generation = workload_generation_role(
-        WorkloadRoleFamily::ManagementAdmitter,
-        WorkloadRoleScope::ProjectEnvironment {
-            org: ORG,
-            project: PROJECT,
-            environment: ENVIRONMENT,
-            database: &database,
-        },
-        CredentialGeneration::A,
-    )
-    .expect("the management admitter takes a project-environment scope");
-    run_ok(
-        &project_url,
-        &sql::prepare_workload_generation_sql(
-            WorkloadRoleFamily::ManagementAdmitter,
-            &database,
-            &admitter_generation,
-            READER_PASSWORD,
-            "2100-01-01T00:00:00Z",
-        ),
-    );
     run_ok(
         &project_url,
         &sql::prepare_workload_generation_sql(
@@ -656,13 +629,12 @@ END $$;
         ),
     );
     let app_url = role_url(url, &app_generation, APP_PASSWORD, &database);
-    let admitter_url = role_url(url, &admitter_generation, READER_PASSWORD, &database);
     for (label, plpgsql, replay) in [
-        (
-            "INSERT into run_queue",
-            insert_queue.as_str(),
-            Some((admitter_url.as_str(), insert_queue.as_str())),
-        ),
+        // No replay arm: `wamn-47wm.5.6` removed the management admitter's queue
+        // INSERT with management run admission, and no principal in this tree
+        // holds INSERT on `run_queue` any more. Privilege is checked BEFORE
+        // column constraints, so a 42501 here can only be the missing grant.
+        ("INSERT into run_queue", insert_queue.as_str(), None),
         // No replay arm for the three below: since `wamn-0h0g.22.6.3` NOTHING in
         // this tree holds UPDATE or DELETE on `run_queue` — the executor-platform
         // family that will is admitted to the vocabulary but has no grant set yet
