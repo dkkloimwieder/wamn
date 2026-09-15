@@ -58,11 +58,7 @@ const CATALOG_INSTALLER: &str = "wamn_floor_installer";
 /// The PLATFORM-GRAIN generation login the shared `TO wamn_platform` arm is
 /// probed with, composed by the real mint rather than spelled by hand.
 ///
-/// `Retention`, NOT `EffectWriter` (`wamn-0h0g.22.40`). `wamn-0h0g.22.32`
-/// demoted the writer out of the platform grain, so a writer probe measures the
-/// PER-RELATION `TO wamn_effect_writer` arm and says nothing at all about the
-/// shared one. `Retention` is platform grain AND holds a real grant on a
-/// governed relation — `wamn_run.runs` — which the arm below reads back from
+/// `Retention` is platform grain AND holds a real grant on a governed relation — `wamn_run.runs` — which the arm below reads back from
 /// `has_any_column_privilege` rather than assuming.
 fn platform_probe_retention() -> String {
     workload_generation_role(
@@ -74,24 +70,6 @@ fn platform_probe_retention() -> String {
         CredentialGeneration::A,
     )
     .expect("Retention takes a tenant scope")
-}
-
-/// The effect-writer generation login the PER-RELATION `TO wamn_effect_writer`
-/// arms are probed with.
-///
-/// KEPT when `wamn-0h0g.22.40` re-pointed the platform probe above: this is the
-/// only cover those arms have anywhere, and it is what killed
-/// `wamn-0h0g.22.32`'s second mutant.
-fn effect_writer_probe() -> String {
-    workload_generation_role(
-        WorkloadRoleFamily::EffectWriter,
-        WorkloadRoleScope::Tenant {
-            tenant: "t1",
-            database: "wamn",
-        },
-        CredentialGeneration::A,
-    )
-    .expect("EffectWriter takes a tenant scope")
 }
 
 /// The two relations whose claim is HOST-INJECTED, measured from
@@ -119,17 +97,9 @@ const HOST_INJECTED: [&str; 2] = ["wamn_run.operator_run_actions", "wamn_run.run
 ///
 /// # Deliberate changes
 ///
-/// `wamn-0h0g.22.32` DEMOTED `wamn_effect_writer` — 8 members down to 7 — and
-/// this edit is the deliberate cost that pin was built to charge. The reason is
-/// not preference: the writer's stable role is under
-/// `RunPlaneActionKind::VerifyEffectWriterRole`, which refuses the role with
-/// 42501 `effect-writer-role-out-of-bounds` when it holds ANY `pg_auth_members`
-/// row as a member. The membership and the guard cannot both hold. The writer
-/// keeps its reads through PER-RELATION arms naming it directly in
-/// `deploy/sql/run-state.sql`, so unlike the silent-lockout mutant described
-/// above, this demotion does NOT strand a reader — and the live gate that would
-/// have caught a stranding, `crates/control/lib/tests/run_plane_live.rs`, goes from
-/// 8 failures to 0 across the change.
+/// `wamn-0h0g.22.32` DEMOTED the effect writer — 8 members down to 7 — and
+/// this edit is the deliberate cost that pin was built to charge.
+/// `wamn-0h0g.10.15` later removed the effect-writer family.
 ///
 /// `wamn-ctc8.15.2` adds the approved session-role reader to the platform group.
 /// Its explicit column grants and tenant predicates bound its reads.
@@ -268,7 +238,6 @@ fn reset(admin_url: &str) {
     for role in [
         "wamn_app",
         "wamn_scenario_author",
-        "wamn_effect_writer",
         // `wamn-0h0g.12.69`: run-state.sql creates and grants to this one for
         // the same reason it creates `wamn_platform` — it NAMES it, and a GRANT
         // to a missing role fails the whole apply. Dropped here BEFORE the group
@@ -286,7 +255,6 @@ fn reset(admin_url: &str) {
         PLATFORM_PROBE_OUTSIDER,
         CATALOG_INSTALLER,
         &platform_probe_retention(),
-        &effect_writer_probe(),
         &record_history_guest(),
     ] {
         apply(
@@ -408,32 +376,6 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
         "the sweep must cover exactly the 39 governed relations"
     );
 
-    // 2b. BORN PARKED (wamn-0h0g.20.30 for the attempt record, wamn-0h0g.20.32
-    //     for its two siblings; owner ruling on wamn-0h0g.20.28). THE SERVER'S OWN
-    //     ANSWER over the REAL DDL, with no reconciler in the loop:
-    //     `wamn_effect_writer` — the stable ACL role every provisioned generation
-    //     LOGIN inherits with INHERIT TRUE — READS the effect tables and cannot
-    //     APPEND to any of the three, at table level or at any column. Prose
-    //     calling the writer parked is not evidence; this is.
-    let writer_table_grants = psql(
-        &db_url,
-        None,
-        "SELECT concat_ws(' ', \
-           has_table_privilege('wamn_effect_writer','wamn_run.effect_attempts','SELECT'), \
-           has_table_privilege('wamn_effect_writer','wamn_run.effect_attempts','INSERT'), \
-           has_any_column_privilege('wamn_effect_writer','wamn_run.effect_attempts','INSERT'), \
-           has_table_privilege('wamn_effect_writer','wamn_run.effect_attempt_dispatches','INSERT'), \
-           has_table_privilege('wamn_effect_writer','wamn_run.effect_attempt_outcomes','INSERT'), \
-           (SELECT NOT (rolsuper OR rolbypassrls) FROM pg_roles \
-             WHERE rolname='wamn_effect_writer'))",
-    );
-    assert_eq!(
-        writer_table_grants, "t f f f f t",
-        "the schema of record did not mint a READ-ONLY effect writer across the \
-         three effect tables (order: attempt SELECT, attempt INSERT, attempt \
-         column INSERT, dispatches INSERT, outcomes INSERT, role is unprivileged)"
-    );
-
     // 3. A MINTED GUEST READS ITS OWN TENANT AND ONLY ITS OWN. The role name is
     //    composed by the mint, not by hand, so this also shows the digest the
     //    provisioner would issue matches the key the predicate computes.
@@ -491,10 +433,9 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
 ///
 /// The floor was UNTARGETED, so it applied to every role — and it calls
 /// `wamn_authority.current_tenant_key()`, which only `wamn_app` may EXECUTE.
-/// Measured against these very files on PostgreSQL 18.6: `wamn_effect_writer`
-/// reading `wamn_run.effect_attempts` and `wamn_scenario_author` reading
-/// `catalog.effective_release_heads` both got `ERROR: permission denied for function
-/// current_tenant_key`. Loud, and therefore survivable.
+/// Measured against these very files on PostgreSQL 18.6: `wamn_scenario_author`
+/// reading `catalog.effective_release_heads` got `ERROR: permission denied for
+/// function current_tenant_key`. Loud, and therefore survivable.
 ///
 /// Narrowing the floor `TO wamn_app` turns that error into something worse.
 /// PostgreSQL DEFAULT-DENIES when RLS is enabled and no policy matches the
@@ -658,24 +599,16 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
          tenant's rows, which is the exact hole wamn-0h0g.22.6 closed"
     );
 
-    // 4. THE ADMISSION ITSELF, END TO END, ONE PROBE PER ARM
-    //    (`wamn-0h0g.22.40`).
+    // 4. THE ADMISSION ITSELF, END TO END (`wamn-0h0g.22.40`).
     //
-    //    TWO different arms admit a non-guest principal to a governed relation:
-    //    the SHARED `TO wamn_platform` arm this test is named for, and the
-    //    PER-RELATION `TO wamn_effect_writer` arms `wamn-0h0g.22.32` added when
-    //    it demoted the writer out of the platform grain. Those are two claims,
-    //    and one probe cannot carry both — an `EffectWriter` login stopped
-    //    measuring the shared arm the day that demotion landed, under a test name
-    //    and a failure message that both still said PLATFORM. Each arm now has
-    //    its own probe over the relation its own family holds a grant on, and
-    //    each names the arm and the family it measures when it fails.
+    //    The SHARED `TO wamn_platform` arm admits a non-guest principal to a
+    //    governed relation. The probe reads the relation its own family holds a
+    //    grant on, and names the arm and the family it measures when it fails.
     //
-    //    Two tenants' rows on each relation. The platform-grain principal reads
+    //    Two tenants' rows on the relation. The platform-grain principal reads
     //    BOTH (the shared arm is `USING (true)`, and `current_tenant_key` derives
     //    NULL for a retention login, so there is no tenant grain to narrow to),
-    //    the writer reads BOTH through its own arm, and a login holding the same
-    //    grants and NEITHER membership reads NONE of either.
+    //    and a login holding the same grant and no membership reads NONE.
     let hash = "'sha256:' || repeat('0', 64)";
     apply(
         &db_url,
@@ -694,30 +627,18 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
                (tenant_id, run_id, package_id, effective_release_id, environment, \
                 flow_id, flow_version) \
              SELECT t, 'r', 'receiving', 1, 'dev', 'f', 1 \
-               FROM unnest(ARRAY['t1', 't2']) AS t;\n\
-             INSERT INTO wamn_run.effect_attempts \
-               (tenant_id, attempt_id, run_id, root_plan_hash, current_plan_hash, frame_id, \
-                local_node_id, source_artifact_hash, requirement_name, occurrence, seq, \
-                generation_fact_kind, attempt_started_at, attempt_deadline_at, \
-                attempt_input_ref, created_at) \
-             SELECT t, gen_random_uuid(), 'r', {hash}, {hash}, 0, 'n', {hash}, 'req', 0, 0, \
-                    'not-required', now(), now(), 'ref', now() \
                FROM unnest(ARRAY['t1', 't2']) AS t;\n"
         ),
     );
     let retention = platform_probe_retention();
-    let writer = effect_writer_probe();
-    // `outsider` holds the SAME grants on BOTH relations and NEITHER membership.
-    // Without it a probe read shows only that SELECT was granted, not that an
-    // arm is what admitted the rows.
+    // `outsider` holds the SAME grant and no membership. Without it a probe
+    // read shows only that SELECT was granted, not that an arm is what
+    // admitted the rows.
     apply(
         &admin,
         &format!(
             "CREATE ROLE \"{retention}\" NOLOGIN NOSUPERUSER NOBYPASSRLS;\n\
              GRANT wamn_run_retention TO \"{retention}\" \
-               WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;\n\
-             CREATE ROLE \"{writer}\" NOLOGIN NOSUPERUSER NOBYPASSRLS;\n\
-             GRANT wamn_effect_writer TO \"{writer}\" \
                WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;\n\
              CREATE ROLE {PLATFORM_PROBE_OUTSIDER} NOLOGIN NOSUPERUSER NOBYPASSRLS;\n"
         ),
@@ -727,27 +648,22 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         &format!(
             "GRANT USAGE ON SCHEMA wamn_run TO {PLATFORM_PROBE_OUTSIDER};\n\
              GRANT SELECT (tenant_id, status, created_at) \
-               ON wamn_run.runs TO {PLATFORM_PROBE_OUTSIDER};\n\
-             GRANT SELECT ON wamn_run.effect_attempts TO {PLATFORM_PROBE_OUTSIDER};\n"
+               ON wamn_run.runs TO {PLATFORM_PROBE_OUTSIDER};\n"
         ),
     );
-    // EACH PROBE READS THE RELATION ITS OWN FAMILY IS GRANTED, read back rather
+    // THE PROBE READS THE RELATION ITS OWN FAMILY IS GRANTED, read back rather
     // than assumed: a family that lost its grant reads zero rows for a reason
-    // that has nothing to do with the arm, and the row counts below would blame
+    // that has nothing to do with the arm, and the row count below would blame
     // the arm for it.
     let probe_grants = psql(
         &db_url,
         None,
-        "SELECT concat_ws(' ', \
-           has_any_column_privilege('wamn_run_retention', 'wamn_run.runs', 'SELECT'), \
-           has_table_privilege('wamn_effect_writer', 'wamn_run.effect_attempts', 'SELECT'))",
+        "SELECT has_any_column_privilege('wamn_run_retention', 'wamn_run.runs', 'SELECT')",
     );
     assert_eq!(
-        probe_grants, "t t",
-        "a probe family holds no SELECT on the relation its arm is measured over, \
-         so a zero-row read below would blame the arm for a missing privilege \
-         (order: wamn_run_retention on wamn_run.runs, wamn_effect_writer on \
-         wamn_run.effect_attempts)"
+        probe_grants, "t",
+        "the probe family holds no SELECT on wamn_run.runs, so a zero-row read \
+         below would blame the arm for a missing privilege"
     );
     // A SUPERUSER FIXTURE MASKS RLS ENTIRELY, so the probe roles are asserted
     // unprivileged from `pg_roles` before a single row is counted.
@@ -756,8 +672,8 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
         None,
         &format!(
             "SELECT bool_and(NOT (rolsuper OR rolbypassrls)) FROM pg_roles \
-              WHERE rolname IN ('{retention}', '{writer}', '{PLATFORM_PROBE_OUTSIDER}', \
-                                'wamn_run_retention', 'wamn_effect_writer', 'wamn_platform')"
+              WHERE rolname IN ('{retention}', '{PLATFORM_PROBE_OUTSIDER}', \
+                                'wamn_run_retention', 'wamn_platform')"
         ),
     );
     assert_eq!(
@@ -776,38 +692,26 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
              END $$;\n\
              COMMIT;\n\
              BEGIN;\n\
-             SET LOCAL ROLE \"{writer}\";\n\
-             DO $$ BEGIN\n\
-                 ASSERT (SELECT count(*) FROM wamn_run.effect_attempts) = 2, \
-                        'THE EFFECT-WRITER ARM DOES NOT ADMIT: the writer is not \
-                         platform grain, so wamn_run.effect_attempts reads short \
-                         without a per-relation arm naming it';\n\
-             END $$;\n\
-             COMMIT;\n\
-             BEGIN;\n\
              SET LOCAL ROLE {PLATFORM_PROBE_OUTSIDER};\n\
              DO $$ BEGIN\n\
                  ASSERT (SELECT count(tenant_id) FROM wamn_run.runs) = 0, \
                         'THE FLOOR LEAKS: a login in neither wamn_app nor \
                          wamn_platform read wamn_run.runs';\n\
-                 ASSERT (SELECT count(*) FROM wamn_run.effect_attempts) = 0, \
-                        'THE FLOOR LEAKS: a login in neither wamn_app nor \
-                         wamn_effect_writer read wamn_run.effect_attempts';\n\
              END $$;\n\
              COMMIT;\n"
         ),
     );
     // `DROP OWNED BY` FIRST, and in the project database, not the admin one:
-    // the outsider holds a schema USAGE and a table SELECT, and `DROP ROLE`
+    // the outsider holds a schema USAGE and a column SELECT, and `DROP ROLE`
     // refuses while an ACL entry names it. `DROP OWNED BY` is per-database.
     apply(
         &db_url,
-        &format!("DROP OWNED BY \"{retention}\", \"{writer}\", {PLATFORM_PROBE_OUTSIDER};\n"),
+        &format!("DROP OWNED BY \"{retention}\", {PLATFORM_PROBE_OUTSIDER};\n"),
     );
     apply(
         &admin,
         &format!(
-            "DROP ROLE \"{retention}\";\nDROP ROLE \"{writer}\";\n\
+            "DROP ROLE \"{retention}\";\n\
              DROP ROLE {PLATFORM_PROBE_OUTSIDER};\n"
         ),
     );

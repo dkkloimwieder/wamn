@@ -112,14 +112,13 @@ pub use management_admitter::{
 };
 pub use name::{
     APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, CONTROL_AUTHOR_SECRET_PREFIX, DB_OWNER_ROLE,
-    DB_PREFIX, DISPATCH_READER_ROLE, EFFECT_WRITER_SECRET_PREFIX, GUEST_SECRET_PREFIX,
-    INSTANCE_SUFFIX_LEN, MANAGEMENT_ADMITTER_SECRET_PREFIX, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN,
-    MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, compose_url,
-    control_author_secret_name, event_stream_name, management_admitter_secret_name,
-    project_env_cdc_secret_name, project_env_database_name, project_env_effect_writer_secret_name,
-    project_env_guest_secret_name, project_env_namespace, project_env_secret_name,
-    validate_instance_suffix, validate_project_env, validate_project_env_cdc, validate_project_id,
-    workload_secret_name,
+    DB_PREFIX, DISPATCH_READER_ROLE, GUEST_SECRET_PREFIX, INSTANCE_SUFFIX_LEN,
+    MANAGEMENT_ADMITTER_SECRET_PREFIX, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
+    MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, compose_url, control_author_secret_name,
+    event_stream_name, management_admitter_secret_name, project_env_cdc_secret_name,
+    project_env_database_name, project_env_guest_secret_name, project_env_namespace,
+    project_env_secret_name, validate_instance_suffix, validate_project_env,
+    validate_project_env_cdc, validate_project_id, workload_secret_name,
 };
 pub use org::{OrgClusters, render_org_cluster_set};
 pub use platform_principals::{
@@ -134,25 +133,18 @@ pub use system_reader::{
 };
 
 pub use secret::{
-    WorkloadSecretBody, render_control_author_secret_manifest,
-    render_effect_writer_secret_manifest, render_guest_secret_manifest,
+    WorkloadSecretBody, render_control_author_secret_manifest, render_guest_secret_manifest,
     render_management_admitter_secret_manifest, render_project_env_cdc_secret_manifest,
     render_project_env_secret_manifest, render_workload_secret_manifest,
 };
 /// The platform component list, for callers that bind a component as the actor.
 pub use wamn_project_state::PlatformComponent;
-pub use wamn_run_state::{
-    CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_CREDENTIAL_PATH,
-    EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION, EFFECT_WRITER_ROLE, EffectWriterCredential,
-    EffectWriterCredentialError, EffectWriterCredentialErrorKind, EffectWriterCredentialScope,
-    EffectWriterCredentialValidity, effect_writer_credential, effect_writer_generation_role,
-    effect_writer_scope_hash, parse_effect_writer_credential, validate_effect_writer_credential,
-};
+pub use wamn_run_state::CredentialGeneration;
 pub use workload_role::{
     AUDIT_RETENTION_ROLE, CONTROL_AUTHOR_ROLE, MANAGEMENT_ADMITTER_ROLE, PLATFORM_GROUP_ROLE,
     RETENTION_ROLE, SERVICE_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
     WorkloadRoleScopeError, WorkloadRoleScopeKind, WorkloadSecretBodyKind,
-    legacy_effect_writer_generation_role, workload_generation_role, workload_role_scope_hash,
+    workload_generation_role, workload_role_scope_hash,
 };
 
 /// Core control-database schema, applied first by a fresh bootstrap.

@@ -4,15 +4,6 @@ use super::{
     WorkloadRoleFamily, platform_group_membership_sql, quote_ident, quote_literal, stable_surface_sql,
 };
 
-/// Idempotently create the stable effect-table ACL role as NOLOGIN.
-///
-/// Table/schema grants deliberately do not live here: schema-control owns them
-/// once the effect tables exist. This builder only establishes the
-/// cluster-global, ownership-free role identity and restrictive attributes.
-pub fn ensure_effect_writer_acl_role_sql() -> String {
-    ensure_workload_acl_role_sql(WorkloadRoleFamily::EffectWriter)
-}
-
 /// Idempotently create or harden one stable workload ACL role as NOLOGIN.
 pub fn ensure_workload_acl_role_sql(family: WorkloadRoleFamily) -> String {
     ensure_acl_role_sql(family.acl_role())
@@ -34,27 +25,6 @@ pub(crate) fn ensure_acl_role_sql(role: &str) -> String {
            END IF; \
          END $workload_acl$;",
         role_lit = quote_literal(role),
-    )
-}
-
-/// Prepare one inactive scoped credential generation for authenticated use.
-///
-/// `role` is the validated deterministic generation name. The caller verifies
-/// the slot is inactive before applying this batch. Password and server-side
-/// `VALID UNTIL` are replaced, new membership is the stable effect ACL role, and
-/// direct database authority is solely `CONNECT` on this project database.
-pub fn prepare_effect_writer_generation_sql(
-    database: &str,
-    role: &str,
-    password: &str,
-    expires_at: &str,
-) -> String {
-    prepare_workload_generation_sql(
-        WorkloadRoleFamily::EffectWriter,
-        database,
-        role,
-        password,
-        expires_at,
     )
 }
 
@@ -91,25 +61,13 @@ pub fn prepare_workload_generation_sql(
 
 /// Normalize one existing generation's membership during lifecycle migration.
 ///
-/// `active` selects the one exact stable-role edge or no edge. The effect-writer
-/// arm also removes the retired projection membership; it is migration input,
-/// never a generic family.
+/// `active` selects the one exact stable-role edge or no edge.
 pub fn normalize_workload_generation_membership_sql(
     family: WorkloadRoleFamily,
     role: &str,
     active: bool,
 ) -> String {
     let role_ident = quote_ident(role);
-    let legacy_projection_revoke = if family == WorkloadRoleFamily::EffectWriter {
-        format!(
-            "DO $$ BEGIN IF EXISTS (SELECT FROM pg_roles WHERE rolname = {legacy_lit}) THEN \
-               REVOKE {legacy_ident} FROM {role_ident}; END IF; END $$;",
-            legacy_lit = quote_literal(wamn_run_state::RUN_PROJECTION_WRITER_ROLE),
-            legacy_ident = quote_ident(wamn_run_state::RUN_PROJECTION_WRITER_ROLE),
-        )
-    } else {
-        String::new()
-    };
     let grant = if active {
         format!(
             "GRANT {acl_role} TO {role_ident} \
@@ -122,23 +80,13 @@ pub fn normalize_workload_generation_membership_sql(
     format!(
         "{ensure} \
          {platform_arm} \
-         {legacy_projection_revoke} \
          REVOKE {acl_role} FROM {role_ident}; \
          {grant}",
         ensure = ensure_workload_acl_role_sql(family),
         platform_arm = platform_group_membership_sql(family),
-        legacy_projection_revoke = legacy_projection_revoke,
         acl_role = quote_ident(family.acl_role()),
         grant = grant,
     )
-}
-
-/// Retire one old credential generation after replacement use was verified.
-///
-/// The batch removes authority and then authentication. The caller commits it
-/// before terminating sessions with [`terminate_effect_writer_generation_sessions_sql`].
-pub fn retire_effect_writer_generation_sql(database: &str, role: &str) -> String {
-    retire_workload_generation_sql(WorkloadRoleFamily::EffectWriter, database, role)
 }
 
 /// Remove one workload generation's authority before disabling authentication.
@@ -161,11 +109,6 @@ pub(crate) fn retire_acl_generation_sql(acl_role: &str, database: &str, role: &s
     )
 }
 
-/// Terminate sessions only after credential authority removal has committed.
-pub fn terminate_effect_writer_generation_sessions_sql(role: &str) -> String {
-    terminate_workload_generation_sessions_sql(role)
-}
-
 /// Terminate sessions only after a workload generation is retired.
 pub fn terminate_workload_generation_sessions_sql(role: &str) -> String {
     let role_lit = quote_literal(role);
@@ -173,15 +116,6 @@ pub fn terminate_workload_generation_sessions_sql(role: &str) -> String {
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
            WHERE usename = {role_lit} AND pid <> pg_backend_pid();"
     )
-}
-
-/// Read-only state probe used by ctl and the bootstrap wrapper.
-///
-/// `$1` is the exact generation role. The result exposes authentication, exact
-/// direct role memberships, exact direct database CONNECT ACLs, and active
-/// session count without carrying password material.
-pub fn effect_writer_generation_state_sql() -> &'static str {
-    workload_generation_state_sql()
 }
 
 /// Read one generation or stable ACL role without family-wide cardinality assumptions.
@@ -249,11 +183,6 @@ pub fn workload_generation_state_sql() -> &'static str {
               WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = r.oid \
                 AND d.deptype = 'o') AS owned_objects \
        FROM pg_catalog.pg_authid r WHERE r.rolname = $1"
-}
-
-/// Session-scoped serialization primitive retained for the effect-writer caller.
-pub fn effect_writer_scope_lock_sql() -> &'static str {
-    workload_scope_lock_sql()
 }
 
 /// Session-scoped serialization primitive for workload credential mutation.

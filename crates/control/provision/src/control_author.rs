@@ -4,10 +4,8 @@
 //! owner of drafts, authoring commands, reservations, case runs, and finalized
 //! reports. Its one authoring/report connection now names the **control**
 //! database, and the identity on that connection is a scoped A/B LOGIN
-//! generation of the stable NOLOGIN [`CONTROL_AUTHOR_ROLE`] — the same
-//! generation model the effect writer already runs under (wamn-0h0g.13.31 /
-//! .13.34), with its own domain separator so the two planes can never share a
-//! name.
+//! generation of the stable NOLOGIN [`CONTROL_AUTHOR_ROLE`], with its own
+//! domain separator so two planes can never share a name.
 //!
 //! `wamn_scenario_author` is deliberately absent from this module: it is the
 //! project plane's author role, it is never granted control-database `CONNECT`,
@@ -280,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    fn generation_roles_fit_postgres_and_never_collide_with_the_effect_writer() {
+    fn generation_roles_fit_postgres() {
         let a = role(CredentialGeneration::A);
         let b = role(CredentialGeneration::B);
         assert_ne!(a, b);
@@ -296,15 +294,6 @@ mod tests {
                 .chars()
                 .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
         );
-
-        // The two planes must never derive one name from the other's scope. Only
-        // the domain separator distinguishes the preimages, so this is the
-        // assertion that fails if the separator is dropped or copied.
-        assert_ne!(
-            control_author_scope_hash(ORG, PROJECT, ENVIRONMENT, DATABASE),
-            wamn_run_state::effect_writer_scope_hash(PROJECT, DATABASE)
-        );
-        assert!(!a.contains("effect_writer"));
         assert!(!a.contains("scenario_author"));
     }
 

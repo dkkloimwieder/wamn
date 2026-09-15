@@ -21,9 +21,7 @@
 //! policy reads ZERO ROWS WITH NO ERROR. Every arm whose claim is about RLS
 //! REACH therefore asserts the POST-STATE ROW COUNT from a MINTED GENERATION
 //! LOGIN, never from the bare stable ACL role — which derives a NULL tenant key
-//! and matches nothing silently — and keeps a control arm
-//! ([`the_effect_writer_arm_reaches_exactly_its_four_run_plane_tables`]'s
-//! outsider) that legitimately reads zero.
+//! and matches nothing silently.
 //!
 //! # Hermetic, and it owns its server
 //!
@@ -68,12 +66,6 @@ const TENANT_B: &str = "t2";
 /// Throwaway password for the probe logins. Not a credential of record: the
 /// gate builds and drops these roles inside a disposable container.
 const PROBE_PASSWORD: &str = "w68-matrix-probe";
-
-/// A login in NEITHER `wamn_platform` nor any family, holding the SAME table
-/// grant as the effect writer. It is the control that makes the writer's row
-/// counts mean something: under FORCE RLS this one reads ZERO ROWS WITH NO
-/// ERROR, which is exactly what a silently locked-out family looks like.
-const OUTSIDER: &str = "wamn_matrix_outsider";
 
 /// The reserved host-only group that is NOT a [`WorkloadRoleFamily`] and has no
 /// platform-group exception.
@@ -164,7 +156,7 @@ struct FamilyReach {
     routines: &'static [&'static str],
 }
 
-/// The eleven families whose credentials reach a project-environment database.
+/// The ten families whose credentials reach a project-environment database.
 ///
 /// `ControlAuthor`, `RegistryReader` and `IdentityReader` are absent because
 /// their scope is [`WorkloadRoleScopeKind::Control`]: their credentials reach
@@ -172,7 +164,7 @@ struct FamilyReach {
 /// different plane. `wamn_scenario_author` is absent because it is a host group,
 /// not a [`WorkloadRoleFamily`] — it has no generation lifecycle to mint a
 /// principal from.
-const MATRIX: [FamilyReach; 11] = [
+const MATRIX: [FamilyReach; 10] = [
     FamilyReach {
         family: WorkloadRoleFamily::App,
         relations: &[
@@ -204,17 +196,6 @@ const MATRIX: [FamilyReach; 11] = [
             "wamn_authority.current_tenant_key()",
             "wamn_authority.tenant_key(text)",
         ],
-    },
-    FamilyReach {
-        family: WorkloadRoleFamily::EffectWriter,
-        relations: &[
-            "wamn_run.effect_attempt_dispatches|SELECT|table",
-            "wamn_run.effect_attempt_outcomes|SELECT|table",
-            "wamn_run.effect_attempts|SELECT|table",
-            "wamn_run.run_queue|SELECT|column",
-            "wamn_run.runs|SELECT|column",
-        ],
-        routines: &[],
     },
     FamilyReach {
         family: WorkloadRoleFamily::Retention,
@@ -454,7 +435,6 @@ fn managed_roles() -> Vec<String> {
     roles.push(SCENARIO_AUTHOR_PROBE.to_owned());
     roles.push(SCENARIO_AUTHOR_ROLE.to_owned());
     roles.push(PLATFORM_GROUP_ROLE.to_owned());
-    roles.push(OUTSIDER.to_owned());
     roles
 }
 
@@ -598,20 +578,6 @@ fn build() -> Fixture {
     for reach in &MATRIX {
         mint(&db_url, reach.family);
     }
-    // The control principal: SAME table grant as the effect writer, member of
-    // nothing. It shows that a row count of zero is what a lockout
-    // looks like, so a writer arm reading rows is a real result.
-    apply(
-        &db_url,
-        "mint the outsider control login",
-        &format!(
-            "CREATE ROLE {OUTSIDER} LOGIN PASSWORD '{PROBE_PASSWORD}' \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS;\n\
-             GRANT CONNECT ON DATABASE \"{DATABASE}\" TO {OUTSIDER};\n\
-             GRANT USAGE ON SCHEMA wamn_run TO {OUTSIDER};\n\
-             GRANT SELECT ON wamn_run.effect_attempts TO {OUTSIDER};\n"
-        ),
-    );
     // A test-only login that INHERITS the scenario-author group. It adds no
     // privilege of its own and does not make the group a member of anything, so
     // every observed read comes from that reserved role alone.
@@ -858,11 +824,6 @@ fn the_guest_sql_family_is_refused_the_other_families_operations() {
 }
 
 #[test]
-fn the_effect_writer_family_is_refused_the_other_families_operations() {
-    assert_family_row(WorkloadRoleFamily::EffectWriter);
-}
-
-#[test]
 fn the_retention_family_is_refused_the_other_families_operations() {
     assert_family_row(WorkloadRoleFamily::Retention);
 }
@@ -982,113 +943,14 @@ fn every_ordered_pair_of_matrix_families_is_covered_exactly_once() {
 /// pairs the matrix cannot speak for, so it is spelled out rather than left to
 /// be counted. Pairs naming the MEASURED-EMPTY family as the object
 /// are excluded: those are asserted separately, by name, above.
-const CONTAINED_PAIRS: [(&str, &str); 7] = [
+const CONTAINED_PAIRS: [(&str, &str); 6] = [
     ("app", "event-materializer"),
     ("app", "http-admitter"),
     ("app", "retention"),
     ("app", "session-role-reader"),
-    ("effect-writer", "dispatch-reader"),
     ("executor-platform", "dispatch-reader"),
     ("http-admitter", "session-role-reader"),
 ];
-
-// ---------------------------------------------------------------------------
-// THE EFFECT-WRITER ARMS — four of them, three previously unguarded
-// ---------------------------------------------------------------------------
-
-/// The four `TO wamn_effect_writer` arms, EXCESS AND MISSING BOTH FAILING.
-///
-/// # Why this is a row-count arm and not a privilege arm
-///
-/// `wamn-0h0g.22.32` landed four per-relation `AS PERMISSIVE … TO
-/// wamn_effect_writer USING (true)` arms. Measured when they landed: dropping
-/// `runs_effect_writer`, or the dispatches or outcomes arm, left BOTH
-/// `deploy_sql_authority` and `run_plane_live` at full green while the minted
-/// writer's read of `wamn_run.runs` went to ZERO ROWS. THREE OF THE FOUR WERE
-/// COMPLETELY UNGUARDED. `has_table_privilege` cannot see it: the grant is
-/// untouched and only the policy is gone, so the read is refused at zero rows
-/// with no error.
-///
-/// # What the claim is, and what it is NOT
-///
-/// The arms are `USING (true)`, so the claim is the ARM'S REACH, never
-/// cross-tenant confinement: one project-environment database serves exactly one
-/// tenant, and the arm restores exactly the reach the platform membership gave
-/// before `wamn-0h0g.22.32` demoted the writer out of `wamn_platform`. The
-/// strictly-tighter clause was WITHDRAWN and is deliberately not asserted here.
-#[test]
-fn the_effect_writer_arm_reaches_exactly_its_four_run_plane_tables() {
-    let fixture = fixture();
-    let writer = WorkloadRoleFamily::EffectWriter;
-
-    // --- EXCESS: no FIFTH relation carries an arm naming the writer ---------
-    assert_eq!(
-        rows(
-            &fixture.db_url,
-            &format!(
-                "SELECT n.nspname || '.' || c.relname \
-                   FROM pg_catalog.pg_policy p \
-                   JOIN pg_catalog.pg_class c ON c.oid = p.polrelid \
-                   JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
-                  WHERE p.polroles @> ARRAY['{role}'::regrole::oid] \
-                  ORDER BY (n.nspname || '.' || c.relname) COLLATE \"C\"",
-                role = writer.acl_role(),
-            ),
-        ),
-        vec![
-            "wamn_run.effect_attempt_dispatches",
-            "wamn_run.effect_attempt_outcomes",
-            "wamn_run.effect_attempts",
-            "wamn_run.runs",
-        ],
-        "the set of relations carrying a policy arm named for the effect-writer \
-         family is not exactly the four run-plane tables"
-    );
-
-    // --- MISSING: each of the four is actually READ, as the minted login -----
-    let login = generation(writer);
-    let as_writer = login_url(&fixture.admin, &login);
-    for table in [
-        "wamn_run.runs",
-        "wamn_run.effect_attempts",
-        "wamn_run.effect_attempt_dispatches",
-        "wamn_run.effect_attempt_outcomes",
-    ] {
-        assert_eq!(
-            query(&as_writer, &format!("SELECT count(*) FROM {table}")),
-            "2",
-            "the effect-writer family reads no rows from {table}: its arm is \
-             missing, and under FORCE RLS that is a SILENT lockout, not an error"
-        );
-    }
-
-    // --- THE ARM BUYS NOTHING WITHOUT A GRANT -------------------------------
-    // A relation the writer holds no grant on is refused LOUDLY, which is what
-    // separates "refused" from "matched nothing" everywhere above.
-    assert_eq!(
-        sqlstate(
-            &as_writer,
-            "SELECT count(*) FROM wamn_run.environment_policies;\n"
-        )
-        .as_deref(),
-        Some("42501"),
-        "the effect-writer family reached a relation it holds no grant on"
-    );
-
-    // --- THE CONTROL THAT LEGITIMATELY READS ZERO ---------------------------
-    // Same table grant, member of nothing: zero rows and NO error. Without this
-    // arm the four counts above could not be told from a lucky fixture.
-    let as_outsider = login_url(&fixture.admin, OUTSIDER);
-    assert_eq!(
-        query(
-            &as_outsider,
-            "SELECT count(*) FROM wamn_run.effect_attempts"
-        ),
-        "0",
-        "a principal in NEITHER group, holding the same table grant, read rows: \
-         the tenant floor is not default-denying"
-    );
-}
 
 // ---------------------------------------------------------------------------
 // THE PLATFORM-GRAIN ARMS
@@ -1150,7 +1012,7 @@ fn a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say() 
              partially or not at all"
         );
     }
-    // …and NOTHING MORE. These two are the effect writer's and the guest's.
+    // …and NOTHING MORE. These two are the guest's.
     for relation in [
         "wamn_run.effect_attempt_dispatches",
         "wamn_run.effect_attempt_outcomes",
@@ -1169,10 +1031,10 @@ fn a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say() 
 ///
 /// # A premise of that ruling no longer holds
 ///
-/// The ruling named TWO tenant-scoped `wamn_platform` members, `EffectWriter`
-/// and `Retention`. `wamn-0h0g.22.32` then DEMOTED the writer out of the group —
-/// its stable role is under a shape guard that refuses ANY `pg_auth_members` row
-/// — so `Retention` is the only subject the arm still has. That is asserted here
+/// The ruling named TWO tenant-scoped `wamn_platform` members, the effect
+/// writer and `Retention`. `wamn-0h0g.22.32` then DEMOTED the writer out of the group,
+/// and `wamn-0h0g.10.15` removed the effect-writer family, so `Retention` is the
+/// only subject the arm still has. That is asserted here
 /// rather than remembered, so the day a second one appears this arm reds.
 #[test]
 fn the_tenant_scoped_platform_member_reads_nothing_outside_its_grants() {
@@ -1361,7 +1223,7 @@ fn every_governed_relation_carries_the_tenant_key_expression_index() {
     );
     // A floor, so an empty schema cannot satisfy the equality above trivially.
     // The five run-plane relations are named because they are the ones whose
-    // policies the effect-writer and platform arms share.
+    // policies the platform arms share.
     for relation in [
         "wamn_run.runs",
         "wamn_run.effect_attempts",

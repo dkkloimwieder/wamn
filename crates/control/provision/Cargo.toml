@@ -46,7 +46,7 @@ wamn-pg-core = { workspace = true }
 # The platform principal rows take their component list, names, and derived
 # ids from the app_system model.
 wamn-project-state = { workspace = true }
-wamn-run-state = { workspace = true, features = ["effect-writer-credential"] }
+wamn-run-state = { workspace = true, features = ["tenant-key"] }
 # Operation-grant reconciliation consumes the same deny-unknown-fields package
 # manifest as generation. It derives grants from that public parsed shape; it
 # does not carry a second manifest grammar.
@@ -70,7 +70,6 @@ wamn-test-postgres = { workspace = true, optional = true }
 
 [dev-dependencies]
 wamn-catalog = { workspace = true }
-chrono = { workspace = true, features = ["std"] }
 # wamn-0h0g.8.21: `catalog.deployment_attestations` is CONTROL-plane only, so its
 # live test belongs to this crate's portable-store gate, while the Rust binding
 # for `catalog.register_deployment_attestation` belongs to the pure SQL owner.

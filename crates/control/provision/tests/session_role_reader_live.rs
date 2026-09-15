@@ -185,7 +185,6 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
             "wamn_app",
             "wamn_scenario_author",
             "wamn_control_author",
-            "wamn_effect_writer",
             "wamn_run_retention",
             "wamn_platform",
         ]
@@ -196,7 +195,7 @@ fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
         run(
             &admin,
             "CREATE ROLE wamn_app NOLOGIN; CREATE ROLE wamn_scenario_author NOLOGIN; \
-            CREATE ROLE wamn_control_author NOLOGIN; CREATE ROLE wamn_effect_writer NOLOGIN;",
+            CREATE ROLE wamn_control_author NOLOGIN;",
         );
         for artifact in [
             wamn_catalog::CATALOG_SCHEMA_SQL,

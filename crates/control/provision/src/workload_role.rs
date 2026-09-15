@@ -3,10 +3,7 @@
 use std::fmt;
 
 use sha2::{Digest as _, Sha256};
-use wamn_run_state::{
-    AuthorityClass, CredentialGeneration, EFFECT_WRITER_ROLE, app_scope_hash,
-    effect_writer_generation_role, effect_writer_scope_hash,
-};
+use wamn_run_state::{AuthorityClass, CredentialGeneration, app_scope_hash};
 
 use crate::name::{
     CONTROL_AUTHOR_SECRET_PREFIX, GUEST_SECRET_PREFIX, MANAGEMENT_ADMITTER_SECRET_PREFIX,
@@ -103,9 +100,10 @@ pub(crate) const SCOPE_HASH_HEX_LEN: usize = 40;
 /// it carries no runtime authority class and no operation-permission read.
 /// `wamn-emtx.13` adds the tenant-scoped audit retention family, which removes
 /// expired record history entries.
+/// `wamn-0h0g.10.15` removes the effect-writer family, which had no runtime
+/// consumer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkloadRoleFamily {
-    EffectWriter,
     ControlAuthor,
     ManagementAdmitter,
     DispatchReader,
@@ -128,8 +126,7 @@ impl WorkloadRoleFamily {
     /// provisioning's flag set, action dispatch and Secret naming are all
     /// derived by walking it, so an admitted family reaches every one of them
     /// without a list anywhere being appended to by hand.
-    pub const ALL: [Self; 14] = [
-        Self::EffectWriter,
+    pub const ALL: [Self; 13] = [
         Self::ControlAuthor,
         Self::ManagementAdmitter,
         Self::DispatchReader,
@@ -148,7 +145,6 @@ impl WorkloadRoleFamily {
     /// Stable NOLOGIN ACL role inherited by this family's generations.
     pub const fn acl_role(self) -> &'static str {
         match self {
-            Self::EffectWriter => EFFECT_WRITER_ROLE,
             Self::ControlAuthor => CONTROL_AUTHOR_ROLE,
             Self::ManagementAdmitter => MANAGEMENT_ADMITTER_ROLE,
             Self::DispatchReader => DISPATCH_READER_ROLE,
@@ -190,9 +186,7 @@ impl WorkloadRoleFamily {
     /// Exact scope class used to derive generation identities.
     pub const fn scope_kind(self) -> WorkloadRoleScopeKind {
         match self {
-            Self::EffectWriter | Self::App | Self::Retention | Self::AuditRetention => {
-                WorkloadRoleScopeKind::Tenant
-            }
+            Self::App | Self::Retention | Self::AuditRetention => WorkloadRoleScopeKind::Tenant,
             Self::ManagementAdmitter
             | Self::DispatchReader
             | Self::ServiceReader
@@ -226,18 +220,9 @@ impl WorkloadRoleFamily {
     ///   61), and for the same reason: no reader needs the edge. Its grants
     ///   reach only package history tables, which carry no row security.
     ///
-    /// * [`Self::EffectWriter`] holds a STABLE ROLE UNDER A SHAPE GUARD that
-    ///   forbids it (`wamn-0h0g.22.32`). `RunPlaneActionKind::VerifyEffectWriterRole`
-    ///   raises 42501 `effect-writer-role-out-of-bounds` when `wamn_effect_writer`
-    ///   holds ANY row in `pg_auth_members` as a member, and a `wamn_platform`
-    ///   edge is exactly such a row. The membership and the guard cannot both
-    ///   hold, and the guard is the older, narrower contract. The writer reaches
-    ///   its four tables through PER-RELATION arms naming it directly in
-    ///   `deploy/sql/run-state.sql` instead — not through this group.
-    ///
     /// Everything else — the eight families whose credentials reach a
-    /// project-environment or tenant database, are not the guest, and are not
-    /// under that guard — is a member. `EventMaterializer` exercises that edge
+    /// project-environment or tenant database and are not the guest — is a
+    /// member. `EventMaterializer` exercises that edge
     /// through its two catalog reads. `ServiceReader` remains the empty-surface
     /// case: an RLS arm with no table grant behind it admits nothing, while the
     /// edge prevents a future first grant from silently reading zero rows.
@@ -249,7 +234,7 @@ impl WorkloadRoleFamily {
     /// cross-tenant on the relations it holds grants on; the tenant predicate it
     /// keeps in its own statements is what re-narrows it.
     pub const fn is_platform_grain(self) -> bool {
-        !matches!(self, Self::App | Self::EffectWriter | Self::AuditRetention)
+        !matches!(self, Self::App | Self::AuditRetention)
             && !matches!(self.scope_kind(), WorkloadRoleScopeKind::Control)
     }
 
@@ -301,8 +286,6 @@ impl WorkloadRoleFamily {
     /// already mounts through `secretKeyRef … key: url`, with no edit here.
     pub fn secret_body_kind(self) -> WorkloadSecretBodyKind {
         match self {
-            // The frozen `credential.json` document the runtime parses.
-            Self::EffectWriter => WorkloadSecretBodyKind::EffectWriterCredential,
             // The guest credential IS the tenant authority, so its Secret
             // carries the tenant key that keys every governed predicate.
             Self::App => WorkloadSecretBodyKind::TenantUrl,
@@ -328,7 +311,6 @@ impl WorkloadRoleFamily {
 
     pub(crate) const fn scope_domain(self) -> &'static [u8] {
         match self {
-            Self::EffectWriter => b"wamn.effect-writer.scope.v0.1",
             Self::ControlAuthor => b"wamn.control-author.scope.v0.1",
             Self::ManagementAdmitter => b"wamn.management-admitter.scope.v0.1",
             Self::DispatchReader => b"wamn.dispatch-reader.scope.v0.1",
@@ -355,9 +337,8 @@ impl WorkloadRoleFamily {
 /// ever needs two families, that row returns as its own owner question rather
 /// than growing an arm.
 ///
-/// The direction is deliberate and one-way. Several families (`EffectWriter`,
-/// `ControlAuthor`, `DispatchReader`, `ServiceReader`, `Retention`,
-/// `ManagementAdmitter`) carry no authority class at all, so the inverse is not
+/// The direction is deliberate and one-way. Several families (`ControlAuthor`,
+/// `DispatchReader`, `ServiceReader`, `Retention`, `ManagementAdmitter`) carry no authority class at all, so the inverse is not
 /// a function and is not offered.
 impl From<AuthorityClass> for WorkloadRoleFamily {
     fn from(class: AuthorityClass) -> Self {
@@ -377,8 +358,6 @@ pub enum WorkloadSecretBodyKind {
     Url,
     /// One `url` key, plus the tenant key label and tenant annotation.
     TenantUrl,
-    /// The frozen effect-writer `credential.json` document.
-    EffectWriterCredential,
     /// One validated environment target and credential in `target.json`.
     SessionTarget,
 }
@@ -477,17 +456,10 @@ pub fn workload_role_scope_hash(
             actual,
         });
     }
-    // Two families delegate to `wamn-run-state`, which is the leaf the RUNTIME
-    // can reach: the effect writer because its credential lives there, and the
-    // App family because `wamn-0h0g.22.6.7` makes the runtime check that a
-    // resolved guest credential belongs to the tenant it is about to serve.
-    // Delegation, not duplication — there is still ONE definition of each.
-    if family == WorkloadRoleFamily::EffectWriter {
-        let WorkloadRoleScope::Tenant { tenant, database } = scope else {
-            unreachable!("scope kind was checked above")
-        };
-        return Ok(effect_writer_scope_hash(tenant, database));
-    }
+    // The App family delegates to `wamn-run-state`, which is the leaf the
+    // RUNTIME can reach, because `wamn-0h0g.22.6.7` makes the runtime check that
+    // a resolved guest credential belongs to the tenant it is about to serve.
+    // Delegation, not duplication — there is still ONE definition.
     if family == WorkloadRoleFamily::App {
         let WorkloadRoleScope::Tenant { tenant, database } = scope else {
             unreachable!("scope kind was checked above")
@@ -530,59 +502,12 @@ pub fn workload_generation_role(
     scope: WorkloadRoleScope<'_>,
     generation: CredentialGeneration,
 ) -> Result<String, WorkloadRoleScopeError> {
-    if family == WorkloadRoleFamily::EffectWriter {
-        let actual = scope.kind();
-        let expected = family.scope_kind();
-        if actual != expected {
-            return Err(WorkloadRoleScopeError {
-                family,
-                expected,
-                actual,
-            });
-        }
-        let WorkloadRoleScope::Tenant { tenant, database } = scope else {
-            unreachable!("scope kind was checked above")
-        };
-        return Ok(effect_writer_generation_role(tenant, database, generation));
-    }
     Ok(format!(
         "{}_{}_{}",
         family.generation_prefix(),
         workload_role_scope_hash(family, scope)?,
         generation.as_str(),
     ))
-}
-
-/// Derive the retired project-environment effect-writer role for migration only.
-///
-/// Callers may inspect and retire this exact role. Generic prepare never creates
-/// it; all newly minted effect-writer roles use tenant scope.
-pub fn legacy_effect_writer_generation_role(
-    org: &str,
-    project: &str,
-    environment: &str,
-    database: &str,
-    generation: CredentialGeneration,
-) -> String {
-    let mut preimage = Vec::new();
-    frame(
-        &mut preimage,
-        WorkloadRoleFamily::EffectWriter.scope_domain(),
-    );
-    for (tag, value) in [
-        ("org", org),
-        ("project", project),
-        ("environment", environment),
-        ("database", database),
-    ] {
-        push_field(&mut preimage, tag, value);
-    }
-    let digest = hex::encode(Sha256::digest(preimage));
-    format!(
-        "{EFFECT_WRITER_ROLE}_{}_{}",
-        &digest[..SCOPE_HASH_HEX_LEN],
-        generation.as_str()
-    )
 }
 
 fn push_field(preimage: &mut Vec<u8>, tag: &str, value: &str) {
@@ -679,9 +604,8 @@ mod tests {
 
     /// The exact vocabulary, in declaration order (`wamn-0fqa`: seven to ten;
     /// `wamn-0h0g.13.63`: ten to twelve; `wamn-ctc8.15.2`: thirteen;
-    /// `wamn-emtx.13`: fourteen).
-    const FAMILIES: [WorkloadRoleFamily; 14] = [
-        WorkloadRoleFamily::EffectWriter,
+    /// `wamn-emtx.13`: fourteen; `wamn-0h0g.10.15`: thirteen).
+    const FAMILIES: [WorkloadRoleFamily; 13] = [
         WorkloadRoleFamily::ControlAuthor,
         WorkloadRoleFamily::ManagementAdmitter,
         WorkloadRoleFamily::DispatchReader,
@@ -699,31 +623,29 @@ mod tests {
 
     #[test]
     fn family_set_and_scope_classes_are_closed() {
-        // A fifteenth variant fails to compile here as well as in the
+        // A fourteenth variant fails to compile here as well as in the
         // implementation, so the pinned vocabulary cannot silently grow.
         for (index, family) in FAMILIES.into_iter().enumerate() {
             let pinned = match family {
-                WorkloadRoleFamily::EffectWriter => 0,
-                WorkloadRoleFamily::ControlAuthor => 1,
-                WorkloadRoleFamily::ManagementAdmitter => 2,
-                WorkloadRoleFamily::DispatchReader => 3,
-                WorkloadRoleFamily::ServiceReader => 4,
-                WorkloadRoleFamily::App => 5,
-                WorkloadRoleFamily::Retention => 6,
-                WorkloadRoleFamily::ExecutorPlatform => 7,
-                WorkloadRoleFamily::HttpAdmitter => 8,
-                WorkloadRoleFamily::EventMaterializer => 9,
-                WorkloadRoleFamily::RegistryReader => 10,
-                WorkloadRoleFamily::IdentityReader => 11,
-                WorkloadRoleFamily::SessionRoleReader => 12,
-                WorkloadRoleFamily::AuditRetention => 13,
+                WorkloadRoleFamily::ControlAuthor => 0,
+                WorkloadRoleFamily::ManagementAdmitter => 1,
+                WorkloadRoleFamily::DispatchReader => 2,
+                WorkloadRoleFamily::ServiceReader => 3,
+                WorkloadRoleFamily::App => 4,
+                WorkloadRoleFamily::Retention => 5,
+                WorkloadRoleFamily::ExecutorPlatform => 6,
+                WorkloadRoleFamily::HttpAdmitter => 7,
+                WorkloadRoleFamily::EventMaterializer => 8,
+                WorkloadRoleFamily::RegistryReader => 9,
+                WorkloadRoleFamily::IdentityReader => 10,
+                WorkloadRoleFamily::SessionRoleReader => 11,
+                WorkloadRoleFamily::AuditRetention => 12,
             };
             assert_eq!(index, pinned, "{family:?}");
         }
         assert_eq!(
             FAMILIES.map(WorkloadRoleFamily::scope_kind),
             [
-                WorkloadRoleScopeKind::Tenant,
                 WorkloadRoleScopeKind::Control,
                 WorkloadRoleScopeKind::ProjectEnvironment,
                 WorkloadRoleScopeKind::ProjectEnvironment,
@@ -742,7 +664,6 @@ mod tests {
         assert_eq!(
             FAMILIES.map(WorkloadRoleFamily::acl_role),
             [
-                "wamn_effect_writer",
                 "wamn_control_author",
                 "wamn_management_admitter",
                 "wamn_dispatch_reader",
@@ -763,7 +684,7 @@ mod tests {
     #[test]
     fn wrong_scope_grain_refuses() {
         let error = workload_generation_role(
-            WorkloadRoleFamily::EffectWriter,
+            WorkloadRoleFamily::App,
             WorkloadRoleScope::Control {
                 org: "o",
                 project: "p",
@@ -780,13 +701,6 @@ mod tests {
     #[test]
     fn every_role_fits_postgres_and_generations_differ() {
         let scopes = [
-            (
-                WorkloadRoleFamily::EffectWriter,
-                WorkloadRoleScope::Tenant {
-                    tenant: "t",
-                    database: "db",
-                },
-            ),
             (
                 WorkloadRoleFamily::ControlAuthor,
                 WorkloadRoleScope::Control {
@@ -932,7 +846,6 @@ mod tests {
         };
         for family in [
             WorkloadRoleFamily::App,
-            WorkloadRoleFamily::EffectWriter,
             WorkloadRoleFamily::Retention,
             WorkloadRoleFamily::AuditRetention,
         ] {
@@ -1189,19 +1102,5 @@ mod tests {
             "wamn_audit_retention_bd22eb963b03bd528015fd2fba92768578166321_a"
         );
         assert_eq!(derived.len(), 63);
-    }
-
-    #[test]
-    fn legacy_effect_writer_identity_is_retirement_only_and_frozen() {
-        assert_eq!(
-            legacy_effect_writer_generation_role(
-                "acme",
-                "billing",
-                "dev",
-                "wamn-db-acme--billing--dev--k3m9x2p7",
-                CredentialGeneration::A,
-            ),
-            "wamn_effect_writer_3c92a981fa554e60b309efa67f5b35e8ba687221_a"
-        );
     }
 }

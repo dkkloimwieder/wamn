@@ -20,14 +20,10 @@ pub use database::{
 
 #[doc(inline)]
 pub use credentials::{
-    effect_writer_generation_state_sql, effect_writer_scope_lock_sql,
-    ensure_control_author_acl_role_sql, ensure_effect_writer_acl_role_sql,
-    ensure_workload_acl_role_sql, normalize_workload_generation_membership_sql,
-    prepare_control_author_generation_sql, prepare_effect_writer_generation_sql,
+    ensure_control_author_acl_role_sql, ensure_workload_acl_role_sql,
+    normalize_workload_generation_membership_sql, prepare_control_author_generation_sql,
     prepare_workload_generation_sql, retire_control_author_generation_sql,
-    retire_effect_writer_generation_sql, retire_workload_generation_sql,
-    terminate_control_author_generation_sessions_sql,
-    terminate_effect_writer_generation_sessions_sql,
+    retire_workload_generation_sql, terminate_control_author_generation_sessions_sql,
     terminate_workload_generation_sessions_sql, workload_generation_state_sql,
     workload_scope_lock_sql,
 };
@@ -377,7 +373,7 @@ pub fn ensure_platform_group_role_sql() -> String {
 /// PostgreSQL 16+ a role's `rolinherit` supplies the DEFAULT `INHERIT` option
 /// for memberships granted TO it, and RLS role matching walks `pg_auth_members`
 /// by that PER-EDGE option — so a bare `GRANT wamn_platform TO
-/// wamn_effect_writer` lands `inherit_option = false` and the two-hop chain
+/// wamn_run_retention` lands `inherit_option = false` and the two-hop chain
 /// (generation login -> stable ACL role -> `wamn_platform`) dies. Nothing
 /// raises: the generation still holds its table grants, and the floor policy
 /// simply matches no row. Measured on PostgreSQL 18.6 against the real files —
@@ -620,8 +616,8 @@ pub fn grant_session_role_reader_surface_sql() -> String {
 ///   `DELETE` (PostgreSQL has no column-grain DELETE), plus COLUMN-grain
 ///   `UPDATE` over [`EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS`] — the lease and
 ///   the crash counter, never the FIFO position.
-/// * `effect_attempts`: `SELECT` only. The table is the effect writer's to
-///   append to; the claim path only asks whether a row exists.
+/// * `effect_attempts`: `SELECT` only. The claim path only asks whether a row
+///   exists.
 /// * `wamn_authority.tenant_key(text)`: MEASURED, and not optional. `runs`
 ///   carries the `runs_tkey` EXPRESSION INDEX over that function, and
 ///   PostgreSQL evaluates an index expression while forming the new index entry
@@ -833,10 +829,7 @@ pub fn grant_identity_reader_surface_sql() -> String {
 /// role to its exact grant set, when this crate owns that convergence.
 ///
 /// `None` = the family's stable role carries no grant set this batch applies.
-/// The effect writer is the standing example: schema-control owns its grants
-/// because they only exist once the effect tables do, so this batch has
-/// nothing to converge and a caller must not assert the grant set before
-/// preparing. An admitted family lands on `None` with no edit here; a family
+/// An admitted family lands on `None` with no edit here; a family
 /// that acquires a grant set adds it beside its builder, which is the one place
 /// a family stays per-family (`wamn-0h0g.22.16`).
 pub fn stable_surface_sql(family: WorkloadRoleFamily) -> Option<String> {
@@ -1512,83 +1505,6 @@ mod tests {
         assert_eq!(generation.matches("GRANT CONNECT ON DATABASE").count(), 1);
     }
 
-    #[test]
-    fn writer_acl_roles_are_stable_nologin_and_own_no_grants_here() {
-        let sql = ensure_effect_writer_acl_role_sql();
-        assert!(sql.contains("'wamn_effect_writer'"));
-        assert!(!sql.contains("'wamn_run_projection_writer'"));
-        assert!(sql.contains("CREATE ROLE %I NOLOGIN"));
-        for attr in [
-            "NOSUPERUSER",
-            "NOCREATEDB",
-            "NOCREATEROLE",
-            "NOINHERIT",
-            "NOREPLICATION",
-            "NOBYPASSRLS",
-        ] {
-            assert!(sql.contains(attr), "missing {attr}");
-        }
-        for forbidden in ["CONNECT ON DATABASE", "ON SCHEMA", "ON TABLE"] {
-            assert!(
-                !sql.contains(forbidden),
-                "provisioning stole schema-control grant ownership"
-            );
-        }
-    }
-
-    #[test]
-    fn generation_prepare_has_only_login_membership_and_project_connect() {
-        let role = "wamn_effect_writer_1111111111111111111111111111111111111111_a";
-        let sql = prepare_effect_writer_generation_sql(
-            "wamn-db-acme--billing--dev",
-            role,
-            "a'b",
-            "2026-09-01T00:00:00Z",
-        );
-        assert!(sql.contains(&format!("CREATE ROLE \"{role}\" NOLOGIN")));
-        assert!(sql.contains(&format!(
-            "ALTER ROLE \"{role}\" LOGIN PASSWORD 'a''b' VALID UNTIL '2026-09-01T00:00:00Z'"
-        )));
-        assert!(sql.contains(&format!("GRANT \"wamn_effect_writer\" TO \"{role}\"")));
-        assert!(sql.contains(&format!(
-            "REVOKE \"wamn_run_projection_writer\" FROM \"{role}\""
-        )));
-        assert!(sql.contains("WITH ADMIN FALSE, INHERIT TRUE, SET FALSE"));
-        assert!(sql.contains(&format!(
-            "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"{role}\""
-        )));
-        for forbidden in [
-            "SUPERUSER",
-            "CREATEDB",
-            "CREATEROLE",
-            "REPLICATION",
-            "BYPASSRLS",
-        ] {
-            assert!(sql.contains(&format!("NO{forbidden}")));
-        }
-        assert!(!sql.contains("GRANT USAGE"));
-        assert!(!sql.contains("GRANT SELECT"));
-        assert!(!sql.contains("GRANT INSERT"));
-    }
-
-    #[test]
-    fn generation_retire_commits_authority_removal_before_session_termination() {
-        let role = "wamn_effect_writer_1111111111111111111111111111111111111111_a";
-        let sql = retire_effect_writer_generation_sql("wamn-db-acme--billing--dev", role);
-        let membership = sql.find("REVOKE \"wamn_effect_writer\"").unwrap();
-        let connect = sql.find("REVOKE CONNECT ON DATABASE").unwrap();
-        let no_login = sql.find("NOLOGIN PASSWORD NULL").unwrap();
-        assert!(membership < connect && connect < no_login);
-        assert!(!sql.contains("pg_terminate_backend"));
-
-        let terminate = terminate_effect_writer_generation_sessions_sql(role);
-        assert!(terminate.contains(&format!("WHERE usename = '{role}'")));
-        assert!(terminate.contains("pid <> pg_backend_pid()"));
-        for authority_change in ["REVOKE ", "ALTER ROLE"] {
-            assert!(!terminate.contains(authority_change));
-        }
-    }
-
     /// wamn-0h0g.8.18: the stable control-author role is host-only, hardens on
     /// replay, and never becomes a member of another plane's role.
     #[test]
@@ -1600,12 +1516,7 @@ mod tests {
         // A replay that finds a drifted attribute must repair it, not succeed.
         assert!(sql.contains("ELSIF EXISTS"));
         assert!(sql.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL NOSUPERUSER NOCREATEDB"));
-        for other_plane in [
-            "wamn_scenario_author",
-            "wamn_effect_writer",
-            "wamn_run_projection_writer",
-            "wamn_app",
-        ] {
+        for other_plane in ["wamn_scenario_author", "wamn_app"] {
             assert!(
                 !sql.contains(other_plane),
                 "control author touched {other_plane}"
@@ -1641,8 +1552,6 @@ mod tests {
         // Never the project plane's author role, and never another plane's ACL.
         for forbidden in [
             "wamn_scenario_author",
-            "wamn_effect_writer",
-            "wamn_run_projection_writer",
             "SUPERUSER TO",
             "WITH ADMIN TRUE",
             "WITH GRANT OPTION",
@@ -1706,7 +1615,7 @@ mod tests {
 
     #[test]
     fn generation_state_probe_is_read_only_and_parameterized() {
-        let sql = effect_writer_generation_state_sql();
+        let sql = workload_generation_state_sql();
         assert!(sql.starts_with("SELECT"));
         assert!(sql.contains("rolcanlogin"));
         assert!(sql.contains("FROM pg_catalog.pg_authid r"));
@@ -1775,7 +1684,7 @@ mod tests {
         assert!(public_temporary_on_current_database_sql().contains("'TEMPORARY'"));
         assert!(non_template_databases_sql().contains("NOT datistemplate"));
         assert_eq!(
-            effect_writer_scope_lock_sql(),
+            workload_scope_lock_sql(),
             "SELECT pg_advisory_lock(hashtextextended($1::text, 0))"
         );
     }

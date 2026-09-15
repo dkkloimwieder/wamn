@@ -56,9 +56,6 @@ pub const DB_OWNER_ROLE: &str = "wamn_db_owner";
 /// story.
 pub const DISPATCH_READER_ROLE: &str = "wamn_dispatch_reader";
 
-/// Prefix for the fixed-mount effect-writer credential Secret.
-pub const EFFECT_WRITER_SECRET_PREFIX: &str = "wamn-effect-writer-";
-
 /// Prefix for the scoped control-author URL Secret.
 pub const CONTROL_AUTHOR_SECRET_PREFIX: &str = "wamn-authoring-";
 
@@ -78,10 +75,9 @@ pub const MANAGEMENT_ADMITTER_SECRET_PREFIX: &str = "wamn-mgmt-admitter-";
 /// convention, exactly as the management-admitter prefix does. The Secret is
 /// scoped to the project-environment, not to the tenant key: one management
 /// instance serves exactly one `(org, project, environment)` and that scope's
-/// single tenant, which is the same scoping the effect-writer Secret already
-/// uses for a role that is likewise minted per tenant. The tenant travels in the
-/// manifest's labels, never in the name — a tenant id may be 64 bytes and carry
-/// characters a DNS-1123 name cannot.
+/// single tenant. The tenant travels in the manifest's labels, never in the
+/// name — a tenant id may be 64 bytes and carry characters a DNS-1123 name
+/// cannot.
 pub const GUEST_SECRET_PREFIX: &str = "wamn-guest-";
 
 /// Prefix for the per-project-env database **and** Secret names: `wamn-db-<org>--…`.
@@ -333,11 +329,6 @@ pub fn validate_instance_suffix(instance: &str) -> Result<(), ProvisionError> {
     })
 }
 
-/// The fixed-mount effect-writer credential Secret name.
-pub fn project_env_effect_writer_secret_name(org: &str, project: &str, env: &str) -> String {
-    workload_secret_name(WorkloadRoleFamily::EffectWriter, org, project, env)
-}
-
 /// The scoped per-tenant guest-SQL credential Secret name.
 pub fn project_env_guest_secret_name(org: &str, project: &str, env: &str) -> String {
     workload_secret_name(WorkloadRoleFamily::App, org, project, env)
@@ -498,9 +489,6 @@ fn pct(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_run_state::{
-        CredentialGeneration, effect_writer_generation_role, effect_writer_scope_hash,
-    };
 
     const INSTANCE: &str = "k3m9x2p7";
 
@@ -1025,25 +1013,6 @@ mod tests {
         assert!(u.ends_with("/wamn-db-x"));
     }
 
-    #[test]
-    fn effect_writer_scope_identity_and_names_are_frozen() {
-        let database = project_env_database_name("acme", "billing", "dev", INSTANCE);
-        let scope_hash = effect_writer_scope_hash("tenant", &database);
-        assert_eq!(scope_hash.len(), 40);
-        let a = effect_writer_generation_role("tenant", &database, CredentialGeneration::A);
-        let b = effect_writer_generation_role("tenant", &database, CredentialGeneration::B);
-        assert_eq!(a, format!("wamn_effect_writer_{scope_hash}_a"));
-        assert_eq!(b, format!("wamn_effect_writer_{scope_hash}_b"));
-        assert_eq!(a.len(), 61);
-        assert_eq!(b.len(), 61);
-        assert_eq!(CredentialGeneration::A.other(), CredentialGeneration::B);
-        assert_eq!(CredentialGeneration::B.other(), CredentialGeneration::A);
-        assert_eq!(
-            project_env_effect_writer_secret_name("acme", "billing", "dev"),
-            "wamn-effect-writer-acme--billing--dev"
-        );
-    }
-
     /// wamn-0h0g.8.5.3: `deploy/platform/scenario-worker.yaml` references the
     /// management-admitter Secret by this exact rendered name, and
     /// wamn-0h0g.12.176's renderer mints it from this same helper. Pinning
@@ -1071,27 +1040,9 @@ mod tests {
         for sibling in [
             control_author_secret_name("acme", "receiving", "dev"),
             project_env_secret_name("acme", "receiving", "dev"),
-            project_env_effect_writer_secret_name("acme", "receiving", "dev"),
             project_env_cdc_secret_name("acme", "receiving", "dev"),
         ] {
             assert_ne!(admitter, sibling);
-        }
-    }
-
-    #[test]
-    fn effect_writer_scope_hash_frames_tenant_and_database() {
-        let base = effect_writer_scope_hash("tenant", "db");
-        for changed in [
-            effect_writer_scope_hash("tenant-x", "db"),
-            effect_writer_scope_hash("tenant", "db-x"),
-        ] {
-            assert_ne!(base, changed);
-            assert_eq!(changed.len(), 40);
-            assert!(
-                changed
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-            );
         }
     }
 }

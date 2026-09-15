@@ -170,7 +170,6 @@ fn reset(admin_url: &str, database: &str) {
             "wamn_app",
             "wamn_scenario_author",
             "wamn_control_author",
-            "wamn_effect_writer",
             "wamn_run_retention",
             "wamn_platform",
         ]
@@ -197,8 +196,6 @@ fn reset(admin_url: &str, database: &str) {
          CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
            NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
          CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-           NOINHERIT NOREPLICATION NOBYPASSRLS;\n\
-         CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
            NOINHERIT NOREPLICATION NOBYPASSRLS;\n",
     );
     run_admin(admin_url, "reset the family-surface fixture", &script);
@@ -547,7 +544,7 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
          ASSERT has_table_privilege(r, 'wamn_run.effect_attempts', 'SELECT'), \
            'the claim asks whether an effect attempt exists'; \
          ASSERT NOT has_table_privilege(r, 'wamn_run.effect_attempts', 'INSERT'), \
-           'the table is the effect writer''s to append to'; \n",
+           'the executor appends no effect attempt'; \n",
     );
     // COLUMN GRAIN, from the server, both ways. `has_column_privilege` answers
     // TRUE for a column reachable through a TABLE-level grant, so the FALSE arms

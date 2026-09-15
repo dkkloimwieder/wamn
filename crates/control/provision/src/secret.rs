@@ -7,7 +7,6 @@
 
 use serde_json::{Value, json};
 use wamn_control_registry::Triple;
-use wamn_run_state::{EFFECT_WRITER_CREDENTIAL_KEY, EffectWriterCredential};
 
 use crate::name::{
     APP_ROLE, cdc_object_name, project_env_cdc_secret_name, project_env_secret_name,
@@ -49,7 +48,7 @@ pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str, url:
 
 /// The body one workload credential `Secret` carries.
 ///
-/// Four shapes, not one variant per family. Which shape a family
+/// Three shapes, not one variant per family. Which shape a family
 /// takes is [`WorkloadRoleFamily::secret_body_kind`], so an admitted family
 /// gets the plain single-`url` Secret with no edit here.
 #[derive(Debug, Clone, Copy)]
@@ -70,12 +69,6 @@ pub enum WorkloadSecretBody<'a> {
         tenant_key: &'a str,
         url: &'a str,
     },
-    /// The frozen effect-writer `credential.json` document.
-    ///
-    /// Kubernetes mounts the whole Secret directory read-only, without
-    /// `subPath`, so an atomic Secret projection update can be observed after
-    /// the wrapper drains/reloads pools.
-    EffectWriterCredential(&'a EffectWriterCredential),
     /// The checked audience binding and reader credential in `target.json`.
     SessionTarget(&'a SessionTarget),
 }
@@ -85,7 +78,6 @@ impl WorkloadSecretBody<'_> {
         match self {
             Self::Url(_) => WorkloadSecretBodyKind::Url,
             Self::TenantUrl { .. } => WorkloadSecretBodyKind::TenantUrl,
-            Self::EffectWriterCredential(_) => WorkloadSecretBodyKind::EffectWriterCredential,
             Self::SessionTarget(_) => WorkloadSecretBodyKind::SessionTarget,
         }
     }
@@ -134,13 +126,6 @@ pub fn render_workload_secret_manifest(
             metadata["annotations"] = json!({ "wamn.io/tenant": tenant });
             json!({ "url": url })
         }
-        WorkloadSecretBody::EffectWriterCredential(credential) => {
-            metadata["annotations"] = Value::Object(effect_writer_annotations(credential));
-            json!({
-                (EFFECT_WRITER_CREDENTIAL_KEY): serde_json::to_string(credential)
-                    .expect("effect-writer credential serializes"),
-            })
-        }
         WorkloadSecretBody::SessionTarget(target) => json!({
             (SESSION_TARGET_KEY): target.to_json().expect("validated session target serializes"),
         }),
@@ -152,69 +137,6 @@ pub fn render_workload_secret_manifest(
         "type": "Opaque",
         "stringData": string_data,
     })
-}
-
-/// The effect-writer credential's annotation block.
-fn effect_writer_annotations(
-    credential: &EffectWriterCredential,
-) -> serde_json::Map<String, Value> {
-    let document = serde_json::to_value(credential).expect("effect-writer credential serializes");
-    let field = |name: &str| {
-        document[name]
-            .as_str()
-            .unwrap_or_else(|| panic!("effect-writer credential {name} is a string"))
-    };
-    let mut annotations = serde_json::Map::from_iter([
-        (
-            "wamn.io/credential-id".to_string(),
-            Value::String(credential.credential_id().to_string()),
-        ),
-        (
-            "wamn.io/credential-generation".to_string(),
-            Value::String(credential.generation().as_str().to_string()),
-        ),
-        (
-            "wamn.io/database-role".to_string(),
-            Value::String(credential.role().to_string()),
-        ),
-        (
-            "wamn.io/tenant".to_string(),
-            Value::String(field("tenant").to_string()),
-        ),
-        (
-            "wamn.io/issued-at".to_string(),
-            Value::String(field("issued-at").to_string()),
-        ),
-        (
-            "wamn.io/not-before".to_string(),
-            Value::String(field("not-before").to_string()),
-        ),
-        (
-            "wamn.io/expires-at".to_string(),
-            Value::String(field("expires-at").to_string()),
-        ),
-    ]);
-    if let Some(revoked_at) = document["revoked-at"].as_str() {
-        annotations.insert(
-            "wamn.io/revoked-at".to_string(),
-            Value::String(revoked_at.to_string()),
-        );
-    }
-    annotations
-}
-
-/// Render the fixed-mount effect-writer Secret for one credential generation.
-pub fn render_effect_writer_secret_manifest(
-    triple: &Triple,
-    namespace: &str,
-    credential: &EffectWriterCredential,
-) -> Value {
-    render_workload_secret_manifest(
-        WorkloadRoleFamily::EffectWriter,
-        triple,
-        namespace,
-        WorkloadSecretBody::EffectWriterCredential(credential),
-    )
 }
 
 /// Render the scoped control-author URL Secret consumed by scenario-worker.
@@ -319,7 +241,6 @@ pub fn render_project_env_cdc_secret_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::SystemTime;
 
     #[test]
     fn session_reader_secret_round_trips_the_checked_target() {
@@ -359,50 +280,6 @@ mod tests {
             !format!("{:?}", WorkloadSecretBody::SessionTarget(&target))
                 .contains("fixture-password")
         );
-    }
-
-    use chrono::{DateTime, Utc};
-    use wamn_run_state::{
-        CredentialGeneration, EFFECT_WRITER_CREDENTIAL_PATH, EffectWriterCredentialScope,
-        EffectWriterCredentialValidity, effect_writer_credential, effect_writer_generation_role,
-        parse_effect_writer_credential, validate_effect_writer_credential,
-    };
-
-    fn writer_fixture() -> (Triple, EffectWriterCredentialScope, EffectWriterCredential) {
-        let triple = Triple::new("acme", "billing", "dev");
-        let scope = EffectWriterCredentialScope {
-            tenant: "tenant".to_string(),
-            org: "acme".to_string(),
-            project: "billing".to_string(),
-            environment: "dev".to_string(),
-            database: "wamn-db-acme--billing--dev".to_string(),
-        };
-        let role =
-            effect_writer_generation_role(&scope.tenant, &scope.database, CredentialGeneration::A);
-        let credential = effect_writer_credential(
-            &scope,
-            "0123456789abcdef0123456789abcdef",
-            CredentialGeneration::A,
-            &EffectWriterCredentialValidity {
-                issued_at: "2026-01-01T00:00:00Z".to_string(),
-                not_before: "2026-01-01T00:00:00Z".to_string(),
-                expires_at: "2026-02-01T00:00:00Z".to_string(),
-                revoked_at: None,
-            },
-            &format!(
-                "postgres://{role}:{}@wamn-pg-rw:5432/{}",
-                "a".repeat(64),
-                scope.database
-            ),
-        );
-        (triple, scope, credential)
-    }
-
-    fn instant(value: &str) -> SystemTime {
-        DateTime::parse_from_rfc3339(value)
-            .unwrap()
-            .with_timezone(&Utc)
-            .into()
     }
 
     #[test]
@@ -599,72 +476,5 @@ mod tests {
             s["stringData"]["role"],
             "wamn_cdc_acme__billing__dev__k3m9x2p7"
         );
-    }
-
-    #[test]
-    fn effect_writer_secret_and_document_are_fixed_mount_exact() {
-        let (triple, scope, credential) = writer_fixture();
-        validate_effect_writer_credential(&credential, &scope, instant("2026-01-15T00:00:00Z"))
-            .unwrap();
-        let secret = render_effect_writer_secret_manifest(&triple, "wamn-system", &credential);
-        assert_eq!(
-            secret["metadata"]["name"],
-            "wamn-effect-writer-acme--billing--dev"
-        );
-        assert_eq!(
-            secret["metadata"]["labels"]["app.kubernetes.io/component"],
-            "effect-writer-credentials"
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"].as_object().unwrap().len(),
-            7
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"]["wamn.io/credential-id"],
-            "0123456789abcdef0123456789abcdef"
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"]["wamn.io/issued-at"],
-            "2026-01-01T00:00:00Z"
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"]["wamn.io/tenant"],
-            "tenant"
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"]["wamn.io/not-before"],
-            "2026-01-01T00:00:00Z"
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"]["wamn.io/expires-at"],
-            "2026-02-01T00:00:00Z"
-        );
-        assert!(
-            secret["metadata"]["annotations"]
-                .get("wamn.io/revoked-at")
-                .is_none()
-        );
-        let data = secret["stringData"].as_object().unwrap();
-        assert_eq!(data.len(), 1);
-        let parsed = parse_effect_writer_credential(
-            data[EFFECT_WRITER_CREDENTIAL_KEY]
-                .as_str()
-                .unwrap()
-                .as_bytes(),
-        )
-        .unwrap();
-        assert_eq!(parsed, credential);
-        let document: Value = serde_json::from_str(
-            data[EFFECT_WRITER_CREDENTIAL_KEY]
-                .as_str()
-                .expect("credential.json stringData"),
-        )
-        .unwrap();
-        assert!(document.get("schema").is_none());
-        assert_eq!(
-            EFFECT_WRITER_CREDENTIAL_PATH,
-            "/etc/wamn/effect-writer/credential.json"
-        );
-        assert!(!format!("{credential:?}").contains(&"a".repeat(64)));
     }
 }
