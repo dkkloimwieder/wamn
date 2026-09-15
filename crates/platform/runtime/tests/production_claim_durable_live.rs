@@ -38,14 +38,10 @@ use common::{
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires a disposable PostgreSQL 18 URL in WAMN_DURABLE_TIER_PG_URL"]
 async fn production_claim_durable_live() -> anyhow::Result<()> {
-    let url = std::env::var("WAMN_DURABLE_TIER_PG_URL").context(
-        "set WAMN_DURABLE_TIER_PG_URL to a disposable PostgreSQL database \
-         (a DIFFERENT one from WAMN_PRODUCTION_CLAIM_PG_URL: both suites install \
-         the same schema and drop it on teardown)",
-    )?;
-    let fixture = install_fixture(&url).await?;
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let fixture = install_fixture(database.url()).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
     let release_package_ids = [PACKAGE_ID.to_owned(), "cat_overlay".to_owned()];

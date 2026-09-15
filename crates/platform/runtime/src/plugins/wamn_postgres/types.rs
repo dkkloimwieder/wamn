@@ -391,13 +391,8 @@ mod tests {
     // whose canonical spelling PostgreSQL does not produce.
     // -----------------------------------------------------------------------
 
-    const CARRIER_URL_ENV: &str = "WAMN_CARRIER_SPELLING_PG_URL";
-
-    async fn live_client() -> tokio_postgres::Client {
-        let url = std::env::var(CARRIER_URL_ENV).unwrap_or_else(|_| {
-            panic!("set {CARRIER_URL_ENV} to a disposable PostgreSQL 18 database")
-        });
-        let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
+    async fn live_client(database: &wamn_test_postgres::Database) -> tokio_postgres::Client {
+        let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
             .await
             .expect("connect to the disposable carrier-spelling database");
         tokio::spawn(async move {
@@ -409,9 +404,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires WAMN_CARRIER_SPELLING_PG_URL for a disposable PostgreSQL 18 database"]
     async fn live_a_timestamptz_read_back_spells_exactly_what_the_canonicalizer_spells() {
-        let client = live_client().await;
+        let database = wamn_test_postgres::database();
+        let client = live_client(&database).await;
         client
             .batch_execute(
                 "CREATE TEMPORARY TABLE carrier_timestamp (at timestamptz NOT NULL); \
@@ -441,9 +436,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires WAMN_CARRIER_SPELLING_PG_URL for a disposable PostgreSQL 18 database"]
     async fn live_every_carrier_that_passes_a_typed_value_as_text_matches_its_canonicalizer() {
-        let client = live_client().await;
+        let database = wamn_test_postgres::database();
+        let client = live_client(&database).await;
         client
             .batch_execute(
                 "CREATE TEMPORARY TABLE carrier_spelling ( \

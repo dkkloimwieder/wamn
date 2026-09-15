@@ -26,7 +26,6 @@ use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker};
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::p2::bindings::CommandPre;
 
-const ADMIN_URL_ENV: &str = "WAMN_SQLX_TRANSACTION_PG_URL";
 const COMPONENT_ENV: &str = "WAMN_SQLX_TRANSACTION_COMPONENT";
 const COMPONENT_ID: &str = "sqlx-command-live";
 const SCHEMA: &str = "sqlx_command_gate";
@@ -263,14 +262,15 @@ async fn acceptance(admin: &Client, admin_url: &str, component: &Path) -> anyhow
 }
 
 #[tokio::test]
-#[ignore = "requires WAMN_SQLX_TRANSACTION_PG_URL and WAMN_SQLX_TRANSACTION_COMPONENT"]
+#[ignore = "requires WAMN_SQLX_TRANSACTION_COMPONENT naming the built sqlx-command component"]
 async fn sqlx_command_commits_rolls_back_and_obeys_current_user_rls() {
-    let admin_url = std::env::var(ADMIN_URL_ENV)
-        .unwrap_or_else(|_| panic!("set {ADMIN_URL_ENV} to a fresh PostgreSQL 18 superuser URL"));
     let component = std::env::var(COMPONENT_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|_| panic!("set {COMPONENT_ENV} to the built sqlx-command component"));
-    let admin = connect(&admin_url)
+    let _lock = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let admin_url = test_database.url();
+    let admin = connect(admin_url)
         .await
         .expect("connect SQLx transaction admin");
     let database: String = admin
@@ -286,7 +286,7 @@ async fn sqlx_command_commits_rolls_back_and_obeys_current_user_rls() {
         "SQLx transaction gate requires a fresh cluster: wamn_app, {role}, or {SCHEMA} exists"
     );
 
-    let result = acceptance(&admin, &admin_url, &component).await;
+    let result = acceptance(&admin, admin_url, &component).await;
     let teardown = cleanup(&admin, &role).await;
     result.expect("SQLx transaction acceptance");
     teardown.expect("SQLx transaction cleanup");

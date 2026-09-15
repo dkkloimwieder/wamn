@@ -1,6 +1,6 @@
 //! Real scoped permission reads and local HTTPS keys cross the route-authentication boundary.
 //!
-//! This ignored test requires its own fresh PostgreSQL 18 server with
+//! This test starts its own PostgreSQL 18 server with
 //! `shared_preload_libraries=pg_stat_statements` and `pg_stat_statements.track=all`.
 //! It does not start deployed hosts or show nested registered-operation guards.
 #![cfg(feature = "test-util")]
@@ -33,7 +33,6 @@ use wamn_runtime::release_manifest::LoadedRelease;
 mod session_fixture;
 use session_fixture::{AUDIENCE, ORG, Server, claims, header, signed};
 
-const URL_ENV: &str = "WAMN_SESSION_ROUTE_PG18_URL";
 const PROJECT: &str = "project";
 const TENANT: &str = "tenant-a";
 const ATTACHMENT: &str = "purchase-http";
@@ -249,12 +248,15 @@ fn assert_permission_reads(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires fresh PG18 with pg_stat_statements in WAMN_SESSION_ROUTE_PG18_URL"]
 async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_identity()
 -> anyhow::Result<()> {
-    let admin_url = std::env::var(URL_ENV)
-        .context("set WAMN_SESSION_ROUTE_PG18_URL to this test's fresh disposable PG18 server")?;
-    let admin = connect(&admin_url).await?;
+    let mut postgres = wamn_test_postgres::start(&[
+        ("shared_preload_libraries", "pg_stat_statements"),
+        ("pg_stat_statements.track", "all"),
+    ])?;
+    let test_database = postgres.create_database("session_route")?;
+    let admin_url = test_database.url();
+    let admin = connect(admin_url).await?;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
         .await?
@@ -271,7 +273,7 @@ async fn sessions_use_one_fresh_scoped_permission_union_and_preserve_the_signed_
     )?;
     install(&admin, &database, &generation).await?;
     seed(&admin).await?;
-    let mut url = url::Url::parse(&admin_url)?;
+    let mut url = url::Url::parse(admin_url)?;
     url.set_username(&generation)
         .map_err(|()| anyhow::anyhow!("set fixture login"))?;
     url.set_password(Some(PASSWORD))

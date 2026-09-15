@@ -646,16 +646,9 @@ fn clear_component_claims_reaps_all_registries_for_the_workload() {
 }
 
 // ------------------------------------------------------------------
-// Live-PG checks (hermetic; ignored by default, and they fail loudly when
-// run without WAMN_PG_TEST_URL). Set WAMN_PG_TEST_URL to a fresh PostgreSQL
-// 18 database. Each test creates + drops its own objects. Recipe:
-// docs/operations/running-tests.md#live-prerequisites-and-troubleshooting [CLAIMS-LIVE].
+// Live-PG checks. Each test owns a database of the test PostgreSQL server
+// and creates + drops its own objects.
 // ------------------------------------------------------------------
-
-fn test_pg_url() -> String {
-    std::env::var("WAMN_PG_TEST_URL")
-        .expect("WAMN_PG_TEST_URL must name a fresh PostgreSQL 18 database")
-}
 
 /// The tenant every live guest checkout in this module authenticates for.
 const LIVE_TENANT: &str = "acme";
@@ -748,10 +741,9 @@ fn database_url_for_role(database_url: &str, role: &str, password: &str) -> Stri
 // `valid_*` would reject these values, but the point is the BIND is safe
 // regardless of validation.
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_PG_TEST_URL"]
 async fn live_bound_claims_are_injection_inert_and_txn_local() {
-    let url = test_pg_url();
-    let client = connect_raw(&url).await;
+    let database = wamn_test_postgres::database();
+    let client = connect_raw(database.url()).await;
     let marker = format!("wave2_marker_{}", std::process::id());
     client
         .batch_execute(&format!(
@@ -890,12 +882,13 @@ async fn live_bound_claims_are_injection_inert_and_txn_local() {
 // is its LOGIN, and injecting a GUC nothing it can read consults would be a
 // second, settable statement about an authority derived elsewhere.
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_PG_TEST_URL"]
 async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
-    let admin_url = test_pg_url();
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(
-            live_guest_url(&admin_url, LIVE_TENANT).await,
+            live_guest_url(admin_url, LIVE_TENANT).await,
         )),
         guest_pool_max_size: 2,
         platform_pool_max_size: 2,
@@ -963,7 +956,7 @@ async fn live_begin_with_claims_sets_the_guest_set_without_a_tenant_claim() {
     assert!(
         who.contains(&wamn_run_state::app_scope_hash(
             LIVE_TENANT,
-            &live_database(&admin_url)
+            &live_database(admin_url)
         )),
         "the guest session must authenticate as {LIVE_TENANT}'s generation, got {who:?}"
     );
@@ -1044,14 +1037,15 @@ fn rls_fixture_sql(schema: &str, probe: &str, tenant: &str, u1: &str, u2: &str) 
 // NOBYPASSRLS role, so it fails against a `CLAIM_SQL` that does not inject
 // the caller's identity.
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_PG_TEST_URL"]
 async fn live_compiled_per_user_policy_permits_the_injected_caller() {
     const TENANT: &str = "rls-claim-live";
     const COMPONENT: &str = "rls-claim-live-component";
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     const U2: &str = "22222222-2222-4222-8222-222222222222";
 
-    let admin_url = test_pg_url();
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
     let suffix = std::process::id();
     let schema = format!("wamn_rls_claim_{suffix}");
     // The probe login is NAMED AS A GUEST GENERATION for this test's tenant:
@@ -1062,10 +1056,10 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let _ = suffix;
-    let admin = connect_raw(&admin_url).await;
+    let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&rls_fixture_sql(&schema, &probe, TENANT, U1, U2))
         .await
@@ -1073,7 +1067,7 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
 
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(database_url_for_role(
-            &admin_url, &probe, &probe,
+            admin_url, &probe, &probe,
         ))),
         guest_pool_max_size: 2,
         platform_pool_max_size: 2,
@@ -1137,14 +1131,15 @@ async fn live_compiled_per_user_policy_permits_the_injected_caller() {
 // The CONTROL below shows the escalation is real, so the refusal that
 // follows is load-bearing rather than vacuous.
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_PG_TEST_URL"]
 async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
     const TENANT: &str = "rls-override-live";
     const COMPONENT: &str = "rls-override-live-component";
     const U1: &str = "11111111-1111-4111-8111-111111111111";
     const U2: &str = "22222222-2222-4222-8222-222222222222";
 
-    let admin_url = test_pg_url();
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
     let suffix = std::process::id();
     let schema = format!("wamn_rls_override_{suffix}");
     // The probe login is NAMED AS A GUEST GENERATION for this test's tenant:
@@ -1155,10 +1150,10 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
     // too and the tests stay parallel-safe.
     let probe = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
     let _ = suffix;
-    let admin = connect_raw(&admin_url).await;
+    let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&rls_fixture_sql(&schema, &probe, TENANT, U1, U2))
         .await
@@ -1166,7 +1161,7 @@ async fn live_guest_cannot_override_the_injected_role_or_user_claim() {
 
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(database_url_for_role(
-            &admin_url, &probe, &probe,
+            admin_url, &probe, &probe,
         ))),
         guest_pool_max_size: 2,
         platform_pool_max_size: 2,
@@ -1613,15 +1608,16 @@ fn two_tenant_rls_fixture_sql(
 /// The logins are NOSUPERUSER NOBYPASSRLS, so the server cannot be talked
 /// out of the floor either.
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_PG_TEST_URL"]
 async fn live_a_second_tenant_is_refused_rather_than_served_the_first_tenants_rows() {
     const TENANT_A: &str = "seam-live-a";
     const TENANT_B: &str = "seam-live-b";
 
-    let admin_url = test_pg_url();
+    let _lock = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let admin_url = test_database.url();
     let suffix = std::process::id();
     let schema = format!("wamn_seam_{suffix}");
-    let database = live_database(&admin_url);
+    let database = live_database(admin_url);
     // Named exactly as provisioning names a guest generation, so the
     // credential the host resolves is bound to TENANT_A by its own digest.
     let role_a = format!(
@@ -1632,7 +1628,7 @@ async fn live_a_second_tenant_is_refused_rather_than_served_the_first_tenants_ro
         "wamn_app_{}_a",
         wamn_run_state::app_scope_hash(TENANT_B, &database)
     );
-    let admin = connect_raw(&admin_url).await;
+    let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&two_tenant_rls_fixture_sql(
             &schema, &role_a, &role_b, TENANT_A, TENANT_B,
@@ -1640,7 +1636,7 @@ async fn live_a_second_tenant_is_refused_rather_than_served_the_first_tenants_ro
         .await
         .expect("seed the two-tenant RLS fixture as the superuser owner");
 
-    let mut url = url::Url::parse(&admin_url).expect("parse the live test url");
+    let mut url = url::Url::parse(admin_url).expect("parse the live test url");
     url.set_username(&role_a).expect("set A's login");
     url.set_password(Some("live-guest"))
         .expect("set A's password");
@@ -1724,12 +1720,13 @@ async fn live_a_second_tenant_is_refused_rather_than_served_the_first_tenants_ro
 // R18 — the post_create hook runs on connect; a successful checkout from the
 // pool shows the assertion passed on this server (stock PG18 = on).
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_PG_TEST_URL"]
 async fn live_connect_asserts_standard_conforming_strings() {
-    let admin_url = test_pg_url();
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(
-            live_guest_url(&admin_url, LIVE_TENANT).await,
+            live_guest_url(admin_url, LIVE_TENANT).await,
         )),
         guest_pool_max_size: 1,
         platform_pool_max_size: 1,
@@ -1753,12 +1750,12 @@ async fn live_connect_asserts_standard_conforming_strings() {
 }
 
 #[tokio::test]
-#[ignore = "requires WAMN_POOL_LIFECYCLE_PG_URL for a disposable PostgreSQL database"]
 async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleaving() {
-    let admin_url = std::env::var("WAMN_POOL_LIFECYCLE_PG_URL")
-        .expect("set WAMN_POOL_LIFECYCLE_PG_URL to a disposable PostgreSQL database");
-    let url = live_guest_url(&admin_url, LIVE_TENANT).await;
-    let database = live_database(&admin_url);
+    let _lock = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let admin_url = test_database.url();
+    let url = live_guest_url(admin_url, LIVE_TENANT).await;
+    let database = live_database(admin_url);
     let family = wamn_control_provision::WorkloadRoleFamily::ExecutorPlatform;
     let role = wamn_control_provision::workload_generation_role(
         family,
@@ -1772,7 +1769,7 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
     )
     .expect("derive the executor generation");
     let role_ident = wamn_pg_core::quote_ident(&role);
-    let admin = connect_raw(&admin_url).await;
+    let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&format!(
             "DO $$ BEGIN \
@@ -1786,7 +1783,7 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
         ))
         .await
         .expect("ensure the live executor generation");
-    let executor_url = database_url_for_role(&admin_url, &role, "live-platform");
+    let executor_url = database_url_for_role(admin_url, &role, "live-platform");
     let postgres = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(
             ClassCredentials::default()
@@ -1883,16 +1880,17 @@ async fn live_size_one_guest_and_platform_pools_isolate_sessions_under_interleav
 // R18-neg (wamn-2jkm.65) — the fail-CLOSED branch, exercised against a REAL
 // server booted with standard_conforming_strings=off. The positive above
 // shows the hook passes on a stock server; this shows it REJECTS an unsafe
-// one and that the guest sees `connection-unavailable`. Gated on a SEPARATE
-// url (WAMN_SCS_OFF_PG_URL) so it never runs against the stock test server;
-// ignored by default, and it fails loudly when run without the url. Recipe: docs/operations/running-tests.md#live-prerequisites-and-troubleshooting [R18-NEG].
+// one and that the guest sees `connection-unavailable`. It starts a SEPARATE
+// server with that setting, so it never runs against the stock test server.
 #[tokio::test]
-#[ignore = "requires a PostgreSQL 18 server with standard_conforming_strings=off via WAMN_SCS_OFF_PG_URL"]
 async fn live_scs_off_server_fails_checkout_closed() {
-    let url = std::env::var("WAMN_SCS_OFF_PG_URL").expect(
-        "WAMN_SCS_OFF_PG_URL must name a PostgreSQL 18 server booted with \
-         standard_conforming_strings=off",
-    );
+    let mut server = wamn_test_postgres::start(&[("standard_conforming_strings", "off")])
+        .expect("start a PostgreSQL 18 server with standard_conforming_strings=off");
+    let url = server
+        .create_database("scs_off")
+        .expect("create the scs-off test database")
+        .url()
+        .to_owned();
 
     // CONTROL: the server must be REACHABLE and genuinely report scs=off, so
     // the checkout failure below is the HOOK rejecting a live server, not a
@@ -1907,7 +1905,7 @@ async fn live_scs_off_server_fails_checkout_closed() {
         .get(0);
     assert_eq!(
         scs, "off",
-        "control: point WAMN_SCS_OFF_PG_URL at a server booted with \
+        "control: the server must boot with \
              standard_conforming_strings=off (got {scs:?}); otherwise this test is vacuous"
     );
 
@@ -2020,17 +2018,18 @@ fn cold_parse_statement() -> VerifiedStatement {
 /// — always sends its Parse first. Reverting to that shape, or swapping the
 /// two branches of the `join!`, fails this every run.
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_PG_TEST_URL"]
 async fn live_a_cold_connection_parses_inside_the_claim_transaction() {
     const TENANT: &str = "coldparse";
-    let admin_url = test_pg_url();
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
     let schema = format!("wamn_coldparse_{}", std::process::id());
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(&admin_url, TENANT).await;
-    let admin = connect_raw(&admin_url).await;
+    let guest_url = live_guest_url(admin_url, TENANT).await;
+    let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&cold_parse_fixture_sql(&schema, &role))
         .await
@@ -2184,15 +2183,16 @@ fn an_explicit_transaction_statement_without_an_executing_principal_is_refused()
 /// principal. A read with the same principal keeps the autocommit path, so its
 /// session carries no `app.user_id`.
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_PG_TEST_URL"]
 async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autocommit() {
     const TENANT: &str = "principal";
-    let admin_url = test_pg_url();
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(&admin_url, TENANT).await;
+    let guest_url = live_guest_url(admin_url, TENANT).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2235,7 +2235,7 @@ async fn live_a_transaction_binds_the_executing_principal_and_a_read_stays_autoc
     );
 
     drop(pg);
-    let admin = connect_raw(&admin_url).await;
+    let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&format!("DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
         .await
@@ -2305,16 +2305,17 @@ fn an_acquisition_binds_its_operation_and_the_next_one_does_not_inherit_it() {
 /// The pool holds one connection. A session-level `app.operation` on that
 /// connection does not reach the next transaction, which has no operation.
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_PG_TEST_URL"]
 async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connection_keeps_none() {
     const TENANT: &str = "operation";
     const OPERATION: &str = "wamn-receiving:purchase-order/update@1.0.0";
-    let admin_url = test_pg_url();
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(&admin_url, TENANT).await;
+    let guest_url = live_guest_url(admin_url, TENANT).await;
     let pg = WamnPostgres::new(WamnPostgresConfig {
         credentials: Some(ClassCredentials::every_class(guest_url)),
         guest_pool_max_size: 1,
@@ -2388,7 +2389,7 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
     );
 
     drop(pg);
-    let admin = connect_raw(&admin_url).await;
+    let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&format!("DROP OWNED BY \"{role}\"; DROP ROLE \"{role}\";"))
         .await
@@ -2400,23 +2401,23 @@ async fn live_a_transaction_binds_the_executing_operation_and_a_pooled_connectio
 /// Ignored by default, because it is a two-thousand request loop, not an
 /// assertion. What it measures is ROUND TRIPS, and on a
 /// loopback server one round trip is roughly 50 us -- under the noise of a
-/// busy machine. Point `WAMN_PG_TEST_URL` at a server whose latency you can
-/// see (a delaying TCP proxy in front of a container, or a real host) and
-/// the count is legible: the claim transaction and the statement are ONE
+/// busy machine. The claim transaction and the statement are ONE
 /// flight, and `WAMN_PG_PIPELINE_BENCH_RUN` adds the run-owned causation
 /// emit that rides the same BEGIN.
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_PG_TEST_URL"]
+#[ignore = "a two-thousand request measurement loop, not an assertion"]
 async fn bench_pipelined_claim_flight() {
     const TENANT: &str = "pipebench";
-    let admin_url = test_pg_url();
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let admin_url = database.url();
     let schema = format!("wamn_pipebench_{}", std::process::id());
     let role = format!(
         "wamn_app_{}_a",
-        wamn_run_state::app_scope_hash(TENANT, &live_database(&admin_url))
+        wamn_run_state::app_scope_hash(TENANT, &live_database(admin_url))
     );
-    let guest_url = live_guest_url(&admin_url, TENANT).await;
-    let admin = connect_raw(&admin_url).await;
+    let guest_url = live_guest_url(admin_url, TENANT).await;
+    let admin = connect_raw(admin_url).await;
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {schema} CASCADE; \

@@ -63,11 +63,11 @@ fn production_claim_run_state_stand_in_tracks_schema_of_record() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires a disposable PostgreSQL 18 URL in WAMN_PRODUCTION_CLAIM_PG_URL"]
 async fn production_claim_live() -> anyhow::Result<()> {
-    let url = std::env::var("WAMN_PRODUCTION_CLAIM_PG_URL")
-        .context("set WAMN_PRODUCTION_CLAIM_PG_URL to a disposable PostgreSQL database")?;
-    let fixture = install_fixture(&url).await?;
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let url = database.url();
+    let fixture = install_fixture(url).await?;
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
     let release_package_ids = [PACKAGE_ID.to_owned(), "cat_overlay".to_owned()];
@@ -109,7 +109,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // its production row locks, then the rolled-back head remains claimable.
     seed_run(admin, "double-a", "cat_main", 10).await?;
     seed_run(admin, "double-b", "cat_main", 11).await?;
-    let first_claimer = connect(&url).await?;
+    let first_claimer = connect(url).await?;
     first_claimer
         .batch_execute(&format!(
             "BEGIN; SET LOCAL search_path TO {SCHEMA}, pg_catalog"

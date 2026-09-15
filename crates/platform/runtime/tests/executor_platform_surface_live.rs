@@ -1,4 +1,4 @@
-//! Ignored live gate for the executor-platform credential's PLAN SUPPLY and
+//! Live gate for the executor-platform credential's PLAN SUPPLY and
 //! its exact-credential probe (`wamn-0h0g.22.42`).
 //!
 //! Two things `wamn-0h0g.22.31` could not discharge live meet here because they
@@ -112,11 +112,11 @@ async fn begin_claimed(client: &Client) -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires a disposable PostgreSQL 18 URL in WAMN_EXEC_PLATFORM_PG_URL"]
 async fn executor_platform_surface_live() -> anyhow::Result<()> {
-    let admin_url = std::env::var("WAMN_EXEC_PLATFORM_PG_URL")
-        .context("set WAMN_EXEC_PLATFORM_PG_URL to a disposable superuser PostgreSQL url")?;
-    let admin = connect(&admin_url).await?;
+    let _lock = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let admin_url = test_database.url();
+    let admin = connect(admin_url).await?;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
         .await?
@@ -335,7 +335,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
         .context("seed the plan-supply fixture")?;
 
     // ---- PLAN SUPPLY, LIVE UNDER THE CREDENTIAL ---------------------------
-    let platform_url = generation_url(&admin_url, None)?;
+    let platform_url = generation_url(admin_url, None)?;
     let generation = connect(&platform_url).await?;
     begin_claimed(&generation).await?;
 
@@ -557,7 +557,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
     // database the credential named. The refusal is therefore the SERVER's
     // `current_database()`, and its connection kind shows it was
     // reached over the wire rather than decided from the url.
-    let elsewhere_url = generation_url(&admin_url, Some(ELSEWHERE))?;
+    let elsewhere_url = generation_url(admin_url, Some(ELSEWHERE))?;
     let elsewhere = connect(&elsewhere_url).await?;
     let observed_elsewhere: String = elsewhere
         .query_one("SELECT current_database()::text", &[])

@@ -1664,10 +1664,10 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "requires a disposable PostgreSQL 18 URL in WAMN_PRODUCTION_CLAIM_PG_URL"]
     async fn executor_authority_uses_current_user_for_each_operation() -> anyhow::Result<()> {
-        let config: tokio_postgres::Config =
-            std::env::var("WAMN_PRODUCTION_CLAIM_PG_URL")?.parse()?;
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_test_postgres::database();
+        let config: tokio_postgres::Config = database.url().parse()?;
         let pool = deadpool_postgres::Pool::builder(deadpool_postgres::Manager::new(
             config,
             tokio_postgres::NoTls,
