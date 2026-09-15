@@ -5,14 +5,14 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tokio_postgres::{Client, NoTls};
+use wamn_control::apply_package::{self, ApplyPackageArgs};
 use wamn_control_provision::PlatformComponent;
 use wamn_control_provision::operation_grants::{OPERATION_GRANT_LOCK_SQL, operation_grant_tokens};
-use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_schema_introspection::migration_policy::{MigrationPolicyError, MigrationPolicyErrorKind};
 use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
-const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
+const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 const TENANT: &str = "package-runner-live";
 /// The test principal that the fixture seed writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
@@ -85,13 +85,13 @@ fn fixture_root() -> PathBuf {
 }
 
 fn overlay_package_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/client_acme_receiving")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/client_acme_receiving")
 }
 
 fn copy_receiving_package(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
     std::fs::create_dir_all(root.join("migrations")).expect("create package fixture directory");
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
     std::fs::copy(source.join("wamn.json"), root.join("wamn.json"))
         .expect("copy strict package manifest");
     std::fs::copy(

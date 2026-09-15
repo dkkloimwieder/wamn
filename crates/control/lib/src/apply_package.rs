@@ -45,7 +45,7 @@ pub use error::{
     PACKAGE_VERSION_SEALED_REFUSAL, PREDECESSOR_NOT_CURRENT_REFUSAL,
     RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
 };
-pub(crate) use package_version::{
+pub use package_version::{
     LOCK_PACKAGE_SQL, SELECT_CURRENT_PACKAGE_VERSION_SQL, load_applied_package,
     read_package_directory, register_package,
 };
@@ -285,7 +285,7 @@ async fn apply(
 }
 
 /// Reconcile mutable local configuration only after confirming the installed schema.
-pub(crate) async fn reconcile_local_package_configuration(
+pub async fn reconcile_local_package_configuration(
     tx: &Transaction<'_>,
     tenant: &str,
     directory: &PackageDirectory,

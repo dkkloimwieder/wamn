@@ -9,7 +9,7 @@ use wamn_schema_control::{
 
 use super::error::{ApplyPackageError, ApplyPackageErrorKind};
 
-pub(crate) const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
+pub const LOCK_PACKAGE_SQL: &str = "SELECT pg_advisory_xact_lock(hashtextextended(\
      'wamn.package.lineage:' || $1 || ':' || $2, 0))";
 const SELECT_PACKAGE_SQL: &str = "\
 SELECT manifest_sha256, predecessor_version FROM catalog.packages \
@@ -19,7 +19,7 @@ const SELECT_MIGRATIONS_SQL: &str = "\
 SELECT ordinal, relative_path, sha256 FROM catalog.package_migrations \
  WHERE tenant_id = $1 AND package_id = $2 AND package_version = $3 \
  ORDER BY ordinal";
-pub(crate) const SELECT_CURRENT_PACKAGE_VERSION_SQL: &str = "\
+pub const SELECT_CURRENT_PACKAGE_VERSION_SQL: &str = "\
 SELECT package.package_version FROM catalog.packages AS package \
  WHERE package.tenant_id = $1 AND package.package_id = $2 \
    AND NOT EXISTS (\
@@ -30,7 +30,7 @@ SELECT package.package_version FROM catalog.packages AS package \
    )";
 
 /// Register a package while retaining its lineage lock through the caller's transaction.
-pub(crate) async fn register_package(
+pub async fn register_package(
     tx: &Transaction<'_>,
     tenant: &str,
     coordinate: &wamn_catalog::PackageCoordinate,
@@ -144,7 +144,7 @@ pub(super) fn predecessor_prefix_error(
     }
 }
 
-pub(crate) async fn load_applied_package(
+pub async fn load_applied_package(
     tx: &Transaction<'_>,
     tenant: &str,
     package_id: &str,
@@ -184,7 +184,7 @@ pub(crate) async fn load_applied_package(
     }))
 }
 
-pub(crate) fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
+pub fn read_package_directory(root: &Path) -> anyhow::Result<PackageDirectory> {
     let manifest_path = root.join("wamn.json");
     let manifest_bytes = std::fs::read(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;

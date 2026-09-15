@@ -64,7 +64,6 @@ wamn-authoring-model = { workspace = true }
 # The shared terminal driver behind `wamn dev --tui` (wamn-10yt.5.9).
 wamn-client-terminal = { workspace = true }
 wamn-event-wire = { workspace = true, optional = true }
-wamn-event-reg = { workspace = true }
 # Release authoring parses and validates immutable execution graphs.
 wamn-execution-contract = { workspace = true }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity
@@ -73,7 +72,8 @@ wamn-catalog = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }
-wamn-record-history = { workspace = true }
+# The control operations that the verbs call.
+wamn-control = { workspace = true }
 # The pure provisioning SQL builders + identifier naming + credential Secret
 # rendering.
 wamn-control-provision = { workspace = true }

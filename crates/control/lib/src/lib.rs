@@ -3,3 +3,7 @@
 //! It holds the admission, release, provisioning, reconcile, and package
 //! operations. It does database, filesystem, and network work. It does no CLI
 //! presentation and owns no process.
+
+pub mod apply_package;
+pub mod reconcile_package_data_access;
+pub mod sql_params;

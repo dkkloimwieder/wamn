@@ -5701,6 +5701,28 @@ dependencies = [
 [[package]]
 name = "wamn-control"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "hex",
+ "ring",
+ "serde_json",
+ "tokio",
+ "tokio-postgres",
+ "url",
+ "wamn-catalog",
+ "wamn-control-provision",
+ "wamn-event-reg",
+ "wamn-execution-contract",
+ "wamn-project-state",
+ "wamn-record-history",
+ "wamn-runtime",
+ "wamn-schema-control",
+ "wamn-schema-generator",
+ "wamn-schema-introspection",
+ "wamn-test-infrastructure",
+ "wamn-test-postgres",
+]
 
 [[package]]
 name = "wamn-control-provision"
@@ -5762,15 +5784,14 @@ dependencies = [
  "wamn-authoring-model",
  "wamn-catalog",
  "wamn-client-terminal",
+ "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
- "wamn-event-reg",
  "wamn-event-wire",
  "wamn-execution-contract",
  "wamn-pg-core",
  "wamn-platform-identity",
  "wamn-project-state",
- "wamn-record-history",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-schema-control",

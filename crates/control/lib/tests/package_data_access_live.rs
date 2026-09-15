@@ -4,15 +4,15 @@ use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
 use url::Url;
+use wamn_control::apply_package::{self, ApplyPackageArgs};
+use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
-use wamn_ctl::apply_package::{self, ApplyPackageArgs};
-use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
 use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
-const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
+const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 const OVERLAY_EVIDENCE_PATH: &str = "generated/platform-policy/data-access.json";
 const TENANT: &str = "package-data-access-live";
 const PASSWORD: &str = "package-data-access-live-password";
@@ -28,11 +28,11 @@ async fn connect(url: &str) -> Client {
 }
 
 fn receiving_package_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving")
 }
 
 fn overlay_package_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/client_acme_receiving")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/client_acme_receiving")
 }
 
 fn generation_url(admin_url: &str, role: &str) -> String {

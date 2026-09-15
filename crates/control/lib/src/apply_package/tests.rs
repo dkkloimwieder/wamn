@@ -23,7 +23,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         )
         .await
         .unwrap();
-    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
+    let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
     run(ApplyPackageArgs {
         package: shipped.clone(),
         database_url: url.clone(),

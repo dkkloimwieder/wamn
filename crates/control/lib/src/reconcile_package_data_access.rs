@@ -126,7 +126,7 @@ struct PresentedPackage {
 
 /// The same parsed package evidence used by validation and local cutover.
 #[derive(Debug)]
-pub(crate) struct PreparedLocalDataAccess(Vec<PresentedPackage>);
+pub struct PreparedLocalDataAccess(Vec<PresentedPackage>);
 
 /// Reconcile the exact installed set of generated package contributions.
 pub async fn run(args: ReconcilePackageDataAccessArgs) -> anyhow::Result<()> {
@@ -166,12 +166,12 @@ async fn execute(
     ))
 }
 
-pub(crate) fn prepare_local(packages: &[PathBuf]) -> anyhow::Result<PreparedLocalDataAccess> {
+pub fn prepare_local(packages: &[PathBuf]) -> anyhow::Result<PreparedLocalDataAccess> {
     read_presented_packages(packages).map(PreparedLocalDataAccess)
 }
 
 /// Recheck live schema and grants using the already parsed local source inputs.
-pub(crate) async fn reconcile_local(
+pub async fn reconcile_local(
     prepared: &PreparedLocalDataAccess,
     database_url: &str,
     tenant: &str,
@@ -964,7 +964,7 @@ mod tests {
 
         // Local cutover retains the owner's exact parsed evidence; removing
         // source files after validation cannot substitute a later manifest/ACL.
-        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
+        let source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
         let original = crate::apply_package::read_package_directory(&source).unwrap();
         let overlay_bytes = std::fs::read(source.join(DATA_ACCESS_OVERLAY_PATH)).unwrap();
         let root =

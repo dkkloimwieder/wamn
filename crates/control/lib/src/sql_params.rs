@@ -3,7 +3,7 @@
 use tokio_postgres::types::ToSql;
 use wamn_schema_control::Value;
 
-pub(crate) fn as_postgres(values: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
+pub fn as_postgres(values: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
     values
         .iter()
         .map(|value| -> &(dyn ToSql + Sync) {
