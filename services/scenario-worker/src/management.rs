@@ -467,9 +467,9 @@ pub struct ManagementServeArgs {
     /// database (wamn-0h0g.8.5.3).
     ///
     /// It is a SECOND, separate connection, never a fallback for the authoring
-    /// one and never reachable from it: admission writes project run state,
-    /// authoring writes the control command table, and a transaction cannot span two
-    /// databases. Flipping the production admission path off the shared
+    /// one and never reachable from it: admission appends project `catalog.wirings`
+    /// rows, authoring writes the control command table, and a transaction cannot span
+    /// two databases. Flipping the production admission path off the shared
     /// `wamn_app` role and onto this credential is wamn-0h0g.22.10's traffic
     /// change; this argument is the plumbing that change needs to already exist.
     ///
