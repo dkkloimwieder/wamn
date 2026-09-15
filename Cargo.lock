@@ -6355,6 +6355,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "wamn-record-history",
+ "wamn-test-postgres",
 ]
 
 [[package]]

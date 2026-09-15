@@ -1,9 +1,8 @@
 //! Live PostgreSQL 18 exit gate for migration-derived catalog introspection.
 //!
-//! `WAMN_SCHEMA_INTROSPECTION_PG_URL` must name a disposable PostgreSQL 18
-//! maintenance database through a superuser connection. The admin identity is
-//! used only to create, measure, and remove the fixture database and negative
-//! catalog objects. The real Receiving migration and supported additive changes
+//! Each test connects to a test database of the test PostgreSQL 18 server
+//! through a superuser connection. The admin identity is used only to create,
+//! measure, and remove the fixture database and negative catalog objects. The real Receiving migration and supported additive changes
 //! execute through a dedicated non-superuser role that owns only `receiving`.
 
 use std::collections::BTreeMap;
@@ -1112,10 +1111,11 @@ async fn run_gate(admin_config: Config, fixture: Fixture) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires WAMN_SCHEMA_INTROSPECTION_PG_URL and disposable PostgreSQL 18"]
 async fn receiving_migration_round_trips_and_refuses_unsupported_server_objects() {
-    let url = std::env::var("WAMN_SCHEMA_INTROSPECTION_PG_URL")
-        .expect("WAMN_SCHEMA_INTROSPECTION_PG_URL must name a disposable PostgreSQL 18 server");
+    // record-history.sql creates the cluster-wide wamn_db_owner role.
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
     let admin_config = url.parse::<Config>().expect("parse PostgreSQL admin URL");
     let admin = connect(admin_config.clone()).await;
     configure_admin(&admin).await;
@@ -1617,10 +1617,9 @@ async fn run_exclusion_gate(admin_config: Config, fixture: Fixture) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "requires WAMN_SCHEMA_INTROSPECTION_PG_URL and disposable PostgreSQL 18"]
 async fn an_exclusion_constraint_is_modelled_rather_than_refused() {
-    let url = std::env::var("WAMN_SCHEMA_INTROSPECTION_PG_URL")
-        .expect("WAMN_SCHEMA_INTROSPECTION_PG_URL must name a disposable PostgreSQL 18 server");
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
     let admin_config = url.parse::<Config>().expect("parse PostgreSQL admin URL");
     let admin = connect(admin_config.clone()).await;
     configure_admin(&admin).await;

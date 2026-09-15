@@ -13,6 +13,7 @@ wamn-record-history = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true
