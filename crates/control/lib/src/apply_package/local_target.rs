@@ -35,9 +35,12 @@ pub(super) async fn lift_release_seal(
 }
 
 /// Record the current manifest hash of one package coordinate in the local target comment.
-pub(super) async fn record_manifest(
+///
+/// The caller owns the comment, so one transaction can record several
+/// coordinates and keep every hash it already wrote.
+pub(crate) async fn record_manifest(
     tx: &Transaction<'_>,
-    mut comment: LocalTargetComment,
+    comment: &mut LocalTargetComment,
     coordinate: &str,
     manifest_sha256: &str,
 ) -> anyhow::Result<bool> {

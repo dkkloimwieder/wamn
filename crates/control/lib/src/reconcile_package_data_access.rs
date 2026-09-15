@@ -272,7 +272,7 @@ async fn reconcile_mode(
             .await?;
         }
     }
-    validate_installed_set(&tx, tenant, packages, local).await?;
+    validate_installed_set(&tx, tenant, packages, local.is_some()).await?;
     let schemas = packages
         .iter()
         .flat_map(|package| package.schemas.iter().cloned())
@@ -342,6 +342,9 @@ async fn reconcile_mode(
         residue_targets(&after_residue)
     );
     if apply {
+        if let Some(environment) = local {
+            record_local_manifests(&tx, tenant, environment, packages).await?;
+        }
         tx.commit()
             .await
             .context("commit package data-access reconciliation")?;
@@ -363,18 +366,8 @@ async fn validate_installed_set(
     tx: &Transaction<'_>,
     tenant: &str,
     packages: &[PresentedPackage],
-    local: Option<&str>,
+    local: bool,
 ) -> anyhow::Result<()> {
-    // catalog.packages keeps the first manifest hash of a coordinate. A local
-    // target records the current hash of each package it applied in its comment.
-    let current = match local {
-        Some(environment) => {
-            wamn_runtime::local_application::read_local_target_comment(tx, tenant, environment)
-                .await?
-                .manifests
-        }
-        None => BTreeMap::new(),
-    };
     let mut installed = CoordinateHashes::new();
     for row in tx
         .query(SELECT_INSTALLED_SQL, &[&tenant])
@@ -383,15 +376,11 @@ async fn validate_installed_set(
     {
         let package_id = row.get::<_, String>(0);
         let package_version = row.get::<_, String>(1);
-        let manifest_sha256 = current
-            .get(&format!("{package_id}@{package_version}"))
-            .cloned()
-            .unwrap_or_else(|| row.get::<_, String>(2));
         ensure!(
             installed
                 .insert(
                     (package_id.clone(), package_version.clone()),
-                    manifest_sha256
+                    row.get::<_, String>(2)
                 )
                 .is_none(),
             "package-data-access-installed-set-repeats-coordinate: {package_id}@{package_version}"
@@ -402,18 +391,43 @@ async fn validate_installed_set(
         .map(|package| {
             (
                 (package.package_id.clone(), package.package_version.clone()),
-                if local.is_some() {
-                    installed
-                        .get(&(package.package_id.clone(), package.package_version.clone()))
-                        .cloned()
-                        .unwrap_or_default()
-                } else {
-                    package.manifest_sha256.clone()
-                },
+                package.manifest_sha256.clone(),
             )
         })
         .collect::<CoordinateHashes>();
-    validate_presented_lineages(&installed, &presented)
+    validate_presented_lineages(&installed, &presented)?;
+    // A published coordinate carries one manifest for good. A local target is
+    // disposable and takes a changed wamn.json at the applied coordinate, so
+    // the presented manifest is the truth there and this reconcile records it.
+    if !local {
+        validate_recorded_manifests(&installed, &presented)?;
+    }
+    Ok(())
+}
+
+/// Write the presented manifest hash of every package into the local target comment.
+///
+/// The comment then names the manifest the running application came from. This
+/// runs in the transaction that commits the grants, so the comment and the
+/// grants move together or not at all.
+async fn record_local_manifests(
+    tx: &Transaction<'_>,
+    tenant: &str,
+    environment: &str,
+    packages: &[PresentedPackage],
+) -> anyhow::Result<()> {
+    let mut comment =
+        wamn_runtime::local_application::read_local_target_comment(tx, tenant, environment).await?;
+    for package in packages {
+        crate::apply_package::record_manifest(
+            tx,
+            &mut comment,
+            &package.coordinate,
+            &package.manifest_sha256,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// Refuse unless the presented roots cover every applied package lineage.
@@ -426,6 +440,9 @@ async fn validate_installed_set(
 /// package with no presented root at all drops a contribution from the union,
 /// and only that case refuses. A presented coordinate that never reached Apply
 /// also refuses, because its declared relations are not on the server yet.
+///
+/// Whether the presented bytes match the applied bytes is a separate question,
+/// which `validate_recorded_manifests` answers for a published target.
 fn validate_presented_lineages(
     installed: &CoordinateHashes,
     presented: &CoordinateHashes,
@@ -452,6 +469,17 @@ fn validate_presented_lineages(
         missing.join(","),
         unapplied.join(",")
     );
+    Ok(())
+}
+
+/// Refuse a presented root whose bytes moved under an applied coordinate.
+///
+/// Every presented coordinate is already known to be applied, so the recorded
+/// hash exists for each one.
+fn validate_recorded_manifests(
+    installed: &CoordinateHashes,
+    presented: &CoordinateHashes,
+) -> anyhow::Result<()> {
     for ((package_id, package_version), presented_hash) in presented {
         let recorded_hash = installed
             .get(&(package_id.clone(), package_version.clone()))
@@ -885,7 +913,7 @@ mod tests {
 
     use super::{
         CoordinateHashes, UndeclaredResidue, prepare_local, render_undeclared_revocation,
-        validate_presented_lineages,
+        validate_presented_lineages, validate_recorded_manifests,
     };
 
     const DOCK_SHA: &str =
@@ -954,7 +982,9 @@ mod tests {
     fn a_presented_root_whose_bytes_moved_under_a_published_version_still_refuses() {
         let installed = coordinates(&[("dock", "1.0.0", DOCK_SHA)]);
         let presented = coordinates(&[("dock", "1.0.0", WMS_SHA)]);
-        let refusal = validate_presented_lineages(&installed, &presented)
+        validate_presented_lineages(&installed, &presented)
+            .expect("the coordinate is covered and applied; only its bytes moved");
+        let refusal = validate_recorded_manifests(&installed, &presented)
             .expect_err("a moved manifest under a published version must refuse")
             .to_string();
         assert!(

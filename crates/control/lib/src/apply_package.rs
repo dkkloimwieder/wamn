@@ -45,6 +45,7 @@ pub use error::{
     PACKAGE_VERSION_SEALED_REFUSAL, PREDECESSOR_NOT_CURRENT_REFUSAL,
     RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
 };
+pub(crate) use local_target::record_manifest;
 pub use local_target::{applied_migration_drift, local_target_recreate_reason};
 pub use package_version::{
     LOCK_PACKAGE_SQL, SELECT_CURRENT_PACKAGE_VERSION_SQL, load_applied_package,
@@ -174,7 +175,7 @@ async fn apply(
     tx.query_one(LOCK_PACKAGE_SQL, &[&tenant, &package_id])
         .await
         .context("lock package family")?;
-    let local_comment = match local_environment {
+    let mut local_comment = match local_environment {
         Some(environment) => Some(local_target::lift_release_seal(&tx, tenant, environment).await?),
         None => None,
     };
@@ -321,7 +322,7 @@ async fn apply(
         reconcile_package_operation_grants(&tx, &directory.manifest_bytes, tenant).await?;
     let registrations_changed =
         reconcile_package_registrations(&tx, tenant, &package_id, &registrations).await?;
-    let comment_changed = match local_comment {
+    let comment_changed = match local_comment.as_mut() {
         Some(comment) => {
             local_target::record_manifest(&tx, comment, coordinate_text, &plan.manifest_sha256)
                 .await?

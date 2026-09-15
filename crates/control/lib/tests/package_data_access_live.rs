@@ -1,5 +1,6 @@
 //! Disposable-PG18 test for installed-set generated data authority.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
@@ -904,4 +905,163 @@ async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
 
     std::fs::remove_dir_all(lineage_fixture_directory().join("receiving-logged"))
         .expect("remove the logged package fixture");
+}
+
+/// The full comment of the connected database.
+async fn database_comment(client: &Client) -> Option<String> {
+    client
+        .query_one(
+            "SELECT pg_catalog.shobj_description(oid, 'pg_database') \
+               FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
+            &[],
+        )
+        .await
+        .expect("read the database comment")
+        .get(0)
+}
+
+/// The manifest hashes the local target comment records.
+async fn recorded_manifests(client: &Client) -> BTreeMap<String, String> {
+    let comment = database_comment(client)
+        .await
+        .expect("the target carries a comment");
+    wamn_runtime::local_application::parse_local_target_comment(&comment)
+        .expect("parse the local target comment")
+        .manifests
+}
+
+/// Change the staged manifest bytes without changing what the package declares.
+fn change_manifest_bytes(root: &Path) -> String {
+    let path = root.join("wamn.json");
+    let mut bytes = std::fs::read(&path).expect("read the staged manifest");
+    bytes.push(b'\n');
+    std::fs::write(&path, &bytes).expect("write the changed manifest");
+    let changed = manifest_sha256(&bytes);
+    let mut evidence: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(root.join(OVERLAY_EVIDENCE_PATH)).expect("read staged evidence"),
+    )
+    .expect("parse staged evidence");
+    evidence
+        .as_object_mut()
+        .expect("package evidence is an object")
+        .insert("manifest_sha256".to_owned(), serde_json::json!(changed));
+    std::fs::write(
+        root.join(OVERLAY_EVIDENCE_PATH),
+        wamn_execution_contract::canonical_json_bytes(&evidence),
+    )
+    .expect("regenerate evidence for the changed manifest");
+    changed
+}
+
+/// Owner ruling 8 of wamn-ri4b: the local grant reconcile at Activate records
+/// the presented manifest hash of each package in the local target comment, and
+/// a changed wamn.json at an applied coordinate no longer refuses there.
+#[tokio::test]
+async fn the_local_grant_reconcile_records_the_presented_manifest_hash() {
+    const ENVIRONMENT: &str = "development";
+    let url = locked_database::database(wamn_test_postgres::database);
+    let admin = install_lineage_fixture(&url).await;
+    let (receiving, first) = stage_package_root(&receiving_package_root(), "receiving-local", None);
+    let (overlay, overlay_sha256) =
+        stage_package_root(&overlay_package_root(), "overlay-local", None);
+    apply(&url, receiving.clone()).await;
+    apply(&url, overlay.clone()).await;
+
+    let instance: u32 = admin
+        .query_one(
+            "SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
+            &[],
+        )
+        .await
+        .expect("read the database instance")
+        .get(0);
+    let marker =
+        wamn_runtime::local_application::local_target_marker(TENANT, ENVIRONMENT, instance);
+    admin
+        .batch_execute(&format!(
+            "DO $comment$ BEGIN \
+               EXECUTE format('COMMENT ON DATABASE %I IS %L', current_database(), {}::text); \
+             END $comment$;",
+            wamn_pg_core::quote_literal(&marker)
+        ))
+        .await
+        .expect("mark the local target");
+
+    let roots = vec![receiving.clone(), overlay.clone()];
+    let reconcile = |apply: bool| {
+        let prepared = reconcile_package_data_access::prepare_local(&roots)
+            .expect("prepare the presented local packages");
+        let url = url.to_string();
+        async move {
+            reconcile_package_data_access::reconcile_local(
+                &prepared,
+                &url,
+                TENANT,
+                ENVIRONMENT,
+                apply,
+            )
+            .await
+        }
+    };
+
+    // A validating reconcile rolls back, so it records nothing.
+    reconcile(false)
+        .await
+        .expect("validate the local grants before the cutover");
+    assert_eq!(database_comment(&admin).await, Some(marker.clone()));
+
+    reconcile(true).await.expect("apply the local grants");
+    assert_eq!(
+        recorded_manifests(&admin).await,
+        BTreeMap::from([
+            ("wamn_receiving@1.0.0".to_owned(), first.clone()),
+            ("client_acme_receiving@3.0.0".to_owned(), overlay_sha256),
+        ]),
+        "the comment does not name the presented manifest of each package"
+    );
+
+    // An operations-only wamn.json edit at an applied coordinate reconciles
+    // with no Migrate, and the comment follows the presented manifest.
+    let second = change_manifest_bytes(&receiving);
+    assert_ne!(second, first, "the manifest bytes did not move");
+    reconcile(true)
+        .await
+        .expect("the local reconcile takes a changed manifest at an applied coordinate");
+    assert_eq!(
+        recorded_manifests(&admin).await.get("wamn_receiving@1.0.0"),
+        Some(&second),
+        "the comment kept a manifest hash the application no longer came from"
+    );
+    assert_eq!(
+        admin
+            .query_one(
+                "SELECT manifest_sha256 FROM catalog.packages \
+                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                    AND package_version = '1.0.0'",
+                &[&TENANT],
+            )
+            .await
+            .expect("read the immutable package row")
+            .get::<_, String>(0),
+        first,
+        "catalog.packages keeps the first recorded manifest hash"
+    );
+
+    // The production path still refuses the same moved bytes.
+    let drift = reconcile_package_data_access::reconcile_package_data_access(reconcile_args(
+        &url,
+        roots.clone(),
+    ))
+    .await
+    .expect_err("moved bytes reconciled under an applied coordinate");
+    assert!(
+        drift
+            .to_string()
+            .contains("package-data-access-source-drift: package=wamn_receiving@1.0.0"),
+        "the production path did not refuse the moved bytes: {drift:#}"
+    );
+
+    for root in &roots {
+        std::fs::remove_dir_all(root).expect("remove the local reconcile fixture");
+    }
 }
