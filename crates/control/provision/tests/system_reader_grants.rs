@@ -13,8 +13,8 @@
 //! `rolbypassrls` — a superuser fixture would satisfy every probe below while
 //! showing nothing.
 //!
-//! Set `WAMN_REGISTRY_PG_URL` to a throwaway superuser URL to arm it (the same
-//! knob `control_storage.rs` uses); it prints a skip line and returns when unset.
+//! Each test takes its own test database on the test PostgreSQL server and holds
+//! the process lock, because it drops and creates cluster-wide roles.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -34,12 +34,6 @@ const ORG: &str = "acme";
 const PROJECT: &str = "receiving";
 const ENV: &str = "dev";
 const READER_PW: &str = "wamn_system_reader_pw";
-
-/// Both gates re-apply `system-schema.sql` into the SAME database, so they must
-/// not interleave. Tests inside one binary run in parallel threads by default;
-/// this is what makes each one's `DROP SCHEMA … CASCADE` a reset rather than a
-/// race that wipes the other's grants mid-assertion.
-static SCHEMA: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// One psql run: `(succeeded, stdout, stderr)`.
 ///
@@ -84,7 +78,7 @@ fn run_admin(url: &str, what: &str, script: &str) -> String {
 
 /// The admin URL with its userinfo replaced by one role's login.
 fn role_url(admin_url: &str, role: &str, password: &str) -> String {
-    let mut url = Url::parse(admin_url).expect("WAMN_REGISTRY_PG_URL is a URL");
+    let mut url = Url::parse(admin_url).expect("the test database URL is a URL");
     url.set_username(role).expect("set the probe role");
     url.set_password(Some(password)).expect("set the password");
     url.into()
@@ -228,14 +222,9 @@ fn reader_sqlstate(reader_url: &str, statement: &str) -> Option<String> {
 
 #[test]
 fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
-    let Ok(admin_url) = std::env::var("WAMN_REGISTRY_PG_URL") else {
-        eprintln!(
-            "skipping the_registry_reader_holds_one_select_and_is_refused_everywhere_else \
-             (set WAMN_REGISTRY_PG_URL to run)"
-        );
-        return;
-    };
-    let _serialized = SCHEMA.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let admin_url = test_database.url().to_owned();
     let database = {
         let (ok, out, err) = psql_tuples(&admin_url, "SELECT current_database()");
         assert!(ok, "read the target database name:\n{err}");
@@ -405,14 +394,9 @@ fn the_registry_reader_holds_one_select_and_is_refused_everywhere_else() {
 /// live half of the guard that fails on the fourth.
 #[test]
 fn the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_other() {
-    let Ok(admin_url) = std::env::var("WAMN_REGISTRY_PG_URL") else {
-        eprintln!(
-            "skipping the_identity_reader_can_never_write_identity_and_neither_reader_reaches_the_other \
-             (set WAMN_REGISTRY_PG_URL to run)"
-        );
-        return;
-    };
-    let _serialized = SCHEMA.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let admin_url = test_database.url().to_owned();
     let database = {
         let (ok, out, err) = psql_tuples(&admin_url, "SELECT current_database()");
         assert!(ok, "read the target database name:\n{err}");

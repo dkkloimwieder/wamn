@@ -25,17 +25,8 @@
 //! FORCE RLS an "it failed" assertion cannot tell REFUSED from MATCHED-NOTHING,
 //! which is why the post-state is read back in both directions.
 //!
-//! Set `WAMN_FAMILY_SURFACE_PG_URL` to a throwaway superuser URL to arm it; both
-//! gates print a skip line and return when it is unset.
-//!
-//! ```bash
-//! docker run -d --name wamn-family-pg -e POSTGRES_PASSWORD=probe \
-//!   -p 127.0.0.1:5437:5432 postgres:18
-//! until psql postgres://postgres:probe@localhost:5437/postgres -Atqc 'select 1'; do :; done
-//! WAMN_FAMILY_SURFACE_PG_URL=postgres://postgres:probe@localhost:5437/postgres \
-//!   cargo test -p wamn-control-provision --test family_surface_grants
-//! docker rm -f wamn-family-pg      # BY EXPLICIT NAME. Never prune.
-//! ```
+//! Each gate takes its own test database on the test PostgreSQL server and holds
+//! the process lock, because it rebuilds cluster-wide roles.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -55,11 +46,6 @@ const ORG: &str = "acme";
 const PROJECT: &str = "billing";
 const ENV: &str = "dev";
 const GENERATION_PW: &str = "wamn_family_surface_pw";
-
-/// All gates rebuild the SAME schemas and the SAME cluster-global roles, so
-/// they must not interleave. Tests inside one binary run in parallel threads by
-/// default; this makes each one's reset a reset rather than a race.
-static SCHEMA: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// One psql run: `(succeeded, stdout, stderr)`.
 ///
@@ -154,7 +140,7 @@ fn generation(family: WorkloadRoleFamily, database: &str) -> String {
 
 /// The admin URL with its userinfo replaced by one role's login.
 fn role_url(admin_url: &str, role: &str, password: &str) -> String {
-    let mut url = Url::parse(admin_url).expect("WAMN_FAMILY_SURFACE_PG_URL is a URL");
+    let mut url = Url::parse(admin_url).expect("the test database URL is a URL");
     url.set_username(role).expect("set the probe role");
     url.set_password(Some(password)).expect("set the password");
     url.into()
@@ -223,14 +209,9 @@ fn reset(admin_url: &str, database: &str) {
 
 #[test]
 fn the_event_materializer_role_holds_exactly_its_two_catalog_reads() {
-    let Ok(admin) = std::env::var("WAMN_FAMILY_SURFACE_PG_URL") else {
-        eprintln!(
-            "skipping the_event_materializer_role_holds_exactly_its_two_catalog_reads \
-             (set WAMN_FAMILY_SURFACE_PG_URL to run)"
-        );
-        return;
-    };
-    let _serialized = SCHEMA.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let admin = test_database.url().to_owned();
     let database = query(&admin, "SELECT current_database()");
     reset(&admin, &database);
 
@@ -438,14 +419,9 @@ fn expected_executor_grants() -> Vec<String> {
 /// THE EXECUTOR-PLATFORM SURFACE, AS THE SERVER SEES IT.
 #[test]
 fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
-    let Ok(admin) = std::env::var("WAMN_FAMILY_SURFACE_PG_URL") else {
-        eprintln!(
-            "skipping the_executor_platform_role_holds_exactly_its_measured_claim_surface \
-             (set WAMN_FAMILY_SURFACE_PG_URL to run)"
-        );
-        return;
-    };
-    let _serialized = SCHEMA.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let admin = test_database.url().to_owned();
     let database = query(&admin, "SELECT current_database()");
     reset(&admin, &database);
 
@@ -705,14 +681,9 @@ fn the_executor_platform_role_holds_exactly_its_measured_claim_surface() {
 /// authority fails here rather than at the next incident.
 #[test]
 fn the_http_admitter_role_adds_exactly_the_fresh_permission_reads() {
-    let Ok(admin) = std::env::var("WAMN_FAMILY_SURFACE_PG_URL") else {
-        eprintln!(
-            "skipping the_http_admitter_role_adds_exactly_the_fresh_permission_reads \
-             (set WAMN_FAMILY_SURFACE_PG_URL to run)"
-        );
-        return;
-    };
-    let _serialized = SCHEMA.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let admin = test_database.url().to_owned();
     let database = query(&admin, "SELECT current_database()");
     reset(&admin, &database);
 

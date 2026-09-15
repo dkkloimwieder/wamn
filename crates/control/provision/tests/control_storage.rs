@@ -10,8 +10,8 @@
 //!   data-plane manifest references the T1 cluster / system DB;
 //! - a **live-apply gate** (invariants 2/3 + placement/env FK integrity + the
 //!   template stamp insert-if-absent semantics + the saga exactly-once/resume
-//!   checkpoint), gated on `WAMN_REGISTRY_PG_URL` (a superuser URL — the harness
-//!   provisions the `wamn_system` owner role) and skipped cleanly when unset.
+//!   checkpoint), on a test database of the test PostgreSQL server (a superuser
+//!   URL — the harness provisions the `wamn_system` owner role).
 
 use std::path::Path;
 
@@ -588,18 +588,15 @@ fn no_data_plane_manifest_references_the_system_cluster() {
 
 // --- live-apply gate: invariants 2/3 + placement/env FK + seed + saga --------
 
-/// Apply `deploy/sql/system-schema.sql` to a throwaway Postgres and assert the live,
-/// DB-enforced invariants. Set `WAMN_REGISTRY_PG_URL` to a superuser URL (the
-/// harness provisions the `wamn_system` owner role); skipped when unset.
+/// Apply `deploy/sql/system-schema.sql` to a test database and assert the live,
+/// DB-enforced invariants. The test connects as the superuser (the harness
+/// provisions the `wamn_system` owner role) and holds the process lock, because
+/// it creates cluster-wide roles.
 #[test]
 fn system_schema_applies_and_enforces_invariants_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_REGISTRY_PG_URL") else {
-        eprintln!(
-            "skipping system_schema_applies_and_enforces_invariants_on_postgres \
-             (set WAMN_REGISTRY_PG_URL to run)"
-        );
-        return;
-    };
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let mut script = String::new();
     script.push_str(

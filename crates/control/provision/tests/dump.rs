@@ -6,45 +6,30 @@
 //! database, and assert the seeded rows survive the round-trip. One artifact
 //! serves restore-to-last-dump AND the 10.3 export; this shows it restores.
 //!
-//! Set `WAMN_DUMP_PG_URL` to a **superuser** URL (it CREATEs/DROPs two throwaway
-//! databases); skipped cleanly when unset or when the `pg_dump`/`pg_restore`/`psql`
-//! client tools are absent. The object-store transport is out of scope here;
-//! this gate validates the artifact itself, which is substrate-independent.
+//! The source and scratch databases are test databases on the test PostgreSQL
+//! server, and the `pg_dump`/`pg_restore`/`psql` client tools must be on `PATH`.
+//! The object-store transport is out of scope here; this gate validates the
+//! artifact itself, which is substrate-independent.
 
 use std::process::Command as Proc;
 
 use wamn_control_provision::pg_dump_argv;
 
-const SRC_DB: &str = "wamn_dump_src_test";
-const SCRATCH_DB: &str = "wamn_dump_scratch_test";
-
 #[test]
 fn dump_round_trips_a_seeded_database() {
-    let Ok(admin) = std::env::var("WAMN_DUMP_PG_URL") else {
-        eprintln!("skipping dump_round_trips_a_seeded_database (set WAMN_DUMP_PG_URL to run)");
-        return;
-    };
     for tool in ["psql", "pg_dump", "pg_restore"] {
-        if !tool_present(tool) {
-            eprintln!("skipping dump_round_trips_a_seeded_database (no {tool} on PATH)");
-            return;
-        }
+        assert!(
+            tool_present(tool),
+            "dump_round_trips_a_seeded_database requires {tool} on PATH"
+        );
     }
 
-    let src = swap_db(&admin, SRC_DB);
-    let scratch = swap_db(&admin, SCRATCH_DB);
+    let src_database = wamn_test_postgres::database();
+    let scratch_database = wamn_test_postgres::database();
+    let src = src_database.url().to_owned();
+    let scratch = scratch_database.url().to_owned();
     let dump_dir = std::env::temp_dir().join(format!("wamn-dump-gate-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dump_dir);
-
-    // Fresh source + scratch databases (CREATE DATABASE cannot run in a txn — psql
-    // -c is autocommit). FORCE drops any leftover connections from a prior run.
-    for db in [SRC_DB, SCRATCH_DB] {
-        run_psql(
-            &admin,
-            &format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
-        );
-        run_psql(&admin, &format!("CREATE DATABASE {db}"));
-    }
 
     // Seed the source with a table carrying an exact-decimal column (the no-float
     // rule) so the round-trip shows value fidelity, not just row count.
@@ -96,29 +81,8 @@ fn dump_round_trips_a_seeded_database() {
         "exact-decimal value restored without loss"
     );
 
-    // Teardown: drop both throwaway databases and the dump directory.
-    for db in [SRC_DB, SCRATCH_DB] {
-        run_psql(
-            &admin,
-            &format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
-        );
-    }
+    // Teardown: the test databases drop with their values; remove the dump directory.
     let _ = std::fs::remove_dir_all(&dump_dir);
-}
-
-/// Swap the database path segment of a libpq URL, preserving any query string.
-fn swap_db(url: &str, db: &str) -> String {
-    let (no_q, query) = match url.split_once('?') {
-        Some((a, b)) => (a, Some(b)),
-        None => (url, None),
-    };
-    let (base, _old_db) = no_q
-        .rsplit_once('/')
-        .expect("url has a database path segment");
-    match query {
-        Some(q) => format!("{base}/{db}?{q}"),
-        None => format!("{base}/{db}"),
-    }
 }
 
 fn tool_present(tool: &str) -> bool {

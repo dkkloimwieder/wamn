@@ -1,4 +1,4 @@
-//! Drift and optional live-apply test for the operations persistence extension.
+//! Drift and live-apply test for the operations persistence extension.
 //!
 //! The core control schema remains independently installable. The ops artifact
 //! is applied afterwards, owns exactly two operations relations, and may
@@ -142,17 +142,14 @@ fn copy_and_dump_builders_match_the_ops_relations() {
     }
 }
 
-/// Apply core once and the ops extension twice to a throwaway Postgres, then
-/// exercise the real builders. Skipped when `WAMN_REGISTRY_PG_URL` is unset.
+/// Apply core once and the ops extension twice to a test database, then
+/// exercise the real builders. The test holds the process lock, because it
+/// creates cluster-wide roles.
 #[test]
 fn ops_schema_applies_idempotently_after_core_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_REGISTRY_PG_URL") else {
-        eprintln!(
-            "skipping ops_schema_applies_idempotently_after_core_on_postgres \
-             (set WAMN_REGISTRY_PG_URL to run)"
-        );
-        return;
-    };
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let mut script = String::new();
     script.push_str(wamn_control_provision::state::ensure_ops_role_sql());

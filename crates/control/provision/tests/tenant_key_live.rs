@@ -154,13 +154,8 @@ fn ddl(scope: &Scope) -> String {
 
 #[test]
 fn the_sql_tenant_key_equals_the_rust_tenant_key() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_KEY_PG_URL") else {
-        eprintln!(
-            "skipping the_sql_tenant_key_equals_the_rust_tenant_key \
-             (set WAMN_TENANT_KEY_PG_URL to run)"
-        );
-        return;
-    };
+    let test_database = wamn_test_postgres::database();
+    let admin = test_database.url().to_owned();
     let scope = Scope::new("agree");
     let db_url = reset(&admin, &scope);
     psql_file(&db_url, &ddl(&scope));
@@ -189,13 +184,8 @@ fn the_sql_tenant_key_equals_the_rust_tenant_key() {
 
 #[test]
 fn the_function_carries_the_flags_the_expression_index_requires() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_KEY_PG_URL") else {
-        eprintln!(
-            "skipping the_function_carries_the_flags_the_expression_index_requires \
-             (set WAMN_TENANT_KEY_PG_URL to run)"
-        );
-        return;
-    };
+    let test_database = wamn_test_postgres::database();
+    let admin = test_database.url().to_owned();
     let scope = Scope::new("flags");
     let db_url = reset(&admin, &scope);
     psql_file(&db_url, &ddl(&scope));
@@ -257,13 +247,8 @@ fn the_function_carries_the_flags_the_expression_index_requires() {
 
 #[test]
 fn the_guest_may_execute_the_derivation_and_may_not_replace_it() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_KEY_PG_URL") else {
-        eprintln!(
-            "skipping the_guest_may_execute_the_derivation_and_may_not_replace_it \
-             (set WAMN_TENANT_KEY_PG_URL to run)"
-        );
-        return;
-    };
+    let test_database = wamn_test_postgres::database();
+    let admin = test_database.url().to_owned();
     let scope = Scope::new("grants");
     let db_url = reset(&admin, &scope);
     psql_file(&db_url, &ddl(&scope));
@@ -350,13 +335,8 @@ fn the_guest_may_execute_the_derivation_and_may_not_replace_it() {
 /// `wamn-0h0g.11.49` converge path provably the same object.
 #[test]
 fn a_second_apply_leaves_the_definition_identical() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_KEY_PG_URL") else {
-        eprintln!(
-            "skipping a_second_apply_leaves_the_definition_identical \
-             (set WAMN_TENANT_KEY_PG_URL to run)"
-        );
-        return;
-    };
+    let test_database = wamn_test_postgres::database();
+    let admin = test_database.url().to_owned();
     let scope = Scope::new("converge");
     let db_url = reset(&admin, &scope);
     // BOTH derivations, ordered: a converge arm that watched only one would
@@ -415,13 +395,8 @@ fn role_url(admin_url: &str, role: &str, database: &str) -> String {
 /// PostgreSQL, and this is the only place it is established.
 #[test]
 fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_KEY_PG_URL") else {
-        eprintln!(
-            "skipping the_session_derivation_returns_the_key_of_the_connected_guest_login \
-             (set WAMN_TENANT_KEY_PG_URL to run)"
-        );
-        return;
-    };
+    let test_database = wamn_test_postgres::database();
+    let admin = test_database.url().to_owned();
     let scope = Scope::new("session");
     let db_url = reset(&admin, &scope);
     psql_file(&db_url, &ddl(&scope));
@@ -535,13 +510,8 @@ fn the_session_derivation_returns_the_key_of_the_connected_guest_login() {
 /// was created for.
 #[test]
 fn the_bootstrap_and_literal_renderings_install_the_same_object() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_KEY_PG_URL") else {
-        eprintln!(
-            "skipping the_bootstrap_and_literal_renderings_install_the_same_object \
-             (set WAMN_TENANT_KEY_PG_URL to run)"
-        );
-        return;
-    };
+    let test_database = wamn_test_postgres::database();
+    let admin = test_database.url().to_owned();
     // MULTI-BYTE ON PURPOSE — see `Scope::multibyte`.
     let scope = Scope::multibyte("boot");
     let db_url = reset(&admin, &scope);

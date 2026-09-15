@@ -1,7 +1,7 @@
-//! Optional live-apply gate for the platform extension builder, against a
-//! throwaway Postgres when `WAMN_PROVISION_PG_URL` is set (a **superuser** URL,
-//! the administrator connection the extension builder documents). Skips cleanly
-//! when unset. Shells out to `psql` so the crate retains no database dependency.
+//! Live-apply gate for the platform extension builder, against a test database
+//! on the test PostgreSQL server, through its superuser URL (the administrator
+//! connection the extension builder documents). Shells out to `psql` so the
+//! crate retains no database dependency.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -23,13 +23,8 @@ const OVERLAP_PROBE_TABLE: &str = "CREATE TABLE overlap_probe.appointment (\
 
 #[test]
 fn the_platform_extensions_make_an_exclusion_constraint_reachable() {
-    let Ok(url) = std::env::var("WAMN_PROVISION_PG_URL") else {
-        eprintln!(
-            "skipping the_platform_extensions_make_an_exclusion_constraint_reachable \
-             (set WAMN_PROVISION_PG_URL to run)"
-        );
-        return;
-    };
+    let database = wamn_test_postgres::database();
+    let url = database.url().to_owned();
 
     // 1. WITHOUT the extension: the constraint refuses for want of an operator
     //    class. Run alone, because ON_ERROR_STOP would abandon the script.

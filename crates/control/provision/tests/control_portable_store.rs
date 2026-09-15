@@ -2,13 +2,10 @@
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
 
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
     include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
 const STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
-
-static STORE: Mutex<()> = Mutex::new(());
 
 fn psql(url: &str, script: &str) -> std::process::Output {
     let mut child = Command::new("psql")
@@ -119,10 +116,9 @@ fn literal(value: &wamn_schema_control::Value) -> String {
 }
 
 #[test]
-#[ignore = "requires disposable PostgreSQL 18 URL in WAMN_CONTROL_PORTABLE_PG_URL"]
 fn current_database_connect_posture_is_exactly_scoped() {
-    let url = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL")
-        .expect("WAMN_CONTROL_PORTABLE_PG_URL names a disposable PostgreSQL 18 database");
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
     let sibling = format!("wamn_portable_sibling_{}", std::process::id());
     psql_ok(
         &url,
@@ -169,14 +165,9 @@ fn current_database_connect_posture_is_exactly_scoped() {
 
 #[test]
 fn control_portable_store_enforces_the_current_record_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
-        eprintln!(
-            "skipping control_portable_store_enforces_the_current_record_on_postgres \
-             (set WAMN_CONTROL_PORTABLE_PG_URL)"
-        );
-        return;
-    };
-    let _serialized = STORE.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
     reset_and_apply(&url, "");
 
     psql_ok(
@@ -355,14 +346,9 @@ RESET ROLE;
 
 #[test]
 fn control_author_is_tenant_bound_and_exactly_scoped_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
-        eprintln!(
-            "skipping control_author_is_tenant_bound_and_exactly_scoped_on_postgres \
-             (set WAMN_CONTROL_PORTABLE_PG_URL)"
-        );
-        return;
-    };
-    let _serialized = STORE.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
     let database = database(&url);
     let author_a = wamn_control_provision::control_author_generation_role(
         "acme",
@@ -552,13 +538,9 @@ $second$;
 
 #[test]
 fn deployment_attestation_rust_binding_holds_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_CONTROL_PORTABLE_PG_URL") else {
-        eprintln!(
-            "skipping deployment_attestation_rust_binding_holds_on_postgres (set WAMN_CONTROL_PORTABLE_PG_URL)"
-        );
-        return;
-    };
-    let _serialized = STORE.lock().unwrap_or_else(|poison| poison.into_inner());
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
     reset_and_apply(&url, "");
     let hash = format!("sha256:{}", "a".repeat(64));
     let identity = wamn_schema_control::attestation::EffectiveReleaseIdentity {

@@ -1,10 +1,10 @@
 //! Live-apply gate for the project-env DATABASE OWNERSHIP floor (R9) and its
 //! database-scoped `CONNECT` grants.
 //!
-//! Set `WAMN_PROVISION_PG_URL` to a **superuser** URL of a throwaway Postgres
-//! (`CREATE DATABASE` / `CREATE ROLE` need it, exactly as the CNPG cluster
-//! superuser does in production) — the same variable `tests/provision.rs` uses,
-//! so one container serves both. Skipped cleanly when unset.
+//! The test connects with the superuser URL of a test database on the test
+//! PostgreSQL server (`CREATE DATABASE` / `CREATE ROLE` need it, exactly as the
+//! CNPG cluster superuser does in production). It holds the process lock,
+//! because it drops and creates cluster-wide roles.
 //!
 //! Two tests, both driving the REAL project-database builders:
 //!
@@ -60,13 +60,9 @@ fn run_ok(url: &str, script: &str) {
 
 #[test]
 fn project_env_database_ownership_and_connect_are_scoped() {
-    let Ok(url) = std::env::var("WAMN_PROVISION_PG_URL") else {
-        eprintln!(
-            "skipping project_env_database_ownership_and_connect_are_scoped \
-             (set WAMN_PROVISION_PG_URL to run)"
-        );
-        return;
-    };
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     // TWO project-env databases: a single one makes every cross-database sweep
     // below vacuous (a loop over one row shows nothing about the cluster).

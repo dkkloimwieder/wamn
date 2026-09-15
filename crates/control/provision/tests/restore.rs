@@ -11,8 +11,8 @@
 //!    already holds a stale row, and assert `--clean` dropped it (the restored
 //!    state replaces, not appends). This makes the `--clean` flag load-bearing.
 //!
-//! Set `WAMN_RESTORE_PG_URL` to a **superuser** URL (it CREATEs/DROPs throwaway
-//! databases); skipped cleanly when unset or when the client tools are absent.
+//! The databases are test databases on the test PostgreSQL server, and the
+//! client tools must be on `PATH`.
 //! The object-store transport is out of scope here; this validates the restore
 //! of the artifact, substrate-independent.
 
@@ -20,38 +20,23 @@ use std::process::Command as Proc;
 
 use wamn_control_provision::{pg_dump_argv, pg_restore_argv};
 
-const SRC_DB: &str = "wamn_restore_src_test";
-const SCRATCH_DB: &str = "wamn_restore_scratch_test";
-const INPLACE_DB: &str = "wamn_restore_inplace_test";
-
 #[test]
 fn restore_round_trips_and_clean_replaces_in_place() {
-    let Ok(admin) = std::env::var("WAMN_RESTORE_PG_URL") else {
-        eprintln!("skipping restore gate (set WAMN_RESTORE_PG_URL to run)");
-        return;
-    };
     for tool in ["psql", "pg_dump", "pg_restore"] {
-        if !tool_present(tool) {
-            eprintln!("skipping restore gate (no {tool} on PATH)");
-            return;
-        }
+        assert!(
+            tool_present(tool),
+            "the restore gate requires {tool} on PATH"
+        );
     }
 
-    let src = swap_db(&admin, SRC_DB);
-    let scratch = swap_db(&admin, SCRATCH_DB);
-    let inplace = swap_db(&admin, INPLACE_DB);
+    let src_database = wamn_test_postgres::database();
+    let scratch_database = wamn_test_postgres::database();
+    let inplace_database = wamn_test_postgres::database();
+    let src = src_database.url().to_owned();
+    let scratch = scratch_database.url().to_owned();
+    let inplace = inplace_database.url().to_owned();
     let dump_dir = std::env::temp_dir().join(format!("wamn-restore-gate-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dump_dir);
-
-    // Fresh throwaway databases (CREATE DATABASE cannot run in a txn — psql -c is
-    // autocommit). FORCE drops leftover connections from a prior run.
-    for db in [SRC_DB, SCRATCH_DB, INPLACE_DB] {
-        run_psql(
-            &admin,
-            &format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
-        );
-        run_psql(&admin, &format!("CREATE DATABASE {db}"));
-    }
 
     // Seed the source with an exact-decimal column (the no-float rule) so the
     // round-trip checks exact values and row count.
@@ -126,29 +111,8 @@ fn restore_round_trips_and_clean_replaces_in_place() {
         "the in-place database now holds exactly the dump's rows"
     );
 
-    // Teardown.
-    for db in [SRC_DB, SCRATCH_DB, INPLACE_DB] {
-        run_psql(
-            &admin,
-            &format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
-        );
-    }
+    // Teardown: the test databases drop with their values.
     let _ = std::fs::remove_dir_all(&dump_dir);
-}
-
-/// Swap the database path segment of a libpq URL, preserving any query string.
-fn swap_db(url: &str, db: &str) -> String {
-    let (no_q, query) = match url.split_once('?') {
-        Some((a, b)) => (a, Some(b)),
-        None => (url, None),
-    };
-    let (base, _old) = no_q
-        .rsplit_once('/')
-        .expect("url has a database path segment");
-    match query {
-        Some(q) => format!("{base}/{db}?{q}"),
-        None => format!("{base}/{db}"),
-    }
 }
 
 fn tool_present(tool: &str) -> bool {

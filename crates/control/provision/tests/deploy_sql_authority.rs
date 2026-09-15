@@ -24,16 +24,8 @@
 //! against level-2 spec tests 2, 3, 4, 5, 7, 8, 10, and 16.
 //! The `app_system` history case (`wamn-emtx.21`) tests spec test 20 for the
 //! six history tables of `deploy/sql/app-schema.sql`.
-//! Run the file with `--test-threads=1`, because every case owns the server.
-//!
-//! ```bash
-//! docker run -d --name wamn-floor-pg -e POSTGRES_PASSWORD=probe \
-//!   -p 127.0.0.1:5434:5432 postgres:18
-//! until psql postgres://postgres:probe@localhost:5434/postgres -Atqc 'select 1'; do :; done
-//! WAMN_TENANT_FLOOR_PG_URL=postgres://postgres:probe@localhost:5434/postgres \
-//!   cargo test -p wamn-control-provision --test deploy_sql_authority -- --test-threads=1
-//! docker rm -f wamn-floor-pg      # BY EXPLICIT NAME. Never prune.
-//! ```
+//! Every case starts a PostgreSQL server of its own, because every case
+//! rebuilds cluster-wide roles and the `wamn` database.
 
 use std::process::Command;
 
@@ -195,6 +187,18 @@ fn the_platform_grain_family_set_is_pinned_and_not_derived() {
     );
 }
 
+/// Start a PostgreSQL server that one case owns, and return it with its
+/// superuser URL.
+fn owned_server() -> (wamn_test_postgres::OwnedPostgres, String) {
+    let server = wamn_test_postgres::start(&[]).expect("start a test PostgreSQL server");
+    let admin = server
+        .database("postgres")
+        .expect("the test server has its postgres database")
+        .url()
+        .to_owned();
+    (server, admin)
+}
+
 fn psql(url: &str, database: Option<&str>, script: &str) -> String {
     let mut command = Command::new("psql");
     command
@@ -306,19 +310,12 @@ fn reset(admin_url: &str) {
 /// tenant and only its own.
 #[test]
 fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_swept_floor_admits_only_the_connected_guest_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
 
     // HERMETIC, and it has to be: `postgres-init.sql` carries a bare
     // `CREATE DATABASE wamn`, and a run that found the database already
     // populated would be asserting against LAST run's schema, not this build's.
-    // Roles are CLUSTER-wide, so this gate OWNS its server: point it only at a
-    // disposable one.
+    // Roles are CLUSTER-wide, so this gate OWNS its server.
     reset(&admin);
     // Seed the retired shared-login posture so the REAL init artifact must
     // converge it. The candidate is test-owned and deliberately unrelated to
@@ -518,13 +515,7 @@ fn the_swept_floor_admits_only_the_connected_guest_on_postgres() {
 /// from `pg_auth_members`, not assumed from the builder's text.
 #[test]
 fn the_platform_arm_admits_every_platform_family_from_the_server() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_platform_arm_admits_every_platform_family_from_the_server \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
 
     reset(&admin);
     apply(&admin, POSTGRES_INIT);
@@ -855,13 +846,7 @@ fn the_platform_arm_admits_every_platform_family_from_the_server() {
 /// following a `reset`, which is the second install arm below.
 #[test]
 fn the_two_scenario_author_emitters_agree_at_zero_memberships() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_two_scenario_author_emitters_agree_at_zero_memberships \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
 
     let memberships = |label: &str| -> String {
         let existing = psql(
@@ -943,13 +928,7 @@ fn the_two_scenario_author_emitters_agree_at_zero_memberships() {
 fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
     const ROLE: &str = "wamn_audit_retention";
     const SYSTEM_DATABASE: &str = "wamn_floor_system";
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let shape = |url: &str| {
         psql(
             url,
@@ -1044,13 +1023,7 @@ fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
 #[test]
 fn the_catalog_schema_installs_under_a_superuser_not_named_postgres() {
     const PASSWORD: &str = "floor-installer-probe";
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_catalog_schema_installs_under_a_superuser_not_named_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
 
     reset(&admin);
     apply(&admin, POSTGRES_INIT);
@@ -1163,13 +1136,7 @@ fn as_guest(db_url: &str, guest: &str, actor: &str, body: &str) {
 /// Spec tests 1, 3, the no-op half of 8, and 9, over the production guest.
 #[test]
 fn the_stamp_trigger_stamps_guest_writes_on_postgres() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_stamp_trigger_stamps_guest_writes_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_fixture(&admin);
 
     // THE GRANTS AND THE FUNCTION SHAPE, from the server catalogs.
@@ -1340,13 +1307,7 @@ fn refuses_without_actor(statement: &str) -> String {
 /// The database half of spec test 4 and spec test 12.
 #[test]
 fn the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_stamp_trigger_refuses_a_write_without_an_actor_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_fixture(&admin);
     as_guest(
         &db_url,
@@ -1504,13 +1465,7 @@ fn apply_refused(url: &str, sql: &str) -> String {
 /// 64-byte refusal, from the server catalogs.
 #[test]
 fn the_history_table_function_creates_one_fixed_shape_on_postgres() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_history_table_function_creates_one_fixed_shape_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
 
     let functions = psql(
@@ -1696,13 +1651,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
         "timestamptz_image wamn_app EXECUTE",
         "wamn_history wamn_app USAGE",
     ];
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let joined = |grants: &[&str]| {
         let mut grants = grants.to_vec();
         grants.sort_unstable();
@@ -1828,13 +1777,7 @@ fn the_wamn_app_history_grants_come_from_the_grant_file_alone_on_postgres() {
 /// the transaction id, over the production guest.
 #[test]
 fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_log_trigger_writes_one_entry_per_row_change_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
 
     // An insert writes the full row in after and '{}' in before. The row image
@@ -1990,13 +1933,7 @@ fn the_log_trigger_writes_one_entry_per_row_change_on_postgres() {
 /// primary key, over the production guest.
 #[test]
 fn the_log_trigger_refuses_and_rolls_back_the_write_on_postgres() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_log_trigger_refuses_and_rolls_back_the_write_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
     apply(
         &db_url,
@@ -2234,13 +2171,7 @@ fn finish(session: std::process::Child) {
 /// competitor leaves no entry.
 #[test]
 fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_log_trigger_serializes_concurrent_changes_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
     // A third actor inserts, so each update moves updated_by.
     apply(
@@ -2462,13 +2393,7 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
 /// no-op keeps every stamp.
 #[test]
 fn a_numeric_scale_only_update_moves_the_stamps_on_postgres() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping a_numeric_scale_only_update_moves_the_stamps_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_fixture(&admin);
     apply(
         &db_url,
@@ -2531,13 +2456,7 @@ fn a_numeric_scale_only_update_moves_the_stamps_on_postgres() {
 /// trigger, so only the amount changes.
 #[test]
 fn a_numeric_scale_only_update_writes_a_log_entry_on_postgres() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping a_numeric_scale_only_update_writes_a_log_entry_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_fixture(&admin);
     apply(
         &db_url,
@@ -2687,13 +2606,7 @@ fn image_columns(image: &str) -> Vec<(String, String)> {
 /// Receiving SQL. The fold then shows the row at each retained position.
 #[test]
 fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_history_read_reconstructs_a_row_at_retained_positions_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_fixture(&admin);
     apply(
         &db_url,
@@ -2906,13 +2819,7 @@ fn the_history_read_reconstructs_a_row_at_retained_positions_on_postgres() {
 /// role its history table.
 #[test]
 fn the_app_system_history_stays_out_of_audit_retention_reach_on_postgres() {
-    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
-        eprintln!(
-            "skipping the_app_system_history_stays_out_of_audit_retention_reach_on_postgres \
-             (set WAMN_TENANT_FLOOR_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, admin) = owned_server();
     let (db_url, guest) = record_history_log_fixture(&admin);
     apply(
         &db_url,

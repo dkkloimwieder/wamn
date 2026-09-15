@@ -1,8 +1,7 @@
 //! Live-apply gate for the CDC capture builders (wamn-l5i9.9, D19 v3 §4).
 //!
-//! Set `WAMN_CDC_PG_URL` to a **superuser** URL of a throwaway Postgres running
-//! with `wal_level=logical` (e.g. `docker run … postgres:18 -c
-//! wal_level=logical`); skipped cleanly when unset. Applies the REAL builders
+//! Each test starts its own PostgreSQL server with `wal_level=logical` and
+//! connects with its superuser URL. Applies the REAL builders
 //! via psql and asserts the live substrate: the publication covers the schema
 //! and auto-includes a table created later (`FOR TABLES IN SCHEMA`), the slot
 //! is pgoutput + non-temporary + failover-enabled (the exact shape
@@ -23,6 +22,18 @@ const INSTANCE: &str = "k3m9x2p7";
 fn swap_db(url: &str, db: &str) -> String {
     let (base, _) = url.rsplit_once('/').expect("url has a path");
     format!("{base}/{db}")
+}
+
+/// Start a server with `wal_level=logical`, and return it with its superuser URL.
+fn logical_server() -> (wamn_test_postgres::OwnedPostgres, String) {
+    let server = wamn_test_postgres::start(&[("wal_level", "logical")])
+        .expect("start a test PostgreSQL server with wal_level=logical");
+    let url = server
+        .database("postgres")
+        .expect("the test server has its postgres database")
+        .url()
+        .to_owned();
+    (server, url)
 }
 
 fn psql(url: &str, script: &str) -> std::process::Output {
@@ -54,12 +65,7 @@ fn run_ok(url: &str, script: &str) {
 
 #[test]
 fn cdc_substrate_applies_and_is_idempotent_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_CDC_PG_URL") else {
-        eprintln!(
-            "skipping cdc_substrate_applies_and_is_idempotent_on_postgres (set WAMN_CDC_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, url) = logical_server();
 
     let (org, project, env) = ("acme", "billing", "dev");
     let db = project_env_database_name(org, project, env, INSTANCE);
@@ -167,12 +173,7 @@ END $$;
 /// on new environments while production stayed wide open.
 #[test]
 fn cdc_role_reads_only_the_classification_maps_and_still_decodes_tenant_tables() {
-    let Ok(url) = std::env::var("WAMN_CDC_PG_URL") else {
-        eprintln!(
-            "skipping cdc_role_reads_only_the_entity_map_and_still_decodes_tenant_tables (set WAMN_CDC_PG_URL to run)"
-        );
-        return;
-    };
+    let (_server, url) = logical_server();
 
     let (org, project, env) = ("acme", "narrowing", "dev");
     let db = project_env_database_name(org, project, env, INSTANCE);

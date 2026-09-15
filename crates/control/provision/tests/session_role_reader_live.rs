@@ -1,9 +1,9 @@
 //! Exact session role-reader ACLs and A/B retirement on disposable PostgreSQL 18.
 //!
-//! Arm WAMN_SESSION_ROLE_READER_PG_URL naming wamn_session_role_reader_test and
-//! WAMN_SESSION_ROLE_READER_ALLOW_SCHEMA_RESET=1. Use a fresh owned cluster: this
-//! test resets its four project schemas and named fixture roles, and revokes
-//! the cluster's PUBLIC CONNECT floor. It never connects to a deployed database.
+//! The test starts its own PostgreSQL server with a wamn_session_role_reader_test
+//! database: it resets its four project schemas and named fixture roles, and
+//! revokes the server's PUBLIC CONNECT floor. It never connects to a deployed
+//! database.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -107,7 +107,7 @@ fn role(generation: CredentialGeneration) -> String {
 }
 
 fn login_url(admin: &str, role: &str) -> String {
-    let mut url = Url::parse(admin).expect("armed administrator URL");
+    let mut url = Url::parse(admin).expect("administrator URL");
     url.set_username(role).expect("set role");
     url.set_password(Some(PASSWORD))
         .expect("set fixture password");
@@ -156,15 +156,13 @@ fn assert_surface(admin: &str) {
 }
 
 #[test]
-#[ignore = "requires an explicitly armed disposable PostgreSQL 18 cluster"]
 fn dedicated_session_reader_columns_and_generations_execute_on_postgres() {
-    let admin = std::env::var("WAMN_SESSION_ROLE_READER_PG_URL")
-        .expect("set WAMN_SESSION_ROLE_READER_PG_URL");
-    assert_eq!(
-        std::env::var("WAMN_SESSION_ROLE_READER_ALLOW_SCHEMA_RESET").as_deref(),
-        Ok("1"),
-        "arm only a disposable cluster"
-    );
+    let mut server = wamn_test_postgres::start(&[]).expect("start a test PostgreSQL server");
+    let admin = server
+        .create_database(DATABASE)
+        .expect("create the session role-reader test database")
+        .url()
+        .to_owned();
     assert_eq!(
         Url::parse(&admin).expect("administrator URL").path(),
         format!("/{DATABASE}")

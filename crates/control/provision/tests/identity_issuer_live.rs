@@ -1,8 +1,7 @@
 //! Execute the identity issuer grants on a disposable PostgreSQL 18 database.
 //!
-//! Set WAMN_IDENTITY_ISSUER_PG_URL and WAMN_IDENTITY_ISSUER_ALLOW_SCHEMA_RESET=1.
-//! The URL must name wamn_system on a disposable cluster. This ignored test
-//! resets its system schemas and closes the cluster PUBLIC CONNECT floor.
+//! The test starts its own PostgreSQL server with a wamn_system database. It
+//! resets its system schemas and closes the server PUBLIC CONNECT floor.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -73,7 +72,7 @@ fn denied(url: &str, script: &str) {
 }
 
 fn login_url(admin: &str, role: &str) -> String {
-    let mut url = Url::parse(admin).expect("armed administrator URL");
+    let mut url = Url::parse(admin).expect("administrator URL");
     url.set_username(role).expect("set role");
     url.set_password(Some(PASSWORD))
         .expect("set fixture password");
@@ -97,15 +96,13 @@ fn reset(admin: &str, roles: &[String]) {
 }
 
 #[test]
-#[ignore = "requires an explicitly armed disposable PostgreSQL 18 cluster"]
 fn scoped_issuer_grants_and_generation_retirement_execute_on_postgres() {
-    let admin =
-        std::env::var("WAMN_IDENTITY_ISSUER_PG_URL").expect("set WAMN_IDENTITY_ISSUER_PG_URL");
-    assert_eq!(
-        std::env::var("WAMN_IDENTITY_ISSUER_ALLOW_SCHEMA_RESET").as_deref(),
-        Ok("1"),
-        "set WAMN_IDENTITY_ISSUER_ALLOW_SCHEMA_RESET=1 only for a disposable cluster"
-    );
+    let mut server = wamn_test_postgres::start(&[]).expect("start a test PostgreSQL server");
+    let admin = server
+        .create_database("wamn_system")
+        .expect("create the wamn_system test database")
+        .url()
+        .to_owned();
     assert_eq!(
         Url::parse(&admin).expect("administrator URL").path(),
         "/wamn_system"

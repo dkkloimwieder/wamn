@@ -1,6 +1,7 @@
 //! PostgreSQL 18 test for exact manifest-derived route-caller grants.
 //!
-//! Set `WAMN_OPERATION_GRANTS_PG18_URL` to a disposable superuser database.
+//! The test uses a test database of the test PostgreSQL server as its superuser,
+//! and holds the process lock, because it creates cluster-wide roles.
 //! The test reads the mutation counts and final rows from PostgreSQL itself.
 
 use std::io::Write as _;
@@ -19,7 +20,6 @@ const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
 /// The test principal that the fixture seed writes as.
 const FIXTURE_PRINCIPAL: &str = "00000000-0000-4000-8000-0000000000f1";
 const RECEIVING_MANIFEST: &[u8] = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
-const ENV_VAR: &str = "WAMN_OPERATION_GRANTS_PG18_URL";
 
 fn psql(url: &str, script: &str) -> (bool, String, String) {
     let mut child = Command::new("psql")
@@ -89,13 +89,9 @@ fn transaction(statement: &str) -> String {
 
 #[test]
 fn route_caller_grants_are_exact_residue_free_and_convergent_live() {
-    let Ok(url) = std::env::var(ENV_VAR) else {
-        eprintln!(
-            "skipping route_caller_grants_are_exact_residue_free_and_convergent_live \
-             (set {ENV_VAR} to run)"
-        );
-        return;
-    };
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
     assert!(
         query(&url, "SHOW server_version_num")
             .parse::<u32>()

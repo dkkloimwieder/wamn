@@ -28,21 +28,8 @@
 //! # Hermetic, and it owns its server
 //!
 //! Roles are CLUSTER-WIDE and `deploy/sql/postgres-init.sql` carries a bare
-//! `CREATE DATABASE wamn`, so this gate rebuilds its whole world and must be
-//! pointed only at a disposable container. ONE FRESH CLUSTER PER ROLE OR GRANT
-//! MUTANT.
-//!
-//! ```bash
-//! docker run -d --name w68-matrix-pg -e POSTGRES_PASSWORD=probe \
-//!   -p 127.0.0.1:5443:5432 postgres:18
-//! # THE ONLY HONEST READINESS PROBE IS A CONNECT FROM THE HOST OVER THE
-//! # MAPPED PORT: pg_isready, a TCP connect and `docker exec psql` all answer
-//! # yes while the published port is still down.
-//! until psql postgres://postgres:probe@127.0.0.1:5443/postgres -Atqc 'select 1'; do :; done
-//! WAMN_DENIAL_MATRIX_PG_URL=postgres://postgres:probe@127.0.0.1:5443/postgres \
-//!   cargo test -p wamn-control-provision --test family_denial_matrix -- --test-threads=1
-//! docker rm -f w68-matrix-pg      # BY EXPLICIT NAME. Never prune.
-//! ```
+//! `CREATE DATABASE wamn`, so this gate rebuilds its whole world on a
+//! PostgreSQL server that the test process starts for it alone.
 
 use std::collections::BTreeSet;
 use std::io::Write as _;
@@ -64,8 +51,6 @@ const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const RUN_STATE: &str = include_str!("../../../../deploy/sql/run-state.sql");
 const RUN_QUEUE: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
-
-const ENV_VAR: &str = "WAMN_DENIAL_MATRIX_PG_URL";
 
 /// The database `deploy/sql/postgres-init.sql` creates. Also the scope every
 /// generation login's digest is taken over, so it cannot be chosen freely.
@@ -418,7 +403,7 @@ fn sqlstate(url: &str, statement: &str) -> Option<String> {
 /// The admin URL with its userinfo replaced by one role's login, pointed at the
 /// project database.
 fn login_url(admin_url: &str, role: &str) -> String {
-    let mut url = Url::parse(admin_url).unwrap_or_else(|_| panic!("{ENV_VAR} is a URL"));
+    let mut url = Url::parse(admin_url).expect("the test server URL is a URL");
     url.set_username(role).expect("set the probe role");
     url.set_password(Some(PROBE_PASSWORD))
         .expect("set password");
@@ -431,6 +416,7 @@ fn login_url(admin_url: &str, role: &str) -> String {
 // ---------------------------------------------------------------------------
 
 struct Fixture {
+    _server: wamn_test_postgres::OwnedPostgres,
     admin: String,
     db_url: String,
 }
@@ -576,14 +562,20 @@ CREATE TRIGGER wamn_record_history_log AFTER INSERT OR UPDATE OR DELETE ON reten
 
 static FIXTURE: OnceLock<Fixture> = OnceLock::new();
 
-/// Build the world once per process: the real artifacts, the real convergent
-/// grant batches, and one minted generation login per family.
-fn build(admin: String) -> Fixture {
+/// Build the world once per process on its own server: the real artifacts, the
+/// real convergent grant batches, and one minted generation login per family.
+fn build() -> Fixture {
+    let server = wamn_test_postgres::start(&[]).expect("start the denial matrix PostgreSQL server");
+    let admin = server
+        .database("postgres")
+        .expect("the denial matrix server has its postgres database")
+        .url()
+        .to_owned();
     reset(&admin);
     apply(&admin, "apply postgres-init.sql", POSTGRES_INIT);
     // The admin URL keeps its own userinfo and moves to the project database;
     // `login_url` is for the probe logins.
-    let mut admin_db = Url::parse(&admin).unwrap_or_else(|_| panic!("{ENV_VAR} is a URL"));
+    let mut admin_db = Url::parse(&admin).expect("the test server URL is a URL");
     admin_db.set_path(DATABASE);
     let db_url = admin_db.to_string();
 
@@ -635,7 +627,11 @@ fn build(admin: String) -> Fixture {
         ),
     );
 
-    Fixture { admin, db_url }
+    Fixture {
+        _server: server,
+        admin,
+        db_url,
+    }
 }
 
 /// Prepare one family's stable surface and one generation login.
@@ -669,16 +665,9 @@ fn mint(db_url: &str, family: WorkloadRoleFamily) {
     }
 }
 
-/// `None` and a printed skip line when the gate is not armed.
-///
-/// A self-skipping env-gated test reports PASS and has never executed, so the
-/// line names the test that skipped.
-fn armed(test: &str) -> Option<&'static Fixture> {
-    let Ok(admin) = std::env::var(ENV_VAR) else {
-        eprintln!("skipping {test} (set {ENV_VAR} to run)");
-        return None;
-    };
-    Some(FIXTURE.get_or_init(|| build(admin)))
+/// The world of this process, built on first use.
+fn fixture() -> &'static Fixture {
+    FIXTURE.get_or_init(build)
 }
 
 // ---------------------------------------------------------------------------
@@ -781,9 +770,7 @@ fn family(subject: WorkloadRoleFamily) -> &'static FamilyReach {
 /// widening onto an object NO family owns; the pairwise half NAMES the family
 /// whose operation was taken.
 fn assert_family_row(subject: WorkloadRoleFamily) {
-    let Some(fixture) = armed(&format!("the denial matrix row for {subject:?}")) else {
-        return;
-    };
+    let fixture = fixture();
     let reach = family(subject);
     let login = generation(subject);
     let label = subject.label();
@@ -1031,10 +1018,7 @@ const CONTAINED_PAIRS: [(&str, &str); 7] = [
 /// strictly-tighter clause was WITHDRAWN and is deliberately not asserted here.
 #[test]
 fn the_effect_writer_arm_reaches_exactly_its_four_run_plane_tables() {
-    let Some(fixture) = armed("the_effect_writer_arm_reaches_exactly_its_four_run_plane_tables")
-    else {
-        return;
-    };
+    let fixture = fixture();
     let writer = WorkloadRoleFamily::EffectWriter;
 
     // --- EXCESS: no FIFTH relation carries an arm naming the writer ---------
@@ -1121,11 +1105,7 @@ fn the_effect_writer_arm_reaches_exactly_its_four_run_plane_tables() {
 /// where a grant exists, `42501` where it does not.
 #[test]
 fn a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say() {
-    let Some(fixture) =
-        armed("a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say")
-    else {
-        return;
-    };
+    let fixture = fixture();
     let executor = WorkloadRoleFamily::ExecutorPlatform;
     assert!(
         executor.is_platform_grain(),
@@ -1196,10 +1176,7 @@ fn a_platform_family_without_tenant_context_reads_exactly_what_its_grants_say() 
 /// rather than remembered, so the day a second one appears this arm reds.
 #[test]
 fn the_tenant_scoped_platform_member_reads_nothing_outside_its_grants() {
-    let Some(fixture) = armed("the_tenant_scoped_platform_member_reads_nothing_outside_its_grants")
-    else {
-        return;
-    };
+    let fixture = fixture();
     let tenant_scoped_members: Vec<WorkloadRoleFamily> = MATRIX
         .iter()
         .map(|reach| reach.family)
@@ -1255,11 +1232,7 @@ fn the_tenant_scoped_platform_member_reads_nothing_outside_its_grants() {
 /// logged relation itself. The family holds no `wamn_platform` edge.
 #[test]
 fn the_audit_retention_family_reads_only_the_retention_columns_of_its_history_tables() {
-    let Some(fixture) =
-        armed("the_audit_retention_family_reads_only_the_retention_columns_of_its_history_tables")
-    else {
-        return;
-    };
+    let fixture = fixture();
     let family = WorkloadRoleFamily::AuditRetention;
     let login = generation(family);
     assert_eq!(
@@ -1302,9 +1275,7 @@ fn the_audit_retention_family_reads_only_the_retention_columns_of_its_history_ta
 /// confinement is RLS-shaped rather than grant-shaped.
 #[test]
 fn the_guest_family_reads_its_own_tenant_and_only_its_own() {
-    let Some(fixture) = armed("the_guest_family_reads_its_own_tenant_and_only_its_own") else {
-        return;
-    };
+    let fixture = fixture();
     let login = generation(WorkloadRoleFamily::App);
     let as_guest = login_url(&fixture.admin, &login);
     assert_eq!(
@@ -1358,10 +1329,7 @@ const TENANT_KEY_INDEX_EXPRESSION: &str = "wamn_authority.tenant_key(tenant_id)"
 /// COUNT: the sets are compared to each other, not to a remembered number.
 #[test]
 fn every_governed_relation_carries_the_tenant_key_expression_index() {
-    let Some(fixture) = armed("every_governed_relation_carries_the_tenant_key_expression_index")
-    else {
-        return;
-    };
+    let fixture = fixture();
     let governed = rows(
         &fixture.db_url,
         "SELECT n.nspname || '.' || c.relname \
@@ -1449,10 +1417,7 @@ const FROZEN_DERIVATION_DIGESTS: [&str; 2] = [
 /// single policy. Neither can be rewritten without moving a digest here.
 #[test]
 fn the_authority_derivations_match_their_pinned_definition_digest() {
-    let Some(fixture) = armed("the_authority_derivations_match_their_pinned_definition_digest")
-    else {
-        return;
-    };
+    let fixture = fixture();
     let observed = rows(
         &fixture.db_url,
         "SELECT p.proname || ' ' \
@@ -1481,9 +1446,7 @@ fn the_authority_derivations_match_their_pinned_definition_digest() {
 /// The authority derivations are not executable through PUBLIC.
 #[test]
 fn authority_derivations_are_not_public_execute() {
-    let Some(fixture) = armed("authority_derivations_are_not_public_execute") else {
-        return;
-    };
+    let fixture = fixture();
     assert_eq!(
         query(
             &fixture.db_url,
@@ -1528,9 +1491,7 @@ const PLATFORM_GRAIN_ACL_ROLES: [&str; 8] = [
 /// has no exception: it has no production credential or project-plane read.
 #[test]
 fn the_platform_group_members_are_exactly_the_derived_families() {
-    let Some(fixture) = armed("the_platform_group_members_are_exactly_the_derived_families") else {
-        return;
-    };
+    let fixture = fixture();
 
     // The pin and the derivation are checked against EACH OTHER first, so a red
     // below names which of the two moved rather than only that they disagree.
@@ -1602,10 +1563,7 @@ fn the_platform_group_members_are_exactly_the_derived_families() {
 /// not merely as an ACL catalog observation.
 #[test]
 fn the_scenario_author_has_no_platform_membership_or_project_reads() {
-    let Some(fixture) = armed("the_scenario_author_has_no_platform_membership_or_project_reads")
-    else {
-        return;
-    };
+    let fixture = fixture();
 
     assert_eq!(
         query(
