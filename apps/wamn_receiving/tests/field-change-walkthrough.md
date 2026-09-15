@@ -55,12 +55,19 @@ A loop time starts at the process start or at the file save.
 It ends at the `run served` line of that run.
 The `wamn dev up` and `wamn dev clean-check` times are the whole command.
 
+The restart row comes from a later test run at source `dbfdd492bac0da4518ee7ad021b5c23cb65ee379`, from a clean worktree.
+At that source, Generate compares each generated file with the file on disk and writes only the files that differ.
+Cargo built `wamn` and `wamn-host` from that source before the test run.
+The test run used the same commands in a new environment of the same kind, with Compose project `rcv-rerun-llst8`.
+One process served a first run and stopped.
+A second process then served the restart with unchanged source.
+
 | Step | Seconds | Stages that ran | Stages skipped | Target oid |
 | --- | ---: | --- | --- | ---: |
 | `wamn dev up` | 6.143 | not a loop run | not a loop run | 17080 |
 | First run | 33.745 | all ten | none | 18239 |
 | Warm edit | 22.323 | build, virtualize, admit, gate, release, activate | migrate, introspect, generate, acl | 18239 |
-| Restart with unchanged source | 16.931 | generate, build, virtualize, acl, admit, gate, release, activate | migrate, introspect | 18239 |
+| Restart with unchanged source | 19.869 | generate, build, virtualize, acl, admit, gate, release, activate | migrate, introspect | 18239 |
 | Restore edit | 17.660 | build, virtualize, admit, gate, release, activate | migrate, introspect, generate, acl | 18239 |
 | `wamn dev clean-check` | 0.763 | not a loop run | not a loop run | not used |
 
@@ -69,7 +76,7 @@ The loop printed these stage times, in the order of the loop rows above:
 ```text
 watch stage-ms: prepare=127ms migrate=261ms introspect=66ms generate=793ms build=4966ms virtualize=900ms acl=1619ms admit=5970ms gate=439ms release=6263ms activate=12137ms
 watch stage-ms: prepare=5ms migrate=0ms introspect=0ms generate=549ms build=4209ms virtualize=867ms acl=546ms admit=4553ms gate=446ms release=5224ms activate=5476ms
-watch stage-ms: prepare=113ms migrate=0ms introspect=0ms generate=738ms build=4122ms virtualize=720ms acl=1459ms admit=3776ms gate=360ms release=4400ms activate=1064ms
+watch stage-ms: prepare=217ms migrate=0ms introspect=0ms generate=885ms build=785ms virtualize=1022ms acl=1541ms admit=4657ms gate=629ms release=6640ms activate=2872ms
 watch stage-ms: prepare=4ms migrate=0ms introspect=0ms generate=490ms build=4286ms virtualize=873ms acl=484ms admit=4338ms gate=436ms release=5196ms activate=1191ms
 ```
 
@@ -88,9 +95,17 @@ After the last run, `pg_database` listed `wamn_system` (16384), the template (18
 The restart read the target schema record, which holds the schema inputs and the introspected catalogs.
 The record matched, so the restart kept the target and skipped Migrate and Introspect.
 A new process runs Generate and Acl again.
-Generate wrote the 101 generated files again with the same bytes.
-Cargo then compiled the data crate, the component, and the operator crates again.
 The SQLx inputs matched the committed inputs, so Generate did not prepare SQLx metadata.
+In the later test run, the first run recreated the target as oid 18239, and the restart served oid 18239.
+
+In the restart, Generate compared the 101 generated files with the files on disk and wrote none of them.
+The files kept their modification times, so Cargo compiled no crate.
+Build took 785 ms, and no `rustc` process ran.
+A fingerprint file is the record that Cargo uses to find changed crates.
+No Cargo fingerprint file changed in the build directory.
+
+The Admit, Release, and Activate stages took longer than in the earlier test run, so the restart took 19.869 s in total.
+The computer also ran unrelated work, with a one-minute load average of 3.9 at the restart start and 4.7 after its end.
 
 ## Work that the loop did not do
 
@@ -98,7 +113,7 @@ The loop has no Publish or Apply stage, and the Compose project had no registry.
 The Release stage wrote the release to local files.
 A script sampled the processes of each loop session every 0.2 seconds.
 No sample showed `cargo sqlx`, `cargo test`, or a test binary.
-Generate took 793 ms or less in each run, which leaves no time for SQLx preparation.
+Generate took 885 ms or less in each run, which leaves no time for SQLx preparation.
 The target database kept one creation through the edit and the restart, as the oid list shows.
 
 ## Requests
