@@ -15,10 +15,8 @@
 //! path.
 //!
 //! These cases return structured results to the application test caller.
-//! Standalone ignored tests write those results beside the existing input
-//! document named by `WAMN_JOURNEY_DOCUMENT`.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Context as _;
 use serde_json::{Value, json};
@@ -123,14 +121,6 @@ fn item<'a>(answer: &'a Value, request_id: &str) -> anyhow::Result<&'a Value> {
         items[0]
     );
     Ok(&items[0])
-}
-
-#[tokio::test]
-#[ignore = "requires the released WMS route on a disposable cluster, named by the journey document's runtime phase"]
-async fn contention_and_replay_through_the_composed_route() -> anyhow::Result<()> {
-    let document = JourneyDocument::required()?;
-    let result = assert_contention_and_replay(&document).await?;
-    write_result(&result_directory()?, "wms-contention-result.json", &result)
 }
 
 pub(crate) async fn assert_contention_and_replay(document: &JourneyDocument) -> anyhow::Result<Value> {
@@ -255,14 +245,6 @@ fn uuid(value: &Value) -> anyhow::Result<String> {
         .filter(|id| id.len() == 36)
         .map(str::to_owned)
         .with_context(|| format!("a uuid: {value}"))
-}
-
-#[tokio::test]
-#[ignore = "requires the released WMS route on a disposable cluster, named by the journey document's runtime phase"]
-async fn the_remaining_operations_serve_their_released_routes() -> anyhow::Result<()> {
-    let document = JourneyDocument::required()?;
-    let result = assert_remaining_operations(&document).await?;
-    write_result(&result_directory()?, "wms-operations-result.json", &result)
 }
 
 pub(crate) async fn assert_remaining_operations(document: &JourneyDocument) -> anyhow::Result<Value> {
@@ -500,16 +482,6 @@ pub(crate) async fn assert_remaining_operations(document: &JourneyDocument) -> a
     Ok(json!({"split_pallet_id": new_pallet_id}))
 }
 
-#[tokio::test]
-#[ignore = "requires the released WMS route after its disposable labels bucket is removed"]
-async fn committed_move_survives_label_store_failure() -> anyhow::Result<()> {
-    let document = JourneyDocument::required()?;
-    let (http, result) = assert_committed_move_after_label_failure(&document).await?;
-    let directory = result_directory()?;
-    write_result(&directory, "wms-partial-http.json", &http)?;
-    write_result(&directory, "wms-partial-result.json", &result)
-}
-
 pub(crate) async fn assert_committed_move_after_label_failure(document: &JourneyDocument) -> anyhow::Result<(Value, Value)> {
     let runtime = document
         .runtime
@@ -700,13 +672,6 @@ pub(crate) async fn assert_committed_rows(
         "the WMS committed rows disagree with the response: {observed}"
     );
     Ok(observed)
-}
-
-fn result_directory() -> anyhow::Result<PathBuf> {
-    let document = std::env::var_os("WAMN_JOURNEY_DOCUMENT")
-        .context("WAMN_JOURNEY_DOCUMENT must name the existing test input")?;
-    let document = std::fs::canonicalize(document).context("resolve the test input path")?;
-    Ok(document.parent().context("the test input has a parent directory")?.to_owned())
 }
 
 pub(crate) fn write_result(directory: &Path, name: &str, result: &Value) -> anyhow::Result<()> {

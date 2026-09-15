@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use tokio::process::{Child, Command};
 use tokio::task::JoinSet;
 use tokio::time::timeout;
-use wamn_control_registry::{Env, Triple};
+use wamn_control_registry::Triple;
 use wamn_ctl::dev::activation::{HOST_SHUTDOWN_TIMEOUT, WORKLOAD_RPC_TIMEOUT};
 use wamn_runtime::registry_credentials::read_registry_credentials;
 use wamn_test_infrastructure::event_broker::Credentials;
@@ -317,32 +317,6 @@ async fn stop_child(child: &mut Child) -> Result<Value> {
         timeout(CONTROL_BUDGET, child.wait()).await??;
         anyhow::bail!("test host exceeded the existing host shutdown budget")
     }
-}
-
-#[tokio::test]
-#[ignore = "requires the private completed Receiving fixture and rebuilt production host"]
-async fn production_http_start_burst_keeps_native_host_progress() -> Result<()> {
-    let input_path = std::env::var_os("WAMN_STARTUP_BURST_INPUT")
-        .context("WAMN_STARTUP_BURST_INPUT must name the runner-owned fixture")?;
-    let inputs: Inputs = serde_json::from_slice(&std::fs::read(PathBuf::from(input_path))?)?;
-    let credentials = Credentials {
-        username: std::env::var("WAMN_EVT_NATS_USERNAME")?,
-        password_file: PathBuf::from(
-            std::env::var_os("WAMN_EVT_NATS_PASSWORD_FILE")
-                .context("the startup test requires its private NATS password file")?,
-        ),
-    };
-    let scope = Triple {
-        org: std::env::var("WAMN_EVT_ORG")?,
-        project: std::env::var("WAMN_EVT_PROJECT")?,
-        env: Env::new(std::env::var("WAMN_EVT_ENV")?),
-    };
-    let source = wamn_control_provision::events::source_stream_config(
-        &scope,
-        std::env::var("WAMN_EVT_STREAM_REPLICAS")?.parse()?,
-        Duration::from_secs(std::env::var("WAMN_EVT_DUP_WINDOW_SECS")?.parse()?),
-    );
-    assert_startup(&inputs, &credentials, &scope, &source).await
 }
 
 pub(crate) async fn assert_startup(

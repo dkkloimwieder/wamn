@@ -70,10 +70,6 @@ wasmtime-wasi-http = { workspace = true }
 wamn-authoring-model = { workspace = true }
 
 [[test]]
-name = "receiving_command_histories_live"
-path = "receiving_command_histories_live.rs"
-
-[[test]]
 name = "receiving_sqlx_verifier"
 path = "receiving_sqlx_verifier.rs"
 

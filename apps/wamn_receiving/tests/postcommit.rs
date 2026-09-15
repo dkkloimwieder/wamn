@@ -17,7 +17,7 @@ use wamn_runtime::plugins::wamn_jetstream::{
 
 use super::{
     BASE_PACKAGE_ID, ENVIRONMENT, JourneyDocument, MATERIALIZER_DURABLE, MATERIALIZER_STREAM,
-    OVERLAY_PACKAGE_ID, PROJECT, TENANT, connect, connect_event_test_client, overlay_route_path, secret_value,
+    OVERLAY_PACKAGE_ID, PROJECT, TENANT, connect, overlay_route_path, secret_value,
 };
 
 const REGISTRATION: &str = "client_acme_receiving::quality.create_inspection";
@@ -605,27 +605,6 @@ async fn assert_replay_and_progress(
         "post-commit test changed its registration"
     );
     Ok(())
-}
-
-#[tokio::test]
-#[ignore = "requires the disposable Receiving journey after its causal materializer baseline"]
-async fn production_materializer_preserves_replay_and_progress() -> anyhow::Result<()> {
-    let document = JourneyDocument::required()?;
-    let materializer = document.materializer.as_ref()
-        .context("the journey omitted its materializer baseline")?;
-    let nats = connect_event_test_client(
-        &materializer.nats_url,
-        "WAMN_EVT_NATS_USERNAME",
-        "WAMN_EVT_NATS_PASSWORD_FILE",
-    ).await?;
-    let replay = connect_event_test_client(
-        &materializer.nats_url,
-        "WAMN_EVT_NATS_REPLAY_USERNAME",
-        "WAMN_EVT_NATS_REPLAY_PASSWORD_FILE",
-    ).await?;
-    assert_postcommit(
-        &document, "kind-wamn-receiving-postcommit", "wamn-receiving-postcommit", &nats, &replay,
-    ).await
 }
 
 pub(super) async fn assert_postcommit(

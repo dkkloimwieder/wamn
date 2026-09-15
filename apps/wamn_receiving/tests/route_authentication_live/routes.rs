@@ -3,19 +3,6 @@
 use super::*;
 
 
-#[tokio::test]
-#[ignore = "requires disposable PG18 and authenticated OCI plus built virtualized base, overlay, and flow-http artifacts"]
-async fn production_two_package_release_serves_all_fourteen_pat_routes() -> anyhow::Result<()> {
-    receiving_pat_journey(&JourneyDocument::required()?, &journey_scenario_worker_binary()?, false).await.map(|_| ())
-}
-
-#[tokio::test]
-#[ignore = "requires the dedicated fresh-only disposable journey and copied package directory"]
-async fn production_two_package_fresh_only_fixture_serves_all_fourteen_pat_routes()
--> anyhow::Result<()> {
-    receiving_pat_journey(&JourneyDocument::required()?, &journey_scenario_worker_binary()?, true).await.map(|_| ())
-}
-
 pub(super) fn copy_fresh_only_package(source: &Path, destination: &Path) -> anyhow::Result<()> {
     std::fs::create_dir(destination)?;
     for entry in std::fs::read_dir(source)? {

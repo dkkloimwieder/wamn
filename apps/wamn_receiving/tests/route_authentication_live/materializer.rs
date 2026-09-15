@@ -6,51 +6,6 @@ use super::*;
 /// `crates/identity/project-state`.
 const MATERIALIZER_PRINCIPAL: &str = "968bd0cc-e612-5d29-9d6c-af1993b8df0a";
 
-pub(super) async fn connect_event_test_client(
-    url: &str,
-    username_key: &str,
-    password_file_key: &str,
-) -> anyhow::Result<async_nats::Client> {
-    let username = std::env::var(username_key)
-        .with_context(|| format!("the event test requires {username_key}"))?;
-    let password_file = std::env::var_os(password_file_key)
-        .with_context(|| format!("the event test requires {password_file_key}"))?;
-    anyhow::ensure!(
-        !username.is_empty()
-            && username.bytes().all(|byte| {
-                byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
-            }),
-        "the event test username must contain only ASCII letters, digits, underscore or hyphen"
-    );
-    let password = tokio::fs::read_to_string(password_file)
-        .await
-        .context("read the private event test password file")?;
-    anyhow::ensure!(!password.is_empty(), "the event test password is empty");
-    async_nats::ConnectOptions::new()
-        .custom_inbox_prefix(format!("_INBOX_{username}"))
-        .user_and_password(username, password)
-        .connect(url)
-        .await
-        .context("connect to the disposable event plane with the scoped test role")
-}
-
-#[tokio::test]
-#[ignore = "requires the disposable Receiving journey after its production materializer settles"]
-async fn production_materializer_consumes_the_causal_receipt_exactly_once() -> anyhow::Result<()> {
-    let document = JourneyDocument::required()?;
-    let phase = document.materializer.context(
-        "the journey document carries no materializer phase: the route phase must \
-         provision the project environment and the trigger must produce a receipt \
-         before this test runs",
-    )?;
-    let nats = connect_event_test_client(
-        &phase.nats_url,
-        "WAMN_EVT_NATS_USERNAME",
-        "WAMN_EVT_NATS_PASSWORD_FILE",
-    ).await?;
-    assert_materializer_causation(&phase, nats).await
-}
-
 pub(super) async fn assert_materializer_causation(
     phase: &MaterializerPhase,
     nats: async_nats::Client,

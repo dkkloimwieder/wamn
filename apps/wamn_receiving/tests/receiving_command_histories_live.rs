@@ -902,19 +902,6 @@ async fn authority(db: &Client, route: &Route, inputs: &Inputs, evidence: &mut F
     )
 }
 
-#[test]
-#[ignore = "requires an owned disposable Receiving release and WAMN_RECEIVING_CORRECTNESS_DOCUMENT"]
-fn production_receiving_command_histories() -> Result<()> {
-    let path = std::env::var_os("WAMN_RECEIVING_CORRECTNESS_DOCUMENT")
-        .context("WAMN_RECEIVING_CORRECTNESS_DOCUMENT must name the private fixture document")?;
-    let inputs: Inputs = serde_json::from_slice(&std::fs::read(path)?)?;
-    assert_histories(inputs)
-}
-
-pub(crate) fn assert_histories(inputs: Inputs) -> Result<()> {
-    assert_histories_with_cancellation(inputs, pg_walstream::CancellationToken::new())
-}
-
 pub(crate) fn assert_histories_with_cancellation(
     inputs: Inputs,
     cancellation: pg_walstream::CancellationToken,

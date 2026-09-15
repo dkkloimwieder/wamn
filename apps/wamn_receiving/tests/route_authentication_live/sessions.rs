@@ -4,14 +4,6 @@ use super::*;
 
 
 /// Prepare one session route without changing the checked-in PAT publication.
-#[tokio::test]
-#[ignore = "requires the completed disposable Receiving journey and WAMN_SESSION_HOST_FIXTURE_OUTPUT"]
-async fn production_receiving_session_host_fixture() -> anyhow::Result<()> {
-    let inputs = JourneyDocument::required()?;
-    let output = required_journey_path("WAMN_SESSION_HOST_FIXTURE_OUTPUT")?;
-    prepare_session_host_fixture(&inputs, &output).await
-}
-
 pub(super) async fn prepare_session_host_fixture(
     inputs: &JourneyDocument,
     output: &Path,
@@ -226,44 +218,6 @@ pub(super) async fn prepare_session_host_fixture(
 
 /// The native driver uses a pinned loopback HTTPS port-forward, not cluster DNS.
 /// Separate deployed host Jobs test cluster transport and key-removal bounds.
-#[tokio::test]
-#[ignore = "requires the completed Receiving session fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT"]
-async fn production_nested_session_call_preserves_original_caller() -> anyhow::Result<()> {
-    tokio::time::timeout(
-        Duration::from_secs(180),
-        nested_session_caller(false, false),
-    )
-    .await
-    .context("nested session test exceeded 180 seconds")?
-}
-
-#[tokio::test]
-#[ignore = "requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT"]
-async fn production_nested_fresh_only_requires_pat_and_observes_revocation() -> anyhow::Result<()> {
-    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, false))
-        .await
-        .context("nested fresh-only test exceeded 180 seconds")?
-}
-
-#[tokio::test]
-#[ignore = "requires the fresh-only Receiving fixture, active identity issuer, public CA, and WAMN_SESSION_NESTED_HTTPS_ENDPOINT"]
-async fn production_session_client_login_and_fresh_selection() -> anyhow::Result<()> {
-    tokio::time::timeout(Duration::from_secs(180), nested_session_caller(true, true))
-        .await
-        .context("session client test exceeded 180 seconds")?
-}
-
-pub(super) async fn nested_session_caller(fresh_only: bool, session_client: bool) -> anyhow::Result<()> {
-    assert_nested_session(
-        JourneyDocument::required()?,
-        &required_journey("WAMN_IDENTITY_ISSUER")?,
-        &required_journey("WAMN_SESSION_NESTED_HTTPS_ENDPOINT")?,
-        &std::fs::read(required_journey_path("WAMN_IDENTITY_CA_FILE")?)?,
-        fresh_only,
-        session_client,
-    ).await
-}
-
 pub(super) async fn assert_nested_session(
     mut inputs: JourneyDocument,
     issuer: &str,
