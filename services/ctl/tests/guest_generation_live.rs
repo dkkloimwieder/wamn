@@ -8,11 +8,9 @@
 //! every guest read refuses — and no pure test can see it, because one of the
 //! two implementations only exists inside PostgreSQL.
 //!
-//! Run only against a disposable cluster: the test drops and recreates
-//! cluster-global roles, including the stable `wamn_app` ACL role.
-//!
-//! `WAMN_GUEST_GENERATION_PG18_URL=postgres://.../postgres cargo test -p wamn-ctl \
-//!   --test guest_generation_live -- --ignored --nocapture`
+//! The test runs on the PostgreSQL server of its test process and holds the
+//! process lock of that server: it drops and recreates cluster-global roles,
+//! including the stable `wamn_app` ACL role.
 
 use std::path::{Path, PathBuf};
 
@@ -164,12 +162,14 @@ async fn assert_guest_attributes(admin: &Client, role: &str, database: &str) {
 }
 
 #[tokio::test]
-#[ignore = "requires a disposable PG18 named by WAMN_GUEST_GENERATION_PG18_URL"]
 async fn guest_generations_are_per_tenant_and_carry_the_predicate_key() {
-    let Ok(admin_url) = std::env::var("WAMN_GUEST_GENERATION_PG18_URL") else {
-        eprintln!("skipping guest_generation_live (set WAMN_GUEST_GENERATION_PG18_URL to run)");
-        return;
-    };
+    let _lock = wamn_test_postgres::lock();
+    // The system store lives in the maintenance database `postgres`, where
+    // `action_args` points the verb.
+    let admin_database = wamn_test_postgres::database();
+    let mut admin_url = Url::parse(admin_database.url()).expect("parse the test database URL");
+    admin_url.set_path("/postgres");
+    let admin_url = admin_url.to_string();
 
     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
     let scope = WorkloadRoleScope::Tenant {

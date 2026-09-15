@@ -6,12 +6,10 @@
 //! this shows the ctl stamp drives the generic `wamn-0h0g.13.59` lifecycle
 //! against a real cluster: nothing here reimplements prepare, retire or abort.
 //!
-//! Run only against a disposable cluster: the test creates one database and
-//! cluster-global roles, revokes PUBLIC CONNECT on every non-template database,
-//! and revokes PUBLIC TEMPORARY on the exact project database.
-//!
-//! `WAMN_MANAGEMENT_ADMITTER_PG18_URL=postgres://.../postgres cargo test -p wamn-ctl \
-//!   --test management_admitter_generation_live -- --ignored --nocapture`
+//! The test runs on the PostgreSQL server of its test process and holds the
+//! process lock of that server: it creates one database and cluster-global
+//! roles, revokes PUBLIC CONNECT on every non-template database, and revokes
+//! PUBLIC TEMPORARY on the exact project database.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -323,10 +321,14 @@ fn expected_stable_acl() -> BTreeSet<String> {
 }
 
 #[tokio::test]
-#[ignore = "requires disposable PostgreSQL 18 via WAMN_MANAGEMENT_ADMITTER_PG18_URL"]
 async fn management_admitter_generation_lifecycle_converges_and_rotates() {
-    let admin_url = std::env::var("WAMN_MANAGEMENT_ADMITTER_PG18_URL")
-        .expect("set WAMN_MANAGEMENT_ADMITTER_PG18_URL to a disposable PG18 superuser URL");
+    let _lock = wamn_test_postgres::lock();
+    // The system store lives in the maintenance database `postgres`, where
+    // `action_args` points the verb.
+    let admin_database = wamn_test_postgres::database();
+    let mut admin_url = Url::parse(admin_database.url()).expect("parse the test database URL");
+    admin_url.set_path("/postgres");
+    let admin_url = admin_url.to_string();
     let catalog = connect(&admin_url).await;
     let version: i32 = catalog
         .query_one("SHOW server_version_num", &[])

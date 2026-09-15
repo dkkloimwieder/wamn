@@ -1,7 +1,7 @@
 //! PostgreSQL 18 test for the project-admin effect-uncertain terminalization.
 //!
-//! Set `WAMN_OPERATOR_TERMINALIZE_PG18_URL` to the superuser URL of a disposable
-//! database. The gate is skipped when the variable is absent.
+//! The test uses a superuser connection to a database on the PostgreSQL server of
+//! its test process, and holds the process lock of that server.
 
 use tokio_postgres::{Client, NoTls};
 use wamn_ctl::{reconcile_run_plane, terminalize_effect_uncertain};
@@ -128,12 +128,9 @@ fn request<'a>(
 
 #[tokio::test]
 async fn terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live() {
-    let Some(url) = std::env::var("WAMN_OPERATOR_TERMINALIZE_PG18_URL").ok() else {
-        eprintln!(
-            "WAMN_OPERATOR_TERMINALIZE_PG18_URL unset — skipping operator terminalization gate"
-        );
-        return;
-    };
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let url = database.url().to_owned();
     let mut client = connect(&url).await;
     let schema = reset_and_install(&client).await;
 

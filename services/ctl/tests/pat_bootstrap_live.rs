@@ -18,15 +18,19 @@ impl Drop for Files {
 }
 
 #[tokio::test]
-#[ignore = "requires armed disposable PostgreSQL 18 and a built wamn-identity binary"]
+#[ignore = "requires a built wamn-identity binary beside wamn-ctl or named by WAMN_IDENTITY_BINARY"]
 async fn cli_bootstrap_mints_first_service_pats_over_https() {
-    assert_eq!(
-        std::env::var("WAMN_PAT_BOOTSTRAP_ALLOW_SCHEMA_RESET").as_deref(),
-        Ok("1"),
-        "arm only a fresh disposable PostgreSQL server"
-    );
-    let url =
-        std::env::var("WAMN_PAT_BOOTSTRAP_PG_URL").expect("provide the disposable wamn_system URL");
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    database
+        .execute(&[
+            "DROP DATABASE IF EXISTS wamn_system WITH (FORCE)",
+            "CREATE DATABASE wamn_system",
+        ])
+        .expect("create the system database on the test server");
+    let mut url = url::Url::parse(database.url()).expect("test database URL");
+    url.set_path("/wamn_system");
+    let url = url.to_string();
     let (admin, driver) = connect(&url)
         .await
         .ok()
@@ -53,7 +57,9 @@ async fn cli_bootstrap_mints_first_service_pats_over_https() {
     provision_journey_control(&url, admin.as_ref())
         .await
         .ok()
-        .expect("provision system authority");
+        .expect(
+            "provision system authority; it requires a built wamn-identity binary beside wamn-ctl or named by WAMN_IDENTITY_BINARY",
+        );
     // The server records the actual inserting login. A direct CLI INSERT must
     // fail this test even if it creates an otherwise valid PAT.
     admin

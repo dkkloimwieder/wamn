@@ -1,11 +1,9 @@
 //! PG18 lifecycle test for private effect-writer credential generations.
 //!
-//! Run only against a disposable cluster: the test creates one database and
-//! cluster-global roles, revokes PUBLIC CONNECT on every non-template database,
-//! and revokes PUBLIC TEMPORARY on the exact project database.
-//!
-//! `WAMN_EFFECT_WRITER_PG18_URL=postgres://.../postgres cargo test -p wamn-ctl \
-//!   --test effect_writer_generation_live -- --ignored --nocapture`
+//! The test runs on the PostgreSQL server of its test process and holds the
+//! process lock of that server: it creates one database and cluster-global
+//! roles, revokes PUBLIC CONNECT on every non-template database, and revokes
+//! PUBLIC TEMPORARY on the exact project database.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -234,10 +232,14 @@ async fn direct_acl_set(admin: &Client, role: &str) -> BTreeSet<String> {
 }
 
 #[tokio::test]
-#[ignore = "requires disposable PostgreSQL 18 via WAMN_EFFECT_WRITER_PG18_URL"]
 async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
-    let admin_url = std::env::var("WAMN_EFFECT_WRITER_PG18_URL")
-        .expect("set WAMN_EFFECT_WRITER_PG18_URL to a disposable PG18 superuser URL");
+    let _lock = wamn_test_postgres::lock();
+    // The system store lives in the maintenance database `postgres`, where
+    // `action_args` points the verb.
+    let admin_database = wamn_test_postgres::database();
+    let mut admin_url = Url::parse(admin_database.url()).expect("parse the test database URL");
+    admin_url.set_path("/postgres");
+    let admin_url = admin_url.to_string();
     let catalog = connect(&admin_url).await;
     let version: i32 = catalog
         .query_one("SHOW server_version_num", &[])

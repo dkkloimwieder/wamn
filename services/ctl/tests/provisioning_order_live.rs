@@ -8,11 +8,9 @@
 //! next step to accept the result. This file does, with the SAME text
 //! production emits — never a transcription.
 //!
-//! Run only against a disposable cluster: it drops and recreates cluster-global
-//! roles, including the stable `wamn_app` ACL role.
-//!
-//! `WAMN_PROVISIONING_ORDER_PG18_URL=postgres://.../postgres cargo test -p wamn-ctl \
-//!   --test provisioning_order_live -- --ignored --nocapture --test-threads=1`
+//! Each test runs on the PostgreSQL server of its test process and holds the
+//! process lock of that server: it drops and recreates cluster-global roles,
+//! including the stable `wamn_app` ACL role.
 
 use std::path::{Path, PathBuf};
 
@@ -224,12 +222,14 @@ async fn apply_documented_order(catalog: &Client, database: &str) {
 /// step. Nothing here is hand-built; if `privilege_sql` leaves the cluster in a
 /// state `--prepare-guest-generation` refuses, this fails.
 #[tokio::test]
-#[ignore = "requires a disposable PG18 named by WAMN_PROVISIONING_ORDER_PG18_URL"]
 async fn the_documented_provisioning_order_completes_end_to_end() {
-    let Ok(admin_url) = std::env::var("WAMN_PROVISIONING_ORDER_PG18_URL") else {
-        eprintln!("skipping provisioning_order_live (set WAMN_PROVISIONING_ORDER_PG18_URL to run)");
-        return;
-    };
+    let _lock = wamn_test_postgres::lock();
+    // The system store lives in the maintenance database `postgres`, where
+    // `action_args` points the verb.
+    let admin_database = wamn_test_postgres::database();
+    let mut admin_url = Url::parse(admin_database.url()).expect("parse the test database URL");
+    admin_url.set_path("/postgres");
+    let admin_url = admin_url.to_string();
     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
     let scope = WorkloadRoleScope::Tenant {
         tenant: TENANT,
@@ -344,12 +344,14 @@ async fn the_documented_provisioning_order_completes_end_to_end() {
 /// the emitted privilege SQL converges the leftover CONNECT away and the retry
 /// succeeds.
 #[tokio::test]
-#[ignore = "requires a disposable PG18 named by WAMN_PROVISIONING_ORDER_PG18_URL"]
 async fn a_refused_prepare_leaves_the_state_its_documentation_promises() {
-    let Ok(admin_url) = std::env::var("WAMN_PROVISIONING_ORDER_PG18_URL") else {
-        eprintln!("skipping provisioning_order_live (set WAMN_PROVISIONING_ORDER_PG18_URL to run)");
-        return;
-    };
+    let _lock = wamn_test_postgres::lock();
+    // The system store lives in the maintenance database `postgres`, where
+    // `action_args` points the verb.
+    let admin_database = wamn_test_postgres::database();
+    let mut admin_url = Url::parse(admin_database.url()).expect("parse the test database URL");
+    admin_url.set_path("/postgres");
+    let admin_url = admin_url.to_string();
     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, INSTANCE);
     let scope = WorkloadRoleScope::Tenant {
         tenant: TENANT,

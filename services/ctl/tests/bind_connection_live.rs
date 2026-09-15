@@ -11,10 +11,9 @@
 //! push-component admits one, a wiring authored by the real author under a
 //! green report, and a release row of the shape the mint writes.
 //!
-//! Two disposable PostgreSQL 18 databases, one server:
-//!   WAMN_BIND_CONNECTION_PROJECT_PG_URL, WAMN_BIND_CONNECTION_CONTROL_PG_URL
-//! Required, never self-skipped: the test `expect`s them. Ignored by default
-//! because it needs the server; arm it with a container removed BY NAME.
+//! Two databases on the PostgreSQL server of the test process: a project
+//! database with the tenant+app_system floor and a control database with the
+//! system floor. The test holds the process lock of that server.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -25,7 +24,6 @@ use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, ConnectionTypeDescriptor,
     DefinitionHash, WiringDocument, WiringNode, WiringTerminal,
 };
-use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::author_wiring::{AuthorWiringRequest, author_wiring};
 use wamn_ctl::bind_connection::{self, BindConnectionArgs, RequirementType};
@@ -50,8 +48,6 @@ const HTTP_SIDECAR: &str =
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
 const RELEASE_ID: i32 = 1;
-const CATALOG_SCHEMA_SQL: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
-const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 
 async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -166,27 +162,6 @@ async fn admit_component(
 }
 
 async fn provision_project(project: &Client, project_url: &str) {
-    project
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS wms CASCADE; \
-             DROP SCHEMA IF EXISTS app_system CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DO $$ DECLARE role_name text; BEGIN \
-               PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
-               FOREACH role_name IN ARRAY ARRAY['wamn_app', 'wamn_scenario_author'] LOOP \
-                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
-                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-                 END IF; \
-               END LOOP; \
-             END $$;",
-        )
-        .await
-        .expect("reset the project catalog schema and prerequisite roles");
-    project
-        .batch_execute(&format!("{CATALOG_SCHEMA_SQL}\n{APP_SCHEMA_SQL}"))
-        .await
-        .expect("install the production package and application schemas");
     // apply-package narrows migration authority to wamn_db_owner, a
     // CLUSTER-wide role. On a fresh server it does not exist; the sibling
     // fixture that omits this passes only where an earlier run left the role
@@ -270,33 +245,6 @@ async fn provision_project(project: &Client, project_url: &str) {
 }
 
 async fn provision_control(control: &Client) {
-    control
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS wamn_run CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS registry CASCADE; \
-             DROP SCHEMA IF EXISTS provisioning CASCADE; \
-             DROP SCHEMA IF EXISTS identity CASCADE; \
-             DO $$ DECLARE role_name text; BEGIN \
-               PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
-               FOREACH role_name IN ARRAY ARRAY['wamn_system', 'wamn_control_author', 'wamn_app'] \
-               LOOP \
-                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
-                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-                 END IF; \
-               END LOOP; \
-             END $$;",
-        )
-        .await
-        .expect("reset the control store and its prerequisite roles");
-    for stage in CONTROL_BOOTSTRAP_SQL {
-        control
-            .batch_execute(stage)
-            .await
-            .expect("install the production control bootstrap");
-    }
     control
         .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
         .await
@@ -540,12 +488,12 @@ async fn assert_nested_effect_snapshot(
 }
 
 #[tokio::test]
-#[ignore = "requires two disposable PostgreSQL 18 databases named by WAMN_BIND_CONNECTION_{PROJECT,CONTROL}_PG_URL"]
 async fn bind_connection_round_trips_through_the_plugins_own_resolution() {
-    let project_url = std::env::var("WAMN_BIND_CONNECTION_PROJECT_PG_URL")
-        .expect("WAMN_BIND_CONNECTION_PROJECT_PG_URL names a disposable PostgreSQL 18 database");
-    let control_url = std::env::var("WAMN_BIND_CONNECTION_CONTROL_PG_URL")
-        .expect("WAMN_BIND_CONNECTION_CONTROL_PG_URL names a disposable PostgreSQL 18 database");
+    let _lock = wamn_test_postgres::lock();
+    let project_database = wamn_project_state::test_database::tenant_app_system();
+    let control_database = wamn_control_provision::test_database::system();
+    let project_url = project_database.url().to_owned();
+    let control_url = control_database.url().to_owned();
     let (mut project, project_task) = connect(&project_url).await;
     let (control, control_task) = connect(&control_url).await;
     provision_project(&project, &project_url).await;

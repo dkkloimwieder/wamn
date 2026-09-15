@@ -1,11 +1,10 @@
 //! Live test that authorship needs a GREEN gate report for its own hash.
 //!
-//! Two disposable PostgreSQL 18 databases are required, because the fact under
-//! test is not co-resident with the row it guards: `catalog.wirings` is a
-//! PROJECT-plane relation and `wamn_run.gate_reports` a CONTROL-plane one
-//! (wamn-0h0g.8.5.6 removed the wiring row's report column). Set
-//! `WAMN_AUTHOR_WIRING_PROJECT_PG_URL` and `WAMN_AUTHOR_WIRING_CONTROL_PG_URL`;
-//! this test drops and recreates the schemas it owns in each.
+//! Two databases are required, because the fact under test is not co-resident
+//! with the row it guards: `catalog.wirings` is a PROJECT-plane relation and
+//! `wamn_run.gate_reports` a CONTROL-plane one (wamn-0h0g.8.5.6 removed the
+//! wiring row's report column). The test creates both on the PostgreSQL server
+//! of its test process and holds the process lock of that server.
 //!
 //! Both stores are provisioned from the production SQL artifacts —
 //! `ensure_catalog_storage` and `CONTROL_BOOTSTRAP_SQL` — so the report row the
@@ -73,7 +72,6 @@ use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, DefinitionHash,
     WiringDocument, WiringNode, WiringTerminal,
 };
-use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::author_wiring::{AuthorWiringErrorKind, AuthorWiringRequest, author_wiring};
 use wamn_ctl::push_component::admitted_projection_hash;
@@ -84,8 +82,6 @@ const PACKAGE_VERSION: &str = "1.0.0";
 const COMPONENT: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 const FACT_FINGERPRINT: &str =
     "sha256:6666666666666666666666666666666666666666666666666666666666666666";
-const CATALOG_SCHEMA_SQL: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
-const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 
 async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -124,29 +120,14 @@ async fn provision_project(project: &Client, project_url: &str) {
     project
         .batch_execute(
             // `apply_package` runs the migrations as `wamn_db_owner`, so that
-            // role must exist and own this database, as provisioning sets it.
-            "DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DO $$ DECLARE role_name text; BEGIN \
-               PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
-               FOREACH role_name IN ARRAY \
-                   ARRAY['wamn_app', 'wamn_scenario_author', 'wamn_db_owner'] LOOP \
-                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
-                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-                 END IF; \
-               END LOOP; \
-             END $$; \
-             DO $$ BEGIN \
+            // role must own this database, as provisioning sets it.
+            "DO $$ BEGIN \
                EXECUTE format('ALTER DATABASE %I OWNER TO wamn_db_owner', \
                               pg_catalog.current_database()); \
              END $$;",
         )
         .await
-        .expect("reset the project catalog schema and prerequisite roles");
-    project
-        .batch_execute(&format!("{CATALOG_SCHEMA_SQL}\n{APP_SCHEMA_SQL}"))
-        .await
-        .expect("install the production package and application schemas");
+        .expect("give the project database to the package owner");
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -212,44 +193,20 @@ async fn provision_project(project: &Client, project_url: &str) {
         .expect("seed the admitted component fact every fixture wiring names");
 }
 
-/// Install the production control store the gate report is read from.
+/// Prepare the production control store the gate report is read from.
 ///
-/// `wamn_run.gate_reports` is immutable, so the schemas are dropped rather than
-/// emptied. `CONTROL_BOOTSTRAP_SQL`'s author-authority self-check requires that
-/// `wamn_scenario_author` cannot reach this database, which is what the CONNECT
-/// revoke buys.
+/// The system floor installed it. The CONNECT revoke keeps
+/// `wamn_scenario_author` from reaching this database.
 async fn provision_control(control: &Client) {
     control
         .batch_execute(
-            "DROP SCHEMA IF EXISTS wamn_run CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS registry CASCADE; \
-             DROP SCHEMA IF EXISTS provisioning CASCADE; \
-             DROP SCHEMA IF EXISTS identity CASCADE; \
-             DO $$ DECLARE role_name text; BEGIN \
-               PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
-               FOREACH role_name IN ARRAY ARRAY['wamn_system', 'wamn_control_author', 'wamn_app'] \
-               LOOP \
-                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
-                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-                 END IF; \
-               END LOOP; \
-             END $$; \
-             DO $$ BEGIN \
+            "DO $$ BEGIN \
                EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', \
                               pg_catalog.current_database()); \
              END $$;",
         )
         .await
-        .expect("reset the control store and its prerequisite roles");
-    for stage in CONTROL_BOOTSTRAP_SQL {
-        control
-            .batch_execute(stage)
-            .await
-            .expect("install the production control bootstrap");
-    }
+        .expect("revoke PUBLIC CONNECT on the control database");
     control
         .execute("SELECT set_config('app.tenant', $1, false)", &[&TENANT])
         .await
@@ -332,13 +289,12 @@ async fn stored_wirings(project: &Client, wiring_id: &str) -> i64 {
 /// key; nothing here depends on rewriting a report, which the relation's
 /// immutability trigger forbids anyway.
 #[tokio::test]
-#[ignore = "requires two disposable PostgreSQL 18 databases in \
-            WAMN_AUTHOR_WIRING_PROJECT_PG_URL and WAMN_AUTHOR_WIRING_CONTROL_PG_URL"]
 async fn a_wiring_is_authored_only_under_a_green_report_for_its_own_hash() {
-    let project_url = std::env::var("WAMN_AUTHOR_WIRING_PROJECT_PG_URL")
-        .expect("WAMN_AUTHOR_WIRING_PROJECT_PG_URL names a disposable PostgreSQL 18 database");
-    let control_url = std::env::var("WAMN_AUTHOR_WIRING_CONTROL_PG_URL")
-        .expect("WAMN_AUTHOR_WIRING_CONTROL_PG_URL names a disposable PostgreSQL 18 database");
+    let _lock = wamn_test_postgres::lock();
+    let project_database = wamn_project_state::test_database::tenant_app_system();
+    let control_database = wamn_control_provision::test_database::system();
+    let project_url = project_database.url().to_owned();
+    let control_url = control_database.url().to_owned();
     let (mut project, project_task) = connect(&project_url).await;
     let (control, control_task) = connect(&control_url).await;
     provision_project(&project, &project_url).await;
