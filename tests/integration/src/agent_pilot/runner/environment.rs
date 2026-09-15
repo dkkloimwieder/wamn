@@ -228,6 +228,8 @@ impl Run {
             .arg("--route-host")
             .arg(text(&self.task["identity"]["route_host"]))
             .args([
+                "--platform-domain",
+                "example.invalid",
                 "--flow-http-workload-image",
                 "127.0.0.1:5004/wamn/flow-http:pilot",
                 "--host-binary",

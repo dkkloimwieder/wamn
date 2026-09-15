@@ -107,6 +107,8 @@ fn dev_up_refuses_an_ephemeral_gate_port_and_names_it() {
             "/nonexistent/.dockerconfigjson",
             "--route-host",
             "receiving.localhost",
+            "--platform-domain",
+            "example.invalid",
             "--flow-http-workload-image",
             "127.0.0.1:1/wamn/flow-http:dev",
             "--host-binary",
