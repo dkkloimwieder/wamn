@@ -550,9 +550,9 @@ GRANT SELECT (tenant_id, status, created_at), DELETE
 -- ---------------------------------------------------------------------------
 -- Immutable effect-attempt table. Every effectful occurrence has one
 -- server-minted identity here.
--- wamn-0h0g.4.9 installs the inaccessible writer primitive. Whoever first
--- wires and activates it lifts the refusal; until then execution remains
--- hard-refused.
+-- No effect writer is built: wamn-0h0g.10.15 deleted the wamn-0h0g.4.9
+-- primitive, and wamn-0h0g.20 rebuilds it. Whoever builds it lifts the
+-- refusal; until then execution remains hard-refused.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.effect_attempts (
     tenant_id       text NOT NULL,

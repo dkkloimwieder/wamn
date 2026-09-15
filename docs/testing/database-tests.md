@@ -34,7 +34,8 @@ For rollback, observe an intermediate write before forcing failure and then insp
 
 The [standard claim test](../../crates/platform/runtime/tests/production_claim_live.rs) exercises claims with a declared executor credential.
 The [durable claim test](../../crates/platform/runtime/tests/production_claim_durable_live.rs) exercises the durable class with the same executor credential.
-No effect writer exists, so the fixture superuser takes the effect-intent fence and records each effect attempt.
+No effect writer exists, so the fixture superuser records each effect attempt.
+In the reaper race, it takes the effect-intent fence before it records the attempt.
 
 ## Record history
 
