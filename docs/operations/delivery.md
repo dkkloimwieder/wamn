@@ -69,7 +69,7 @@ A supplied executor image also runs the existing idle lifecycle assertions.
 The gates assertions inspect its image and shared host layers.
 
 Qualification writes pass or fail with the source commit, command results, release inputs, and artifact hashes.
-It creates temporary application evidence beneath the repository evidence directory and removes its own files after the cases.
+It creates temporary application results in the system temporary directory and removes its own files after the cases.
 Keep the qualification result and candidate files until publication and deployment finish.
 No source-host or CI-provider API is required.
 
@@ -77,11 +77,11 @@ No source-host or CI-provider API is required.
 
 Use a clean integrated checkout for the complete release command tests.
 Set `CARGO_TARGET_DIR` to the absolute build directory for that checkout.
-Run the existing Receiving and WMS fixtures with separate unused evidence directories:
+Run the existing Receiving and WMS fixtures:
 
 ```bash
-tools/delivery-owned receiving "$PWD/evidence/delivery-receiving"
-tools/delivery-owned wms "$PWD/evidence/delivery-wms"
+tools/delivery-owned receiving
+tools/delivery-owned wms
 ```
 
 Each fixture creates its own services, database, kind cluster, and native image registry.
@@ -89,7 +89,9 @@ It keeps the minted release store until preparation, qualification, publication,
 The application owner supplies the authenticated request and expected response.
 Receiving also supplies an executor image, while WMS uses the host image.
 The fixture reports failure if an operation or cleanup fails.
-It removes only its own resources and writes the command results beneath the chosen evidence directory.
+It removes only its own resources.
+It writes the command results to its own new directory and prints that path.
+The directory is in the system temporary directory, or in the existing parent directory that an optional second argument names.
 
 ## Qualified publication
 
