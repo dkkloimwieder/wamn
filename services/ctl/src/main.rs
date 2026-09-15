@@ -6,9 +6,9 @@ mod print_platform_principals;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    author_wiring, bind_connection, component_verbs, delivery, identity_issuer, package_verbs,
-    print_release_env, project_env_membership, promote, provision_org, provisioning_verbs,
-    publish_release, reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
+    bind_connection, component_verbs, delivery, identity_issuer, package_verbs, print_release_env,
+    project_env_membership, provision_org, provisioning_verbs, reconcile_replica_identity,
+    release_verbs, terminalize_effect_uncertain,
 };
 
 #[derive(Parser)]
@@ -56,24 +56,24 @@ enum Command {
     /// Validate/publish component bytes, then exact-project their facts to both planes
     PushComponent(component_verbs::PushComponentArgs),
     /// Submit one authored wiring document as an immutable gated wiring version (wamn-1xb5)
-    AuthorWiring(author_wiring::AuthorWiringArgs),
+    AuthorWiring(release_verbs::AuthorWiringArgs),
     /// Bind one admitted component's declared connection alias to an
     /// environment-owned instance carrying a host-held credential handle.
     BindConnection(bind_connection::BindConnectionArgs),
     /// Mint one immutable format-1 effective release from exact package-owned facts.
     ///
     /// PRECONDITION: run `reconcile-run-plane` for this tenant and this `--run-schema` FIRST. This verb reads the tenant's `environment_policies` row before it commits and refuses when the row is absent (`environment-policy-not-converged`) as well as when it names another environment than the release carries (`environment-policy-environment-mismatch`), so publishing into a never-reconciled run plane fails rather than passing unchecked.
-    PublishRelease(publish_release::PublishReleaseArgs),
+    PublishRelease(release_verbs::PublishReleaseArgs),
     /// Print the release lines a pod template carries for one minted release (wamn-duyl)
     PrintReleaseEnv(print_release_env::PrintReleaseEnvArgs),
     /// Print the SQL that creates the platform principal rows of one tenant.
     PrintPlatformPrincipals(print_platform_principals::PrintPlatformPrincipalsArgs),
     /// Promote one verified format-1 release into a target environment
-    Promote(promote::PromoteArgs),
+    Promote(release_verbs::PromoteArgs),
     /// Detect or repair per-model REPLICA IDENTITY drift from package registrations — one-shot and idempotent.
     ReconcileReplicaIdentity(reconcile_replica_identity::ReconcileReplicaIdentityArgs),
     /// Reconcile a project-env's run-plane schema to deploy/sql — create missing tables, additive ALTERs, outbox-era teardown; idempotent (wamn-1wdq)
-    ReconcileRunPlane(reconcile_run_plane::ReconcileRunPlaneArgs),
+    ReconcileRunPlane(release_verbs::ReconcileRunPlaneArgs),
     /// Terminalize one effect-uncertain run from explicit external evidence.
     TerminalizeEffectUncertain(terminalize_effect_uncertain::TerminalizeEffectUncertainArgs),
 }
@@ -113,13 +113,13 @@ async fn main() -> anyhow::Result<()> {
             package_verbs::reconcile_data_access(args).await
         }
         Command::PushComponent(args) => component_verbs::push(args).await,
-        Command::AuthorWiring(args) => author_wiring::run(args).await,
-        Command::PublishRelease(args) => publish_release::run(args).await,
+        Command::AuthorWiring(args) => release_verbs::author(args).await,
+        Command::PublishRelease(args) => release_verbs::publish(args).await,
         Command::PrintReleaseEnv(args) => print_release_env::run(args).await,
         Command::PrintPlatformPrincipals(args) => print_platform_principals::run(args),
-        Command::Promote(args) => promote::run(args).await,
+        Command::Promote(args) => release_verbs::promote(args).await,
         Command::ReconcileReplicaIdentity(args) => reconcile_replica_identity::run(args).await,
-        Command::ReconcileRunPlane(args) => reconcile_run_plane::run(args).await,
+        Command::ReconcileRunPlane(args) => release_verbs::reconcile(args).await,
         Command::TerminalizeEffectUncertain(args) => terminalize_effect_uncertain::run(args).await,
     }
 }

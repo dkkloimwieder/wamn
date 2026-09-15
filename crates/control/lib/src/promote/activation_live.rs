@@ -5,14 +5,14 @@ use std::time::Duration;
 use tokio_postgres::{Client, IsolationLevel, NoTls};
 use wamn_catalog::{WiringActivationError, WiringActivationErrorKind};
 
-use super::{CLAIM_TENANT_SQL, PromoteArgs, activate_once};
+use super::{CLAIM_TENANT_SQL, PromoteRequest, activate_once};
 
 fn hash(letter: char) -> String {
     format!("sha256:{}", letter.to_string().repeat(64))
 }
 
-fn args(url: &str) -> PromoteArgs {
-    PromoteArgs {
+fn args(url: &str) -> PromoteRequest {
+    PromoteRequest {
         source_database_url: url.to_owned(),
         target_database_url: url.to_owned(),
         control_database_url: url.to_owned(),
@@ -94,7 +94,7 @@ async fn counts(client: &Client) -> (i64, i64) {
 
 async fn refuses_unreleased_absent_and_foreign_definitions(
     client: &mut Client,
-    args: &PromoteArgs,
+    args: &PromoteRequest,
 ) {
     for (wiring, digest) in [
         ("orders-create", hash('c')),
@@ -138,7 +138,7 @@ async fn refuses_unreleased_absent_and_foreign_definitions(
     assert_eq!(counts(client).await, (0, 0));
 }
 
-async fn commit_retry_and_rollback_keep_one_history(client: &mut Client, args: &PromoteArgs) {
+async fn commit_retry_and_rollback_keep_one_history(client: &mut Client, args: &PromoteRequest) {
     let tx = begin(client).await;
     assert!(
         activate_once(&tx, args, "shop", "orders-create", &hash('a'))
@@ -174,7 +174,10 @@ async fn commit_retry_and_rollback_keep_one_history(client: &mut Client, args: &
     assert_eq!(actual, hash('a'));
 }
 
-async fn retirement_refuses_change_but_keeps_exact_retry(client: &mut Client, args: &PromoteArgs) {
+async fn retirement_refuses_change_but_keeps_exact_retry(
+    client: &mut Client,
+    args: &PromoteRequest,
+) {
     client
         .execute(
             "INSERT INTO catalog.wiring_tombstones

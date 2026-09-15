@@ -31,6 +31,7 @@ use wamn_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, WorkloadActionVerb,
     WorkloadGenerationAction, read_json, secret_annotation, secret_value,
 };
+use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
     management_admitter_generation_role, platform_principals_sql, sql as provision_sql,
@@ -40,7 +41,6 @@ use wamn_pg_core::Identifier;
 use crate::dev::activation::DevActivationIdentity;
 use crate::provision_org::{self, ProvisionOrgArgs, TemplateArg};
 use crate::provisioning_verbs;
-use crate::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
 
 /// The deployment-owned inputs a standing development environment needs.
 ///
@@ -539,7 +539,7 @@ pub async fn reconcile_journey_run_plane(
     system_url: &str,
     project_url: &str,
 ) -> anyhow::Result<()> {
-    reconcile_run_plane::run(ReconcileRunPlaneArgs {
+    let outcome = reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         system_database_url: system_url.to_owned(),
         admin_database_url: project_url.to_owned(),
         org: ORG.to_owned(),
@@ -550,7 +550,9 @@ pub async fn reconcile_journey_run_plane(
         dry_run: false,
     })
     .await
-    .context("reconcile the journey run plane")
+    .context("reconcile the journey run plane")?;
+    crate::release_verbs::print_reconciled(&outcome, false, TENANT, ENVIRONMENT);
+    Ok(())
 }
 
 pub async fn prepare_journey_credentials(

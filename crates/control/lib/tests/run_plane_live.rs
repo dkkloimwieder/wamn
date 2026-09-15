@@ -103,7 +103,7 @@ use catalog::{capture_mode_additive_leg, stored_suite_cutover_leg, two_plane_res
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control::reconcile_run_plane::{
-    self, RECONCILE_TARGET_REFUSAL_PREFIX, ReconcileRunPlaneArgs, ReconcileTargetError,
+    self, RECONCILE_TARGET_REFUSAL_PREFIX, ReconcileRunPlaneRequest, ReconcileTargetError,
     ReconcileTargetErrorKind,
 };
 use wamn_control::verification_policy::project_environment_policy;
@@ -1084,8 +1084,8 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         "real CLI projection starts without a local policy row"
     );
 
-    // The REAL CLI path (arg validation + connect + apply + print).
-    reconcile_run_plane::run(ReconcileRunPlaneArgs {
+    // The REAL CLI path (arg validation + connect + apply).
+    reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
@@ -1126,7 +1126,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         )
         .await
         .expect("change the system env policy");
-    reconcile_run_plane::run(ReconcileRunPlaneArgs {
+    reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
@@ -1150,7 +1150,7 @@ async fn v1_era_drifted_leg(su: &Client, system_su: &Client, system_url: &str, t
         .expect("read policy after dry-run")
         .get(0);
     assert_eq!(after_dry_run, "durable", "dry-run mutated local policy");
-    reconcile_run_plane::run(ReconcileRunPlaneArgs {
+    reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
@@ -1666,7 +1666,7 @@ async fn registry_durability_schema_ensure_leg(
         .get(0);
     assert!(!before, "missing-column mutant was not installed");
 
-    let args = |dry_run| ReconcileRunPlaneArgs {
+    let args = |dry_run| ReconcileRunPlaneRequest {
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: "acme".to_string(),
@@ -1677,7 +1677,7 @@ async fn registry_durability_schema_ensure_leg(
         dry_run,
     };
     let before_dry_run = registry_env_policy_catalog_snapshot(system_su).await;
-    reconcile_run_plane::run(args(true))
+    reconcile_run_plane::reconcile_run_plane(args(true))
         .await
         .expect("dry-run observes a pre-carrier registry without migrating it");
     assert_eq!(
@@ -1711,7 +1711,7 @@ async fn registry_durability_schema_ensure_leg(
         "dry-run must not project the legacy standard policy into the run plane"
     );
 
-    reconcile_run_plane::run(args(false))
+    reconcile_run_plane::reconcile_run_plane(args(false))
         .await
         .expect("reconcile upgrades the system env-policy schema");
     let first = registry_durability_schema_snapshot(system_su).await;
@@ -1733,7 +1733,7 @@ async fn registry_durability_schema_ensure_leg(
     let projected = (projected_row.get(0), projected_row.get(1));
     assert_eq!(projected, ("dev".to_string(), "standard".to_string()));
 
-    reconcile_run_plane::run(args(true))
+    reconcile_run_plane::reconcile_run_plane(args(true))
         .await
         .expect("second registry schema ensure is idempotent");
     assert_eq!(registry_durability_schema_snapshot(system_su).await, first);

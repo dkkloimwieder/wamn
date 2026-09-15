@@ -21,15 +21,14 @@ use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::{Client as PgClient, NoTls};
 use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
+use wamn_control::publish_release::{
+    DeploymentCoordinate, read_release_snapshot, report_deployment_coordinate,
+};
 use wamn_runtime::component_artifact_source::{OCI_CA_PATHS_ENV, read_ca_bundles};
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_BYTES, ReleaseManifestArtifactBlobs, release_manifest_artifact_layout,
     release_manifest_artifact_reference, verify_release_manifest_artifact_layout,
-};
-
-use crate::publish_release::{
-    DeploymentCoordinate, read_release_snapshot, report_deployment_coordinate,
 };
 
 /// Bound each registry connect/read phase without adding a deployment knob.
@@ -241,7 +240,7 @@ async fn run_with_provenance(
     // on no other verb. Its foreign key refuses a release whose identity the mint
     // never projected — bytes that reached a registry without ever being minted
     // cannot be attested into existence.
-    crate::publish_release::attest_deployment(
+    wamn_control::publish_release::attest_deployment(
         &args.control_database_url,
         &coordinate,
         &published.digest,

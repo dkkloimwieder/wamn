@@ -29,6 +29,7 @@ use wamn_control::component_declaration::{
     ComponentDeclarationError, ComponentDeclarationErrorKind, PACKAGE_MANIFEST,
     authored_base_digests, render_declaration_document,
 };
+use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_component::{
     AdmitComponentRequest, ComponentAdmission, PublishAdmittedComponentRequest, admit_component,
     project_admitted_component_for_verification, publish_admitted_component,
@@ -51,7 +52,6 @@ use super::watch::GitSource;
 use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner, DevTargetDurability};
 use crate::dev_gate::GateClient;
 use crate::print_release_env::{ReleaseCarrier, lookup_release_snapshot};
-use crate::publish_release::{PublishReleaseArgs, ReleaseWiringTarget};
 use crate::push_release_manifest::PushReleaseManifestArgs;
 
 const BUILD_TOOL: &str = "tools/build-components";
@@ -602,7 +602,7 @@ impl ProductionDevStageRunner {
 
         let run_schema = BareSchemaName::new(RUN_SCHEMA)
             .expect("the verification bootstrap owns a valid run schema");
-        crate::verification_policy::project_environment_policy(
+        wamn_control::verification_policy::project_environment_policy(
             self.config.system_database_url(),
             self.preparation_database_url(),
             &run_schema,
@@ -1299,7 +1299,7 @@ impl ProductionDevStageRunner {
             .map(|package| package.root.join(PACKAGE_MANIFEST))
             .collect();
         let identity = self.config.activation_identity();
-        let request = PublishReleaseArgs {
+        let request = PublishReleaseRequest {
             database_url: self.config.target_database_url().to_owned(),
             control_database_url: self.config.system_database_url().to_owned(),
             org: identity.org.clone(),
@@ -1331,7 +1331,7 @@ impl ProductionDevStageRunner {
                 })
                 .collect();
             let (minted, mut local_facts) =
-                crate::publish_release::mint_local(request, &self.admissions, documents)
+                publish_release::mint_local(request, &self.admissions, documents)
                     .await
                     .map_err(|source| {
                         ProductionDevStageError::owner("assemble local application", source)
@@ -1436,11 +1436,12 @@ impl ProductionDevStageRunner {
             })?
             .commit
             .clone();
-        crate::publish_release::run(request)
+        let digest = publish_release::publish_release(request)
             .await
             .map_err(|source| {
                 ProductionDevStageError::owner("mint the verified effective release", source)
             })?;
+        println!("{digest}");
 
         crate::push_release_manifest::run_with_source_commit(
             PushReleaseManifestArgs {

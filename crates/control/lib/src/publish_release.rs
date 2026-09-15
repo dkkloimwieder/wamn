@@ -10,7 +10,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
-use clap::Args;
 use serde::de::DeserializeOwned;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
@@ -357,56 +356,48 @@ struct ReleaseComponentMembership {
     component_digest: String,
 }
 
-#[derive(Debug, Args)]
-pub struct PublishReleaseArgs {
-    #[arg(long)]
+/// Inputs of one effective-release publication.
+#[derive(Debug)]
+pub struct PublishReleaseRequest {
+    /// Owner connection to the project-environment database the release is minted in.
     pub database_url: String,
-    #[arg(long)]
+    /// Owner connection to the control database the release identity is projected to.
     pub control_database_url: String,
-    #[arg(long)]
+    /// Registry organization of the deployment coordinate.
     pub org: String,
-    #[arg(long)]
+    /// Registry project of the deployment coordinate.
     pub project: String,
-    #[arg(long)]
+    /// Tenant owning the release.
     pub tenant: String,
-    #[arg(long)]
+    /// Integer identity of the release.
     pub effective_release_id: u32,
-    #[arg(long)]
+    /// Environment the release is minted for.
     pub environment: String,
     /// Principal already authenticated by the publication boundary.
-    #[arg(long)]
     pub verified_publisher_principal: String,
-    #[arg(long)]
+    /// Run-plane schema holding the tenant's environment policy.
     pub run_schema: String,
-    /// Exact package membership; repeat once per package.
-    #[arg(long = "package", value_parser = parse_package, required = true)]
+    /// Exact package membership.
     pub packages: Vec<PackageCoordinate>,
-    /// Exact package-owned wiring; repeat once per wiring.
-    #[arg(
-        long = "wiring",
-        value_name = "PACKAGE@VERSION::WIRING=VERSION",
-        required = true
-    )]
+    /// Exact package-owned wirings.
     pub wirings: Vec<ReleaseWiringTarget>,
-    /// Package-owned attachment documents; repeat once per package.
-    #[arg(long = "attachments", value_name = "PATH", required = true)]
+    /// Package-owned attachment documents.
     pub attachments: Vec<PathBuf>,
     /// Deployment-owned hostname applied to every HTTP route.
-    #[arg(long)]
     pub route_host: Option<String>,
     /// Exact `wamn.json` for every package in the release.
-    #[arg(long = "package-manifest", value_name = "PATH", required = true)]
     pub package_manifests: Vec<PathBuf>,
 }
 
-fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
+/// Parse one exact `PACKAGE_ID@PACKAGE_VERSION` package coordinate.
+pub fn parse_package(value: &str) -> Result<PackageCoordinate, String> {
     let (package_id, package_version) = value
         .rsplit_once('@')
         .ok_or_else(|| "expected PACKAGE_ID@PACKAGE_VERSION".to_owned())?;
     PackageCoordinate::new(package_id, package_version).map_err(|error| error.to_string())
 }
 
-impl PublishReleaseArgs {
+impl PublishReleaseRequest {
     fn deployment_coordinate(&self, release: &ServingRelease) -> DeploymentCoordinate {
         DeploymentCoordinate::new(&self.org, &self.project, release)
     }
@@ -417,18 +408,18 @@ impl PublishReleaseArgs {
     }
 }
 
-pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
-    let minted = mint_candidate(&args, false).await?;
-    let coordinate = args.deployment_coordinate(&minted.manifest.release);
+/// Mint one effective release, project its identity, and return its manifest digest.
+pub async fn publish_release(request: PublishReleaseRequest) -> anyhow::Result<ManifestDigest> {
+    let minted = mint_candidate(&request, false).await?;
+    let coordinate = request.deployment_coordinate(&minted.manifest.release);
     report_deployment_coordinate(&coordinate, &minted.digest);
-    project_release_identity(&args.control_database_url, &coordinate).await?;
-    println!("{}", minted.digest);
-    Ok(())
+    project_release_identity(&request.control_database_url, &coordinate).await?;
+    Ok(minted.digest)
 }
 
 /// Assemble a candidate only in a provisioned disposable target, without publication.
 pub async fn mint_local(
-    mut args: PublishReleaseArgs,
+    mut args: PublishReleaseRequest,
     admissions: &[crate::push_component::ComponentAdmission],
     documents: Vec<(ComponentPackageScope, WiringDocument)>,
 ) -> anyhow::Result<(
@@ -634,7 +625,7 @@ pub async fn mint_local(
 }
 
 async fn mint_candidate(
-    args: &PublishReleaseArgs,
+    args: &PublishReleaseRequest,
     local: bool,
 ) -> anyhow::Result<MintedReleaseManifest> {
     ensure!(

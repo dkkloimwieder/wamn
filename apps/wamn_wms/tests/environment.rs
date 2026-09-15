@@ -11,23 +11,23 @@ use serde_json::{Value, json};
 use wamn_authoring_model::AuthoringScope;
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::author_wiring::{self, AuthorWiringRequest};
 use wamn_control::enable_cdc_project_env::EnableCdcProjectEnvRequest;
 use wamn_control::pat_client::PatIssuerConfig;
 use wamn_control::provision_project_env::{
     self, ProvisionProjectEnvRequest, ProvisionedRoute, WorkloadActionRequest, read_json,
     secret_value,
 };
+use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_component::{AdmitComponentRequest, PublishAdmittedComponentRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
+use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_control_provision::{WorkloadRoleFamily, sql};
-use wamn_ctl::author_wiring::{self, AuthorWiringArgs};
 use wamn_ctl::bind_connection::{self, BindConnectionArgs, RequirementType};
 use wamn_ctl::dev::environment::{JourneyCredentials, connect};
 use wamn_ctl::print_release_env::{self, ReleaseCarrier};
 use wamn_ctl::provision_org::{self, TemplateArg};
-use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
 use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
-use wamn_ctl::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
 use wamn_test_infrastructure::declarations::{
     GateInput, gate_document, render_component_declaration,
@@ -163,7 +163,7 @@ pub async fn prepare_project(
     drop(project);
     task.abort();
     installed?;
-    reconcile_run_plane::run(ReconcileRunPlaneArgs {
+    reconcile_run_plane::reconcile_run_plane(ReconcileRunPlaneRequest {
         system_database_url: inputs.system_pg_url.clone(),
         admin_database_url: route.database_url.clone(),
         org: ORG.into(),
@@ -452,7 +452,7 @@ pub async fn publish(
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    publish_release::run(PublishReleaseArgs {
+    publish_release::publish_release(PublishReleaseRequest {
         database_url: route.database_url.clone(),
         control_database_url: inputs.system_pg_url.clone(),
         org: ORG.into(),
@@ -616,14 +616,16 @@ async fn author_wirings(
                 "the authoring service refused {}",
                 document.wiring_id
             );
-            author_wiring::run(AuthorWiringArgs {
-                database_url: route.database_url.clone(),
-                control_database_url: inputs.system_pg_url.clone(),
-                tenant: TENANT.into(),
-                package_id: package.package_id().to_string(),
-                package_version: package.package_version().to_string(),
-                wiring_document: path.clone(),
-            })
+            author_wiring::author_wiring_in_databases(
+                &route.database_url,
+                &inputs.system_pg_url,
+                &AuthorWiringRequest {
+                    tenant_id: TENANT,
+                    package_id: package.package_id(),
+                    package_version: package.package_version(),
+                    document: &document,
+                },
+            )
             .await?;
         }
         Ok::<(), anyhow::Error>(())

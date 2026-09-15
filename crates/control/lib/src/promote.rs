@@ -10,7 +10,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
-use clap::Args;
 use tokio_postgres::{Client, GenericClient, IsolationLevel, NoTls, Row, Transaction};
 use wamn_catalog::{
     AdmittedComponent, ComponentPackageScope, PackageCoordinate, ServingManifest,
@@ -141,40 +140,54 @@ impl fmt::Display for PromotionError {
 
 impl std::error::Error for PromotionError {}
 
-#[derive(Debug, Args)]
-pub struct PromoteArgs {
-    #[arg(long)]
+/// Inputs of one release promotion into a target environment.
+#[derive(Debug)]
+pub struct PromoteRequest {
+    /// Connection to the source project environment holding the release.
     pub source_database_url: String,
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    /// Owner connection to the target project environment.
     pub target_database_url: String,
-    #[arg(long)]
+    /// Owner connection to the control database the release identity is projected to.
     pub control_database_url: String,
-    #[arg(long)]
+    /// Registry organization of the target deployment coordinate.
     pub org: String,
-    #[arg(long)]
+    /// Registry project of the target deployment coordinate.
     pub project: String,
-    #[arg(long)]
+    /// Tenant owning both releases.
     pub tenant: String,
-    #[arg(long)]
+    /// Integer identity of the source release.
     pub source_effective_release_id: u32,
-    #[arg(long)]
+    /// Integer identity of the promoted target release.
     pub target_effective_release_id: u32,
-    #[arg(long)]
+    /// Environment the source release was minted for.
     pub source_environment: String,
-    #[arg(long)]
+    /// Environment the release is promoted into.
     pub target_environment: String,
-    #[arg(long)]
+    /// Run-plane schema holding the target tenant's environment policy.
     pub run_schema: String,
-    #[arg(long)]
+    /// Registry and repository base the component artifacts are pulled from.
     pub artifact_base: String,
-    #[arg(long, env = "WAMN_REGISTRY_AUTH_FILE")]
+    /// Docker configuration carrying the registry pull credential.
     pub registry_auth_file: PathBuf,
-    #[arg(long, default_value_t = false)]
+    /// Whether the exact registry host may use plain HTTP.
     pub insecure_registry: bool,
-    #[arg(long)]
+    /// Principal recorded as the promoting publisher.
     pub principal: String,
-    #[arg(long, default_value = "promote-release")]
+    /// Reason recorded with each wiring activation.
     pub reason: String,
+}
+
+/// Result of one release promotion.
+#[derive(Debug)]
+pub struct PromoteOutcome {
+    /// Manifest digest of the source release.
+    pub source_manifest_digest: String,
+    /// Manifest digest of the minted target release.
+    pub target_manifest_digest: String,
+    /// Number of component artifacts verified in the registry.
+    pub verified_components: usize,
+    /// Number of wiring activation pointers that changed.
+    pub activated_wirings: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -233,7 +246,8 @@ struct SourceRelease {
     requirements: Vec<PortableRequirement>,
 }
 
-pub async fn run(args: PromoteArgs) -> anyhow::Result<()> {
+/// Promote one verified release into its target environment and return the outcome.
+pub async fn promote(args: PromoteRequest) -> anyhow::Result<PromoteOutcome> {
     validate_args(&args)?;
     let run_schema = BareSchemaName::new(args.run_schema.clone())
         .with_context(|| format!("invalid --run-schema {:?}", args.run_schema))?;
@@ -286,18 +300,12 @@ pub async fn run(args: PromoteArgs) -> anyhow::Result<()> {
         .expect("the release mint returned a canonical digest");
     report_deployment_coordinate(&coordinate, &digest);
     project_release_identity(&args.control_database_url, &coordinate).await?;
-    println!(
-        "promoted {} from {}:{} to {}:{} as {} ({} component artifact(s) verified, {} pointer flip(s))",
-        release.manifest_digest,
-        args.source_environment,
-        args.source_effective_release_id,
-        args.target_environment,
-        args.target_effective_release_id,
-        target_digest,
-        release.components.len(),
-        activated,
-    );
-    Ok(())
+    Ok(PromoteOutcome {
+        verified_components: release.components.len(),
+        source_manifest_digest: release.manifest_digest,
+        target_manifest_digest: target_digest,
+        activated_wirings: activated,
+    })
 }
 
 async fn finish_connection<T>(
@@ -320,7 +328,7 @@ async fn finish_connection<T>(
     }
 }
 
-fn validate_args(args: &PromoteArgs) -> anyhow::Result<()> {
+fn validate_args(args: &PromoteRequest) -> anyhow::Result<()> {
     for (field, value) in [
         ("tenant", args.tenant.as_str()),
         ("source-environment", args.source_environment.as_str()),
@@ -350,7 +358,7 @@ fn pg_release_id(value: u32, side: &'static str) -> anyhow::Result<i32> {
 
 async fn load_source_release(
     client: &mut Client,
-    args: &PromoteArgs,
+    args: &PromoteRequest,
     release_id: i32,
 ) -> anyhow::Result<SourceRelease> {
     let tx = client
@@ -634,7 +642,7 @@ async fn promote_target(
     client: &mut Client,
     artifact_source: &ComponentArtifactSource,
     source: &SourceRelease,
-    args: &PromoteArgs,
+    args: &PromoteRequest,
     target_release_id: i32,
     run_schema: &BareSchemaName,
 ) -> anyhow::Result<(String, usize)> {
@@ -897,7 +905,7 @@ async fn persist_wiring(
 
 async fn activate_once(
     tx: &Transaction<'_>,
-    args: &PromoteArgs,
+    args: &PromoteRequest,
     package_id: &str,
     wiring_id: &str,
     graph_hash: &str,

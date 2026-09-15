@@ -4,7 +4,8 @@
 //! its test process, and holds the process lock of that server.
 
 use tokio_postgres::{Client, NoTls};
-use wamn_ctl::{reconcile_run_plane, terminalize_effect_uncertain};
+use wamn_control::reconcile_run_plane;
+use wamn_ctl::terminalize_effect_uncertain;
 use wamn_run_state::operator_action::{OperatorActionBasis, OperatorTerminalizeResult};
 use wamn_schema_control::BareSchemaName;
 

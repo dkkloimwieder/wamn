@@ -9,13 +9,13 @@ use serde_json::{Value, json};
 use tokio_postgres::Client;
 use wamn_catalog::{ComponentDeclaration, PackageCoordinate};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::author_wiring::{self, AuthorWiringRequest};
 use wamn_control::provision_project_env::secret_value;
+use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_component::{self, AdmitComponentRequest, PublishAdmittedComponentRequest};
-use wamn_ctl::author_wiring::{self, AuthorWiringArgs};
 use wamn_ctl::dev::environment::{
     ENVIRONMENT, JourneyCredentials, ORG, PROJECT, TENANT, connect, spawn_journey_management_gate,
 };
-use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
 use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
 use wamn_platform_identity::{PrincipalKind, issue_pat, resolve_subject, revoke_pat};
 use wamn_runtime::release_manifest::LoadedRelease;
@@ -188,14 +188,17 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
     let wiring_path = root.join("wiring.json");
     write_json(&wiring_path, &wiring)?;
     gate_wiring(&test, &wiring).await?;
-    author_wiring::run(AuthorWiringArgs {
-        database_url: test.project_url.to_owned(),
-        control_database_url: test.inputs.system_pg_url.clone(),
-        tenant: TENANT.to_owned(),
-        package_id: PACKAGE.to_owned(),
-        package_version: VERSION.to_owned(),
-        wiring_document: wiring_path,
-    })
+    let document = author_wiring::read_wiring_document(&wiring_path)?;
+    author_wiring::author_wiring_in_databases(
+        test.project_url,
+        &test.inputs.system_pg_url,
+        &AuthorWiringRequest {
+            tenant_id: TENANT,
+            package_id: PACKAGE,
+            package_version: VERSION,
+            document: &document,
+        },
+    )
     .await?;
 
     let definition = json!({"id": WIRING, "kind": "http",
@@ -221,7 +224,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         journey_package_root(base_package, Some(test.inputs)).join("wamn.json"),
         package.join("wamn.json"),
     ];
-    publish_release::run(PublishReleaseArgs {
+    publish_release::publish_release(PublishReleaseRequest {
         database_url: test.project_url.to_owned(),
         control_database_url: test.inputs.system_pg_url.clone(),
         org: ORG.to_owned(),

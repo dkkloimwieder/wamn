@@ -25,8 +25,8 @@ use wamn_catalog::{
     DefinitionHash, WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::author_wiring::{AuthorWiringRequest, author_wiring};
 use wamn_control::push_component::admitted_projection_hash;
-use wamn_ctl::author_wiring::{AuthorWiringRequest, author_wiring};
 use wamn_ctl::bind_connection::{self, BindConnectionArgs, RequirementType};
 use wamn_runtime::plugins::wamn_blobstore::binding::{self, BindingError};
 use wamn_runtime::plugins::wamn_postgres::{

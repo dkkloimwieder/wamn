@@ -50,13 +50,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error as StdError;
 
 use anyhow::Context as _;
-use clap::Args;
 use tokio_postgres::NoTls;
 
 use wamn_control_provision::{
     DISPATCH_READER_ROLE, project_env_database_name, sql, validate_project_env,
 };
-use wamn_control_registry::Triple;
+use wamn_control_registry::{DurabilityClass, Triple};
 use wamn_schema_control::{
     BareSchemaName, EffectWriterRoleObservation, RowPolicyObservation, RowSecurityObservation,
     RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
@@ -130,44 +129,48 @@ const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 12] = [
     RunPlaneActionKind::RetiredEffectDispositionCutover,
 ];
 
-#[derive(Debug, Args)]
-pub struct ReconcileRunPlaneArgs {
+/// Inputs of one run-plane reconciliation.
+#[derive(Debug)]
+pub struct ReconcileRunPlaneRequest {
     /// Administrative Postgres URL to the system registry. The reconciler reads
     /// the project-env's stored instance suffix here before resolving policy;
-    /// admission never connects to this database. Env `WAMN_SYSTEM_ADMIN_URL`.
-    #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
+    /// admission never connects to this database.
     pub system_database_url: String,
 
     /// Administrative Postgres URL to the exact registry-derived project
     /// database. Observation and apply require SUPERUSER or BYPASSRLS so
-    /// forced-RLS legacy rows cannot be skipped. Env `WAMN_PG_ADMIN_URL`.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    /// forced-RLS legacy rows cannot be skipped.
     pub admin_database_url: String,
 
     /// Registry organization owning the environment policy.
-    #[arg(long)]
     pub org: String,
 
     /// Registry project owning the exact provisioned database target.
-    #[arg(long)]
     pub project: String,
 
     /// Tenant whose project-local policy row is converged.
-    #[arg(long)]
     pub tenant: String,
 
     /// Environment policy name in the owning organization's registry set.
-    #[arg(long)]
     pub env: String,
 
     /// The project-env schema the run-plane tables live in (e.g.
     /// `wamn_runner_demo`, `poc_f1`).
-    #[arg(long)]
     pub schema: String,
 
-    /// Print the reconcile plan without applying it (strictly read-only).
-    #[arg(long)]
+    /// Plan without applying (strictly read-only).
     pub dry_run: bool,
+}
+
+/// Result of one run-plane reconciliation.
+#[derive(Debug)]
+pub struct ReconcileRunPlaneOutcome {
+    /// The plan that was applied, or that would apply under a dry run.
+    pub plan: RunPlanePlan,
+    /// Whether the tenant's environment policy changed, or would change.
+    pub policy_changed: bool,
+    /// Durability class of the source environment policy.
+    pub durability_class: DurabilityClass,
 }
 
 /// Stable class for a run-plane target-identity refusal.
@@ -259,7 +262,10 @@ impl StdError for ReconcileTargetError {
     }
 }
 
-pub async fn run(args: ReconcileRunPlaneArgs) -> anyhow::Result<()> {
+/// Reconcile one registry-verified run plane and return its plan and policy change.
+pub async fn reconcile_run_plane(
+    args: ReconcileRunPlaneRequest,
+) -> anyhow::Result<ReconcileRunPlaneOutcome> {
     anyhow::ensure!(!args.tenant.is_empty(), "--tenant must not be empty");
     let schema = BareSchemaName::new(args.schema.clone())
         .with_context(|| format!("invalid --schema {:?}", args.schema))?;
@@ -343,22 +349,11 @@ pub async fn run(args: ReconcileRunPlaneArgs) -> anyhow::Result<()> {
     drop(client);
     let _ = conn_task.await;
     let (plan, policy_changed, durability_class) = result?;
-
-    print_plan(&plan, args.dry_run);
-    if policy_changed {
-        let mode = if args.dry_run {
-            "would converge"
-        } else {
-            "converged"
-        };
-        println!(
-            "  {mode} environment policy tenant={:?} environment={:?} durability_class={}",
-            args.tenant,
-            args.env,
-            durability_class.as_sql(),
-        );
-    }
-    Ok(())
+    Ok(ReconcileRunPlaneOutcome {
+        plan,
+        policy_changed,
+        durability_class,
+    })
 }
 
 /// Converge one source-attested environment policy into the project-local
@@ -972,23 +967,6 @@ async fn observe(
         }
     }
     Ok(obs)
-}
-
-fn print_plan(plan: &RunPlanePlan, dry_run: bool) {
-    let verb = if dry_run { "would apply" } else { "applied" };
-    if plan.is_noop() {
-        println!(
-            "run plane already at the schema of record — no actions ({} tables at target)",
-            plan.at_target.len()
-        );
-    } else {
-        for a in &plan.actions {
-            println!("{verb} {:?}: {}", a.kind, a.target);
-        }
-    }
-    for (table, col) in &plan.extra_columns {
-        println!("  [extra] {table}.{col} is not in the schema of record — left untouched");
-    }
 }
 
 #[cfg(test)]

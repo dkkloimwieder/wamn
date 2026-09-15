@@ -1,6 +1,6 @@
 use super::{
     CLI_ENV, CLI_INSTANCE, CLI_ORG, CLI_PROJECT, Client, RECONCILE_TARGET_REFUSAL_PREFIX,
-    ReconcileRunPlaneArgs, ReconcileTargetError, ReconcileTargetErrorKind, SCHEMA, connect,
+    ReconcileRunPlaneRequest, ReconcileTargetError, ReconcileTargetErrorKind, SCHEMA, connect,
     database_url, drop_database, locked_database, project_env_database_name,
     project_environment_policy, reconcile_run_plane, recreate_database, reset, schema,
 };
@@ -127,8 +127,8 @@ fn target_guard_args(
     project: &str,
     environment: &str,
     dry_run: bool,
-) -> ReconcileRunPlaneArgs {
-    ReconcileRunPlaneArgs {
+) -> ReconcileRunPlaneRequest {
+    ReconcileRunPlaneRequest {
         system_database_url: system_url.to_string(),
         admin_database_url: target_url.to_string(),
         org: CLI_ORG.to_string(),
@@ -229,7 +229,7 @@ async fn reconcile_target_identity_guard_live() {
 
     for dry_run in [true, false] {
         for &(label, project, environment, target_url, kind, expected, actual) in &cases {
-            let error = reconcile_run_plane::run(target_guard_args(
+            let error = reconcile_run_plane::reconcile_run_plane(target_guard_args(
                 &system_url,
                 target_url,
                 project,
@@ -313,7 +313,7 @@ async fn reconcile_target_identity_guard_live() {
 
     let system_before_dry_run = target_guard_system_snapshot(&system_su).await;
     let primary_before_dry_run = target_guard_database_snapshot(&primary_su).await;
-    reconcile_run_plane::run(target_guard_args(
+    reconcile_run_plane::reconcile_run_plane(target_guard_args(
         &system_url,
         &primary_url,
         CLI_PROJECT,
@@ -333,7 +333,7 @@ async fn reconcile_target_identity_guard_live() {
         "correct-target dry-run changed the project plane"
     );
 
-    reconcile_run_plane::run(target_guard_args(
+    reconcile_run_plane::reconcile_run_plane(target_guard_args(
         &system_url,
         &primary_url,
         CLI_PROJECT,
@@ -442,7 +442,7 @@ async fn reconcile_target_identity_guard_live() {
 
     let system_converged = target_guard_system_snapshot(&system_su).await;
     let primary_converged = target_guard_database_snapshot(&primary_su).await;
-    reconcile_run_plane::run(target_guard_args(
+    reconcile_run_plane::reconcile_run_plane(target_guard_args(
         &system_url,
         &primary_url,
         CLI_PROJECT,

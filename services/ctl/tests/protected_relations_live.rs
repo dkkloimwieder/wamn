@@ -9,11 +9,11 @@ use std::path::{Path, PathBuf};
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::reconcile_run_plane;
 use wamn_control_provision::identity_issuer::{
     IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, grant_identity_issuer_surface_sql,
 };
 use wamn_control_provision::sql;
-use wamn_ctl::reconcile_run_plane;
 use wamn_schema_control::BareSchemaName;
 use wamn_test_infrastructure::locked_database;
 

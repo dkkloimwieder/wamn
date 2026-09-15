@@ -471,16 +471,22 @@ pub(super) async fn verify_zero_case_gate_reports(
 pub(super) async fn author_journey_wirings(inputs: &JourneyDocument, project_url: &str, system_url: &str) -> anyhow::Result<()> {
     for package in JOURNEY_PACKAGES {
         for (wiring, _) in package.operations {
-            author_wiring::run(AuthorWiringArgs {
-                database_url: project_url.to_owned(),
-                control_database_url: system_url.to_owned(),
-                tenant: TENANT.to_owned(),
-                package_id: package.id.to_owned(),
-                package_version: package.version.to_owned(),
-                wiring_document: journey_publication_root(package, Some(inputs))
+            let document = author_wiring::read_wiring_document(
+                &journey_publication_root(package, Some(inputs))
                     .join("wirings")
                     .join(format!("{wiring}.json")),
-            })
+            )
+            .with_context(|| format!("author gated wiring {}::{wiring}", package.id))?;
+            author_wiring::author_wiring_in_databases(
+                project_url,
+                system_url,
+                &AuthorWiringRequest {
+                    tenant_id: TENANT,
+                    package_id: package.id,
+                    package_version: package.version,
+                    document: &document,
+                },
+            )
             .await
             .with_context(|| format!("author gated wiring {}::{wiring}", package.id))?;
         }
@@ -521,7 +527,7 @@ pub(super) async fn mint_journey_release(
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    publish_release::run(PublishReleaseArgs {
+    publish_release::publish_release(PublishReleaseRequest {
         database_url: project_url.to_owned(),
         control_database_url: system_url.to_owned(),
         org: ORG.to_owned(),

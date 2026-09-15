@@ -5,6 +5,7 @@ use std::fmt;
 
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls};
+use wamn_control::reconcile_run_plane;
 use wamn_control_provision::{
     CredentialGeneration, DB_OWNER_ROLE, management_admitter_generation_role,
     platform_principals_sql, sql,
@@ -13,7 +14,6 @@ use wamn_pg_core::Identifier;
 use wamn_schema_control::BareSchemaName;
 
 use super::activation::DevActivationIdentity;
-use crate::reconcile_run_plane;
 
 pub(crate) const RUN_SCHEMA: &str = "wamn_run";
 const APP_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/app-schema.sql");

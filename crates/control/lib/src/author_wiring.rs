@@ -32,10 +32,9 @@
 //! other document, hash, or gate scope refuses rather than being replaced,
 //! because the stored definition is immutable.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::Context as _;
-use clap::Args;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_catalog::{
     AdmittedComponent, ComponentPackageScope, DefinitionHash, WiringDocument,
@@ -170,54 +169,20 @@ pub struct AuthorWiringRequest<'a> {
     pub document: &'a WiringDocument,
 }
 
-/// Arguments for the wiring-authorship verb.
-#[derive(Debug, Args)]
-pub struct AuthorWiringArgs {
-    /// Owner URL to the project-environment database holding the catalog facts.
-    #[arg(long)]
-    pub database_url: String,
-
-    /// Owner URL to the CONTROL database holding `wamn_run.gate_reports`.
-    ///
-    /// A separate URL because the report is a separate plane's fact: it is not
-    /// in `catalog.wirings` and never was after wamn-0h0g.8.5.6. Pointing this
-    /// at the project database refuses rather than passing — the relation is
-    /// not there.
-    #[arg(long)]
-    pub control_database_url: String,
-
-    /// Tenant claim carried by the authored wiring.
-    #[arg(long)]
-    pub tenant: String,
-
-    /// Package identity the wiring is authored into.
-    #[arg(long)]
-    pub package_id: String,
-
-    /// Exact package version whose component facts gate this wiring.
-    #[arg(long)]
-    pub package_version: String,
-
-    /// The wiring document to submit; it carries its own id and version.
-    #[arg(long)]
-    pub wiring_document: PathBuf,
-}
-
-/// Author one gated wiring version and print its definition hash.
-pub async fn run(args: AuthorWiringArgs) -> anyhow::Result<()> {
-    let document = read_wiring_document(&args.wiring_document)?;
-    let request = AuthorWiringRequest {
-        tenant_id: &args.tenant,
-        package_id: &args.package_id,
-        package_version: &args.package_version,
-        document: &document,
-    };
-
-    let (control, control_connection) = tokio_postgres::connect(&args.control_database_url, NoTls)
+/// Author one gated wiring version over its own project and control connections.
+///
+/// The project connection holds the authoring transaction, and the control
+/// connection reads the gate report [`author_wiring`] requires.
+pub async fn author_wiring_in_databases(
+    database_url: &str,
+    control_database_url: &str,
+    request: &AuthorWiringRequest<'_>,
+) -> anyhow::Result<DefinitionHash> {
+    let (control, control_connection) = tokio_postgres::connect(control_database_url, NoTls)
         .await
         .context("connect to the control store holding the gate reports")?;
     let control_task = tokio::spawn(control_connection);
-    let opened = tokio_postgres::connect(&args.database_url, NoTls)
+    let opened = tokio_postgres::connect(database_url, NoTls)
         .await
         .context("connect to the authoring project environment");
     let (mut client, connection) = match opened {
@@ -228,7 +193,7 @@ pub async fn run(args: AuthorWiringArgs) -> anyhow::Result<()> {
         }
     };
     let connection_task = tokio::spawn(connection);
-    let authored = author_in_transaction(&control, &mut client, &request).await;
+    let authored = author_in_transaction(&control, &mut client, request).await;
     match authored {
         Ok(hash) => {
             drop(client);
@@ -241,8 +206,7 @@ pub async fn run(args: AuthorWiringArgs) -> anyhow::Result<()> {
                 .await
                 .context("join the gate-report connection")?
                 .context("drive the gate-report connection")?;
-            println!("{hash}");
-            Ok(())
+            Ok(hash)
         }
         Err(error) => {
             connection_task.abort();
@@ -462,37 +426,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::error::Error as _;
 
-    use clap::Parser as _;
     use wamn_catalog::{WiringNode, WiringTerminal};
 
     use super::*;
-
-    /// Host command for the flattened argument surface under test.
-    #[derive(Debug, clap::Parser)]
-    struct AuthorProbe {
-        #[command(flatten)]
-        args: AuthorWiringArgs,
-    }
-
-    const COORDINATE: [&str; 10] = [
-        "--database-url",
-        "postgres://author.invalid/env",
-        "--control-database-url",
-        "postgres://author.invalid/control",
-        "--tenant",
-        "tenant-a",
-        "--package-id",
-        "orders",
-        "--package-version",
-        "3.0.0",
-    ];
-
-    fn parse(submission: &[&str]) -> Result<AuthorWiringArgs, clap::Error> {
-        let mut argv = vec!["author-wiring"];
-        argv.extend_from_slice(&COORDINATE);
-        argv.extend_from_slice(submission);
-        AuthorProbe::try_parse_from(argv).map(|probe| probe.args)
-    }
 
     fn scope() -> ComponentPackageScope {
         ComponentPackageScope {
@@ -546,55 +482,6 @@ mod tests {
             imports: Vec::new(),
             imports_fingerprint: format!("sha256:{}", "6".repeat(64)),
             effects: Vec::new(),
-        }
-    }
-
-    /// The document is the WHOLE submission, and argv adds nothing to it.
-    ///
-    /// The gate-report argument this used to require is gone (wamn-0h0g.8.5.6):
-    /// the report keys on the wiring hash the document itself determines, so
-    /// there is no report id left for a caller to supply or mis-supply. What
-    /// argv still carries is WHERE to read that report — a database URL, not an
-    /// identity — and it is required, so no invocation can omit the check.
-    #[test]
-    fn the_document_is_the_whole_artifact_and_argv_restates_nothing() {
-        let complete =
-            parse(&["--wiring-document", "wiring.json"]).expect("the submission surface parses");
-        assert_eq!(complete.wiring_document, PathBuf::from("wiring.json"));
-        assert_eq!(
-            complete.control_database_url,
-            "postgres://author.invalid/control"
-        );
-
-        // The control store is not optional: drop its URL and the verb cannot
-        // be invoked at all, so there is no ungated authoring invocation.
-        let mut without_control = vec!["author-wiring"];
-        without_control.extend_from_slice(&COORDINATE[..2]);
-        without_control.extend_from_slice(&COORDINATE[4..]);
-        without_control.extend_from_slice(&["--wiring-document", "wiring.json"]);
-        assert!(
-            AuthorProbe::try_parse_from(without_control).is_err(),
-            "authoring parsed with no control store to read the gate report from"
-        );
-
-        let refusals: [Vec<&str>; 3] = [
-            // There is no artifact to submit.
-            vec![],
-            // The retired report argument is REFUSED, not ignored: a caller
-            // still passing it is asking for an identity that no longer exists,
-            // and silently accepting it would suggest it still meant something.
-            vec![
-                "--wiring-document",
-                "wiring.json",
-                "--gate-report-id",
-                "gate-2026-08-23",
-            ],
-            // The wiring id and version are the document's; argv cannot restate
-            // them, so a second authoring grammar cannot start here.
-            vec!["--wiring-document", "wiring.json", "--wiring-id", "orders"],
-        ];
-        for refused in refusals {
-            assert!(parse(&refused).is_err(), "accepted {refused:?}");
         }
     }
 
