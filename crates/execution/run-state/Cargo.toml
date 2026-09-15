@@ -54,6 +54,7 @@ tokio-postgres = { workspace = true, optional = true }
 wamn-catalog = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wamn-control-provision = { workspace = true }
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

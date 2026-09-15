@@ -1,4 +1,4 @@
-//! Ignored live gate for the fenced run-state transitions.
+//! Live gate for the fenced run-state transitions.
 
 use std::io::Write as _;
 use std::process::{Command, Output, Stdio};
@@ -70,10 +70,10 @@ fn executor_preamble() -> String {
 }
 
 #[test]
-#[ignore = "requires WAMN_RUN_STORE_PG_URL and a throwaway PostgreSQL database"]
 fn run_state_live() {
-    let url = std::env::var("WAMN_RUN_STORE_PG_URL")
-        .expect("set WAMN_RUN_STORE_PG_URL to the throwaway superuser database");
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
     let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))

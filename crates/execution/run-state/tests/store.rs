@@ -326,23 +326,20 @@ fn live_database(url: &str) -> String {
         .to_string()
 }
 
-/// Apply `deploy/sql/run-state.sql` to a throwaway Postgres and assert the tenant RLS
+/// Apply `deploy/sql/run-state.sql` to a test database and assert the tenant RLS
 /// isolates rows, the idempotency index dedupes, and the INSTALLED run-status CHECK
 /// admits exactly the crate's [`RunStatus`] vocabulary while refusing the retired
-/// run-level `parked`. Gated on `WAMN_RUN_STORE_PG_URL` (a superuser URL — the harness
-/// prepares an App generation); skips cleanly when unset.
+/// run-level `parked`. The test runs as the superuser (the harness prepares an App
+/// generation) and holds the process lock, because it changes cluster-wide roles.
 #[test]
 fn run_state_schema_applies_and_isolates_on_postgres() {
     /// The run-level status the queue park retired off the run row. The server must
     /// refuse it, not merely the file must omit it.
     const RETIRED_RUN_STATUS: &str = "parked";
 
-    let Ok(url) = std::env::var("WAMN_RUN_STORE_PG_URL") else {
-        eprintln!(
-            "skipping run_state_schema_applies_and_isolates_on_postgres (set WAMN_RUN_STORE_PG_URL to run)"
-        );
-        return;
-    };
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let ddl = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),

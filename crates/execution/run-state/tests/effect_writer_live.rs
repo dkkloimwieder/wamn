@@ -1,4 +1,4 @@
-//! Native private-writer gate over a throwaway PostgreSQL database.
+//! Native private-writer gate over a test PostgreSQL database.
 
 #![cfg(feature = "native")]
 
@@ -71,10 +71,10 @@ fn attempt_at(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires WAMN_RUN_STORE_PG_URL and a throwaway PostgreSQL database"]
 async fn native_effect_writer_live() {
-    let admin_url = std::env::var("WAMN_RUN_STORE_PG_URL")
-        .expect("set WAMN_RUN_STORE_PG_URL to a throwaway PostgreSQL database");
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let admin_url = test_database.url().to_owned();
     let (admin, admin_task) = connect(&admin_url).await;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])

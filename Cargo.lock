@@ -6206,6 +6206,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-execution-contract",
  "wamn-pg-core",
+ "wamn-test-postgres",
 ]
 
 [[package]]

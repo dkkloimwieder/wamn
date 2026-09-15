@@ -1,4 +1,4 @@
-//! Ignored PostgreSQL test for the surviving run-queue authority matrix.
+//! PostgreSQL test for the surviving run-queue authority matrix.
 
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
@@ -53,10 +53,10 @@ fn assert_sqlstate(url: &str, script: &str, state: &str, message: &str) {
 }
 
 #[test]
-#[ignore = "requires WAMN_RUN_STORE_PG_URL and a throwaway PostgreSQL database"]
 fn surviving_authority_matrix_live() {
-    let url = std::env::var("WAMN_RUN_STORE_PG_URL")
-        .expect("set WAMN_RUN_STORE_PG_URL to the throwaway superuser database");
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
     let catalog = wamn_catalog::CATALOG_SCHEMA_SQL;
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
