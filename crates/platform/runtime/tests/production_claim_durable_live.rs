@@ -22,23 +22,23 @@
 
 use std::sync::Arc;
 
-use anyhow::Context as _;
 use serde_json::{Value, json};
-use wamn_run_state::{EffectAttempt, EffectWriterErrorKind, FailKind, RunStatus};
+use wamn_run_state::queue::serialize_effect_intent_sql;
+use wamn_run_state::{FailKind, RunStatus};
 use wamn_runtime::plugins::wamn_postgres::{ProductionClaimResult, ProductionReapResult};
 
 mod common;
 
 use common::{
     COMPONENT, EMPTY_HASH, ENVIRONMENT, PACKAGE_ID, POD_EFFECTIVE_RELEASE_ID, POD_MANIFEST_DIGEST,
-    RUNTIME_APPLICATION_NAME, SCHEMA, TENANT, WIRING_ID, WIRING_VERSION, WRITER_LATCH,
-    assert_callerless_terminal, assert_prior_winner_terminal, effect_attempt, expire_effect_run,
-    install_fixture, install_prior_caller_winner, make_callerless, ready_run, release_record,
-    seed_durable_run, seed_live_effect_run, teardown, wait_for_advisory_wait,
+    RUNTIME_APPLICATION_NAME, SCHEMA, TENANT, WIRING_ID, WIRING_VERSION,
+    assert_callerless_terminal, assert_prior_winner_terminal, connect, expire_effect_run,
+    insert_effect_attempt, install_fixture, install_prior_caller_winner, make_callerless,
+    ready_run, release_record, seed_durable_run, seed_live_effect_run, teardown,
+    wait_for_advisory_wait,
 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "existing failure wamn-gw99: the fixture's effect writer has no executor-platform membership, so its attempt is refused with executor-platform-authority-required before the advisory wait"]
 async fn production_claim_durable_live() -> anyhow::Result<()> {
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
@@ -46,14 +46,14 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
     let admin = &fixture.admin;
     let plugin = &fixture.plugin;
     let release_package_ids = [PACKAGE_ID.to_owned(), "cat_overlay".to_owned()];
-    let writer = &fixture.writer;
-    let writer_role = fixture.writer_role.clone();
 
-    // A writer that fenced and validated while the lease was live may commit
-    // after the lease expires. The reaper holds the row lock, waits on the same
-    // tenant/run fence, then uses a fresh snapshot and must observe the attempt.
-    // The fence is class-gated (wamn-0h0g.20.2), so the run is admitted
-    // `durable`.
+    // A transaction that took the effect-intent fence and recorded an attempt
+    // while the lease was live may commit after the lease expires. The reaper
+    // holds the row lock, waits on the same tenant/run fence, then uses a fresh
+    // snapshot and must observe the attempt. The fence is class-gated
+    // (wamn-0h0g.20.2), so the run is admitted `durable`. No effect writer
+    // exists (wamn-0h0g.10.15), so the fixture superuser takes the production
+    // fence statement and records the attempt.
     //
     // THE MIRROR OF THIS ROW IS `standard-effect` IN `production_claim_live.rs`:
     // same shape — crash budget spent, lease expired, one attributed attempt —
@@ -82,35 +82,15 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
             &[&TENANT],
         )
         .await?;
-    admin
-        .batch_execute(&format!(
-            "CREATE FUNCTION {SCHEMA}.hold_effect_insert() RETURNS trigger \
-               LANGUAGE plpgsql AS $hold$ BEGIN \
-                 PERFORM pg_advisory_xact_lock({WRITER_LATCH}); RETURN NEW; \
-               END $hold$; \
-             CREATE TRIGGER hold_effect_insert BEFORE INSERT ON {SCHEMA}.effect_attempts \
-               FOR EACH ROW EXECUTE FUNCTION {SCHEMA}.hold_effect_insert();"
-        ))
+    let mut writer = connect(database.url()).await?;
+    let intent = writer.transaction().await?;
+    intent
+        .query_one("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
         .await?;
-    admin
-        .query_one("SELECT pg_advisory_lock($1)", &[&WRITER_LATCH])
+    intent
+        .query_one(&serialize_effect_intent_sql(), &[&"effect-race"])
         .await?;
-    let mut writer_task = {
-        let writer = fixture.writer.clone();
-        tokio::spawn(async move {
-            writer
-                .begin_attempt(effect_attempt("effect-race", "effect-node"))
-                .await
-        })
-    };
-    tokio::select! {
-        waiting = wait_for_advisory_wait(admin, None, Some(&writer_role)) => waiting?,
-        finished = &mut writer_task => {
-            finished.context("join effect writer before advisory wait")?
-                .context("effect writer refused before advisory wait")?;
-            anyhow::bail!("effect writer completed without waiting on the advisory lock");
-        }
-    }
+    insert_effect_attempt(&intent, "effect-race", "effect-node").await?;
     admin
         .execute(
             &format!(
@@ -131,12 +111,8 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         })
     };
     wait_for_advisory_wait(admin, Some(RUNTIME_APPLICATION_NAME), None).await?;
-    let unlocked: bool = admin
-        .query_one("SELECT pg_advisory_unlock($1)", &[&WRITER_LATCH])
-        .await?
-        .get(0);
-    assert!(unlocked);
-    let inserted_effect: EffectAttempt = writer_task.await??;
+    intent.commit().await?;
+    drop(writer);
     assert_eq!(
         reaper.await??,
         ProductionReapResult::EffectAttempt {
@@ -175,24 +151,10 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
         wamn_execution_contract::canonical_json_sha256(&effect_body)
     );
     assert!(!effect.get::<_, bool>(3));
-    assert_eq!(
-        writer
-            .begin_attempt(effect_attempt("effect-race", "effect-node"))
-            .await?,
-        inserted_effect,
-        "an exact immutable retry survives later terminalization"
-    );
-    let inactive_new = writer
-        .begin_attempt(effect_attempt("effect-race", "second-effect-node"))
-        .await
-        .expect_err("a new coordinate cannot begin after terminalization");
-    assert_eq!(inactive_new.kind(), EffectWriterErrorKind::RunNotRunnable);
 
     seed_live_effect_run(admin, "effect-callerless", 51).await?;
     make_callerless(admin, "effect-callerless").await?;
-    writer
-        .begin_attempt(effect_attempt("effect-callerless", "effect-node"))
-        .await?;
+    insert_effect_attempt(admin, "effect-callerless", "effect-node").await?;
     expire_effect_run(admin, "effect-callerless").await?;
     assert_eq!(
         plugin
@@ -208,9 +170,7 @@ async fn production_claim_durable_live() -> anyhow::Result<()> {
 
     seed_live_effect_run(admin, "effect-winner", 52).await?;
     let effect_winner = install_prior_caller_winner(admin, "effect-winner").await?;
-    writer
-        .begin_attempt(effect_attempt("effect-winner", "effect-node"))
-        .await?;
+    insert_effect_attempt(admin, "effect-winner", "effect-node").await?;
     expire_effect_run(admin, "effect-winner").await?;
     assert_eq!(
         plugin

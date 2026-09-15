@@ -1682,7 +1682,7 @@ mod tests {
                    FOREACH role_name IN ARRAY ARRAY[ \
                      'wamn_executor_platform', 'wamn_management_admitter', \
                      'wamn_app', 'wamn_control_author', 'wamn_scenario_author', \
-                     'wamn_effect_writer', 'wamn_executor_authority_test' \
+                     'wamn_executor_authority_test' \
                    ] LOOP \
                      IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
                        EXECUTE format('CREATE ROLE %I NOSUPERUSER NOBYPASSRLS', role_name); \
@@ -1707,7 +1707,6 @@ mod tests {
             "wamn_app",
             "wamn_control_author",
             "wamn_scenario_author",
-            "wamn_effect_writer",
         ] {
             connection
                 .batch_execute(&format!("SET LOCAL ROLE {role}"))

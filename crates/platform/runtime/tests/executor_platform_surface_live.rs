@@ -151,7 +151,7 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $$ DECLARE role_name text; BEGIN \
                FOREACH role_name IN ARRAY ARRAY[ \
-                 'wamn_app','wamn_scenario_author','wamn_control_author','wamn_effect_writer', \
+                 'wamn_app','wamn_scenario_author','wamn_control_author', \
                  'wamn_executor_platform','wamn_http_admitter','{GENERATION}' \
                ] LOOP \
                  IF EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname=role_name) THEN \
@@ -164,8 +164,6 @@ async fn executor_platform_surface_live() -> anyhow::Result<()> {
              CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
              CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
              BEGIN; {catalog_ddl} {run_state_ddl} {run_queue_ddl} COMMIT;"
         ))
