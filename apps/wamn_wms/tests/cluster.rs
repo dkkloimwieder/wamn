@@ -67,12 +67,6 @@ async fn restarted_wms_host_retains_compiled_code_and_serves_requests()
     run_case(Case::Startup).await
 }
 
-#[tokio::test]
-#[ignore = "holds a disposable WMS cluster with a browser route on loopback port 8080"]
-async fn wms_browser_demo() -> anyhow::Result<()> {
-    run_case(Case::Demo).await
-}
-
 #[derive(Clone, Copy, Debug)]
 enum Case {
     Routes,
@@ -80,7 +74,6 @@ enum Case {
     PartialCompletion,
     GeneratedTerminal,
     Startup,
-    Demo,
 }
 
 async fn run_case(case: Case) -> anyhow::Result<()> {
@@ -91,6 +84,9 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     );
     let partial_completion = matches!(case, Case::PartialCompletion | Case::GeneratedTerminal);
     let generated_terminal = matches!(case, Case::GeneratedTerminal);
+    // A requested hold keeps the released routes case reachable from a browser.
+    let browser =
+        matches!(case, Case::Routes) && std::env::var_os("WAMN_JOURNEY_HOLD_SECONDS").is_some();
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
@@ -234,10 +230,11 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
             &scope,
             &source,
             case,
+            browser,
             &delivery_cancelled,
         )
         .await;
-        demo::hold(work.path(), matches!(case, Case::Demo) && result.is_ok()).await?;
+        demo::hold(work.path(), browser && result.is_ok()).await?;
         result
     })
     .catch_unwind());
@@ -297,7 +294,7 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
         &json!({
             "source":head,"cluster":cluster,"completed":matches!(&run, Ok(Ok(()))),
             "partial_completion":partial_completion,"generated_terminal":generated_terminal,
-            "startup":matches!(case, Case::Startup),"demo":matches!(case, Case::Demo),
+            "startup":matches!(case, Case::Startup),"demo":browser,
             "delivery":matches!(case, Case::Delivery),
             "failure_capture":failure_capture.as_ref().err().map(|error|format!("{error:#}")),
             "failure":match &run { Ok(Err(error)) => Some(format!("{error:#}")), Err(_) => Some("test panicked".to_owned()), _ => None },
@@ -354,6 +351,7 @@ async fn run_created(
     scope: &Triple,
     source: &async_nats::jetstream::stream::Config,
     case: Case,
+    browser: bool,
     delivery_cancelled: &pg_walstream::CancellationToken,
 ) -> anyhow::Result<()> {
     let partial_completion = matches!(case, Case::PartialCompletion | Case::GeneratedTerminal);
@@ -603,16 +601,10 @@ async fn run_created(
             evidence,
         )
         .await?;
-        let endpoint = deployment::expose_route(
-            cluster,
-            work,
-            cluster,
-            lifecycle,
-            &document.route_host,
-            matches!(case, Case::Demo),
-        )
-        .await?;
-        if matches!(case, Case::Demo) {
+        let endpoint =
+            deployment::expose_route(cluster, work, cluster, lifecycle, &document.route_host)
+                .await?;
+        if browser {
             demo::start(
                 lifecycle,
                 cluster,
@@ -693,7 +685,7 @@ async fn run_created(
                 }
             }
         }
-        if !matches!(case, Case::Demo) {
+        if !browser {
             checked(kubectl(cluster, work).args([
                 "-n",
                 cluster,

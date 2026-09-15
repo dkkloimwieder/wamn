@@ -64,10 +64,19 @@ For another WMS case, replace the test name:
 | Committed movement after label failure | `cluster::released_wms_routes_retain_committed_work_after_label_failure` |
 | Generated terminal success and partial completion | `cluster::generated_wms_terminal_reports_success_and_partial_completion` |
 | Cold, restarted, and steady requests with compiled-cache identity | `cluster::restarted_wms_host_retains_compiled_code_and_serves_requests` |
-| Browser demonstration | `cluster::wms_browser_demo` |
 
-The browser case serves `http://127.0.0.1:8080/` and keeps NodePort `30950`.
-Its default hold time is 3,600 seconds. `WAMN_JOURNEY_HOLD_SECONDS` changes that duration.
+To use the WMS routes from a browser, set `WAMN_JOURNEY_HOLD_SECONDS` on the released routes case.
+This exact command runs only that case:
+
+```bash
+WAMN_JOURNEY_HOLD_SECONDS=3600 cargo test --locked --offline -p wamn-wms-tests --lib \
+  cluster::released_wms_routes -- --exact --ignored --nocapture
+```
+
+With the variable set, the case keeps its route NodePort Service and serves `http://127.0.0.1:8080/`.
+After the case finishes, it holds the cluster for that many seconds or until interrupted.
+A passing case first prints the route and the caller token file.
+Without the variable, the case does not hold.
 The startup case records requests, traces, recovery, and cache identity without asserting an overhead ratio.
 
 ### Native RC

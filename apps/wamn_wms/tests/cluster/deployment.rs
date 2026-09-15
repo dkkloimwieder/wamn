@@ -275,7 +275,6 @@ pub(super) async fn expose_route(
     namespace: &str,
     lifecycle: &Path,
     route_host: &str,
-    demo: bool,
 ) -> anyhow::Result<String> {
     let slices = checked(kubectl(cluster, work).args([
         "-n",
@@ -305,16 +304,13 @@ pub(super) async fn expose_route(
         !endpoints.is_empty(),
         "flow-http has no placed endpoint to mirror"
     );
-    let mut body = json!({"apiVersion":"v1","kind":"List","items":[
+    let body = json!({"apiVersion":"v1","kind":"List","items":[
         {"apiVersion":"v1","kind":"Service","metadata":{"name":"flow-http-nodeport","namespace":namespace},
          "spec":{"type":"NodePort","ports":[{"name":"http","port":80,"targetPort":80,"protocol":"TCP"}]}},
         {"apiVersion":"discovery.k8s.io/v1","kind":"EndpointSlice",
          "metadata":{"name":"flow-http-nodeport","namespace":namespace,"labels":{"kubernetes.io/service-name":"flow-http-nodeport"}},
          "addressType":"IPv4","ports":[{"name":"http","port":80,"protocol":"TCP"}],"endpoints":endpoints}
     ]});
-    if demo {
-        body["items"][0]["spec"]["ports"][0]["nodePort"] = json!(30950);
-    }
     let path = work.join("flow-http-nodeport.json");
     fs::write(&path, serde_json::to_vec_pretty(&body)?)?;
     checked(kubectl(cluster, work).args(["apply", "-f"]).arg(&path)).await?;

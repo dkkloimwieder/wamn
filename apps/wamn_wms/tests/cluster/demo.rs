@@ -1,4 +1,6 @@
 //! The optional browser route remains reachable until the owned test is released.
+//!
+//! `released_wms_routes` keeps it when `WAMN_JOURNEY_HOLD_SECONDS` is set.
 
 use std::fs;
 use std::path::Path;
@@ -38,7 +40,7 @@ pub(super) async fn start(
             write_result(
                 evidence,
                 "demo.json",
-                &json!({"url":"http://127.0.0.1:8080/","status":response.status().as_u16(),"route_host":route_host,"node_port":30950}),
+                &json!({"url":"http://127.0.0.1:8080/","status":response.status().as_u16(),"route_host":route_host}),
             )?;
             return Ok(());
         }
@@ -50,13 +52,7 @@ pub(super) async fn start(
 pub(super) async fn hold(work: &Path, enabled: bool) -> anyhow::Result<()> {
     let seconds = match std::env::var("WAMN_JOURNEY_HOLD_SECONDS") {
         Ok(value) => value.parse::<f64>()?,
-        Err(std::env::VarError::NotPresent) => {
-            if enabled {
-                3600.0
-            } else {
-                0.0
-            }
-        }
+        Err(std::env::VarError::NotPresent) => 0.0,
         Err(error) => return Err(error.into()),
     };
     ensure!(
