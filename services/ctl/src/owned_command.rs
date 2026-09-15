@@ -145,14 +145,17 @@ mod tests {
 
     #[tokio::test]
     async fn stuck_children_cancel_and_reap_descendants_with_diagnostics() {
+        if let Ok(mode) = std::env::var("WAMN_OWNED_COMMAND_TEST") {
+            stuck_child(&mode).await;
+            return;
+        }
         for mode in ["deadline", "TERM"] {
             let mut command = Command::new(std::env::current_exe().expect("locate test binary"));
             command
                 .args([
-                    "--ignored",
                     "--exact",
                     "--nocapture",
-                    "owned_command::tests::stuck_child",
+                    "owned_command::tests::stuck_children_cancel_and_reap_descendants_with_diagnostics",
                 ])
                 .env("WAMN_OWNED_COMMAND_TEST", mode)
                 .kill_on_drop(true);
@@ -170,16 +173,13 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    #[ignore = "isolated child of stuck_children_cancel_and_reap_descendants_with_diagnostics"]
-    async fn stuck_child() {
+    async fn stuck_child(mode: &str) {
         use rustix::process::{WaitOptions, getpid, kill_process, set_child_subreaper, waitpid};
 
         // Only this isolated test process adopts the exiting leader's child.
         set_child_subreaper(Some(getpid())).expect("own the orphaned fixture descendant");
 
-        let mode = std::env::var("WAMN_OWNED_COMMAND_TEST").expect("parent selects cancellation");
-        assert!(matches!(mode.as_str(), "deadline" | "TERM"));
+        assert!(matches!(mode, "deadline" | "TERM"));
         let path =
             std::env::temp_dir().join(format!("wamn-owned-command-{}.pids", std::process::id()));
         assert!(!path.exists(), "fixture path is unused");

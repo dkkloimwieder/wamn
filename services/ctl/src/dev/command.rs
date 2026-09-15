@@ -892,14 +892,17 @@ mod tests {
 
     #[tokio::test]
     async fn unix_signals_are_remembered_until_active_work_finishes() {
+        if let Ok(signal) = std::env::var("WAMN_DEV_SIGNAL_TEST") {
+            signal_child_finishes_work_and_closes_watch(&signal).await;
+            return;
+        }
         // Keep process-wide handlers and real signals out of the test runner.
         for signal in ["TERM", "INT", "HUP"] {
             let mut command = Command::new(std::env::current_exe().expect("locate test binary"));
             command
                 .args([
-                    "--ignored",
                     "--exact",
-                    "dev::command::tests::signal_child_finishes_work_and_closes_watch",
+                    "dev::command::tests::unix_signals_are_remembered_until_active_work_finishes",
                 ])
                 .env("WAMN_DEV_SIGNAL_TEST", signal)
                 .kill_on_drop(true);
@@ -917,9 +920,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    #[ignore = "isolated child of unix_signals_are_remembered_until_active_work_finishes"]
-    async fn signal_child_finishes_work_and_closes_watch() {
+    async fn signal_child_finishes_work_and_closes_watch(signal: &str) {
         use rustix::process::{Signal, getpid, kill_process};
 
         struct ActiveWork {
@@ -958,10 +959,10 @@ mod tests {
             }
         }
 
-        let selected = match std::env::var("WAMN_DEV_SIGNAL_TEST").as_deref() {
-            Ok("TERM") => Signal::TERM,
-            Ok("INT") => Signal::INT,
-            Ok("HUP") => Signal::HUP,
+        let selected = match signal {
+            "TERM" => Signal::TERM,
+            "INT" => Signal::INT,
+            "HUP" => Signal::HUP,
             other => panic!("the parent must select a test signal: {other:?}"),
         };
         let (shutdown, receiver) = watch::channel(false);
