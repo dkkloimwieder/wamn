@@ -41,6 +41,7 @@ tokio = { workspace = true, features = ["io-util", "net"] }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 tracing-subscriber = { workspace = true }
 wat = "=1.252.0"
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

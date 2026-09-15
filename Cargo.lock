@@ -5888,6 +5888,7 @@ dependencies = [
  "wamn-project-state",
  "wamn-router",
  "wamn-runtime",
+ "wamn-test-postgres",
  "wash-runtime",
  "wat",
 ]

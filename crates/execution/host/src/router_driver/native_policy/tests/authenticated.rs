@@ -5,7 +5,6 @@ use std::process::Command;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::Context as _;
 use serde_json::json;
 use tokio::time::{Instant, timeout};
 use tokio_postgres::{Client, NoTls};
@@ -35,7 +34,6 @@ use super::{OperationRefusal, OperationRefusalKind, invoke_native};
 mod session_fixture;
 use session_fixture::{ORG, Server, claims, header, signed};
 
-const URL_ENV: &str = "WAMN_NATIVE_B_AUTH_PG_URL";
 const PROJECT: &str = "test";
 const TENANT: &str = "tenant-a";
 const ENVIRONMENT: &str = "test";
@@ -511,11 +509,8 @@ async fn assert_case(scenario: Scenario, caller: &AuthenticatedCaller) {
     println!("authenticated-native-case={scenario:?} result=pass");
 }
 
-async fn assert_authenticated() -> anyhow::Result<()> {
-    let admin_url = std::env::var(URL_ENV).with_context(|| {
-        format!("set {URL_ENV} to this test's fresh disposable PostgreSQL 18 server")
-    })?;
-    let (mut server, route) = authentication_fixture(&admin_url).await?;
+async fn assert_authenticated(admin_url: &str) -> anyhow::Result<()> {
+    let (mut server, route) = authentication_fixture(admin_url).await?;
     let parent_only = authenticated(&route, false).await;
     let permitted = authenticated(&route, true).await;
     for scenario in SCENARIOS {
@@ -534,12 +529,11 @@ async fn assert_authenticated() -> anyhow::Result<()> {
 }
 
 #[test]
-#[ignore = "requires WAMN_NATIVE_B_AUTH_PG_URL naming this test's fresh disposable PostgreSQL 18 server"]
 fn native_authenticated_nested_authority_and_lifecycle() {
     let full_name = format!("router_driver::native_policy::tests::authenticated::{TEST_NAME}");
     if std::env::var(CHILD_MARKER).as_deref() != Ok(TEST_NAME) {
         let output = Command::new(std::env::current_exe().expect("test executable"))
-            .args(["--exact", &full_name, "--include-ignored", "--nocapture"])
+            .args(["--exact", &full_name, "--nocapture"])
             .env(CHILD_MARKER, TEST_NAME)
             .output()
             .expect("start isolated authenticated native test");
@@ -581,6 +575,8 @@ fn native_authenticated_nested_authority_and_lifecycle() {
         }
         return;
     }
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
     let (done, finished) = mpsc::channel();
     let watchdog = std::thread::spawn(move || {
         if finished.recv_timeout(Duration::from_secs(60)) == Err(mpsc::RecvTimeoutError::Timeout) {
@@ -594,7 +590,7 @@ fn native_authenticated_nested_authority_and_lifecycle() {
         .build()
         .expect("isolated native runtime");
     runtime
-        .block_on(assert_authenticated())
+        .block_on(assert_authenticated(database.url()))
         .expect("real authenticated native test");
     drop(runtime);
     done.send(()).expect("finish watchdog");
