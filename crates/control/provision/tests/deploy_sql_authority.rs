@@ -59,6 +59,10 @@ const RECORD_HISTORY_APP_GRANTS: &str =
 /// that a leftover healthy membership masks a mutated builder.
 const PLATFORM_PROBE_OUTSIDER: &str = "wamn_floor_outsider";
 
+/// The superuser login, not named `postgres`, that one case installs the
+/// catalog schema as (`wamn-txmd`). Named here so `reset` can drop it.
+const CATALOG_INSTALLER: &str = "wamn_floor_installer";
+
 /// The PLATFORM-GRAIN generation login the shared `TO wamn_platform` arm is
 /// probed with, composed by the real mint rather than spelled by hand.
 ///
@@ -276,6 +280,7 @@ fn reset(admin_url: &str) {
         // run's `CREATE ROLE` rather than masking anything, but the gate is
         // supposed to be re-runnable against a surviving cluster.
         PLATFORM_PROBE_OUTSIDER,
+        CATALOG_INSTALLER,
         &platform_probe_retention(),
         &effect_writer_probe(),
         &record_history_guest(),
@@ -1029,6 +1034,51 @@ fn the_audit_retention_role_comes_from_the_catalog_schema_alone_on_postgres() {
     apply(
         &admin,
         &format!("DROP DATABASE {SYSTEM_DATABASE};\nDROP ROLE wamn_system;\n"),
+    );
+}
+
+/// The catalog schema names no installing role (`wamn-txmd`).
+///
+/// A superuser with any name installs `CATALOG_SCHEMA_SQL` through its own
+/// login, and the catalog schema belongs to that superuser.
+#[test]
+fn the_catalog_schema_installs_under_a_superuser_not_named_postgres() {
+    const PASSWORD: &str = "floor-installer-probe";
+    let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
+        eprintln!(
+            "skipping the_catalog_schema_installs_under_a_superuser_not_named_postgres \
+             (set WAMN_TENANT_FLOOR_PG_URL to run)"
+        );
+        return;
+    };
+
+    reset(&admin);
+    apply(&admin, POSTGRES_INIT);
+    apply(
+        &admin,
+        &format!("CREATE ROLE {CATALOG_INSTALLER} LOGIN SUPERUSER PASSWORD '{PASSWORD}';\n"),
+    );
+    let mut installer_url = url::Url::parse(&admin).expect("admin url parses");
+    installer_url
+        .set_username(CATALOG_INSTALLER)
+        .expect("admin url takes a user name");
+    installer_url
+        .set_password(Some(PASSWORD))
+        .expect("admin url takes a password");
+    installer_url.set_path("/wamn");
+    let installer_url = installer_url.as_str();
+
+    apply(installer_url, CATALOG_SCHEMA);
+    assert_eq!(
+        psql(
+            installer_url,
+            None,
+            "SELECT nspowner::regrole::text FROM pg_catalog.pg_namespace \
+              WHERE nspname = 'catalog'"
+        ),
+        CATALOG_INSTALLER,
+        "CATALOG_SCHEMA_SQL applied as {CATALOG_INSTALLER} gave the catalog schema \
+         another owner"
     );
 }
 

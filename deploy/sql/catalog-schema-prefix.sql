@@ -11,7 +11,7 @@
 
 BEGIN;
 
-CREATE SCHEMA catalog AUTHORIZATION postgres;
+CREATE SCHEMA catalog AUTHORIZATION CURRENT_USER;
 
 DO $platform_group$ BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
