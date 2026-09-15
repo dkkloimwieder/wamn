@@ -1,4 +1,4 @@
-//! Ignored live gates for the wiring relations (wamn-0h0g.18.2, .18.5).
+//! Live gates for the wiring relations (wamn-0h0g.18.2, .18.5).
 //!
 //! These tests check that activation and rollback use one statement, aborted
 //! changes leave the stored activation unchanged, committed history survives,
@@ -10,19 +10,12 @@
 //! through `PREPARE`/`EXECUTE` so the gate cannot pass against text that only
 //! resembles what production sends.
 //!
-//! Run it against a THROWAWAY superuser database — it creates cluster-wide roles
-//! and rewrites the `catalog` schema:
-//!
-//! ```text
-//! docker run -d --name pg -e POSTGRES_PASSWORD=pw -p 5433:5432 postgres:18
-//! WAMN_CATALOG_PG_URL=postgresql://postgres:pw@127.0.0.1:5433/postgres \
-//!   cargo test -p wamn-catalog --test wiring_activation_live -- --ignored
-//! ```
+//! Each gate runs as the superuser of its own test database and holds the
+//! process lock, because it creates cluster-wide roles.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::process::{Command, Output, Stdio};
-use std::sync::{Mutex, MutexGuard};
 
 use wamn_catalog::{
     WiringDocument, WiringEdge, WiringNode, WiringTerminal, flip_activation,
@@ -36,21 +29,6 @@ use wamn_event_wire::Op;
 const TENANT: &str = "t1";
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
-
-/// Every gate here rewrites the ONE `catalog` schema of the one database
-/// `WAMN_CATALOG_PG_URL` names, so they take turns. Without this the default
-/// harness runs them concurrently and each sees the other's `DROP SCHEMA
-/// catalog CASCADE` land mid-install — a red that says nothing about the DDL.
-static DATABASE: Mutex<()> = Mutex::new(());
-
-/// Claim the database for the duration of one gate. A poisoned lock is a gate
-/// that already failed and reported why; the next one still gets a clean schema
-/// from its own preamble.
-fn exclusive() -> MutexGuard<'static, ()> {
-    DATABASE
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 fn psql(url: &str, script: &str) -> Output {
     let mut child = Command::new("psql")
@@ -192,11 +170,10 @@ fn read(label: &str) -> String {
 }
 
 #[test]
-#[ignore = "requires WAMN_CATALOG_PG_URL and a throwaway PostgreSQL database"]
 fn wiring_activation_live() {
-    let _database = exclusive();
-    let url = std::env::var("WAMN_CATALOG_PG_URL")
-        .expect("set WAMN_CATALOG_PG_URL to the throwaway superuser database");
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
     let database = current_database(&url);
     let app_generation = app_generation(&database);
 
@@ -335,11 +312,10 @@ fn wiring_activation_live() {
 /// PostgreSQL stores the document as JSONB, which can reorder its keys.
 /// The parsed document must retain the same hash after the round trip.
 #[test]
-#[ignore = "requires WAMN_CATALOG_PG_URL and a throwaway PostgreSQL database"]
 fn the_terminal_document_survives_fresh_catalog_storage() {
-    let _database = exclusive();
-    let url = std::env::var("WAMN_CATALOG_PG_URL")
-        .expect("set WAMN_CATALOG_PG_URL to the throwaway superuser database");
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
     let database = current_database(&url);
     let app_generation = app_generation(&database);
 

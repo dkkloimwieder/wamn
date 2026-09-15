@@ -40,6 +40,7 @@ wamn-test-postgres = { workspace = true, optional = true }
 [dev-dependencies]
 wamn-catalog = { path = ".", features = ["test-util"] }
 wamn-control-provision = { workspace = true }
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true
