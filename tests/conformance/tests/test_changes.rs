@@ -446,3 +446,72 @@ fn dry_run_prints_the_commands_without_running_tests() {
         "{stdout}"
     );
 }
+
+#[test]
+fn cluster_runs_the_root_ignored_tests_one_at_a_time() {
+    let fixture = Fixture::new();
+    fixture.write("apps/demo/command/record.sql", "SELECT 1;\n");
+    for (arguments, ending) in [
+        (
+            &["--cluster", "dry-run"][..],
+            " --no-fail-fast -p demo-tests -- --ignored --test-threads=1",
+        ),
+        (
+            &["--cluster", "--name", "journey", "dry-run"][..],
+            " --no-fail-fast -p demo-tests journey -- --ignored --test-threads=1",
+        ),
+    ] {
+        let output = fixture.tool(arguments);
+        assert!(output.status.success());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 3, "{stdout}");
+        assert!(
+            lines[2].starts_with("root: ") && lines[2].ends_with(ending),
+            "{stdout}"
+        );
+    }
+    assert!(!fixture.directory.join("cargo calls").exists());
+}
+
+#[test]
+fn a_name_filter_needs_cluster_and_a_matching_ignored_test() {
+    let fixture = Fixture::new();
+    fixture.write("crates/core/src/lib.rs", "changed\n");
+    let output = fixture.tool(&["--name", "journey", "dry-run"]);
+    assert_eq!(output.status.code(), Some(64));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--name requires --cluster"), "{stderr}");
+
+    // The fake Cargo lists no test, so no ignored test matches and none runs.
+    let output = fixture.tool(&["--cluster", "--name", "journey", "run"]);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("matches the name filter 'journey'"),
+        "{stderr}"
+    );
+    assert_eq!(
+        fixture.calls(),
+        vec![fixture.command(
+            "Cargo.toml",
+            &[
+                "-p",
+                "checker",
+                "-p",
+                "core",
+                "-p",
+                "user",
+                "--features",
+                "user/ops",
+                "journey",
+                "--",
+                "--ignored",
+                "--test-threads=1",
+                "--list",
+                "--format",
+                "terse",
+            ],
+        )]
+    );
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly WAMN_USAGE='usage: tools/test-changes [--base REF] [run|dry-run]'
+readonly WAMN_USAGE='usage: tools/test-changes [--base REF] [--cluster [--name FILTER]] [run|dry-run]'
 
 wamn_fail() {
   local -r exit_code="$1"
@@ -32,12 +32,23 @@ readonly -a WAMN_MANIFESTS=(Cargo.toml apps/Cargo.toml apps/platform/no-std/Carg
 readonly -a WAMN_ROOT_FULL_FEATURES=(wamn-ctl/ops)
 
 WAMN_BASE=''
+WAMN_CLUSTER=false
+WAMN_NAME=''
 WAMN_COMMAND=''
 while (($# > 0)); do
   case "$1" in
     --base)
       (($# >= 2)) || wamn_usage_error '--base requires a Git revision'
       WAMN_BASE="$2"
+      shift 2
+      ;;
+    --cluster)
+      WAMN_CLUSTER=true
+      shift
+      ;;
+    --name)
+      (($# >= 2)) || wamn_usage_error '--name requires a test name filter'
+      WAMN_NAME="$2"
       shift 2
       ;;
     run | dry-run)
@@ -51,6 +62,10 @@ while (($# > 0)); do
   esac
 done
 readonly WAMN_COMMAND="${WAMN_COMMAND:-run}"
+readonly WAMN_CLUSTER WAMN_NAME
+if [[ -n "$WAMN_NAME" && "$WAMN_CLUSTER" != true ]]; then
+  wamn_usage_error '--name requires --cluster'
+fi
 
 cd -- "$WAMN_REPOSITORY_ROOT"
 if [[ -z "$WAMN_BASE" ]]; then
@@ -100,7 +115,8 @@ readonly WAMN_METADATA
 # One line per workspace with work: index, full (true or false), the first input
 # that forced a full run as JSON, and the selected packages and features.
 # A package selects its dependents in every workspace that resolves it: normal
-# and build edges transitively, then one dev edge.
+# and build edges transitively, then one dev edge. With --cluster only the root
+# workspace has work, because the other workspaces hold no ignored tests.
 readonly WAMN_SELECTION='
 def rel($root): ltrimstr($root + "/");
 def closure($graph):
@@ -137,6 +153,7 @@ $metadata[0].workspace_root as $root
       end] as $selections
 | [$selections[] | .package // empty] | unique as $changed
 | range(0; $metadata | length) as $index
+| select(($cluster | not) or $index == 0)
 | $metadata[$index] as $md
 | ([$selections[] | select(.full == $index) | .path] | first) as $full
 | ($md.workspace_members) as $workspace
@@ -155,7 +172,7 @@ $metadata[0].workspace_root as $root
 
 WAMN_PLAN="$(
   printf '%s\n' "${WAMN_METADATA[@]}" | jq -rs --argjson relevant "$WAMN_RELEVANT" \
-    '. as $metadata | '"$WAMN_SELECTION"
+    --argjson cluster "$WAMN_CLUSTER" '. as $metadata | '"$WAMN_SELECTION"
 )" || wamn_fail 65 'could not select packages from Cargo metadata'
 readonly WAMN_PLAN
 
@@ -185,11 +202,25 @@ while IFS=$'\t' read -r index full trigger packages features; do
   if [[ -n "$features" ]]; then
     argv+=(--features "${features// /,}")
   fi
+  if [[ -n "$WAMN_NAME" ]]; then
+    argv+=("$WAMN_NAME")
+  fi
+  if [[ "$WAMN_CLUSTER" == true ]]; then
+    # Ignored tests start clusters, brokers, and registries, so they run one at a time.
+    argv+=(-- --ignored --test-threads=1)
+  fi
   if [[ "$WAMN_COMMAND" == dry-run ]]; then
     printf '%s:' "$label"
     printf ' %q' "$WAMN_CARGO" "${argv[@]}"
     printf '\n'
     continue
+  fi
+  if [[ -n "$WAMN_NAME" ]]; then
+    # Libtest lists each matching ignored test as `name: test`.
+    listed="$("$WAMN_CARGO" "${argv[@]}" --list --format terse </dev/null)" ||
+      wamn_fail 1 "cannot list the ignored tests of $label"
+    grep -q ': test$' <<<"$listed" ||
+      wamn_fail 1 "no ignored test in the selected packages matches the name filter '$WAMN_NAME'"
   fi
   printf 'test-changes: %s\n' "$label" >&2
   exit_code=0
