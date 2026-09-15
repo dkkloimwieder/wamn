@@ -45,7 +45,7 @@ use wamn_control_provision::{
 };
 use wamn_test_infrastructure::locked_database;
 
-/// The legacy app-password input remains until `wamn-0h0g.12.185`, but
+/// The legacy app-password input remains until `wamn-xv69`, but
 /// `ensure_app_role_sql` deliberately emits none of it. Keeping a conspicuous
 /// fixture value here shows the role batch cannot leak that input back into
 /// the retired shared LOGIN.

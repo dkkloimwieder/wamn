@@ -320,8 +320,8 @@ pub fn workload_secret_flag(family: WorkloadRoleFamily) -> String {
 /// password is CREATED by its own prepare action rather than handed to
 /// provisioning on a flag.
 ///
-/// The app-password parameter remains for the legacy command/URL surface owned
-/// by `wamn-0h0g.12.185`, but [`sql::ensure_app_role_sql`] deliberately emits
+/// The app-password parameter remains for the legacy URL surface owned
+/// by `wamn-xv69`, but [`sql::ensure_app_role_sql`] deliberately emits
 /// none of it. The app role is the same stable passwordless NOLOGIN carrier as
 /// every other generation family.
 ///

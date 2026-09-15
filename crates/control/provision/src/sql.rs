@@ -136,7 +136,7 @@ pub fn drain_app_role_sessions_sql() -> String {
 ///
 /// `password` remains only because the legacy `provision-project-env`
 /// `--app-password` URL surface still accepts it; removing that surface belongs to
-/// `wamn-0h0g.12.185`. It is deliberately not emitted into the SQL.
+/// `wamn-xv69`. It is deliberately not emitted into the SQL.
 pub fn ensure_app_role_sql(_password: &str) -> String {
     ensure_app_acl_role_sql()
 }

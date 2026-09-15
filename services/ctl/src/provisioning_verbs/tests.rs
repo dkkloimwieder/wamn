@@ -498,7 +498,7 @@ fn provisioning_mints_no_dispatch_reader_credential() {
 /// The sibling guard for `--app-password` (wamn-0h0g.12.129).
 ///
 /// The argument remains required for the legacy URL surface until
-/// `wamn-0h0g.12.185`, but it must never regain a default or reach role SQL.
+/// `wamn-xv69`, but it must never regain a default or reach role SQL.
 /// A 2026-08-19 verifier read measured the old default on every cluster the
 /// shared LOGIN existed on.
 #[test]

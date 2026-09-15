@@ -76,7 +76,7 @@ pub struct ProvisionProjectEnvArgs {
     ///
     /// `wamn-0h0g.12.140` removes it from role SQL: `wamn_app` is now a stable
     /// passwordless NOLOGIN ACL role. The argument remains until
-    /// `wamn-0h0g.12.185` retires the legacy command and URL surface itself.
+    /// `wamn-xv69` retires the legacy URL surface itself.
     ///
     /// **Deliberately has no `default_value`.** A default here provisioned every
     /// project-env with a publicly known password on a `LOGIN` role that
