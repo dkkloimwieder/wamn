@@ -71,7 +71,7 @@ readonly WAMN_CHANGED
 
 WAMN_RELEVANT="$(
   jq -n '$ARGS.positional | unique
-    | map(select((startswith("docs/") or startswith(".beads/")) | not))' \
+    | map(select((startswith("docs/") or startswith(".beads/") or test("^[^/]+\\.md$")) | not))' \
     --args -- "${WAMN_CHANGED[@]}"
 )"
 readonly WAMN_RELEVANT

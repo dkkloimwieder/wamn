@@ -312,6 +312,17 @@ fn documentation_and_beads_changes_select_nothing() {
 }
 
 #[test]
+fn a_root_markdown_change_selects_nothing() {
+    let fixture = Fixture::new();
+    fixture.write("README.md", "changed\n");
+    let output = fixture.tool(&["dry-run"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(stdout.lines().last(), Some("selected: nothing"), "{stdout}");
+    assert!(!fixture.directory.join("cargo calls").exists());
+}
+
+#[test]
 fn a_crate_change_selects_its_dependents_with_required_features() {
     let fixture = Fixture::new();
     fixture.write("crates/core/src/lib.rs", "changed\n");
