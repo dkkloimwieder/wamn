@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Test the Receiving operator's live launch, native restart, and cleanup.
 
-Consumes an already running disposable `wamn dev up` environment. This command
-runs the real development stages, including builds; reserve the machine first.
-It does not provision infrastructure, mutate Git, or stop the environment Gate.
+Consumes a disposable environment that `wamn dev up` wrote. This command runs
+the real development stages, including builds; reserve the machine first.
+It does not provision infrastructure or mutate Git.
 """
 
 import argparse
@@ -223,7 +223,7 @@ class LiveSession(terminal.Session):
             require(self.activation() == activation, "activation restarted without an input edit")
 
     def close(self):
-        """Stop only this process session; leave the independent dev-up Gate alone."""
+        """Stop only this process session."""
         try:
             self.children()
             if self.process.poll() is None:

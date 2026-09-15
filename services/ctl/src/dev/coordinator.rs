@@ -638,10 +638,9 @@ impl ProductionDevStageRunner {
             // The SERVER decides which statements need a transaction, by
             // planning each one against the migrated database. The unclassified
             // entry point writes `transactional: false` for every statement,
-            // which rewrites the committed contracts and then fails the very
-            // next stage on a dirty worktree (wamn-10yt.10.33). The narrowed
-            // catalog above is passed through, because every package here
-            // shares one verification database and re-introspecting would hand
+            // which rewrites the committed contracts (wamn-10yt.10.33). The
+            // narrowed catalog above is passed through, because every package
+            // here shares one target database and re-introspecting would hand
             // this package the relations and fields its neighbours own.
             wamn_schema_generator::materialize_package_verified_with_catalog(
                 MaterializeMode::Write,
