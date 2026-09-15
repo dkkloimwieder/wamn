@@ -1,4 +1,4 @@
-//! Armed, disposable-PostgreSQL test of the actual signing-key lifecycle.
+//! Test of the actual signing-key lifecycle on a test PostgreSQL database.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -22,9 +22,10 @@ const ISSUER: &str = "https://identity.lifecycle.internal";
 const OTHER_ISSUER: &str = "https://other.lifecycle.internal";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires an explicitly armed disposable PostgreSQL database"]
 async fn session_key_lifecycle_on_postgres() {
-    let (url, mut admin) = prepare_database().await;
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let (url, mut admin) = prepare_database(test_database.url()).await;
 
     let first = publish_session_key(&mut admin, ISSUER).await.unwrap();
     let second = publish_session_key(&mut admin, ISSUER).await.unwrap();
@@ -222,10 +223,11 @@ async fn session_key_lifecycle_on_postgres() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires an explicitly armed disposable PostgreSQL database; run tests serially"]
 async fn signer_backend_loss_before_commit_does_not_issue_token() {
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
     tokio::time::timeout(Duration::from_secs(30), async {
-        let (url, mut admin) = prepare_database().await;
+        let (url, mut admin) = prepare_database(test_database.url()).await;
         let first = publish_session_key(&mut admin, ISSUER).await.unwrap();
         let second = publish_session_key(&mut admin, ISSUER).await.unwrap();
         activate_session_key(&mut admin, ISSUER, &first.kid).await.unwrap();
@@ -383,17 +385,10 @@ async fn relay_until_commit(
     }
 }
 
-// These ignored tests deliberately replace the same disposable schemas. Invoke
-// an exact test name or use --test-threads=1 when running the whole test binary.
-async fn prepare_database() -> (String, Client) {
-    assert_eq!(
-        std::env::var("WAMN_SESSION_KEYS_ALLOW_SCHEMA_RESET").as_deref(),
-        Ok("1"),
-        "arm only an owned disposable database: this test replaces platform schemas"
-    );
-    let url =
-        std::env::var("WAMN_SESSION_KEYS_PG_URL").expect("provide the disposable PostgreSQL URL");
-    let admin = connect(&url).await;
+// Each test passes its own test database and holds the process lock, because
+// the system schema creates the cluster-wide wamn_system and wamn_db_owner roles.
+async fn prepare_database(url: &str) -> (String, Client) {
+    let admin = connect(url).await;
     admin
         .batch_execute(
             "DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; \
@@ -407,7 +402,7 @@ async fn prepare_database() -> (String, Client) {
         .batch_execute(SYSTEM_SCHEMA_SQL)
         .await
         .expect("apply production system schema");
-    (url, admin)
+    (url.to_owned(), admin)
 }
 
 async fn race_signing_and_rotation(

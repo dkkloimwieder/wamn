@@ -1,4 +1,4 @@
-//! Optional real-PostgreSQL test for the platform identity core.
+//! Real-PostgreSQL test for the platform identity core.
 
 use std::time::Duration;
 
@@ -13,13 +13,10 @@ use wamn_platform_identity::{
 
 #[tokio::test]
 async fn platform_identity_round_trip_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_PLATFORM_IDENTITY_PG_URL") else {
-        eprintln!(
-            "skipping platform_identity_round_trip_on_postgres \
-             (set WAMN_PLATFORM_IDENTITY_PG_URL to run)"
-        );
-        return;
-    };
+    // The system schema creates the cluster-wide wamn_system and wamn_db_owner roles.
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let (client, connection) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
         .await

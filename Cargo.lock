@@ -6085,6 +6085,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "wamn-control-provision",
+ "wamn-test-postgres",
 ]
 
 [[package]]
