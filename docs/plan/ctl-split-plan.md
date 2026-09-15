@@ -68,15 +68,14 @@ It does not own the two directory trees.
 
 ## 4. Remaining work
 
-`wamn-df1z` extracts the remaining control verbs with the same method:
-`bind_connection`, `identity_issuer`, `project_env_membership`, `provision_org`, `push_release_manifest`, `print_release_env`, `reconcile_replica_identity`, and `terminalize_effect_uncertain`.
+`wamn-df1z` extracts the remaining control code with the same method, in one lane:
 
-The owner has not decided whether two more module groups join `wamn-df1z`:
+- The control verbs `bind_connection`, `identity_issuer`, `project_env_membership`, `provision_org`, `push_release_manifest`, `print_release_env`, `reconcile_replica_identity`, and `terminalize_effect_uncertain`.
+- `services/ctl/src/delivery/`, which holds deployment, publication, and qualification. CI calls this code, so it must not stay in a CLI module.
+- The `ops` feature verbs `copy_project_env`, `dump_project_env`, `restore_project_env`, `prune_record_history`, `prune_run_history`, `event_advisories`, and `ops_schema`.
 
-- `services/ctl/src/delivery/` holds deployment, publication, and qualification.
-  It writes release selection, deployment, and attestation records.
-  It also owns `git`, `docker`, `kubectl`, and `cargo` processes, and section 2 keeps process ownership out of the library.
-- The `ops` feature verbs are `copy_project_env`, `dump_project_env`, `restore_project_env`, `prune_record_history`, `prune_run_history`, `event_advisories`, and `ops_schema`.
+`delivery/` runs `git`, `docker`, `kubectl`, and `cargo` processes, and section 2 keeps process ownership out of the library.
+Before that code moves, the lane brings the process-ownership choice to the owner.
 
 The separation of the dev loop in `services/ctl/src/dev/` is later work.
 
