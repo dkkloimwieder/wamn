@@ -11,6 +11,25 @@ For mechanical edits, compare source, paths, and syntax.
 Do not repeat builds or tests without a new behavior change or concrete failure.
 Cleanup boundaries do not require broad test runs.
 
+`tools/test-changes` selects the Cargo test commands for a change set.
+The change set is the working tree against `git merge-base HEAD main`, or against the commit that `--base REF` names.
+It includes committed, staged, unstaged, deleted, and untracked files.
+
+- A file in a Cargo package selects that package and its dependents in every workspace that resolves it: normal and build dependents transitively, then one development dependent.
+- A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
+- A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
+- Any other file outside `docs/` and `.beads/` runs the root command `cargo test --workspace --locked --offline --features wamn-ctl/ops --no-fail-fast`.
+- A change set with only `docs/` and `.beads/` files selects nothing.
+
+Selected packages run their default tests with the required features of their targets.
+Cargo metadata does not show a file that a package reads from another package's directory through `include_str!` or `#[path]`.
+Run the reading package's tests for such a change.
+`tools/test-changes dry-run` prints the selected commands.
+`tools/test-changes run` runs each command, reports each workspace, and returns a nonzero status if any command fails.
+It records no result.
+
+The following commands select individual test targets:
+
 ```bash
 cargo test --locked --offline -p wamn-receiving-tests --test generation
 cargo test --locked --offline -p wamn-receiving-tui

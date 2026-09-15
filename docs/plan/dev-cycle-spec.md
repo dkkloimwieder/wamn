@@ -2,8 +2,8 @@
 
 **Status:** rev 2 · 2026-09-15 · external review applied · measured at
 `ab9859e7`.
-Scope: the time between saving a change and knowing whether it works. Two
-removals of repeated work and one consolidation. No caching
+Scope: the time between saving a change and knowing whether it works. One
+removal of repeated work and one consolidation. No caching
 framework, no attribute system, no machine-wide service, no crate quota.
 
 ## 1. Measured
@@ -26,8 +26,7 @@ the same 218 s of serial database tests.
 1. **SQLx preparation on every cycle.** `.sqlx` offline metadata is committed
    and documented; it is not the default, so `cargo sqlx prepare` recompiles
    every `query!` against a live database on every run.
-2. **No selection.** Every change runs the app's whole database group.
-3. **Seventy-five crates.** About forty are guests and must exist; among the
+2. **Seventy-five crates.** About forty are guests and must exist; among the
    native crates, some merely divide one implementation into several
    packages. A shared-contract change rebuilds most of the tree.
 
@@ -63,16 +62,7 @@ a result; it stops recomputing inputs that didn't move.
 
 ### 4.3 Selection by ownership, then by Cargo
 
-- A small wrapper (it has selection logic; it is not an alias) runs: the
-  owning application's tests for a change under `apps/<name>/`, plus
-  `cargo test -p` for the Rust crates whose files changed and their
-  dependents from `cargo metadata`. Generator tests run when the generator
-  changes, and for an application edit only where an existing test consumes
-  that application. No impact registry.
-- Fallbacks: saved, untracked, and deleted inputs count; a change to a shared
-  manifest, the lockfile, or an unowned input runs the full existing command.
-  A targeted green run never advances a global "everything tested" state.
-- The full run stays one command for CI and pre-merge.
+4.3 landed under `wamn-eg9d`; `docs/operations/running-tests.md` documents `tools/test-changes`.
 
 ### 4.4 Crate consolidation
 
@@ -110,14 +100,11 @@ and after; not a crate count.
 
 1. After 4.1: the walkthrough's Rust-only edit shows 0 s preparation; a SQL
    edit shows preparation and nothing else regressed.
-2. After 4.3: a Receiving SQL edit runs Receiving's tests and the generator's
-   only where a test consumes Receiving; a lockfile change runs the full
-   command.
-3. After 4.4: rebuild seconds for a shared-contract change, before and after.
-4. The walkthrough rerun: cold setup and warm iteration reported separately,
+2. After 4.4: rebuild seconds for a shared-contract change, before and after.
+3. The walkthrough rerun: cold setup and warm iteration reported separately,
    executed-test counts preserved.
 
 ## 7. Order
 
-4.1 first. 4.3 second. 4.4 in small independent commits alongside,
+4.1 first. 4.4 in small independent commits alongside,
 coordinated with the `ctl` extraction. Each lands with its measurement.
