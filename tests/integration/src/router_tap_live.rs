@@ -239,11 +239,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires disposable WAMN_TAP NATS, PostgreSQL, OCI registry, and built production guests"]
+    #[ignore = "requires disposable WAMN_TAP NATS, OCI registry, and built production guests"]
     async fn the_released_router_bridge_emits_accepted_and_settled_previews() -> anyhow::Result<()>
     {
         let nats_url = required("WAMN_ROUTER_TAP_NATS_URL")?;
-        let database_url = required("WAMN_ROUTER_TAP_PG_URL")?;
         let artifact_base = required("WAMN_ROUTER_TAP_ARTIFACT_BASE")?;
         let node_wasm = PathBuf::from(required("WAMN_ROUTER_TAP_NODE_WASM")?);
         let flow_http_wasm = PathBuf::from(required("WAMN_ROUTER_TAP_FLOW_HTTP_WASM")?);
@@ -303,6 +302,9 @@ mod tests {
         let event_scope = wamn_control_registry::Triple::new(TENANT, PROJECT, ENVIRONMENT);
         let event_stream = wamn_event_wire::stream_name(TENANT, PROJECT, ENVIRONMENT);
         let advisory_stream = wamn_event_wire::delivery_advisory_stream(&event_stream);
+        // The route seed creates shared roles.
+        let _lock = wamn_test_infrastructure::postgres::lock();
+        let database = wamn_test_infrastructure::postgres::database();
         let result: anyhow::Result<()> = async {
             wamn_ctl::event_streams::provision(
                 &jetstream_context,
@@ -314,7 +316,7 @@ mod tests {
             .await?;
             let (port, served) = upstream_origin().await?;
             let route = trusted_http_route::build(&RouteOptions {
-                database_url,
+                database_url: database.url().to_owned(),
                 artifact_base,
                 component_wasm: node_wasm,
                 upstream_base_url: format!("http://127.0.0.1:{port}"),

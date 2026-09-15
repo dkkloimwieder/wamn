@@ -415,7 +415,6 @@ async fn seed_catalog(
     release: &LoadedRelease,
     additional_wiring: Option<(&AdmittedComponent, &[WiringDocument])>,
 ) -> anyhow::Result<ClassCredentials> {
-    wamn_test_infrastructure::postgres::require_owned_url_when_recorded(&options.database_url)?;
     let (client, connection) = tokio_postgres::connect(&options.database_url, NoTls)
         .await
         .context("connect the seeding session")?;
@@ -1586,20 +1585,18 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires fresh PostgreSQL, throwaway OCI registry, and actual http-request guest"]
+    #[ignore = "requires throwaway OCI registry and actual http-request guest"]
     async fn real_http_guest_reuses_connections_without_reusing_authority() -> anyhow::Result<()> {
-        anyhow::ensure!(
-            std::env::var("WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET").as_deref() == Ok("1"),
-            "set WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET=1 for the disposable database"
-        );
         tokio::time::timeout(Duration::from_secs(180), test_connection_reuse())
             .await
             .context("real HTTP guest connection reuse test exceeded 180 seconds")?
     }
 
     async fn test_connection_reuse() -> anyhow::Result<()> {
-        let database_url = std::env::var("WAMN_HTTP_REUSE_PG_URL")
-            .context("set WAMN_HTTP_REUSE_PG_URL to fresh disposable PostgreSQL 18")?;
+        // The route seed creates shared roles.
+        let _lock = wamn_test_infrastructure::postgres::lock();
+        let database = wamn_test_infrastructure::postgres::database();
+        let database_url = database.url().to_owned();
         let artifact_base = std::env::var("WAMN_HTTP_REUSE_ARTIFACT_BASE")
             .context("set WAMN_HTTP_REUSE_ARTIFACT_BASE to a throwaway OCI repository")?;
         let component_wasm = std::env::var("WAMN_HTTP_REUSE_COMPONENT_WASM")
@@ -1803,22 +1800,19 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires fresh project PostgreSQL, separate fresh wamnsystem, OCI registry, and actual HTTP guest"]
+    #[ignore = "requires OCI registry and actual HTTP guest"]
     async fn nested_http_authorizes_child_and_preserves_original_caller() -> anyhow::Result<()> {
-        anyhow::ensure!(
-            std::env::var("WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET").as_deref() == Ok("1"),
-            "set WAMN_HTTP_REUSE_ALLOW_SCHEMA_RESET=1 for both disposable databases"
-        );
         tokio::time::timeout(Duration::from_secs(180), test_nested_authority())
             .await
             .context("real nested HTTP authority test exceeded 180 seconds")?
     }
 
     async fn test_nested_authority() -> anyhow::Result<()> {
-        let database_url = std::env::var("WAMN_HTTP_REUSE_PG_URL")
-            .context("set WAMN_HTTP_REUSE_PG_URL to fresh disposable PostgreSQL 18")?;
-        let system_url = std::env::var("WAMN_HTTP_REUSE_SYSTEM_PG_URL")
-            .context("set WAMN_HTTP_REUSE_SYSTEM_PG_URL to a separate fresh /wamnsystem")?;
+        // The control store changes database grants of the whole server, so
+        // the project and wamnsystem databases share a server of their own.
+        let mut server = wamn_test_infrastructure::postgres::start(&[])?;
+        let database_url = server.create_database("http_reuse")?.url().to_owned();
+        let system_url = server.create_database("wamnsystem")?.url().to_owned();
         let project_config: tokio_postgres::Config = database_url.parse()?;
         anyhow::ensure!(
             project_config

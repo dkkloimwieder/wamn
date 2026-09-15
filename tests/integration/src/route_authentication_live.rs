@@ -24,7 +24,6 @@ use wamn_ctl::dev::environment::{ENVIRONMENT, ORG, PROJECT, TENANT, connect, gen
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 
-const URL_ENV: &str = "WAMN_ROUTE_AUTH_PG18_URL";
 const OTHER_PROJECT: &str = "other";
 const OTHER_ENVIRONMENT: &str = "prod";
 const ROUTE_CALLER_ROLE: &str = "route-caller";
@@ -594,10 +593,17 @@ async fn assert_human_environment_membership(
 }
 
 #[tokio::test]
-#[ignore = "requires a fresh disposable PG18 named by WAMN_ROUTE_AUTH_PG18_URL"]
+#[ignore = "requires the built wamn-identity binary beside the test executable or in WAMN_IDENTITY_BINARY"]
 async fn production_route_caller_authentication_and_operation_authorization() {
-    let admin_url = std::env::var(URL_ENV)
-        .expect("WAMN_ROUTE_AUTH_PG18_URL must name a fresh disposable PostgreSQL 18 server");
+    // Provisioning changes roles and database grants of the whole server, so
+    // the test starts its own.
+    let mut server =
+        wamn_test_infrastructure::postgres::start(&[]).expect("start the test PostgreSQL server");
+    let admin_url = server
+        .create_database("wamn_system")
+        .expect("create the wamn_system database")
+        .url()
+        .to_owned();
     let scratch = ScratchRoot::create().expect("create route-auth test directory");
     let root = scratch.path();
 

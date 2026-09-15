@@ -11,9 +11,8 @@
 //! foreign key to the pallet, so the two cases need the migration and nothing
 //! else.
 //!
-//! `WAMN_CLAIM_LAW_PG_URL` names a fresh disposable PostgreSQL 18 database.
-//! The live tests are `#[ignore]`d and read the variable with an error rather
-//! than a skip, so an unarmed run never counts them as passing.
+//! The live tests take a database of their own from the private PostgreSQL 18
+//! server of the test process.
 
 use std::path::Path;
 
@@ -24,8 +23,8 @@ use tokio_postgres::{Client, NoTls, Row};
 use uuid::Uuid;
 use wamn_execution_contract::canonical_json_bytes;
 use wamn_gate_harness::claim_law::{self, BindValue, ClaimContract, CommandFixture};
+use wamn_test_infrastructure::postgres::Database;
 
-const URL_ENV: &str = "WAMN_CLAIM_LAW_PG_URL";
 const PACKAGE_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/wamn_wms");
 const CLAIM_TESTS: &str = "generated/contracts/inventory/move.claim-tests.json";
 const OPERATION: &str = "wamn-wms:inventory/move@1.0.0";
@@ -41,10 +40,10 @@ const TO_LOCATION_ID: Uuid = Uuid::from_u128(0xc1a1_0002);
 const CHANGED_LOCATION_ID: Uuid = Uuid::from_u128(0xc1a1_0003);
 const OCCURRED_AT: &str = "2026-09-05T12:00:00.000000Z";
 
-/// One prepared schema for the whole test binary. The migration creates
+/// One prepared database for the whole test binary. The migration creates
 /// `wms.*` by name, so the tests share the schema and separate themselves by
 /// idempotency key.
-static PREPARED: OnceCell<String> = OnceCell::const_new();
+static PREPARED: OnceCell<Database> = OnceCell::const_new();
 
 /// The values the emitted statements bind, other than the canonical command.
 struct MoveFixture {
@@ -95,7 +94,6 @@ fn the_emitted_contract_names_the_two_cases_the_live_tests_execute() -> Result<(
 }
 
 #[tokio::test]
-#[ignore = "requires a fresh disposable PostgreSQL 18 URL in WAMN_CLAIM_LAW_PG_URL"]
 async fn a_replay_returns_the_immutable_original_result_and_writes_nothing() -> Result<()> {
     let contract = contract()?;
     let mut client = session().await?;
@@ -125,7 +123,6 @@ async fn a_replay_returns_the_immutable_original_result_and_writes_nothing() -> 
 }
 
 #[tokio::test]
-#[ignore = "requires a fresh disposable PostgreSQL 18 URL in WAMN_CLAIM_LAW_PG_URL"]
 async fn a_changed_request_under_a_live_key_refuses_with_idempotency_conflict() -> Result<()> {
     let contract = contract()?;
     let mut client = session().await?;
@@ -156,7 +153,6 @@ async fn a_changed_request_under_a_live_key_refuses_with_idempotency_conflict() 
 /// the changed request as if it had always been the original. Both emitted
 /// cases must go red, and this test fails if either one still passes.
 #[tokio::test]
-#[ignore = "requires a fresh disposable PostgreSQL 18 URL in WAMN_CLAIM_LAW_PG_URL"]
 async fn a_claim_that_updates_on_conflict_fails_both_emitted_cases() -> Result<()> {
     let mut mutant = contract()?;
     mutant.mutate(
@@ -218,13 +214,12 @@ async fn session() -> Result<Client> {
 
 /// Apply the exact WMS migration once, to a database that must be fresh.
 async fn prepared_database() -> Result<String> {
-    PREPARED.get_or_try_init(prepare).await.cloned()
+    Ok(PREPARED.get_or_try_init(prepare).await?.url().to_owned())
 }
 
-async fn prepare() -> Result<String> {
-    let url = std::env::var(URL_ENV)
-        .with_context(|| format!("{URL_ENV} names a fresh disposable PostgreSQL 18 database"))?;
-    let client = connect(&url).await?;
+async fn prepare() -> Result<Database> {
+    let database = wamn_test_infrastructure::postgres::database();
+    let client = connect(database.url()).await?;
     let version = client
         .query_one("SELECT current_setting('server_version_num')", &[])
         .await
@@ -250,7 +245,7 @@ async fn prepare() -> Result<String> {
         .batch_execute(MIGRATION)
         .await
         .context("apply the exact WMS migration")?;
-    Ok(url)
+    Ok(database)
 }
 
 async fn connect(url: &str) -> Result<Client> {

@@ -429,11 +429,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires disposable PostgreSQL and OCI, plus built virtualized probe and flow-http artifacts"]
+    #[ignore = "requires disposable OCI, plus built virtualized probe and flow-http artifacts"]
     async fn virtualized_std_guest_hides_the_sentinel_and_maps_a_panic_to_a_typed_refusal()
     -> anyhow::Result<()> {
         required(SENTINEL_KEY)?;
-        let database_url = required("WAMN_STD_VIRTUALIZATION_PG_URL")?;
         let artifact_base = required("WAMN_STD_VIRTUALIZATION_ARTIFACT_BASE")?;
         let component_wasm = PathBuf::from(required("WAMN_STD_VIRTUALIZATION_COMPONENT_WASM")?);
         let flow_http_wasm = PathBuf::from(required("WAMN_STD_VIRTUALIZATION_FLOW_HTTP_WASM")?);
@@ -454,8 +453,11 @@ mod tests {
         );
 
         let (upstream_base_url, served) = connection_origin().await?;
+        // The route seed creates shared roles.
+        let _lock = wamn_test_infrastructure::postgres::lock();
+        let database = wamn_test_infrastructure::postgres::database();
         let route = trusted_http_route::build(&RouteOptions {
-            database_url,
+            database_url: database.url().to_owned(),
             artifact_base,
             component_wasm,
             upstream_base_url,

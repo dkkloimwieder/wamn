@@ -168,11 +168,8 @@ mod tests {
     /// already flagged in `wamn-0h0g.12.6`'s close, and not a defect. So the
     /// wire is never asserted against the effect span.
     #[tokio::test]
-    #[ignore = "requires WAMN_HOTROUTE_PG_URL, WAMN_HOTROUTE_ARTIFACT_BASE and \
-                WAMN_HOTROUTE_COMPONENT_WASM"]
+    #[ignore = "requires WAMN_HOTROUTE_ARTIFACT_BASE and WAMN_HOTROUTE_COMPONENT_WASM"]
     async fn an_incoming_traceparent_reaches_the_outbound_socket_under_the_same_trace() {
-        let database_url =
-            required("WAMN_HOTROUTE_PG_URL").expect("set WAMN_HOTROUTE_PG_URL to a throwaway db");
         let artifact_base = required("WAMN_HOTROUTE_ARTIFACT_BASE")
             .expect("set WAMN_HOTROUTE_ARTIFACT_BASE to a throwaway <registry>/<repository>");
         let component_wasm = required("WAMN_HOTROUTE_COMPONENT_WASM")
@@ -181,8 +178,11 @@ mod tests {
         let harness = TraceHarness::install();
         let (port, served) = upstream_origin().await;
 
+        // The route seed creates shared roles.
+        let _lock = wamn_test_infrastructure::postgres::lock();
+        let database = wamn_test_infrastructure::postgres::database();
         let route = trusted_http_route::build(&RouteOptions {
-            database_url,
+            database_url: database.url().to_owned(),
             artifact_base,
             component_wasm: PathBuf::from(component_wasm),
             upstream_base_url: format!("http://127.0.0.1:{port}"),
