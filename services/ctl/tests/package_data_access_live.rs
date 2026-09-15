@@ -185,6 +185,20 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .await
         .expect("reset package data-access fixture");
     admin
+        .batch_execute(sql::ensure_db_owner_role_sql())
+        .await
+        .expect("ensure the production package-owner role");
+    admin
+        .batch_execute(
+            "DO $grant$ BEGIN \
+               EXECUTE format(\
+                 'GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()\
+               ); \
+             END $grant$;",
+        )
+        .await
+        .expect("grant the package-owner role its production-equivalent database authority");
+    admin
         .batch_execute(CATALOG_SCHEMA)
         .await
         .expect("install package catalog");
@@ -501,6 +515,20 @@ async fn install_lineage_fixture(url: &str) -> Client {
         )
         .await
         .expect("reset package lineage fixture");
+    admin
+        .batch_execute(sql::ensure_db_owner_role_sql())
+        .await
+        .expect("ensure the production package-owner role");
+    admin
+        .batch_execute(
+            "DO $grant$ BEGIN \
+               EXECUTE format(\
+                 'GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()\
+               ); \
+             END $grant$;",
+        )
+        .await
+        .expect("grant the package-owner role its production-equivalent database authority");
     admin
         .batch_execute(CATALOG_SCHEMA)
         .await
