@@ -123,14 +123,12 @@ To select tests by name, add `--name FILTER`, as [select the relevant tests](#se
 
 Ordinary tests need no result directory.
 Report the command, source revision, and pass, fail, or skip outcome.
-Some cluster tests and tools write diagnostic files and require a new directory.
-For those commands, choose an unused path under the main checkout's `evidence/` directory:
+Some cluster tests and tools write diagnostic files.
+Run output stays local and does not go into the checkout.
+For a command that needs a new result directory, create a temporary one:
 
 ```bash
-WAMN_MAIN="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
-WAMN_RESULTS="$WAMN_MAIN/evidence/local-tests"
-mkdir -p "$WAMN_MAIN/evidence"
-mkdir "$WAMN_RESULTS"
+WAMN_RESULTS="$(mktemp -d)"
 ```
 
 Keep source unchanged while a command runs.
