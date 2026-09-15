@@ -1,9 +1,9 @@
 //! Live-apply gate for the DISPATCHER READ AUTHORITY floor (wamn-0h0g.12.66).
 //!
-//! Set `WAMN_PROVISION_PG_URL` to a **superuser** URL of a throwaway Postgres
+//! The gate connects as the superuser of the test PostgreSQL server
 //! (`CREATE DATABASE` / `CREATE ROLE` need it, exactly as the CNPG cluster
-//! superuser does in production). Use a dedicated fresh PG18: this gate converges
-//! the cluster-wide PUBLIC `CONNECT` floor. Ignored unless explicitly selected.
+//! superuser does in production). It converges the cluster-wide PUBLIC `CONNECT`
+//! floor, so it holds the process lock.
 //!
 //! This gate lives with the dispatcher, not with the provisioner, because what is
 //! under test is a RELATIONSHIP between the two: the provisioner's real builders
@@ -194,10 +194,10 @@ fn assert_permitted_to(url: &str, role: &str, label: &str, statement: &str) {
 }
 
 #[test]
-#[ignore = "requires WAMN_PROVISION_PG_URL and a disposable PostgreSQL 18 server"]
 fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
-    let url = std::env::var("WAMN_PROVISION_PG_URL")
-        .expect("set WAMN_PROVISION_PG_URL to a disposable PostgreSQL 18 server");
+    let _lock = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url();
     let database = project_env_database_name(ORG, PROJECT, ENVIRONMENT, "k3m9x2p7");
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 
@@ -226,12 +226,12 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
          DROP ROLE IF EXISTS \"{DISPATCH_READER_ROLE}\";\n",
         drop_db = sql::drop_database_named_sql(&database),
     );
-    run_ok(&url, &teardown);
+    run_ok(url, &teardown);
 
     // The REAL role builders. The run-plane DDL below assumes the stable ACL roles
     // already exist, exactly as it does in production.
     run_ok(
-        &url,
+        url,
         &format!(
             "{app}\n{owner}\n{effect}\n{reader}\n",
             app = sql::ensure_app_role_sql(APP_ROLE),
@@ -241,7 +241,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
         ),
     );
     run_ok(
-        &url,
+        url,
         "DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
              CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
@@ -251,7 +251,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     );
     // IDEMPOTENCY, arm 1: the role builder applied a SECOND time is a clean no-op.
     run_ok(
-        &url,
+        url,
         &sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
     );
 
@@ -264,7 +264,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     // cluster-global LOGIN role carrying a password — because that is what a
     // pre-cutover cluster has and what the harden arm has to take away.
     run_ok(
-        &url,
+        url,
         &format!(
             "ALTER ROLE \"{DISPATCH_READER_ROLE}\" LOGIN PASSWORD 'legacy' BYPASSRLS CREATEDB;\n\
              DO $$ BEGIN \
@@ -275,11 +275,11 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
         ),
     );
     run_ok(
-        &url,
+        url,
         &sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
     );
     run_ok(
-        &url,
+        url,
         &format!(
             "DO $$ BEGIN \
                ASSERT (SELECT NOT rolcanlogin AND rolpassword IS NULL AND NOT rolbypassrls \
@@ -291,7 +291,7 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
         ),
     );
 
-    run_ok(&url, &sql::create_database_named_sql(&database));
+    run_ok(url, &sql::create_database_named_sql(&database));
     // Ownership converges BEFORE the CONNECT revokes: `ALTER DATABASE … OWNER TO`
     // rewrites the outgoing owner's ACL entry, so a revoke applied before it can
     // be undone by the entry the owner change carries over.
@@ -303,13 +303,13 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
         owner = sql::set_database_owner_sql(&database),
         reader_connect = sql::revoke_dispatch_reader_connect_sql(&database),
     );
-    run_ok(&url, &privilege_sql);
+    run_ok(url, &privilege_sql);
     // IDEMPOTENCY, arm 2: the privilege batch is convergent, not one-shot.
-    run_ok(&url, &privilege_sql);
+    run_ok(url, &privilege_sql);
 
     // The run-plane schema, applied as the cluster superuser exactly as the
     // reconciler does.
-    let project_url = with_database(&url, &database);
+    let project_url = with_database(url, &database);
     run_ok(&project_url, wamn_catalog::CATALOG_SCHEMA_SQL);
     for ddl in ["run-state.sql", "run-queue.sql"] {
         let path = format!("{root}/deploy/sql/{ddl}");
@@ -513,7 +513,7 @@ END $$;
     );
 
     // --- test 2: the real dispatcher statements still work -----------------
-    let reader_url = role_url(&url, &generation, READER_PASSWORD, &database);
+    let reader_url = role_url(url, &generation, READER_PASSWORD, &database);
 
     let identity = run_ok(
         &reader_url,
@@ -654,8 +654,8 @@ END $$;
             "2100-01-01T00:00:00Z",
         ),
     );
-    let app_url = role_url(&url, &app_generation, APP_PASSWORD, &database);
-    let admitter_url = role_url(&url, &admitter_generation, READER_PASSWORD, &database);
+    let app_url = role_url(url, &app_generation, APP_PASSWORD, &database);
+    let admitter_url = role_url(url, &admitter_generation, READER_PASSWORD, &database);
     for (label, plpgsql, replay) in [
         (
             "INSERT into run_queue",
@@ -692,5 +692,5 @@ END $$;
     let _ = lock_queue_sql;
 
     // Teardown: self-contained; never touches a shared database.
-    run_ok(&url, &teardown);
+    run_ok(url, &teardown);
 }

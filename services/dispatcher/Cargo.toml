@@ -44,6 +44,7 @@ wamn-control-provision = { workspace = true }
 # TEST-OWNED meter provider (`InMemoryMetricExporter`), never the global one, so
 # two tests cannot see each other's instruments.
 opentelemetry_sdk = { workspace = true, features = ["metrics", "testing"] }
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true
