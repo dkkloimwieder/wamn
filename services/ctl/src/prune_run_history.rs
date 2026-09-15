@@ -181,9 +181,7 @@ async fn verify_retention_identity(
 /// pure prune statement with the tenant BOUND. When `apply`, the delete commits;
 /// otherwise it runs inside a rolled-back transaction so `dry_run` reports the
 /// exact affected count without mutating. Returns the number of `runs` rows
-/// removed. The live retention gate (`tests/integration/src/retention.rs`)
-/// drives this same path through the `wamn-ctl-ops` process, so verb and gate
-/// exercise ONE code path.
+/// removed.
 ///
 /// No `app.tenant` claim is injected any more. That GUC keyed the RETIRED floor;
 /// `wamn-0h0g.22.6` re-keyed `runs` onto `current_user`, and the one thing the

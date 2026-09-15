@@ -86,7 +86,7 @@ wamn-pg-core = { workspace = true }
 wamn-runtime = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 # 9.6 prune-run-history: the single-source run-state SQL builder
-# (`prune_terminal_runs_sql`) the retention verb and its live gate share.
+# (`prune_terminal_runs_sql`) the retention verb uses.
 wamn-run-state = { workspace = true }
 
 [dev-dependencies]
