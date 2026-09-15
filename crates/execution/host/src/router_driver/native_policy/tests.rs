@@ -89,6 +89,7 @@ enum Case {
     StartDeadline,
     RunDeadline,
     Cancellation,
+    Trap,
 }
 
 fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
@@ -130,6 +131,7 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
     let body = match case {
         Case::NestedRefusal => "local.get $input i32.const 256 call $nested",
         Case::RunDeadline | Case::Cancellation => "(loop br 0)",
+        Case::Trap => "unreachable",
         Case::Success | Case::StartDeadline => {
             r"
           i32.const 264 local.get $input i32.load offset=96 i32.store
@@ -189,6 +191,7 @@ struct Observation {
     native_identity: bool,
     claims: Option<SessionClaims>,
     invocation: Option<ConnectionInvocation>,
+    logging: Option<(String, String)>,
     caller: Option<wamn_runtime::plugins::flow_http_routing::AuthenticatedCaller>,
     deadline: Option<Instant>,
 }
@@ -247,6 +250,7 @@ impl HostPlugin for Observe {
                         .contains_key(&scope);
                     let claims = policy.resources.postgres.session_claims(&scope);
                     let invocation = policy.resources.blobstore.invocation(&scope);
+                    let logging = policy.resources.logging.claim_snapshot(&scope);
                     let _effect = invocation
                         .as_ref()
                         .filter(|_| phase == 1)
@@ -271,6 +275,7 @@ impl HostPlugin for Observe {
                         native_identity,
                         claims,
                         invocation,
+                        logging,
                         caller,
                         deadline,
                     });
@@ -633,6 +638,13 @@ impl Fixture {
             assert!(
                 self.policy
                     .resources
+                    .logging
+                    .claim_snapshot(&event.scope)
+                    .is_none()
+            );
+            assert!(
+                self.policy
+                    .resources
                     .postgres
                     .activate_statement_operation(&event.scope, ROOT)
                     .is_err()
@@ -679,7 +691,7 @@ async fn run_case(case: Case) {
         );
     } else {
         let deadline = Instant::now()
-            + if matches!(case, Case::Success | Case::NestedRefusal) {
+            + if matches!(case, Case::Success | Case::NestedRefusal | Case::Trap) {
                 CLEANUP
             } else {
                 BUDGET
@@ -713,6 +725,12 @@ async fn run_case(case: Case) {
                 );
                 assert!(format!("{error:#}").contains("deadline"), "{error:#}");
             }
+            Case::Trap => {
+                let error = result.expect_err("a guest trap fails the invocation");
+                let text = format!("{error:#}");
+                assert!(text.contains("wasm trap"), "{text}");
+                assert!(!text.contains("deadline"), "{text}");
+            }
             Case::Cancellation => unreachable!("cancellation has its own caller task"),
         }
     }
@@ -727,6 +745,7 @@ async fn run_case(case: Case) {
             );
             assert!(event.claims.is_none());
             assert!(event.invocation.is_none());
+            assert!(event.logging.is_none());
         } else {
             assert!(
                 !event.native_identity,
@@ -746,6 +765,11 @@ async fn run_case(case: Case) {
                     "a callerless delivery binds the operation that it runs"
                 );
             }
+            assert_eq!(
+                event.logging,
+                Some(("tenant-a".into(), "test".into())),
+                "execution has a logging claim"
+            );
             let invocation = event
                 .invocation
                 .as_ref()
@@ -847,6 +871,10 @@ fn native_node_cancellation_revokes_invocation_authority() {
         "native_node_cancellation_revokes_invocation_authority",
         Case::Cancellation,
     );
+}
+#[test]
+fn native_node_trap_revokes_invocation_authority() {
+    isolated("native_node_trap_revokes_invocation_authority", Case::Trap);
 }
 
 #[tokio::test]
