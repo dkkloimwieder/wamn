@@ -1101,7 +1101,6 @@ async fn setup(raw: &str) -> Fixture {
             "wamn_app",
             "wamn_scenario_author",
             "wamn_control_author",
-            "wamn_effect_writer",
             "wamn_platform",
             "wamn_run_retention",
         ]
@@ -1154,7 +1153,7 @@ async fn setup(raw: &str) -> Fixture {
         .batch_execute(SYSTEM_SCHEMA_SQL)
         .await
         .expect_redacted("production system schema");
-    system.client.batch_execute("RESET ROLE; CREATE ROLE wamn_app NOLOGIN; CREATE ROLE wamn_scenario_author NOLOGIN; CREATE ROLE wamn_control_author NOLOGIN; CREATE ROLE wamn_effect_writer NOLOGIN;")
+    system.client.batch_execute("RESET ROLE; CREATE ROLE wamn_app NOLOGIN; CREATE ROLE wamn_scenario_author NOLOGIN; CREATE ROLE wamn_control_author NOLOGIN;")
         .await.expect_redacted("schema prerequisite roles");
     // The system fixture is platform setup, so it writes as wamn:provisioning.
     system
