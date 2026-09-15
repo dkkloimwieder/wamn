@@ -51,6 +51,8 @@ wamn-run-state = { workspace = true, features = ["tenant-key"] }
 # manifest as generation. It derives grants from that public parsed shape; it
 # does not carry a second manifest grammar.
 wamn-schema-generator = { workspace = true }
+# The audit retention role name is a record history platform fixture name.
+wamn-record-history = { workspace = true }
 
 # wamn-0h0g.8.18 control_author: the scoped A/B generation role name is a
 # domain-separated digest of (org, project, environment, database), and the
@@ -76,7 +78,6 @@ wamn-catalog = { workspace = true }
 # A DEV edge only — nothing in this crate's production surface reaches it.
 # This test edge adds no database effects to the production builders.
 wamn-schema-control = { workspace = true }
-wamn-record-history = { workspace = true }
 wamn-test-postgres = { workspace = true }
 
 [lints]

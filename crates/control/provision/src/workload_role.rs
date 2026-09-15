@@ -56,7 +56,7 @@ pub const SESSION_ROLE_READER_ROLE: &str = "wamn_session_role_reader";
 /// Keep the 40-hex scope digest and A/B suffix within PostgreSQL's 63 bytes.
 const SESSION_ROLE_READER_GENERATION_PREFIX: &str = "wamn_session_roles";
 /// Stable NOLOGIN role used by record history retention generations.
-pub const AUDIT_RETENTION_ROLE: &str = "wamn_audit_retention";
+pub use wamn_record_history::AUDIT_RETENTION_ROLE;
 
 /// The shared NOLOGIN group role every non-guest tenant-floor arm targets
 /// (`wamn-0h0g.22.17`).

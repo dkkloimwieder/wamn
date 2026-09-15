@@ -31,6 +31,9 @@ pub const STAMP_TRIGGER: &str = "wamn_record_history_stamp";
 /// The trigger that writes one history entry for each changed row of a logged relation.
 pub const LOG_TRIGGER: &str = "wamn_record_history_log";
 
+/// The NOLOGIN role that holds the history retention grants of record history.
+pub const AUDIT_RETENTION_ROLE: &str = "wamn_audit_retention";
+
 /// The retention of a relation that keeps no log.
 pub const NO_LOG_RETENTION: &str = "none";
 

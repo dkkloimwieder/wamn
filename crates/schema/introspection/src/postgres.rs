@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use tokio_postgres::{Client, Row};
-use wamn_record_history::{LOG_TRIGGER, STAMP_TRIGGER, is_history_table_name};
+use wamn_record_history::{
+    AUDIT_RETENTION_ROLE, LOG_TRIGGER, STAMP_TRIGGER, is_history_table_name,
+};
 
 use crate::ir::{
     CatalogIr, Column, ColumnGeneration, Constraint, Exclusion, ExclusionAccessMethod,
@@ -263,13 +265,23 @@ fn relation_is_excluded(excluded_relations: &[(&str, &str)], schema: &str, table
             })
 }
 
+// Each `has_acl` column reads whether an ACL holds an entry for a grantee other
+// than the object owner and the `$2` audit retention role. The audit retention
+// grants are a record history platform fixture, so their grantee name alone
+// skips them.
 const SCHEMAS_SQL: &str = r"
 WITH configured(schema_name) AS (
     SELECT unnest($1::text[])
 )
 SELECT configured.schema_name,
        namespace.oid IS NOT NULL AS present,
-       namespace.nspacl IS NOT NULL AS has_acl
+       EXISTS (
+           SELECT FROM pg_catalog.aclexplode(namespace.nspacl) AS entry
+            WHERE entry.grantee <> namespace.nspowner
+              AND entry.grantee NOT IN (
+                  SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname = $2
+              )
+       ) AS has_acl
   FROM configured
   LEFT JOIN pg_catalog.pg_namespace AS namespace
     ON namespace.nspname = configured.schema_name
@@ -284,7 +296,13 @@ SELECT namespace.nspname::text AS schema_name,
        access_method.amname::text AS access_method,
        relation.relrowsecurity AS row_security,
        relation.relforcerowsecurity AS force_row_security,
-       relation.relacl IS NOT NULL AS has_acl,
+       EXISTS (
+           SELECT FROM pg_catalog.aclexplode(relation.relacl) AS entry
+            WHERE entry.grantee <> relation.relowner
+              AND entry.grantee NOT IN (
+                  SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname = $2
+              )
+       ) AS has_acl,
        EXISTS (
            SELECT 1
              FROM pg_catalog.pg_inherits AS inheritance
@@ -359,7 +377,13 @@ const TYPES_SQL: &str = r"
 SELECT namespace.nspname::text AS schema_name,
        catalog_type.typname::text AS type_name,
        catalog_type.typtype::text AS type_kind,
-       catalog_type.typacl IS NOT NULL AS has_acl,
+       EXISTS (
+           SELECT FROM pg_catalog.aclexplode(catalog_type.typacl) AS entry
+            WHERE entry.grantee <> catalog_type.typowner
+              AND entry.grantee NOT IN (
+                  SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname = $2
+              )
+       ) AS has_acl,
        relation.relkind::text AS relation_kind,
        relation.relname::text AS relation_name,
        element_namespace.nspname::text AS element_schema,
@@ -406,7 +430,13 @@ SELECT namespace.nspname::text AS schema_name,
        attribute.attidentity::text AS identity_kind,
        attribute.attgenerated::text AS generated_kind,
        attribute.attcollation = catalog_type.typcollation AS has_default_collation,
-       attribute.attacl IS NOT NULL AS has_acl
+       EXISTS (
+           SELECT FROM pg_catalog.aclexplode(attribute.attacl) AS entry
+            WHERE entry.grantee <> relation.relowner
+              AND entry.grantee NOT IN (
+                  SELECT role.oid FROM pg_catalog.pg_roles AS role WHERE role.rolname = $2
+              )
+       ) AS has_acl
   FROM pg_catalog.pg_attribute AS attribute
   JOIN pg_catalog.pg_class AS relation
     ON relation.oid = attribute.attrelid
@@ -679,7 +709,7 @@ async fn validate_schemas(
     schemas: &[String],
 ) -> Result<(), PostgresIntrospectionError> {
     let rows = client
-        .query(SCHEMAS_SQL, &[&schemas])
+        .query(SCHEMAS_SQL, &[&schemas, &AUDIT_RETENTION_ROLE])
         .await
         .map_err(|error| database_error("query configured schemas", error))?;
 
@@ -710,7 +740,7 @@ async fn load_relations(
     schemas: &[String],
 ) -> Result<Vec<RelationRow>, PostgresIntrospectionError> {
     client
-        .query(RELATIONS_SQL, &[&schemas])
+        .query(RELATIONS_SQL, &[&schemas, &AUDIT_RETENTION_ROLE])
         .await
         .map_err(|error| database_error("query configured-schema relations", error))
         .map(|rows| rows.iter().map(relation_row).collect())
@@ -975,7 +1005,7 @@ async fn validate_types(
     excluded_relations: &[(&str, &str)],
 ) -> Result<(), PostgresIntrospectionError> {
     let rows = client
-        .query(TYPES_SQL, &[&schemas])
+        .query(TYPES_SQL, &[&schemas, &AUDIT_RETENTION_ROLE])
         .await
         .map_err(|error| database_error("query configured-schema types", error))?;
 
@@ -1058,7 +1088,7 @@ async fn load_columns(
     schemas: &[String],
 ) -> Result<Vec<ColumnRow>, PostgresIntrospectionError> {
     client
-        .query(COLUMNS_SQL, &[&schemas])
+        .query(COLUMNS_SQL, &[&schemas, &AUDIT_RETENTION_ROLE])
         .await
         .map_err(|error| database_error("query configured-schema columns", error))
         .map(|rows| rows.iter().map(column_row).collect())
@@ -1971,8 +2001,9 @@ pub async fn read_catalog(
 /// Read configured application schemas while omitting explicitly named
 /// host-owned relations from the package IR.
 ///
-/// The reader also skips each relation whose name ends with `_history` and the
-/// `wamn_record_history_stamp` and `wamn_record_history_log` triggers by name.
+/// The reader also skips each relation whose name ends with `_history`, the
+/// `wamn_record_history_stamp` and `wamn_record_history_log` triggers, and the
+/// ACL entries of the `wamn_audit_retention` role by name.
 pub async fn read_catalog_excluding_relations(
     client: &Client,
     application_schemas: &[&str],

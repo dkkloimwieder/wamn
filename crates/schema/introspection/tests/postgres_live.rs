@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, Config, NoTls};
 
+use wamn_record_history::AUDIT_RETENTION_ROLE;
+
 use wamn_schema_introspection::ir::{
     ColumnDefault, ColumnGeneration, Exclusion, ExclusionAccessMethod, ExclusionElement,
     ExclusionKey, IdentityMode,
@@ -1074,6 +1076,73 @@ async fn assert_record_history_fixtures_are_skipped(admin: &Client, reader: &Cli
     );
 }
 
+/// Introspection skips the ACL entries of the audit retention role by name. A
+/// grant to any other role still refuses.
+async fn assert_audit_retention_grants_are_skipped(
+    admin: &Client,
+    reader: &Client,
+    other_role: &str,
+) {
+    let before = read_catalog(reader, &[APPLICATION_SCHEMA])
+        .await
+        .expect("read the catalog before the audit retention grants");
+    admin
+        .batch_execute(&format!(
+            "DO $role$ BEGIN \
+               IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{AUDIT_RETENTION_ROLE}') THEN \
+                 CREATE ROLE {AUDIT_RETENTION_ROLE} NOLOGIN; \
+               END IF; \
+             END $role$; \
+             GRANT USAGE ON SCHEMA receiving TO {AUDIT_RETENTION_ROLE}; \
+             GRANT SELECT ON receiving.purchase_order TO {AUDIT_RETENTION_ROLE}; \
+             GRANT SELECT (id) ON receiving.purchase_order_line TO {AUDIT_RETENTION_ROLE}"
+        ))
+        .await
+        .expect("apply the audit retention grants");
+    let granted = admin
+        .query_one(
+            "SELECT has_schema_privilege($1, 'receiving', 'USAGE'), \
+                    has_table_privilege($1, 'receiving.purchase_order', 'SELECT'), \
+                    has_column_privilege($1, 'receiving.purchase_order_line', 'id', 'SELECT')",
+            &[&AUDIT_RETENTION_ROLE],
+        )
+        .await
+        .expect("read the audit retention grants");
+    for column in 0..3 {
+        assert!(
+            granted.get::<_, bool>(column),
+            "audit retention grant {column} is held"
+        );
+    }
+    let catalog = read_catalog(reader, &[APPLICATION_SCHEMA])
+        .await
+        .expect("introspection skips the audit retention grants");
+    assert_eq!(
+        catalog.canonical_json_bytes(),
+        before.canonical_json_bytes(),
+        "the audit retention grants do not change the catalog IR"
+    );
+
+    let other_role = identifier(other_role);
+    admin
+        .batch_execute(&format!(
+            "CREATE ROLE {other_role} NOLOGIN; \
+             GRANT USAGE ON SCHEMA receiving TO {other_role}"
+        ))
+        .await
+        .expect("grant the application schema to another role");
+    let refused = read_catalog(reader, &[APPLICATION_SCHEMA]).await;
+    admin
+        .batch_execute(&format!(
+            "REVOKE USAGE ON SCHEMA receiving FROM {other_role}; \
+             DROP ROLE {other_role}"
+        ))
+        .await
+        .expect("remove the other role");
+    let error = refused.expect_err("a schema grant to another role refuses");
+    assert_eq!(error.kind(), PostgresIntrospectionErrorKind::UnsupportedAcl);
+}
+
 async fn run_gate(admin_config: Config, fixture: Fixture) {
     validate_migration_file(&fixture.migration_path, APPLICATION_SCHEMA)
         .expect("pre-apply policy admits the real Receiving migration");
@@ -1108,6 +1177,12 @@ async fn run_gate(admin_config: Config, fixture: Fixture) {
     assert_additive_columns(&migration).await;
     assert_refusal_matrix(&target_admin, &migration).await;
     assert_record_history_fixtures_are_skipped(&target_admin, &migration).await;
+    assert_audit_retention_grants_are_skipped(
+        &target_admin,
+        &migration,
+        &format!("{}_grantee", fixture.role),
+    )
+    .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
