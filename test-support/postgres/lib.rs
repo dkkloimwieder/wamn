@@ -6,19 +6,17 @@
 //! pass database coordinates to one child command.
 
 use std::fs::{self, DirBuilder, File, OpenOptions};
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener};
 use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, ensure};
-use ring::rand::{SecureRandom as _, SystemRandom};
-use rustix::process::{Pid, Signal, kill_process_group};
 use url::Url;
 
 const POSTGRES_BIN: &str = "/usr/lib/postgresql/18/bin";
@@ -192,9 +190,9 @@ impl std::fmt::Debug for OwnedPostgres {
 /// removed after the exit.
 pub fn start(settings: &[(&str, &str)]) -> anyhow::Result<OwnedPostgres> {
     let mut random = [0_u8; 48];
-    SystemRandom::new()
-        .fill(&mut random)
-        .map_err(|_| anyhow::anyhow!("create test server identity"))?;
+    File::open("/dev/urandom")
+        .and_then(|mut source| source.read_exact(&mut random))
+        .context("create test server identity")?;
     let directory = std::env::temp_dir().join(format!(
         "wamn-test-postgres-{}-{}",
         std::process::id(),
@@ -348,53 +346,6 @@ impl OwnedPostgres {
         Ok(OwnedDatabase { url: url.into() })
     }
 
-    /// Run one child with the database coordinate in each named variable.
-    ///
-    /// The child inherits no PostgreSQL variables of this process. A signal to
-    /// this process stops the child and its process group.
-    pub async fn run(
-        &mut self,
-        command: &mut tokio::process::Command,
-        database: &OwnedDatabase,
-        url_env_names: &[String],
-    ) -> anyhow::Result<ExitStatus> {
-        for (name, _) in std::env::vars_os() {
-            if name.to_str().is_some_and(|name| {
-                name.starts_with("PG")
-                    || name.ends_with("_PG_URL")
-                    || name.ends_with("DATABASE_URL")
-            }) {
-                command.env_remove(name);
-            }
-        }
-        for name in url_env_names {
-            command.env(name, database.url());
-        }
-        command.env("RUST_TEST_THREADS", "1").kill_on_drop(true);
-        command.as_std_mut().process_group(0);
-        let mut interrupt =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
-        let mut terminate =
-            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
-        let mut hangup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())?;
-        let mut child = command.spawn().context("start the owned database test")?;
-        let group = ProcessGroup(
-            Pid::from_raw(child.id().context("the child has a process ID")? as i32)
-                .context("the child process ID is positive")?,
-        );
-        let status = tokio::select! {
-            status = child.wait() => status.context("wait for the owned database test"),
-            _ = interrupt.recv() => Err(anyhow::anyhow!("the owned database test was interrupted")),
-            _ = terminate.recv() => Err(anyhow::anyhow!("the owned database test was terminated")),
-            _ = hangup.recv() => Err(anyhow::anyhow!("the owned database test lost its session")),
-        };
-        drop(group);
-        if status.is_err() {
-            let _ = child.wait().await;
-        }
-        status
-    }
-
     /// Stop only this server and remove only its private directory.
     pub fn stop(&mut self) -> anyhow::Result<()> {
         if let Some(mut watcher) = self.watcher.take() {
@@ -404,9 +355,11 @@ impl OwnedPostgres {
                 .context("wait for the PostgreSQL test server watcher")?;
         }
         if let Some(mut process) = self.process.take() {
-            if let Some(pid) = Pid::from_raw(process.id() as i32) {
-                let _ = kill_process_group(pid, Signal::KILL);
-            }
+            let _ = Command::new("kill")
+                .args(["-KILL", "--", &format!("-{}", process.id())])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
             process
                 .wait()
                 .context("reap the owned PostgreSQL process")?;
@@ -450,13 +403,6 @@ fn psql(port: u16, password: &str, database: &str, batches: &[&str]) -> anyhow::
 impl Drop for OwnedPostgres {
     fn drop(&mut self) {
         let _ = self.stop();
-    }
-}
-
-struct ProcessGroup(Pid);
-impl Drop for ProcessGroup {
-    fn drop(&mut self) {
-        let _ = kill_process_group(self.0, Signal::KILL);
     }
 }
 
@@ -568,54 +514,6 @@ mod tests {
         );
         let directory = server.directory.clone();
         drop(server);
-        assert!(!directory.exists());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn owned_server_runs_children_with_role_coordinates_and_cleans_up() -> anyhow::Result<()>
-    {
-        let mut server = start(&[])?;
-        let directory = server.directory.clone();
-        let database = server.create_database("delivery_test")?;
-        server.sql("delivery_test", "CREATE ROLE fixture_reader LOGIN PASSWORD 'fixture-only'; GRANT CONNECT ON DATABASE delivery_test TO fixture_reader")?;
-        let role = database.with_credentials("fixture_reader", "fixture-only")?;
-        let mut query = tokio::process::Command::new("sh");
-        query.args(["-c", "test \"$(/usr/lib/postgresql/18/bin/psql \"$DATABASE_URL\" -XAt -v ON_ERROR_STOP=1 -c 'SELECT current_user')\" = fixture_reader"]);
-        assert!(
-            server
-                .run(&mut query, &role, &["DATABASE_URL".to_owned()])
-                .await?
-                .success()
-        );
-        let mut failure = tokio::process::Command::new("sh");
-        failure.args(["-c", "exit 17"]);
-        assert_eq!(
-            server
-                .run(&mut failure, &database, &["DATABASE_URL".to_owned()])
-                .await?
-                .code(),
-            Some(17)
-        );
-        let child_pid = directory.join("interrupted-child.pid");
-        let mut interrupted = tokio::process::Command::new("sh");
-        interrupted
-            .args([
-                "-c",
-                "echo $$ > \"$1\"; kill -TERM \"$2\"; sleep 60",
-                "fixture",
-            ])
-            .arg(&child_pid)
-            .arg(std::process::id().to_string());
-        assert!(
-            server
-                .run(&mut interrupted, &database, &["DATABASE_URL".to_owned()])
-                .await
-                .is_err()
-        );
-        let pid = fs::read_to_string(child_pid)?;
-        assert!(!Path::new(&format!("/proc/{}", pid.trim())).exists());
-        server.stop()?;
         assert!(!directory.exists());
         Ok(())
     }

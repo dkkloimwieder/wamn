@@ -11,13 +11,7 @@ path = "lib.rs"
 [dependencies]
 anyhow = { workspace = true }
 hex = { workspace = true }
-ring = { workspace = true }
-rustix = { workspace = true }
-tokio = { workspace = true, features = ["macros", "process", "signal"] }
 url = { workspace = true }
-
-[dev-dependencies]
-tokio = { workspace = true, features = ["rt"] }
 
 [lints]
 workspace = true
