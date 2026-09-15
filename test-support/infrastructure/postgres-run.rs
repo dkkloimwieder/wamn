@@ -65,7 +65,9 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
                 );
                 return Ok(std::process::ExitCode::SUCCESS);
             }
-            _ => anyhow::bail!("expected --database, --url-env, or -- before the test command"),
+            _ => anyhow::bail!(
+                "expected --database, --url-env, --schema, --migration-dir, --history-manifest, --help, or -- before the test command"
+            ),
         }
     }
     let database = database.context("--database is required")?;
@@ -210,7 +212,7 @@ async fn apply_migrations(
 
 /// Create the history table of each relation that the package declares a log for.
 ///
-/// This follows the generation database step of `docs/operations/running-tests.md`.
+/// `docs/operations/running-tests.md#application-generation-and-sqlx` describes this step.
 /// `wamn_app` exists first, because `record-history-app-grants.sql` grants the history read functions to it.
 async fn create_history_tables(client: &tokio_postgres::Client, path: &Path) -> anyhow::Result<()> {
     let manifest = PackageManifest::from_slice(
