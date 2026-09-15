@@ -401,6 +401,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use serde_json::json;
+    use wamn_control_provision::{CredentialGeneration, management_admitter_generation_role};
 
     use super::super::config::parse_config;
     use super::super::{
@@ -841,6 +842,9 @@ mod tests {
         let document = json!({
             "verification_database_url": verification_url,
             "target_database_url": target_url,
+            "target_privileges_file": "/run/wamn-dev/privileges.sql",
+            "target_template_database": format!("wamn_dev_protected_{process}--template"),
+            "target_database_acl_file": "/run/wamn-dev/database-acl.sql",
             "system_database_url": database_url(verification_url, &format!("wamn_dev_system_{process}")),
             "identity_database_url": database_url(verification_url, &format!("wamn_dev_identity_{process}")),
             "guest_database_url": database_url(verification_url, &format!("wamn_dev_guest_{process}")),
@@ -938,8 +942,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "existing failure: live_config omits target_database_acl_file, so the configuration is refused before PostgreSQL"]
     async fn disposable_postgres_checks_freshness_cleanup_and_confinement() {
+        let _lock = wamn_test_postgres::lock();
         let database = wamn_test_postgres::database();
         let url = database.url().to_owned();
         let spec = DatabaseSpec::from_url(&url).expect("valid disposable database URL");
@@ -950,6 +954,28 @@ mod tests {
             .expect("valid protected database name");
         let protected_url = database_url(&url, protected.as_str());
         let config = live_config(&url, &protected_url);
+        let identity = config.activation_identity();
+        let roles = [CredentialGeneration::A, CredentialGeneration::B].map(|generation| {
+            Identifier::new(management_admitter_generation_role(
+                &identity.org,
+                &identity.project,
+                &identity.environment,
+                spec.database.as_str(),
+                generation,
+            ))
+            .expect("generated role is a valid identifier")
+        });
+        for role in &roles {
+            authority
+                .client
+                .batch_execute(&format!(
+                    "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                     INHERIT NOREPLICATION NOBYPASSRLS",
+                    role.quoted()
+                ))
+                .await
+                .expect("create an existing management-admitter generation fixture");
+        }
 
         cleanup(&authority, &spec.database)
             .await
@@ -1055,5 +1081,12 @@ mod tests {
         cleanup(&authority, &protected)
             .await
             .expect("remove protected fixture database");
+        for role in roles {
+            authority
+                .client
+                .batch_execute(&format!("DROP ROLE {}", role.quoted()))
+                .await
+                .expect("drop the management-admitter generation fixture");
+        }
     }
 }
