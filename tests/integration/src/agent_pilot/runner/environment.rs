@@ -188,15 +188,10 @@ impl Run {
             .filter(|packages| !packages.is_empty())
             .context("the manifest names no package_sources; the standup requires at least one")?;
         let mut command = Command::new("setsid");
-        command.arg("nohup");
-        if self.args.standup == "dev-env" {
-            command.arg(self.target.join("debug/wamn-dev-env"));
-        } else {
-            command
-                .arg(self.target.join("debug/wamn"))
-                .args(["dev", "up"]);
-        }
         command
+            .arg("nohup")
+            .arg(self.target.join("debug/wamn"))
+            .args(["dev", "up"])
             .current_dir(self.directory.join("worktree"))
             .args([
                 "--system-database-url",
@@ -270,15 +265,13 @@ impl Run {
             }
             anyhow::ensure!(
                 child.try_wait()?.is_none(),
-                "the {} standup exited; see {}",
-                self.args.standup,
+                "the wamn dev up standup exited; see {}",
                 self.directory.join("env.log").display()
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         anyhow::bail!(
-            "the {} standup did not hold a Gate on 8088; see {}",
-            self.args.standup,
+            "the wamn dev up standup did not hold a Gate on 8088; see {}",
             self.directory.join("env.log").display()
         )
     }

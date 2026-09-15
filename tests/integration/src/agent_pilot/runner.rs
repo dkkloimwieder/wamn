@@ -38,8 +38,6 @@ pub struct RunArgs {
     agent: Option<String>,
     #[arg(long)]
     task: Option<PathBuf>,
-    #[arg(long, default_value = "dev-env", value_parser = ["dev-env", "dev-up"])]
-    standup: String,
     #[arg(long)]
     commit: Option<String>,
     #[arg(long, default_value = "completed")]
@@ -665,7 +663,7 @@ impl Run {
             .join(" ");
         write_json(
             &self.directory.join("run.json"),
-            &json!({"run":self.key,"commit":commit,"task":self.task["task"],"agent":self.args.agent,"standup":self.args.standup,
+            &json!({"run":self.key,"commit":commit,"task":self.task["task"],"agent":self.args.agent,
             "machine":{"load_at_launch":load,"cores":std::thread::available_parallelism()?.get()},"build":{"cached":seconds<30,"seconds":seconds,"target":self.target},
             "up":{"ok":true,"baseline_stages":stages},"launch":null,"verbs":null,"git":null,"down":null}),
         )?;
@@ -804,10 +802,6 @@ impl Run {
             ("Cargo.toml", vec!["-p", "wamn-host", "-p", "wamn-identity"]),
             ("Cargo.toml", vec!["-p", "wamn-scenario-worker"]),
             (
-                "Cargo.toml",
-                vec!["-p", "wamn-integration-tests", "--bin", "wamn-dev-env"],
-            ),
-            (
                 "apps/Cargo.toml",
                 vec!["-p", "http-route", "--target", "wasm32-wasip2"],
             ),
@@ -836,7 +830,6 @@ impl Run {
             "wamn-identity",
             "wamn-host",
             "wamn-scenario-worker",
-            "wamn-dev-env",
         ] {
             anyhow::ensure!(
                 executable(&self.target.join("debug").join(artifact)),
@@ -858,7 +851,6 @@ impl Run {
             "debug/wamn-identity",
             "debug/wamn-host",
             "debug/wamn-scenario-worker",
-            "debug/wamn-dev-env",
             "wasm32-wasip2/debug/http_route.wasm",
         ] {
             let bytes = fs::read(self.target.join(artifact))?;
