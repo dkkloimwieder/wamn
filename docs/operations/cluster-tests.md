@@ -5,25 +5,31 @@ These commands exercise deployed application behavior.
 Choose an [output directory](running-tests.md#capture-a-run) and follow the [cleanup](running-tests.md#cleanup) procedure.
 Follow [test-database isolation](running-tests.md#test-database-isolation).
 
-Install Docker, kind, kubectl, Helm, OpenSSL, and the tools required by the selected app test.
+Each cluster test lists the programs and environment variables that it needs in its `#[ignore = "requires: ..."]` reason.
+Its first line fails and names each listed input that is missing.
 Run from clean committed source with an isolated target directory.
-Keep the parent result directory present and the selected helper directory absent.
-The Rust test creates that helper directory and refuses an existing one.
+
+Each Receiving and WMS cluster test creates its own new result directory and prints its path.
+`WAMN_RECEIVING_EVIDENCE_DIR` and `WAMN_WMS_EVIDENCE_DIR` can name an existing parent directory for it.
+Without the variable, the parent is the system temporary directory, which is `$TMPDIR` or `/tmp`.
+The results stay on this machine.
 
 The app tests own decisions, provisioning calls, assertions, results, and cleanup.
 The `tools/receiving-cluster-journey-run` and `tools/wms-cluster-journey-run` scripts perform only requested lifecycle actions.
 Do not call their retired `--apply` interface.
 Run one installation at a time when cases share fixed management ports.
 
+`tools/test-changes --cluster --name <test>` runs one case.
+It runs the ignored tests whose full names contain `<test>`, one test at a time, in the packages that the change set selects.
+[Select the relevant tests](running-tests.md#select-the-relevant-tests) describes that selection.
+
 ### `[RECEIVING-CLUSTER-JOURNEY]` Receiving application tests
 
 Run the full released route, materializer, startup, recovery, and environment-isolation case:
 
 ```bash
-WAMN_RECEIVING_EVIDENCE_DIR="$WAMN_RESULTS/receiving" \
-  cargo test --locked --offline -p wamn-receiving-tests --lib \
-  route_authentication_live::cluster::default_case::released_routes_materializer_startup_and_environment_isolation \
-  -- --ignored --exact --nocapture
+tools/test-changes --cluster --name \
+  route_authentication_live::cluster::default_case::released_routes_materializer_startup_and_environment_isolation
 ```
 
 The test builds its required guests, native programs, and images.
@@ -33,28 +39,25 @@ It keeps normal TLS peer verification and separate scheduler and event credentia
 For `[RECEIVING-POSTCOMMIT]`, select the sequential baseline and additive installation comparison:
 
 ```bash
-WAMN_RECEIVING_EVIDENCE_DIR="$WAMN_RESULTS/receiving-postcommit" \
-  cargo test --locked --offline -p wamn-receiving-tests --lib \
-  route_authentication_live::cluster::postcommit_pair::unchanged_overlay_across_baseline_and_additive_installations \
-  -- --ignored --exact --nocapture
+tools/test-changes --cluster --name \
+  route_authentication_live::cluster::postcommit_pair::unchanged_overlay_across_baseline_and_additive_installations
 ```
 
 This case compares unchanged overlay files and guest bytes across both installations.
 It retains duplicate-delivery, blocked-handler, broker-advisory, and later-valid-event assertions.
 The adjacent `route_cases`, `session_cases`, and `measurement_cases` modules own the other named Receiving cases.
-Select their exact test names with the same required result input.
+Pass their full test names to `--name`.
 
 ### `[WMS-CLUSTER-JOURNEY]` WMS application tests
 
 Run the released WMS routes:
 
 ```bash
-WAMN_WMS_EVIDENCE_DIR="$WAMN_RESULTS/wms" \
-  cargo test --locked --offline -p wamn-wms-tests --lib \
-  cluster::released_wms_routes -- --exact --ignored --nocapture
+tools/test-changes --cluster --name cluster::released_wms_routes
 ```
 
-For another WMS case, use a fresh result directory and replace the exact test name:
+This name also matches the label-failure case, so the command runs both cases.
+For another WMS case, replace the test name:
 
 | Case | Full test name |
 | --- | --- |

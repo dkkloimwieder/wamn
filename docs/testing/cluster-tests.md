@@ -19,6 +19,10 @@ A simulated outcome does not establish that a real process recovers or cleans up
 
 ## Completion
 
+Run one case with `tools/test-changes --cluster --name <test>`, as [cluster tests](../operations/cluster-tests.md) describes.
+A selected case whose declared prerequisite is missing fails and names it.
+Each Receiving and WMS cluster test writes its results to its own new directory and prints the path.
+That directory is inside the parent that `WAMN_RECEIVING_EVIDENCE_DIR` or `WAMN_WMS_EVIDENCE_DIR` names, or inside the system temporary directory when the variable is not set.
 Use the case's declared finite step, retry, and timeout limits.
 Inspect the runner's cleanup result after success, failure, or handled interruption.
 Record unresolved owned resources as incomplete cleanup.
