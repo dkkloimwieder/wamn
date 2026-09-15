@@ -85,13 +85,10 @@ An ignored test needs built components, Docker, a cluster, a broker, or a regist
 It takes its database from the same functions.
 When `--ignored` selects it, it fails and names its first missing input instead of skipping.
 
-The manual generation commands below still take URL variables.
-For them, run `pg_virtualenv -t -v 18 bash`.
-The shell receives its connection variables, and the server is removed when the shell exits.
 For Docker fixtures, choose a new container name and an unused loopback port.
 Make sure that a real query succeeds through the same connection path that the command uses.
 
-The `wamn-test-postgres` runner binary in `wamn-test-infrastructure` serves delivery tooling.
+The `wamn-test-postgres` runner binary in `wamn-test-infrastructure` serves delivery tooling and the manual generation commands below.
 Release qualification uses it for the generation database and the SQLx metadata check.
 It starts a server, creates the named database, and optionally applies migrations and history tables.
 It removes inherited PostgreSQL variables, sets each `--url-env` variable to the database URL, and runs the command.
@@ -171,7 +168,7 @@ Do not infer execution from the aggregate Cargo pass count.
 | `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
 | `[MGMT-LIVE]` | `services/scenario-worker/tests/management_live.rs`: runs by default on the test server and holds the process lock |
 | `[STD-GUEST-VIRTUALIZATION]` | `tests/integration/src/virtualized_std_guest.rs`: built guest files and its explicit `WAMN_STD_VIRTUALIZATION_*` inputs |
-| `[EVT-C-CDC]` | `tests/integration/src/cdcbench.rs` exposes a Rust entrypoint but no `wamn-gates` subcommand |
+| `[EVT-C-CDC]` | `tests/integration/src/cdcbench.rs`: exposes a Rust entrypoint but no `wamn-gates` subcommand, starts its own server with `wal_level=logical`, and needs a JetStream NATS at `--nats-url` |
 
 The source owners declare additional credentials, artifact paths, and selected assertions.
 Do not substitute shared services for missing test inputs.
@@ -262,16 +259,18 @@ Use a base-only database for Receiving and a separate base-plus-overlay database
 Otherwise, introspection can write overlay fields into generated base files.
 Use another database for WMS.
 
-Inside a fresh PostgreSQL 18 shell, prepare Receiving from its migrations:
+Run the generator under the `wamn-test-postgres` runner.
+Each run starts its own server, so each application gets a separate database.
+The runner creates the schema, sets it as the search path of the database, and applies the migrations in order.
+The example reads the database URL from `DATABASE_URL`.
+To check Receiving, run:
 
 ```bash
-createdb wamn_receiving
-psql -d wamn_receiving -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA receiving'
-for migration in apps/wamn_receiving/migrations/*.sql; do
-  psql -d wamn_receiving -v ON_ERROR_STOP=1 -f "$migration" || exit
-done
-RECEIVING_DATABASE_URL="postgresql://$PGUSER:$PGPASSWORD@127.0.0.1:$PGPORT/wamn_receiving"
-WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
+cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
+  --database wamn_receiving --schema receiving \
+  --migration-dir apps/wamn_receiving/migrations \
+  --history-manifest apps/wamn_receiving/wamn.json \
+  --url-env DATABASE_URL -- \
   cargo run --locked --offline -p wamn-schema-generator --example materialize_package \
   -- check apps/wamn_receiving
 ```
@@ -279,44 +278,25 @@ WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" \
 `check` and `write` plan every authored and generated statement as `wamn_app` under the grants that the package declaration derives.
 They do this in one transaction and roll it back, so the database keeps its roles and privileges.
 If the server has no `wamn_app` role, that transaction creates it.
-Connect as a role that can create roles, grant privileges, and set the role, such as the superuser of the fresh server.
+The runner URL names the superuser of the fresh server, which can create roles, grant privileges, and set the role.
 
-If a model declares a retention other than `"none"`, create the history table of that relation after the migrations.
-Do this before `check`, `write`, and SQLx prepare, so that `EXPLAIN` and SQLx prepare resolve authored SQL that names the history table.
-`record-history-app-grants.sql` grants the history read functions to `wamn_app`, and it fails if the server has no `wamn_app` role.
-The first command creates that role, so run it once for each server before the other commands.
-The second command installs the history table function.
-The third command grants the history read functions to `wamn_app`.
-The fourth command creates one history table:
-
-```bash
-psql -d wamn_receiving -v ON_ERROR_STOP=1 -c 'CREATE ROLE wamn_app NOLOGIN'
-psql -d wamn_receiving -v ON_ERROR_STOP=1 -f deploy/sql/record-history.sql
-psql -d wamn_receiving -v ON_ERROR_STOP=1 -f deploy/sql/record-history-app-grants.sql
-psql -d wamn_receiving -v ON_ERROR_STOP=1 \
-  -c "SELECT wamn_history.create_history_table('receiving', 'purchase_order', false)"
-```
-
-Repeat the fourth command for each logged relation, with its schema and relation name.
-Receiving logs `purchase_order` and `purchase_order_line`, so its generation database also needs this command:
-
-```bash
-psql -d wamn_receiving -v ON_ERROR_STOP=1 \
-  -c "SELECT wamn_history.create_history_table('receiving', 'purchase_order_line', false)"
-```
-
+`--history-manifest` creates the history table of each relation whose model declares a retention other than `"none"`.
+The runner does this after the migrations and before the command, so that `EXPLAIN` and SQLx prepare resolve authored SQL that names a history table.
+First it creates the `wamn_app` role and applies `deploy/sql/record-history.sql`.
+Then it applies `deploy/sql/record-history-app-grants.sql`, which grants the history read functions to `wamn_app`.
+Receiving logs `purchase_order` and `purchase_order_line`.
 Introspection leaves each history table out of the schema description.
-Acme and WMS declare no log of their own, so their generation databases need no history table.
+Acme and WMS declare no log of their own, so the runner creates no history table for them.
 
 `check` compares the complete generated path and byte set without changing it.
 For an intended declaration or SQL change, replace `check` with `write`.
 Review the generated files before building the guest and operator.
 Do not edit generated Rust directly.
 
-For Acme, apply the Receiving migrations first and then its overlay migrations in a separate database.
-Use `apps/client_acme_receiving` as the generation input.
-For WMS, create its declared schema and apply only `apps/wamn_wms/migrations/*.sql` in its separate database.
-Use `apps/wamn_wms` as the input.
+For Acme, pass `--migration-dir apps/wamn_receiving/migrations` before `--migration-dir apps/client_acme_receiving/migrations`.
+Use `apps/client_acme_receiving` for `--history-manifest` and as the generation input.
+For WMS, pass `--schema wms` and only `--migration-dir apps/wamn_wms/migrations`.
+Use `apps/wamn_wms` for `--history-manifest` and as the input.
 
 `.cargo/config.toml` sets `SQLX_OFFLINE=true`, so SQLx compiles from each application's committed `tests/.sqlx/` directory and needs no database.
 A `DATABASE_URL` in the environment does not change this.
@@ -336,18 +316,20 @@ At the start of a session, it compares them with the committed files at `HEAD`.
 A failed or interrupted preparation runs again in the next cycle.
 A Rust-only change does not prepare.
 
-To prepare the metadata manually after a Receiving SQL change, run:
+To prepare the metadata manually after a Receiving SQL change, run it under the runner.
+`cargo sqlx prepare` reads the database URL from `DATABASE_URL`:
 
 ```bash
-RECEIVING_SQLX_DATABASE_URL="${RECEIVING_DATABASE_URL}?options=-csearch_path%3Dreceiving%2Cpublic"
-(
-  cd apps/wamn_receiving/tests
-  CARGO_NET_OFFLINE=true cargo sqlx prepare -D "$RECEIVING_SQLX_DATABASE_URL" -- \
-    --test receiving_sqlx_verifier --locked --offline
-)
+cargo run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- \
+  --database wamn_receiving --schema receiving \
+  --migration-dir apps/wamn_receiving/migrations \
+  --history-manifest apps/wamn_receiving/wamn.json \
+  --url-env DATABASE_URL -- \
+  sh -c 'cd apps/wamn_receiving/tests && CARGO_NET_OFFLINE=true cargo sqlx prepare -- \
+    --test receiving_sqlx_verifier --locked --offline'
 ```
 
-For Acme, use its separate database, `apps/client_acme_receiving/tests`, and the `client_acme_sqlx_verifier` target.
+For Acme, use its runner arguments, `apps/client_acme_receiving/tests`, and the `client_acme_sqlx_verifier` target.
 For an explicit metadata comparison, use the same command with `prepare --check`.
 That comparison writes temporary output under the target and preserves committed metadata.
 Release qualification runs this comparison against a fresh database for each verifier.

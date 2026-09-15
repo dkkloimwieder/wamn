@@ -26,7 +26,7 @@ createdb receiving_walkthrough
 psql -X -d receiving_walkthrough -v ON_ERROR_STOP=1 -c 'CREATE SCHEMA receiving'
 psql -X -d receiving_walkthrough -v ON_ERROR_STOP=1 -f apps/wamn_receiving/migrations/0001_initial.sql
 psql -X -d receiving_walkthrough -v ON_ERROR_STOP=1 -f apps/wamn_receiving/migrations/0002_location_description.sql
-WAMN_SCHEMA_INTROSPECTION_PG_URL="$RECEIVING_DATABASE_URL" cargo +1.98.0 run --locked --offline -p wamn-schema-generator --example materialize_package -- write apps/wamn_receiving
+cargo +1.98.0 run --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres -- --database receiving_walkthrough --schema receiving --migration-dir apps/wamn_receiving/migrations --history-manifest apps/wamn_receiving/wamn.json --url-env DATABASE_URL -- cargo +1.98.0 run --locked --offline -p wamn-schema-generator --example materialize_package -- write apps/wamn_receiving
 (
   cd apps/wamn_receiving/tests
   CARGO_NET_OFFLINE=true cargo +1.98.0 sqlx prepare -D "$RECEIVING_SQLX_DATABASE_URL" -- --test receiving_sqlx_verifier --locked --offline
