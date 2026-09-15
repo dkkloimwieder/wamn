@@ -3,11 +3,13 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use tokio::sync::Notify;
 use tokio::time::{Instant, timeout};
+use tracing_subscriber::layer::SubscriberExt as _;
 use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ArtifactHash, ComponentOperationDependency,
     ComponentPackageScope, EffectiveReleaseId, PackageCoordinate, SERVING_MANIFEST_FORMAT_VERSION,
@@ -23,19 +25,20 @@ use wamn_runtime::plugins::wamn_blobstore::plugin::WamnBlobstore;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{WamnLogging, WamnLoggingConfig};
 use wamn_runtime::plugins::wamn_postgres::{
-    ReleaseIdentity, SessionClaims, StaticCredentialProvider, WamnPostgres,
+    ReleaseIdentity, SessionClaims, StaticCredentialProvider, WAMN_POSTGRES_ID, WamnPostgres,
 };
 use wamn_runtime::release_manifest::LoadedRelease;
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::{SharedCtx, extract_active_ctx};
 use wash_runtime::engine::dispatch::DispatchTarget;
 use wash_runtime::engine::workload::{ResolvedWorkload, WorkloadItem};
+use wash_runtime::host::http::NullServer;
 use wash_runtime::observability::{MeterKind, Meters};
 use wash_runtime::plugin::{HostPlugin, PluginBindings, WitInterfaces};
-use wash_runtime::types::LocalResources;
+use wash_runtime::types::{Component, LocalResources, Workload};
 use wash_runtime::wit::{WitInterface, WitWorld};
 
-use super::super::native_call::{NativeInvocation, invoke_native};
+use super::super::native_call::{NativeInvocation, invoke_native, prepare_native};
 use super::super::native_workload::{
     NativeApplication, NativeComponent, NativeWorkload, NativeWorkloadSpec, load_native_application,
 };
@@ -50,6 +53,7 @@ mod trace;
 const ROOT: &str = "root:entry/run@1.0.0";
 const CHILD: &str = "child:entry/run@1.0.0";
 const OBSERVE: &str = "test:authority/observe@1.0.0";
+const STATEMENTS: &str = "wamn:postgres/statements@0.1.0";
 const CHILD_MARKER: &str = "WAMN_NATIVE_POLICY_CHILD";
 const BUDGET: Duration = Duration::from_millis(200);
 const CLEANUP: Duration = Duration::from_secs(2);
@@ -90,10 +94,16 @@ enum Case {
     RunDeadline,
     Cancellation,
     Trap,
+    PostgresImport,
 }
 
 fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
     let nested = matches!(case, Case::NestedRefusal);
+    let postgres = if matches!(case, Case::PostgresImport) {
+        format!(r#"(import "{STATEMENTS}" (instance))"#)
+    } else {
+        String::new()
+    };
     let import = if nested {
         format!(
             r#"(import "{CHILD}" (instance $child
@@ -132,7 +142,7 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
         Case::NestedRefusal => "local.get $input i32.const 256 call $nested",
         Case::RunDeadline | Case::Cancellation => "(loop br 0)",
         Case::Trap => "unreachable",
-        Case::Success | Case::StartDeadline => {
+        Case::Success | Case::StartDeadline | Case::PostgresImport => {
             r"
           i32.const 264 local.get $input i32.load offset=96 i32.store
           i32.const 268 local.get $input i32.load offset=100 i32.store"
@@ -143,6 +153,7 @@ fn component_bytes(operation: &str, case: Case) -> Vec<u8> {
       {NODE_TYPES}
       (import "{OBSERVE}" (instance $observe
         (export "record" (func (param "phase" u32)))))
+      {postgres}
       {import}
       (core module $memory
         (memory (export "memory") 16)
@@ -392,6 +403,9 @@ impl Fixture {
         if matches!(case, Case::NestedRefusal) {
             root.imports.push(CHILD.into());
         }
+        if matches!(case, Case::PostgresImport) {
+            root.imports.push(STATEMENTS.into());
+        }
         native.push(NativeComponent {
             fact: root.clone(),
             bytes: root_bytes,
@@ -508,6 +522,7 @@ impl Fixture {
                     WitInterface::from(CHILD),
                     WitInterface::from(OBSERVE),
                     WitInterface::from("wamn:node/types@0.1.0"),
+                    WitInterface::from(STATEMENTS),
                 ],
             },
             Arc::clone(&policy),
@@ -732,6 +747,7 @@ async fn run_case(case: Case) {
                 assert!(!text.contains("deadline"), "{text}");
             }
             Case::Cancellation => unreachable!("cancellation has its own caller task"),
+            Case::PostgresImport => unreachable!("the postgres bind case has its own test"),
         }
     }
     fixture.assert_clean().await;
@@ -875,6 +891,127 @@ fn native_node_cancellation_revokes_invocation_authority() {
 #[test]
 fn native_node_trap_revokes_invocation_authority() {
     isolated("native_node_trap_revokes_invocation_authority", Case::Trap);
+}
+
+/// Counts `WARN` events whose message says wamn:postgres calls will be refused.
+#[derive(Clone, Default)]
+struct RefusedCallWarns(Arc<AtomicUsize>);
+
+impl RefusedCallWarns {
+    fn count(&self) -> usize {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for RefusedCallWarns {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _context: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        struct Message(String);
+        impl tracing::field::Visit for Message {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                if field.name() == "message" {
+                    self.0 = format!("{value:?}");
+                }
+            }
+        }
+        if *event.metadata().level() != tracing::Level::WARN {
+            return;
+        }
+        let mut message = Message(String::new());
+        event.record(&mut message);
+        if message.0.contains("calls will be refused") {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+async fn assert_postgres_bind_warns() {
+    let warns = RefusedCallWarns::default();
+    tracing::subscriber::set_global_default(tracing_subscriber::registry().with(warns.clone()))
+        .expect("the isolated test process installs the warn capture first");
+
+    // The driver's native path: preload, then one request, with an empty
+    // workload config that a wash bind would treat as a missing tenant.
+    let fixture = Fixture::new(Case::PostgresImport).await;
+    let target = fixture.target().await;
+    prepare_native(&target, Instant::now() + CLEANUP)
+        .await
+        .expect("preload the wamn:postgres node");
+    assert_eq!(warns.count(), 0, "the native preload does not warn");
+    let emission = invoke_native(&target, fixture.request(Instant::now() + CLEANUP))
+        .await
+        .expect("native dispatch succeeds")
+        .expect("typed node emission");
+    assert_eq!(emission.payload, r#"[{"value":37}]"#);
+    assert_eq!(warns.count(), 0, "a native request does not warn");
+    let postgres = &fixture.policy.resources.postgres;
+    assert!(
+        postgres.linker_entry_binds() > 0,
+        "the native bind linked the node's wamn:postgres import"
+    );
+    assert_eq!(postgres.scope_registrations(), 0);
+    fixture
+        .workload
+        .resolved
+        .unbind_all_plugins()
+        .await
+        .expect("unbind fixture workload");
+
+    // A wash bind of the same import with no tenant still warns, so the
+    // capture above counts this warn when it happens.
+    let wash = Arc::new(WamnPostgres::with_provider(Arc::new(
+        StaticCredentialProvider::new(HashMap::new(), None),
+    )));
+    let plugins: HashMap<&'static str, Arc<dyn HostPlugin>> =
+        HashMap::from([(WAMN_POSTGRES_ID, Arc::clone(&wash) as Arc<dyn HostPlugin>)]);
+    let resolved = wamn_runtime::build_engine(&[])
+        .expect("production engine")
+        .initialize_workload(
+            "wash-postgres-bind",
+            Workload {
+                namespace: "test".into(),
+                name: "wash-postgres-bind".into(),
+                annotations: HashMap::new(),
+                service: None,
+                components: vec![Component {
+                    name: "wash-postgres".into(),
+                    bytes: wat::parse_str(format!(
+                        r#"(component (import "{STATEMENTS}" (instance)))"#
+                    ))
+                    .expect("encode the wash postgres guest")
+                    .into(),
+                    ..Component::default()
+                }],
+                host_interfaces: vec![WitInterface::from(STATEMENTS)],
+                volumes: Vec::new(),
+            },
+        )
+        .expect("initialize the wash workload")
+        .resolve(
+            Some(&plugins),
+            &PluginBindings::new(),
+            Arc::new(NullServer::default()),
+            &Meters::new(MeterKind::Off),
+        )
+        .await
+        .expect("resolve the wash workload");
+    assert_eq!(wash.scope_registrations(), 1);
+    assert_eq!(warns.count(), 1, "a wash bind with no tenant warns once");
+    resolved
+        .unbind_all_plugins()
+        .await
+        .expect("unbind wash workload");
+}
+
+#[test]
+fn native_postgres_guest_binds_without_the_tenant_warn() {
+    run_isolated_test(
+        "native_postgres_guest_binds_without_the_tenant_warn",
+        assert_postgres_bind_warns(),
+    );
 }
 
 #[tokio::test]
