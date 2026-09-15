@@ -384,6 +384,7 @@ pub async fn publish(
         artifact_base: inputs.component_artifact_base.clone(),
         registry_auth_file: inputs.registry_auth_file.clone(),
         insecure_registry: true,
+        oci_ca_paths: Vec::new(),
         admitted_platform_packages: admitted.iter().map(|value| (*value).to_owned()).collect(),
         project_database_url: route.database_url.clone(),
         control_database_url: inputs.system_pg_url.clone(),
@@ -507,6 +508,7 @@ pub async fn publish(
         artifact_base: inputs.release_artifact_base.clone(),
         registry_auth_file: inputs.registry_auth_file.clone(),
         insecure_registry: true,
+        oci_ca_paths: Vec::new(),
     })
         .await?;
     }

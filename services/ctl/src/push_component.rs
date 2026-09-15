@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Args;
-use oci_client::client::{ClientConfig, ClientProtocol, Config, ImageLayer};
+use oci_client::client::{
+    Certificate, CertificateEncoding, ClientConfig, ClientProtocol, Config, ImageLayer,
+};
 use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
@@ -28,7 +30,7 @@ use wamn_runtime::component_artifact::{
     component_artifact_config_bytes, component_artifact_layout, component_artifact_reference,
 };
 use wamn_runtime::component_artifact_source::{
-    ComponentArtifactSource, ComponentArtifactSourceConfig,
+    ComponentArtifactSource, ComponentArtifactSourceConfig, OCI_CA_PATHS_ENV, read_ca_bundles,
 };
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use wamn_schema_control::connections::ComponentConnectionRequirement;
@@ -302,6 +304,11 @@ pub struct PushComponentArgs {
     #[arg(long, default_value_t = false)]
     pub insecure_registry: bool,
 
+    /// PEM CA bundle trusted for the registry, on top of the compiled-in
+    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
+    #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
+    pub oci_ca_paths: Vec<PathBuf>,
+
     /// Exact admitted `wamn:<package>` capability. Repeat for each package the
     /// closed platform registry grants this component.
     #[arg(long = "admit-platform-package")]
@@ -338,6 +345,8 @@ pub struct PublishAdmittedComponentArgs {
     pub registry_auth_file: PathBuf,
     /// Whether the exact registry host may use plain HTTP.
     pub insecure_registry: bool,
+    /// PEM CA bundles trusted for the registry on top of the compiled-in roots.
+    pub oci_ca_paths: Vec<PathBuf>,
     /// Already-applied project database receiving the admitted facts.
     pub project_database_url: String,
     /// Control database receiving the identical admitted facts.
@@ -351,6 +360,7 @@ impl fmt::Debug for PublishAdmittedComponentArgs {
             .field("artifact_base", &self.artifact_base)
             .field("registry_auth_file", &self.registry_auth_file)
             .field("insecure_registry", &self.insecure_registry)
+            .field("oci_ca_paths", &self.oci_ca_paths)
             .field("project_database_url", &"[redacted]")
             .field("control_database_url", &"[redacted]")
             .finish()
@@ -541,6 +551,7 @@ pub async fn publish_admitted_component(
         &reference,
         &args.artifact_base,
         args.insecure_registry,
+        &args.oci_ca_paths,
         &admission.component_bytes,
         &config_bytes,
         admitted,
@@ -605,6 +616,7 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
         artifact_base,
         registry_auth_file,
         insecure_registry,
+        oci_ca_paths,
         admitted_platform_packages,
         project_database_url,
         control_database_url,
@@ -622,6 +634,7 @@ pub async fn run(args: PushComponentArgs) -> anyhow::Result<()> {
             artifact_base,
             registry_auth_file,
             insecure_registry,
+            oci_ca_paths,
             project_database_url,
             control_database_url,
         },
@@ -1170,10 +1183,15 @@ fn read_package_owned_file(
     })
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the push and its verification pull share one registry's transport facts"
+)]
 async fn publish_and_verify(
     reference: &Reference,
     artifact_base: &str,
     insecure: bool,
+    oci_ca_paths: &[PathBuf],
     component_bytes: &[u8],
     config_bytes: &[u8],
     component: &AdmittedComponent,
@@ -1192,10 +1210,18 @@ async fn publish_and_verify(
     // below. Routing through that API would discard the admitted fact. See
     // `docs/architecture/native-alignment.md#retained-wamn-implementations`
     // (`wamn-kdhw`).
+    let ca_bundles = read_ca_bundles(oci_ca_paths).context("read component registry CA bundles")?;
     let client = OciClient::new(ClientConfig {
         protocol,
         read_timeout: Some(REGISTRY_IO_TIMEOUT),
         connect_timeout: Some(REGISTRY_IO_TIMEOUT),
+        extra_root_certificates: ca_bundles
+            .into_iter()
+            .map(|data| Certificate {
+                encoding: CertificateEncoding::Pem,
+                data,
+            })
+            .collect(),
         ..ClientConfig::default()
     });
     let auth = RegistryAuth::Basic(
@@ -1221,6 +1247,8 @@ async fn publish_and_verify(
     let source_config =
         ComponentArtifactSourceConfig::new(artifact_base, insecure, REGISTRY_IO_TIMEOUT)
             .context("configure published component verification source")?
+            .with_ca_paths(oci_ca_paths)
+            .context("read component registry CA bundles")?
             .with_credentials(credentials.clone());
     ComponentArtifactSource::new(source_config)
         .pull_verified(component)
@@ -2655,6 +2683,7 @@ mod tests {
             artifact_base: artifact_base.clone(),
             registry_auth_file: PathBuf::from(&registry_auth_file),
             insecure_registry: true,
+            oci_ca_paths: Vec::new(),
             project_database_url: verification_url.to_string(),
             control_database_url: control_url.to_string(),
         };
@@ -3313,9 +3342,14 @@ mod tests {
     #[ignore = "requires a disposable registry in WAMN_COMPONENT_ARTIFACT_BASE"]
     async fn production_publisher_and_puller_round_trip_exact_bytes() {
         let artifact_base = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
-            .expect("set WAMN_COMPONENT_ARTIFACT_BASE to a disposable HTTP registry/repository");
+            .expect("set WAMN_COMPONENT_ARTIFACT_BASE to a disposable registry/repository");
         let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")
             .expect("set WAMN_REGISTRY_AUTH_FILE to its Docker config credential");
+        // A CA names a TLS registry; without one the registry stays plain HTTP.
+        let oci_ca_paths: Vec<PathBuf> = std::env::var(OCI_CA_PATHS_ENV)
+            .map(|paths| paths.split(',').map(PathBuf::from).collect())
+            .unwrap_or_default();
+        let insecure_registry = oci_ca_paths.is_empty();
         let operation = "wamn:node/handler@0.1.0";
         let mut resolve = wit_parser::Resolve::new();
         let package = resolve
@@ -3392,7 +3426,8 @@ mod tests {
         publish_and_verify(
             &reference,
             &artifact_base,
-            true,
+            insecure_registry,
+            &oci_ca_paths,
             &component_bytes,
             &config_bytes,
             &component,

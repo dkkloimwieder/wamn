@@ -254,6 +254,7 @@ pub(super) async fn push_journey_components(
             artifact_base: inputs.component_artifact_base.clone(),
             registry_auth_file: inputs.registry_auth_file.clone(),
             insecure_registry: true,
+            oci_ca_paths: Vec::new(),
             admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
             project_database_url: project_url.to_owned(),
             control_database_url: system_url.to_owned(),
@@ -585,6 +586,7 @@ pub(super) async fn publish_journey_release(
         artifact_base: inputs.release_artifact_base.clone(),
         registry_auth_file: inputs.registry_auth_file.clone(),
         insecure_registry: true,
+        oci_ca_paths: Vec::new(),
         control_database_url: system_url.to_owned(),
     })
     .await

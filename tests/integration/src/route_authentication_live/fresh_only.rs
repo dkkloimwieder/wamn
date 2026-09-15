@@ -172,6 +172,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         artifact_base: test.inputs.component_artifact_base.clone(),
         registry_auth_file: test.inputs.registry_auth_file.clone(),
         insecure_registry: true,
+        oci_ca_paths: Vec::new(),
         admitted_platform_packages: vec!["wamn:node".to_owned(), "wamn:postgres".to_owned()],
         project_database_url: test.project_url.to_owned(),
         control_database_url: test.inputs.system_pg_url.clone(),
@@ -246,6 +247,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
         artifact_base: test.inputs.release_artifact_base.clone(),
         registry_auth_file: test.inputs.registry_auth_file.clone(),
         insecure_registry: true,
+        oci_ca_paths: Vec::new(),
         control_database_url: test.inputs.system_pg_url.clone(),
     })
     .await?;

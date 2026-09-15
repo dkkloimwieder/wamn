@@ -56,6 +56,7 @@ apply-package owns the grants of the `wamn_audit_retention` role on history tabl
 It grants and revokes them in the transaction that writes the log triggers.
 Reconcile generated data privileges with `wamn-ctl reconcile-package-data-access`.
 Publish the selected component bytes with `wamn-ctl push-component`.
+If the registry certificate chains to a private CA, pass that CA with `--oci-ca-path` or `WASH_OCI_CA_PATHS`.
 Submit their wiring with `wamn-ctl author-wiring`, and bind declared connection aliases with `wamn-ctl bind-connection`.
 Read each command's current required arguments with `--help`.
 
@@ -116,6 +117,7 @@ wamn-ctl print-release-env \
 Publication freezes the effective release and its canonical manifest digest.
 [Qualify the exact candidate](delivery.md#candidate-qualification) before publication.
 The push requires that result, reads the frozen snapshot, and refuses conflicting artifact bytes.
+It takes the same `--oci-ca-path` input as `push-component`.
 `print-release-env` prints the executor environment entries and host flags without editing files.
 
 Copy its output into the executor manifest and the selected complete host overlay.

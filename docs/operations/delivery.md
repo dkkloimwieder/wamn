@@ -119,6 +119,7 @@ wamn-ctl publish-qualified-release \
   --qualification "$DELIVERY_QUALIFICATION" "${release_args[@]}"
 ```
 
+If the registry certificate chains to a private CA, add `--oci-ca-path` with that CA to `release_args`, or set `WASH_OCI_CA_PATHS`.
 If the registry uses HTTP, add `--insecure-registry` for that registry.
 The existing publisher preserves an exact retry and refuses conflicting content or source attribution.
 Different release bytes require a different identity through the existing release creation command.
@@ -182,4 +183,4 @@ The command bounds deployment to 15 minutes and each Kubernetes rollout wait to 
 Failure or interruption leaves the activation transaction uncommitted and reports failure.
 Workload changes and an application mutation can already exist when failure occurs.
 Inspect that state before another authorized attempt because the command does not reset the database or roll back workloads automatically.
-For private registry roots during deployment pulls, pass `--oci-ca-path` or `WASH_OCI_CA_PATHS`.
+The deployment pull uses the same `--oci-ca-path` roots from `release_args`.

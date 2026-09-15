@@ -79,7 +79,12 @@
 # repo path (wamn/materializer:dev) resolve to the same manifest/blobs.
 #
 # The HTTP workload example uses the same trust and credential directory.
-# WAMN custom component publication remains `wamn-ctl push-component`.
+# WAMN custom component publication remains `wamn-ctl push-component`, and
+# `wamn-ctl publish-qualified-release` publishes the release manifest. Over the
+# same port-forward both take the same CA as `--oci-ca-path /tmp/wamn-ca.crt`
+# (env `WASH_OCI_CA_PATHS`) with `--artifact-base localhost:5000/<repository>`,
+# and neither passes `--insecure-registry`. Their `--registry-auth-file` needs
+# the exact `localhost:5000` key (registry-credentials.example.yaml).
 #
 # [15.45] Storage is a PersistentVolumeClaim: a pod restart no longer loses every
 # blob, so readiness prefetch does not fail cluster-wide until someone

@@ -87,11 +87,7 @@ impl ComponentArtifactSourceConfig {
     ///
     /// Empty `paths` leave this source on the compiled-in roots.
     pub fn with_ca_paths(mut self, paths: &[PathBuf]) -> Result<Self, ComponentArtifactCaError> {
-        for path in paths {
-            let bundle = std::fs::read(path)
-                .map_err(|source| ComponentArtifactCaError::unreadable(path, source))?;
-            self.ca_bundles.push(bundle);
-        }
+        self.ca_bundles.extend(read_ca_bundles(paths)?);
         Ok(self)
     }
 
@@ -123,6 +119,27 @@ impl fmt::Debug for ComponentArtifactSourceConfig {
             .field("extra_ca_bundles", &self.ca_bundles.len())
             .finish()
     }
+}
+
+/// Environment variable carrying `--oci-ca-path` values, comma-delimited.
+///
+/// The spelling wash's own host CLI uses (`crates/wash/src/cli/host.rs`).
+pub const OCI_CA_PATHS_ENV: &str = "WASH_OCI_CA_PATHS";
+
+/// Read the PEM CA bundles at `paths`, in order, as extra OCI trust roots.
+///
+/// The one reader behind [`ComponentArtifactSourceConfig::with_ca_paths`] and
+/// the ctl publishers, which build their own `oci-client` for the same
+/// registry. It reads the files and does not check that each bundle is a usable
+/// trust root; the builder above says where that check lives and what
+/// `oci-client` does without it.
+pub fn read_ca_bundles(paths: &[PathBuf]) -> Result<Vec<Vec<u8>>, ComponentArtifactCaError> {
+    paths
+        .iter()
+        .map(|path| {
+            std::fs::read(path).map_err(|source| ComponentArtifactCaError::unreadable(path, source))
+        })
+        .collect()
 }
 
 /// Contextual refusal from the extra OCI trust-root boundary.
@@ -647,6 +664,32 @@ mod tests {
         )
         .expect_err("embedded credentials refuse");
         assert!(!format!("{error:?} {error}").contains("super-secret"));
+    }
+
+    #[test]
+    fn ca_bundles_read_in_order_and_an_unreadable_path_refuses_by_name() {
+        let root = std::env::temp_dir().join(format!("wamn-oci-ca-bundles-{}", std::process::id()));
+        std::fs::create_dir(&root).expect("create owned CA bundle fixture");
+        let first = root.join("first.pem");
+        let second = root.join("second.pem");
+        std::fs::write(&first, b"first bundle").unwrap();
+        std::fs::write(&second, b"second bundle").unwrap();
+
+        assert_eq!(
+            read_ca_bundles(&[second.clone(), first.clone()]).unwrap(),
+            vec![b"second bundle".to_vec(), b"first bundle".to_vec()]
+        );
+        assert!(read_ca_bundles(&[]).unwrap().is_empty());
+
+        let missing = root.join("missing.pem");
+        let error = read_ca_bundles(&[first.clone(), missing.clone()])
+            .expect_err("an unreadable bundle refuses");
+        assert!(error.to_string().contains(&missing.display().to_string()));
+        assert!(std::error::Error::source(&error).is_some());
+
+        std::fs::remove_file(first).unwrap();
+        std::fs::remove_file(second).unwrap();
+        std::fs::remove_dir(root).unwrap();
     }
 
     #[test]

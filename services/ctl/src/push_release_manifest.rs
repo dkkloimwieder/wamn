@@ -14,13 +14,14 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::Args;
-use oci_client::client::{ClientConfig, ClientProtocol};
+use oci_client::client::{Certificate, CertificateEncoding, ClientConfig, ClientProtocol};
 use oci_client::errors::{OciDistributionError, OciErrorCode};
 use oci_client::manifest::OciImageManifest;
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client as OciClient, Reference};
 use tokio_postgres::{Client as PgClient, NoTls};
 use wamn_catalog::{ManifestDigest, ServingManifest, ServingRelease};
+use wamn_runtime::component_artifact_source::{OCI_CA_PATHS_ENV, read_ca_bundles};
 use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use wamn_runtime::release_manifest_artifact::{
     RELEASE_MANIFEST_CONFIG_BYTES, ReleaseManifestArtifactBlobs, release_manifest_artifact_layout,
@@ -43,6 +44,7 @@ pub enum ReleaseManifestPublishErrorKind {
     Document,
     Reference,
     Credential,
+    TrustAnchor,
     Transport,
     Conflict,
 }
@@ -53,6 +55,7 @@ impl ReleaseManifestPublishErrorKind {
             Self::Document => "document",
             Self::Reference => "reference",
             Self::Credential => "credential",
+            Self::TrustAnchor => "trust-anchor",
             Self::Transport => "transport",
             Self::Conflict => "conflict",
         }
@@ -178,6 +181,11 @@ pub struct PushReleaseManifestArgs {
     #[arg(long, default_value_t = false)]
     pub insecure_registry: bool,
 
+    /// PEM CA bundle trusted for the registry, on top of the compiled-in
+    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
+    #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
+    pub oci_ca_paths: Vec<PathBuf>,
+
     /// Owner URL to the CONTROL database this deployment is attested in
     /// (wamn-0h0g.8.27).
     ///
@@ -222,6 +230,7 @@ async fn run_with_provenance(
         &canonical_bytes,
         &args.artifact_base,
         args.insecure_registry,
+        &args.oci_ca_paths,
         &args.registry_auth_file,
     )
     .await?;
@@ -302,6 +311,7 @@ pub async fn publish_release_manifest(
     canonical_bytes: &[u8],
     artifact_base: &str,
     insecure_registry: bool,
+    oci_ca_paths: &[PathBuf],
     registry_auth_file: &Path,
 ) -> Result<PublishedReleaseManifest, ReleaseManifestPublishError> {
     let (admitted, digest) =
@@ -337,7 +347,15 @@ pub async fn publish_release_manifest(
         artifact.repository().to_owned(),
         artifact.tag().to_owned(),
     );
-    let client = registry_client(artifact.registry(), insecure_registry);
+    let ca_bundles = read_ca_bundles(oci_ca_paths).map_err(|source| {
+        ReleaseManifestPublishError::with_source(
+            ReleaseManifestPublishErrorKind::TrustAnchor,
+            "release-manifest-ca-bundle-unreadable",
+            format!("read CA bundles for registry {}", artifact.registry()),
+            source,
+        )
+    })?;
+    let client = registry_client(artifact.registry(), insecure_registry, ca_bundles);
     let auth = registry_auth(&credentials);
 
     if probe_exact_artifact(&client, &reference, &auth, canonical_bytes, &digest).await? {
@@ -392,7 +410,7 @@ pub async fn publish_release_manifest(
 /// `OciErrorCode::ManifestUnknown` discrimination for the exact-retry probe,
 /// neither of which survives that API. See standing trigger 5 in
 /// `docs/architecture/native-alignment.md#retained-wamn-implementations` (`wamn-kdhw`).
-fn registry_client(registry: &str, insecure_registry: bool) -> OciClient {
+fn registry_client(registry: &str, insecure_registry: bool, ca_bundles: Vec<Vec<u8>>) -> OciClient {
     let protocol = if insecure_registry {
         ClientProtocol::HttpsExcept(vec![registry.to_owned()])
     } else {
@@ -402,6 +420,13 @@ fn registry_client(registry: &str, insecure_registry: bool) -> OciClient {
         protocol,
         read_timeout: Some(REGISTRY_IO_TIMEOUT),
         connect_timeout: Some(REGISTRY_IO_TIMEOUT),
+        extra_root_certificates: ca_bundles
+            .into_iter()
+            .map(|data| Certificate {
+                encoding: CertificateEncoding::Pem,
+                data,
+            })
+            .collect(),
         ..ClientConfig::default()
     })
 }
@@ -754,11 +779,17 @@ mod tests {
             .expect("set WAMN_RELEASE_MANIFEST_ARTIFACT_BASE to a disposable repository");
         let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")
             .expect("set WAMN_REGISTRY_AUTH_FILE to its Docker config credential");
+        // A CA names a TLS registry; without one the registry stays plain HTTP.
+        let oci_ca_paths: Vec<PathBuf> = std::env::var(OCI_CA_PATHS_ENV)
+            .map(|paths| paths.split(',').map(PathBuf::from).collect())
+            .unwrap_or_default();
+        let insecure_registry = oci_ca_paths.is_empty();
 
         let first = publish_release_manifest(
             CANONICAL_MANIFEST,
             &artifact_base,
-            true,
+            insecure_registry,
+            &oci_ca_paths,
             Path::new(&registry_auth_file),
         )
         .await
@@ -766,7 +797,8 @@ mod tests {
         let retry = publish_release_manifest(
             CANONICAL_MANIFEST,
             &artifact_base,
-            true,
+            insecure_registry,
+            &oci_ca_paths,
             Path::new(&registry_auth_file),
         )
         .await

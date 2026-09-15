@@ -70,8 +70,6 @@ pub struct DeployArgs {
     /// Private credential file, excluded from qualified artifacts and output.
     #[arg(long)]
     pub bearer_file: PathBuf,
-    #[arg(long = "oci-ca-path", env = "WASH_OCI_CA_PATHS", value_delimiter = ',')]
-    pub oci_ca_paths: Vec<PathBuf>,
 }
 
 pub async fn select(args: SelectArgs) -> anyhow::Result<()> {
@@ -134,7 +132,7 @@ pub async fn run(args: DeployArgs) -> anyhow::Result<()> {
         args.release.insecure_registry,
         &args.release.registry_auth_file,
     )?
-    .with_ca_paths(&args.oci_ca_paths)?;
+    .with_ca_paths(&args.release.oci_ca_paths)?;
     let pulled = source
         .pull_verified(snapshot.carrier.manifest_digest.as_str())
         .await?;
