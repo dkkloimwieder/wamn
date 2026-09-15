@@ -78,6 +78,9 @@ pub mod state;
 pub mod system_reader;
 /// The pure derivation guest RLS uses to reach a tenant from `current_user`.
 pub mod tenant_key;
+/// Test databases with the system control store floor.
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_database;
 pub mod workload_role;
 
 #[cfg(feature = "ops")]

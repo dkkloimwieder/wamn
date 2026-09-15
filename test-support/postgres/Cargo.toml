@@ -1,0 +1,25 @@
+[package]
+name = "wamn-test-postgres"
+description = "Private PostgreSQL 18 servers and databases for tests."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+hex = { workspace = true }
+ring = { workspace = true }
+rustix = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "process", "signal"] }
+url = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt"] }
+
+[lints]
+workspace = true

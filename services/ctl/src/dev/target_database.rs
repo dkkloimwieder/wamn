@@ -552,7 +552,7 @@ mod tests {
     #[ignore = "starts an owned disposable PostgreSQL 18 server"]
     async fn local_lease_retains_data_and_reset_reapplies_exact_configuration() -> anyhow::Result<()>
     {
-        let mut server = wamn_test_infrastructure::postgres::start()?;
+        let mut server = wamn_test_infrastructure::postgres::start(&[])?;
         let admin_database = server.database("postgres")?;
         let template_database = server.create_database("target_template")?;
         let target_database = server.create_database("target")?;

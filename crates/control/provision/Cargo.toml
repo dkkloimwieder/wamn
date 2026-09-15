@@ -8,6 +8,9 @@ license.workspace = true
 [features]
 default = []
 ops = []
+# The system test database floor (`test_database`). It starts a private
+# PostgreSQL server for the test process, so no production build enables it.
+test-util = ["dep:wamn-test-postgres"]
 
 [[test]]
 name = "dump"
@@ -56,6 +59,7 @@ wamn-schema-generator = { workspace = true }
 hex = { workspace = true }
 sha2 = { workspace = true }
 url = { workspace = true }
+wamn-test-postgres = { workspace = true, optional = true }
 
 # No database or Kubernetes effects. The builders return text, JSON, and native
 # broker configuration values. The `provision-project-env` driver (wamn-ctl) holds
@@ -74,6 +78,7 @@ chrono = { workspace = true, features = ["std"] }
 # This test edge adds no database effects to the production builders.
 wamn-schema-control = { workspace = true }
 wamn-record-history = { workspace = true }
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

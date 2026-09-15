@@ -18,6 +18,10 @@ mod wiring;
 mod wiring_activation;
 mod wiring_compatibility;
 
+/// Test databases with the tenant catalog floor.
+#[cfg(feature = "test-util")]
+pub mod test_database;
+
 pub use component_library::{
     AdmittedComponent, AdmittedComponentEffect, AdmittedComponentFacts, AdmittedComponentOperation,
     AdmittedComponentParameter, AdmittedComponentPort, ComponentConnection,

@@ -275,6 +275,10 @@ pub const TABLES: &[Table] = &[
     API_KEYS,
 ];
 
+/// Test databases with the tenant+app_system floor.
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_database;
+
 #[cfg(test)]
 mod tests {
     use super::*;

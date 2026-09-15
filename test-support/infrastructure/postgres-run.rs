@@ -78,7 +78,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let mut command =
         tokio::process::Command::new(program.context("a test command after -- is required")?);
     command.args(args);
-    let mut server = postgres::start()?;
+    let mut server = postgres::start(&[])?;
     let owned = server.create_database(&database)?;
     let setup = apply_migrations(
         &server,

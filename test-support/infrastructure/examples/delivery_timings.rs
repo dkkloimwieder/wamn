@@ -283,7 +283,7 @@ async fn main() -> anyhow::Result<()> {
     let event_url = format!("nats://{events}");
     event_broker::connect(&broker.provisioning, &event_url).await?;
     event_broker::connect(&broker.runtime, &event_url).await?;
-    let mut server = postgres::start()?;
+    let mut server = postgres::start(&[])?;
     let database = server.create_database("wamn_system")?;
     server.require_url(database.url())?;
     let endpoint = url::Url::parse(database.url())?;

@@ -7,7 +7,7 @@ pub mod declarations;
 pub mod event_broker;
 pub mod executor;
 pub mod platform;
-pub mod postgres;
+pub use wamn_test_postgres as postgres;
 
 pub mod rendering;
 pub mod scratch;

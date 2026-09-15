@@ -166,7 +166,7 @@ async fn seed_release(client: &Client, id: i32, version: &str, hash: char) -> Se
 #[tokio::test]
 #[ignore = "starts an owned disposable PostgreSQL 18 server"]
 async fn owned_selection_lock_refuses_late_activation_and_changed_installed_schema() {
-    let mut server = wamn_test_infrastructure::postgres::start().unwrap();
+    let mut server = wamn_test_infrastructure::postgres::start(&[]).unwrap();
     let database = server.create_database("delivery_order").unwrap();
     server.require_url(database.url()).unwrap();
     let (mut first, first_connection) = tokio_postgres::connect(database.url(), NoTls)

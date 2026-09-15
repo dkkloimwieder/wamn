@@ -5571,6 +5571,7 @@ dependencies = [
  "wamn-control-provision",
  "wamn-event-wire",
  "wamn-execution-contract",
+ "wamn-test-postgres",
 ]
 
 [[package]]
@@ -5717,6 +5718,7 @@ dependencies = [
  "wamn-run-state",
  "wamn-schema-control",
  "wamn-schema-generator",
+ "wamn-test-postgres",
 ]
 
 [[package]]
@@ -6089,8 +6091,10 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "uuid",
+ "wamn-catalog",
  "wamn-control-provision",
  "wamn-runtime",
+ "wamn-test-postgres",
 ]
 
 [[package]]
@@ -6404,6 +6408,21 @@ dependencies = [
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-schema-generator",
+ "wamn-test-postgres",
+]
+
+[[package]]
+name = "wamn-test-postgres"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "ring",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
 ]
 
 [[package]]

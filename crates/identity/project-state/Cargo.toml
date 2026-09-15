@@ -5,8 +5,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# The tenant+app_system test database floor (`test_database`). It starts a
+# private PostgreSQL server for the test process, so no production build enables it.
+test-util = ["dep:wamn-catalog", "dep:wamn-test-postgres"]
+
 [dependencies]
 uuid = { workspace = true, features = ["v5"] }
+wamn-catalog = { workspace = true, optional = true, features = ["test-util"] }
+wamn-test-postgres = { workspace = true, optional = true }
 
 [dev-dependencies]
 wamn-control-provision = { workspace = true }
@@ -14,6 +21,8 @@ wamn-control-provision = { workspace = true }
 # timestamptz canonicalizer, which lives in the runtime.
 chrono = { workspace = true }
 wamn-runtime = { workspace = true }
+wamn-catalog = { workspace = true, features = ["test-util"] }
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true
