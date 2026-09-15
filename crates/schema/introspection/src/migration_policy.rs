@@ -6,9 +6,11 @@
 //! boundary frozen in `wamn:postgres@0.1.0`, where the host selects the schema
 //! and guests name relations unqualified.
 //!
-//! The validator intentionally admits only the DDL shapes currently demanded by
-//! Receiving: schema-qualified ordinary `CREATE TABLE`, one additive client
-//! column, or one named client check constraint. PostgreSQL remains responsible
+//! The validator admits only additive DDL: schema-qualified ordinary
+//! `CREATE TABLE`, one additive client column, or one named client check
+//! constraint. An added column is either nullable with a modeled type and no
+//! default, or one of the two demanded non-null default forms; every shape that
+//! rewrites existing rows stays refused. PostgreSQL remains responsible
 //! for parsing definitions, while post-apply catalog introspection validates
 //! their resulting objects. This layer refuses statement operations that the
 //! final catalog state cannot establish.
@@ -18,6 +20,8 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+
+use crate::ir::postgres_type;
 
 /// Stable internal class for a refused migration artifact.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -545,9 +549,10 @@ fn validate_add_column(
             "ADD COLUMN requires one unquoted column name",
         );
     };
-    let admitted = (word(tokens, 8, "boolean")
-        && words(tokens, 9, &["not", "null", "default", "false"])
-        && tokens.len() == 13)
+    let admitted = is_nullable_modeled_column(&tokens[8..])
+        || (word(tokens, 8, "boolean")
+            && words(tokens, 9, &["not", "null", "default", "false"])
+            && tokens.len() == 13)
         || (word(tokens, 8, "text")
             && words(tokens, 9, &["not", "null", "default"])
             && matches!(tokens.get(12), Some(Token::StringLiteral("'not_required'")))
@@ -560,10 +565,35 @@ fn validate_add_column(
             path,
             statement_index,
             format!(
-                "table {table_name:?} column {column_name:?} must use a demanded non-null boolean or text default"
+                "table {table_name:?} column {column_name:?} must be nullable with a modeled type and no default, or use a demanded non-null boolean or text default"
             ),
         )
     }
+}
+
+/// Report whether the tokens after the column name are a modeled type alone.
+///
+/// A nullable column with no default and no further clause adds no value to any
+/// existing row, so PostgreSQL records it in the catalog without a rewrite. The
+/// admitted type spellings are exactly the ones introspection maps to the frozen
+/// column types, so the generator can model every column the policy admits. Any
+/// further token, including a default, a constraint clause, a collation, or a
+/// type modifier, leaves the spelling unmapped and refuses.
+fn is_nullable_modeled_column(type_tokens: &[Token<'_>]) -> bool {
+    if type_tokens.is_empty() {
+        return false;
+    }
+    let mut spelling = String::new();
+    for token in type_tokens {
+        let Token::Word(word) = token else {
+            return false;
+        };
+        if !spelling.is_empty() {
+            spelling.push(' ');
+        }
+        spelling.push_str(&word.to_ascii_lowercase());
+    }
+    postgres_type(&spelling).is_ok()
 }
 
 fn validate_add_constraint(

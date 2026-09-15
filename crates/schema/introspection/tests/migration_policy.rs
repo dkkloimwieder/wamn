@@ -73,7 +73,7 @@ fn admits_every_manifest_schema_and_refuses_an_out_of_set_target() {
 }
 
 #[test]
-fn admits_only_the_demanded_overlay_additions() {
+fn admits_the_demanded_overlay_additions() {
     let artifact = TempArtifact::write(
         "sql",
         r#"
@@ -89,6 +89,58 @@ ALTER TABLE receiving.purchase_order
 
     validate_migration_file(artifact.path(), "receiving")
         .expect("the two client fields and named check are the admitted overlay DDL");
+}
+
+#[test]
+fn admits_a_nullable_column_of_every_modeled_type() {
+    for column_type in [
+        "boolean",
+        "integer",
+        "bigint",
+        "double precision",
+        "text",
+        "bytea",
+        "numeric",
+        "timestamp with time zone",
+        "jsonb",
+        "uuid",
+    ] {
+        let sql =
+            format!("ALTER TABLE receiving.location ADD COLUMN acme_description {column_type};");
+        let artifact = TempArtifact::write("sql", &sql);
+        validate_migration_file(artifact.path(), "receiving")
+            .unwrap_or_else(|error| panic!("{sql} must be admitted: {error}"));
+    }
+
+    let uppercase = TempArtifact::write(
+        "sql",
+        "ALTER TABLE receiving.location ADD COLUMN acme_moved_at TIMESTAMP WITH TIME ZONE;",
+    );
+    validate_migration_file(uppercase.path(), "receiving")
+        .expect("the type spelling is admitted without regard to case");
+}
+
+#[test]
+fn a_nullable_column_admits_no_further_clause_and_no_unmodeled_type() {
+    for sql in [
+        "ALTER TABLE receiving.location ADD COLUMN acme_description varchar;",
+        "ALTER TABLE receiving.location ADD COLUMN acme_description text[];",
+        "ALTER TABLE receiving.location ADD COLUMN acme_description numeric(10, 2);",
+        "ALTER TABLE receiving.location ADD COLUMN acme_description text COLLATE \"C\";",
+        "ALTER TABLE receiving.location ADD COLUMN acme_description text DEFAULT 'open';",
+        "ALTER TABLE receiving.location ADD COLUMN acme_description text NOT NULL;",
+        "ALTER TABLE receiving.location ADD COLUMN acme_moved_at timestamp with time zone DEFAULT now();",
+        "ALTER TABLE receiving.location ADD COLUMN acme_id uuid REFERENCES receiving.area (id);",
+        "ALTER TABLE receiving.location ADD COLUMN acme_id uuid PRIMARY KEY;",
+        "ALTER TABLE receiving.location ADD COLUMN acme_description text, ADD COLUMN acme_note text;",
+    ] {
+        let error = refusal(sql);
+        assert_eq!(
+            error.kind(),
+            MigrationPolicyErrorKind::UnsupportedStatement,
+            "{sql}"
+        );
+    }
 }
 
 #[test]
@@ -198,7 +250,6 @@ fn overlay_additions_refuse_broader_alter_table_authority() {
         "ALTER TABLE receiving.purchase_order DROP COLUMN status;",
         "ALTER TABLE receiving.purchase_order ALTER COLUMN status SET DEFAULT 'closed';",
         "ALTER TABLE receiving.purchase_order ADD COLUMN IF NOT EXISTS acme_flag boolean NOT NULL DEFAULT false;",
-        "ALTER TABLE receiving.purchase_order ADD COLUMN acme_flag boolean;",
         "ALTER TABLE receiving.purchase_order ADD COLUMN acme_count bigint NOT NULL DEFAULT 0;",
         "ALTER TABLE receiving.purchase_order ADD COLUMN acme_status text NOT NULL DEFAULT 'open';",
         "ALTER TABLE receiving.purchase_order ADD CONSTRAINT acme_unique UNIQUE (purchase_order_number);",
