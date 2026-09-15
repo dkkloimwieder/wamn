@@ -24,6 +24,8 @@ const RECEIVING_SCHEMAS: &[(&str, &str)] = &[
 ];
 // Existing deployed cases own bounded setup and cleanup inside this outer limit.
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(45 * 60);
+/// Workspace directories, from the repository root, whose members change checks can select.
+const TEST_WORKSPACES: &[&str] = &["", "apps"];
 
 /// Qualify a clean selected revision through the existing application cases.
 #[derive(Debug, Args)]
@@ -45,6 +47,7 @@ pub struct QualifyReleaseArgs {
 pub struct CheckChangesArgs {
     #[arg(long, default_value = ".")]
     pub repository: PathBuf,
+    /// A member of the root or apps workspace.
     #[arg(long)]
     pub package: String,
     /// Omit for the library test target.
@@ -488,8 +491,9 @@ pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
     };
     let checked = async {
         let root = snapshot.repository_root();
+        let workspace = package_workspace(root, &args.package, &mut result.checks).await?;
         let binary = compile_tests(
-            root,
+            &workspace,
             &args.package,
             args.test.as_deref(),
             &[],
@@ -511,7 +515,7 @@ pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
             if args.include_ignored {
                 command.push("--include-ignored".to_owned());
             }
-            require_one_case(&run(root, &command, &[], &mut result.checks).await?)?;
+            require_one_case(&run(&workspace, &command, &[], &mut result.checks).await?)?;
         }
         Ok::<_, anyhow::Error>(())
     }
@@ -528,6 +532,49 @@ pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
     }
     serde_json::to_writer_pretty(output, &result)?;
     checked
+}
+
+/// Select the one test workspace whose members include the package.
+async fn package_workspace(
+    root: &Path,
+    package: &str,
+    checks: &mut Vec<CheckResult>,
+) -> anyhow::Result<PathBuf> {
+    let mut metadata = Vec::new();
+    for workspace in TEST_WORKSPACES {
+        let workspace = root.join(workspace);
+        let mut command = strings(&[
+            "cargo",
+            "metadata",
+            "--locked",
+            "--offline",
+            "--no-deps",
+            "--format-version=1",
+            "--manifest-path",
+        ]);
+        command.push(workspace.join("Cargo.toml").display().to_string());
+        metadata.push((workspace, run(root, &command, &[], checks).await?.stdout));
+    }
+    member_workspace(package, &metadata)
+}
+
+fn member_workspace(package: &str, metadata: &[(PathBuf, Vec<u8>)]) -> anyhow::Result<PathBuf> {
+    let mut workspaces = Vec::new();
+    for (workspace, stdout) in metadata {
+        let value: serde_json::Value =
+            serde_json::from_slice(stdout).context("read the workspace Cargo metadata")?;
+        let members = value["packages"]
+            .as_array()
+            .context("the workspace Cargo metadata lists its members")?;
+        if members.iter().any(|member| member["name"] == package) {
+            workspaces.push(workspace);
+        }
+    }
+    ensure!(
+        workspaces.len() == 1,
+        "{package} is not a member of exactly one test workspace"
+    );
+    Ok(workspaces[0].clone())
 }
 
 async fn compare_built_image(
@@ -753,6 +800,30 @@ mod tests {
         ] {
             assert!(require_one_case(&failed).is_err());
         }
+    }
+
+    #[test]
+    fn change_checks_select_the_one_workspace_that_has_the_package() {
+        let workspaces = |root: &str, apps: &str| {
+            [("/r", root), ("/r/apps", apps)].map(|(workspace, member)| {
+                let metadata = serde_json::json!({"packages": [{"name": member}]});
+                (
+                    PathBuf::from(workspace),
+                    serde_json::to_vec(&metadata).unwrap(),
+                )
+            })
+        };
+        let split = workspaces("wamn-ctl", "wamn-receiving-data-access");
+        assert_eq!(
+            member_workspace("wamn-ctl", &split).unwrap(),
+            Path::new("/r")
+        );
+        assert_eq!(
+            member_workspace("wamn-receiving-data-access", &split).unwrap(),
+            Path::new("/r/apps")
+        );
+        assert!(member_workspace("wamn-wms-data-access", &split).is_err());
+        assert!(member_workspace("same", &workspaces("same", "same")).is_err());
     }
 
     #[test]
