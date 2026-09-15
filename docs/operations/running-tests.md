@@ -30,6 +30,15 @@ Run the reading package's tests for such a change.
 It records no result.
 `tools/test-changes` is the broad check before integration, and a single edit runs its covering exact case through [`wamn dev clean-check`](delivery.md#change-checks).
 
+`tools/test-changes --cluster` runs the [ignored tests](#ignored-tests) of the selected packages instead of their default tests.
+It uses only the root workspace, because the other workspaces hold no ignored tests.
+It adds `-- --ignored --test-threads=1` to the root workspace command, so the tests run one at a time.
+`--name FILTER` is valid only with `--cluster`.
+The tool passes the filter to Cargo as the test name filter, which selects the tests whose full names contain it.
+Before `run` starts the tests, the tool lists the ignored tests that match the filter.
+If no ignored test in the selected packages matches, the tool fails and names the filter.
+`dry-run` compiles nothing, so it does not check the filter.
+
 The following commands select individual test targets:
 
 ```bash
@@ -83,9 +92,7 @@ The floors do not take the lock.
 A test of provisioning, migrations, or grants executes that operation and does not start from a floor that already performed it.
 Exercise the intended role because a superuser bypasses row security.
 
-An ignored test needs built components, Docker, a cluster, a broker, or a registry.
-It takes its database from the same functions.
-When `--ignored` selects it, it fails and names its first missing input instead of skipping.
+An [ignored test](#ignored-tests) takes its database from the same functions.
 
 For Docker fixtures, choose a new container name and an unused loopback port.
 Make sure that a real query succeeds through the same connection path that the command uses.
@@ -95,6 +102,22 @@ Release qualification uses it for the generation database and the SQLx metadata 
 It starts a server, creates the named database, and optionally applies migrations and history tables.
 It removes inherited PostgreSQL variables, sets each `--url-env` variable to the database URL, and runs the command.
 It stops the command's process group and removes its server on completion, failure, or handled interruption.
+
+## Ignored tests
+
+An ignored test needs built components, Docker, a cluster, a broker, or a registry.
+Its ignore reason declares its prerequisites in one form, `#[ignore = "requires: <name>, <name>"]`.
+A name in upper case is an environment variable that must be set and not empty.
+Any other name is a program that must be on `PATH`.
+The first statement of the test calls `wamn_test_postgres::require_prerequisites` with the same names in the same order.
+When a prerequisite is missing, the test fails before it does any work, and the message names every missing prerequisite.
+Some inputs do not fit this form, such as a binary beside the test executable or one of two inputs.
+The test checks such an input directly after the declaration, and a failed check names the input.
+An ignored test does not return early or skip.
+
+To run the ignored tests of the selected packages, use `tools/test-changes --cluster`.
+They run one at a time.
+To select tests by name, add `--name FILTER`, as [select the relevant tests](#select-the-relevant-tests) describes.
 
 ## Capture a run
 
@@ -125,8 +148,6 @@ If the user requests a workspace sweep, use the retained complete command:
 ```bash
 cargo test --workspace --locked --offline --features wamn-ctl/ops --no-fail-fast -- \
   --include-ignored --nocapture --test-threads=1 \
-  --skip regenerate_checked_in_journey_schema \
-  --skip regenerate_checked_in_dev_config_schema \
   > "$WAMN_RESULTS/workspace.log" 2>&1
 ```
 
@@ -136,8 +157,8 @@ Do not pipe the command through `tail` or another output filter.
 `--features wamn-ctl/ops` builds the targets that require the `ops` feature.
 `--no-fail-fast` retains later binary results after a failure.
 
-`--include-ignored` selects ignored cases, but their required inputs still control whether they execute.
-`--nocapture` exposes explicit skip messages. The two excluded tests write generated schemas.
+`--include-ignored` also selects the [ignored tests](#ignored-tests), and each one fails when a declared prerequisite is missing.
+`--nocapture` shows the output of each test.
 
 If the user requests the separate contract command, run it after the sweep, including when the sweep fails:
 
@@ -158,8 +179,6 @@ A changed test name does not establish a new failure or remove an earlier failur
 An exact filter can select zero tests and still return success.
 For a named case, require its exact result row and one executed case.
 An ignored test needs `--ignored` or `--include-ignored` after Cargo's `--` separator.
-Some tests return early when an environment variable is absent and appear among reported passes.
-Read their `--nocapture` output and required inputs before reporting execution.
 Do not infer execution from the aggregate Cargo pass count.
 
 | Existing reference | Current owner and required setup |
@@ -167,10 +186,10 @@ Do not infer execution from the aggregate Cargo pass count.
 | `[RUN-PLANE-RECONCILE]` | `crates/control/lib/tests/run_plane_live.rs`: runs by default on the test server and holds the process lock |
 | `[CLAIMS-LIVE]` | Runtime `plugins::wamn_postgres::claims::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
-| `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
-| `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
+| `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored and selected by `tools/test-changes --cluster`, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
+| `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored and selected by `tools/test-changes --cluster`, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
 | `[MGMT-LIVE]` | `services/scenario-worker/tests/management_live.rs`: runs by default on the test server and holds the process lock |
-| `[STD-GUEST-VIRTUALIZATION]` | `tests/integration/src/virtualized_std_guest.rs`: built guest files and its explicit `WAMN_STD_VIRTUALIZATION_*` inputs |
+| `[STD-GUEST-VIRTUALIZATION]` | `tests/integration/src/virtualized_std_guest.rs`: ignored and selected by `tools/test-changes --cluster`, and needs built guest files and its explicit `WAMN_STD_VIRTUALIZATION_*` inputs |
 | `[EVT-C-CDC]` | `tests/integration/src/cdcbench.rs`: exposes a Rust entrypoint but no `wamn-gates` subcommand, starts its own server with `wal_level=logical`, and needs a JetStream NATS at `--nats-url` |
 
 The source owners declare additional credentials, artifact paths, and selected assertions.

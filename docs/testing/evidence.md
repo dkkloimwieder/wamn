@@ -14,8 +14,8 @@ Compilation alone does not execute an assertion.
 A selected name can match zero tests and still return a successful process exit.
 Require the expected result row and executed count before reporting that a named case ran.
 
-Some live tests return early when an input is absent and appear in the reported pass count.
-Treat that result as an explicit skip, not live execution.
+When a selected ignored test is missing a declared prerequisite, it fails and names that prerequisite.
+That failure is not live execution.
 Unavailable prerequisites leave required cases incomplete.
 A known or classified failure remains a failure.
 Do not change unrelated assertions to obtain a passing result.
