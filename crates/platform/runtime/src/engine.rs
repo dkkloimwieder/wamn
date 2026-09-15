@@ -212,6 +212,7 @@ fn validate_pooling_capacity_environment(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::fs;
     use std::future::Future as _;
     use std::net::SocketAddr;
@@ -223,9 +224,14 @@ mod tests {
     use wash_runtime::engine::ctx::{Ctx, SharedCtx};
     use wash_runtime::engine::guest_memory::install_memory_limiter;
     use wash_runtime::host::allowed_hosts::AllowedHost;
+    use wash_runtime::host::http::NullServer;
+    use wash_runtime::observability::{MeterKind, Meters};
+    use wash_runtime::plugin::PluginBindings;
     use wash_runtime::sockets::{AddrDecision, DenyReason, SocketAddrUse};
     use wash_runtime::wasmtime::component::Component;
     use wash_runtime::wasmtime::{Instance, Linker, Memory, Module, Store};
+    use wit_component::{ComponentEncoder, StringEncoding, embed_component_metadata};
+    use wit_parser::Resolve;
 
     use super::*;
 
@@ -379,6 +385,213 @@ mod tests {
                      allowing it is EgressMode::Count"
                 ),
             }
+        }
+    }
+
+    /// The `wasi:sockets` subset the socket guest imports, at the version the
+    /// engine links. The error-code enum and the address variants must match
+    /// the host's case lists exactly, or the component does not link.
+    const SOCKETS_SUBSET_WIT: &str = r#"
+package wasi:sockets@0.2.12;
+
+interface network {
+  resource network;
+  enum error-code {
+    unknown, access-denied, not-supported, invalid-argument, out-of-memory, timeout,
+    concurrency-conflict, not-in-progress, would-block, invalid-state, new-socket-limit,
+    address-not-bindable, address-in-use, remote-unreachable, connection-refused,
+    connection-reset, connection-aborted, datagram-too-large, name-unresolvable,
+    temporary-resolver-failure, permanent-resolver-failure,
+  }
+  enum ip-address-family { ipv4, ipv6 }
+  type ipv4-address = tuple<u8, u8, u8, u8>;
+  type ipv6-address = tuple<u16, u16, u16, u16, u16, u16, u16, u16>;
+  record ipv4-socket-address { port: u16, address: ipv4-address }
+  record ipv6-socket-address { port: u16, flow-info: u32, address: ipv6-address, scope-id: u32 }
+  variant ip-socket-address { ipv4(ipv4-socket-address), ipv6(ipv6-socket-address) }
+}
+
+interface instance-network {
+  use network.{network};
+  instance-network: func() -> network;
+}
+
+interface tcp {
+  use network.{network, error-code, ip-socket-address};
+  resource tcp-socket {
+    start-connect: func(network: borrow<network>, remote-address: ip-socket-address) -> result<_, error-code>;
+  }
+}
+
+interface tcp-create-socket {
+  use network.{error-code, ip-address-family};
+  use tcp.{tcp-socket};
+  create-tcp-socket: func(address-family: ip-address-family) -> result<tcp-socket, error-code>;
+}
+"#;
+
+    const SOCKET_GUEST_WORLD: &str = "package test:socket-guest; world guest { \
+        import wasi:sockets/instance-network@0.2.12; \
+        import wasi:sockets/tcp-create-socket@0.2.12; \
+        import wasi:sockets/tcp@0.2.12; \
+        export probe: func() -> u32; }";
+
+    /// `probe` returns 0 when start-connect succeeds, `0x100 | error-code`
+    /// when start-connect fails, and `0x200 | error-code` when the socket
+    /// cannot be created. start-connect only stores the connect future, so no
+    /// packet leaves the host even when the policy allows the address.
+    const SOCKET_GUEST_WAT: &str = r#"(module
+      (import "wasi:sockets/instance-network@0.2.12" "instance-network"
+        (func $instance-network (result i32)))
+      (import "wasi:sockets/tcp-create-socket@0.2.12" "create-tcp-socket"
+        (func $create-tcp-socket (param i32 i32)))
+      (import "wasi:sockets/tcp@0.2.12" "[method]tcp-socket.start-connect"
+        (func $start-connect (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))
+      (memory (export "memory") 1)
+      (func (export "probe") (result i32) (local $network i32)
+        call $instance-network
+        local.set $network
+        ;; ipv4, result<tcp-socket, error-code> written at 16
+        i32.const 0 i32.const 16 call $create-tcp-socket
+        (if (i32.load8_u (i32.const 16))
+          (then (return (i32.or (i32.const 0x200) (i32.load8_u (i32.const 20))))))
+        (i32.load (i32.const 20))
+        local.get $network
+        ;; ipv4(93.184.216.34:443), padded to the ipv6 case's eleven slots
+        i32.const 0
+        i32.const 443 i32.const 93 i32.const 184 i32.const 216 i32.const 34
+        i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 0 i32.const 0
+        ;; result<_, error-code> written at 32
+        i32.const 32
+        call $start-connect
+        (if (i32.load8_u (i32.const 32))
+          (then (return (i32.or (i32.const 0x100) (i32.load8_u (i32.const 33))))))
+        i32.const 0))"#;
+
+    /// The error-code case index of `access-denied`.
+    const ACCESS_DENIED: u32 = 1;
+
+    fn socket_guest_bytes() -> Vec<u8> {
+        let mut resolve = Resolve::new();
+        resolve
+            .push_str("wasi-sockets.wit", SOCKETS_SUBSET_WIT)
+            .expect("the wasi:sockets subset parses");
+        let package = resolve
+            .push_str("guest.wit", SOCKET_GUEST_WORLD)
+            .expect("the socket guest world parses");
+        let world = resolve
+            .select_world(&[package], Some("guest"))
+            .expect("the socket guest world resolves");
+        let mut module = wat::parse_str(SOCKET_GUEST_WAT).expect("encode the socket guest");
+        embed_component_metadata(&mut module, &resolve, world, StringEncoding::UTF8)
+            .expect("embed the socket guest metadata");
+        ComponentEncoder::default()
+            .module(&module)
+            .expect("the socket guest core module is accepted")
+            .validate(true)
+            .encode()
+            .expect("encode the socket guest component")
+    }
+
+    /// Run the socket guest as a workload component on `engine`, through the
+    /// same store template a served component gets, and return its probe code.
+    async fn probe_unlisted_connect(engine: &Engine) -> u32 {
+        let workload = engine
+            .initialize_workload(
+                "socket-policy-test",
+                wash_runtime::types::Workload {
+                    namespace: "test".to_owned(),
+                    name: "socket-policy-test".to_owned(),
+                    annotations: HashMap::new(),
+                    service: None,
+                    components: vec![wash_runtime::types::Component {
+                        name: "socket-guest".to_owned(),
+                        bytes: socket_guest_bytes().into(),
+                        ..wash_runtime::types::Component::default()
+                    }],
+                    host_interfaces: Vec::new(),
+                    volumes: Vec::new(),
+                },
+            )
+            .expect("initialize the socket guest workload")
+            .resolve(
+                None,
+                &PluginBindings::new(),
+                Arc::new(NullServer::default()),
+                &Meters::new(MeterKind::Off),
+            )
+            .await
+            .expect("resolve the socket guest workload");
+        let id = workload
+            .components()
+            .read()
+            .await
+            .keys()
+            .next()
+            .expect("the workload has its one component")
+            .to_string();
+        let mut store = workload
+            .new_store(&id)
+            .await
+            .expect("build the component store");
+        store.set_epoch_deadline(u64::MAX / 2);
+        let instance = workload
+            .instantiate_pre(&id)
+            .await
+            .expect("pre-link the socket guest")
+            .instantiate_async(&mut store)
+            .await
+            .expect("instantiate the socket guest");
+        let probe = instance
+            .get_typed_func::<(), (u32,)>(&mut store, "probe")
+            .expect("the socket guest exports probe");
+        let (code,) = probe
+            .call_async(&mut store, ())
+            .await
+            .expect("the socket guest does not trap");
+        code
+    }
+
+    /// wamn-qk15: every production builder installs the enforcing socket
+    /// policy on the engine it returns.
+    ///
+    /// The policy test above checks `host_socket_policy` itself. This test
+    /// checks the engines: a guest on each one asks to connect to a routable
+    /// address that no allowlist entry grants. An engine built with
+    /// `SocketPolicy::default()` counts that connect and allows it.
+    #[tokio::test]
+    async fn every_production_engine_refuses_an_unlisted_guest_connect() {
+        let cache_dir = cache_test_path();
+        let engines = [
+            ("build_engine", build_engine(&[]).expect("build_engine")),
+            (
+                "build_engine_with_host_memory",
+                build_engine_with_host_memory(&[], default_host_memory_budgets())
+                    .expect("build_engine_with_host_memory"),
+            ),
+            (
+                "build_engine_with_host_memory_and_compilation_cache",
+                build_engine_with_host_memory_and_compilation_cache(
+                    &[],
+                    default_host_memory_budgets(),
+                    &cache_dir,
+                )
+                .expect("build_engine_with_host_memory_and_compilation_cache"),
+            ),
+        ];
+        let mut results = Vec::new();
+        for (builder, engine) in &engines {
+            results.push((*builder, probe_unlisted_connect(engine).await));
+        }
+        drop(engines);
+        fs::remove_dir_all(&cache_dir).expect("remove the isolated compilation cache");
+        for (builder, code) in results {
+            assert_eq!(
+                code,
+                0x100 | ACCESS_DENIED,
+                "{builder}: start-connect to 93.184.216.34:443 must fail with access-denied \
+                 (0x101); 0 means the engine allowed it, 0x2xx means socket creation failed"
+            );
         }
     }
 
