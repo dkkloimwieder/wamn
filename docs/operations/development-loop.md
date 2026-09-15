@@ -110,7 +110,7 @@ The host resolves the credential handle through its normal credential source.
 
 If the instance already exists, its definition and credential handle must match exactly.
 For changed coordinates or a changed handle, select a different instance ID.
-Without the `instance` object, the selection requires an existing enabled instance and active credential generation.
+Without the `instance` object, the selection requires an existing enabled instance and active connection generation.
 The loop watches both the selection file and its absolute definition paths.
 
 To discard the application data manually, stop the loop and reset its target:

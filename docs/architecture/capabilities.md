@@ -57,6 +57,11 @@ A replacement generation must demonstrate live use before the previous generatio
 A resource or connection cannot silently cross a tenant, environment, or generation boundary.
 The [database contract](data-access.md) owns SQL-specific authorization and transaction behavior.
 
+`wamn:postgres` binds no connection instance, so it has no connection generation.
+The host selects the one project-environment database from its trusted project.
+Each authority class logs in to that database as its own A/B credential generation, read from its own Secret.
+Rotation is the `wamn-ctl provision-project-env` sequence: prepare the new generation, publish its Secret, roll the workloads, and retire the old generation.
+
 ## Outbound HTTP
 
 The public contract is [`wamn:connection/http@0.1.0`](../../crates/platform/runtime/wit/deps/wamn-connection/package.wit).
