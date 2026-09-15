@@ -119,12 +119,12 @@ pub(crate) async fn read_authoritative_environment_policy(
             .await
             .context("assume the environment-policy owner")?;
         if ensure_durability_schema {
-            wamn_control::env_policies::ensure_env_policy_durability_schema(&source).await?;
+            crate::env_policies::ensure_env_policy_durability_schema(&source).await?;
         }
         let policy = if ensure_durability_schema {
-            wamn_control::env_policies::read_env_policy(&source, source_policy_org, environment).await?
+            crate::env_policies::read_env_policy(&source, source_policy_org, environment).await?
         } else {
-            wamn_control::env_policies::observe_env_policy(&source, source_policy_org, environment).await?
+            crate::env_policies::observe_env_policy(&source, source_policy_org, environment).await?
         }
         .with_context(|| {
             format!(

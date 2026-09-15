@@ -134,7 +134,7 @@ pub struct ModelIr {
 ///
 /// METHOD AND TEMPLATE ONLY. The input this is read from cannot carry a host:
 /// publication refuses one outright — `validate_authored_attachment_routes`
-/// (`services/ctl/src/publish_release.rs:1293`) rejects an authored
+/// (`crates/control/lib/src/publish_release.rs:1293`) rejects an authored
 /// `route.host` with "remove it and pass --route-host", and the host is
 /// stamped in later at release mint from that flag. So the client's base URL
 /// and host stay construction-time deployment config, and generated code
@@ -1571,7 +1571,7 @@ mod tests {
     /// (`canonical_http_route_template`) would leave it nothing to substitute
     /// into. No shipped route is parameterized, so the case is synthetic —
     /// but the platform's own tests author exactly this shape
-    /// (`services/ctl/src/publish_release.rs:2496` sets `/receipt/{id}` on a
+    /// (`crates/control/lib/src/publish_release.rs:2496` sets `/receipt/{id}` on a
     /// serving attachment), so it is a real release shape, not an invented one.
     #[test]
     fn a_parameterized_template_keeps_its_parameter_name() {

@@ -231,7 +231,7 @@ pub enum RunPlaneActionKind {
     ///
     /// This is the ONE run-plane privilege the pure planner does not build: its
     /// grant text comes from `wamn_control_provision`, and the effect shell
-    /// appends the action. See `wamn_ctl::reconcile_run_plane`.
+    /// appends the action. See `wamn_control::reconcile_run_plane`.
     RepairDispatchReaderPrivilege,
     /// Remove every guest-visible table and column privilege on `run_queue`.
     RemoveAppRunQueueAuthority,

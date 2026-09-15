@@ -128,7 +128,7 @@ const HOST_INJECTED: [&str; 2] = ["wamn_run.operator_run_actions", "wamn_run.run
 /// keeps its reads through PER-RELATION arms naming it directly in
 /// `deploy/sql/run-state.sql`, so unlike the silent-lockout mutant described
 /// above, this demotion does NOT strand a reader — and the live gate that would
-/// have caught a stranding, `services/ctl/tests/run_plane_live.rs`, goes from
+/// have caught a stranding, `crates/control/lib/tests/run_plane_live.rs`, goes from
 /// 8 failures to 0 across the change.
 ///
 /// `wamn-ctc8.15.2` adds the approved session-role reader to the platform group.

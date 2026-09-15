@@ -73,8 +73,8 @@ use wamn_catalog::{
     WiringDocument, WiringNode, WiringTerminal,
 };
 use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::author_wiring::{AuthorWiringErrorKind, AuthorWiringRequest, author_wiring};
 use wamn_control::push_component::admitted_projection_hash;
-use wamn_ctl::author_wiring::{AuthorWiringErrorKind, AuthorWiringRequest, author_wiring};
 
 const TENANT: &str = "gate-report-tenant";
 const PACKAGE: &str = "wamn_receiving";
@@ -131,7 +131,8 @@ async fn provision_project(project: &Client, project_url: &str) {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .expect("ctl crate lives under services/ctl");
+        .and_then(Path::parent)
+        .expect("the control library lives under crates/control/lib");
     apply_package::apply_package(ApplyPackageRequest {
         package: repository.join("apps/wamn_receiving"),
         database_url: project_url.to_string(),
@@ -237,7 +238,7 @@ async fn author(
     control: &Client,
     project: &mut Client,
     document: &WiringDocument,
-) -> Result<DefinitionHash, wamn_ctl::author_wiring::AuthorWiringError> {
+) -> Result<DefinitionHash, wamn_control::author_wiring::AuthorWiringError> {
     let transaction = project
         .transaction()
         .await

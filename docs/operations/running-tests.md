@@ -145,7 +145,7 @@ Do not infer execution from the aggregate Cargo pass count.
 
 | Existing reference | Current owner and required setup |
 | --- | --- |
-| `[RUN-PLANE-RECONCILE]` | `services/ctl/tests/run_plane_live.rs`: runs by default on the test server and holds the process lock |
+| `[RUN-PLANE-RECONCILE]` | `crates/control/lib/tests/run_plane_live.rs`: runs by default on the test server and holds the process lock |
 | `[CLAIMS-LIVE]` | Runtime `plugins::wamn_postgres::claims::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |

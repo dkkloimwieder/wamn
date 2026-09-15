@@ -2907,7 +2907,7 @@ fn effect_writer_surface_uses_acl_not_insert_authorization_triggers() {
     // cannot tell a declaration from a comment mentioning one. The load-bearing
     // arm is THE SERVER'S refusal, asserted live over the applied DDL in
     // `crates/control/provision/tests/deploy_sql_authority.rs` and over the
-    // reconciled result in `services/ctl/tests/run_plane_live.rs`.
+    // reconciled result in `crates/control/lib/tests/run_plane_live.rs`.
     assert!(
         RUN_STATE_SQL
             .contains("GRANT SELECT ON wamn_run.effect_attempts TO wamn_effect_writer")

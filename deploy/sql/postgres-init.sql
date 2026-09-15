@@ -163,7 +163,7 @@ END $platform_group$;
 -- with 42501 `effect-writer-role-out-of-bounds`, if it holds ANY row in
 -- `pg_auth_members` as a member. This grant WAS that row, so a fresh install
 -- built a cluster that `reconcile-run-plane` then refused. Measured before the
--- removal: 8 of the 17 tests in `services/ctl/tests/run_plane_live.rs` failed on
+-- removal: 8 of the 17 tests in `crates/control/lib/tests/run_plane_live.rs` failed on
 -- that exact code. The writer reaches its four run-plane tables through
 -- per-relation arms naming it directly in `deploy/sql/run-state.sql`, so
 -- deleting this line strands no read.

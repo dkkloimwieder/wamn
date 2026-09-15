@@ -14,7 +14,7 @@ Each nested operation retains the original caller and needs its own declared aut
 Component membership or an imported interface alone grants no permission to call an operation.
 
 An attachment with auth policy `none` has no principal, so it cannot write.
-If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release mint](../../services/ctl/src/publish_release/components.rs) refuses it.
+If the reachable wiring of an anonymous attachment holds a registered operation or a transactional statement, [release mint](../../crates/control/lib/src/publish_release/components.rs) refuses it.
 
 A route input that fails its schema returns HTTP 400 with the code `schema-invalid`.
 The body carries the RFC 6901 pointer of the offending value in `data.pointer`:

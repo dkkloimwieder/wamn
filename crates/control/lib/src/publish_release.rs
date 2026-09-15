@@ -427,9 +427,9 @@ pub async fn run(args: PublishReleaseArgs) -> anyhow::Result<()> {
 }
 
 /// Assemble a candidate only in a provisioned disposable target, without publication.
-pub(crate) async fn mint_local(
+pub async fn mint_local(
     mut args: PublishReleaseArgs,
-    admissions: &[wamn_control::push_component::ComponentAdmission],
+    admissions: &[crate::push_component::ComponentAdmission],
     documents: Vec<(ComponentPackageScope, WiringDocument)>,
 ) -> anyhow::Result<(
     MintedReleaseManifest,
@@ -891,7 +891,7 @@ fn verify_environment_name(
     Ok(())
 }
 
-pub(crate) fn report_deployment_coordinate(
+pub fn report_deployment_coordinate(
     coordinate: &DeploymentCoordinate,
     manifest_hash: &ManifestDigest,
 ) {
@@ -990,7 +990,7 @@ pub async fn project_release_identity(
             .query_one(CLAIM_TENANT_SQL, &[&identity.tenant_id])
             .await
             .map_err(storage)?;
-        let params = wamn_control::sql_params::as_postgres(&statement.params);
+        let params = crate::sql_params::as_postgres(&statement.params);
         transaction
             .execute(statement.sql.as_str(), &params)
             .await
@@ -1070,7 +1070,7 @@ pub async fn attest_deployment(
             ))
         };
         let statement = wamn_schema_control::attestation::register_attestation(&attestation);
-        let params = wamn_control::sql_params::as_postgres(&statement.params);
+        let params = crate::sql_params::as_postgres(&statement.params);
         let inserted = transaction
             .query_opt(statement.sql.as_str(), &params)
             .await
@@ -1924,11 +1924,11 @@ mod tests {
     #[test]
     fn real_package_attachment_documents_merge_into_one_release() {
         let base: BTreeMap<String, ServingAttachment> = serde_json::from_slice(include_bytes!(
-            "../../../apps/wamn_receiving/publication/attachments.json"
+            "../../../../apps/wamn_receiving/publication/attachments.json"
         ))
         .expect("the Receiving package attachments have the serving wire shape");
         let overlay: BTreeMap<String, ServingAttachment> = serde_json::from_slice(include_bytes!(
-            "../../../apps/client_acme_receiving/publication/attachments.json"
+            "../../../../apps/client_acme_receiving/publication/attachments.json"
         ))
         .expect("the Acme package attachments have the serving wire shape");
         let authored = merge_package_attachment_documents(vec![
@@ -2285,7 +2285,7 @@ mod tests {
 
     fn dependency_manifest(digest: &str) -> wamn_schema_generator::PackageManifest {
         let mut document: serde_json::Value =
-            serde_json::from_str(include_str!("../../../apps/wamn_receiving/wamn.json"))
+            serde_json::from_str(include_str!("../../../../apps/wamn_receiving/wamn.json"))
                 .expect("the repository package manifest parses as JSON");
         document["base_dependencies"] = serde_json::json!({
             "base": {
@@ -2300,11 +2300,11 @@ mod tests {
 
     #[test]
     fn release_mint_consumes_package_metadata_and_refuses_unsatisfied_policy() {
-        let manifest_bytes = include_bytes!("../../../apps/wamn_receiving/wamn.json");
+        let manifest_bytes = include_bytes!("../../../../apps/wamn_receiving/wamn.json");
         let manifest = wamn_schema_generator::PackageManifest::from_slice(manifest_bytes)
             .expect("the Receiving manifest is valid");
         let metadata_bytes =
-            include_bytes!("../../../apps/wamn_receiving/generated/package-weld.json");
+            include_bytes!("../../../../apps/wamn_receiving/generated/package-weld.json");
         let metadata = wamn_schema_generator::GeneratedPackageMetadata::from_slice(metadata_bytes)
             .expect("the Receiving metadata is canonical");
         validate_package_metadata(&manifest, &metadata)
@@ -2355,13 +2355,13 @@ mod tests {
 
     fn handler_manifest() -> wamn_schema_generator::PackageManifest {
         serde_json::from_str(include_str!(
-            "../../../apps/client_acme_receiving/wamn.json"
+            "../../../../apps/client_acme_receiving/wamn.json"
         ))
         .expect("the repository handler manifest parses")
     }
 
     fn source_manifest() -> wamn_schema_generator::PackageManifest {
-        serde_json::from_str(include_str!("../../../apps/wamn_receiving/wamn.json"))
+        serde_json::from_str(include_str!("../../../../apps/wamn_receiving/wamn.json"))
             .expect("the repository source manifest parses")
     }
 
@@ -2380,10 +2380,10 @@ mod tests {
     /// placeholder into a dependency and resolve nothing.
     fn repository_overlay_declaration() -> wamn_catalog::ComponentDeclaration {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../apps/client_acme_receiving");
-        let base_digests = wamn_control::component_declaration::authored_base_digests(&root)
+            .join("../../../apps/client_acme_receiving");
+        let base_digests = crate::component_declaration::authored_base_digests(&root)
             .expect("the repository overlay manifest authors its base digest");
-        let document = wamn_control::component_declaration::render_declaration_document(
+        let document = crate::component_declaration::render_declaration_document(
             &root.join("publication/components/client_acme_receiving.json.in"),
             "tenant-a",
             &base_digests,
@@ -2396,7 +2396,7 @@ mod tests {
     fn resolve_repository_private_handler_entry() -> String {
         let declaration = repository_overlay_declaration();
         let document_value = serde_json::from_str(include_str!(
-            "../../../apps/client_acme_receiving/publication/wirings/quality_create_inspection.json"
+            "../../../../apps/client_acme_receiving/publication/wirings/quality_create_inspection.json"
         ))
         .expect("the repository handler wiring parses as JSON");
         let document = WiringDocument::parse(&document_value)

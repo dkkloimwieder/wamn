@@ -102,27 +102,27 @@ use catalog::{capture_mode_additive_leg, stored_suite_cutover_leg, two_plane_res
 
 use tokio_postgres::{Client, NoTls};
 
+use wamn_control::reconcile_run_plane::{
+    self, RECONCILE_TARGET_REFUSAL_PREFIX, ReconcileRunPlaneArgs, ReconcileTargetError,
+    ReconcileTargetErrorKind,
+};
+use wamn_control::verification_policy::project_environment_policy;
 use wamn_control_provision::{
     CredentialGeneration, DISPATCH_READER_ROLE, WorkloadRoleFamily, WorkloadRoleScope,
     effect_writer_generation_role, project_env_database_name, sql as provision_sql,
     workload_generation_role,
 };
-use wamn_ctl::reconcile_run_plane::{
-    self, RECONCILE_TARGET_REFUSAL_PREFIX, ReconcileRunPlaneArgs, ReconcileTargetError,
-    ReconcileTargetErrorKind,
-};
-use wamn_ctl::verification_policy::project_environment_policy;
 use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
 use wamn_test_infrastructure::locked_database;
 
-const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
-const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
+const RUN_STATE_SQL: &str = include_str!("../../../../deploy/sql/run-state.sql");
+const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 /// The CONTROL plane's canonical record. Read here only to lift the co-resident
 /// relation's declaration text, never installed as a whole.
 const CONTROL_PORTABLE_STORE_SQL: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
-    include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
+    include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
 
 const SCHEMA: &str = "rp_live";
 const DISPATCH_READER_PASSWORD: &str = "dispatch-reader-run-plane-probe";

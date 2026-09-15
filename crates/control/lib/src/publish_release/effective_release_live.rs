@@ -5,8 +5,6 @@ use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{AdmittedComponent, ComponentDeclaration, PackageCoordinate, ServingAttachment};
-use wamn_control::apply_package::{self, ApplyPackageRequest};
-use wamn_control::push_component::{admitted_projection_hash, append_or_verify_admitted_component};
 use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
@@ -16,7 +14,9 @@ use super::{
     mint_release_manifest_with_package_manifests, read_package_manifests,
     resolve_route_host_overlay, sha256, validate_package_metadata,
 };
+use crate::apply_package::{self, ApplyPackageRequest};
 use crate::author_wiring::{self, AuthorWiringRequest};
+use crate::push_component::{admitted_projection_hash, append_or_verify_admitted_component};
 
 const TENANT: &str = "effective-release-poc";
 const ENVIRONMENT: &str = "dev";
@@ -25,7 +25,7 @@ const RELEASE_ID: i32 = 1;
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
-const APP_SCHEMA: &str = include_str!("../../../../deploy/sql/app-schema.sql");
+const APP_SCHEMA: &str = include_str!("../../../../../deploy/sql/app-schema.sql");
 const BASE_WIRINGS: [&str; 9] = [
     "location_list",
     "purchase_order_get",
@@ -57,7 +57,7 @@ struct PackageInput {
 }
 
 fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
 /// The base component digest, read from the ONE file that authors it.
@@ -66,7 +66,7 @@ fn repository_root() -> PathBuf {
 /// overlay manifest pins, which is a third copy of a value that must be one.
 fn base_component_digest() -> String {
     let overlay = repository_root().join("apps/client_acme_receiving");
-    wamn_control::component_declaration::authored_base_digests(&overlay)
+    crate::component_declaration::authored_base_digests(&overlay)
         .expect("the overlay manifest authors its base digest")["wamn_receiving@1.0.0"]
         .to_string()
 }
@@ -210,11 +210,11 @@ async fn admit_components(
         // The template leaves its base dependency digest as a placeholder, so
         // the render -- not a tenant substitution -- is what makes it a
         // declaration (wamn-10yt.50).
-        let base_digests = wamn_control::component_declaration::authored_base_digests(&input.root)
+        let base_digests = crate::component_declaration::authored_base_digests(&input.root)
             .unwrap_or_else(|error| {
                 panic!("read {}@{} base pins: {error}", input.id, input.version)
             });
-        let declaration = wamn_control::component_declaration::render_declaration_document(
+        let declaration = crate::component_declaration::render_declaration_document(
             &input.component_declaration,
             TENANT,
             &base_digests,

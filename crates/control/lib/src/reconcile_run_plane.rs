@@ -271,18 +271,16 @@ pub async fn run(args: ReconcileRunPlaneArgs) -> anyhow::Result<()> {
             source,
         )
     })?;
-    let instance = wamn_control::provision_project_env::read_project_env_instance(
-        &args.system_database_url,
-        &triple,
-    )
-    .await
-    .map_err(|source| {
-        ReconcileTargetError::with_source(
-            ReconcileTargetErrorKind::RegistryTarget,
-            format!("registry target {triple} has no usable recorded instance"),
-            source,
-        )
-    })?;
+    let instance =
+        crate::provision_project_env::read_project_env_instance(&args.system_database_url, &triple)
+            .await
+            .map_err(|source| {
+                ReconcileTargetError::with_source(
+                    ReconcileTargetErrorKind::RegistryTarget,
+                    format!("registry target {triple} has no usable recorded instance"),
+                    source,
+                )
+            })?;
     let expected_database =
         project_env_database_name(&args.org, &args.project, &args.env, &instance);
     let (client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)

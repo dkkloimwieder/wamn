@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{EffectiveReleaseId, ManifestDigest, PackageCoordinate, ServingRelease};
-use wamn_ctl::publish_release::{
+use wamn_control::publish_release::{
     DeploymentCoordinate, attest_deployment, project_release_identity,
 };
 use wamn_test_infrastructure::locked_database;
