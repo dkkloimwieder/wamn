@@ -365,11 +365,13 @@ pub(super) async fn verify_dev_target_package_and_acl_state(project: &Client) ->
     Ok(())
 }
 
+/// The entries are sorted, because a recreated database can list the same entries in another order.
 pub(super) async fn current_database_acl(client: &Client) -> anyhow::Result<(String, Option<String>)> {
     let row = client
         .query_one(
-            "SELECT datname::text, datacl::text FROM pg_catalog.pg_database \
-             WHERE datname = current_database()",
+            "SELECT datname::text, \
+                    (SELECT array_agg(entry::text ORDER BY entry::text) FROM unnest(datacl) AS entry)::text \
+             FROM pg_catalog.pg_database WHERE datname = current_database()",
             &[],
         )
         .await
@@ -412,6 +414,8 @@ pub(super) async fn assert_dev_command(
     let (project, project_task) = connect(&environment.route.database_url).await?;
     let system_acl_before = current_database_acl(admin.as_ref()).await?;
     let durable_acl_before = current_database_acl(project.as_ref()).await?;
+    // The first run recreates the target, which closes this connection.
+    project_task.abort();
     let event_scope = wamn_control_registry::Triple {
         org: environment.identity.org.clone(),
         project: environment.identity.project.clone(),
@@ -437,6 +441,7 @@ pub(super) async fn assert_dev_command(
         // The literal command emits this result only after native workload
         // stop and supervised host reaping have both succeeded.
         verify_dev_command_output(&output)?;
+        let (project, project_task) = connect(&environment.route.database_url).await?;
         let system_acl_after = current_database_acl(admin.as_ref()).await?;
         let durable_acl_after = current_database_acl(project.as_ref()).await?;
         anyhow::ensure!(
@@ -450,11 +455,11 @@ pub(super) async fn assert_dev_command(
              before={durable_acl_before:?} after={durable_acl_after:?}"
         );
         verify_dev_target_package_and_acl_state(project.as_ref()).await?;
+        project_task.abort();
         Ok::<_, anyhow::Error>(())
     }
     .await;
 
-    project_task.abort();
     admin_task.abort();
 
     command_result
