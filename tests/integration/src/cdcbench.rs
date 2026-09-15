@@ -1,5 +1,4 @@
-//! The `cdcbench` subcommand: the [EVT-C-CDC] ceiling campaign (wamn-l5i9.14,
-//! docs/archive/events/event-plane-jetstream.md §7/§8, docs/archive/results/ceilings.md § C-CDC).
+//! The `cdcbench` entrypoint: the [EVT-C-CDC] ceiling campaign (wamn-l5i9.14).
 //!
 //! A MEASUREMENT campaign, not a regression gate (§8: curves and knees, no
 //! pass/fail — only sanity/completeness asserts gate). Three axes:

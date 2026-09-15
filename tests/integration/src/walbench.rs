@@ -1,9 +1,7 @@
-//! The `walbench` subcommand: the EVT-C-WAL-0 pre-CDC WAL-volume baseline
-//! (docs/archive/events/event-plane-jetstream.md §7/§8, docs/archive/results/ceilings.md § C-WAL-0) — the
+//! The `walbench` entrypoint: the EVT-C-WAL-0 pre-CDC WAL-volume baseline, the
 //! *denominator* every later C-CDC WAL-delta claim (wamn-l5i9.14) divides by.
 //!
-//! A MEASUREMENT campaign, not a regression gate: curves land in
-//! `docs/archive/results/ceilings.md` + `docs/results/ceilings-data/` (§11 provenance), and only the
+//! A MEASUREMENT campaign, not a regression gate: only the
 //! sanity asserts gate — the run is genuinely PRE-CDC (no publication, no
 //! replication slot, every table at DEFAULT replica identity), every op moved
 //! WAL (the instrument self-check), and the op counts are exact. Pure
@@ -33,8 +31,8 @@
 //! practice): there is no knee search a one-sided disk stall can poison — the
 //! headline numbers are byte counts and medians, and a stall shows up visibly
 //! as a p99 outlier. The insert position (`pg_current_wal_insert_lsn`), not the
-//! flushed position, so the byte counts are exact even on the fixture pod's
-//! `fsync=off`/`synchronous_commit=off` (the C2 instrument lesson).
+//! flushed position, so the byte counts do not depend on flush settings (the C2
+//! instrument lesson).
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -295,7 +293,7 @@ async fn connect_app(
 
 /// The instance WAL INSERT position (LSN as text). The insert position, not
 /// `pg_current_wal_lsn()` (the flushed position): under
-/// `synchronous_commit=off`/`fsync=off` (the in-cluster fixture pod) nothing
+/// `synchronous_commit=off`/`fsync=off` nothing
 /// flushes inside a fast batch and the flushed position reads ~0 bytes moved —
 /// the insert position measures WAL *generated*, the quantity here, regardless
 /// of flush policy (the C2 instrument lesson).
@@ -408,7 +406,7 @@ pub async fn run(args: WalBenchArgs) -> anyhow::Result<()> {
 /// Record the WAL level and check that the database is pre-CDC: no publication, no
 /// replication slot, every measured table at DEFAULT replica identity (`d`).
 /// This is what makes "the pre-CDC denominator" a checkable property rather
-/// than an assumption — a stray leftover slot on the fixture pod would fail it.
+/// than an assumption — a stray leftover slot would fail it.
 async fn precheck(admin: &Client, pass: &mut bool) -> anyhow::Result<()> {
     let wal_level: String = admin.query_one("SHOW wal_level", &[]).await?.get(0);
     let pubs: i64 = admin
@@ -902,7 +900,7 @@ async fn mixed_phase(
         normalize(&admin, &tables).await?;
 
         // Bracket WAL PER EVENT, not over the whole window: the insert LSN is
-        // instance-global, so a window-long bracket on the *shared* fixture pod
+        // instance-global, so a window-long bracket on a shared server
         // would fold in other tenants' WAL (an early run showed one window at
         // ~5× another). A per-event bracket is a sub-ms window; summing them
         // excludes the idle gaps where other tenants write, so the total is OUR
