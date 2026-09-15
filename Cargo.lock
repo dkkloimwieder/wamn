@@ -6307,15 +6307,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-scenario-model"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "wamn-execution-contract",
-]
-
-[[package]]
 name = "wamn-scenario-worker"
 version = "0.1.0"
 dependencies = [
