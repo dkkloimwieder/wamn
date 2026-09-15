@@ -38,8 +38,12 @@ The development command selects the operator from its Cargo declaration.
 | `wamn-schema-control` | Package migration decisions and run storage declarations |
 | `wamn-catalog` | Component, wiring, and release facts |
 | `wamn-control` | Control operations that the CLI, the dev loop, and test support call |
-| `wamn-ctl` | Database and broker operations through these libraries |
+| `wamn-ctl` | CLI verbs and the dev loop over `wamn-control` and the lower libraries |
 | `wamn-scenario-worker` | The authoring admission API |
+
+The CLI, the dev loop, and other callers call `wamn-control`, and `wamn-control` calls the lower libraries.
+`wamn-control` never depends on `wamn-ctl`.
+A `wamn-control` operation takes ordinary inputs, keeps its own validation, and returns its result without printing.
 
 `apply-package` is the sole application migration applier.
 Rust decides package registration and wiring activation from stored facts within the caller's transaction.
@@ -48,7 +52,7 @@ Package registration retains its lineage lock, exact retry behavior, and first t
 Platform schema installation targets fresh databases, including the control database.
 
 `wamn-schema-control` compares projected release identities and deployment attestations.
-The CLI writes them and compares a concurrent winner within the same transaction.
+`wamn-control` writes them and compares a concurrent winner within the same transaction.
 Exact retries retain the first timestamp and nullable source provenance.
 The provisioning owner locks and compares environment identity before refreshing its tenant projection.
 That refresh clears the instance claim even when the suffix stays unchanged.
