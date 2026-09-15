@@ -139,6 +139,7 @@ Do not infer execution from the aggregate Cargo pass count.
 | Existing reference | Current owner and required setup |
 | --- | --- |
 | `[RUN-PLANE-RECONCILE]` | `services/ctl/tests/run_plane_live.rs`: fresh PostgreSQL 18 through `WAMN_CTL_PG_URL` |
+| `[CLAIMS-LIVE]` | Runtime `plugins::wamn_postgres::claims::tests` cases that call `test_pg_url`: fresh PostgreSQL 18 through `WAMN_PG_TEST_URL` |
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed`: separate `WAMN_SCS_OFF_PG_URL`, server setting `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: `WAMN_READER_PG_URL` at `/postgres`, logical WAL, and `WAMN_READER_NATS_URL` |
 | `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: `WAMN_SQLX_TRANSACTION_PG_URL` and `WAMN_SQLX_TRANSACTION_COMPONENT` |
