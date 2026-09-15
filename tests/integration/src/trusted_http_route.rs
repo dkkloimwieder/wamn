@@ -454,10 +454,9 @@ async fn seed_with_client(
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
         .context("read the run-queue DDL")?;
     let role_bootstrap = format!(
-        "{} {} {}",
+        "{} {}",
         wamn_control_provision::sql::ensure_app_acl_role_sql(),
         wamn_schema_control::ensure_scenario_author_role_sql(),
-        wamn_control_provision::sql::ensure_effect_writer_acl_role_sql(),
     );
     client
         .batch_execute(&format!(
