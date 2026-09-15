@@ -2179,7 +2179,9 @@ fn finish(session: std::process::Child) {
 }
 
 /// Level-2 spec test 3. The second writer waits on the row lock of the first,
-/// and the entries agree with the serialized row changes.
+/// and the entries agree with the serialized row changes. Writers of different
+/// rows that commit out of position order keep every entry, and a rolled-back
+/// competitor leaves no entry.
 #[test]
 fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
     let Ok(admin) = std::env::var("WAMN_TENANT_FLOOR_PG_URL") else {
@@ -2266,6 +2268,140 @@ fn the_log_trigger_serializes_concurrent_changes_on_postgres() {
                       'the second entry must start from the first result at a later position';\n\
              END $$;\n"
         ),
+    );
+
+    // Different rows: neither writer waits. Both hold an assigned transaction
+    // open at the same time, and the writer with the earlier position commits
+    // last.
+    apply(
+        &db_url,
+        &logged_guest_transaction(
+            &guest,
+            ACTOR_C,
+            CREATE_OPERATION,
+            "INSERT INTO rh_probe.logged (id, note, revision) VALUES (2, 'first', 1), (3, 'first', 1);",
+        ),
+    );
+    let mut earlier = start_session(&db_url, "rh-earlier");
+    send(
+        &mut earlier,
+        &format!(
+            "{}UPDATE rh_probe.logged SET note = 'from earlier', revision = revision + 1 \
+               WHERE id = 2;\n\
+             SELECT set_config('application_name', 'rh-earlier-held', false);\n",
+            claims(ACTOR_A)
+        ),
+    );
+    wait_until(
+        &db_url,
+        "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE application_name = 'rh-earlier-held')",
+    );
+    let mut later = start_session(&db_url, "rh-later");
+    send(
+        &mut later,
+        &format!(
+            "{}UPDATE rh_probe.logged SET note = 'from later', revision = revision + 1 \
+               WHERE id = 3;\n\
+             SELECT set_config('application_name', 'rh-later-held', false);\n",
+            claims(ACTOR_B)
+        ),
+    );
+    wait_until(
+        &db_url,
+        "SELECT count(*) = 2 FROM pg_stat_activity \
+          WHERE application_name IN ('rh-earlier-held', 'rh-later-held') \
+            AND state = 'idle in transaction' AND backend_xid IS NOT NULL",
+    );
+    send(&mut later, "COMMIT;\n");
+    drop(later.stdin.take());
+    finish(later);
+    send(&mut earlier, "COMMIT;\n");
+    drop(earlier.stdin.take());
+    finish(earlier);
+
+    apply(
+        &db_url,
+        &format!(
+            "DO $$ BEGIN\n\
+               ASSERT (SELECT array_agg(note ORDER BY id) = ARRAY['from earlier', 'from later'] \
+                        FROM rh_probe.logged WHERE id IN (2, 3)), \
+                      'both changes must commit';\n\
+               ASSERT (SELECT count(*) = 7 AND count(DISTINCT position) = 7 \
+                        FROM rh_probe.logged_history), \
+                      'every committed change must write one entry, and no position may repeat';\n\
+               ASSERT (SELECT count(*) = 2 AND bool_and(r.kinds = ARRAY['insert', 'update']) \
+                        FROM (SELECT array_agg(kind ORDER BY position) AS kinds \
+                                FROM rh_probe.logged_history \
+                               WHERE row_key IN ('{{\"id\": 2}}', '{{\"id\": 3}}') \
+                               GROUP BY row_key) AS r), \
+                      'the positions of each row must rise with its changes';\n\
+               ASSERT (SELECT e.changed_by = '{ACTOR_A}' AND e.after ->> 'note' = 'from earlier' \
+                          AND l.changed_by = '{ACTOR_B}' AND l.after ->> 'note' = 'from later' \
+                          AND e.position < l.position \
+                        FROM rh_probe.logged_history e, rh_probe.logged_history l \
+                        WHERE e.row_key = '{{\"id\": 2}}' AND e.kind = 'update' \
+                          AND l.row_key = '{{\"id\": 3}}' AND l.kind = 'update'), \
+                      'each entry must keep its own position when the later position commits first';\n\
+             END $$;\n"
+        ),
+    );
+
+    // A rolled-back competitor: the committed writer waits on the row lock of
+    // a writer that logs a change and rolls back. Gaps are allowed.
+    let mut aborted = start_session(&db_url, "rh-aborted");
+    send(
+        &mut aborted,
+        &format!(
+            "{}UPDATE rh_probe.logged SET note = 'rolled back', revision = revision + 1 \
+               WHERE id = 1;\n\
+             SELECT set_config('application_name', 'rh-aborted-locked', false);\n",
+            claims(ACTOR_A)
+        ),
+    );
+    wait_until(
+        &db_url,
+        "SELECT EXISTS (SELECT FROM pg_stat_activity WHERE application_name = 'rh-aborted-locked')",
+    );
+    let mut committed = start_session(&db_url, "rh-committed");
+    send(
+        &mut committed,
+        &format!(
+            "{}UPDATE rh_probe.logged SET note = 'after rollback', revision = revision + 1 \
+               WHERE id = 1;\n\
+             COMMIT;\n",
+            claims(ACTOR_B)
+        ),
+    );
+    drop(committed.stdin.take());
+    wait_until(
+        &db_url,
+        "SELECT EXISTS (SELECT FROM pg_stat_activity \
+                         WHERE application_name = 'rh-committed' AND wait_event_type = 'Lock')",
+    );
+    send(&mut aborted, "ROLLBACK;\n");
+    drop(aborted.stdin.take());
+    finish(aborted);
+    finish(committed);
+
+    apply(
+        &db_url,
+        "DO $$ BEGIN\n\
+           ASSERT (SELECT note = 'after rollback' AND revision = 4 \
+                    FROM rh_probe.logged WHERE id = 1), \
+                  'the committed change must apply to the committed row';\n\
+           ASSERT (SELECT count(*) = 8 AND count(DISTINCT position) = 8 \
+                      AND count(*) FILTER (WHERE before ->> 'note' = 'rolled back' \
+                                              OR after ->> 'note' = 'rolled back') = 0 \
+                    FROM rh_probe.logged_history), \
+                  'the rolled-back change must leave no entry';\n\
+           ASSERT (SELECT l.before ->> 'note' = 'from second' AND l.before -> 'revision' = '3' \
+                      AND l.after -> 'revision' = '4' \
+                      AND l.position > ALL (SELECT position FROM rh_probe.logged_history \
+                                             WHERE row_key = '{\"id\": 1}' AND position <> l.position) \
+                    FROM rh_probe.logged_history l \
+                    WHERE l.row_key = '{\"id\": 1}' AND l.after ->> 'note' = 'after rollback'), \
+                  'the committed change must start from the committed row at a higher position';\n\
+         END $$;\n",
     );
 
     apply(&admin, &format!("DROP ROLE \"{guest}\";\n"));
