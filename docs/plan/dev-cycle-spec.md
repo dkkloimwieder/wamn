@@ -51,27 +51,8 @@ a result; it stops recomputing inputs that didn't move.
 
 ### 4.4 Crate consolidation
 
-Rule: **merge crates that merely divide one cohesive implementation, provided
-the merge does not worsen dependency weight, target compatibility, or
-ordinary edit/build time.** Native/Wasm and feature-isolation boundaries stay.
-One consumer does not make a boundary useless; two do not make it useful.
-
-Candidates for review — each gets a decision, none is a destination:
-
-| candidate | question |
-|---|---|
-| `tools/probes/*` (4) | any live consumer of their executable tests? if none, delete |
-| `crates/identity/project-state` + `platform` | one implementation? |
-| `crates/control/registry` + `provision` | one implementation, or the control library from the `ctl` extraction? |
-| `crates/execution/run-state`, `scheduler`, `router` | cohesive, or does merging concentrate dependencies? |
-| `crates/platform/pg-core`, `component-policy`, `component-virtualizer`, `runtime` | lightweight primitives stay separate if merging grows `runtime`'s unit |
-| `crates/scenarios/model`, `authoring/model`, `catalog/model` | unrelated contracts — merge only if they are one model |
-| `crates/client/terminal`, `tui`, `core` | UI machinery into `core` only if edit/build time doesn't worsen |
-
-Each merge is one mechanical commit with a shim, independently reviewable,
-coordinated with the `ctl` extraction (manifests, imports, test ownership
-overlap). Measure **elapsed rebuild time** of a shared-contract change before
-and after; not a crate count.
+4.4 closed under `wamn-zh3p`; `tools/probes` and `wamn-scenario-model` were deleted, and the other six candidates stay separate crates.
+No merge landed, so section 6 item 2 records no measurement.
 
 ## 5. What must not change
 
