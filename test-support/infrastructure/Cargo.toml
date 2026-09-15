@@ -28,7 +28,7 @@ wamn-control-provision = { workspace = true }
 wamn-authoring-model = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-schema-generator = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt", "process", "time"] }
+tokio = { workspace = true, features = ["macros", "rt", "process", "signal", "time"] }
 url = { workspace = true }
 tokio-postgres = { workspace = true }
 wamn-test-postgres = { workspace = true }

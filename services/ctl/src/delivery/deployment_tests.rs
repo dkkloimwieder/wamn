@@ -167,17 +167,14 @@ async fn seed_release(client: &Client, id: i32, version: &str, hash: char) -> Se
 async fn owned_selection_lock_refuses_late_activation_and_changed_installed_schema() {
     let mut server = wamn_test_infrastructure::postgres::start(&[]).unwrap();
     let database = server.create_database("delivery_order").unwrap();
-    server.require_url(database.url()).unwrap();
     let (mut first, first_connection) = tokio_postgres::connect(database.url(), NoTls)
         .await
         .unwrap();
     let first_connection = tokio::spawn(first_connection);
-    server.require_url(database.url()).unwrap();
     let (mut second, second_connection) = tokio_postgres::connect(database.url(), NoTls)
         .await
         .unwrap();
     let second_connection = tokio::spawn(second_connection);
-    server.require_url(database.url()).unwrap();
     let (observer, observer_connection) = tokio_postgres::connect(database.url(), NoTls)
         .await
         .unwrap();

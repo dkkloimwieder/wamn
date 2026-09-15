@@ -6425,8 +6425,6 @@ dependencies = [
  "hex",
  "ring",
  "rustix",
- "serde",
- "serde_json",
  "tokio",
  "url",
 ]

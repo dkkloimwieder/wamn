@@ -708,8 +708,7 @@ async fn run(
         .args(&argv[1..])
         .current_dir(root)
         .kill_on_drop(true)
-        .env("CARGO_NET_OFFLINE", "true")
-        .env("WAMN_TEST_REQUIRED", "1");
+        .env("CARGO_NET_OFFLINE", "true");
     for (name, _) in std::env::vars_os() {
         if name.to_str().is_some_and(|name| {
             name.starts_with("PG") || name.ends_with("_PG_URL") || name.ends_with("DATABASE_URL")

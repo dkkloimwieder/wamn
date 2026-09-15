@@ -10,12 +10,14 @@ use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use ring::rand::{SecureRandom as _, SystemRandom};
+use rustix::process::{Pid, Signal, kill_process_group};
 use serde_json::json;
 use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
+use tokio::signal::unix::{SignalKind, signal};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_registry::Triple;
-use wamn_test_infrastructure::{event_broker, postgres};
+use wamn_test_infrastructure::event_broker;
 
 #[derive(Debug)]
 struct Compose {
@@ -122,6 +124,39 @@ async fn checked(command: &mut Command) -> anyhow::Result<Vec<u8>> {
         String::from_utf8_lossy(&output.stderr)
     );
     Ok(output.stdout)
+}
+
+/// Run the timing command in its own process group, which a signal to this process stops.
+///
+/// The command inherits no PostgreSQL variables of this process.
+async fn run(command: &mut Command) -> anyhow::Result<std::process::ExitStatus> {
+    for (name, _) in std::env::vars_os() {
+        if name.to_str().is_some_and(|name| {
+            name.starts_with("PG") || name.ends_with("_PG_URL") || name.ends_with("DATABASE_URL")
+        }) {
+            command.env_remove(name);
+        }
+    }
+    command.kill_on_drop(true).process_group(0);
+    let mut interrupt = signal(SignalKind::interrupt())?;
+    let mut terminate = signal(SignalKind::terminate())?;
+    let mut hangup = signal(SignalKind::hangup())?;
+    let mut child = command.spawn().context("start the timing command")?;
+    let group = Pid::from_raw(i32::try_from(
+        child.id().context("the timing command has a process ID")?,
+    )?)
+    .context("the timing command process ID is positive")?;
+    let status = tokio::select! {
+        status = child.wait() => status.context("wait for the timing command"),
+        _ = interrupt.recv() => Err(anyhow::anyhow!("the timing command was interrupted")),
+        _ = terminate.recv() => Err(anyhow::anyhow!("the timing command was terminated")),
+        _ = hangup.recv() => Err(anyhow::anyhow!("the timing command lost its session")),
+    };
+    let _ = kill_process_group(group, Signal::KILL);
+    if status.is_err() {
+        let _ = child.wait().await;
+    }
+    status
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -283,34 +318,6 @@ async fn main() -> anyhow::Result<()> {
     let event_url = format!("nats://{events}");
     event_broker::connect(&broker.provisioning, &event_url).await?;
     event_broker::connect(&broker.runtime, &event_url).await?;
-    let mut server = postgres::start(&[])?;
-    let database = server.create_database("wamn_system")?;
-    server.require_url(database.url())?;
-    let endpoint = url::Url::parse(database.url())?;
-    let mut bootstrap = Command::new("/usr/lib/postgresql/18/bin/psql");
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with("PG") {
-            bootstrap.env_remove(key);
-        }
-    }
-    // postgres-init.sql uses psql's database switch. Explicit native libpq
-    // fields keep that switch on the same owned server and never a default.
-    bootstrap
-        .args(["-X", "-v", "ON_ERROR_STOP=1", "-f"])
-        .arg(repository.join("deploy/sql/postgres-init.sql"))
-        .env("PGHOST", endpoint.host_str().context("owned server host")?)
-        .env(
-            "PGPORT",
-            endpoint.port().context("owned server port")?.to_string(),
-        )
-        .env("PGUSER", endpoint.username())
-        .env(
-            "PGPASSWORD",
-            endpoint.password().context("owned server password")?,
-        )
-        .env("PGDATABASE", endpoint.path().trim_start_matches('/'));
-    checked(&mut bootstrap).await?;
-    server.record_database("wamn")?;
     let variables = BTreeMap::from([
         ("WAMN_TIMINGS_ROOT", results.display().to_string()),
         ("WAMN_TIMINGS_BASELINE", repository.display().to_string()),
@@ -383,10 +390,7 @@ async fn main() -> anyhow::Result<()> {
         .envs(&variables)
         .env("CARGO_TARGET_DIR", &target)
         .env("CARGO_BUILD_JOBS", "2");
-    let status = server
-        .run(&mut command, &database, &["WAMN_ROUTE_PG18_URL".to_owned()])
-        .await?;
-    server.stop()?;
+    let status = run(&mut command).await?;
     compose.stop().await?;
     ensure!(status.success(), "timing command failed with {status}");
     Ok(())

@@ -68,8 +68,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let database = database.context("--database is required")?;
     ensure!(!names.is_empty(), "at least one --url-env is required");
     ensure!(
-        names.iter().all(|name| name != postgres::OWNERSHIP_ENV
-            && !name.is_empty()
+        names.iter().all(|name| !name.is_empty()
             && name
                 .bytes()
                 .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')),
@@ -81,7 +80,6 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let mut server = postgres::start(&[])?;
     let owned = server.create_database(&database)?;
     let setup = apply_migrations(
-        &server,
         &owned,
         schema.as_deref(),
         &migrations,
@@ -101,13 +99,11 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
 
 /// Reconstruct only the database that this invocation owns.
 async fn apply_migrations(
-    server: &postgres::OwnedPostgres,
     database: &postgres::OwnedDatabase,
     schema: Option<&str>,
     directories: &[PathBuf],
     history_manifest: Option<&Path>,
 ) -> anyhow::Result<()> {
-    server.require_url(database.url())?;
     let (client, connection) = tokio_postgres::connect(database.url(), tokio_postgres::NoTls)
         .await
         .context("connect to the owned migration database")?;

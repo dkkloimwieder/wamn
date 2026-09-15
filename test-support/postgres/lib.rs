@@ -5,11 +5,10 @@
 //! with other server settings. The owned runner binary uses the same server to
 //! pass database coordinates to one child command.
 
-use std::collections::BTreeSet;
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::Write as _;
 use std::net::{Ipv4Addr, TcpListener};
-use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -20,22 +19,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, ensure};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use rustix::process::{Pid, Signal, kill_process_group};
-use serde::{Deserialize, Serialize};
 use url::Url;
 
-/// The child runner's private record of its live PostgreSQL server and databases.
-pub const OWNERSHIP_ENV: &str = "WAMN_TEST_POSTGRES_OWNERSHIP";
-/// Presence makes selected test prerequisites mandatory instead of optional.
-pub const REQUIRED_ENV: &str = "WAMN_TEST_REQUIRED";
 const POSTGRES_BIN: &str = "/usr/lib/postgresql/18/bin";
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-struct Ownership {
-    pid: u32,
-    port: u16,
-    databases: BTreeSet<String>,
-}
 
 /// Create a database that the calling test owns on the server of this test process.
 ///
@@ -67,7 +53,7 @@ pub fn database() -> Database {
     Database {
         url: owned.url,
         name,
-        port: server.ownership.port,
+        port: server.port,
         password: server.password.clone(),
     }
 }
@@ -140,12 +126,15 @@ impl Drop for Database {
             self.port,
             &self.password,
             "postgres",
-            &[&format!("DROP DATABASE IF EXISTS \"{}\" WITH (FORCE)", self.name)],
+            &[&format!(
+                "DROP DATABASE IF EXISTS \"{}\" WITH (FORCE)",
+                self.name
+            )],
         );
     }
 }
 
-/// A database created by its server owner, with credentials omitted from Debug.
+/// A database coordinate of an owned server, with credentials omitted from Debug.
 pub struct OwnedDatabase {
     url: String,
 }
@@ -159,12 +148,12 @@ impl std::fmt::Debug for OwnedDatabase {
 }
 
 impl OwnedDatabase {
-    /// Return the exact owned coordinate for the selected connection path.
+    /// Return the superuser coordinate of this database.
     pub fn url(&self) -> &str {
         &self.url
     }
 
-    /// Select the role under test without changing its owned database coordinate.
+    /// Select the role under test without changing the database coordinate.
     pub fn with_credentials(&self, user: &str, password: &str) -> anyhow::Result<Self> {
         let mut url = Url::parse(&self.url)?;
         ensure!(!user.is_empty(), "the test database role must be named");
@@ -181,7 +170,7 @@ pub struct OwnedPostgres {
     directory: PathBuf,
     watcher: Option<Child>,
     process: Option<Child>,
-    ownership: Ownership,
+    port: u16,
     password: String,
 }
 
@@ -190,7 +179,7 @@ impl std::fmt::Debug for OwnedPostgres {
         formatter
             .debug_struct("OwnedPostgres")
             .field("directory", &self.directory)
-            .field("ownership", &self.ownership)
+            .field("port", &self.port)
             .finish_non_exhaustive()
     }
 }
@@ -219,11 +208,7 @@ pub fn start(settings: &[(&str, &str)]) -> anyhow::Result<OwnedPostgres> {
         directory,
         watcher: None,
         process: None,
-        ownership: Ownership {
-            pid: 0,
-            port: 0,
-            databases: BTreeSet::from(["postgres".to_owned()]),
-        },
+        port: 0,
         password: hex::encode(&random[24..]),
     };
     server.initialize(settings)?;
@@ -284,7 +269,7 @@ impl OwnedPostgres {
         let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?
             .local_addr()?
             .port();
-        self.ownership.port = port;
+        self.port = port;
         let log = private_file(&self.directory.join("server.log"))?;
         let mut command = Command::new(Path::new(POSTGRES_BIN).join("postgres"));
         command
@@ -305,7 +290,6 @@ impl OwnedPostgres {
             .process_group(0)
             .spawn()
             .context("start the owned PostgreSQL process")?;
-        self.ownership.pid = process.id();
         self.process = Some(process);
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
@@ -332,7 +316,6 @@ impl OwnedPostgres {
             );
             std::thread::sleep(Duration::from_millis(25));
         }
-        self.write_ownership()?;
         let ready = self.sql(
             "postgres",
             "SELECT current_setting('server_version_num')::int / 10000",
@@ -344,72 +327,37 @@ impl OwnedPostgres {
         Ok(())
     }
 
-    /// Create and record a database before a test can receive its coordinate.
+    /// Create a database on this server and return its coordinate.
     pub fn create_database(&mut self, name: &str) -> anyhow::Result<OwnedDatabase> {
         ensure!(
             valid_database_name(name),
             "the test database name must be a lowercase SQL identifier"
         );
-        ensure!(
-            !self.ownership.databases.contains(name),
-            "the test database already exists"
-        );
         self.sql("postgres", &format!("CREATE DATABASE {name}"))?;
-        self.ownership.databases.insert(name.to_owned());
-        self.write_ownership()?;
         self.database(name)
     }
 
-    /// Record a database that an existing setup owner created on this server.
-    pub fn record_database(&mut self, name: &str) -> anyhow::Result<OwnedDatabase> {
-        ensure!(
-            valid_database_name(name) && !matches!(name, "template0" | "template1"),
-            "the recorded test database must name a created lowercase SQL identifier"
-        );
-        // sql() checks the private live process record before connecting to
-        // this server's recorded postgres database. No external URL is admitted.
-        let existing = self.sql(
-            "postgres",
-            &format!("SELECT datname FROM pg_catalog.pg_database WHERE datname = '{name}'"),
-        )?;
-        ensure!(
-            existing.trim() == name,
-            "the setup owner did not create the named database"
-        );
-        self.ownership.databases.insert(name.to_owned());
-        self.write_ownership()?;
-        self.database(name)
-    }
-
-    /// Return only a database that this server created and recorded.
+    /// Return the superuser coordinate of a database of this server.
     pub fn database(&self, name: &str) -> anyhow::Result<OwnedDatabase> {
-        ensure!(
-            self.ownership.databases.contains(name),
-            "the database is not owned by this test runner"
-        );
         let mut url = Url::parse("postgresql://postgres@127.0.0.1/postgres")?;
-        url.set_port(Some(self.ownership.port))
+        url.set_port(Some(self.port))
             .expect("PostgreSQL URLs accept a port");
         url.set_password(Some(&self.password))
             .expect("PostgreSQL URLs accept credentials");
         url.set_path(name);
-        self.require_url(url.as_str())?;
         Ok(OwnedDatabase { url: url.into() })
     }
 
-    /// Refuse unowned coordinates before opening a database connection.
-    pub fn require_url(&self, url: &str) -> anyhow::Result<()> {
-        require_recorded_url(&self.record_path(), url)
-    }
-
-    /// Run one child at a time, with only owned database inputs and signal cleanup.
+    /// Run one child with the database coordinate in each named variable.
+    ///
+    /// The child inherits no PostgreSQL variables of this process. A signal to
+    /// this process stops the child and its process group.
     pub async fn run(
         &mut self,
         command: &mut tokio::process::Command,
         database: &OwnedDatabase,
         url_env_names: &[String],
     ) -> anyhow::Result<ExitStatus> {
-        self.require_url(database.url())?;
         for (name, _) in std::env::vars_os() {
             if name.to_str().is_some_and(|name| {
                 name.starts_with("PG")
@@ -422,11 +370,7 @@ impl OwnedPostgres {
         for name in url_env_names {
             command.env(name, database.url());
         }
-        command
-            .env(OWNERSHIP_ENV, self.record_path())
-            .env(REQUIRED_ENV, "1")
-            .env("RUST_TEST_THREADS", "1")
-            .kill_on_drop(true);
+        command.env("RUST_TEST_THREADS", "1").kill_on_drop(true);
         command.as_std_mut().process_group(0);
         let mut interrupt =
             tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
@@ -473,21 +417,8 @@ impl OwnedPostgres {
         Ok(())
     }
 
-    fn record_path(&self) -> PathBuf {
-        self.directory.join("ownership.json")
-    }
-
-    fn write_ownership(&self) -> anyhow::Result<()> {
-        let path = self.record_path();
-        let temporary = self.directory.join("ownership.next");
-        serde_json::to_writer(private_file(&temporary)?, &self.ownership)?;
-        fs::rename(temporary, path).context("record the owned PostgreSQL databases")
-    }
-
     fn sql(&self, database: &str, sql: &str) -> anyhow::Result<String> {
-        let coordinate = self.database(database)?;
-        self.require_url(coordinate.url())?;
-        psql(self.ownership.port, &self.password, database, &[sql])
+        psql(self.port, &self.password, database, &[sql])
     }
 }
 
@@ -527,88 +458,6 @@ impl Drop for ProcessGroup {
     fn drop(&mut self) {
         let _ = kill_process_group(self.0, Signal::KILL);
     }
-}
-
-/// Require the current runner's ownership record before a child connects.
-pub fn require_owned_url(url: &str) -> anyhow::Result<()> {
-    let path = std::env::var_os(OWNERSHIP_ENV)
-        .context("run this test through wamn-test-postgres; its ownership record is required")?;
-    require_recorded_url(Path::new(&path), url)
-}
-
-/// Enforce ownership in delivery runs while retaining legacy manual test inputs.
-pub fn require_owned_url_when_recorded(url: &str) -> anyhow::Result<()> {
-    if std::env::var_os(OWNERSHIP_ENV).is_some() || std::env::var_os(REQUIRED_ENV).is_some() {
-        require_owned_url(url)?;
-    }
-    Ok(())
-}
-
-fn require_recorded_url(path: &Path, input: &str) -> anyhow::Result<()> {
-    let directory = path
-        .parent()
-        .context("the database ownership record has no directory")?;
-    ensure!(
-        directory.is_absolute()
-            && directory
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("wamn-test-postgres-")),
-        "the database ownership record is outside an owned fixture directory"
-    );
-    ensure!(
-        fs::symlink_metadata(directory)?.file_type().is_dir()
-            && fs::metadata(directory)?.permissions().mode() & 0o077 == 0,
-        "the database fixture directory must be private"
-    );
-    let record_meta = fs::symlink_metadata(path)?;
-    ensure!(
-        record_meta.file_type().is_file() && record_meta.permissions().mode() & 0o077 == 0,
-        "the database ownership record must be a private regular file"
-    );
-    let ownership: Ownership = serde_json::from_slice(&fs::read(path)?)?;
-    let data = directory.join("data");
-    let pid = fs::read_to_string(data.join("postmaster.pid"))
-        .context("the owned PostgreSQL process is absent")?;
-    let lines = pid.lines().collect::<Vec<_>>();
-    ensure!(
-        lines.first().and_then(|pid| pid.parse::<u32>().ok()) == Some(ownership.pid)
-            && lines.get(1).is_some_and(|path| Path::new(path) == data)
-            && lines.get(3).and_then(|port| port.parse::<u16>().ok()) == Some(ownership.port),
-        "the PostgreSQL process no longer matches the ownership record"
-    );
-    let command = fs::read(format!("/proc/{}/cmdline", ownership.pid))
-        .context("the owned PostgreSQL process is no longer running")?;
-    let args = command.split(|byte| *byte == 0).collect::<Vec<_>>();
-    ensure!(
-        args.first()
-            == Some(
-                &Path::new(POSTGRES_BIN)
-                    .join("postgres")
-                    .as_os_str()
-                    .as_encoded_bytes()
-            )
-            && args
-                .windows(2)
-                .any(|pair| pair[0] == b"-D" && pair[1] == data.as_os_str().as_encoded_bytes()),
-        "the ownership record does not identify the test server process"
-    );
-    let url = Url::parse(input).context("the test database URL is invalid")?;
-    ensure!(
-        matches!(url.scheme(), "postgres" | "postgresql")
-            && url.host_str() == Some("127.0.0.1")
-            && url.port() == Some(ownership.port)
-            && ownership
-                .databases
-                .iter()
-                .any(|database| url.path() == format!("/{database}"))
-            && url.query_pairs().all(|(key, _)| matches!(
-                key.as_ref(),
-                "sslmode" | "options" | "application_name" | "connect_timeout"
-            )),
-        "the database URL is not owned by this test runner"
-    );
-    Ok(())
 }
 
 fn private_file(path: &Path) -> anyhow::Result<File> {
@@ -723,82 +572,16 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn setup_owner_databases_require_live_recorded_identity() -> anyhow::Result<()> {
-        let mut server = start(&[])?;
-        assert!(server.record_database("absent_database").is_err());
-        assert!(server.record_database("template1").is_err());
-        assert!(server.record_database("bad';SELECT 1").is_err());
-        server.sql("postgres", "CREATE DATABASE setup_owned")?;
-        assert!(server.database("setup_owned").is_err());
-        let database = server.record_database("setup_owned")?;
-        server.require_url(database.url())?;
-        assert_eq!(
-            server
-                .sql("setup_owned", "SELECT current_database()")?
-                .trim(),
-            "setup_owned"
-        );
-        server.stop()?;
-        assert!(server.record_database("setup_owned").is_err());
-        Ok(())
-    }
-
-    #[test]
-    fn unowned_input_refuses_before_contacting_its_listener() {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let url = format!(
-            "postgresql://postgres@127.0.0.1:{}/interactive",
-            listener.local_addr().unwrap().port()
-        );
-        let error = require_recorded_url(
-            Path::new("/does-not-own-a-test-server/ownership.json"),
-            &url,
-        )
-        .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("outside an owned fixture directory")
-        );
-        assert_eq!(
-            listener.accept().unwrap_err().kind(),
-            std::io::ErrorKind::WouldBlock
-        );
-    }
-
     #[tokio::test]
-    async fn owned_server_guards_coordinates_roles_child_execution_and_cleanup()
-    -> anyhow::Result<()> {
+    async fn owned_server_runs_children_with_role_coordinates_and_cleans_up() -> anyhow::Result<()>
+    {
         let mut server = start(&[])?;
         let directory = server.directory.clone();
-        let record = server.record_path();
         let database = server.create_database("delivery_test")?;
-        for input in [
-            database.url().replace("/delivery_test", "/interactive"),
-            database.url().replace("127.0.0.1", "localhost"),
-            format!("{}?host=interactive.example", database.url()),
-            format!("{}?hostaddr=127.0.0.1", database.url()),
-        ] {
-            assert!(server.require_url(&input).is_err());
-        }
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
-        listener.set_nonblocking(true)?;
-        let mut foreign = Url::parse(database.url())?;
-        foreign
-            .set_port(Some(listener.local_addr()?.port()))
-            .unwrap();
-        assert!(server.require_url(foreign.as_str()).is_err());
-        assert_eq!(
-            listener.accept().unwrap_err().kind(),
-            std::io::ErrorKind::WouldBlock
-        );
-
         server.sql("delivery_test", "CREATE ROLE fixture_reader LOGIN PASSWORD 'fixture-only'; GRANT CONNECT ON DATABASE delivery_test TO fixture_reader")?;
         let role = database.with_credentials("fixture_reader", "fixture-only")?;
         let mut query = tokio::process::Command::new("sh");
-        query.args(["-c", "test -f \"$WAMN_TEST_POSTGRES_OWNERSHIP\" && test \"$(/usr/lib/postgresql/18/bin/psql \"$DATABASE_URL\" -XAt -v ON_ERROR_STOP=1 -c 'SELECT current_user')\" = fixture_reader"]);
+        query.args(["-c", "test \"$(/usr/lib/postgresql/18/bin/psql \"$DATABASE_URL\" -XAt -v ON_ERROR_STOP=1 -c 'SELECT current_user')\" = fixture_reader"]);
         assert!(
             server
                 .run(&mut query, &role, &["DATABASE_URL".to_owned()])
@@ -834,7 +617,6 @@ mod tests {
         assert!(!Path::new(&format!("/proc/{}", pid.trim())).exists());
         server.stop()?;
         assert!(!directory.exists());
-        assert!(require_recorded_url(&record, database.url()).is_err());
         Ok(())
     }
 }
