@@ -2877,7 +2877,7 @@ fn missing_helpers_and_record_triggers_are_repaired() {
             .iter()
             .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
             .count(),
-        12
+        11
     );
 }
 
