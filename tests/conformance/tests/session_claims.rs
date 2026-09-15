@@ -286,10 +286,27 @@ fn rust_string_literals(source: &str) -> Vec<(usize, String)> {
     literals
 }
 
+/// Cut each line at its first `--` outside a single-quoted literal.
+///
+/// Quotes are tracked per line, so a stray apostrophe cannot hide later lines.
+/// A `''` inside a literal toggles twice and so stays an escaped quote.
 fn strip_sql_comments(source: &str) -> String {
     source
         .lines()
-        .map(|line| line.split_once("--").map_or(line, |(before, _)| before))
+        .map(|line| {
+            let bytes = line.as_bytes();
+            let mut quoted = false;
+            for (index, byte) in bytes.iter().enumerate() {
+                match byte {
+                    b'\'' => quoted = !quoted,
+                    b'-' if !quoted && bytes.get(index + 1) == Some(&b'-') => {
+                        return &line[..index];
+                    }
+                    _ => {}
+                }
+            }
+            line
+        })
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -422,6 +439,22 @@ fn session_forgeable_claims_have_no_authorization_reader_while_the_claim_escape_
         forgeable_claim_reads(operation_policy).len(),
         1,
         "the fence must see an app.operation read"
+    );
+    assert_eq!(
+        forgeable_claim_reads(&strip_sql_comments(
+            "raise hint 'use --tenant'; \
+             create policy p on t using (current_setting('app.role', true) = 'x');"
+        ))
+        .len(),
+        1,
+        "a double dash inside a string literal must not hide a later claim read"
+    );
+    assert!(
+        forgeable_claim_reads(&strip_sql_comments(
+            "select 'it''s'; -- don't current_setting('app.role', true)"
+        ))
+        .is_empty(),
+        "a real comment must still hide a claim read"
     );
     let trigger_file = "create function wamn_history.stamp_row() returns trigger \
          language plpgsql set search_path = pg_catalog as $stamp_row$ begin \
