@@ -5706,7 +5706,9 @@ dependencies = [
  "anyhow",
  "async-nats",
  "chrono",
+ "clap",
  "hex",
+ "oci-client",
  "rcgen",
  "reqwest",
  "ring",
@@ -5732,6 +5734,8 @@ dependencies = [
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
  "wamn-test-postgres",
+ "wit-component 0.252.0",
+ "wit-parser 0.252.0",
 ]
 
 [[package]]

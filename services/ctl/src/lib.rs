@@ -34,7 +34,7 @@ pub mod prune_record_history;
 #[cfg(feature = "ops")]
 pub mod prune_run_history;
 pub mod publish_release;
-pub mod push_component;
+pub use wamn_control::push_component;
 pub mod push_release_manifest;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;

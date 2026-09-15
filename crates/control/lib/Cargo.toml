@@ -9,7 +9,9 @@ license.workspace = true
 anyhow = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 chrono = { workspace = true, features = ["clock"] }
+clap = { workspace = true, features = ["derive", "env"] }
 hex = { workspace = true }
+oci-client = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
 ring = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
@@ -21,10 +23,13 @@ wamn-catalog = { workspace = true }
 wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-reg = { workspace = true }
+wamn-execution-contract = { workspace = true }
 wamn-pg-core = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-record-history = { workspace = true }
 wamn-run-state = { workspace = true }
+# push_component is the sole production caller of byte admission and shares
+# the immutable OCI media/reference contract with the runtime pull side.
 wamn-runtime = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-schema-generator = { workspace = true }
@@ -37,10 +42,11 @@ tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 tokio-rustls = { workspace = true }
 wamn-catalog = { workspace = true, features = ["test-util"] }
 wamn-control-provision = { workspace = true, features = ["test-util"] }
-wamn-execution-contract = { workspace = true }
 wamn-project-state = { workspace = true, features = ["test-util"] }
 wamn-test-infrastructure = { workspace = true }
 wamn-test-postgres = { workspace = true }
+wit-component = { version = "=0.252.0", features = ["dummy-module"] }
+wit-parser = "=0.252.0"
 
 [lints]
 workspace = true

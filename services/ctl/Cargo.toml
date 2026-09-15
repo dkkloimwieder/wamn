@@ -83,8 +83,6 @@ wamn-control-registry = { workspace = true }
 # independently issued/revoked PATs for provision-project-env.
 wamn-platform-identity = { workspace = true }
 wamn-pg-core = { workspace = true }
-# push-component is the sole production caller of byte admission and shares
-# the immutable OCI media/reference contract with the runtime pull side.
 wamn-runtime = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 # 9.6 prune-run-history: the single-source run-state SQL builder

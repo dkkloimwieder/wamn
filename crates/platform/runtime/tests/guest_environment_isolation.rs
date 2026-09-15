@@ -13,7 +13,7 @@
 //!
 //! Tenant admission separately DENIES `wasi:cli/environment` to tenant code —
 //! the closed allowlist in `crates/platform/component-policy`, reached from
-//! `services/ctl/src/push_component.rs` through `validate_component_admission`.
+//! `crates/control/lib/src/push_component.rs` through `validate_component_admission`.
 //! That is the first door. This test checks the guarantee that holds for a guest
 //! which imports the interface ANYWAY: defence in depth, measured rather than
 //! asserted.

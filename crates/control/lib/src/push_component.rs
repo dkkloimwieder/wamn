@@ -399,11 +399,11 @@ impl fmt::Debug for ComponentAdmission {
 }
 
 impl ComponentAdmission {
-    pub(crate) fn facts(&self) -> &AdmittedComponent {
+    pub fn facts(&self) -> &AdmittedComponent {
         &self.component
     }
 
-    pub(crate) fn requirements(&self) -> &[ComponentConnectionRequirement] {
+    pub fn requirements(&self) -> &[ComponentConnectionRequirement] {
         &self.requirements
     }
 
@@ -430,7 +430,7 @@ impl ComponentAdmission {
 
 /// Validate saved component and package bytes without publication side effects.
 pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmission> {
-    let directory = wamn_control::apply_package::read_package_directory(&args.package)?;
+    let directory = crate::apply_package::read_package_directory(&args.package)?;
     let package = plan_package_migrations(&directory, None)
         .context("validate strict package directory before component publication")?;
     let package_manifest =
@@ -1569,7 +1569,7 @@ async fn persist_with_client(
         None
     };
     let package_inserted = if plane == ProjectionPlane::Control {
-        wamn_control::apply_package::register_package(
+        crate::apply_package::register_package(
             &transaction,
             &component.scope.tenant_id,
             &package.coordinate,
@@ -1672,7 +1672,7 @@ async fn require_exact_applied_package(
         )
     })?;
     ensure_component_package_matches(component, &presented.coordinate)?;
-    let Some(applied) = wamn_control::apply_package::load_applied_package(
+    let Some(applied) = crate::apply_package::load_applied_package(
         transaction,
         &component.scope.tenant_id,
         &component.scope.package_id,
@@ -1919,7 +1919,7 @@ async fn verify_requirements(
 /// A PROJECT-plane append: promotion copies an already-admitted fact into a
 /// target database that IS its own creation, so it carries no environment
 /// instance. Only the control projection in [`persist_with_client`] resolves one.
-pub(crate) async fn append_or_verify_admitted_component(
+pub async fn append_or_verify_admitted_component(
     transaction: &tokio_postgres::Transaction<'_>,
     component: &AdmittedComponent,
     projection_hash: &str,
@@ -2089,7 +2089,7 @@ mod tests {
 
     fn repository_receiving_component() -> AdmittedComponent {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../apps/wamn_receiving/publication/components/receiving.json.in"
+            "../../../../apps/wamn_receiving/publication/components/receiving.json.in"
         ))
         .expect("repository component declaration is JSON");
         document["scope"]["tenant-id"] = serde_json::json!("tenant-a");
@@ -2158,9 +2158,10 @@ mod tests {
 
     #[test]
     fn package_evidence_binds_exact_sql_to_each_manifest_operation() {
-        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
+        let package_root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
         let manifest = wamn_schema_generator::PackageManifest::from_slice(include_bytes!(
-            "../../../apps/wamn_receiving/wamn.json"
+            "../../../../apps/wamn_receiving/wamn.json"
         ))
         .expect("repository package manifest parses");
         let mut component = repository_receiving_component();
@@ -2189,10 +2190,11 @@ mod tests {
 
     #[test]
     fn fresh_only_requires_authored_component_and_generated_contract_agreement() {
-        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
+        let package_root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
         let operation = "wamn-receiving:purchase-order/get@1.0.0";
         let baseline = wamn_schema_generator::PackageManifest::from_slice(include_bytes!(
-            "../../../apps/wamn_receiving/wamn.json"
+            "../../../../apps/wamn_receiving/wamn.json"
         ))
         .unwrap();
         for (authored, declared) in [(true, false), (false, true), (true, true)] {
@@ -2251,7 +2253,8 @@ mod tests {
 
     #[test]
     fn unsafe_paths_and_digest_drift_are_typed_statement_refusals() {
-        let package_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
+        let package_root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
         let canonical_root = package_root.canonicalize().expect("package root resolves");
         let path_error = read_package_owned_file(
             &package_root,
@@ -2302,7 +2305,7 @@ mod tests {
     #[test]
     fn private_manifest_operation_cannot_cross_component_ownership() {
         let mut document: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../apps/client_acme_receiving/wamn.json"
+            "../../../../apps/client_acme_receiving/wamn.json"
         ))
         .expect("repository overlay manifest is JSON");
         let primary = "client_acme_receiving";
@@ -2377,7 +2380,7 @@ mod tests {
 
     fn overlay_manifest() -> wamn_schema_generator::PackageManifest {
         serde_json::from_str(include_str!(
-            "../../../apps/client_acme_receiving/wamn.json"
+            "../../../../apps/client_acme_receiving/wamn.json"
         ))
         .expect("repository overlay manifest parses")
     }
@@ -2575,8 +2578,9 @@ mod tests {
         let mut project = connect(&project_config).await;
         let mut control = connect(&control_config).await;
 
-        let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
-        let directory = wamn_control::apply_package::read_package_directory(&package_path)
+        let package_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+        let directory = crate::apply_package::read_package_directory(&package_path)
             .expect("read real Receiving package");
         let package = plan_package_migrations(&directory, None).expect("plan real package");
         let component_bytes = b"verification-project-component".to_vec();
@@ -2912,8 +2916,9 @@ mod tests {
         let control_config: PgConfig = database.url().parse().expect("parse the test database URL");
         let control = connect(&control_config).await;
 
-        let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
-        let directory = wamn_control::apply_package::read_package_directory(&package_path)
+        let package_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+        let directory = crate::apply_package::read_package_directory(&package_path)
             .expect("read real Receiving package");
         let package = plan_package_migrations(&directory, None).expect("plan real package");
 
@@ -2985,7 +2990,7 @@ mod tests {
                 .batch_execute("SET ROLE wamn_system")
                 .await
                 .expect("assume production control owner");
-            wamn_control::provision_project_env::project_tenant_environment(
+            crate::provision_project_env::project_tenant_environment(
                 &mut projection,
                 &wamn_control_registry::Triple::new("acme", "receiving", "dev"),
                 Some(&projection_component().scope.tenant_id),
@@ -3209,7 +3214,7 @@ mod tests {
         let package = resolve
             .push_str(
                 "wamn-node.wit",
-                include_str!("../../../crates/execution/router/wit/package.wit"),
+                include_str!("../../../../crates/execution/router/wit/package.wit"),
             )
             .expect("the live node WIT parses");
         let world = resolve

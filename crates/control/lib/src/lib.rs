@@ -11,5 +11,6 @@ pub mod event_streams;
 pub mod ident;
 pub mod pat_client;
 pub mod provision_project_env;
+pub mod push_component;
 pub mod reconcile_package_data_access;
 pub mod sql_params;
