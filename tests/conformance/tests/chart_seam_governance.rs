@@ -17,11 +17,11 @@
 //! time with `CrossEnvironmentSchedulingDenied`.
 
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use serde::Deserialize as _;
 use serde_json::Value;
 
 const VALUES: &str = "deploy/infra/values-wamn.yaml";
@@ -34,6 +34,11 @@ const SOCKPROBE: &str = "apps/platform/fixtures/sockprobe/src/main.rs";
 const EXPECTED_CHART_VERSION: &str = "2.9.0";
 static RENDER_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const EXPECTED_RUNTIME_REVISION: &str = "68ebece9";
+const DEPLOYMENT: (&str, &str) = ("apps/v1", "Deployment");
+const NETWORK_POLICY: (&str, &str) = ("networking.k8s.io/v1", "NetworkPolicy");
+const POD_DISRUPTION_BUDGET: (&str, &str) = ("policy/v1", "PodDisruptionBudget");
+const ROLE: (&str, &str) = ("rbac.authorization.k8s.io/v1", "Role");
+const ROLE_BINDING: (&str, &str) = ("rbac.authorization.k8s.io/v1", "RoleBinding");
 
 /// The component workloads the operator schedules onto the host tier — the only
 /// two in scope for operator management (ruling wamn-0h0g.13.46).
@@ -141,53 +146,54 @@ fn render_chart(root: &Path, release: &str, values: &[&str]) -> RenderDirectory 
     output
 }
 
-fn decode_manifest(root: &Path, manifest: &[u8]) -> Value {
-    let mut kubectl = Command::new("kubectl")
-        .current_dir(root)
-        .args([
-            "create",
-            "--dry-run=client",
-            "--validate=false",
-            "--filename=-",
-            "--output=json",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("start the Kubernetes structural decoder");
-    kubectl
-        .stdin
-        .take()
-        .expect("kubectl stdin is piped")
-        .write_all(manifest)
-        .expect("send rendered chart to the structural decoder");
-    let decoded = kubectl
-        .wait_with_output()
-        .expect("join the Kubernetes structural decoder");
-    assert!(
-        decoded.status.success(),
-        "Kubernetes decode failed: {}",
-        String::from_utf8_lossy(&decoded.stderr)
-    );
-    serde_json::from_slice(&decoded.stdout).expect("Kubernetes manifest decodes as JSON")
+/// Decode a manifest into the JSON that `kubectl create --dry-run=client --output=json`
+/// printed: empty documents are skipped, one object stays itself, and several
+/// objects become a `List`. Every object must carry one of the `expected`
+/// `apiVersion` and `kind` pairs, and every expected pair must occur.
+fn decode_manifest(manifest: &[u8], expected: &[(&str, &str)]) -> Value {
+    let mut objects = serde_yaml::Deserializer::from_slice(manifest)
+        .map(|document| Value::deserialize(document).expect("Kubernetes manifest decodes as YAML"))
+        .filter(|object| !object.is_null())
+        .collect::<Vec<_>>();
+    let is = |object: &Value, (api_version, kind): (&str, &str)| {
+        object["apiVersion"] == api_version && object["kind"] == kind
+    };
+    for object in &objects {
+        assert!(
+            expected.iter().any(|pair| is(object, *pair)),
+            "Kubernetes manifest carries unexpected {} {}",
+            object["apiVersion"],
+            object["kind"]
+        );
+    }
+    for &(api_version, kind) in expected {
+        assert!(
+            objects.iter().any(|object| is(object, (api_version, kind))),
+            "Kubernetes manifest carries no {api_version} {kind}"
+        );
+    }
+    match objects.len() {
+        0 => panic!("Kubernetes manifest holds no object"),
+        1 => objects.remove(0),
+        _ => serde_json::json!({"apiVersion": "v1", "kind": "List", "items": objects}),
+    }
 }
 
-fn rendered_manifest(root: &Path, output: &RenderDirectory, template: &str) -> Value {
+fn rendered_manifest(output: &RenderDirectory, template: &str, expected: &[(&str, &str)]) -> Value {
     let path = output
         .path()
         .join("runtime-operator/templates")
         .join(template);
     let manifest = fs::read(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    decode_manifest(root, &manifest)
+    decode_manifest(&manifest, expected)
 }
 
 fn render_host_objects(root: &Path, values: &[&str]) -> (Value, Value) {
     let output = render_chart(root, "wamn-host", values);
     (
-        rendered_manifest(root, &output, "runtime/deployment.yaml"),
-        rendered_manifest(root, &output, "runtime/networkpolicy.yaml"),
+        rendered_manifest(&output, "runtime/deployment.yaml", &[DEPLOYMENT]),
+        rendered_manifest(&output, "runtime/networkpolicy.yaml", &[NETWORK_POLICY]),
     )
 }
 
@@ -335,7 +341,7 @@ fn assert_native_host_controls(
 
 fn assert_executor_native_controls(root: &Path) {
     let source = read_repository_file(root, EXECUTOR);
-    let manifest = decode_manifest(root, source.as_bytes());
+    let manifest = decode_manifest(source.as_bytes(), &[DEPLOYMENT, POD_DISRUPTION_BUDGET]);
     let deployment = manifest["items"]
         .as_array()
         .expect("executor manifest contains a Deployment and disruption budget")
@@ -378,7 +384,11 @@ fn assert_events_overlay_remains_namespace_scoped(root: &Path) {
     let values = read_repository_file(root, VALUES);
     let overlay = read_repository_file(root, EVENTS_RBAC);
     let output = render_chart(root, "wamn", &[VALUES]);
-    let namespace_roles = rendered_manifest(root, &output, "operator/workload-namespace-role.yaml");
+    let namespace_roles = rendered_manifest(
+        &output,
+        "operator/workload-namespace-role.yaml",
+        &[ROLE, ROLE_BINDING],
+    );
     let namespace_roles = namespace_roles["items"]
         .as_array()
         .expect("watched namespaces render operator Roles and RoleBindings");
@@ -389,10 +399,10 @@ fn assert_events_overlay_remains_namespace_scoped(root: &Path) {
     );
     for namespace in namespaces {
         let manifest = decode_manifest(
-            root,
             overlay
                 .replace("__ENVIRONMENT_NAMESPACE__", namespace)
                 .as_bytes(),
+            &[ROLE, ROLE_BINDING],
         );
         let objects = manifest["items"]
             .as_array()
@@ -819,8 +829,9 @@ fn the_component_workloads_target_the_host_tier_environment() {
 }
 
 #[test]
-#[ignore = "pulls and renders the pinned OCI chart; run via [RECEIVING-HOST-OVERLAY]"]
+#[ignore = "requires: helm"]
 fn receiving_pat_overlay_renders_a_complete_scoped_host() {
+    wamn_test_postgres::require_prerequisites(&["helm"]);
     let root = repository_root();
     let (base, base_policy) = render_host_objects(&root, &[HOST_VALUES]);
     let (receiving, receiving_policy) =
