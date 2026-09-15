@@ -27,6 +27,11 @@ name = "protected_relations_live"
 path = "tests/protected_relations_live.rs"
 required-features = ["ops"]
 
+[[test]]
+name = "prune_record_history_live"
+path = "tests/prune_record_history_live.rs"
+required-features = ["ops"]
+
 [dependencies]
 anyhow = { workspace = true }
 # `string`: `wamn-0h0g.22.16` derives the workload-generation flag set from the

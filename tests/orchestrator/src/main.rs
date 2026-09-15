@@ -13,7 +13,7 @@ use wamn_conformance_tests::socket_test;
 use wamn_integration_tests::agent_pilot;
 use wamn_integration_tests::{
     dashboard_test, host_session_test, identity_keys_test, identity_session_test, membership_test,
-    readerbench, rc, record_history_retention, retention,
+    readerbench, rc, retention,
 };
 use wamn_system_tests::trace_test;
 
@@ -51,8 +51,6 @@ enum Command {
     MembershipTest(membership_test::MembershipTestArgs),
     /// Test that the real prune-run-history verb removes only old TERMINAL runs, keeping recent and non-terminal history.
     Retention(retention::RetentionArgs),
-    /// Test that the real prune-record-history verb removes only expired record history entries as the audit retention credential.
-    RecordHistoryRetention(record_history_retention::RecordHistoryRetentionArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
@@ -95,7 +93,6 @@ async fn async_main() -> anyhow::Result<()> {
         Command::IdentitySessionFixture(args) => identity_session_test::fixture(args).await,
         Command::MembershipTest(args) => membership_test::run(args).await,
         Command::Retention(args) => retention::run(args).await,
-        Command::RecordHistoryRetention(args) => record_history_retention::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
         Command::ServeEcho(args) => trace_test::serve_echo(args).await,
         Command::SocketTest(args) => socket_test::run(args).await,

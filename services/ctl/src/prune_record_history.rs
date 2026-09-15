@@ -133,8 +133,8 @@ async fn verify_audit_retention_identity(client: &Client, tenant: &str) -> anyho
 /// The verb visits the relations in byte order of schema and relation. Each
 /// transaction binds the platform principal, sets `TimeZone` to UTC, takes the
 /// audit retention lock, reads the retention source, and prunes the next
-/// relation after the last one that it pruned. The live retention gate
-/// (`tests/integration/src/record_history_retention.rs`) drives this path
+/// relation after the last one that it pruned. The live retention test
+/// (`services/ctl/tests/prune_record_history_live.rs`) drives this path
 /// through the `wamn-ctl-ops` process.
 pub async fn prune(client: &mut Client) -> anyhow::Result<Vec<PrunedHistory>> {
     let mut pruned = Vec::new();

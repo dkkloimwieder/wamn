@@ -22,7 +22,6 @@ pub mod membership_test;
 pub mod provisionbench;
 pub mod readerbench;
 pub mod rc;
-pub mod record_history_retention;
 pub mod retention;
 #[cfg(test)]
 mod route_authentication_live;
