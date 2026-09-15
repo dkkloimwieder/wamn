@@ -32,11 +32,18 @@ pub(super) struct DevJourneyInputs {
 }
 
 impl DevJourneyInputs {
+    /// Each test sets the local artifact directory under its own scratch root.
     fn required() -> anyhow::Result<Self> {
         let inputs = Self {
             wamn_binary: required_journey_path("WAMN_RECEIVING_DEV_BIN")?,
             environment: DevEnvironmentInputs {
-                local_artifacts: None,
+                local_artifacts: wamn_ctl::dev::config::LocalArtifacts {
+                    directory: PathBuf::new(),
+                    flow_http_component: required_journey_path("WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")?
+                        .canonicalize()
+                        .context("resolve the local flow-http component")?,
+                    bindings: None,
+                },
                 host_binary: required_journey_path("WAMN_RECEIVING_DEV_HOST_BIN")?,
                 nats_url: required_journey("WAMN_RECEIVING_DEV_NATS_URL")?,
                 event_nats_url: required_journey("WAMN_EVT_NATS_URL")?,
@@ -50,14 +57,8 @@ impl DevJourneyInputs {
                 otel_exporter_otlp_endpoint: required_journey(
                     "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
                 )?,
-                flow_http_workload_image: required_journey(
-                    "WAMN_RECEIVING_DEV_FLOW_HTTP_WORKLOAD_IMAGE",
-                )?,
-                component_artifact_base: required_journey("WAMN_ROUTE_COMPONENT_ARTIFACT_BASE")?,
-                release_artifact_base: required_journey("WAMN_ROUTE_RELEASE_ARTIFACT_BASE")?,
                 route_host: required_journey("WAMN_ROUTE_HOST")?,
                 platform_domain: PLATFORM_DOMAIN.to_owned(),
-                registry_auth_file: required_journey_path("WAMN_ROUTE_REGISTRY_AUTH_FILE")?,
                 package_sources: vec![
                     package_root()
                         .canonicalize()
@@ -76,13 +77,6 @@ impl DevJourneyInputs {
         Ok(inputs)
     }
 }
-
-/// Fixed nameable port for `[WAMN-DEV-LIVE]`'s spawned Gate.
-///
-/// A spawned child cannot hand an ephemeral port back the way the in-process
-/// launch did, and the configuration written from it outlives the process that
-/// writes it, so the port is named here (wamn-10yt.10.32).
-pub(super) const DEV_LIVE_GATE_BIND: &str = "127.0.0.1:18088";
 
 pub(super) async fn run_dev_product_command(
     inputs: &DevJourneyInputs,
@@ -371,119 +365,6 @@ pub(super) async fn verify_dev_target_package_and_acl_state(project: &Client) ->
     Ok(())
 }
 
-pub(super) async fn verify_dev_release_state(
-    control: &Client,
-    inputs: &DevEnvironmentInputs,
-    expected_source_commit: &str,
-    expected_publisher_id: &str,
-    expected_publisher_subject: &str,
-) -> anyhow::Result<()> {
-    let release = control
-        .query_one(
-            "SELECT environment, verified_publisher_principal \
-             FROM catalog.effective_releases \
-             WHERE tenant_id = $1 AND effective_release_id = $2",
-            &[&TENANT, &(RELEASE_ID as i32)],
-        )
-        .await
-        .context("read the product-command effective release")?;
-    let environment: String = release.get(0);
-    let publisher: Option<String> = release.get(1);
-    anyhow::ensure!(
-        environment == ENVIRONMENT && publisher.is_none(),
-        "wamn dev projected more than the control-plane release identity: \
-         environment={environment:?} publisher={publisher:?}"
-    );
-
-    let attestation = control
-        .query_one(
-            "SELECT deployed_manifest_hash, source_commit \
-             FROM catalog.deployment_attestations \
-             WHERE tenant_id = $1 AND effective_release_id = $2 \
-               AND org_id = $3 AND project_id = $4 AND environment = $5",
-            &[&TENANT, &(RELEASE_ID as i32), &ORG, &PROJECT, &ENVIRONMENT],
-        )
-        .await
-        .context("read the product-command deployment attestation")?;
-    let manifest_hash: String = attestation.get(0);
-    let source_commit: String = attestation.get(1);
-    anyhow::ensure!(
-        manifest_hash.len() == 71 && manifest_hash.starts_with("sha256:"),
-        "wamn dev recorded a malformed release attestation: {manifest_hash}"
-    );
-    anyhow::ensure!(
-        source_commit == expected_source_commit,
-        "wamn dev attested source commit {source_commit:?}, expected {expected_source_commit:?}"
-    );
-
-    let source = ReleaseManifestSource::new(
-        &inputs.release_artifact_base,
-        true,
-        &inputs.registry_auth_file,
-    )
-    .context("configure the product-command release puller")?;
-    let bytes = source
-        .pull_verified(&manifest_hash)
-        .await
-        .context("pull the exact product-command release manifest")?;
-    let origin = format!("{}@{manifest_hash}", inputs.release_artifact_base);
-    let release = LoadedRelease::load_canonical_bytes(&bytes, &origin)
-        .context("load the product-command release manifest")?;
-    let expected_packages = JOURNEY_PACKAGES
-        .iter()
-        .map(|package| PackageCoordinate::new(package.id, package.version))
-        .collect::<Result<BTreeSet<_>, _>>()?;
-    anyhow::ensure!(
-        release.manifest().release.tenant_id == TENANT
-            && release.manifest().release.effective_release_id.get() == RELEASE_ID
-            && release.manifest().release.environment == ENVIRONMENT
-            && release.manifest().release.packages == expected_packages,
-        "wamn dev published the wrong exact release closure: {:?}",
-        release.manifest().release
-    );
-
-    let publish_audits = control
-        .query(
-            "SELECT principal_id, principal_subject, effective_role, provenance_commit, \
-                    provenance_dirty \
-             FROM catalog.authoring_command_audit \
-             WHERE tenant_id = $1 AND command_kind = 'publish' \
-               AND org = $2 AND project = $3 AND environment = $4 \
-             ORDER BY command_id COLLATE \"C\"",
-            &[&TENANT, &ORG, &PROJECT, &ENVIRONMENT],
-        )
-        .await
-        .context("read the product-command Publish audit")?;
-    let expected_publish_count = JOURNEY_PACKAGES
-        .iter()
-        .map(|package| package.operations.len())
-        .sum::<usize>();
-    anyhow::ensure!(
-        publish_audits.len() == expected_publish_count,
-        "wamn dev recorded {} Publish audits, expected {expected_publish_count}",
-        publish_audits.len()
-    );
-    for audit in publish_audits {
-        let principal_id: String = audit.get(0);
-        let principal_subject: String = audit.get(1);
-        let effective_role: String = audit.get(2);
-        let provenance_commit: Option<String> = audit.get(3);
-        let provenance_dirty: Option<bool> = audit.get(4);
-        anyhow::ensure!(
-            principal_id == expected_publisher_id
-                && principal_subject == expected_publisher_subject
-                && effective_role == "project-author"
-                && provenance_commit.as_deref() == Some(expected_source_commit)
-                && provenance_dirty == Some(false),
-            "wamn dev Publish audit carried the wrong publisher or provenance: \
-             principal_id={principal_id:?} principal_subject={principal_subject:?} \
-             effective_role={effective_role:?} provenance_commit={provenance_commit:?} \
-             provenance_dirty={provenance_dirty:?}"
-        );
-    }
-    Ok(())
-}
-
 pub(super) async fn current_database_acl(client: &Client) -> anyhow::Result<(String, Option<String>)> {
     let row = client
         .query_one(
@@ -496,33 +377,14 @@ pub(super) async fn current_database_acl(client: &Client) -> anyhow::Result<(Str
     Ok((row.get(0), row.get(1)))
 }
 
-pub(super) async fn verify_dev_verification_database_absent(
-    admin: &Client,
-    database: &str,
-) -> anyhow::Result<()> {
-    let present: bool = admin
-        .query_one(
-            "SELECT EXISTS (SELECT FROM pg_catalog.pg_database WHERE datname = $1)",
-            &[&database],
-        )
-        .await
-        .context("read disposable verification database cleanup")?
-        .get(0);
-    anyhow::ensure!(
-        !present,
-        "wamn dev left disposable verification database {database} behind"
-    );
-    Ok(())
-}
-
 #[tokio::test]
-#[ignore = "requires disposable NATS, authenticated OCI, and built wamn/host/flow-http binaries"]
+#[ignore = "requires disposable NATS and built wamn/host/flow-http binaries"]
 async fn product_dev_command_owns_the_clean_twelve_stage_output_and_cleanup() -> anyhow::Result<()>
 {
     // The environment resets the control store of the whole server, so the test starts its own.
     let mut server = wamn_test_infrastructure::postgres::start(&[])?;
     let system_url = server.create_database("wamn_system")?.url().to_owned();
-    let inputs = DevJourneyInputs::required()?;
+    let mut inputs = DevJourneyInputs::required()?;
     let credentials = wamn_test_infrastructure::event_broker::Credentials {
         username: required_journey("WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME")?,
         password_file: required_journey_path("WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE")?,
@@ -530,60 +392,25 @@ async fn product_dev_command_owns_the_clean_twelve_stage_output_and_cleanup() ->
     let provisioning = wamn_test_infrastructure::event_broker::connect(
         &credentials, &inputs.environment.event_nats_url,
     ).await?;
-    assert_dev_command(&system_url, &inputs, &provisioning).await
+    assert_dev_command(&system_url, &mut inputs, &provisioning).await
 }
 
 pub(super) async fn assert_dev_command(
     system_url: &str,
-    inputs: &DevJourneyInputs,
+    inputs: &mut DevJourneyInputs,
     event_provisioning: &async_nats::Client,
 ) -> anyhow::Result<()> {
-    // Keep the expensive product gate to one clean run. Engine tests
-    // `dirty_source_reaches_gate_then_refuses_before_publish` and
-    // `dirty_watch_suffix_refuses_before_its_first_provenance_stage`, plus the
-    // filesystem adapter's `filesystem_events_map_owned_inputs_and_ignore_generated_outputs`,
-    // own dirty-stop and affected-suffix behavior deterministically.
-    let repository = repository_root()?;
-    let source = GitSource::discover(&repository)
-        .await
-        .context("discover the product-command source repository")?
-        .snapshot()
-        .await
-        .context("read the product-command source identity")?;
-    anyhow::ensure!(
-        source.state() == DevSourceState::Clean,
-        "the live product-command test requires a clean worktree"
-    );
-    let source_commit = source.source_commit().to_owned();
-
+    // Keep the expensive product gate to one run. The filesystem adapter's
+    // `filesystem_events_map_owned_inputs_and_ignore_generated_outputs` owns
+    // affected-suffix behavior deterministically.
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
+    inputs.environment.local_artifacts.directory = root.join("local-artifacts");
     let (admin, admin_task) = connect(&system_url).await?;
-    let gate_binary = journey_scenario_worker_binary()?;
     let environment =
         wamn_ctl::dev::environment::provision(&system_url, admin.as_ref(), root, PLATFORM_DOMAIN)
             .await?;
-    let publisher_subject = environment
-        .route
-        .management_principal_subject
-        .as_deref()
-        .context("project provisioning emitted no management-author principal")?;
-    let publisher_id = resolve_subject(admin.as_ref(), PrincipalKind::Service, publisher_subject)
-        .await
-        .context("resolve the production management-author principal")?
-        .context("the production management-author principal is absent")?
-        .id()
-        .to_string();
     let (project, project_task) = connect(&environment.route.database_url).await?;
-    // The Gate the loop publishes through is the same real process an operator
-    // starts with `wamn dev up`; nothing here links it in (wamn-10yt.10.32).
-    let mut gate_server = spawn_journey_management_gate(
-        &gate_binary,
-        &environment.credentials,
-        &environment.credentials.management_admitter,
-        DEV_LIVE_GATE_BIND,
-    )
-    .await?;
     let system_acl_before = current_database_acl(admin.as_ref()).await?;
     let durable_acl_before = current_database_acl(project.as_ref()).await?;
     let event_scope = wamn_control_registry::Triple {
@@ -602,14 +429,12 @@ pub(super) async fn assert_dev_command(
         &environment.template,
         &environment.route,
         &environment.credentials,
-        &environment.verification,
-        gate_server.bind(),
         &inputs.environment,
         &environment.identity,
     )?;
 
     let command_result = async {
-        let output = run_dev_product_command(&inputs, &config).await?;
+        let output = run_dev_product_command(inputs, &config).await?;
         // The literal command emits this result only after native workload
         // stop and supervised host reaping have both succeeded.
         verify_dev_command_output(&output)?;
@@ -626,39 +451,12 @@ pub(super) async fn assert_dev_command(
              before={durable_acl_before:?} after={durable_acl_after:?}"
         );
         verify_dev_target_package_and_acl_state(project.as_ref()).await?;
-        verify_dev_release_state(
-            admin.as_ref(),
-            &inputs.environment,
-            &source_commit,
-            &publisher_id,
-            publisher_subject,
-        )
-        .await?;
         Ok::<_, anyhow::Error>(())
     }
     .await;
 
-    let gate_stop = gate_server.shutdown().await;
-    let verification_cleanup =
-        verify_dev_verification_database_absent(admin.as_ref(), &environment.verification.database)
-            .await;
-    // Exact fallback cleanup runs after the assertion, so it cannot make a
-    // product cleanup failure look green when an earlier stage fails.
-    let fixture_database_cleanup = admin
-        .batch_execute(&provision_sql::drop_database_named_sql(
-            &environment.verification.database,
-        ))
-        .await
-        .context("remove the exact verification fixture after its cleanup assertion");
-    let role_cleanup =
-        clean_dev_verification_gate_roles(admin.as_ref(), &environment.verification).await;
     project_task.abort();
     admin_task.abort();
 
-    command_result?;
-    gate_stop?;
-    verification_cleanup?;
-    fixture_database_cleanup?;
-    role_cleanup?;
-    Ok(())
+    command_result
 }

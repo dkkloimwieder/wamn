@@ -12,7 +12,6 @@ use anyhow::{Context as _, ensure};
 use ring::rand::{SecureRandom as _, SystemRandom};
 use rustix::process::{Pid, Signal, kill_process_group};
 use serde_json::json;
-use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 use tokio::signal::unix::{SignalKind, signal};
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
@@ -46,14 +45,9 @@ impl Compose {
             .arg(self.directory.join("compose.json"))
             .env("WAMN_STD_VIRT_PG_PORT", "0")
             .env("WAMN_STD_VIRT_REGISTRY_PORT", "0")
-            .env("WAMN_ROUTE_REGISTRY_PORT", "0")
             .env("WAMN_RECEIVING_DEV_NATS_PORT", "0")
             .env("WAMN_RECEIVING_DEV_TEMPO_PORT", "0")
             .env("WAMN_RECEIVING_DEV_OTLP_PORT", "0")
-            .env(
-                "WAMN_ROUTE_REGISTRY_HTPASSWD",
-                self.directory.join("htpasswd"),
-            )
             .kill_on_drop(true);
         command
     }
@@ -223,83 +217,24 @@ async fn main() -> anyhow::Result<()> {
             .is_empty(),
         "timing project already owns containers"
     );
-    let password = hex::encode(&nonce[8..]);
-    let mut htpasswd = Command::new("docker")
-        .args([
-            "run",
-            "--rm",
-            "-i",
-            "--name",
-            &format!("{}-htpasswd", compose.project),
-            "--entrypoint",
-            "htpasswd",
-            "httpd:2-alpine",
-            "-Bni",
-            "wamn-timing",
-        ])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()?;
-    htpasswd
-        .stdin
-        .take()
-        .context("registry password input")?
-        .write_all(format!("{password}\n").as_bytes())
-        .await?;
-    let output = htpasswd.wait_with_output().await?;
-    ensure!(
-        output.status.success(),
-        "prepare the private registry password"
-    );
-    private(&directory.join("htpasswd"), &output.stdout)?;
     checked(compose.command().args([
         "up",
         "--detach",
         "--wait",
         "--wait-timeout",
         "90",
-        "authenticated-registry",
         "receiving-dev-nats",
         "receiving-dev-tempo",
         "delivery-events",
     ]))
     .await?;
-    let registry = compose.port("authenticated-registry", "5000").await?;
     let scheduler = compose.port("receiving-dev-nats", "4222").await?;
     let events = compose.port("delivery-events", "4222").await?;
     let tempo = compose.port("receiving-dev-tempo", "3200").await?;
     let otlp = compose.port("receiving-dev-tempo", "4317").await?;
-    let registry_auth = directory.join("registry-auth.json");
-    private(
-        &registry_auth,
-        &serde_json::to_vec(
-            &json!({"auths":{registry.clone():{"username":"wamn-timing","password":password}}}),
-        )?,
-    )?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
-    ensure!(
-        client
-            .get(format!("http://{registry}/v2/"))
-            .send()
-            .await?
-            .status()
-            == reqwest::StatusCode::UNAUTHORIZED,
-        "owned registry must refuse an anonymous request"
-    );
-    ensure!(
-        client
-            .get(format!("http://{registry}/v2/"))
-            .basic_auth("wamn-timing", Some(&password))
-            .send()
-            .await?
-            .status()
-            .is_success(),
-        "owned registry must accept its private credential"
-    );
     tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             if client
@@ -330,13 +265,6 @@ async fn main() -> anyhow::Result<()> {
             target.join("debug/wamn-host").display().to_string(),
         ),
         (
-            "WAMN_JOURNEY_SCENARIO_WORKER_BIN",
-            target
-                .join("debug/wamn-scenario-worker")
-                .display()
-                .to_string(),
-        ),
-        (
             "WAMN_IDENTITY_BINARY",
             target.join("debug/wamn-identity").display().to_string(),
         ),
@@ -365,23 +293,7 @@ async fn main() -> anyhow::Result<()> {
             "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
             format!("http://{otlp}"),
         ),
-        (
-            "WAMN_RECEIVING_DEV_FLOW_HTTP_WORKLOAD_IMAGE",
-            format!("{registry}/wamn/flow-http:timing"),
-        ),
-        (
-            "WAMN_ROUTE_COMPONENT_ARTIFACT_BASE",
-            format!("{registry}/wamn/components"),
-        ),
-        (
-            "WAMN_ROUTE_RELEASE_ARTIFACT_BASE",
-            format!("{registry}/wamn/releases"),
-        ),
         ("WAMN_ROUTE_HOST", "receiving.localhost".to_owned()),
-        (
-            "WAMN_ROUTE_REGISTRY_AUTH_FILE",
-            registry_auth.display().to_string(),
-        ),
     ]);
     let mut command = Command::new(executable);
     command

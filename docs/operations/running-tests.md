@@ -210,7 +210,7 @@ Use a clean linked worktree reserved for this test.
 Set `SOURCE` to its absolute path.
 Export `CARGO_TARGET_DIR` with the path to its separate absolute build directory.
 The case changes authored files, observes the running application, and restores the saved source.
-Keep port 18088 unused and run this case alone.
+Run this case alone.
 The fixture requires PostgreSQL 18 binaries, Docker, and the existing development service images.
 
 Build the native programs, fixture, HTTP guest, and exact test binary from that worktree:
@@ -218,7 +218,7 @@ Build the native programs, fixture, HTTP guest, and exact test binary from that 
 ```bash
 cd "$SOURCE"
 cargo build --locked --offline \
-  -p wamn-ctl -p wamn-host -p wamn-identity -p wamn-scenario-worker \
+  -p wamn-ctl -p wamn-host -p wamn-identity \
   -p wamn-test-infrastructure --bins --example delivery_timings
 cargo build --locked --offline --manifest-path apps/Cargo.toml \
   --target wasm32-wasip2 -p http-route
@@ -241,7 +241,7 @@ WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_rou
 
 The fixture starts Compose services on assigned loopback ports.
 The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.
-The case refuses registry access and requires authenticated application results after code, SQL, and schema edits.
+The case requires authenticated application results after code, SQL, and schema edits.
 It also requires retained data for compatible edits, refusal of invalid SQL, and a new database after a schema edit.
 Require one executed passing case, successful resource cleanup, and restored source before reporting success.
 This correctness case does not report performance measurements.

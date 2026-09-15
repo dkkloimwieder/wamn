@@ -27,17 +27,13 @@ fn development_command_requires_its_two_explicit_inputs_and_offers_watch() {
     }
 }
 
-/// `up` is a subcommand of `dev`, and it names the two inputs the spawned Gate
-/// added: the binary to spawn and the fixed port to spawn it on
-/// (wamn-10yt.10.32).
+/// `up` is a subcommand of `dev`, and it names its required inputs.
 #[test]
-fn dev_up_names_the_scenario_worker_binary_and_its_fixed_port() {
+fn dev_up_names_its_required_inputs() {
     let output = output(&["dev", "up", "--help"]);
     assert!(output.status.success());
     let help = String::from_utf8(output.stdout).expect("help is UTF-8");
     for input in [
-        "--scenario-worker-binary",
-        "--gate-bind",
         "--system-database-url",
         "--root",
         "--package",
@@ -56,79 +52,6 @@ fn the_bare_development_command_still_requires_its_configuration() {
     assert!(
         stderr.contains("--config"),
         "the missing-configuration refusal does not name --config: {stderr}"
-    );
-}
-
-/// The Gate is a spawned child now, so it cannot report back an ephemeral port
-/// the way the in-process launch did. Port 0 is refused, the refusal NAMES the
-/// address, and it lands before any credential is minted.
-#[test]
-fn dev_up_refuses_an_ephemeral_gate_port_and_names_it() {
-    let root = std::env::temp_dir().join(format!("wamn-dev-up-ephemeral-{}", std::process::id()));
-    let output = Command::new(env!("CARGO_BIN_EXE_wamn"))
-        .args([
-            "dev",
-            "up",
-            "--system-database-url",
-            "postgresql://postgres@127.0.0.1:1/postgres",
-        ])
-        .arg("--root")
-        .arg(&root)
-        .args([
-            "--scenario-worker-binary",
-            "/nonexistent/wamn-scenario-worker",
-            "--gate-bind",
-            "127.0.0.1:0",
-            "--nats-url",
-            "nats://127.0.0.1:1",
-            "--event-nats-url",
-            "nats://127.0.0.1:1",
-            "--event-nats-username",
-            "dev_runtime",
-            "--event-nats-password-file",
-            "/nonexistent/event-runtime-password",
-            "--event-provisioning-username",
-            "dev_provisioning",
-            "--event-provisioning-password-file",
-            "/nonexistent/event-provisioning-password",
-            "--stream-replicas",
-            "1",
-            "--dup-window-secs",
-            "120",
-            "--tempo-query-url",
-            "http://127.0.0.1:1",
-            "--otel-exporter-otlp-endpoint",
-            "http://127.0.0.1:1",
-            "--component-artifact-base",
-            "127.0.0.1:1/wamn/components",
-            "--release-artifact-base",
-            "127.0.0.1:1/wamn/releases",
-            "--registry-auth-file",
-            "/nonexistent/.dockerconfigjson",
-            "--route-host",
-            "receiving.localhost",
-            "--platform-domain",
-            "example.invalid",
-            "--flow-http-workload-image",
-            "127.0.0.1:1/wamn/flow-http:dev",
-            "--host-binary",
-            "/nonexistent/wamn-host",
-            "--package",
-            "apps/wamn_receiving",
-        ])
-        .output()
-        .expect("run wamn dev up with an ephemeral gate port");
-    assert!(!output.status.success());
-    let stderr = String::from_utf8(output.stderr).expect("stderr is UTF-8");
-    assert!(
-        stderr.contains("127.0.0.1:0"),
-        "the ephemeral-port refusal does not name the address: {stderr}"
-    );
-    // The refusal precedes standup, so nothing was created to clean up.
-    assert!(
-        !root.exists(),
-        "wamn dev up created {} before settling its Gate address",
-        root.display()
     );
 }
 

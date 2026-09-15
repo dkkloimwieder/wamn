@@ -11,18 +11,13 @@ use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use anyhow::{Context as _, anyhow};
 use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
-use tokio::time::Instant;
 use tokio_postgres::NoTls;
-use wamn_authoring_model::{
-    AuthoringScope, CommitProvenance, Gate, GateResult, PublishValidatedDraft,
-    PublishedWiringIdentity,
-};
+use wamn_authoring_model::{GateResult, PublishedWiringIdentity};
 use wamn_catalog::{PackageCoordinate, WiringDocument};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::component_declaration::{
@@ -30,11 +25,8 @@ use wamn_control::component_declaration::{
     authored_base_digests, render_declaration_document,
 };
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
-use wamn_control::push_component::{
-    AdmitComponentRequest, ComponentAdmission, PublishAdmittedComponentRequest, admit_component,
-    project_admitted_component_for_verification, publish_admitted_component,
-};
-use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
+use wamn_control::push_component::{AdmitComponentRequest, ComponentAdmission, admit_component};
+use wamn_control::reconcile_package_data_access;
 use wamn_schema_control::BareSchemaName;
 use wamn_schema_generator::{MaterializeMode, PackageManifest};
 use wamn_schema_introspection::ir::{CatalogIr, Table};
@@ -47,17 +39,14 @@ use super::read::{
     dev_read_channel,
 };
 use super::target_database;
-use super::verification_world::RUN_SCHEMA;
 use super::watch::GitSource;
 use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner, DevTargetDurability};
-use crate::dev_gate::GateClient;
-use crate::print_release_env::{ReleaseCarrier, lookup_release_snapshot};
-use crate::push_release_manifest::PushReleaseManifestArgs;
+use crate::print_release_env::ReleaseCarrier;
 
 const BUILD_TOOL: &str = "tools/build-components";
 const PACKAGE_WELD: &str = "generated/package-weld.json";
 const RECORD_HISTORY_SQL: &str = "deploy/sql/record-history.sql";
-const AUTHORING_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const RUN_SCHEMA: &str = "wamn_run";
 
 /// Stable code for the notice a run emits when it built past an authored pin.
 pub const BASE_PIN_STALE_NOTICE: &str = "pin stale";
@@ -370,7 +359,6 @@ pub struct ProductionDevStageRunner {
     config: DevConfig,
     overlay_root: PathBuf,
     git: GitSource,
-    authoring: GateClient,
     packages: Option<ResolvedDevPackages>,
     catalogs: BTreeMap<String, CatalogIr>,
     build: Option<BuildStageOutput>,
@@ -381,7 +369,6 @@ pub struct ProductionDevStageRunner {
     published_wirings: Vec<PublishedWiring>,
     target_instance: Option<String>,
     target_lease: Option<target_database::TargetLease>,
-    publish_provenance: Option<CommitProvenance>,
     release: Option<ReleaseCarrier>,
     local_bindings: Vec<wamn_runtime::local_application::LocalBindingFacts>,
     local_binding_inputs: Vec<PreparedLocalBinding>,
@@ -442,22 +429,13 @@ impl fmt::Debug for ProductionDevStageRunner {
 }
 
 impl ProductionDevStageRunner {
-    /// Bind one strict request to the production authoring endpoint and Git source.
-    pub fn new(
-        config: DevConfig,
-        overlay_root: PathBuf,
-        git: GitSource,
-    ) -> Result<Self, ProductionDevStageError> {
-        let authoring =
-            GateClient::new(config.gate_url(), config.gate_bearer_token()).map_err(|source| {
-                ProductionDevStageError::owner("construct the authoring client", source.into())
-            })?;
+    /// Bind one strict request to its Git source.
+    pub fn new(config: DevConfig, overlay_root: PathBuf, git: GitSource) -> Self {
         let (read_publisher, read_handle) = dev_read_channel();
-        Ok(Self {
+        Self {
             config,
             overlay_root,
             git,
-            authoring,
             packages: None,
             catalogs: BTreeMap::new(),
             build: None,
@@ -468,7 +446,6 @@ impl ProductionDevStageRunner {
             target_instance: None,
             target_lease: None,
             published_wirings: Vec::new(),
-            publish_provenance: None,
             release: None,
             local_bindings: Vec::new(),
             local_binding_inputs: Vec::new(),
@@ -488,7 +465,7 @@ impl ProductionDevStageRunner {
             read_publisher,
             read_handle,
             observation_readers: None,
-        })
+        }
     }
 
     /// Read-only state for terminal and future console clients.
@@ -606,10 +583,10 @@ impl ProductionDevStageRunner {
         let package_inputs = self.package_inputs()?;
 
         let run_schema = BareSchemaName::new(RUN_SCHEMA)
-            .expect("the verification bootstrap owns a valid run schema");
+            .expect("the repository-owned run schema is a valid bare identifier");
         wamn_control::verification_policy::project_environment_policy(
             self.config.system_database_url(),
-            self.preparation_database_url(),
+            self.config.target_database_url(),
             &run_schema,
             &self.config.activation_identity().org,
             &self.config.activation_identity().tenant,
@@ -621,7 +598,7 @@ impl ProductionDevStageRunner {
         for package in package_inputs {
             let outcome = apply_package::apply_package(ApplyPackageRequest {
                 package: package.root,
-                database_url: self.preparation_database_url().to_owned(),
+                database_url: self.config.target_database_url().to_owned(),
                 tenant: self.config.activation_identity().tenant.clone(),
             })
             .await
@@ -630,9 +607,8 @@ impl ProductionDevStageRunner {
             })?;
             crate::package_verbs::print_applied(&outcome);
         }
-        if self.config.local_artifacts().is_some() {
-            self.schema_input_digest = self.schema_input_candidate.clone();
-        }
+        self.schema_input_digest
+            .clone_from(&self.schema_input_candidate);
         Ok(())
     }
 
@@ -641,7 +617,7 @@ impl ProductionDevStageRunner {
         let packages = self.package_inputs()?;
         for package in &packages {
             let catalog = wamn_schema_generator::introspect_package(
-                self.preparation_database_url(),
+                self.config.target_database_url(),
                 &package.root,
             )
             .await
@@ -680,7 +656,7 @@ impl ProductionDevStageRunner {
             wamn_schema_generator::materialize_package_verified_with_catalog(
                 MaterializeMode::Write,
                 catalog,
-                self.preparation_database_url(),
+                self.config.target_database_url(),
                 &package.root,
             )
             .await
@@ -698,76 +674,68 @@ impl ProductionDevStageRunner {
                 })?;
             }
         }
-        if self.config.local_artifacts().is_some() {
-            let selected = self.package_inputs()?;
-            if selected.iter().any(|package| {
-                crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
-            }) {
-                let output = super::execute_preparation(
-                    Command::new("cargo").args(["sqlx", "--version"]),
-                    super::INPUT_COMMAND_TIMEOUT,
+        let selected = self.package_inputs()?;
+        if selected.iter().any(|package| {
+            crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
+        }) {
+            let output = super::execute_preparation(
+                Command::new("cargo").args(["sqlx", "--version"]),
+                super::INPUT_COMMAND_TIMEOUT,
+            )
+            .await
+            .map_err(|source| ProductionDevStageError::owner("read SQLx CLI version", source))?;
+            require_command_success("read SQLx CLI version", &output)?;
+            crate::delivery::sqlx::require_cli_version(&output.stdout).map_err(|source| {
+                ProductionDevStageError::owner("require pinned SQLx CLI", source)
+            })?;
+        }
+        for package in selected {
+            let package_id = &package.manifest.package.id;
+            if let Some(verifier) = crate::delivery::sqlx::verifier_for(package_id) {
+                let current =
+                    sqlx_metadata_inputs_on_disk(self.git.repository_root(), &package.root)
+                        .map_err(|source| {
+                            ProductionDevStageError::owner("read SQLx metadata inputs", source)
+                        })?;
+                if sqlx_metadata_is_current(
+                    self.sqlx_metadata_inputs.get(package_id),
+                    self.git.repository_root(),
+                    &package.root,
+                    &current,
                 )
-                .await
-                .map_err(|source| {
-                    ProductionDevStageError::owner("read SQLx CLI version", source.into())
-                })?;
-                require_command_success("read SQLx CLI version", &output)?;
-                crate::delivery::sqlx::require_cli_version(&output.stdout).map_err(|source| {
-                    ProductionDevStageError::owner("require pinned SQLx CLI", source)
-                })?;
-            }
-            for package in selected {
-                let package_id = &package.manifest.package.id;
-                if let Some(verifier) = crate::delivery::sqlx::verifier_for(package_id) {
-                    let current =
-                        sqlx_metadata_inputs_on_disk(self.git.repository_root(), &package.root)
-                            .map_err(|source| {
-                                ProductionDevStageError::owner("read SQLx metadata inputs", source)
-                            })?;
-                    if sqlx_metadata_is_current(
-                        self.sqlx_metadata_inputs.get(package_id),
-                        self.git.repository_root(),
-                        &package.root,
-                        &current,
-                    )
-                    .await?
-                    {
-                        self.sqlx_metadata_inputs
-                            .insert(package_id.clone(), Some(current));
-                        continue;
-                    }
-                    // Until a preparation succeeds, the metadata on disk is unknown.
-                    self.sqlx_metadata_inputs.insert(package_id.clone(), None);
-                    let database_url = crate::delivery::sqlx::package_database_url(
-                        self.preparation_database_url(),
-                        &package.manifest,
-                    )
-                    .map_err(|source| {
-                        ProductionDevStageError::owner("scope SQLx to the package schemas", source)
-                    })?;
-                    let mut command = crate::delivery::sqlx::prepare_command(
-                        &package.root.join("tests"),
-                        &database_url,
-                        verifier,
-                        false,
-                    );
-                    let output =
-                        super::execute_preparation(&mut command, super::PREPARATION_TIMEOUT)
-                            .await
-                            .map_err(|source| {
-                                ProductionDevStageError::owner(
-                                    "refresh selected SQLx metadata",
-                                    source.into(),
-                                )
-                            })?;
-                    require_command_success("prepare selected SQLx verifier", &output)?;
+                .await?
+                {
                     self.sqlx_metadata_inputs
                         .insert(package_id.clone(), Some(current));
+                    continue;
                 }
+                // Until a preparation succeeds, the metadata on disk is unknown.
+                self.sqlx_metadata_inputs.insert(package_id.clone(), None);
+                let database_url = crate::delivery::sqlx::package_database_url(
+                    self.config.target_database_url(),
+                    &package.manifest,
+                )
+                .map_err(|source| {
+                    ProductionDevStageError::owner("scope SQLx to the package schemas", source)
+                })?;
+                let mut command = crate::delivery::sqlx::prepare_command(
+                    &package.root.join("tests"),
+                    &database_url,
+                    verifier,
+                    false,
+                );
+                let output = super::execute_preparation(&mut command, super::PREPARATION_TIMEOUT)
+                    .await
+                    .map_err(|source| {
+                        ProductionDevStageError::owner("refresh selected SQLx metadata", source)
+                    })?;
+                require_command_success("prepare selected SQLx verifier", &output)?;
+                self.sqlx_metadata_inputs
+                    .insert(package_id.clone(), Some(current));
             }
         }
         let outputs = generated_outputs_digest(&self.package_inputs()?)?;
-        if self.config.local_artifacts().is_some() && outputs == "missing" {
+        if outputs == "missing" {
             return Err(ProductionDevStageError::invalid(
                 "verify generated outputs",
                 "generation or SQLx preparation left required outputs missing",
@@ -928,16 +896,6 @@ impl ProductionDevStageRunner {
                     ),
                 ));
             }
-            if self.config.local_artifacts().is_none() {
-                project_admitted_component_for_verification(
-                    &admission,
-                    self.config.target_database_url(),
-                )
-                .await
-                .map_err(|source| {
-                    ProductionDevStageError::owner("project admission into the environment", source)
-                })?;
-            }
             self.admissions.push(admission);
         }
         Ok(())
@@ -952,57 +910,37 @@ impl ProductionDevStageRunner {
                 "every package must carry one exact admission before Gate",
             ));
         }
-        let scope = self.authoring_scope();
         for input in load_wirings(&self.package_inputs()?)? {
             let command_id = authoring_command_id(
                 "gate",
                 &input.package_id,
                 &input.package_version,
                 &input.document,
-                None,
                 self.target_instance.as_deref(),
             );
-            let outcome = if self.config.local_artifacts().is_some() {
-                self.reauthenticate_publisher().await?;
-                let scope = wamn_catalog::ComponentPackageScope {
-                    tenant_id: self.config.activation_identity().tenant.clone(),
-                    package_id: input.package_id.to_string(),
-                    package_version: input.package_version.to_string(),
-                };
-                let facts = self
-                    .admissions
-                    .iter()
-                    .filter(|admission| admission.facts().scope == scope)
-                    .map(|admission| admission.facts().clone())
-                    .collect::<Vec<_>>();
-                wamn_authoring_model::gate::judge_gate_document(&input.wiring, &scope, &facts).map(
-                    |()| GateResult {
-                        report_id: format!("local:{command_id}"),
-                        validated_draft: wamn_authoring_model::ValidatedDraftRef {
-                            validated_draft_id: format!(
-                                "local:{}",
-                                input.wiring.wiring_hash().as_str()
-                            ),
-                        },
-                    },
-                )
-            } else {
-                self.authoring
-                    .submit(
-                        &command_id,
-                        Gate {
-                            scope: scope.clone(),
-                            package_id: input.package_id.to_string(),
-                            package_version: input.package_version.to_string(),
-                            document: input.document.clone(),
-                        },
-                        Instant::now() + AUTHORING_REQUEST_TIMEOUT,
-                    )
-                    .await
-                    .map_err(|source| {
-                        ProductionDevStageError::owner("submit production Gate", source.into())
-                    })?
+            self.reauthenticate_publisher().await?;
+            let scope = wamn_catalog::ComponentPackageScope {
+                tenant_id: self.config.activation_identity().tenant.clone(),
+                package_id: input.package_id.to_string(),
+                package_version: input.package_version.to_string(),
             };
+            let facts = self
+                .admissions
+                .iter()
+                .filter(|admission| admission.facts().scope == scope)
+                .map(|admission| admission.facts().clone())
+                .collect::<Vec<_>>();
+            let outcome = wamn_authoring_model::gate::judge_gate_document(
+                &input.wiring,
+                &scope,
+                &facts,
+            )
+            .map(|()| GateResult {
+                report_id: format!("local:{command_id}"),
+                validated_draft: wamn_authoring_model::ValidatedDraftRef {
+                    validated_draft_id: format!("local:{}", input.wiring.wiring_hash().as_str()),
+                },
+            });
             match outcome {
                 Ok(result) => {
                     read_outcomes.push(DevGateOutcome {
@@ -1056,136 +994,17 @@ impl ProductionDevStageRunner {
             ));
         }
 
-        if self.config.local_artifacts().is_some() {
-            self.reauthenticate_publisher().await?;
-            for gated in self.gated_wirings.clone() {
-                let input = gated.input;
-                let result = PublishedWiringIdentity {
-                    wiring_id: input.wiring.wiring_id.clone(),
-                    version: input.wiring.version,
-                    artifact_hash: input.wiring.wiring_hash().as_str().to_owned(),
-                };
-                self.published_wirings
-                    .push(PublishedWiring { input, result });
-            }
-            return Ok(());
-        }
-
-        let source = self.git.snapshot().await.map_err(|source| {
-            ProductionDevStageError::owner("read publication source commit", source.into())
-        })?;
-        // The same condition the engine applies, at the second call site.
-        // Publish pushes a component by digest, and a digest names its own
-        // bytes; the provenance claim is what needs committed source, and a
-        // disposable session registry carries none.
-        if super::refuses_dirty_source(DevStage::Publish, self.target_durability())
-            && source.state() != super::DevSourceState::Clean
-        {
-            return Err(ProductionDevStageError::invalid(
-                "read publication source commit",
-                "the source worktree became dirty before Publish",
-            ));
-        }
-        // CARRY THE OBSERVATION; do not restate the refusal (wamn-10yt.49).
-        // The refusal above checks cleanliness only for a DURABLE target. A
-        // disposable target reaches this line with a dirty worktree by design,
-        // and a literal `false` would put a statement the run had just seen to
-        // be untrue into the attestation that
-        // `catalog.authoring_command_audit.provenance_dirty` keeps. The flag
-        // exists to be read, so it says what the snapshot said.
-        //
-        // Omitting `provenance` for a disposable target was the other honest
-        // shape and is rejected: `dirty` is not optional, and the audit CHECK
-        // ties `provenance_dirty` to `provenance_commit`, so dropping the flag
-        // also drops the commit -- which is TRUE -- and changes the command
-        // identity `authoring_command_id` derives from it.
-        let provenance = CommitProvenance {
-            commit: source.source_commit().to_owned(),
-            r#ref: None,
-            dirty: source.state() == super::DevSourceState::Dirty,
-        };
-
-        for admission in &self.admissions {
-            let outcome = publish_admitted_component(
-                admission,
-                PublishAdmittedComponentRequest {
-                    artifact_base: self.config.component_artifact_base().to_owned(),
-                    registry_auth_file: self.config.registry_auth_file().to_owned(),
-                    insecure_registry: self.config.insecure_registry(),
-                    oci_ca_paths: Vec::new(),
-                    project_database_url: self.config.target_database_url().to_owned(),
-                    control_database_url: self.config.system_database_url().to_owned(),
-                },
-            )
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::owner("publish admitted component", source)
-            })?;
-            crate::component_verbs::print_published(&outcome);
-        }
-
-        let scope = self.authoring_scope();
+        self.reauthenticate_publisher().await?;
         for gated in self.gated_wirings.clone() {
             let input = gated.input;
-            let command_id = authoring_command_id(
-                "publish",
-                &input.package_id,
-                &input.package_version,
-                &input.document,
-                Some(&provenance.commit),
-                self.target_instance.as_deref(),
-            );
-            let outcome = self
-                .authoring
-                .publish(
-                    &command_id,
-                    PublishValidatedDraft {
-                        scope: scope.clone(),
-                        package_id: input.package_id.to_string(),
-                        package_version: input.package_version.to_string(),
-                        document: input.document.clone(),
-                        provenance: Some(provenance.clone()),
-                    },
-                    Instant::now() + AUTHORING_REQUEST_TIMEOUT,
-                )
-                .await
-                .map_err(|source| {
-                    ProductionDevStageError::owner(
-                        "publish wiring through the authenticated authoring endpoint",
-                        source.into(),
-                    )
-                })?;
-            let result = outcome.map_err(|refusal| {
-                ProductionDevStageError::invalid(
-                    "publish package wiring",
-                    format!(
-                        "{}@{}::{} was refused: {refusal:?}",
-                        input.package_id, input.package_version, input.wiring.wiring_id
-                    ),
-                )
-            })?;
-            let expected_hash = input.wiring.wiring_hash();
-            if result.wiring_id != input.wiring.wiring_id
-                || result.version != input.wiring.version
-                || result.artifact_hash != expected_hash.as_str()
-            {
-                return Err(ProductionDevStageError::invalid(
-                    "carry published wiring identity",
-                    format!(
-                        "published identity {:?} differs from {}@{}::{}={} ({})",
-                        result,
-                        input.package_id,
-                        input.package_version,
-                        input.wiring.wiring_id,
-                        input.wiring.version,
-                        expected_hash.as_str()
-                    ),
-                ));
-            }
+            let result = PublishedWiringIdentity {
+                wiring_id: input.wiring.wiring_id.clone(),
+                version: input.wiring.version,
+                artifact_hash: input.wiring.wiring_hash().as_str().to_owned(),
+            };
             self.published_wirings
                 .push(PublishedWiring { input, result });
         }
-        self.publish_provenance = Some(provenance);
         Ok(())
     }
 
@@ -1213,43 +1032,26 @@ impl ProductionDevStageRunner {
             .into_iter()
             .map(|package| package.root)
             .collect::<Vec<_>>();
-        if self.config.local_artifacts().is_some() {
-            let input_digest = self.generate_inputs_digest()?;
-            let prepared = PreparedLocalGrants {
-                target: target_database::prepare_configuration(&self.config).map_err(|source| {
-                    ProductionDevStageError::owner("prepare local target privileges", source)
-                })?,
-                data_access: reconcile_package_data_access::prepare_local(&packages).map_err(
-                    |source| {
-                        ProductionDevStageError::owner(
-                            "prepare generated package data access",
-                            source,
-                        )
-                    },
-                )?,
-                input_digest,
-            };
-            self.reconcile_local_grants(&prepared, false).await?;
-            if prepared.input_digest != self.generate_inputs_digest()? {
-                return Err(ProductionDevStageError::invalid(
-                    "validate local grant inputs",
-                    "source inputs changed during grant validation; retry the candidate",
-                ));
-            }
-            self.local_grants = Some(prepared);
-            return Ok(());
+        let input_digest = self.generate_inputs_digest()?;
+        let prepared = PreparedLocalGrants {
+            target: target_database::prepare_configuration(&self.config).map_err(|source| {
+                ProductionDevStageError::owner("prepare local target privileges", source)
+            })?,
+            data_access: reconcile_package_data_access::prepare_local(&packages).map_err(
+                |source| {
+                    ProductionDevStageError::owner("prepare generated package data access", source)
+                },
+            )?,
+            input_digest,
+        };
+        self.reconcile_local_grants(&prepared, false).await?;
+        if prepared.input_digest != self.generate_inputs_digest()? {
+            return Err(ProductionDevStageError::invalid(
+                "validate local grant inputs",
+                "source inputs changed during grant validation; retry the candidate",
+            ));
         }
-        reconcile_package_data_access::reconcile_package_data_access(
-            ReconcilePackageDataAccessRequest {
-                packages,
-                database_url: self.config.target_database_url().to_owned(),
-                tenant: self.config.activation_identity().tenant.clone(),
-            },
-        )
-        .await
-        .map_err(|source| {
-            ProductionDevStageError::owner("reconcile generated package data access", source)
-        })?;
+        self.local_grants = Some(prepared);
         Ok(())
     }
 
@@ -1340,193 +1142,138 @@ impl ProductionDevStageRunner {
             route_host: Some(self.config.route_host().to_owned()),
             package_manifests,
         };
-        if let Some(local) = self.config.local_artifacts() {
-            let documents = self
-                .published_wirings
-                .iter()
-                .map(|published| {
-                    (
-                        wamn_catalog::ComponentPackageScope {
-                            tenant_id: identity.tenant.clone(),
-                            package_id: published.input.package_id.to_string(),
-                            package_version: published.input.package_version.to_string(),
-                        },
-                        published.input.wiring.clone(),
-                    )
-                })
-                .collect();
-            let (minted, mut local_facts) =
-                publish_release::mint_local(request, &self.admissions, documents)
-                    .await
-                    .map_err(|source| {
-                        ProductionDevStageError::owner("assemble local application", source)
-                    })?;
-            let binding_inputs =
-                prepare_local_bindings(&self.config, &self.admissions).map_err(|source| {
-                    ProductionDevStageError::owner("prepare local connection selections", source)
-                })?;
-            local_facts.bindings = resolve_local_bindings(&self.config, &binding_inputs, None)
+        let local = self.config.local_artifacts();
+        let documents = self
+            .published_wirings
+            .iter()
+            .map(|published| {
+                (
+                    wamn_catalog::ComponentPackageScope {
+                        tenant_id: identity.tenant.clone(),
+                        package_id: published.input.package_id.to_string(),
+                        package_version: published.input.package_version.to_string(),
+                    },
+                    published.input.wiring.clone(),
+                )
+            })
+            .collect();
+        let (minted, mut local_facts) =
+            publish_release::mint_local(request, &self.admissions, documents)
                 .await
                 .map_err(|source| {
-                    ProductionDevStageError::owner("validate local connection selections", source)
+                    ProductionDevStageError::owner("assemble local application", source)
                 })?;
-            wamn_runtime::local_application::validate_local_facts(&local_facts, &minted.manifest)
-                .map_err(|source| {
-                ProductionDevStageError::owner("validate complete local application", source)
+        let binding_inputs =
+            prepare_local_bindings(&self.config, &self.admissions).map_err(|source| {
+                ProductionDevStageError::owner("prepare local connection selections", source)
             })?;
-            fs::create_dir_all(&local.directory).map_err(|source| {
-                ProductionDevStageError::owner("create local artifact directory", source.into())
-            })?;
-            for artifact in &self.artifacts {
-                let bytes = fs::read(&artifact.path).map_err(|source| {
-                    ProductionDevStageError::owner("read local component", source.into())
-                })?;
-                if wamn_runtime::component_admission::component_digest(&bytes)
-                    != artifact.digest.as_ref()
-                {
-                    return Err(ProductionDevStageError::invalid(
-                        "stage local component",
-                        "admitted component bytes changed",
-                    ));
-                }
-                let path = wamn_runtime::component_artifact_source::local_component_path(
-                    &local.directory,
-                    &artifact.digest,
-                )
-                .map_err(|source| {
-                    ProductionDevStageError::owner("name local component", source.into())
-                })?;
-                fs::write(path, bytes).map_err(|source| {
-                    ProductionDevStageError::owner("stage local component", source.into())
-                })?;
-            }
-            fs::write(
-                local
-                    .directory
-                    .join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
-                &minted.canonical_bytes,
-            )
-            .map_err(|source| {
-                ProductionDevStageError::owner("stage local application manifest", source.into())
-            })?;
-            let admission_bytes = serde_json::to_vec(&local_facts).map_err(|source| {
-                ProductionDevStageError::owner("encode local admissions", source.into())
-            })?;
-            let admission_digest =
-                wamn_runtime::component_admission::component_digest(&admission_bytes);
-            fs::write(
-                local
-                    .directory
-                    .join(wamn_runtime::local_application::LOCAL_FACTS_FILE),
-                admission_bytes,
-            )
-            .map_err(|source| {
-                ProductionDevStageError::owner("stage local admissions", source.into())
-            })?;
-            let carrier = ReleaseCarrier {
-                artifact_base: format!("local:{}", local.directory.display()),
-                manifest_digest: minted.digest,
-            };
-            activation::prepare_local(&DevActivationRequest {
-                config: &self.config,
-                release: &carrier,
-                identity: self.config.activation_identity(),
-                host_binary: self.config.host_binary(),
-                wasmtime_cache_dir: self.config.wasmtime_cache_dir(),
-                host_output_log: None,
-                local_admission_digest: Some(&admission_digest),
-            })
-            .map_err(|source| {
-                ProductionDevStageError::owner(
-                    "validate local workload before replacement",
-                    source.into(),
-                )
-            })?;
-            self.read_publisher
-                .set_release(minted.manifest, carrier.clone());
-            self.release = Some(carrier);
-            self.local_bindings = local_facts.bindings;
-            self.local_binding_inputs = binding_inputs;
-            self.local_admission_digest = Some(admission_digest);
-            return Ok(());
-        }
-        let source_commit = self
-            .publish_provenance
-            .as_ref()
-            .ok_or_else(|| {
-                ProductionDevStageError::invalid(
-                    "mint effective release",
-                    "the Publish stage produced no source provenance",
-                )
-            })?
-            .commit
-            .clone();
-        let digest = publish_release::publish_release(request)
+        local_facts.bindings = resolve_local_bindings(&self.config, &binding_inputs, None)
             .await
             .map_err(|source| {
-                ProductionDevStageError::owner("mint the verified effective release", source)
+                ProductionDevStageError::owner("validate local connection selections", source)
             })?;
-        println!("{digest}");
-
-        crate::push_release_manifest::run_with_source_commit(
-            PushReleaseManifestArgs {
-                database_url: self.config.target_database_url().to_owned(),
-                org: identity.org.clone(),
-                project: identity.project.clone(),
-                tenant: identity.tenant.clone(),
-                effective_release_id: self.config.effective_release_id(),
-                artifact_base: self.config.release_artifact_base().to_owned(),
-                registry_auth_file: self.config.registry_auth_file().to_owned(),
-                insecure_registry: self.config.insecure_registry(),
-                oci_ca_paths: Vec::new(),
-                control_database_url: self.config.system_database_url().to_owned(),
-            },
-            &source_commit,
-        )
-        .await
-        .map_err(|source| {
-            ProductionDevStageError::owner("publish the effective release manifest", source)
+        wamn_runtime::local_application::validate_local_facts(&local_facts, &minted.manifest)
+            .map_err(|source| {
+                ProductionDevStageError::owner("validate complete local application", source)
+            })?;
+        fs::create_dir_all(&local.directory).map_err(|source| {
+            ProductionDevStageError::owner("create local artifact directory", source.into())
         })?;
-
-        let release = lookup_release_snapshot(
-            self.config.target_database_url(),
-            &identity.tenant,
-            self.config.effective_release_id(),
-            self.config.release_artifact_base(),
+        for artifact in &self.artifacts {
+            let bytes = fs::read(&artifact.path).map_err(|source| {
+                ProductionDevStageError::owner("read local component", source.into())
+            })?;
+            if wamn_runtime::component_admission::component_digest(&bytes)
+                != artifact.digest.as_ref()
+            {
+                return Err(ProductionDevStageError::invalid(
+                    "stage local component",
+                    "admitted component bytes changed",
+                ));
+            }
+            let path = wamn_runtime::component_artifact_source::local_component_path(
+                &local.directory,
+                &artifact.digest,
+            )
+            .map_err(|source| {
+                ProductionDevStageError::owner("name local component", source.into())
+            })?;
+            fs::write(path, bytes).map_err(|source| {
+                ProductionDevStageError::owner("stage local component", source.into())
+            })?;
+        }
+        fs::write(
+            local
+                .directory
+                .join(wamn_catalog::RELEASE_MANIFEST_FILE_NAME),
+            &minted.canonical_bytes,
         )
-        .await
         .map_err(|source| {
-            ProductionDevStageError::owner("load the exact release snapshot", source)
+            ProductionDevStageError::owner("stage local application manifest", source.into())
+        })?;
+        let admission_bytes = serde_json::to_vec(&local_facts).map_err(|source| {
+            ProductionDevStageError::owner("encode local admissions", source.into())
+        })?;
+        let admission_digest =
+            wamn_runtime::component_admission::component_digest(&admission_bytes);
+        fs::write(
+            local
+                .directory
+                .join(wamn_runtime::local_application::LOCAL_FACTS_FILE),
+            admission_bytes,
+        )
+        .map_err(|source| {
+            ProductionDevStageError::owner("stage local admissions", source.into())
+        })?;
+        let carrier = ReleaseCarrier {
+            artifact_base: format!("local:{}", local.directory.display()),
+            manifest_digest: minted.digest,
+        };
+        activation::prepare_local(&DevActivationRequest {
+            config: &self.config,
+            release: &carrier,
+            identity: self.config.activation_identity(),
+            host_binary: self.config.host_binary(),
+            wasmtime_cache_dir: self.config.wasmtime_cache_dir(),
+            host_output_log: None,
+            local_admission_digest: Some(&admission_digest),
+        })
+        .map_err(|source| {
+            ProductionDevStageError::owner(
+                "validate local workload before replacement",
+                source.into(),
+            )
         })?;
         self.read_publisher
-            .set_release(release.manifest, release.carrier.clone());
-        self.release = Some(release.carrier);
+            .set_release(minted.manifest, carrier.clone());
+        self.release = Some(carrier);
+        self.local_bindings = local_facts.bindings;
+        self.local_binding_inputs = binding_inputs;
+        self.local_admission_digest = Some(admission_digest);
         Ok(())
     }
 
     async fn activate(&mut self) -> Result<(), ProductionDevStageError> {
-        if self.config.local_artifacts().is_some() {
-            if self.activation.is_some() {
-                self.shutdown().await?;
-            }
-            resolve_local_bindings(
-                &self.config,
-                &self.local_binding_inputs,
-                Some(&self.local_bindings),
-            )
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::owner("apply exact local connection selections", source)
-            })?;
-            let grants = self.local_grants.as_ref().ok_or_else(|| {
-                ProductionDevStageError::invalid(
-                    "apply local grants",
-                    "the candidate has no validated grant inputs",
-                )
-            })?;
-            self.reconcile_local_grants(grants, true).await?;
-            self.acl_input_digest = Some(grants.input_digest.clone());
+        if self.activation.is_some() {
+            self.shutdown().await?;
         }
+        resolve_local_bindings(
+            &self.config,
+            &self.local_binding_inputs,
+            Some(&self.local_bindings),
+        )
+        .await
+        .map_err(|source| {
+            ProductionDevStageError::owner("apply exact local connection selections", source)
+        })?;
+        let grants = self.local_grants.as_ref().ok_or_else(|| {
+            ProductionDevStageError::invalid(
+                "apply local grants",
+                "the candidate has no validated grant inputs",
+            )
+        })?;
+        self.reconcile_local_grants(grants, true).await?;
+        self.acl_input_digest = Some(grants.input_digest.clone());
         self.clear_after(DevStage::Activate);
         let release = self.release.as_ref().ok_or_else(|| {
             ProductionDevStageError::invalid(
@@ -1658,11 +1405,9 @@ impl ProductionDevStageRunner {
         ] {
             inputs.push((path.display().to_string(), file_digest(path)?));
         }
-        if self.config.local_artifacts().is_some()
-            && self.package_inputs()?.iter().any(|package| {
-                crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
-            })
-        {
+        if self.package_inputs()?.iter().any(|package| {
+            crate::delivery::sqlx::verifier_for(&package.manifest.package.id).is_some()
+        }) {
             let path = std::env::var_os("PATH")
                 .and_then(|path| {
                     std::env::split_paths(&path)
@@ -1699,14 +1444,6 @@ impl ProductionDevStageRunner {
         Ok(wamn_execution_contract::canonical_json_sha256(&inputs))
     }
 
-    fn preparation_database_url(&self) -> &str {
-        if self.config.local_artifacts().is_some() {
-            self.config.target_database_url()
-        } else {
-            self.config.verification_database_url()
-        }
-    }
-
     fn package_inputs(&self) -> Result<Vec<PackageInput>, ProductionDevStageError> {
         let packages = self.packages.as_ref().ok_or_else(|| {
             ProductionDevStageError::invalid(
@@ -1739,13 +1476,6 @@ impl ProductionDevStageRunner {
                     format!("selected artifact names unknown package {package_id}"),
                 )
             })
-    }
-
-    fn authoring_scope(&self) -> AuthoringScope {
-        AuthoringScope {
-            project_id: self.config.activation_identity().project.clone(),
-            environment: self.config.activation_identity().environment.clone(),
-        }
     }
 
     async fn reauthenticate_publisher(&self) -> Result<String, ProductionDevStageError> {
@@ -1802,7 +1532,6 @@ impl ProductionDevStageRunner {
                 self.admissions.clear();
                 self.gated_wirings.clear();
                 self.published_wirings.clear();
-                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Generate | DevStage::Build => {
@@ -1812,7 +1541,6 @@ impl ProductionDevStageRunner {
                 self.admissions.clear();
                 self.gated_wirings.clear();
                 self.published_wirings.clear();
-                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Virtualize => {
@@ -1821,25 +1549,21 @@ impl ProductionDevStageRunner {
                 self.admissions.clear();
                 self.gated_wirings.clear();
                 self.published_wirings.clear();
-                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Admit => {
                 self.admissions.clear();
                 self.gated_wirings.clear();
                 self.published_wirings.clear();
-                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Gate => {
                 self.gated_wirings.clear();
                 self.published_wirings.clear();
-                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Publish => {
                 self.published_wirings.clear();
-                self.publish_provenance = None;
                 self.release = None;
             }
             DevStage::Apply | DevStage::Acl | DevStage::Release => {
@@ -2108,30 +1832,24 @@ impl DevStageRunner for ProductionDevStageRunner {
         self.read_publisher.stage_skipped(stage);
     }
 
-    fn first_stage(&self, requested: DevStage) -> DevStage {
-        if self.config.local_artifacts().is_some() {
-            DevStage::Migrate
-        } else {
-            requested
-        }
+    fn first_stage(&self, _requested: DevStage) -> DevStage {
+        DevStage::Migrate
     }
 
     async fn stage_is_unchanged(&mut self, stage: DevStage) -> Result<bool, Self::Error> {
-        if self.config.local_artifacts().is_some() {
-            match stage {
-                DevStage::Migrate | DevStage::Apply => {
-                    return Ok(self.schema_input_digest.is_some()
-                        && self.schema_input_digest == self.schema_input_candidate);
-                }
-                DevStage::Introspect => {
-                    return Ok(self.catalogs.len() == self.package_inputs()?.len());
-                }
-                DevStage::Acl => {
-                    return Ok(self.acl_input_digest.as_deref()
-                        == Some(self.generate_inputs_digest()?.as_str()));
-                }
-                _ => {}
+        match stage {
+            DevStage::Migrate | DevStage::Apply => {
+                return Ok(self.schema_input_digest.is_some()
+                    && self.schema_input_digest == self.schema_input_candidate);
             }
+            DevStage::Introspect => {
+                return Ok(self.catalogs.len() == self.package_inputs()?.len());
+            }
+            DevStage::Acl => {
+                return Ok(self.acl_input_digest.as_deref()
+                    == Some(self.generate_inputs_digest()?.as_str()));
+            }
+            _ => {}
         }
         if stage != DevStage::Generate {
             return Ok(false);
@@ -2176,117 +1894,58 @@ impl DevStageRunner for ProductionDevStageRunner {
     }
 
     async fn prepare_run(&mut self) -> Result<(), Self::Error> {
-        if self.config.local_artifacts().is_some() {
-            self.packages = Some(
-                super::config::resolve_dev_packages(&self.config, &self.overlay_root).map_err(
-                    |source| {
-                        ProductionDevStageError::owner(
-                            "resolve local package closure",
-                            source.into(),
-                        )
-                    },
-                )?,
-            );
-            let digest = schema_inputs_digest(&self.package_inputs()?, &self.config)?;
-            if self.target_lease.is_none() {
-                self.target_lease = Some(target_database::acquire(&self.config).await.map_err(
-                    |source| {
-                        ProductionDevStageError::owner("acquire local session lease", source.into())
-                    },
-                )?);
-            }
-            self.target_lease
-                .as_ref()
-                .expect("lease acquired")
-                .check()
-                .await
-                .map_err(|source| {
-                    ProductionDevStageError::owner("check local session lease", source.into())
-                })?;
-            if self.schema_input_digest.as_deref() != Some(digest.as_str()) {
-                self.shutdown().await?;
-                self.schema_input_digest = None;
-                self.generate_input_digest = None;
-                self.acl_input_digest = None;
-                self.local_grants = None;
-                self.catalogs.clear();
-                let instance = self
-                    .target_lease
-                    .as_ref()
-                    .expect("lease acquired")
-                    .recreate(&self.config)
-                    .await
-                    .map_err(|source| {
-                        ProductionDevStageError::owner(
-                            "recreate local schema target",
-                            source.into(),
-                        )
-                    })?;
-                claim_environment_instance(
-                    self.config.system_database_url(),
-                    &self.config.activation_identity().tenant,
-                    &instance,
-                )
-                .await?;
-                self.target_instance = Some(instance);
-            }
-            self.schema_input_candidate = Some(digest);
-            return Ok(());
-        }
-
-        // The previous run's host still holds connections to this database, and
-        // both DROP DATABASE WITH FORCE and CREATE DATABASE ... TEMPLATE refuse
-        // or disconnect under a live session. The host is stopped first, so the
-        // drop finds nothing to kill.
-        if self.activation.is_some() {
-            self.shutdown().await?;
-        }
-        // The recreate hands back which creation of the database this run got.
-        // An authoring claim is keyed by it, so a replayed command against a
-        // database that no longer exists executes instead of returning a result
-        // whose effect was dropped with the old one (wamn-10yt.51).
+        self.packages = Some(
+            super::config::resolve_dev_packages(&self.config, &self.overlay_root).map_err(
+                |source| {
+                    ProductionDevStageError::owner("resolve local package closure", source.into())
+                },
+            )?,
+        );
+        let digest = schema_inputs_digest(&self.package_inputs()?, &self.config)?;
         if self.target_lease.is_none() {
             self.target_lease = Some(target_database::acquire(&self.config).await.map_err(
                 |source| {
-                    ProductionDevStageError::owner(
-                        "acquire the target session lease",
-                        source.into(),
-                    )
+                    ProductionDevStageError::owner("acquire local session lease", source.into())
                 },
             )?);
         }
-        let instance = self
-            .target_lease
+        self.target_lease
             .as_ref()
-            .expect("target lease acquired")
-            .recreate(&self.config)
+            .expect("lease acquired")
+            .check()
             .await
             .map_err(|source| {
-                ProductionDevStageError::owner("recreate the target database", source.into())
+                ProductionDevStageError::owner("check local session lease", source.into())
             })?;
-        // The SAME instance now keys the control-plane facts this run is about
-        // to write — the component library, its connection requirements and the
-        // deployment attestation (wamn-10yt.52). Stamped into the control store
-        // HERE, once, immediately after the creation it names, so every writer
-        // downstream reads one answer instead of forming its own.
-        //
-        // Before Admit and after the recreate is the only correct moment: a
-        // claim any earlier would name a database this run did not create, and
-        // any later would let a fact land under the previous run's creation.
-        claim_environment_instance(
-            self.config.system_database_url(),
-            &self.config.activation_identity().tenant,
-            &instance,
-        )
-        .await?;
-        self.target_instance = Some(instance);
+        if self.schema_input_digest.as_deref() != Some(digest.as_str()) {
+            self.shutdown().await?;
+            self.schema_input_digest = None;
+            self.generate_input_digest = None;
+            self.acl_input_digest = None;
+            self.local_grants = None;
+            self.catalogs.clear();
+            let instance = self
+                .target_lease
+                .as_ref()
+                .expect("lease acquired")
+                .recreate(&self.config)
+                .await
+                .map_err(|source| {
+                    ProductionDevStageError::owner("recreate local schema target", source.into())
+                })?;
+            claim_environment_instance(
+                self.config.system_database_url(),
+                &self.config.activation_identity().tenant,
+                &instance,
+            )
+            .await?;
+            self.target_instance = Some(instance);
+        }
+        self.schema_input_candidate = Some(digest);
         Ok(())
     }
 
     async fn run(&mut self, stage: DevStage) -> Result<(), Self::Error> {
-        if self.config.local_artifacts().is_none() && self.activation.is_some() {
-            self.shutdown().await?;
-        }
         match stage {
             DevStage::Migrate => self.migrate().await,
             DevStage::Introspect => self.introspect().await,
@@ -2326,9 +1985,7 @@ fn prepare_local_bindings(
     config: &DevConfig,
     admissions: &[ComponentAdmission],
 ) -> anyhow::Result<Vec<PreparedLocalBinding>> {
-    let path = config
-        .local_artifacts()
-        .and_then(|local| local.bindings.as_ref());
+    let path = config.local_artifacts().bindings.as_ref();
     let selections: Vec<LocalBindingSelection> = path
         .map(|path| -> anyhow::Result<_> {
             Ok(
@@ -2641,7 +2298,6 @@ fn authoring_command_id(
     package_id: &str,
     package_version: &str,
     document: &Value,
-    source_commit: Option<&str>,
     target_instance: Option<&str>,
 ) -> String {
     let mut identity = serde_json::json!({
@@ -2650,9 +2306,6 @@ fn authoring_command_id(
         "package-version": package_version,
         "document": document,
     });
-    if let Some(source_commit) = source_commit {
-        identity["source-commit"] = Value::String(source_commit.to_owned());
-    }
     if let Some(target_instance) = target_instance {
         identity["target-instance"] = Value::String(target_instance.to_owned());
     }
@@ -2782,43 +2435,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn command_identity_is_stable_and_publish_separates_source_commits() {
-        let document = serde_json::json!({"wiring-id": "purchase_order_get", "version": 1});
-        let first_gate =
-            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None, None);
-        let second_gate =
-            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None, None);
-        let first_publish = authoring_command_id(
-            "publish",
-            "wamn_receiving",
-            "1.0.0",
-            &document,
-            Some("0123456789abcdef"),
-            None,
-        );
-        let repeated_publish = authoring_command_id(
-            "publish",
-            "wamn_receiving",
-            "1.0.0",
-            &document,
-            Some("0123456789abcdef"),
-            None,
-        );
-        let next_commit_publish = authoring_command_id(
-            "publish",
-            "wamn_receiving",
-            "1.0.0",
-            &document,
-            Some("fedcba9876543210"),
-            None,
-        );
-        assert_eq!(first_gate, second_gate);
-        assert_eq!(first_publish, repeated_publish);
-        assert_ne!(first_gate, first_publish);
-        assert_ne!(first_publish, next_commit_publish);
-    }
-
     /// The claim says which creation of the target database it ran against.
     ///
     /// Measured live on 2026-09-08: without this, a second run replayed all
@@ -2831,32 +2447,13 @@ mod tests {
     fn a_recreated_target_is_a_different_command_and_a_durable_one_is_unchanged() {
         let document = serde_json::json!({"wiring": "purchase_order_get", "version": 1});
 
-        let durable =
-            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None, None);
-        let first_instance = authoring_command_id(
-            "gate",
-            "wamn_receiving",
-            "1.0.0",
-            &document,
-            None,
-            Some("16394"),
-        );
-        let same_instance = authoring_command_id(
-            "gate",
-            "wamn_receiving",
-            "1.0.0",
-            &document,
-            None,
-            Some("16394"),
-        );
-        let next_instance = authoring_command_id(
-            "gate",
-            "wamn_receiving",
-            "1.0.0",
-            &document,
-            None,
-            Some("16512"),
-        );
+        let durable = authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, None);
+        let first_instance =
+            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, Some("16394"));
+        let same_instance =
+            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, Some("16394"));
+        let next_instance =
+            authoring_command_id("gate", "wamn_receiving", "1.0.0", &document, Some("16512"));
 
         assert_eq!(
             first_instance, same_instance,

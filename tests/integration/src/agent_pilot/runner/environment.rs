@@ -12,7 +12,7 @@ use wamn_control_provision::sql;
 use wamn_control_registry::Triple;
 use wamn_test_infrastructure::event_broker::{self, EventBroker};
 
-use super::{Run, directory, process, string};
+use super::{Run, process, string};
 use crate::agent_pilot::{text, write, write_json};
 
 #[derive(Debug)]
@@ -100,11 +100,6 @@ impl Run {
             "registry password preparation failed"
         );
         write(&environment.join("htpasswd"), &result.stdout)?;
-        directory(&environment.join("docker"))?;
-        write_json(
-            &environment.join("docker/config.json"),
-            &json!({"auths":{"127.0.0.1:5004":{"username":"wamn-pilot","password":password}}}),
-        )?;
         self.logged(&mut self.lifecycle("up")).await?;
         let port = string(&mut self.lifecycle("event-port")).await?;
         let (host, port) = port
@@ -153,15 +148,6 @@ impl Run {
         drop(postgres);
         task.await??;
         database?;
-        let wash = string(&mut Command::new(self.tree.join("tools/install-wash"))).await?;
-        self.logged(
-            Command::new(wash)
-                .args(["oci", "push", "127.0.0.1:5004/wamn/flow-http:pilot"])
-                .arg(self.target.join("wasm32-wasip2/debug/http_route.wasm"))
-                .arg("--insecure")
-                .env("DOCKER_CONFIG", environment.join("docker")),
-        )
-        .await?;
         Ok(Broker {
             events,
             server,
@@ -218,25 +204,17 @@ impl Run {
                 "http://127.0.0.1:3201",
                 "--otel-exporter-otlp-endpoint",
                 "http://127.0.0.1:4319",
-                "--component-artifact-base",
-                "127.0.0.1:5004/wamn/components",
-                "--release-artifact-base",
-                "127.0.0.1:5004/wamn/releases",
-                "--registry-auth-file",
             ])
-            .arg(self.directory.join("env/docker/config.json"))
             .arg("--route-host")
             .arg(text(&self.task["identity"]["route_host"]))
             .args([
                 "--platform-domain",
                 "example.invalid",
-                "--flow-http-workload-image",
-                "127.0.0.1:5004/wamn/flow-http:pilot",
-                "--host-binary",
+                "--flow-http-component",
             ])
-            .arg(self.target.join("debug/wamn-host"))
-            .arg("--scenario-worker-binary")
-            .arg(self.target.join("debug/wamn-scenario-worker"));
+            .arg(self.target.join("wasm32-wasip2/debug/http_route.wasm"))
+            .arg("--host-binary")
+            .arg(self.target.join("debug/wamn-host"));
         for package in packages {
             command
                 .arg("--package")
@@ -254,6 +232,9 @@ impl Run {
             format!("{pid}\n").as_bytes(),
         )?;
         for _ in 0..180 {
+            // Read the exit first: a standup that exits right after writing
+            // its configuration must still count as ready.
+            let exited = child.try_wait()?;
             let ready = ["env/dev.json", "env/route-caller-pat.json"]
                 .iter()
                 .all(|path| {
@@ -262,18 +243,18 @@ impl Run {
                         .metadata()
                         .is_ok_and(|m| m.len() > 0)
                 });
-            if ready && process::listening(8088).await? {
+            if ready {
                 return Ok(());
             }
             anyhow::ensure!(
-                child.try_wait()?.is_none(),
+                exited.is_none(),
                 "the wamn dev up standup exited; see {}",
                 self.directory.join("env.log").display()
             );
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
         anyhow::bail!(
-            "the wamn dev up standup did not hold a Gate on 8088; see {}",
+            "the wamn dev up standup did not write its configuration; see {}",
             self.directory.join("env.log").display()
         )
     }

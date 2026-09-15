@@ -34,7 +34,7 @@ use wamn_control::provision_project_env::{
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneRequest};
 use wamn_control_provision::{
     CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL, WorkloadRoleFamily,
-    management_admitter_generation_role, platform_principals_sql, sql as provision_sql,
+    platform_principals_sql, sql as provision_sql,
 };
 use wamn_pg_core::Identifier;
 
@@ -48,7 +48,7 @@ use crate::provisioning_verbs;
 /// command takes them as flags; neither builds a second set of arguments.
 #[derive(Debug)]
 pub struct DevEnvironmentInputs {
-    pub local_artifacts: Option<super::config::LocalArtifacts>,
+    pub local_artifacts: super::config::LocalArtifacts,
     pub host_binary: PathBuf,
     pub nats_url: String,
     pub event_nats_url: String,
@@ -58,13 +58,9 @@ pub struct DevEnvironmentInputs {
     pub dup_window_secs: u64,
     pub tempo_query_url: String,
     pub otel_exporter_otlp_endpoint: String,
-    pub flow_http_workload_image: String,
-    pub component_artifact_base: String,
-    pub release_artifact_base: String,
     pub route_host: String,
     /// Domain of the platform principal emails, `<component>@<platform-domain>`.
     pub platform_domain: String,
-    pub registry_auth_file: PathBuf,
     pub package_sources: Vec<PathBuf>,
 }
 
@@ -78,7 +74,6 @@ pub struct DevEnvironment {
     pub template: String,
     pub route: ProvisionedRoute,
     pub credentials: JourneyCredentials,
-    pub verification: DevVerificationGate,
     pub identity: DevActivationIdentity,
 }
 
@@ -131,14 +126,10 @@ pub async fn provision(
     let template =
         prepare_target_template(admin, system_url, &route.database_url, root, &identity).await?;
 
-    let verification =
-        prepare_dev_verification_gate(system_url, admin, &identity, platform_domain).await?;
-
     Ok(DevEnvironment {
         template,
         route,
         credentials,
-        verification,
         identity,
     })
 }
@@ -799,17 +790,6 @@ pub async fn spawn_journey_management_gate(
     )
 }
 
-#[expect(
-    missing_debug_implementations,
-    reason = "carries minted PATs and password-bearing URLs; no derived formatter may print them"
-)]
-pub struct DevVerificationGate {
-    pub database: String,
-    pub database_url: String,
-    pub credential_url: String,
-    pub generation_roles: [String; 2],
-}
-
 pub fn dev_activation_identity() -> DevActivationIdentity {
     let process = std::process::id();
     DevActivationIdentity {
@@ -825,136 +805,12 @@ pub fn dev_activation_identity() -> DevActivationIdentity {
     }
 }
 
-fn quoted_generated_identifier(identifier: &str) -> anyhow::Result<String> {
-    anyhow::ensure!(
-        identifier
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'),
-        "generated development fixture name is not a safe PostgreSQL identifier"
-    );
-    Ok(format!("\"{identifier}\""))
-}
-
-pub async fn prepare_dev_verification_gate(
-    system_url: &str,
-    admin: &Client,
-    identity: &DevActivationIdentity,
-    platform_domain: &str,
-) -> anyhow::Result<DevVerificationGate> {
-    let database = format!("wamn_dev_verification_{}", std::process::id());
-    admin
-        .batch_execute(&provision_sql::drop_database_named_sql(&database))
-        .await
-        .context("remove stale disposable development verification database")?;
-    admin
-        .batch_execute(&provision_sql::create_database_named_sql(&database))
-        .await
-        .context("create the Gate's initial disposable verification database")?;
-    let quoted_database = quoted_generated_identifier(&database)?;
-    admin
-        .batch_execute(&format!(
-            "REVOKE CONNECT ON DATABASE {quoted_database} FROM PUBLIC"
-        ))
-        .await
-        .context("revoke PUBLIC CONNECT on only the initial verification database")?;
-
-    let generation_roles = [CredentialGeneration::A, CredentialGeneration::B].map(|generation| {
-        management_admitter_generation_role(
-            &identity.org,
-            &identity.project,
-            &identity.environment,
-            &database,
-            generation,
-        )
-    });
-    for role in &generation_roles {
-        let quoted = quoted_generated_identifier(role)?;
-        admin
-            .batch_execute(&format!(
-                "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '{role}') \
-                 THEN CREATE ROLE {quoted} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                 INHERIT NOREPLICATION NOBYPASSRLS; END IF; END $$;"
-            ))
-            .await
-            .with_context(|| format!("ensure inactive generated Gate role {role}"))?;
-    }
-
-    let verification_url = database_url(system_url, &database)?;
-    let (verification, verification_task) = connect(&verification_url).await?;
-    for role in &generation_roles {
-        verification
-            .batch_execute(&provision_sql::retire_workload_generation_sql(
-                WorkloadRoleFamily::ManagementAdmitter,
-                &database,
-                role,
-            ))
-            .await
-            .with_context(|| format!("reset generated Gate role {role} to inactive"))?;
-    }
-    drop(verification);
-    verification_task.abort();
-
-    crate::dev::verification_world::bootstrap(&verification_url, identity, platform_domain)
-        .await
-        .context("bootstrap the Gate's initial disposable verification world")?;
-
-    let password = format!("wamn-dev-gate-{}-a", std::process::id());
-    let (verification, verification_task) = connect(&verification_url).await?;
-    verification
-        .batch_execute(&provision_sql::prepare_workload_generation_sql(
-            WorkloadRoleFamily::ManagementAdmitter,
-            &database,
-            &generation_roles[0],
-            &password,
-            "2099-01-01T00:00:00Z",
-        ))
-        .await
-        .context("prepare the production-shaped verification Gate credential")?;
-    drop(verification);
-    verification_task.abort();
-
-    let mut credential_url =
-        Url::parse(&verification_url).context("parse the disposable verification database URL")?;
-    credential_url
-        .set_username(&generation_roles[0])
-        .map_err(|_| anyhow::anyhow!("set the generated Gate role in its verification URL"))?;
-    credential_url
-        .set_password(Some(&password))
-        .map_err(|_| anyhow::anyhow!("set the generated Gate password in its verification URL"))?;
-
-    Ok(DevVerificationGate {
-        database,
-        database_url: verification_url,
-        credential_url: credential_url.into(),
-        generation_roles,
-    })
-}
-
-pub async fn clean_dev_verification_gate_roles(
-    admin: &Client,
-    fixture: &DevVerificationGate,
-) -> anyhow::Result<()> {
-    for role in &fixture.generation_roles {
-        let quoted = quoted_generated_identifier(role)?;
-        admin
-            .batch_execute(&format!(
-                "REVOKE \"{}\" FROM {quoted}; DROP ROLE {quoted};",
-                WorkloadRoleFamily::ManagementAdmitter.acl_role()
-            ))
-            .await
-            .with_context(|| format!("remove generated Gate role {role}"))?;
-    }
-    Ok(())
-}
-
 pub fn write_dev_config(
     root: &Path,
     system_url: &str,
     template: &str,
     route: &ProvisionedRoute,
     credentials: &JourneyCredentials,
-    verification: &DevVerificationGate,
-    gate_bind: &str,
     inputs: &DevEnvironmentInputs,
     identity: &DevActivationIdentity,
 ) -> anyhow::Result<PathBuf> {
@@ -964,7 +820,6 @@ pub fn write_dev_config(
     std::fs::create_dir_all(&wasmtime_cache)
         .context("create the product-command Wasmtime cache")?;
     let mut config = serde_json::json!({
-        "verification_database_url": verification.database_url.as_str(),
         "target_database_url": route.database_url.as_str(),
         // The loop recreates the target before every run, which drops every
         // per-database privilege with it. This is the file it replays, and it
@@ -989,18 +844,12 @@ pub fn write_dev_config(
         "dup_window_secs": inputs.dup_window_secs,
         "tempo_query_url": inputs.tempo_query_url.as_str(),
         "otel_exporter_otlp_endpoint": inputs.otel_exporter_otlp_endpoint.as_str(),
-        "component_artifact_base": inputs.component_artifact_base.as_str(),
-        "release_artifact_base": inputs.release_artifact_base.as_str(),
-        "registry_auth_file": &inputs.registry_auth_file,
-        "insecure_registry": true,
-        "gate_url": format!("http://{gate_bind}/authoring"),
         "gate_bearer_token": route
             .management_token
             .as_deref()
             .context("project provisioning emitted no management-author PAT")?,
         "operator_bearer_token": route.token.as_str(),
         "route_host": inputs.route_host.as_str(),
-        "flow_http_workload_image": inputs.flow_http_workload_image.as_str(),
         "package_sources": inputs.package_sources.as_slice(),
         "effective_release_id": RELEASE_ID,
         "tenant": identity.tenant.as_str(),
@@ -1017,21 +866,7 @@ pub fn write_dev_config(
     });
     // A separate insert keeps the literal above inside the json! recursion limit.
     config["platform_domain"] = inputs.platform_domain.as_str().into();
-    if let Some(local) = &inputs.local_artifacts {
-        let document = config
-            .as_object_mut()
-            .expect("development configuration is an object");
-        for key in [
-            "component_artifact_base",
-            "release_artifact_base",
-            "registry_auth_file",
-            "insecure_registry",
-            "flow_http_workload_image",
-        ] {
-            document.remove(key);
-        }
-        document.insert("local_artifacts".to_owned(), serde_json::to_value(local)?);
-    }
+    config["local_artifacts"] = serde_json::to_value(&inputs.local_artifacts)?;
     let path = root.join("dev.json");
     std::fs::write(&path, serde_json::to_vec_pretty(&config)?)
         .context("write the strict product-command configuration")?;

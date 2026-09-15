@@ -27,19 +27,8 @@
     }
   },
   "description": "Sole field authority for the strict deployment-owned `dev.json` document.",
-  "if": {
-    "not": {
-      "required": [
-        "local_artifacts"
-      ]
-    }
-  },
   "properties": {
     "catalog": {
-      "type": "string"
-    },
-    "component_artifact_base": {
-      "default": "",
       "type": "string"
     },
     "dup_window_secs": {
@@ -70,14 +59,7 @@
     "executor_platform_database_url": {
       "type": "string"
     },
-    "flow_http_workload_image": {
-      "default": "",
-      "type": "string"
-    },
     "gate_bearer_token": {
-      "type": "string"
-    },
-    "gate_url": {
       "type": "string"
     },
     "guest_database_url": {
@@ -98,17 +80,8 @@
     "identity_database_url": {
       "type": "string"
     },
-    "insecure_registry": {
-      "default": false,
-      "type": "boolean"
-    },
     "local_artifacts": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/LocalArtifacts"
-        }
-      ],
-      "default": null
+      "$ref": "#/definitions/LocalArtifacts"
     },
     "operator_bearer_token": {
       "default": null,
@@ -130,14 +103,6 @@
       "type": "string"
     },
     "project": {
-      "type": "string"
-    },
-    "registry_auth_file": {
-      "default": "",
-      "type": "string"
-    },
-    "release_artifact_base": {
-      "default": "",
       "type": "string"
     },
     "route_host": {
@@ -178,9 +143,6 @@
     "tenant": {
       "type": "string"
     },
-    "verification_database_url": {
-      "type": "string"
-    },
     "wasmtime_cache_dir": {
       "type": "string"
     }
@@ -196,13 +158,13 @@
     "event_nats_username",
     "executor_platform_database_url",
     "gate_bearer_token",
-    "gate_url",
     "guest_database_url",
     "host_binary",
     "host_group",
     "host_name",
     "http_admitter_database_url",
     "identity_database_url",
+    "local_artifacts",
     "org",
     "otel_exporter_otlp_endpoint",
     "package_sources",
@@ -220,18 +182,8 @@
     "target_template_database",
     "tempo_query_url",
     "tenant",
-    "verification_database_url",
     "wasmtime_cache_dir"
   ],
-  "then": {
-    "required": [
-      "component_artifact_base",
-      "release_artifact_base",
-      "registry_auth_file",
-      "insecure_registry",
-      "flow_http_workload_image"
-    ]
-  },
   "title": "DevConfigDocument",
   "type": "object"
 }

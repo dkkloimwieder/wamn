@@ -157,7 +157,7 @@ impl TargetSpec {
         })?;
         // The parse-time guard in `config` already refuses these. Repeating the
         // check here keeps the drop safe for any caller that reaches this module
-        // by another path, exactly as the verification lifecycle does.
+        // by another path.
         if POSTGRES_SYSTEM_DATABASES.contains(&database) {
             return Err(TargetDatabaseError::new(
                 TargetDatabaseErrorKind::InvalidConfiguration,
@@ -360,30 +360,28 @@ impl TargetLease {
         );
         let instance =
             replace_database(&self.client, &self.spec, &template, &fingerprint, &acl).await?;
-        if config.local_artifacts().is_some() {
-            let identity = config.activation_identity();
-            let marker = wamn_runtime::local_application::local_target_marker(
-                &identity.tenant,
-                &identity.environment,
-                instance
-                    .parse()
-                    .expect("database instance is a PostgreSQL oid"),
-            );
-            self.client
-                .batch_execute(&format!(
-                    "COMMENT ON DATABASE {} IS '{}'",
-                    self.spec.database.quoted(),
-                    marker,
-                ))
-                .await
-                .map_err(|source| {
-                    TargetDatabaseError::new(
-                        TargetDatabaseErrorKind::CreateFailed,
-                        "stamp the owned local target before serving the application",
-                    )
-                    .with_source(source)
-                })?;
-        }
+        let identity = config.activation_identity();
+        let marker = wamn_runtime::local_application::local_target_marker(
+            &identity.tenant,
+            &identity.environment,
+            instance
+                .parse()
+                .expect("database instance is a PostgreSQL oid"),
+        );
+        self.client
+            .batch_execute(&format!(
+                "COMMENT ON DATABASE {} IS '{}'",
+                self.spec.database.quoted(),
+                marker,
+            ))
+            .await
+            .map_err(|source| {
+                TargetDatabaseError::new(
+                    TargetDatabaseErrorKind::CreateFailed,
+                    "stamp the owned local target before serving the application",
+                )
+                .with_source(source)
+            })?;
         Ok(instance)
     }
 }
@@ -564,7 +562,7 @@ mod tests {
         std::fs::write(&acl, "GRANT CONNECT ON DATABASE target TO fixture_reader;")?;
         let endpoint: std::net::SocketAddr =
             url::Url::parse(admin_database.url())?.socket_addrs(|| None)?[0];
-        let mut document = crate::dev::config::tests::complete_document(&[endpoint; 16]);
+        let mut document = crate::dev::config::tests::complete_document(&[endpoint; 11]);
         document["target_database_url"] = json!(target_database.url());
         document["target_template_database"] = json!("target_template");
         document["target_privileges_file"] = json!(privileges);

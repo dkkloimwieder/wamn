@@ -14,7 +14,6 @@ pub mod component_verbs;
 pub mod copy_project_env;
 pub mod delivery;
 pub mod dev;
-pub mod dev_gate;
 #[cfg(feature = "ops")]
 pub mod dump_project_env;
 #[cfg(feature = "ops")]

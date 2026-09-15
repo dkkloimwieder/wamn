@@ -4,23 +4,19 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader, Lines};
+use tokio::io::{AsyncBufReadExt as _, BufReader, Lines};
 use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
 use super::super::{
     DevSourceState, GitSource, PLATFORM_DOMAIN, ScratchRoot, TENANT, connect,
-    environment::seed_receiving_business_rows, journey_scenario_worker_binary, repository_root,
-    required_journey, required_journey_path, spawn_journey_management_gate, write_dev_config,
+    environment::seed_receiving_business_rows, repository_root, required_journey,
+    required_journey_path, write_dev_config,
 };
-use super::{
-    DEV_COMMAND_TIMEOUT, DEV_LIVE_GATE_BIND, DevJourneyInputs, current_database_acl,
-};
+use super::{DEV_COMMAND_TIMEOUT, DevJourneyInputs, current_database_acl};
 
 const CODE: &str = "apps/wamn_receiving/component/src/lib.rs";
 const SQL: &str = "apps/wamn_receiving/query/location.sql";
@@ -51,38 +47,24 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
     let mut server = wamn_test_infrastructure::postgres::start(&[])?;
     let system_url = server.create_database("wamn_system")?.url().to_owned();
     let mut inputs = DevJourneyInputs::required()?;
-    let flow_http = required_journey_path("WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")?.canonicalize()?;
     ensure!(
-        flow_http.is_file(),
+        inputs
+            .environment
+            .local_artifacts
+            .flow_http_component
+            .is_file(),
         "the local flow-http component must exist"
     );
     let mut original = SavedSource::capture(&repository)?;
     let scratch = ScratchRoot::create()?;
     let root = scratch.path();
-    let registry = RejectingRegistry::start().await?;
-    inputs.environment.local_artifacts = Some(wamn_ctl::dev::config::LocalArtifacts {
-        directory: root.join("local-artifacts"),
-        flow_http_component: flow_http,
-        bindings: None,
-    });
-    inputs.environment.component_artifact_base = format!("{}/components", registry.address);
-    inputs.environment.release_artifact_base = format!("{}/releases", registry.address);
-    inputs.environment.flow_http_workload_image =
-        format!("{}/flow-http:unavailable", registry.address);
-    inputs.environment.registry_auth_file = root.join("absent-registry-credential");
+    inputs.environment.local_artifacts.directory = root.join("local-artifacts");
 
     let (admin, admin_task) = connect(&system_url).await?;
     let environment =
         wamn_ctl::dev::environment::provision(&system_url, admin.as_ref(), root, PLATFORM_DOMAIN)
             .await?;
     let system_acl = current_database_acl(admin.as_ref()).await?;
-    let mut gate = spawn_journey_management_gate(
-        &journey_scenario_worker_binary()?,
-        &environment.credentials,
-        &environment.credentials.management_admitter,
-        DEV_LIVE_GATE_BIND,
-    )
-    .await?;
     let credentials = wamn_test_infrastructure::event_broker::Credentials {
         username: required_journey("WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME")?,
         password_file: required_journey_path("WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE")?,
@@ -111,8 +93,6 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         &environment.template,
         &environment.route,
         &environment.credentials,
-        &environment.verification,
-        gate.bind(),
         &inputs.environment,
         &environment.identity,
     )?;
@@ -168,7 +148,6 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         ensure!(applied, "the recreated target lacks the actual schema edit");
         require_local_facts(root, admin.as_ref(), &environment.route.database_url).await?;
         ensure!(current_database_acl(admin.as_ref()).await? == system_acl, "the local loop changed the system database ACL");
-        ensure!(registry.requests.load(Ordering::SeqCst) == 0, "the local loop attempted registry access");
         Ok::<_, anyhow::Error>(())
     }.await;
     let stopped = watch.stop().await;
@@ -184,19 +163,11 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         )
     });
     drop(watch);
-    let gate_stopped = gate.shutdown().await;
-    let verification = super::verify_dev_verification_database_absent(
-        admin.as_ref(),
-        &environment.verification.database,
-    )
-    .await;
     let restored = original.restore();
     admin_task.abort();
     provisioning.drain().await?;
     result?;
     stopped?;
-    gate_stopped?;
-    verification?;
     restored?;
     let final_source = git.snapshot().await?;
     ensure!(
@@ -589,38 +560,6 @@ impl Watch {
 impl Drop for Watch {
     fn drop(&mut self) {
         self.kill_group();
-    }
-}
-
-struct RejectingRegistry {
-    address: String,
-    requests: Arc<AtomicUsize>,
-    task: tokio::task::JoinHandle<()>,
-}
-
-impl RejectingRegistry {
-    async fn start() -> anyhow::Result<Self> {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
-        let address = listener.local_addr()?.to_string();
-        let requests = Arc::new(AtomicUsize::new(0));
-        let counted = Arc::clone(&requests);
-        let task = tokio::spawn(async move {
-            while let Ok((mut stream, _)) = listener.accept().await {
-                counted.fetch_add(1, Ordering::SeqCst);
-                let _ = stream.write_all(b"HTTP/1.1 503 Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-            }
-        });
-        Ok(Self {
-            address,
-            requests,
-            task,
-        })
-    }
-}
-
-impl Drop for RejectingRegistry {
-    fn drop(&mut self) {
-        self.task.abort();
     }
 }
 

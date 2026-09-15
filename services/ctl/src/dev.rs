@@ -23,8 +23,6 @@ pub mod target_database;
 #[cfg(target_os = "linux")]
 pub mod tui;
 pub mod up;
-pub mod verification_database;
-pub mod verification_world;
 #[cfg(target_os = "linux")]
 pub mod watch;
 
@@ -32,9 +30,7 @@ use std::error::Error;
 use std::fmt;
 use std::time::{Duration, Instant};
 
-use config::DevConfig;
 use read::DevRuntimeEndpoint;
-use verification_database::VerificationDatabaseError;
 
 // Cold local builds may take longer than edits. Metadata probes have their own
 // smaller bound; neither kind can prevent cooperative shutdown indefinitely.
@@ -580,47 +576,16 @@ impl PendingRun {
     }
 }
 
-/// Run one fixed stage sequence in a fresh verification database.
-///
-/// A dirty source may exercise saved-byte stages through the gate. The engine
-/// refuses before invoking the first stage that can mint committed provenance,
-/// so no later deployment side effect can run under a false source identity.
-pub async fn run_once<R>(
-    config: &DevConfig,
-    source_state: DevSourceState,
-    runner: &mut R,
-) -> Result<Result<DevRunResult, DevRunError>, VerificationDatabaseError>
-where
-    R: DevStageRunner + Send,
-{
-    let mut source_state_provider = FixedSourceState(source_state);
-    run_once_with_source_state_provider(config, runner, &mut source_state_provider).await
-}
-
 /// Run once while re-reading source state at each committed-source boundary.
 pub async fn run_once_with_source_state_provider<R, P>(
-    config: &DevConfig,
     runner: &mut R,
     source_state_provider: &mut P,
-) -> Result<Result<DevRunResult, DevRunError>, VerificationDatabaseError>
+) -> Result<DevRunResult, DevRunError>
 where
     R: DevStageRunner + Send,
     P: DevSourceStateProvider + Send,
 {
-    if config.local_artifacts().is_some() {
-        return Ok(run_suffix_with_source_state_provider(
-            DevStage::Migrate,
-            runner,
-            source_state_provider,
-        )
-        .await);
-    }
-    verification_database::run(config, |verification_database_url| async move {
-        bootstrap_verification_world(config, &verification_database_url, runner).await?;
-        run_suffix_with_source_state_provider(DevStage::Migrate, runner, source_state_provider)
-            .await
-    })
-    .await
+    run_suffix_with_source_state_provider(DevStage::Migrate, runner, source_state_provider).await
 }
 
 async fn run_once_stages<R>(
@@ -731,107 +696,25 @@ where
     })
 }
 
-/// Watch for invalidations inside one fresh verification-database session.
+/// Watch while re-reading Git state at every committed-source boundary.
 ///
 /// Events already queued together coalesce to the earliest affected stage. An
 /// event arriving during a run remains queued for the next run, so runs never
 /// overlap. Stage failures are reported and do not terminate the watch loop;
-/// only an invalidation-source failure does. Every suffix in this watch command
-/// shares the same run-scoped verification database and advisory lease.
-pub async fn run_watch<R, S, O>(
-    config: &DevConfig,
-    runner: &mut R,
-    source: &mut S,
-    observer: &mut O,
-) -> Result<Result<(), S::Error>, VerificationDatabaseError>
-where
-    R: DevStageRunner + Send,
-    S: DevInvalidationSource + Send,
-    O: DevWatchObserver + Send,
-{
-    if config.local_artifacts().is_some() {
-        return Ok(run_watch_loop(runner, source, observer).await);
-    }
-    verification_database::run(config, |verification_database_url| async move {
-        if let Err(error) =
-            bootstrap_verification_world(config, &verification_database_url, runner).await
-        {
-            observer.completed(DevWatchOutcome {
-                from: DevStage::Migrate,
-                result: Err(error),
-            });
-            return Ok(());
-        }
-        run_watch_loop(runner, source, observer).await
-    })
-    .await
-}
-
-/// Watch while re-reading Git state at every committed-source boundary.
+/// only an invalidation-source failure does.
 pub async fn run_watch_with_source_state_provider<R, S, O, P>(
-    config: &DevConfig,
     runner: &mut R,
     source: &mut S,
     observer: &mut O,
     source_state_provider: &mut P,
-) -> Result<Result<(), S::Error>, VerificationDatabaseError>
+) -> Result<(), S::Error>
 where
     R: DevStageRunner + Send,
     S: DevInvalidationSource + Send,
     O: DevWatchObserver + Send,
     P: DevSourceStateProvider + Send,
 {
-    if config.local_artifacts().is_some() {
-        return Ok(run_watch_loop_with_source_state_provider(
-            runner,
-            source,
-            observer,
-            source_state_provider,
-        )
-        .await);
-    }
-    verification_database::run(config, |verification_database_url| async move {
-        if let Err(error) =
-            bootstrap_verification_world(config, &verification_database_url, runner).await
-        {
-            observer.completed(DevWatchOutcome {
-                from: DevStage::Migrate,
-                result: Err(error),
-            });
-            return Ok(());
-        }
-        run_watch_loop_with_source_state_provider(runner, source, observer, source_state_provider)
-            .await
-    })
-    .await
-}
-
-async fn bootstrap_verification_world<R>(
-    config: &DevConfig,
-    verification_database_url: &str,
-    runner: &mut R,
-) -> Result<(), DevRunError>
-where
-    R: DevStageRunner,
-{
-    if let Err(error) = verification_world::bootstrap(
-        verification_database_url,
-        config.activation_identity(),
-        config.platform_domain(),
-    )
-    .await
-    {
-        runner.reset(DevStage::Migrate);
-        runner.stage_started(DevStage::Migrate);
-        let failure = DevStageFailure::new(
-            DevRunErrorKind::StageFailed.as_str(),
-            error.to_string(),
-            None,
-        );
-        runner.stage_failed(DevStage::Migrate, failure);
-        return Err(DevRunError::stage_failed(DevStage::Migrate, error));
-    }
-    Ok(())
+    run_watch_loop_with_source_state_provider(runner, source, observer, source_state_provider).await
 }
 
 async fn run_watch_loop<R, S, O>(

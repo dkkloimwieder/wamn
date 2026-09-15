@@ -15,13 +15,11 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use futures_util::StreamExt as _;
-use oci_client::Reference;
 use rustix::process::{Pid, Signal, kill_process};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::process::{Child, Command};
 use tokio::time::{Instant, timeout, timeout_at};
-use wamn_runtime::registry_credentials::{RegistryCredentials, read_registry_credentials};
 use wash_runtime::washlet::{OPERATOR_API_PREFIX, rpc_subject, types::v2};
 
 use super::config::DevConfig;
@@ -94,7 +92,6 @@ impl fmt::Debug for DevActivationRequest<'_> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DevActivationErrorKind {
     InvalidInput,
-    RegistryCredential,
     SchedulerUnavailable,
     HostProcess,
     HeartbeatUnavailable,
@@ -108,7 +105,6 @@ impl DevActivationErrorKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::InvalidInput => "dev-activation-invalid-input",
-            Self::RegistryCredential => "dev-activation-registry-credential",
             Self::SchedulerUnavailable => "dev-activation-scheduler-unavailable",
             Self::HostProcess => "dev-activation-host-process",
             Self::HeartbeatUnavailable => "dev-activation-heartbeat-unavailable",
@@ -506,94 +502,88 @@ impl DevActivation {
 /// Validate and stage local workload bytes before a serving candidate is stopped.
 pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), DevActivationError> {
     validate_request(request)?;
-    if let Some(local) = request.config.local_artifacts() {
-        let stage_error = |source| {
-            DevActivationError::with_source(
-                DevActivationErrorKind::InvalidInput,
-                "local-flow-http",
-                "cannot stage the explicit local flow-http component",
-                source,
-            )
-        };
-        std::fs::create_dir_all(&local.directory).map_err(stage_error)?;
-        std::fs::set_permissions(&local.directory, std::fs::Permissions::from_mode(0o700))
-            .map_err(stage_error)?;
-        let admission = std::fs::read(
-            local
-                .directory
-                .join(wamn_runtime::local_application::LOCAL_FACTS_FILE),
+    let local = request.config.local_artifacts();
+    let stage_error = |source| {
+        DevActivationError::with_source(
+            DevActivationErrorKind::InvalidInput,
+            "local-flow-http",
+            "cannot stage the explicit local flow-http component",
+            source,
         )
+    };
+    std::fs::create_dir_all(&local.directory).map_err(stage_error)?;
+    std::fs::set_permissions(&local.directory, std::fs::Permissions::from_mode(0o700))
         .map_err(stage_error)?;
-        if Some(wamn_runtime::component_admission::component_digest(&admission).as_str())
-            != request.local_admission_digest
-        {
-            return Err(DevActivationError::new(
-                DevActivationErrorKind::InvalidInput,
-                "local-admission",
-                "local admission bytes changed after validation",
-            ));
-        }
-        let component_bytes = std::fs::read(&local.flow_http_component).map_err(stage_error)?;
-        let checked = (|| -> anyhow::Result<()> {
-            let engine = wamn_runtime::engine::build_engine(&[])?;
-            let component = wash_runtime::wasmtime::component::Component::new(
-                engine.inner(),
-                &component_bytes,
-            )?;
-            anyhow::ensure!(
-                component
-                    .component_type()
-                    .exports(engine.inner())
-                    .any(|(name, _)| name.starts_with("wasi:http/incoming-handler@")
-                        || name == "wasi:http/handler@0.3.0"),
-                "local flow-http component has no incoming HTTP handler"
-            );
-            Ok(())
-        })();
-        checked.map_err(|source| {
-            DevActivationError::with_source(
-                DevActivationErrorKind::InvalidInput,
-                "local-flow-http",
-                format!("local flow-http bytes failed native component validation: {source:#}"),
-                NativeBackendError::from(source),
-            )
-        })?;
-        let digest = wamn_runtime::component_admission::component_digest(&component_bytes);
-        let path = wamn_runtime::component_artifact_source::local_component_path(
-            &local.directory,
-            &digest,
-        )
-        .expect("a computed component digest is valid");
-        std::fs::write(path, component_bytes).map_err(stage_error)?;
-        let mut workload = flow_http_request(request, v2::ImagePullSecret::default());
-        let component = &mut workload
-            .workload
-            .as_mut()
-            .expect("flow-http workload exists")
-            .wit_world
-            .as_mut()
-            .expect("flow-http world exists")
-            .components[0];
-        component.image = digest;
-        component.image_pull_secret = None;
-        component.image_pull_policy = v2::ImagePullPolicy::Never.into();
-        let bytes = serde_json::to_vec(&workload).map_err(|source| {
-            DevActivationError::with_source(
-                DevActivationErrorKind::InvalidInput,
-                "local-flow-http",
-                "cannot encode the local workload",
-                source,
-            )
-        })?;
-        std::fs::write(local.directory.join("flow-http.json"), bytes).map_err(|source| {
-            DevActivationError::with_source(
-                DevActivationErrorKind::InvalidInput,
-                "local-flow-http",
-                "cannot stage the local workload",
-                source,
-            )
-        })?;
+    let admission = std::fs::read(
+        local
+            .directory
+            .join(wamn_runtime::local_application::LOCAL_FACTS_FILE),
+    )
+    .map_err(stage_error)?;
+    if Some(wamn_runtime::component_admission::component_digest(&admission).as_str())
+        != request.local_admission_digest
+    {
+        return Err(DevActivationError::new(
+            DevActivationErrorKind::InvalidInput,
+            "local-admission",
+            "local admission bytes changed after validation",
+        ));
     }
+    let component_bytes = std::fs::read(&local.flow_http_component).map_err(stage_error)?;
+    let checked = (|| -> anyhow::Result<()> {
+        let engine = wamn_runtime::engine::build_engine(&[])?;
+        let component =
+            wash_runtime::wasmtime::component::Component::new(engine.inner(), &component_bytes)?;
+        anyhow::ensure!(
+            component
+                .component_type()
+                .exports(engine.inner())
+                .any(|(name, _)| name.starts_with("wasi:http/incoming-handler@")
+                    || name == "wasi:http/handler@0.3.0"),
+            "local flow-http component has no incoming HTTP handler"
+        );
+        Ok(())
+    })();
+    checked.map_err(|source| {
+        DevActivationError::with_source(
+            DevActivationErrorKind::InvalidInput,
+            "local-flow-http",
+            format!("local flow-http bytes failed native component validation: {source:#}"),
+            NativeBackendError::from(source),
+        )
+    })?;
+    let digest = wamn_runtime::component_admission::component_digest(&component_bytes);
+    let path =
+        wamn_runtime::component_artifact_source::local_component_path(&local.directory, &digest)
+            .expect("a computed component digest is valid");
+    std::fs::write(path, component_bytes).map_err(stage_error)?;
+    let mut workload = flow_http_request(request);
+    let component = &mut workload
+        .workload
+        .as_mut()
+        .expect("flow-http workload exists")
+        .wit_world
+        .as_mut()
+        .expect("flow-http world exists")
+        .components[0];
+    component.image = digest;
+    component.image_pull_policy = v2::ImagePullPolicy::Never.into();
+    let bytes = serde_json::to_vec(&workload).map_err(|source| {
+        DevActivationError::with_source(
+            DevActivationErrorKind::InvalidInput,
+            "local-flow-http",
+            "cannot encode the local workload",
+            source,
+        )
+    })?;
+    std::fs::write(local.directory.join("flow-http.json"), bytes).map_err(|source| {
+        DevActivationError::with_source(
+            DevActivationErrorKind::InvalidInput,
+            "local-flow-http",
+            "cannot stage the local workload",
+            source,
+        )
+    })?;
     Ok(())
 }
 
@@ -601,43 +591,10 @@ pub(super) fn prepare_local(request: &DevActivationRequest<'_>) -> Result<(), De
 pub async fn activate(
     request: DevActivationRequest<'_>,
 ) -> Result<DevActivation, DevActivationError> {
-    let pull_secret = activation_pull_secret(&request)?;
+    validate_request(&request)?;
     let backend = NativeActivationBackend::connect(request.config.scheduler_nats_url()).await?;
-    let active = activate_backend(request, pull_secret, backend).await?;
+    let active = activate_backend(request, backend).await?;
     Ok(DevActivation { active })
-}
-
-fn activation_pull_secret(
-    request: &DevActivationRequest<'_>,
-) -> Result<v2::ImagePullSecret, DevActivationError> {
-    validate_request(request)?;
-    if request.config.local_artifacts().is_some() {
-        // Release already staged and validated the exact local workload. The host
-        // consumes that copy and checks its digest/imports; source edits belong
-        // to the next candidate and must not be read after stopping the old host.
-        return Ok(v2::ImagePullSecret::default());
-    }
-    let image =
-        Reference::try_from(request.config.flow_http_workload_image()).map_err(|source| {
-            DevActivationError::with_source(
-                DevActivationErrorKind::InvalidInput,
-                "workload-image",
-                "configured flow-http workload image is malformed",
-                source,
-            )
-        })?;
-    let credentials =
-        read_registry_credentials(request.config.registry_auth_file(), image.registry()).map_err(
-            |source| {
-                DevActivationError::with_source(
-                    DevActivationErrorKind::RegistryCredential,
-                    "workload-image-credential",
-                    "load the exact flow-http registry credential",
-                    source,
-                )
-            },
-        )?;
-    Ok(image_pull_secret(&credentials))
 }
 
 fn validate_request(request: &DevActivationRequest<'_>) -> Result<(), DevActivationError> {
@@ -685,17 +642,11 @@ fn validate_request(request: &DevActivationRequest<'_>) -> Result<(), DevActivat
     Ok(())
 }
 
-fn image_pull_secret(credentials: &RegistryCredentials) -> v2::ImagePullSecret {
-    v2::ImagePullSecret {
-        username: credentials.username().to_owned(),
-        password: credentials.password().to_owned(),
-    }
-}
-
 fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
     let identity = request.identity;
     let event_identity = request.config.activation_identity();
-    let mut args = vec![
+    let local = request.config.local_artifacts();
+    let args = vec![
         "host".to_owned(),
         "--host-group".to_owned(),
         identity.host_group.clone(),
@@ -709,14 +660,15 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         identity.environment.clone(),
         "--http-addr".to_owned(),
         LOOPBACK_HTTP_BIND.to_owned(),
-        "--release-artifact-base".to_owned(),
-        request.release.artifact_base.clone(),
-        "--release-manifest-digest".to_owned(),
+        "--local-application".to_owned(),
+        local.directory.display().to_string(),
+        "--local-application-digest".to_owned(),
         request.release.manifest_digest.to_string(),
-        "--component-artifact-base".to_owned(),
-        request.config.component_artifact_base().to_owned(),
-        "--registry-auth-file".to_owned(),
-        request.config.registry_auth_file().display().to_string(),
+        "--local-admission-digest".to_owned(),
+        request
+            .local_admission_digest
+            .unwrap_or_default()
+            .to_owned(),
         "--wasmtime-cache-dir".to_owned(),
         request.wasmtime_cache_dir.display().to_string(),
         "--project".to_owned(),
@@ -726,32 +678,6 @@ fn host_process_spec(request: &DevActivationRequest<'_>) -> HostProcessSpec {
         "--schema".to_owned(),
         identity.schema.clone(),
     ];
-    if let Some(local) = request.config.local_artifacts() {
-        let start = args
-            .iter()
-            .position(|arg| arg == "--release-artifact-base")
-            .expect("release arguments exist");
-        let end = args
-            .iter()
-            .position(|arg| arg == "--wasmtime-cache-dir")
-            .expect("cache argument exists");
-        args.splice(
-            start..end,
-            [
-                "--local-application".to_owned(),
-                local.directory.display().to_string(),
-                "--local-application-digest".to_owned(),
-                request.release.manifest_digest.to_string(),
-                "--local-admission-digest".to_owned(),
-                request
-                    .local_admission_digest
-                    .unwrap_or_default()
-                    .to_owned(),
-            ],
-        );
-    } else if request.config.insecure_registry() {
-        args.push("--allow-insecure-registries".to_owned());
-    }
     let env = vec![
         (
             "WAMN_SYSTEM_URL".to_owned(),
@@ -856,10 +782,7 @@ pub fn flow_http_identity_claims(identity: &DevActivationIdentity) -> [(&'static
     ]
 }
 
-fn flow_http_request(
-    request: &DevActivationRequest<'_>,
-    pull_secret: v2::ImagePullSecret,
-) -> v2::WorkloadStartRequest {
+fn flow_http_request(request: &DevActivationRequest<'_>) -> v2::WorkloadStartRequest {
     let identity = request.identity;
     let config = flow_http_identity_claims(identity)
         .into_iter()
@@ -884,17 +807,13 @@ fn flow_http_request(
             service: None,
             wit_world: Some(v2::WitWorld {
                 components: vec![v2::Component {
-                    image: if request.config.local_artifacts().is_some() {
-                        "flow-http.wasm".to_owned()
-                    } else {
-                        request.config.flow_http_workload_image().to_owned()
-                    },
+                    image: "flow-http.wasm".to_owned(),
                     local_resources: Some(local_resources),
                     pool_size: 0,
                     reclaim_window_seconds: 0,
                     reclaim_min_instances: 0,
                     max_invocations: 0,
-                    image_pull_secret: Some(pull_secret),
+                    image_pull_secret: None,
                     name: FLOW_HTTP_NAME.to_owned(),
                     image_pull_policy: v2::ImagePullPolicy::Always.into(),
                     max_concurrency: 0,
@@ -938,7 +857,6 @@ fn wit_interface(
 
 async fn activate_backend<B>(
     request: DevActivationRequest<'_>,
-    pull_secret: v2::ImagePullSecret,
     mut backend: B,
 ) -> Result<BackendActivation<B>, DevActivationError>
 where
@@ -966,28 +884,14 @@ where
 
     let mut host_id = None;
     let mut http_port = None;
-    let activation = async {
-        let selected = wait_for_host(&mut backend, request.identity).await?;
-        host_id = Some(selected.id);
-        http_port = Some(selected.http_port);
-        let selected = host_id
-            .as_deref()
-            .expect("selected host identity is assigned before workload start");
-        if request.config.local_artifacts().is_none() {
-            let start = flow_http_request(&request, pull_secret);
-            let start_response: v2::WorkloadStartResponse = request_json(
-                &mut backend,
-                &rpc_subject(selected, "workload.start"),
-                &start,
-                "start-workload",
-            )
-            .await?;
-            require_running(
-                "start-workload",
-                start_response.workload_status,
-                FLOW_HTTP_WORKLOAD_ID,
-            )?;
-        } else {
+    let activation =
+        async {
+            let selected = wait_for_host(&mut backend, request.identity).await?;
+            host_id = Some(selected.id);
+            http_port = Some(selected.http_port);
+            let selected = host_id
+                .as_deref()
+                .expect("selected host identity is assigned before workload start");
             let deadline = Instant::now() + HOST_HEARTBEAT_TIMEOUT;
             loop {
                 let response: v2::WorkloadStatusResponse = request_json(
@@ -1013,25 +917,24 @@ where
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        }
 
-        let status_response: v2::WorkloadStatusResponse = request_json(
-            &mut backend,
-            &rpc_subject(selected, "workload.status"),
-            &v2::WorkloadStatusRequest {
-                workload_id: FLOW_HTTP_WORKLOAD_ID.to_owned(),
-            },
-            "status-workload",
-        )
-        .await?;
-        require_running(
-            "status-workload",
-            status_response.workload_status,
-            FLOW_HTTP_WORKLOAD_ID,
-        )?;
-        Ok(())
-    }
-    .await;
+            let status_response: v2::WorkloadStatusResponse = request_json(
+                &mut backend,
+                &rpc_subject(selected, "workload.status"),
+                &v2::WorkloadStatusRequest {
+                    workload_id: FLOW_HTTP_WORKLOAD_ID.to_owned(),
+                },
+                "status-workload",
+            )
+            .await?;
+            require_running(
+                "status-workload",
+                status_response.workload_status,
+                FLOW_HTTP_WORKLOAD_ID,
+            )?;
+            Ok(())
+        }
+        .await;
 
     if let Err(error) = activation {
         if let Err(cleanup) = shutdown_backend(
@@ -1605,17 +1508,12 @@ mod tests {
     }
 
     fn config() -> DevConfig {
-        config_with_local(false)
-    }
-
-    fn config_with_local(local: bool) -> DevConfig {
-        parse_config(&serde_json::to_vec(&config_document(local)).unwrap())
+        parse_config(&serde_json::to_vec(&config_document()).unwrap())
             .expect("complete activation config parses")
     }
 
-    fn config_document(local: bool) -> serde_json::Value {
-        let mut document = json!({
-            "verification_database_url": "postgresql://verify:verify-secret@127.0.0.1:41001/verification",
+    fn config_document() -> serde_json::Value {
+        json!({
             "target_database_url": "postgresql://target:target-secret@127.0.0.1:41002/target",
             "target_privileges_file": "/run/wamn-dev/privileges.sql",
             "target_template_database": "target--template",
@@ -1634,15 +1532,12 @@ mod tests {
             "dup_window_secs": 120,
             "tempo_query_url": "http://127.0.0.1:41015",
             "otel_exporter_otlp_endpoint": "http://127.0.0.1:41016",
-            "component_artifact_base": "127.0.0.1:41011/wamn/components",
-            "release_artifact_base": "127.0.0.1:41012/wamn/releases",
-            "registry_auth_file": "/run/secrets/dev-registry.json",
-            "insecure_registry": true,
-            "gate_url": "http://127.0.0.1:41013/authoring",
             "gate_bearer_token": "gate-secret",
             "route_host": "receiving.localhost",
             "platform_domain": "example.invalid",
-            "flow_http_workload_image": "127.0.0.1:41014/wamn/flow-http:dev",
+            "local_artifacts": {
+                "directory": "/tmp/wamn-local-candidate", "flow_http_component": "/tmp/flow-http.wasm"
+            },
             "package_sources": [],
             "effective_release_id": 1,
             "tenant": "00000000-0000-0000-0000-000000000001",
@@ -1656,23 +1551,7 @@ mod tests {
             "runner": "wamn-dev-receiving-1",
             "host_binary": "/opt/wamn/bin/wamn-host",
             "wasmtime_cache_dir": "/tmp/wamn-dev-cache"
-        });
-        if local {
-            let document = document.as_object_mut().unwrap();
-            for key in [
-                "component_artifact_base",
-                "release_artifact_base",
-                "registry_auth_file",
-                "insecure_registry",
-                "flow_http_workload_image",
-            ] {
-                document.remove(key);
-            }
-            document.insert("local_artifacts".to_owned(), json!({
-                "directory": "/tmp/wamn-local-candidate", "flow_http_component": "/tmp/flow-http.wasm"
-            }));
-        }
-        document
+        })
     }
 
     fn identity() -> DevActivationIdentity {
@@ -1763,13 +1642,6 @@ mod tests {
         }
     }
 
-    fn pull_secret() -> v2::ImagePullSecret {
-        v2::ImagePullSecret {
-            username: "flow-reader".to_owned(),
-            password: "flow-secret".to_owned(),
-        }
-    }
-
     fn heartbeat(id: &str, hostname: &str, environment: &str, host_group: &str) -> RuntimeMessage {
         heartbeat_with_port(id, hostname, environment, host_group, 38_080)
     }
@@ -1828,7 +1700,7 @@ mod tests {
         let fixture = host_log_fixture();
         let source = fixture.0.join("flow-http-source.wasm");
         let directory = fixture.0.join("candidate");
-        let mut document = config_document(true);
+        let mut document = config_document();
         document["local_artifacts"] =
             json!({"directory": directory, "flow_http_component": source});
         let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
@@ -1886,8 +1758,6 @@ mod tests {
         )
         .unwrap();
         std::fs::remove_file(&source).unwrap();
-        let pull_secret = activation_pull_secret(&request)
-            .expect("cutover consumes staged input after source removal");
         let spec = host_process_spec(&request);
         assert!(
             spec.args
@@ -1921,9 +1791,7 @@ mod tests {
             ],
             [],
         );
-        let active = activate_backend(request, pull_secret, backend)
-            .await
-            .unwrap();
+        let active = activate_backend(request, backend).await.unwrap();
         assert_eq!(&*active.host_id, "local-host");
         assert_eq!(
             std::fs::read(directory.join("flow-http.json")).unwrap(),
@@ -1971,7 +1839,7 @@ mod tests {
                 ),
             ],
             [
-                response(&v2::WorkloadStartResponse {
+                response(&v2::WorkloadStatusResponse {
                     workload_status: Some(status(v2::WorkloadState::Running)),
                 }),
                 response(&v2::WorkloadStatusResponse {
@@ -1983,9 +1851,9 @@ mod tests {
             ],
             [None],
         );
-        let expected_workload = flow_http_request(&request, pull_secret());
+        let workload = flow_http_request(&request);
 
-        let mut active = activate_backend(request, pull_secret(), backend)
+        let mut active = activate_backend(request, backend)
             .await
             .expect("the exact local host activates");
         assert_eq!(&*active.host_id, "selected-host-id");
@@ -2025,14 +1893,12 @@ mod tests {
             "receiving-dev",
             "--http-addr",
             "127.0.0.1:0",
-            "--release-artifact-base",
-            "127.0.0.1:41012/wamn/releases",
-            "--release-manifest-digest",
+            "--local-application",
+            "/tmp/wamn-local-candidate",
+            "--local-application-digest",
             expected_digest.as_str(),
-            "--component-artifact-base",
-            "127.0.0.1:41011/wamn/components",
-            "--registry-auth-file",
-            "/run/secrets/dev-registry.json",
+            "--local-admission-digest",
+            "",
             "--wasmtime-cache-dir",
             "/tmp/wamn-dev-cache",
             "--project",
@@ -2041,7 +1907,6 @@ mod tests {
             "acme",
             "--schema",
             "receiving",
-            "--allow-insecure-registries",
         ]
         .map(str::to_owned);
         assert_eq!(&*spec.args, &expected_args);
@@ -2100,22 +1965,23 @@ mod tests {
             .requests
             .lock()
             .expect("request lock is not poisoned");
-        assert_eq!(requests.len(), 3, "start, one status receipt, then stop");
+        assert_eq!(
+            requests.len(),
+            3,
+            "running status, one status receipt, then stop"
+        );
         assert_eq!(
             requests
                 .iter()
                 .map(|(subject, _)| subject.as_str())
                 .collect::<Vec<_>>(),
             [
-                "runtime.host.selected-host-id.workload.start",
+                "runtime.host.selected-host-id.workload.status",
                 "runtime.host.selected-host-id.workload.status",
                 "runtime.host.selected-host-id.workload.stop",
             ]
         );
-        let actual_workload: v2::WorkloadStartRequest =
-            serde_json::from_slice(&requests[0].1).expect("decode recorded start request");
-        assert_eq!(actual_workload, expected_workload);
-        let incoming_http = actual_workload
+        let incoming_http = workload
             .workload
             .as_ref()
             .and_then(|workload| workload.wit_world.as_ref())
@@ -2142,7 +2008,7 @@ mod tests {
                 Event::Spawn,
                 Event::Heartbeat,
                 Event::Heartbeat,
-                Event::Request("runtime.host.selected-host-id.workload.start".to_owned()),
+                Event::Request("runtime.host.selected-host-id.workload.status".to_owned()),
                 Event::Request("runtime.host.selected-host-id.workload.status".to_owned()),
                 Event::Request("runtime.host.selected-host-id.workload.stop".to_owned()),
                 Event::Terminate,
@@ -2179,63 +2045,6 @@ mod tests {
                 Event::Wait,
             ]
         );
-    }
-
-    #[tokio::test]
-    async fn terminal_start_states_fail_before_status_and_still_cleanup() {
-        for terminal in [
-            v2::WorkloadState::Completed,
-            v2::WorkloadState::Stopping,
-            v2::WorkloadState::Error,
-            v2::WorkloadState::NotFound,
-        ] {
-            let config = config();
-            let identity = identity();
-            let release = release();
-            let request = DevActivationRequest {
-                config: &config,
-                release: &release,
-                identity: &identity,
-                host_binary: Path::new("/opt/wamn/bin/wamn-host"),
-                wasmtime_cache_dir: Path::new("/tmp/wamn-dev-cache"),
-                host_output_log: None,
-                local_admission_digest: None,
-            };
-            let shared = Arc::new(Shared::default());
-            let backend = FakeBackend::new(
-                Arc::clone(&shared),
-                [heartbeat(
-                    "selected-host-id",
-                    &identity.host_name,
-                    &identity.environment,
-                    &identity.host_group,
-                )],
-                [
-                    response(&v2::WorkloadStartResponse {
-                        workload_status: Some(status(terminal)),
-                    }),
-                    response(&v2::WorkloadStopResponse {
-                        workload_status: Some(status(v2::WorkloadState::NotFound)),
-                    }),
-                ],
-                [Some(true)],
-            );
-
-            let error = match activate_backend(request, pull_secret(), backend).await {
-                Ok(_) => panic!("a terminal start response must fail fast"),
-                Err(error) => error,
-            };
-            assert_eq!(error.kind(), DevActivationErrorKind::WorkloadRefused);
-            assert_eq!(error.step(), "start-workload");
-            assert!(error.detail().contains(terminal.as_str_name()));
-            let requests = shared
-                .requests
-                .lock()
-                .expect("request lock is not poisoned");
-            assert_eq!(requests.len(), 2, "start and cleanup stop only");
-            assert!(requests[0].0.ends_with("workload.start"));
-            assert!(requests[1].0.ends_with("workload.stop"));
-        }
     }
 
     #[tokio::test]
@@ -2285,9 +2094,8 @@ mod tests {
         let shared = Arc::new(Shared::default());
         let backend = FakeBackend::new(Arc::clone(&shared), [], [], []);
 
-        let error = match activate_backend(request, pull_secret(), backend).await {
-            Ok(_) => panic!("missing exact identity must refuse"),
-            Err(error) => error,
+        let Err(error) = activate_backend(request, backend).await else {
+            panic!("missing exact identity must refuse")
         };
 
         assert_eq!(error.kind(), DevActivationErrorKind::InvalidInput);

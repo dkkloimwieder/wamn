@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::Duration;
 
-use oci_client::Reference;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::Value;
@@ -20,7 +19,6 @@ use tokio::time::{Instant, timeout_at};
 use tokio_postgres::Config as PostgresConfig;
 use url::Url;
 use wamn_pg_core::Identifier;
-use wamn_runtime::component_artifact::component_artifact_reference;
 use wamn_schema_generator::{PackageManifest, validate_operation_vocabulary};
 
 use super::DevTargetDurability;
@@ -30,7 +28,6 @@ use super::activation::DevActivationIdentity;
 pub const STARTUP_REACHABILITY_BUDGET: Duration = Duration::from_secs(5);
 
 const DOCUMENT_KEY: &str = "$";
-pub(super) const VERIFICATION_DATABASE_URL: &str = "verification_database_url";
 const TARGET_DATABASE_URL: &str = "target_database_url";
 const TARGET_PRIVILEGES_FILE: &str = "target_privileges_file";
 const TARGET_TEMPLATE_DATABASE: &str = "target_template_database";
@@ -49,16 +46,11 @@ const STREAM_REPLICAS: &str = "stream_replicas";
 const DUP_WINDOW_SECS: &str = "dup_window_secs";
 const TEMPO_QUERY_URL: &str = "tempo_query_url";
 const OTEL_EXPORTER_OTLP_ENDPOINT: &str = "otel_exporter_otlp_endpoint";
-const COMPONENT_ARTIFACT_BASE: &str = "component_artifact_base";
-const RELEASE_ARTIFACT_BASE: &str = "release_artifact_base";
-const REGISTRY_AUTH_FILE: &str = "registry_auth_file";
-const INSECURE_REGISTRY: &str = "insecure_registry";
-const GATE_URL: &str = "gate_url";
 const GATE_BEARER_TOKEN: &str = "gate_bearer_token";
 const OPERATOR_BEARER_TOKEN: &str = "operator_bearer_token";
 const ROUTE_HOST: &str = "route_host";
 const PLATFORM_DOMAIN: &str = "platform_domain";
-const FLOW_HTTP_WORKLOAD_IMAGE: &str = "flow_http_workload_image";
+const LOCAL_ARTIFACTS: &str = "local_artifacts";
 const PACKAGE_SOURCES: &str = "package_sources";
 const EFFECTIVE_RELEASE_ID: &str = "effective_release_id";
 const TENANT: &str = "tenant";
@@ -77,9 +69,6 @@ const PACKAGE_MANIFEST_FILE: &str = "wamn.json";
 pub(super) const POSTGRES_SYSTEM_DATABASES: [&str; 3] = ["postgres", "template0", "template1"];
 const POSTGRES_ROUTING_QUERY_KEYS: [&str; 5] = ["host", "hostaddr", "port", "dbname", "user"];
 
-const REFERENCE_PROBE_DIGEST: &str =
-    "sha256:0000000000000000000000000000000000000000000000000000000000000000";
-
 /// Explicit local candidate files owned by one disposable development session.
 #[derive(Clone, Debug, Deserialize, serde::Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -94,7 +83,6 @@ pub struct LocalArtifacts {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DevConfigDocument {
-    verification_database_url: String,
     target_database_url: String,
     target_privileges_file: PathBuf,
     target_template_database: String,
@@ -113,26 +101,13 @@ struct DevConfigDocument {
     dup_window_secs: u64,
     tempo_query_url: String,
     otel_exporter_otlp_endpoint: String,
-    #[serde(default)]
-    component_artifact_base: String,
-    #[serde(default)]
-    release_artifact_base: String,
-    #[serde(default)]
-    registry_auth_file: PathBuf,
-    #[serde(default)]
-    insecure_registry: bool,
-    gate_url: String,
     gate_bearer_token: String,
     #[serde(default)]
     #[schemars(with = "String")]
     operator_bearer_token: Option<String>,
     route_host: String,
     platform_domain: String,
-    #[serde(default)]
-    flow_http_workload_image: String,
-    #[serde(default)]
-    #[schemars(with = "LocalArtifacts")]
-    local_artifacts: Option<LocalArtifacts>,
+    local_artifacts: LocalArtifacts,
     package_sources: Vec<PathBuf>,
     effective_release_id: NonZeroU32,
     tenant: String,
@@ -572,10 +547,6 @@ struct DatabaseIdentity {
 }
 
 impl DatabaseIdentity {
-    fn same_database_name(&self, other: &Self) -> bool {
-        self.database == other.database
-    }
-
     fn same_database(&self, other: &Self) -> bool {
         self.host == other.host && self.port == other.port && self.database == other.database
     }
@@ -596,7 +567,6 @@ struct ReachabilityProbe {
 /// Validated external inputs for one development loop.
 #[derive(Clone)]
 pub struct DevConfig {
-    verification_database_url: Box<str>,
     target_database_url: Box<str>,
     target_privileges_file: PathBuf,
     target_template_database: Box<str>,
@@ -615,17 +585,11 @@ pub struct DevConfig {
     dup_window_secs: u64,
     tempo_query_url: Box<str>,
     otel_exporter_otlp_endpoint: Box<str>,
-    local_artifacts: Option<LocalArtifacts>,
-    component_artifact_base: Box<str>,
-    release_artifact_base: Box<str>,
-    registry_auth_file: PathBuf,
-    insecure_registry: bool,
-    gate_url: Box<str>,
+    local_artifacts: LocalArtifacts,
     gate_bearer_token: Box<str>,
     operator_bearer_token: Option<Box<str>>,
     route_host: Box<str>,
     platform_domain: Box<str>,
-    flow_http_workload_image: Box<str>,
     package_sources: Box<[PathBuf]>,
     effective_release_id: NonZeroU32,
     activation_identity: DevActivationIdentity,
@@ -638,10 +602,6 @@ impl fmt::Debug for DevConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("DevConfig")
-            .field(
-                VERIFICATION_DATABASE_URL,
-                &self.sanitized_endpoint(VERIFICATION_DATABASE_URL),
-            )
             .field(
                 TARGET_DATABASE_URL,
                 &self.sanitized_endpoint(TARGET_DATABASE_URL),
@@ -687,24 +647,10 @@ impl fmt::Debug for DevConfig {
                 OTEL_EXPORTER_OTLP_ENDPOINT,
                 &self.sanitized_endpoint(OTEL_EXPORTER_OTLP_ENDPOINT),
             )
-            .field(
-                COMPONENT_ARTIFACT_BASE,
-                &self.sanitized_endpoint(COMPONENT_ARTIFACT_BASE),
-            )
-            .field(
-                RELEASE_ARTIFACT_BASE,
-                &self.sanitized_endpoint(RELEASE_ARTIFACT_BASE),
-            )
-            .field(REGISTRY_AUTH_FILE, &self.registry_auth_file)
-            .field(INSECURE_REGISTRY, &self.insecure_registry)
-            .field(GATE_URL, &self.sanitized_endpoint(GATE_URL))
+            .field(LOCAL_ARTIFACTS, &self.local_artifacts)
             .field(GATE_BEARER_TOKEN, &"[REDACTED]")
             .field(ROUTE_HOST, &self.route_host)
             .field(PLATFORM_DOMAIN, &self.platform_domain)
-            .field(
-                FLOW_HTTP_WORKLOAD_IMAGE,
-                &self.sanitized_endpoint(FLOW_HTTP_WORKLOAD_IMAGE),
-            )
             .field(PACKAGE_SOURCES, &self.package_sources)
             .field(EFFECTIVE_RELEASE_ID, &self.effective_release_id)
             .field("activation_identity", &self.activation_identity)
@@ -720,11 +666,6 @@ impl DevConfig {
             .iter()
             .find(|probe| probe.key == key)
             .map_or("<not-an-endpoint>", |probe| &probe.sanitized_endpoint)
-    }
-
-    /// Verification-only PostgreSQL URL used by generation and native checks.
-    pub fn verification_database_url(&self) -> &str {
-        &self.verification_database_url
     }
 
     /// Target PostgreSQL URL. In a development loop this database is
@@ -837,34 +778,9 @@ impl DevConfig {
         &self.otel_exporter_otlp_endpoint
     }
 
-    /// Local input for an unpublished candidate, when configured.
-    pub fn local_artifacts(&self) -> Option<&LocalArtifacts> {
-        self.local_artifacts.as_ref()
-    }
-
-    /// Explicit component registry and repository base.
-    pub fn component_artifact_base(&self) -> &str {
-        &self.component_artifact_base
-    }
-
-    /// Explicit release registry and repository base.
-    pub fn release_artifact_base(&self) -> &str {
-        &self.release_artifact_base
-    }
-
-    /// Deployment-owned Docker authentication document for both registries.
-    pub fn registry_auth_file(&self) -> &Path {
-        &self.registry_auth_file
-    }
-
-    /// Whether the development registries use plain HTTP.
-    pub const fn insecure_registry(&self) -> bool {
-        self.insecure_registry
-    }
-
-    /// Authenticated authoring Gate endpoint.
-    pub fn gate_url(&self) -> &str {
-        &self.gate_url
+    /// Local input for the unpublished candidate.
+    pub const fn local_artifacts(&self) -> &LocalArtifacts {
+        &self.local_artifacts
     }
 
     /// Bearer credential presented only to the Gate.
@@ -885,11 +801,6 @@ impl DevConfig {
     /// Deployment-owned domain of the platform principal emails.
     pub fn platform_domain(&self) -> &str {
         &self.platform_domain
-    }
-
-    /// OCI image reference started through the native workload API.
-    pub fn flow_http_workload_image(&self) -> &str {
-        &self.flow_http_workload_image
     }
 
     /// Explicit local roots considered for manifest-declared base dependencies.
@@ -920,14 +831,7 @@ impl DevConfig {
 
 /// Language-neutral JSON Schema generated from the strict `dev.json` input type.
 pub fn dev_config_schema() -> Value {
-    let mut schema =
-        serde_json::to_value(schemars::schema_for!(DevConfigDocument)).expect("schema serializes");
-    schema["if"] = serde_json::json!({ "not": { "required": ["local_artifacts"] } });
-    schema["then"] = serde_json::json!({ "required": [
-        COMPONENT_ARTIFACT_BASE, RELEASE_ARTIFACT_BASE, REGISTRY_AUTH_FILE,
-        INSECURE_REGISTRY, FLOW_HTTP_WORKLOAD_IMAGE,
-    ] });
-    schema
+    serde_json::to_value(schemars::schema_for!(DevConfigDocument)).expect("schema serializes")
 }
 
 /// Byte-stable pretty JSON Schema generated from the strict `dev.json` input type.
@@ -965,7 +869,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         .with_source(source)
     })?;
     let DevConfigDocument {
-        verification_database_url,
         target_database_url,
         target_privileges_file,
         target_template_database,
@@ -985,16 +888,10 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         tempo_query_url,
         otel_exporter_otlp_endpoint,
         local_artifacts,
-        component_artifact_base,
-        release_artifact_base,
-        registry_auth_file,
-        insecure_registry,
-        gate_url,
         gate_bearer_token,
         operator_bearer_token,
         route_host,
         platform_domain,
-        flow_http_workload_image,
         package_sources,
         effective_release_id,
         tenant,
@@ -1010,8 +907,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         wasmtime_cache_dir,
     } = input;
 
-    let verification_database_url =
-        nonempty_string(verification_database_url, VERIFICATION_DATABASE_URL)?;
     let target_database_url = nonempty_string(target_database_url, TARGET_DATABASE_URL)?;
     let system_database_url = nonempty_string(system_database_url, SYSTEM_DATABASE_URL)?;
     let identity_database_url = nonempty_string(identity_database_url, IDENTITY_DATABASE_URL)?;
@@ -1058,38 +953,26 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
     let tempo_query_url = nonempty_string(tempo_query_url, TEMPO_QUERY_URL)?;
     let otel_exporter_otlp_endpoint =
         nonempty_string(otel_exporter_otlp_endpoint, OTEL_EXPORTER_OTLP_ENDPOINT)?;
-    let (component_artifact_base, release_artifact_base, registry_auth_file) =
-        if let Some(local) = &local_artifacts {
-            for path in [&local.directory, &local.flow_http_component]
-                .into_iter()
-                .chain(local.bindings.iter())
-            {
-                if !path.is_absolute() {
-                    return Err(DevConfigError::new(
-                        DevConfigErrorKind::InvalidValue,
-                        "local_artifacts",
-                        "local artifact paths must be absolute",
-                    ));
-                }
-            }
-            (
-                component_artifact_base.into_boxed_str(),
-                release_artifact_base.into_boxed_str(),
-                registry_auth_file,
-            )
-        } else {
-            (
-                nonempty_string(component_artifact_base, COMPONENT_ARTIFACT_BASE)?,
-                nonempty_string(release_artifact_base, RELEASE_ARTIFACT_BASE)?,
-                nonempty_path(registry_auth_file, REGISTRY_AUTH_FILE)?,
-            )
-        };
+    for path in [
+        &local_artifacts.directory,
+        &local_artifacts.flow_http_component,
+    ]
+    .into_iter()
+    .chain(local_artifacts.bindings.iter())
+    {
+        if !path.is_absolute() {
+            return Err(DevConfigError::new(
+                DevConfigErrorKind::InvalidValue,
+                LOCAL_ARTIFACTS,
+                "local artifact paths must be absolute",
+            ));
+        }
+    }
     let target_privileges_file = nonempty_path(target_privileges_file, TARGET_PRIVILEGES_FILE)?;
     let target_template_database =
         nonempty_string(target_template_database, TARGET_TEMPLATE_DATABASE)?;
     let target_database_acl_file =
         nonempty_path(target_database_acl_file, TARGET_DATABASE_ACL_FILE)?;
-    let gate_url = nonempty_string(gate_url, GATE_URL)?;
     let gate_bearer_token = nonempty_string(gate_bearer_token, GATE_BEARER_TOKEN)?;
     let operator_bearer_token = operator_bearer_token
         .map(|token| nonempty_string(token, OPERATOR_BEARER_TOKEN))
@@ -1103,11 +986,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         )
         .with_source(source)
     })?;
-    let flow_http_workload_image = if local_artifacts.is_some() {
-        flow_http_workload_image.into_boxed_str()
-    } else {
-        nonempty_string(flow_http_workload_image, FLOW_HTTP_WORKLOAD_IMAGE)?
-    };
     let package_sources = package_sources
         .into_iter()
         .map(|root| nonempty_path(root, PACKAGE_SOURCES))
@@ -1142,8 +1020,6 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
 
     validate_route_host(&route_host)?;
 
-    let (verification_probe, verification_identity) =
-        database_probe(VERIFICATION_DATABASE_URL, &verification_database_url)?;
     let (target_probe, target_identity) =
         database_probe(TARGET_DATABASE_URL, &target_database_url)?;
     let (system_probe, system_identity) =
@@ -1162,22 +1038,8 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         &event_materializer_database_url,
     )?;
     validate_disposable_target_database(&target_probe, &target_identity)?;
-    validate_verification_database(
-        &verification_probe,
-        &verification_identity,
-        &[
-            &target_identity,
-            &system_identity,
-            &identity_identity,
-            &guest_identity,
-            &executor_platform_identity,
-            &http_admitter_identity,
-            &event_materializer_identity,
-        ],
-    )?;
     validate_runtime_database_credentials(
         &[
-            (&verification_probe, &verification_identity),
             (&target_probe, &target_identity),
             (&system_probe, &system_identity),
         ],
@@ -1211,9 +1073,7 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         4317,
         false,
     )?;
-    let gate_probe = url_probe(GATE_URL, &gate_url, &["http", "https"], 443, true)?;
-    let mut probes = vec![
-        verification_probe,
+    let probes = vec![
         target_probe,
         system_probe,
         identity_probe,
@@ -1223,31 +1083,11 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         event_materializer_probe,
         scheduler_probe,
         event_probe,
-        gate_probe,
         tempo_probe,
         otel_exporter_probe,
     ];
-    if local_artifacts.is_none() {
-        let registry_port = if insecure_registry { 80 } else { 443 };
-        probes.push(artifact_base_probe(
-            COMPONENT_ARTIFACT_BASE,
-            &component_artifact_base,
-            registry_port,
-        )?);
-        probes.push(artifact_base_probe(
-            RELEASE_ARTIFACT_BASE,
-            &release_artifact_base,
-            registry_port,
-        )?);
-        probes.push(workload_image_probe(
-            FLOW_HTTP_WORKLOAD_IMAGE,
-            &flow_http_workload_image,
-            registry_port,
-        )?);
-    }
 
     Ok(DevConfig {
-        verification_database_url,
         target_database_url,
         target_privileges_file,
         target_template_database,
@@ -1267,16 +1107,10 @@ pub fn parse_config(bytes: &[u8]) -> Result<DevConfig, DevConfigError> {
         tempo_query_url,
         otel_exporter_otlp_endpoint,
         local_artifacts,
-        component_artifact_base,
-        release_artifact_base,
-        registry_auth_file,
-        insecure_registry,
-        gate_url,
         gate_bearer_token,
         operator_bearer_token,
         route_host,
         platform_domain: platform_domain.into_boxed_str(),
-        flow_http_workload_image,
         package_sources,
         effective_release_id,
         activation_identity,
@@ -1451,15 +1285,7 @@ fn validate_config_document_shape(
         .get("required")
         .and_then(Value::as_array)
         .expect("derived dev config schema names required properties");
-    let registry_required = schema["then"]["required"]
-        .as_array()
-        .expect("registry input condition names required properties");
-    let conditional = if object.contains_key("local_artifacts") {
-        &[][..]
-    } else {
-        registry_required.as_slice()
-    };
-    for key in required.iter().chain(conditional) {
+    for key in required {
         let key = key
             .as_str()
             .expect("derived dev config required properties are strings");
@@ -1472,7 +1298,7 @@ fn validate_config_document_shape(
         }
     }
     for (key, value) in object {
-        if key == "local_artifacts" {
+        if key == LOCAL_ARTIFACTS {
             serde_json::from_value::<LocalArtifacts>(value.clone()).map_err(|_| {
                 DevConfigError::new(
                     DevConfigErrorKind::InvalidValue,
@@ -1642,9 +1468,8 @@ fn database_probe(
 
 /// Refuse a target database the development loop must not drop.
 ///
-/// The loop recreates the target before every Apply, so the same reasoning that
-/// protects the verification database applies here: a system database named as
-/// the target would be destroyed by the first run.
+/// The loop recreates the target when its schema inputs change, so a system
+/// database named as the target would be destroyed by the first run.
 fn validate_disposable_target_database(
     probe: &ReachabilityProbe,
     target: &DatabaseIdentity,
@@ -1655,36 +1480,6 @@ fn validate_disposable_target_database(
             TARGET_DATABASE_URL,
             probe.sanitized_endpoint.clone(),
             "set target_database_url to a disposable database other than postgres, template0, or template1",
-        ));
-    }
-    Ok(())
-}
-
-fn validate_verification_database(
-    probe: &ReachabilityProbe,
-    verification: &DatabaseIdentity,
-    protected: &[&DatabaseIdentity],
-) -> Result<(), DevConfigError> {
-    if POSTGRES_SYSTEM_DATABASES.contains(&verification.database.as_ref()) {
-        return Err(DevConfigError::endpoint(
-            DevConfigErrorKind::DatabaseCollision,
-            VERIFICATION_DATABASE_URL,
-            probe.sanitized_endpoint.clone(),
-            "set verification_database_url to a disposable database other than postgres, template0, or template1",
-        ));
-    }
-    // DNS, IP, and service aliases cannot be shown disjoint here. Refusing a
-    // reused name costs naming flexibility; trusting aliases could DROP a
-    // protected database when the disposable verification database is reset.
-    if protected
-        .iter()
-        .any(|identity| verification.same_database_name(identity))
-    {
-        return Err(DevConfigError::endpoint(
-            DevConfigErrorKind::DatabaseCollision,
-            VERIFICATION_DATABASE_URL,
-            probe.sanitized_endpoint.clone(),
-            "set verification_database_url to a disposable database distinct from every target, system, and runtime database",
         ));
     }
     Ok(())
@@ -1788,101 +1583,6 @@ fn sanitized_url(parsed: &Url, include_path: bool, default_port: u16) -> String 
     format!("{}://{host}:{port}{path}", parsed.scheme())
 }
 
-fn artifact_base_probe(
-    key: &'static str,
-    raw: &str,
-    default_port: u16,
-) -> Result<ReachabilityProbe, DevConfigError> {
-    let reference =
-        component_artifact_reference(raw, REFERENCE_PROBE_DIGEST).map_err(|source| {
-            DevConfigError::endpoint(
-                DevConfigErrorKind::InvalidValue,
-                key,
-                sanitized_registry_hint(raw, default_port),
-                "expected an explicit <registry>/<repository> base",
-            )
-            .with_source(source)
-        })?;
-    authority_probe(key, reference.registry(), default_port)
-}
-
-fn workload_image_probe(
-    key: &'static str,
-    raw: &str,
-    default_port: u16,
-) -> Result<ReachabilityProbe, DevConfigError> {
-    let first = raw.split('/').next().unwrap_or_default();
-    if !(first.contains('.') || first.contains(':') || first == "localhost") {
-        return Err(DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
-            key,
-            "<malformed>",
-            "workload image requires an explicit registry",
-        ));
-    }
-    let reference = Reference::try_from(raw).map_err(|_| {
-        DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
-            key,
-            sanitized_registry_hint(raw, default_port),
-            "workload image reference is malformed",
-        )
-    })?;
-    authority_probe(key, reference.registry(), default_port)
-}
-
-fn authority_probe(
-    key: &'static str,
-    authority: &str,
-    default_port: u16,
-) -> Result<ReachabilityProbe, DevConfigError> {
-    let parsed = Url::parse(&format!("tcp://{authority}")).map_err(|_| {
-        DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
-            key,
-            "<malformed>",
-            "registry authority is malformed",
-        )
-    })?;
-    let host = parsed.host_str().ok_or_else(|| {
-        DevConfigError::endpoint(
-            DevConfigErrorKind::InvalidValue,
-            key,
-            "<malformed>",
-            "registry authority has no host",
-        )
-    })?;
-    let port = parsed.port().unwrap_or(default_port);
-    let host_label = if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host.to_owned()
-    };
-    Ok(ReachabilityProbe {
-        key,
-        host: host.into(),
-        port,
-        sanitized_endpoint: format!("oci://{host_label}:{port}").into(),
-    })
-}
-
-fn sanitized_registry_hint(raw: &str, default_port: u16) -> Box<str> {
-    let authority = raw.split('/').next().unwrap_or_default();
-    let parsed = Url::parse(&format!("tcp://{authority}"));
-    let Ok(parsed) = parsed else {
-        return "<malformed>".into();
-    };
-    let Some(host) = parsed.host_str() else {
-        return "<malformed>".into();
-    };
-    let host = if host.contains(':') {
-        format!("[{host}]")
-    } else {
-        host.to_owned()
-    };
-    format!("oci://{host}:{}", parsed.port().unwrap_or(default_port)).into()
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1892,7 +1592,7 @@ pub(crate) mod tests {
     use serde_json::json;
     use tokio::net::TcpListener;
 
-    const ENDPOINT_COUNT: usize = 16;
+    const ENDPOINT_COUNT: usize = 11;
     const DEV_CONFIG_SCHEMA_PATH: &str = "schema/wamn-dev.schema.json";
     const OVERLAY_MANIFEST: &[u8] =
         include_bytes!("../../../../apps/client_acme_receiving/wamn.json");
@@ -1935,34 +1635,29 @@ pub(crate) mod tests {
 
     pub(crate) fn complete_document(addresses: &[SocketAddr; ENDPOINT_COUNT]) -> Value {
         json!({
-            (VERIFICATION_DATABASE_URL): format!("postgresql://verify:verify-secret@{}/verification", addresses[0]),
-            (TARGET_DATABASE_URL): format!("postgresql://target:target-secret@{}/target", addresses[1]),
+            (TARGET_DATABASE_URL): format!("postgresql://target:target-secret@{}/target", addresses[0]),
             (TARGET_PRIVILEGES_FILE): "/run/wamn-dev/privileges.sql",
             (TARGET_TEMPLATE_DATABASE): "target--template",
             (TARGET_DATABASE_ACL_FILE): "/run/wamn-dev/database-acl.sql",
-            (SYSTEM_DATABASE_URL): format!("postgresql://system:system-secret@{}/system", addresses[2]),
-            (IDENTITY_DATABASE_URL): format!("postgresql://identity:identity-secret@{}/system", addresses[3]),
-            (GUEST_DATABASE_URL): format!("postgresql://guest:guest-secret@{}/target", addresses[4]),
-            (EXECUTOR_PLATFORM_DATABASE_URL): format!("postgresql://platform:platform-secret@{}/target", addresses[5]),
-            (HTTP_ADMITTER_DATABASE_URL): format!("postgresql://admitter:admitter-secret@{}/target", addresses[6]),
-            (EVENT_MATERIALIZER_DATABASE_URL): format!("postgresql://materializer:materializer-secret@{}/target", addresses[7]),
-            (SCHEDULER_NATS_URL): format!("nats://{}", addresses[8]),
-            (EVENT_NATS_URL): format!("nats://{}", addresses[9]),
+            (SYSTEM_DATABASE_URL): format!("postgresql://system:system-secret@{}/system", addresses[1]),
+            (IDENTITY_DATABASE_URL): format!("postgresql://identity:identity-secret@{}/system", addresses[2]),
+            (GUEST_DATABASE_URL): format!("postgresql://guest:guest-secret@{}/target", addresses[3]),
+            (EXECUTOR_PLATFORM_DATABASE_URL): format!("postgresql://platform:platform-secret@{}/target", addresses[4]),
+            (HTTP_ADMITTER_DATABASE_URL): format!("postgresql://admitter:admitter-secret@{}/target", addresses[5]),
+            (EVENT_MATERIALIZER_DATABASE_URL): format!("postgresql://materializer:materializer-secret@{}/target", addresses[6]),
+            (SCHEDULER_NATS_URL): format!("nats://{}", addresses[7]),
+            (EVENT_NATS_URL): format!("nats://{}", addresses[8]),
             (EVENT_NATS_USERNAME): "dev_runtime",
             (EVENT_NATS_PASSWORD_FILE): "/run/secrets/event-nats-password",
             (STREAM_REPLICAS): 1,
             (DUP_WINDOW_SECS): 120,
-            (TEMPO_QUERY_URL): format!("http://{}", addresses[14]),
-            (OTEL_EXPORTER_OTLP_ENDPOINT): format!("http://{}", addresses[15]),
-            (COMPONENT_ARTIFACT_BASE): format!("{}/wamn/components", addresses[10]),
-            (RELEASE_ARTIFACT_BASE): format!("{}/wamn/releases", addresses[11]),
-            (REGISTRY_AUTH_FILE): "/run/secrets/registry.json",
-            (INSECURE_REGISTRY): true,
-            (GATE_URL): format!("http://{}/authoring", addresses[12]),
+            (TEMPO_QUERY_URL): format!("http://{}", addresses[9]),
+            (OTEL_EXPORTER_OTLP_ENDPOINT): format!("http://{}", addresses[10]),
             (GATE_BEARER_TOKEN): "gate-super-secret",
             (ROUTE_HOST): "receiving.localhost",
             (PLATFORM_DOMAIN): "example.invalid",
-            (FLOW_HTTP_WORKLOAD_IMAGE): format!("{}/wamn/flow-http:dev", addresses[13]),
+            (LOCAL_ARTIFACTS): {"directory": "/tmp/wamn-local-candidate",
+                "flow_http_component": "/tmp/wamn-flow-http.wasm"},
             (PACKAGE_SOURCES): [],
             (EFFECTIVE_RELEASE_ID): 1,
             (TENANT): "00000000-0000-0000-0000-000000000001",
@@ -2057,37 +1752,20 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn local_configuration_needs_no_registry_and_keeps_authority_inputs() {
+    fn local_artifacts_require_absolute_paths_and_keep_authority_inputs() {
         let addresses = ["127.0.0.1:41000".parse().unwrap(); ENDPOINT_COUNT];
         let mut document = complete_document(&addresses);
-        for key in [
-            COMPONENT_ARTIFACT_BASE,
-            RELEASE_ARTIFACT_BASE,
-            REGISTRY_AUTH_FILE,
-            INSECURE_REGISTRY,
-            FLOW_HTTP_WORKLOAD_IMAGE,
-        ] {
-            document.as_object_mut().unwrap().remove(key);
-        }
-        document["local_artifacts"] = json!({"directory": "/tmp/wamn-local-candidate",
-            "flow_http_component": "/tmp/wamn-flow-http.wasm"});
         let config = parse_config(&serde_json::to_vec(&document).unwrap()).unwrap();
-        assert!(config.local_artifacts().is_some());
-        assert!(config.probes.iter().all(|probe| {
-            ![
-                COMPONENT_ARTIFACT_BASE,
-                RELEASE_ARTIFACT_BASE,
-                FLOW_HTTP_WORKLOAD_IMAGE,
-            ]
-            .contains(&probe.key)
-        }));
+        assert_eq!(
+            config.local_artifacts().directory,
+            Path::new("/tmp/wamn-local-candidate")
+        );
         assert!(
             config
                 .probes
                 .iter()
                 .any(|probe| probe.key == IDENTITY_DATABASE_URL)
         );
-        assert!(config.probes.iter().any(|probe| probe.key == GATE_URL));
         document["local_artifacts"]["directory"] = json!("relative-directory");
         assert_eq!(
             parse_config(&serde_json::to_vec(&document).unwrap())
@@ -2177,13 +1855,10 @@ pub(crate) mod tests {
         );
         assert_eq!(config.effective_release_id(), 1);
         assert_eq!(config.platform_domain(), "example.invalid");
-        assert_eq!(
-            config.tempo_query_url(),
-            format!("http://{}", addresses[14])
-        );
+        assert_eq!(config.tempo_query_url(), format!("http://{}", addresses[9]));
         assert_eq!(
             config.otel_exporter_otlp_endpoint(),
-            format!("http://{}", addresses[15])
+            format!("http://{}", addresses[10])
         );
 
         for key in [TENANT, PLATFORM_DOMAIN, HOST_BINARY, WASMTIME_CACHE_DIR] {
@@ -2430,7 +2105,6 @@ pub(crate) mod tests {
         }
         let debug = format!("{config:?}");
         for credential in [
-            "verify-secret",
             "target-secret",
             "system-secret",
             "identity-secret",
@@ -2461,13 +2135,13 @@ pub(crate) mod tests {
             .expect_err("closed endpoint must refuse");
 
         assert_eq!(error.kind(), DevConfigErrorKind::EndpointUnreachable);
-        assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
+        assert_eq!(error.key(), TARGET_DATABASE_URL);
         assert_eq!(
             error.sanitized_endpoint(),
-            Some(format!("postgresql://{address}/verification").as_str())
+            Some(format!("postgresql://{address}/target").as_str())
         );
         let message = error.to_string();
-        assert!(!message.contains("verify-secret"));
+        assert!(!message.contains("target-secret"));
         assert!(!message.contains("gate-super-secret"));
     }
 
@@ -2475,11 +2149,11 @@ pub(crate) mod tests {
     fn malformed_unknown_and_missing_inputs_refuse_at_their_exact_key() {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
         let mut malformed = complete_document(&addresses);
-        malformed[VERIFICATION_DATABASE_URL] = json!("postgresql://user:secret@[");
+        malformed[TARGET_DATABASE_URL] = json!("postgresql://user:secret@[");
         let error = parse_config(&serde_json::to_vec(&malformed).expect("serialize malformed"))
             .expect_err("malformed endpoint must refuse");
         assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
-        assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
+        assert_eq!(error.key(), TARGET_DATABASE_URL);
         assert_eq!(error.sanitized_endpoint(), Some("<malformed>"));
         assert!(!error.to_string().contains("secret"));
 
@@ -2518,17 +2192,17 @@ pub(crate) mod tests {
             assert_eq!(error.key(), key);
         }
 
-        let mut missing_workload = complete_document(&addresses);
-        missing_workload
+        let mut missing_local_artifacts = complete_document(&addresses);
+        missing_local_artifacts
             .as_object_mut()
             .expect("fixture object")
-            .remove(FLOW_HTTP_WORKLOAD_IMAGE);
+            .remove(LOCAL_ARTIFACTS);
         let error = parse_config(
-            &serde_json::to_vec(&missing_workload).expect("serialize missing workload"),
+            &serde_json::to_vec(&missing_local_artifacts).expect("serialize missing local input"),
         )
-        .expect_err("missing workload image must refuse");
+        .expect_err("missing local artifacts must refuse");
         assert_eq!(error.kind(), DevConfigErrorKind::MissingKey);
-        assert_eq!(error.key(), FLOW_HTTP_WORKLOAD_IMAGE);
+        assert_eq!(error.key(), LOCAL_ARTIFACTS);
 
         let mut missing_runtime_role = complete_document(&addresses);
         missing_runtime_role
@@ -2565,98 +2239,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn verification_database_cannot_alias_a_protected_database() {
-        let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
-        for protected_key in [
-            TARGET_DATABASE_URL,
-            SYSTEM_DATABASE_URL,
-            IDENTITY_DATABASE_URL,
-            GUEST_DATABASE_URL,
-            EXECUTOR_PLATFORM_DATABASE_URL,
-            HTTP_ADMITTER_DATABASE_URL,
-            EVENT_MATERIALIZER_DATABASE_URL,
-        ] {
-            let mut document = complete_document(&addresses);
-            let mut alias = Url::parse(
-                document[protected_key]
-                    .as_str()
-                    .expect("protected URL fixture"),
-            )
-            .expect("parse protected URL fixture");
-            alias
-                .set_username("verifier")
-                .expect("replace fixture username");
-            alias
-                .set_password(Some("verify-secret"))
-                .expect("replace fixture password");
-            document[VERIFICATION_DATABASE_URL] = json!(alias.as_str());
-
-            let error = parse_config(&serde_json::to_vec(&document).expect("serialize collision"))
-                .expect_err("verification database alias must refuse");
-
-            assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
-            assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
-            let message = error.to_string();
-            assert!(message.contains("set verification_database_url"));
-            assert!(!message.contains("secret"));
-        }
-    }
-
-    #[test]
-    fn verification_database_refuses_postgres_system_names_and_encoded_aliases() {
-        let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
-        for database in POSTGRES_SYSTEM_DATABASES {
-            let mut document = complete_document(&addresses);
-            document[VERIFICATION_DATABASE_URL] = json!(format!(
-                "postgresql://verifier:verify-secret@127.0.0.1:41000/{database}"
-            ));
-
-            let error =
-                parse_config(&serde_json::to_vec(&document).expect("serialize system name"))
-                    .expect_err("a PostgreSQL system database must refuse");
-
-            assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
-            assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
-            assert!(error.to_string().contains("set verification_database_url"));
-            assert!(!error.to_string().contains("verify-secret"));
-        }
-
-        let mut encoded_alias = complete_document(&addresses);
-        encoded_alias[VERIFICATION_DATABASE_URL] =
-            json!("postgresql://verifier:verify-secret@127.0.0.1:41000/shared%2Ddatabase");
-        encoded_alias[TARGET_DATABASE_URL] =
-            json!("postgresql://target:target-secret@127.0.0.1:41000/shared-database");
-        let error =
-            parse_config(&serde_json::to_vec(&encoded_alias).expect("serialize encoded alias"))
-                .expect_err("encoded database alias must refuse");
-        assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
-        assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
-    }
-
-    #[test]
-    fn verification_database_name_collision_refuses_across_distinct_host_labels() {
-        let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
-        let mut document = complete_document(&addresses);
-        document[VERIFICATION_DATABASE_URL] =
-            json!("postgresql://verifier:verify-secret@verification.invalid:41000/shared-database");
-        document[TARGET_DATABASE_URL] =
-            json!("postgresql://target:target-secret@target.invalid:41000/shared-database");
-
-        let error = parse_config(&serde_json::to_vec(&document).expect("serialize collision"))
-            .expect_err("host aliases cannot make a destructive database name safe");
-
-        assert_eq!(error.kind(), DevConfigErrorKind::DatabaseCollision);
-        assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
-        assert!(!error.to_string().contains("secret"));
-    }
-
-    #[test]
     fn postgres_identity_routing_query_overrides_refuse_without_leaking_values() {
         let addresses = ["127.0.0.1:41000".parse().expect("fixture address"); ENDPOINT_COUNT];
         for query_key in POSTGRES_ROUTING_QUERY_KEYS {
             let mut document = complete_document(&addresses);
-            document[VERIFICATION_DATABASE_URL] = json!(format!(
-                "postgresql://verifier:verify-secret@127.0.0.1:41000/verification?{query_key}=override-secret"
+            document[TARGET_DATABASE_URL] = json!(format!(
+                "postgresql://target:target-secret@127.0.0.1:41000/target?{query_key}=override-secret"
             ));
 
             let error =
@@ -2664,10 +2252,10 @@ pub(crate) mod tests {
                     .expect_err("routing query override must refuse");
 
             assert_eq!(error.kind(), DevConfigErrorKind::InvalidValue);
-            assert_eq!(error.key(), VERIFICATION_DATABASE_URL);
+            assert_eq!(error.key(), TARGET_DATABASE_URL);
             assert!(error.to_string().contains("remove host, hostaddr, port"));
             assert!(!error.to_string().contains("override-secret"));
-            assert!(!error.to_string().contains("verify-secret"));
+            assert!(!error.to_string().contains("target-secret"));
         }
     }
 

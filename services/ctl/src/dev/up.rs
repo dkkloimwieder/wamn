@@ -4,14 +4,13 @@
 //! start it: every value the strict configuration needs was minted inside the
 //! test and thrown away with it, so the loop was testable and not startable
 //! (wamn-10yt.10.30). This subcommand runs the same standup module the live
-//! gates run, spawns the authoring Gate as a real child process on a fixed
-//! nameable port, writes the strict `dev.json`, and holds until it is stopped.
+//! gates run, writes the strict `dev.json`, and exits.
 //!
 //! It is not a gate: it emits no test result. Its evidence is that `wamn dev`
 //! starts against what it leaves behind.
 //!
-//! Point it only at disposable PostgreSQL 18 and registry services. Standup
-//! resets the control store, so every run is a fresh start.
+//! Point it only at disposable PostgreSQL 18 services. Standup resets the
+//! control store, so every run is a fresh start.
 
 use std::fs::Permissions;
 use std::os::unix::fs::PermissionsExt as _;
@@ -20,22 +19,12 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use clap::Args;
 
-use super::environment::{
-    DevEnvironmentInputs, connect, gate_listen_address, provision, spawn_journey_management_gate,
-    write_dev_config,
-};
+use super::environment::{DevEnvironmentInputs, connect, provision, write_dev_config};
 
 /// The operator credential's file, written into `--root` by
 /// [`super::environment::provision_route`]. Named here so the summary can
 /// point at it: only the path is ever printed, never the token inside it.
 const ROUTE_CALLER_PAT_FILE: &str = "route-caller-pat.json";
-
-/// The address the authoring Gate listens on when `--gate-bind` is not given.
-///
-/// Port 8088 mirrors the scenario-worker production management port. The host
-/// is loopback because the session is local. The port is fixed, not ephemeral,
-/// because the configuration this command writes outlives the process.
-const DEFAULT_GATE_BIND: &str = "127.0.0.1:8088";
 
 /// Inputs `wamn dev up` takes to mint one disposable environment.
 #[derive(Debug, Args)]
@@ -47,17 +36,6 @@ pub struct DevUpArgs {
     /// Directory the emitted Secrets, SQL and `dev.json` are written to.
     #[arg(long, env = "WAMN_DEV_ENV_ROOT")]
     root: PathBuf,
-
-    /// The built `wamn-scenario-worker` this command spawns as the Gate.
-    #[arg(long, env = "WAMN_DEV_ENV_SCENARIO_WORKER_BIN")]
-    scenario_worker_binary: PathBuf,
-
-    /// Address the authoring Gate listens on for the whole session.
-    ///
-    /// A nameable port, not an ephemeral one: the configuration written here
-    /// outlives the process that writes it.
-    #[arg(long, default_value = DEFAULT_GATE_BIND)]
-    gate_bind: String,
 
     #[arg(long, env = "WAMN_DEV_ENV_NATS_URL")]
     nats_url: String,
@@ -93,15 +71,6 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_OTEL_EXPORTER_OTLP_ENDPOINT")]
     otel_exporter_otlp_endpoint: String,
 
-    #[arg(long, env = "WAMN_DEV_ENV_COMPONENT_ARTIFACT_BASE", default_value = "")]
-    component_artifact_base: String,
-
-    #[arg(long, env = "WAMN_DEV_ENV_RELEASE_ARTIFACT_BASE", default_value = "")]
-    release_artifact_base: String,
-
-    #[arg(long, env = "WAMN_DEV_ENV_REGISTRY_AUTH_FILE", default_value = "")]
-    registry_auth_file: PathBuf,
-
     #[arg(long, env = "WAMN_DEV_ENV_ROUTE_HOST")]
     route_host: String,
 
@@ -109,23 +78,12 @@ pub struct DevUpArgs {
     #[arg(long, env = "WAMN_DEV_ENV_PLATFORM_DOMAIN")]
     platform_domain: String,
 
-    #[arg(
-        long,
-        env = "WAMN_DEV_ENV_FLOW_HTTP_WORKLOAD_IMAGE",
-        default_value = ""
-    )]
-    flow_http_workload_image: String,
-
-    /// Built flow-http component for local execution without a registry.
+    /// Built flow-http component the loop loads from its local file.
     #[arg(long, env = "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")]
-    flow_http_component: Option<PathBuf>,
+    flow_http_component: PathBuf,
 
     /// Strict local requirement-to-instance selections for components with connections.
-    #[arg(
-        long,
-        env = "WAMN_DEV_ENV_LOCAL_BINDINGS",
-        requires = "flow_http_component"
-    )]
+    #[arg(long, env = "WAMN_DEV_ENV_LOCAL_BINDINGS")]
     local_bindings: Option<PathBuf>,
 
     /// The built `wamn-host` the loop supervises.
@@ -141,18 +99,11 @@ pub struct DevUpArgs {
     overlay_root: Option<PathBuf>,
 }
 
-/// Stand the environment up, then hold the Gate open until interrupted.
+/// Stand the environment up and write its configuration.
 pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
-    // All settled before a single credential is minted: an environment is
-    // expensive to stand up, and a Gate that cannot be started or cannot be
-    // named leaves a written configuration nothing can use.
-    gate_listen_address(&args.gate_bind)?;
+    // Settled before a single credential is minted: an environment is
+    // expensive to stand up.
     wamn_control_provision::validate_platform_domain(&args.platform_domain)?;
-    anyhow::ensure!(
-        args.scenario_worker_binary.is_file(),
-        "{} does not name a built wamn-scenario-worker binary",
-        args.scenario_worker_binary.display()
-    );
 
     std::fs::create_dir_all(&args.root)
         .with_context(|| format!("create the environment directory {}", args.root.display()))?;
@@ -168,27 +119,20 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
                 .with_context(|| format!("resolve package source {}", package.display()))?,
         );
     }
-    let local_artifacts = args
-        .flow_http_component
-        .as_ref()
-        .map(|path| {
-            Ok::<_, anyhow::Error>(super::config::LocalArtifacts {
-                directory: args.root.canonicalize()?.join("local-artifacts"),
-                bindings: args
-                    .local_bindings
-                    .as_ref()
-                    .map(|path| path.canonicalize())
-                    .transpose()?,
-                flow_http_component: path.canonicalize().with_context(|| {
-                    format!("resolve local flow-http component {}", path.display())
-                })?,
-            })
-        })
-        .transpose()?;
-    anyhow::ensure!(
-        local_artifacts.is_some() || !args.flow_http_workload_image.is_empty(),
-        "supply --flow-http-component for local execution, or an explicit --flow-http-workload-image"
-    );
+    let local_artifacts = super::config::LocalArtifacts {
+        directory: args.root.canonicalize()?.join("local-artifacts"),
+        bindings: args
+            .local_bindings
+            .as_ref()
+            .map(|path| path.canonicalize())
+            .transpose()?,
+        flow_http_component: args.flow_http_component.canonicalize().with_context(|| {
+            format!(
+                "resolve local flow-http component {}",
+                args.flow_http_component.display()
+            )
+        })?,
+    };
     let inputs = DevEnvironmentInputs {
         local_artifacts,
         host_binary: args.host_binary,
@@ -200,12 +144,8 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         dup_window_secs: args.dup_window_secs,
         tempo_query_url: args.tempo_query_url,
         otel_exporter_otlp_endpoint: args.otel_exporter_otlp_endpoint,
-        flow_http_workload_image: args.flow_http_workload_image,
-        component_artifact_base: args.component_artifact_base,
-        release_artifact_base: args.release_artifact_base,
         route_host: args.route_host,
         platform_domain: args.platform_domain,
-        registry_auth_file: args.registry_auth_file,
         package_sources,
     };
 
@@ -240,25 +180,12 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         &[],
     )
     .await?;
-    // The Gate admits into the DURABLE project-environment database, the one
-    // the host serves from. The verification database is a throwaway this
-    // command deletes, so a Gate pointed at it publishes wirings that vanish,
-    // and the host's release preload then finds none (wamn-10yt.10.34).
-    let mut gate = spawn_journey_management_gate(
-        &args.scenario_worker_binary,
-        &environment.credentials,
-        &environment.credentials.management_admitter,
-        &args.gate_bind,
-    )
-    .await?;
     let config = write_dev_config(
         &args.root,
         &args.system_database_url,
         &environment.template,
         &environment.route,
         &environment.credentials,
-        &environment.verification,
-        gate.bind(),
         &inputs,
         &environment.identity,
     )?;
@@ -269,10 +196,9 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
         .map(|root| format!(" --overlay-root {}", root.display()))
         .unwrap_or_default();
     println!("environment ready");
-    println!("  gate:   http://{}/authoring", gate.bind());
     println!("  config: {}", config.display());
     // The operator token is also in dev.json for generated client launch.
-    // Gate uses its separate management-author token.
+    // The local Gate uses its separate management-author token.
     println!(
         "  pat:    {} (operator route-caller PAT, at .stringData.token)",
         args.root.join(ROUTE_CALLER_PAT_FILE).display()
@@ -280,23 +206,6 @@ pub async fn run(args: DevUpArgs) -> anyhow::Result<()> {
     println!();
     println!("run the loop from the repository root, in another terminal:");
     println!("  wamn dev --config {}{overlay} --tui", config.display());
-    println!();
-    println!("this process holds the Gate; stop it with Ctrl-C when the loop is done");
-
-    let bind = gate.bind().to_owned();
-    let exited = tokio::select! {
-        exited = gate.wait() => Some(exited?),
-        interrupted = tokio::signal::ctrl_c() => {
-            interrupted.context("wait for the interrupt that stops the environment")?;
-            None
-        }
-    };
-    let held = match exited {
-        Some(status) => Err(anyhow::anyhow!(
-            "the management Gate on {bind} stopped on its own: {status}"
-        )),
-        None => gate.shutdown().await,
-    };
     admin_task.abort();
-    held
+    Ok(())
 }

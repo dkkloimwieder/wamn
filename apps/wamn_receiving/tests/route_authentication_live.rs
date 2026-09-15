@@ -50,7 +50,6 @@ use wamn_control::author_wiring::{self, AuthorWiringRequest};
 use wamn_control::publish_release::{self, PublishReleaseRequest, ReleaseWiringTarget};
 use wamn_control::push_component::{AdmitComponentRequest, PublishAdmittedComponentRequest};
 use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
-use wamn_control_provision::sql as provision_sql;
 use wamn_ctl::dev::DevSourceState;
 use wamn_ctl::dev::watch::GitSource;
 use wamn_ctl::project_env_membership::{self, ProjectEnvMembershipArgs};
@@ -82,7 +81,7 @@ use wasmtime_wasi_http::p3::bindings::Service;
 use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode;
 
 use wamn_control::provision_project_env::{read_json, secret_value};
-use wamn_ctl::dev::environment::{DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT, clean_dev_verification_gate_roles, connect, install_journey_platform_floor, prepare_journey_credentials, provision_journey_control, provision_route, reconcile_journey_run_plane, spawn_journey_management_gate, write_dev_config};
+use wamn_ctl::dev::environment::{DevEnvironmentInputs, ENVIRONMENT, JourneyCredentials, ORG, PROJECT, RELEASE_ID, TENANT, connect, install_journey_platform_floor, prepare_journey_credentials, provision_journey_control, provision_route, reconcile_journey_run_plane, spawn_journey_management_gate, write_dev_config};
 use wamn_test_infrastructure::scratch::ScratchRoot;
 use runtime::{TraceHarness, journey_trace, span_attribute, span_descends_from, trace_component_invocations, assert_invocation_identity, assert_postgres_descendants, assert_direct_route_trace, assert_nested_record_receipt_trace, assert_native_nested_acquisition, assert_nested_permission_denial_trace, assert_no_component_trace, build_journey_runtime, JourneyGuestMemory, invoke_journey_route, invoke_journey_request, successful_value};
 use routes::copy_fresh_only_package;
@@ -301,7 +300,7 @@ const JOURNEY_PACKAGES: [JourneyPackage; 2] = [
 /// its input document. Everything else crosses as fields of that document.
 const JOURNEY_DOCUMENT_ENV: &str = "WAMN_JOURNEY_DOCUMENT";
 
-/// The built `wamn-scenario-worker` both live gates spawn as their Gate.
+/// The built `wamn-scenario-worker` the route journey spawns as its Gate.
 ///
 /// It rides as an environment variable rather than a journey-document field
 /// because it is a process setting, not journey data: it names a binary this
@@ -309,7 +308,4 @@ const JOURNEY_DOCUMENT_ENV: &str = "WAMN_JOURNEY_DOCUMENT";
 const SCENARIO_WORKER_BIN_ENV: &str = "WAMN_JOURNEY_SCENARIO_WORKER_BIN";
 
 /// Fixed nameable port for `[RECEIVING-ROUTE-JOURNEY]`'s spawned Gate.
-///
-/// Distinct from [`DEV_LIVE_GATE_BIND`] so that a Gate left behind by one
-/// recipe fails the other loudly on bind rather than answering for it.
 const ROUTE_JOURNEY_GATE_BIND: &str = "127.0.0.1:18089";

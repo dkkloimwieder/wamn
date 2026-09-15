@@ -36,7 +36,7 @@ pub struct DevCommandArgs {
     #[arg(long, value_name = "DIRECTORY")]
     overlay_root: PathBuf,
 
-    /// Keep the disposable verification session open and rerun affected suffixes.
+    /// Keep the session open and rerun affected suffixes.
     #[arg(long)]
     watch: bool,
 
@@ -139,9 +139,7 @@ struct NativeInvalidations {
 }
 
 fn local_configuration_files(config: &DevConfig) -> Vec<PathBuf> {
-    let Some(local) = config.local_artifacts() else {
-        return Vec::new();
-    };
+    let local = config.local_artifacts();
     let mut files = vec![
         config.target_privileges_file().to_owned(),
         config.target_database_acl_file().to_owned(),
@@ -411,8 +409,7 @@ impl DevSession {
             .await
             .context("discover the originating Git worktree")?;
         let mut runner =
-            ProductionDevStageRunner::new(config.clone(), args.overlay_root.clone(), git.clone())
-                .context("construct the production development coordinator")?;
+            ProductionDevStageRunner::new(config.clone(), args.overlay_root.clone(), git.clone());
         let (shutdown, shutdown_receiver) = watch::channel(false);
         let control = DevSessionControl { shutdown };
         let shutdown_signals = shutdown_signals(control.clone())
@@ -482,7 +479,7 @@ impl DevSession {
             .await
             .map(|()| None)
         } else {
-            let result = run_once_command(&self.config, &mut self.runner, &mut self.git)
+            let result = run_once_command(&mut self.runner, &mut self.git)
                 .await
                 .map(Some);
             if hold_after_one_shot {
@@ -502,18 +499,7 @@ impl DevSession {
         };
         self.last_served = self.read_handle().snapshot().runtime_endpoint().cloned();
         let cleanup = self.runner.shutdown().await;
-        let result = finish_with_cleanup(result, cleanup);
-        if self.config.local_artifacts().is_some()
-            && let Err(cleanup) = super::verification_database::remove(&self.config).await
-        {
-            return match result {
-                Ok(_) => Err(cleanup).context("remove the local session verification database"),
-                Err(error) => Err(error.context(format!(
-                    "local verification database cleanup also failed: {cleanup}"
-                ))),
-            };
-        }
-        result
+        finish_with_cleanup(result, cleanup)
     }
 }
 
@@ -548,14 +534,10 @@ pub async fn run(args: DevCommandArgs) -> anyhow::Result<()> {
 }
 
 async fn run_once_command(
-    config: &DevConfig,
     runner: &mut ProductionDevStageRunner,
     git: &mut GitSource,
 ) -> anyhow::Result<DevRunResult> {
-    let result = run_once_with_source_state_provider(config, runner, git)
-        .await
-        .context("own the disposable verification database")??;
-    Ok(result)
+    Ok(run_once_with_source_state_provider(runner, git).await?)
 }
 
 async fn run_watch_command(
@@ -625,9 +607,7 @@ async fn run_watch_command(
         source: native,
         shutdown,
     };
-    run_watch_with_source_state_provider(config, runner, &mut source, observer, git)
-        .await
-        .context("own the disposable verification database")??;
+    run_watch_with_source_state_provider(runner, &mut source, observer, git).await?;
     Ok(())
 }
 

@@ -7,7 +7,7 @@ Local saves do not publish components or release manifests to a registry.
 
 ## [WAMN-DEV-ENVIRONMENT] Developer session
 
-Build `wamn`, `wamn-host`, `wamn-scenario-worker`, `wamn-identity`, and the flow-http component before starting a session.
+Build `wamn`, `wamn-host`, `wamn-identity`, and the flow-http component before starting a session.
 Use only disposable PostgreSQL 18, scheduler NATS, event NATS, and telemetry services.
 The system administrator URL must name `wamn_system` without a query or fragment.
 `wamn dev up` resets its control store, so shared or durable targets are unsuitable.
@@ -19,13 +19,11 @@ Read the current required arguments from the existing command:
 ```
 
 Supply an explicit environment directory, package roots, built binaries, and service endpoints.
-For local execution, supply `--flow-http-component` with the absolute path to the built `http_route.wasm`.
+Supply `--flow-http-component` with the absolute path to the built `http_route.wasm`.
 The emitted `local_artifacts` configuration names the local output directory and this component.
-Omit the component repository, release repository, registry authentication, and flow-http image arguments in this mode.
 For declared connections, pass `--local-bindings` with an absolute path to the selection file.
 The emitted configuration stores that path in `local_artifacts.bindings`.
 
-The gate listener needs a fixed, unused port rather than port zero.
 Supply `--platform-domain` with the domain of the platform principal emails, for example `example.invalid`.
 The emitted configuration stores it in `platform_domain`.
 Supply event runtime credentials separately from provisioning credentials.
@@ -33,9 +31,8 @@ Declare `--stream-replicas` and `--dup-window-secs` explicitly.
 Use `--event-provisioning-username` and `--event-provisioning-password-file` for stream creation.
 Use `--event-nats-username` and `--event-nats-password-file` for runtime access.
 
-The command writes private `dev.json` and prints the next developer command.
-Keep `wamn dev up` running in its terminal.
-From a second terminal, use its emitted configuration:
+The command writes private `dev.json`, prints the next developer command, and exits.
+Use its emitted configuration:
 
 ```bash
 "$CARGO_TARGET_DIR/debug/wamn" dev --config "$WAMN_DEV_ENV_DIR/dev.json" \
@@ -125,7 +122,6 @@ To discard the application data manually, stop the loop and reset its target:
 "$CARGO_TARGET_DIR/debug/wamn" dev reset --config "$WAMN_DEV_ENV_DIR/dev.json"
 ```
 
-Keep `wamn dev up` running while the loop is stopped.
 The reset command refuses an active target lease.
 Restart the loop with the same configuration after reset.
 
