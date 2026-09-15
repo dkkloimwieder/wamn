@@ -175,12 +175,11 @@ const BLOBSTORE_PROJECTION_HASH: &str =
     "sha256:4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e";
 const BLOBSTORE_IMPORTS_FINGERPRINT: &str =
     "sha256:5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f5f";
-/// Fixed loopback port for the gate. The gate is serial and env-gated, so a
-/// fixed port is simpler than plumbing an ephemeral one out of the listener.
+/// Fixed loopback port for the gate. Cluster-global roles, one project
+/// database, and this listener make the gate serial: each case holds the
+/// process lock, so a fixed port is simpler than plumbing an ephemeral one out
+/// of the listener.
 const BIND: &str = "127.0.0.1:18088";
-/// Cluster-global roles, one project database, and one fixed listener make this
-/// live gate deliberately serial even when the Rust test harness is parallel.
-static LIVE_GATE_SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 const TTL: Duration = Duration::from_secs(3600);
 
 /// The one refusal every authentication and authorization failure must return.
@@ -1155,16 +1154,14 @@ enum ConnectionGateCase {
 }
 
 async fn run_connection_gate_case(case: ConnectionGateCase) {
-    let Ok(url) = std::env::var("WAMN_PLATFORM_IDENTITY_PG_URL") else {
-        eprintln!("skipping live connection Gate test (set WAMN_PLATFORM_IDENTITY_PG_URL to run)");
-        return;
-    };
-    let _serial = LIVE_GATE_SERIAL.lock().await;
-    let (mut admin, admin_task) = connect(&url).await.expect("connect as the gate admin");
-    provision(&mut admin, &url)
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let url = database.url();
+    let (mut admin, admin_task) = connect(url).await.expect("connect as the gate admin");
+    provision(&mut admin, url)
         .await
         .expect("provision the gate");
-    let (project, project_task) = provision_project(&admin, &url)
+    let (project, project_task) = provision_project(&admin, url)
         .await
         .expect("provision the project plane");
     let principal = admitted_human(
@@ -1175,7 +1172,7 @@ async fn run_connection_gate_case(case: ConnectionGateCase) {
     )
     .await
     .expect("admit the connection Gate principal");
-    let surface = start_management_surface(&url).await;
+    let surface = start_management_surface(url).await;
 
     match case {
         ConnectionGateCase::EmptyCases => {
@@ -1217,25 +1214,20 @@ async fn nonempty_case_connection_component_without_release_or_binding_refuses_e
 /// generation and scope, and succeeds without a database selector in its body.
 #[tokio::test]
 async fn management_surface_reconnects_after_the_verification_database_is_recreated() {
-    let Ok(url) = std::env::var("WAMN_PLATFORM_IDENTITY_PG_URL") else {
-        eprintln!(
-            "skipping management_surface_reconnects_after_the_verification_database_is_recreated \
-             (set WAMN_PLATFORM_IDENTITY_PG_URL to run)"
-        );
-        return;
-    };
-    let _serial = LIVE_GATE_SERIAL.lock().await;
-    let (mut admin, admin_task) = connect(&url).await.expect("connect as the gate admin");
-    provision(&mut admin, &url)
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let url = database.url();
+    let (mut admin, admin_task) = connect(url).await.expect("connect as the gate admin");
+    provision(&mut admin, url)
         .await
         .expect("provision the gate");
-    let (project, project_task) = provision_project(&admin, &url)
+    let (project, project_task) = provision_project(&admin, url)
         .await
         .expect("provision the first verification database");
     let principal = admitted_human(&admin, "reconnect@example.com", PROJECT, "project-author")
         .await
         .expect("admit the reconnect test principal");
-    let surface = start_management_surface(&url).await;
+    let surface = start_management_surface(url).await;
 
     let before = post(
         "/authoring",
@@ -1264,13 +1256,13 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
         serde_json::json!({
             "kind": "management-admission-unavailable",
             "config-key": "WAMN_MANAGEMENT_ADMISSION_PG_URL",
-            "endpoint": sanitized_admission_endpoint(&url),
+            "endpoint": sanitized_admission_endpoint(url),
         })
     );
     assert!(!unavailable.body.contains(ADMITTER_PASSWORD));
     assert!(!unavailable.body.contains(&admitter_role()));
 
-    let (replacement, replacement_task) = provision_project(&admin, &url)
+    let (replacement, replacement_task) = provision_project(&admin, url)
         .await
         .expect("recreate and reprovision the verification database");
     replacement
@@ -1300,26 +1292,18 @@ async fn management_surface_reconnects_after_the_verification_database_is_recrea
 }
 
 #[tokio::test]
-// LOUD, not silent (wamn-61d0). This returned early when the variable was
-// unset, so a default `cargo test` reported `ok. 1 passed ... 0.00s` for a
-// test that executed nothing — the self-skipping false green
-// `docs/operations/running-tests.md#live-prerequisites-and-troubleshooting` names. `#[ignore]` makes its absence
-// VISIBLE in the default run, and the `expect` below makes an explicit run
-// without the database fail loudly instead of passing vacuously. A test that
-// cannot tell "passed" from "never ran" is not evidence.
-#[ignore = "requires disposable PostgreSQL via WAMN_PLATFORM_IDENTITY_PG_URL"]
 async fn management_surface_authenticates_and_attributes_authoring_commands() {
-    let url = std::env::var("WAMN_PLATFORM_IDENTITY_PG_URL")
-        .expect("set WAMN_PLATFORM_IDENTITY_PG_URL to a disposable PostgreSQL superuser URL");
-    let _serial = LIVE_GATE_SERIAL.lock().await;
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_test_postgres::database();
+    let url = database.url();
 
-    let (mut admin, admin_task) = connect(&url).await.expect("connect as the gate admin");
-    provision(&mut admin, &url)
+    let (mut admin, admin_task) = connect(url).await.expect("connect as the gate admin");
+    provision(&mut admin, url)
         .await
         .expect("provision the gate");
     // The SECOND plane. It is a different database on the same server: the
     // composition under test spans both and needs two databases for the test.
-    let (project, project_task) = provision_project(&admin, &url)
+    let (project, project_task) = provision_project(&admin, url)
         .await
         .expect("provision the project plane");
 
@@ -1377,7 +1361,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .await
         .expect("age one token past its expiry");
 
-    let surface = start_management_surface(&url).await;
+    let surface = start_management_surface(url).await;
 
     // ---- every untrusted presenter refuses, identically, before any command --
     let forged = format!("{PAT_TOKEN_PREFIX}0123456789abcdef_{}", "0".repeat(64));

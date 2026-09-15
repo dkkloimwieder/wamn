@@ -6332,6 +6332,7 @@ dependencies = [
  "wamn-platform-identity",
  "wamn-runtime",
  "wamn-schema-control",
+ "wamn-test-postgres",
  "wash-runtime",
 ]
 

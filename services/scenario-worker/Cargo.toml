@@ -45,6 +45,7 @@ wamn-catalog = { workspace = true }
 # mapping resolves on `session_user`, which `SET ROLE` does not change), so they
 # rewrite the admin URL's identity rather than taking a second URL input.
 url = { workspace = true }
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true
