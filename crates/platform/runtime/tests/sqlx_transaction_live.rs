@@ -262,8 +262,9 @@ async fn acceptance(admin: &Client, admin_url: &str, component: &Path) -> anyhow
 }
 
 #[tokio::test]
-#[ignore = "requires WAMN_SQLX_TRANSACTION_COMPONENT naming the built sqlx-command component"]
+#[ignore = "requires: WAMN_SQLX_TRANSACTION_COMPONENT"]
 async fn sqlx_command_commits_rolls_back_and_obeys_current_user_rls() {
+    wamn_test_postgres::require_prerequisites(&["WAMN_SQLX_TRANSACTION_COMPONENT"]);
     let component = std::env::var(COMPONENT_ENV)
         .map(PathBuf::from)
         .unwrap_or_else(|_| panic!("set {COMPONENT_ENV} to the built sqlx-command component"));

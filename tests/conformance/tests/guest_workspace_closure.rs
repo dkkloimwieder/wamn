@@ -142,8 +142,9 @@ fn virtualized_digests(directory: &Path) -> Vec<(String, String)> {
 /// full guest builds; the structural guards above run every time and are what
 /// catch a regression early.
 #[test]
-#[ignore = "requires two checkouts of one commit built by [GUEST-DIGEST-REPRODUCIBILITY]"]
+#[ignore = "requires: WAMN_DIGEST_REPRO_A, WAMN_DIGEST_REPRO_B"]
 fn one_commit_built_in_two_checkouts_yields_identical_guest_digests() {
+    wamn_test_postgres::require_prerequisites(&["WAMN_DIGEST_REPRO_A", "WAMN_DIGEST_REPRO_B"]);
     let a = std::env::var(REPRO_A_ENV)
         .unwrap_or_else(|_| panic!("{REPRO_A_ENV} must name the first checkout's artifacts"));
     let b = std::env::var(REPRO_B_ENV)
@@ -223,8 +224,12 @@ fn artifact_plan_digests(path: &Path, expected_profile: &str) -> BTreeMap<String
 /// features independent of other selected packages.
 /// This test compares shared packages and refuses missing artifacts from the all selection.
 #[test]
-#[ignore = "requires one commit built under both profiles by [GUEST-DIGEST-REPRODUCIBILITY]"]
+#[ignore = "requires: WAMN_DIGEST_PROFILE_APP_PLAN, WAMN_DIGEST_PROFILE_ALL_PLAN"]
 fn one_commit_built_under_two_profiles_yields_identical_guest_digests() {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_DIGEST_PROFILE_APP_PLAN",
+        "WAMN_DIGEST_PROFILE_ALL_PLAN",
+    ]);
     let app_plan = std::env::var(PROFILE_APP_PLAN_ENV)
         .unwrap_or_else(|_| panic!("{PROFILE_APP_PLAN_ENV} must name the app artifact plan"));
     let all_plan = std::env::var(PROFILE_ALL_PLAN_ENV)

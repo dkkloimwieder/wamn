@@ -1584,8 +1584,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires throwaway OCI registry and actual http-request guest"]
+    #[ignore = "requires: WAMN_HTTP_REUSE_ARTIFACT_BASE, WAMN_HTTP_REUSE_COMPONENT_WASM"]
     async fn real_http_guest_reuses_connections_without_reusing_authority() -> anyhow::Result<()> {
+        wamn_test_postgres::require_prerequisites(&[
+            "WAMN_HTTP_REUSE_ARTIFACT_BASE",
+            "WAMN_HTTP_REUSE_COMPONENT_WASM",
+        ]);
         tokio::time::timeout(Duration::from_secs(180), test_connection_reuse())
             .await
             .context("real HTTP guest connection reuse test exceeded 180 seconds")?
@@ -1799,8 +1803,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires OCI registry and actual HTTP guest"]
+    #[ignore = "requires: WAMN_HTTP_REUSE_ARTIFACT_BASE, WAMN_HTTP_REUSE_COMPONENT_WASM"]
     async fn nested_http_authorizes_child_and_preserves_original_caller() -> anyhow::Result<()> {
+        wamn_test_postgres::require_prerequisites(&[
+            "WAMN_HTTP_REUSE_ARTIFACT_BASE",
+            "WAMN_HTTP_REUSE_COMPONENT_WASM",
+        ]);
         tokio::time::timeout(Duration::from_secs(180), test_nested_authority())
             .await
             .context("real nested HTTP authority test exceeded 180 seconds")?

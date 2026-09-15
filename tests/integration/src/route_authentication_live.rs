@@ -593,8 +593,9 @@ async fn assert_human_environment_membership(
 }
 
 #[tokio::test]
-#[ignore = "requires the built wamn-identity binary beside the test executable or in WAMN_IDENTITY_BINARY"]
+#[ignore = "requires:"]
 async fn production_route_caller_authentication_and_operation_authorization() {
+    wamn_test_postgres::require_prerequisites(&[]);
     // Provisioning changes roles and database grants of the whole server, so
     // the test starts its own.
     let mut server =

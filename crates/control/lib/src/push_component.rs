@@ -2481,8 +2481,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires a component registry named by WAMN_COMPONENT_ARTIFACT_BASE and WAMN_REGISTRY_AUTH_FILE"]
+    #[ignore = "requires: WAMN_COMPONENT_ARTIFACT_BASE, WAMN_REGISTRY_AUTH_FILE"]
     async fn verification_projection_replays_refuses_drift_and_leaves_publish_project_noop() {
+        wamn_test_postgres::require_prerequisites(&[
+            "WAMN_COMPONENT_ARTIFACT_BASE",
+            "WAMN_REGISTRY_AUTH_FILE",
+        ]);
         let artifact_base = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
             .expect("WAMN_COMPONENT_ARTIFACT_BASE names the component registry base");
         let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")
@@ -3126,8 +3130,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires a disposable registry in WAMN_COMPONENT_ARTIFACT_BASE"]
+    #[ignore = "requires: WAMN_COMPONENT_ARTIFACT_BASE, WAMN_REGISTRY_AUTH_FILE"]
     async fn production_publisher_and_puller_round_trip_exact_bytes() {
+        wamn_test_postgres::require_prerequisites(&[
+            "WAMN_COMPONENT_ARTIFACT_BASE",
+            "WAMN_REGISTRY_AUTH_FILE",
+        ]);
         let artifact_base = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
             .expect("set WAMN_COMPONENT_ARTIFACT_BASE to a disposable registry/repository");
         let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")

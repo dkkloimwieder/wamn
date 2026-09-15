@@ -772,8 +772,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires a disposable authenticated registry"]
+    #[ignore = "requires: WAMN_RELEASE_MANIFEST_ARTIFACT_BASE, WAMN_REGISTRY_AUTH_FILE"]
     async fn production_publisher_exact_retry_is_a_no_push() {
+        wamn_test_postgres::require_prerequisites(&[
+            "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE",
+            "WAMN_REGISTRY_AUTH_FILE",
+        ]);
         let artifact_base = std::env::var("WAMN_RELEASE_MANIFEST_ARTIFACT_BASE")
             .expect("set WAMN_RELEASE_MANIFEST_ARTIFACT_BASE to a disposable repository");
         let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")

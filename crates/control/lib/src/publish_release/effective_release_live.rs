@@ -389,8 +389,12 @@ fn assert_typed_metadata_refusal(input: &PackageInput) {
 }
 
 #[tokio::test]
-#[ignore = "requires exact built base/overlay component paths"]
+#[ignore = "requires: WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM, WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM"]
 async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM",
+        "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM",
+    ]);
     let inputs = packages();
     assert_typed_metadata_refusal(&inputs[0]);
     let _lock = wamn_test_postgres::lock();

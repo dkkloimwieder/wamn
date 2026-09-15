@@ -101,8 +101,9 @@ impl Drop for Https {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires WAMN_SESSION_EXCHANGE_CTL_BIN naming this worktree's compiled wamn-ctl"]
+#[ignore = "requires: WAMN_SESSION_EXCHANGE_CTL_BIN"]
 async fn session_exchange_uses_fresh_scoped_authority_without_session_state() {
+    wamn_test_postgres::require_prerequisites(&["WAMN_SESSION_EXCHANGE_CTL_BIN"]);
     let mut postgres =
         wamn_test_postgres::start(&[]).expect_redacted("start the test PostgreSQL server");
     let system = postgres
@@ -991,7 +992,8 @@ async fn retire_reader_cli(admin: &str, target: &SessionTarget) -> std::process:
         .expect_redacted("this worktree's default-target ctl binary");
     assert!(
         binary == expected,
-        "retirement test must use this worktree's compiled ctl"
+        "WAMN_SESSION_EXCHANGE_CTL_BIN must name this worktree's compiled ctl at {}",
+        expected.display()
     );
     let mut project = url::Url::parse(admin).expect_redacted("administrator URL shape");
     project.set_path(&format!("/{}", target.connection().database()));

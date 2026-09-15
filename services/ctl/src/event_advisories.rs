@@ -260,8 +260,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires this test's disposable event broker via WAMN_NATIVE_C_NATS_URL"]
+    #[ignore = "requires: WAMN_NATIVE_C_NATS_URL"]
     async fn retained_broker_advisories_report_missing_source_payloads() -> anyhow::Result<()> {
+        wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_URL"]);
         let url = std::env::var("WAMN_NATIVE_C_NATS_URL")
             .context("set WAMN_NATIVE_C_NATS_URL to this test's disposable event broker")?;
         let jetstream = async_nats::jetstream::new(async_nats::connect(url).await?);
@@ -878,8 +879,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires an owned nats-server executable via WAMN_NATIVE_C_NATS_BIN"]
+    #[ignore = "requires: WAMN_NATIVE_C_NATS_BIN"]
     async fn scoped_credentials_confine_management_delivery_and_monitoring() -> anyhow::Result<()> {
+        wamn_test_postgres::require_prerequisites(&["WAMN_NATIVE_C_NATS_BIN"]);
         use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
         use std::process::Stdio;
         use wamn_control_provision::events::advisory_stream_config;

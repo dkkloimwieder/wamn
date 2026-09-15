@@ -18,8 +18,9 @@ impl Drop for Files {
 }
 
 #[tokio::test]
-#[ignore = "requires a built wamn-identity binary beside wamn-ctl or named by WAMN_IDENTITY_BINARY"]
+#[ignore = "requires:"]
 async fn cli_bootstrap_mints_first_service_pats_over_https() {
+    wamn_test_postgres::require_prerequisites(&[]);
     let _lock = wamn_test_postgres::lock();
     let database = wamn_test_postgres::database();
     database

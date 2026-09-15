@@ -190,8 +190,14 @@ fn live_env(name: &str, expectation: &str) -> String {
 }
 
 #[tokio::test]
-#[ignore = "requires a disposable authenticated registry holding a published release"]
+#[ignore = "requires: WAMN_RELEASE_MANIFEST_ARTIFACT_BASE, WAMN_REGISTRY_AUTH_FILE, WAMN_RELEASE_MANIFEST_DIGEST, WAMN_RELEASE_MANIFEST_EFFECTIVE_RELEASE_ID"]
 async fn a_published_release_pulls_back_byte_exact_and_loads_the_release_it_names() {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE",
+        "WAMN_REGISTRY_AUTH_FILE",
+        "WAMN_RELEASE_MANIFEST_DIGEST",
+        "WAMN_RELEASE_MANIFEST_EFFECTIVE_RELEASE_ID",
+    ]);
     let artifact_base = live_env(
         "WAMN_RELEASE_MANIFEST_ARTIFACT_BASE",
         "the explicit <registry>/<repository> the release was pushed to",

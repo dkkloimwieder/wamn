@@ -508,8 +508,12 @@ async fn assert_missing_first_beat(nats_address: SocketAddr, evidence: &Path) ->
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires an owned real nats-server binary and a fresh external evidence directory"]
+#[ignore = "requires: WAMN_HOST_LIVE_NATS_SERVER_BIN, WAMN_HOST_LIVE_EVIDENCE_DIR"]
 async fn rebuilt_host_probes_signals_and_scheduler_recovery() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_HOST_LIVE_NATS_SERVER_BIN",
+        "WAMN_HOST_LIVE_EVIDENCE_DIR",
+    ]);
     let nats_binary = PathBuf::from(
         std::env::var_os("WAMN_HOST_LIVE_NATS_SERVER_BIN")
             .context("set WAMN_HOST_LIVE_NATS_SERVER_BIN to the real NATS server binary")?,

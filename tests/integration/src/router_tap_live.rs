@@ -239,9 +239,15 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires disposable WAMN_TAP NATS, OCI registry, and built production guests"]
+    #[ignore = "requires: WAMN_ROUTER_TAP_NATS_URL, WAMN_ROUTER_TAP_ARTIFACT_BASE, WAMN_ROUTER_TAP_NODE_WASM, WAMN_ROUTER_TAP_FLOW_HTTP_WASM"]
     async fn the_released_router_bridge_emits_accepted_and_settled_previews() -> anyhow::Result<()>
     {
+        wamn_test_postgres::require_prerequisites(&[
+            "WAMN_ROUTER_TAP_NATS_URL",
+            "WAMN_ROUTER_TAP_ARTIFACT_BASE",
+            "WAMN_ROUTER_TAP_NODE_WASM",
+            "WAMN_ROUTER_TAP_FLOW_HTTP_WASM",
+        ]);
         let nats_url = required("WAMN_ROUTER_TAP_NATS_URL")?;
         let artifact_base = required("WAMN_ROUTER_TAP_ARTIFACT_BASE")?;
         let node_wasm = PathBuf::from(required("WAMN_ROUTER_TAP_NODE_WASM")?);

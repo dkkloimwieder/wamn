@@ -168,8 +168,12 @@ mod tests {
     /// already flagged in `wamn-0h0g.12.6`'s close, and not a defect. So the
     /// wire is never asserted against the effect span.
     #[tokio::test]
-    #[ignore = "requires WAMN_HOTROUTE_ARTIFACT_BASE and WAMN_HOTROUTE_COMPONENT_WASM"]
+    #[ignore = "requires: WAMN_HOTROUTE_ARTIFACT_BASE, WAMN_HOTROUTE_COMPONENT_WASM"]
     async fn an_incoming_traceparent_reaches_the_outbound_socket_under_the_same_trace() {
+        wamn_test_postgres::require_prerequisites(&[
+            "WAMN_HOTROUTE_ARTIFACT_BASE",
+            "WAMN_HOTROUTE_COMPONENT_WASM",
+        ]);
         let artifact_base = required("WAMN_HOTROUTE_ARTIFACT_BASE")
             .expect("set WAMN_HOTROUTE_ARTIFACT_BASE to a throwaway <registry>/<repository>");
         let component_wasm = required("WAMN_HOTROUTE_COMPONENT_WASM")
