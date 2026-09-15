@@ -66,15 +66,14 @@ An ignored test needs built components, Docker, a cluster, a broker, or a regist
 It takes its database from the same functions.
 When `--ignored` selects it, it fails and names its first missing input instead of skipping.
 
-Some tests in the table below still name a URL variable.
-For those tests and the manual generation commands, run `pg_virtualenv -t -v 18 bash`.
+The manual generation commands below still take URL variables.
+For them, run `pg_virtualenv -t -v 18 bash`.
 The shell receives its connection variables, and the server is removed when the shell exits.
 For Docker fixtures, choose a new container name and an unused loopback port.
-Make sure that a real query succeeds through the same connection path that the test uses.
-Read the selected test's database-name and role requirements before setting its URL.
+Make sure that a real query succeeds through the same connection path that the command uses.
 
 The `wamn-test-postgres` runner binary in `wamn-test-infrastructure` serves delivery tooling.
-`wamn-ctl check-changes --database-url-env` runs a selected test through it, and release qualification uses it for the generation database and SQLx preparation.
+Release qualification uses it for the generation database and SQLx preparation.
 It starts a server, creates the named database, and optionally applies migrations and history tables.
 It removes inherited PostgreSQL variables, sets each `--url-env` variable to the database URL, and runs the command.
 It stops the command's process group and removes its server on completion, failure, or handled interruption.
@@ -147,11 +146,11 @@ Do not infer execution from the aggregate Cargo pass count.
 | Existing reference | Current owner and required setup |
 | --- | --- |
 | `[RUN-PLANE-RECONCILE]` | `services/ctl/tests/run_plane_live.rs`: runs by default on the test server and holds the process lock |
-| `[CLAIMS-LIVE]` | Runtime `plugins::wamn_postgres::claims::tests` cases that call `test_pg_url`: fresh PostgreSQL 18 through `WAMN_PG_TEST_URL` |
-| `[R18-NEG]` | Runtime `plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed`: separate `WAMN_SCS_OFF_PG_URL`, server setting `standard_conforming_strings=off` |
-| `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: `WAMN_READER_PG_URL` at `/postgres`, logical WAL, and `WAMN_READER_NATS_URL` |
-| `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: `WAMN_SQLX_TRANSACTION_PG_URL` and `WAMN_SQLX_TRANSACTION_COMPONENT` |
-| `[MGMT-LIVE]` | `services/scenario-worker/tests/management_live.rs`: disposable `WAMN_PLATFORM_IDENTITY_PG_URL` and the selected case's declared inputs |
+| `[CLAIMS-LIVE]` | Runtime `plugins::wamn_postgres::claims::tests` `live_*` cases: run by default on the test server, and the cases that create fixed roles hold the process lock |
+| `[R18-NEG]` | Runtime `plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed`: runs by default on a separate server started with `standard_conforming_strings=off` |
+| `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: ignored, starts its own server with `wal_level=logical`, and needs `WAMN_READER_NATS_URL` |
+| `[SQLX-TRANSACTION]` | `crates/platform/runtime/tests/sqlx_transaction_live.rs`: ignored, takes its database from the test server, and needs `WAMN_SQLX_TRANSACTION_COMPONENT` |
+| `[MGMT-LIVE]` | `services/scenario-worker/tests/management_live.rs`: runs by default on the test server and holds the process lock |
 | `[STD-GUEST-VIRTUALIZATION]` | `tests/integration/src/virtualized_std_guest.rs`: built guest files and its explicit `WAMN_STD_VIRTUALIZATION_*` inputs |
 | `[EVT-C-CDC]` | `tests/integration/src/cdcbench.rs` exposes a Rust entrypoint but no `wamn-gates` subcommand |
 

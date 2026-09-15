@@ -1147,11 +1147,9 @@ mod tests {
     /// THE CALLABLE-HTTP ADMITTER'S WHOLE SURFACE, PINNED AS A STRING
     /// (`wamn-0h0g.22.37`).
     ///
-    /// The live gate that measures this from the server is `#[ignore]`-free but
-    /// self-skipping, so it does not run in the ordinary sweep — and a mutant
-    /// that dies only in a live gate ships green. This is generated SQL from a
-    /// Rust builder, so byte-equality here is the only thing that catches the
-    /// builder moving in a plain `cargo test`.
+    /// The live gate in `tests/family_surface_grants.rs` measures this from a
+    /// test server. This is generated SQL from a Rust builder, so byte-equality
+    /// here also catches the builder moving without a server.
     #[test]
     fn the_http_admitter_surface_adds_only_fresh_operation_permission_reads() {
         let sql = grant_http_admitter_surface_sql("wamn_run");

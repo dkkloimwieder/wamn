@@ -141,9 +141,7 @@ Run selected existing tests independently of the retained developer database:
 
 Use an unused result path and replace the package, target, and case with the test that covers the change.
 For an ignored case, add `--include-ignored`.
-A case that takes its database from the [test server](running-tests.md#test-database-isolation) needs no database input.
-For a case that still reads a database URL variable, pass that variable with `--database-url-env`.
-The runner described there supplies a fresh database for each selected case.
+A case that uses PostgreSQL takes its database from the [test server](running-tests.md#test-database-isolation) and needs no database input.
 Failed, skipped, ignored, or empty test selections cannot produce a passing result.
 Local reuse and these change checks do not establish [release qualification](delivery.md#candidate-qualification).
 

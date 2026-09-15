@@ -15,9 +15,7 @@ wamn-ctl check-changes --repository "$SOURCE" \
 
 Replace the package, target, and case with the existing test for the change.
 For an ignored case, add `--include-ignored`.
-A case that takes its database from the [test server](running-tests.md#test-database-isolation) needs no database input.
-For a case that still reads a database URL variable, supply that variable with `--database-url-env`.
-The runner described there creates that database and supplies the URL.
+A case that uses PostgreSQL takes its database from the [test server](running-tests.md#test-database-isolation) and needs no database input.
 A change result records its source state and cannot substitute for release qualification.
 
 ## Candidate qualification
