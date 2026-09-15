@@ -979,7 +979,6 @@ mod execution_tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires WAMN_TENANT_KEY_PG_URL on a fresh disposable PostgreSQL 18 server"]
     async fn counter_uses_login_tenant_without_a_guest_guc() -> anyhow::Result<()> {
         use wamn_control_provision::sql::{
             ensure_app_acl_role_sql, ensure_db_owner_role_sql, prepare_workload_generation_sql,
@@ -991,9 +990,11 @@ mod execution_tests {
         use wamn_run_state::CredentialGeneration;
 
         const DATABASE: &str = "wamn-db-acme--billing--prior-commit";
-        let url = std::env::var("WAMN_TENANT_KEY_PG_URL")
-            .context("WAMN_TENANT_KEY_PG_URL must arm this disposable test")?;
-        let config: tokio_postgres::Config = url
+        // The test requires a server without the shared roles, so it starts its own.
+        let server = wamn_test_infrastructure::postgres::start(&[])?;
+        let config: tokio_postgres::Config = server
+            .database("postgres")?
+            .url()
             .parse()
             .map_err(|_| anyhow::anyhow!("invalid tenant-key test administrator URL"))?;
         anyhow::ensure!(

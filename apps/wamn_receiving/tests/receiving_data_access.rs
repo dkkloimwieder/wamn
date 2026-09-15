@@ -171,15 +171,15 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires a fresh disposable PostgreSQL 18 URL in WAMN_RECEIVING_PG_URL"]
     async fn generated_update_ignores_ungranted_additive_columns() -> Result<()> {
         use wamn_schema_generator::{
             DataAccessOverlay, DataAccessRelationFields, derive_effective_data_access,
             render_effective_data_access_sql,
         };
 
-        let url = std::env::var("WAMN_RECEIVING_PG_URL")
-            .context("WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database")?;
+        // The fixture creates the shared role wamn_app, so the test starts its own server.
+        let mut server = wamn_test_infrastructure::postgres::start(&[])?;
+        let url = server.create_database("receiving")?.url().to_owned();
         let client = connect(&url).await?;
         assert_postgres_18(&client).await?;
         assert_fresh_receiving_schema(&client).await?;
@@ -346,7 +346,6 @@ mod tests {
     /// effective base and overlay row at each position. The Receiving history
     /// read, run as `wamn_app`, returns only the base columns that it declares.
     #[tokio::test]
-    #[ignore = "requires a fresh disposable PostgreSQL 18 URL in WAMN_RECEIVING_PG_URL"]
     async fn an_overlay_update_logs_a_diff_that_folds_to_the_effective_row() -> Result<()> {
         use wamn_record_history::{HistoryRow, RowState, retain_columns, state_at};
         use wamn_schema_generator::{
@@ -354,8 +353,9 @@ mod tests {
             render_effective_data_access_sql,
         };
 
-        let url = std::env::var("WAMN_RECEIVING_PG_URL")
-            .context("WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database")?;
+        // The fixture creates the shared role wamn_app, so the test starts its own server.
+        let mut server = wamn_test_infrastructure::postgres::start(&[])?;
+        let url = server.create_database("receiving")?.url().to_owned();
         let client = connect(&url).await?;
         assert_postgres_18(&client).await?;
         assert_fresh_receiving_schema(&client).await?;
@@ -583,10 +583,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires a fresh disposable PostgreSQL 18 URL in WAMN_RECEIVING_PG_URL"]
     async fn enum_and_optimistic_update_outcomes_hold_on_postgres_18() -> Result<()> {
-        let url = std::env::var("WAMN_RECEIVING_PG_URL")
-            .context("WAMN_RECEIVING_PG_URL must name a fresh disposable PostgreSQL 18 database")?;
+        // The fixture creates the shared role wamn_app, so the test starts its own server.
+        let mut server = wamn_test_infrastructure::postgres::start(&[])?;
+        let url = server.create_database("receiving")?.url().to_owned();
         let mut client = connect(&url).await?;
         assert_postgres_18(&client).await?;
         assert_fresh_receiving_schema(&client).await?;

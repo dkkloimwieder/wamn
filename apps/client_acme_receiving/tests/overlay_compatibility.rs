@@ -519,16 +519,35 @@ fn required_contract_observation_refuses_changed_consumed_fields_and_constraints
 
 /// Narrow seam check; the paired journey remains the fresh-install test.
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 server on which deploy/sql/postgres-init.sql already \
-            ran as the superuser named postgres, so that wamn_app exists. Set \
-            WAMN_OVERLAY_OBSERVER_DATABASE_URL to a database there with no receiving or catalog \
-            schema, and WAMN_OVERLAY_OBSERVER_EVIDENCE_FILE to the retained evidence path"]
 async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirements()
 -> anyhow::Result<()> {
     use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorKind, read_catalog};
 
-    let url = std::env::var("WAMN_OVERLAY_OBSERVER_DATABASE_URL")?;
-    let evidence_path = std::env::var("WAMN_OVERLAY_OBSERVER_EVIDENCE_FILE")?;
+    // deploy/sql/postgres-init.sql creates shared roles and the database wamn,
+    // so the test applies it as the superuser postgres to a server of its own.
+    let mut postgres = wamn_test_infrastructure::postgres::start(&[])?;
+    let url = postgres.create_database("observer")?.url().to_owned();
+    let config: tokio_postgres::Config = url.parse()?;
+    let password = config
+        .get_password()
+        .context("the test server URL carries the superuser password")?;
+    let init = tokio::process::Command::new("/usr/lib/postgresql/18/bin/psql")
+        .env_clear()
+        .env("PGHOST", "127.0.0.1")
+        .env("PGPORT", config.get_ports()[0].to_string())
+        .env("PGUSER", "postgres")
+        .env("PGPASSWORD", std::str::from_utf8(password)?)
+        .env("PGDATABASE", "postgres")
+        .args(["-X", "-q", "-v", "ON_ERROR_STOP=1", "-f"])
+        .arg(super::repository_root()?.join("deploy/sql/postgres-init.sql"))
+        .output()
+        .await
+        .context("run psql for deploy/sql/postgres-init.sql")?;
+    ensure!(
+        init.status.success(),
+        "deploy/sql/postgres-init.sql failed: {}",
+        String::from_utf8_lossy(&init.stderr)
+    );
     let (project, connection_task) = super::connect(&url).await?;
     let server = project.query_one("SELECT current_setting('server_version_num')::integer, current_database()::text, to_regnamespace('receiving') IS NULL AND to_regnamespace('catalog') IS NULL", &[]).await?;
     let version: i32 = server.get(0);
@@ -659,12 +678,7 @@ async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirem
         "additive_observed_schema_sha256":component_digest(&serde_json::to_vec(&additive)?),
         "result":"pass",
     });
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(evidence_path)?;
-    serde_json::to_writer_pretty(&mut file, &evidence)?;
-    file.write_all(b"\n")?;
+    println!("{}", serde_json::to_string_pretty(&evidence)?);
     drop(project);
     connection_task.await?;
     Ok(())

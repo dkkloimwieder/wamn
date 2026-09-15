@@ -4,7 +4,6 @@ use super::*;
 
 mod local_delivery;
 
-pub(super) const JOURNEY_URL_ENV: &str = "WAMN_ROUTE_PG18_URL";
 pub(super) const DEV_COMMAND_TIMEOUT: Duration = Duration::from_secs(12 * 60);
 pub(super) const DEV_EXPECTED_MIGRATIONS: [(&str, &str, i32, &str); 3] = [
     (
@@ -517,10 +516,12 @@ pub(super) async fn verify_dev_verification_database_absent(
 }
 
 #[tokio::test]
-#[ignore = "requires disposable PG18, NATS, authenticated OCI, and built wamn/host/flow-http binaries"]
+#[ignore = "requires disposable NATS, authenticated OCI, and built wamn/host/flow-http binaries"]
 async fn product_dev_command_owns_the_clean_twelve_stage_output_and_cleanup() -> anyhow::Result<()>
 {
-    let system_url = required_journey(JOURNEY_URL_ENV)?;
+    // The environment resets the control store of the whole server, so the test starts its own.
+    let mut server = wamn_test_infrastructure::postgres::start(&[])?;
+    let system_url = server.create_database("wamn_system")?.url().to_owned();
     let inputs = DevJourneyInputs::required()?;
     let credentials = wamn_test_infrastructure::event_broker::Credentials {
         username: required_journey("WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME")?,

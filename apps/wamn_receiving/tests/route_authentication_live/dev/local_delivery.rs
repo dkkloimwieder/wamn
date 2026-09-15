@@ -19,8 +19,7 @@ use super::super::{
     required_journey, required_journey_path, spawn_journey_management_gate, write_dev_config,
 };
 use super::{
-    DEV_COMMAND_TIMEOUT, DEV_LIVE_GATE_BIND, DevJourneyInputs, JOURNEY_URL_ENV,
-    current_database_acl,
+    DEV_COMMAND_TIMEOUT, DEV_LIVE_GATE_BIND, DevJourneyInputs, current_database_acl,
 };
 
 const CODE: &str = "apps/wamn_receiving/component/src/lib.rs";
@@ -34,7 +33,7 @@ const SCHEMA_AFTER: &str =
     "location_code text NOT NULL DEFAULT 'delivery-reset' CONSTRAINT";
 
 #[tokio::test]
-#[ignore = "requires an explicitly owned linked worktree, owned PG18/NATS, and built local runtime files"]
+#[ignore = "requires an explicitly owned linked worktree, owned NATS, and built local runtime files"]
 async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> anyhow::Result<()> {
     let repository = repository_root()?;
     ensure!(
@@ -48,8 +47,9 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
         initial.state() == DevSourceState::Clean,
         "the owned edit worktree must start clean"
     );
-    let system_url = required_journey(JOURNEY_URL_ENV)?;
-    wamn_test_infrastructure::postgres::require_owned_url(&system_url)?;
+    // The environment resets the control store of the whole server, so the test starts its own.
+    let mut server = wamn_test_infrastructure::postgres::start(&[])?;
+    let system_url = server.create_database("wamn_system")?.url().to_owned();
     let mut inputs = DevJourneyInputs::required()?;
     let flow_http = required_journey_path("WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")?.canonicalize()?;
     ensure!(
