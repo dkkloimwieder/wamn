@@ -372,7 +372,7 @@ pub(crate) fn record_wiring(span: &tracing::Span, wiring: Option<EffectWiring<'_
 /// [9.1] Open one effect span: a per-surface constant name, that surface's own
 /// leading fields, then the shared identity vocabulary.
 ///
-/// ```ignore
+/// ```text
 /// effect_span!(
 ///     "wamn.postgres",
 ///     EffectIdentity { tenant: &tenant, project: &project, component: component_id },

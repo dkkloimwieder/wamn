@@ -25,7 +25,7 @@
 //! [`route`] is the synchronous entry point and drives the loop for you. A host
 //! that must await its invocations drives the same two functions directly:
 //!
-//! ```ignore
+//! ```text
 //! let mut walk = wiring.start(delivery);
 //! loop {
 //!     match wiring.next(&mut walk, now_ms()) {
