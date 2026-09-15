@@ -1,5 +1,5 @@
-//! Arguments and output of the `author-wiring`, `publish-release`, `promote`, and
-//! `reconcile-run-plane` verbs.
+//! Arguments and output of the `author-wiring`, `publish-release`, `promote`,
+//! `reconcile-run-plane`, and `terminalize-effect-uncertain` verbs.
 
 use std::path::PathBuf;
 
@@ -11,6 +11,8 @@ use wamn_control::publish_release::{
     self, PublishReleaseRequest, ReleaseWiringTarget, parse_package,
 };
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneOutcome, ReconcileRunPlaneRequest};
+use wamn_control::terminalize_effect_uncertain::{self, TerminalizeEffectUncertainRequest};
+use wamn_run_state::operator_action::OperatorActionBasis;
 
 /// Arguments for the wiring-authorship verb.
 #[derive(Debug, Args)]
@@ -163,6 +165,38 @@ pub struct ReconcileRunPlaneArgs {
     pub dry_run: bool,
 }
 
+/// Exact operator input; effect identity and asserted outcome are absent by construction.
+#[derive(Debug, Args)]
+pub struct TerminalizeEffectUncertainArgs {
+    /// Project-admin PostgreSQL URL for the project database.
+    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    pub admin_database_url: String,
+
+    /// Project run-plane schema.
+    #[arg(long, default_value = "wamn_run")]
+    pub schema: String,
+
+    /// Exact tenant owning the run.
+    #[arg(long)]
+    pub tenant: String,
+
+    /// Exact effect-uncertain run.
+    #[arg(long)]
+    pub run: String,
+
+    /// Evidence basis: external-evidence, counterparty-confirmation, or operator-judgment.
+    #[arg(long)]
+    pub basis: OperatorActionBasis,
+
+    /// Opaque non-empty reference to the evidence used.
+    #[arg(long)]
+    pub evidence_ref: String,
+
+    /// Opaque non-empty idempotency correlation.
+    #[arg(long)]
+    pub correlation_id: String,
+}
+
 /// Author one gated wiring version and print its definition hash.
 pub async fn author(args: AuthorWiringArgs) -> anyhow::Result<()> {
     let hash = author_wiring::author_wiring_document(AuthorWiringDocumentRequest {
@@ -290,6 +324,24 @@ pub fn print_reconciled(
             outcome.durability_class.as_sql(),
         );
     }
+}
+
+/// Terminalize one effect-uncertain run and print its result.
+pub async fn terminalize(args: TerminalizeEffectUncertainArgs) -> anyhow::Result<()> {
+    let result = terminalize_effect_uncertain::terminalize_effect_uncertain(
+        TerminalizeEffectUncertainRequest {
+            admin_database_url: args.admin_database_url,
+            schema: args.schema,
+            tenant: args.tenant,
+            run: args.run,
+            basis: args.basis,
+            evidence_ref: args.evidence_ref,
+            correlation_id: args.correlation_id,
+        },
+    )
+    .await?;
+    println!("{result}");
+    Ok(())
 }
 
 #[cfg(test)]

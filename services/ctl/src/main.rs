@@ -7,8 +7,7 @@ mod print_platform_principals;
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
     bind_connection, component_verbs, delivery, identity_issuer, package_verbs, print_release_env,
-    project_env_membership, provision_org, provisioning_verbs, reconcile_replica_identity,
-    release_verbs, terminalize_effect_uncertain,
+    project_env_membership, provision_org, provisioning_verbs, release_verbs,
 };
 
 #[derive(Parser)]
@@ -71,11 +70,11 @@ enum Command {
     /// Promote one verified format-1 release into a target environment
     Promote(release_verbs::PromoteArgs),
     /// Detect or repair per-model REPLICA IDENTITY drift from package registrations — one-shot and idempotent.
-    ReconcileReplicaIdentity(reconcile_replica_identity::ReconcileReplicaIdentityArgs),
+    ReconcileReplicaIdentity(package_verbs::ReconcileReplicaIdentityArgs),
     /// Reconcile a project-env's run-plane schema to deploy/sql — create missing tables, additive ALTERs, outbox-era teardown; idempotent (wamn-1wdq)
     ReconcileRunPlane(release_verbs::ReconcileRunPlaneArgs),
     /// Terminalize one effect-uncertain run from explicit external evidence.
-    TerminalizeEffectUncertain(terminalize_effect_uncertain::TerminalizeEffectUncertainArgs),
+    TerminalizeEffectUncertain(release_verbs::TerminalizeEffectUncertainArgs),
 }
 
 #[tokio::main]
@@ -118,9 +117,11 @@ async fn main() -> anyhow::Result<()> {
         Command::PrintReleaseEnv(args) => print_release_env::run(args).await,
         Command::PrintPlatformPrincipals(args) => print_platform_principals::run(args),
         Command::Promote(args) => release_verbs::promote(args).await,
-        Command::ReconcileReplicaIdentity(args) => reconcile_replica_identity::run(args).await,
+        Command::ReconcileReplicaIdentity(args) => {
+            package_verbs::reconcile_replica_identity(args).await
+        }
         Command::ReconcileRunPlane(args) => release_verbs::reconcile(args).await,
-        Command::TerminalizeEffectUncertain(args) => terminalize_effect_uncertain::run(args).await,
+        Command::TerminalizeEffectUncertain(args) => release_verbs::terminalize(args).await,
     }
 }
 

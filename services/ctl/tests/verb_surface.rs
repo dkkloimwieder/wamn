@@ -183,7 +183,7 @@ fn mvp_dependency_tree_does_not_enable_ops() {
     let direct = String::from_utf8(direct.stdout).expect("cargo tree output is UTF-8");
     assert!(
         direct.lines().any(|line| line.contains("wamn-run-state ")),
-        "default ctl omitted the terminalization transaction owner\n{direct}"
+        "default ctl omitted the owner of the terminalization basis type\n{direct}"
     );
 }
 

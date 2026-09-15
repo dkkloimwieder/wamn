@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use anyhow::Context as _;
-use clap::Args;
 use tokio_postgres::NoTls;
 use wamn_schema_control::{
     EventRegistration, ManagedModel, ReplicaIdentity, ReplicaIdentityPlan, UnreadableRegistrations,
@@ -17,32 +16,33 @@ SELECT registration::text FROM catalog.event_registrations \
  WHERE registration ->> 'source-package-id' = $1 \
  ORDER BY tenant_id, package_id, registration_id";
 
-#[derive(Debug, Args)]
-pub struct ReconcileReplicaIdentityArgs {
+/// Inputs of one replica identity reconciliation for a package.
+#[derive(Debug)]
+pub struct ReconcileReplicaIdentityRequest {
     /// Superuser connection to the project database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: String,
 
     /// Package root whose strict manifest maps model keys to physical tables.
-    #[arg(long)]
     pub package: PathBuf,
 
-    /// Print the plan without applying it.
-    #[arg(long)]
+    /// Plan without applying.
     pub dry_run: bool,
 }
 
-pub async fn run(args: ReconcileReplicaIdentityArgs) -> anyhow::Result<()> {
-    let directory = crate::apply_package::read_package_directory(&args.package)?;
+/// Reconcile the replica identity of one package's models and return the plan.
+pub async fn reconcile_package_replica_identity(
+    request: ReconcileReplicaIdentityRequest,
+) -> anyhow::Result<ReplicaIdentityPlan> {
+    let directory = crate::apply_package::read_package_directory(&request.package)?;
     let package =
         plan_package_migrations(&directory, None).context("derive package model mapping")?;
     let package_id = package.coordinate.package_id().to_owned();
 
-    let (client, connection) = tokio_postgres::connect(&args.admin_database_url, NoTls)
+    let (client, connection) = tokio_postgres::connect(&request.admin_database_url, NoTls)
         .await
         .context("connect to project database")?;
     let connection_task = tokio::spawn(connection);
-    let result = reconcile(&client, &package_id, &package.models, !args.dry_run).await;
+    let result = reconcile(&client, &package_id, &package.models, !request.dry_run).await;
     drop(client);
     if result.is_err() {
         connection_task.abort();
@@ -52,9 +52,7 @@ pub async fn run(args: ReconcileReplicaIdentityArgs) -> anyhow::Result<()> {
             .context("join replica-identity database connection")?
             .context("drive replica-identity database connection")?;
     }
-    let plan = result?;
-    print_plan(&plan, args.dry_run);
-    Ok(())
+    result
 }
 
 pub async fn reconcile(
@@ -142,34 +140,4 @@ async fn read_current_identities(
         );
     }
     Ok(current)
-}
-
-fn identity_keyword(identity: ReplicaIdentity) -> &'static str {
-    match identity {
-        ReplicaIdentity::Full => "FULL",
-        ReplicaIdentity::Default => "DEFAULT",
-    }
-}
-
-fn print_plan(plan: &ReplicaIdentityPlan, dry_run: bool) {
-    let verb = if dry_run { "would flip" } else { "flipped" };
-    if plan.flips.is_empty() {
-        println!(
-            "replica identity already reconciled: {} model(s) at target",
-            plan.unchanged.len()
-        );
-    }
-    for flip in &plan.flips {
-        println!(
-            "{verb} {}.{} ({}): {} -> {}",
-            flip.schema,
-            flip.table,
-            flip.model_id,
-            identity_keyword(flip.from),
-            identity_keyword(flip.to)
-        );
-    }
-    for table in &plan.skipped_absent {
-        println!("[skip] {table} is absent; apply the package before reconciling");
-    }
 }

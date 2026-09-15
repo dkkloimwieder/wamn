@@ -1,7 +1,6 @@
 //! Project-admin terminalization of one effect-uncertain run.
 
 use anyhow::{Context as _, bail};
-use clap::Args;
 use tokio_postgres::{Client, NoTls, Transaction, error::SqlState};
 use wamn_run_state::operator_action::{
     OperatorActionBasis, OperatorTerminalizeResult, insert_operator_action_sql,
@@ -11,34 +10,27 @@ use wamn_run_state::operator_action::{
 use wamn_schema_control::BareSchemaName;
 
 /// Exact operator input; effect identity and asserted outcome are absent by construction.
-#[derive(Debug, Args)]
-pub struct TerminalizeEffectUncertainArgs {
+#[derive(Debug)]
+pub struct TerminalizeEffectUncertainRequest {
     /// Project-admin PostgreSQL URL for the project database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: String,
 
     /// Project run-plane schema.
-    #[arg(long, default_value = "wamn_run")]
     pub schema: String,
 
     /// Exact tenant owning the run.
-    #[arg(long)]
     pub tenant: String,
 
     /// Exact effect-uncertain run.
-    #[arg(long)]
     pub run: String,
 
-    /// Evidence basis: external-evidence, counterparty-confirmation, or operator-judgment.
-    #[arg(long)]
+    /// Evidence basis recorded with the action.
     pub basis: OperatorActionBasis,
 
     /// Opaque non-empty reference to the evidence used.
-    #[arg(long)]
     pub evidence_ref: String,
 
     /// Opaque non-empty idempotency correlation.
-    #[arg(long)]
     pub correlation_id: String,
 }
 
@@ -106,27 +98,29 @@ fn prior_action_result(
     })
 }
 
-pub async fn run(args: TerminalizeEffectUncertainArgs) -> anyhow::Result<()> {
-    let schema = BareSchemaName::new(args.schema.clone())
-        .with_context(|| format!("invalid --schema {:?}", args.schema))?;
-    let request = TerminalizeEffectUncertain {
-        tenant: &args.tenant,
-        run: &args.run,
-        basis: args.basis,
-        evidence_ref: &args.evidence_ref,
-        correlation_id: &args.correlation_id,
+/// Connect to the project database and terminalize one effect-uncertain run.
+pub async fn terminalize_effect_uncertain(
+    request: TerminalizeEffectUncertainRequest,
+) -> anyhow::Result<OperatorTerminalizeResult> {
+    let schema = BareSchemaName::new(request.schema.clone())
+        .with_context(|| format!("invalid --schema {:?}", request.schema))?;
+    let exact = TerminalizeEffectUncertain {
+        tenant: &request.tenant,
+        run: &request.run,
+        basis: request.basis,
+        evidence_ref: &request.evidence_ref,
+        correlation_id: &request.correlation_id,
     };
-    validate_request(&request)?;
+    validate_request(&exact)?;
 
-    let (mut client, connection) = tokio_postgres::connect(&args.admin_database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(&request.admin_database_url, NoTls)
         .await
         .context("project-admin connect")?;
     let connection_task = tokio::spawn(connection);
-    let result = terminalize(&mut client, &schema, &request).await;
+    let result = terminalize(&mut client, &schema, &exact).await;
     drop(client);
     let _ = connection_task.await;
-    println!("{}", result?);
-    Ok(())
+    result
 }
 
 fn validate_request(request: &TerminalizeEffectUncertain<'_>) -> anyhow::Result<()> {
