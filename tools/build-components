@@ -223,7 +223,7 @@ if [[ "$WAMN_MODE" == watch-roots ]]; then
                    $seen + [$pending[0]])
       end;
     {profile: $profile,
-     workspace_roots:
+     roots:
        [to_entries[]
         | .key as $index
         | (.value.packages
@@ -239,7 +239,7 @@ if [[ "$WAMN_MODE" == watch-roots ]]; then
         | select(startswith($root))
         | ltrimstr($root)]
        | unique}
-    | select(.workspace_roots | length > 0)
+    | select(.roots | length > 0)
   '
   exit 0
 fi

@@ -511,7 +511,7 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
             .collect::<Vec<_>>();
         assert_eq!(
             roots,
-            serde_json::json!({"profile": profile, "workspace_roots": expected_roots}),
+            serde_json::json!({"profile": profile, "roots": expected_roots}),
             "watch roots must name the selected crates and their path dependencies"
         );
         assert_eq!(

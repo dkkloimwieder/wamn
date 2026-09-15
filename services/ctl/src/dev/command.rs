@@ -360,7 +360,7 @@ fn shutdown_signals(control: DevSessionControl) -> io::Result<JoinSet<()>> {
 #[serde(deny_unknown_fields)]
 struct BuildWatchRoots {
     profile: String,
-    workspace_roots: Vec<PathBuf>,
+    roots: Vec<PathBuf>,
 }
 
 /// Prepared development-loop engine shared by CLI and console clients.
@@ -640,11 +640,11 @@ async fn component_build_watch_roots(
         roots.profile
     );
     anyhow::ensure!(
-        !roots.workspace_roots.is_empty(),
+        !roots.roots.is_empty(),
         "production build owner returned no component watch roots"
     );
     roots
-        .workspace_roots
+        .roots
         .into_iter()
         .map(|root| {
             anyhow::ensure!(
