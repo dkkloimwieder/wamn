@@ -1,8 +1,9 @@
 //! Exclusive ownership and explicit recreation of disposable development targets.
 //!
-//! Local watch sessions retain the target until schema inputs change. Recreation
-//! clones the stamped template and restores its captured database ACL. The lease
-//! prevents another session or reset command from replacing a serving target.
+//! Local sessions retain the target until schema inputs change, also across
+//! restarts of the developer process. Recreation clones the stamped template and
+//! restores its captured database ACL. The lease prevents another session or
+//! reset command from replacing a serving target.
 
 use std::error::Error;
 use std::fmt;
@@ -16,6 +17,7 @@ use super::activation::DevActivationIdentity;
 use super::config::{DevConfig, POSTGRES_SYSTEM_DATABASES};
 
 const MAINTENANCE_DATABASE: &str = "postgres";
+const SCHEMA_RECORD_FILE: &str = "target-schema.json";
 const STALE_STANDUP_REMEDY: &str =
     "run wamn dev up to provision the environment and emit its privilege SQL";
 
@@ -243,6 +245,29 @@ pub(crate) fn prepare_configuration(config: &DevConfig) -> anyhow::Result<Prepar
     })
 }
 
+/// Record the schema inputs a successful Migrate applied to one target creation.
+///
+/// The record names the database instance, so a record left beside a target
+/// that was since recreated or reset matches nothing.
+pub(crate) fn record_schema_digest(
+    config: &DevConfig,
+    instance: &str,
+    schema_digest: &str,
+) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+    let directory = &config.local_artifacts().directory;
+    std::fs::create_dir_all(directory).context("create the local artifact directory")?;
+    let record = serde_json::json!({
+        "database-instance": instance,
+        "schema-input-digest": schema_digest,
+    });
+    std::fs::write(
+        directory.join(SCHEMA_RECORD_FILE),
+        serde_json::to_vec(&record)?,
+    )
+    .context("record the target schema digest")
+}
+
 /// Exclusive ownership held while a development session can serve this target.
 pub struct TargetLease {
     client: Client,
@@ -326,6 +351,46 @@ impl TargetLease {
             }
         }
         Ok(())
+    }
+
+    /// The instance of this target when its last Migrate recorded `schema_digest`.
+    ///
+    /// Returns `None` when the record is absent or unreadable, names another
+    /// digest or another creation of the database, or when the local target
+    /// marker no longer matches. The caller then recreates the target.
+    pub(crate) async fn retained_instance(
+        &self,
+        config: &DevConfig,
+        schema_digest: &str,
+    ) -> Option<String> {
+        let bytes =
+            std::fs::read(config.local_artifacts().directory.join(SCHEMA_RECORD_FILE)).ok()?;
+        let record: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        if record["schema-input-digest"] != schema_digest {
+            return None;
+        }
+        let instance: u32 = self
+            .client
+            .query_one(
+                "SELECT oid FROM pg_catalog.pg_database WHERE datname = $1",
+                &[&self.spec.database.as_str()],
+            )
+            .await
+            .ok()?
+            .get(0);
+        let instance = instance.to_string();
+        if record["database-instance"] != instance.as_str() {
+            return None;
+        }
+        let identity = config.activation_identity();
+        wamn_runtime::local_application::require_local_target(
+            config.target_database_url(),
+            &identity.tenant,
+            &identity.environment,
+        )
+        .await
+        .ok()?;
+        Some(instance)
     }
 
     /// Recreate only the target named by this still-held lease.
@@ -778,8 +843,28 @@ mod tests {
         drop(target);
         driver.await??;
 
+        // A restarted session keeps the target its last Migrate recorded, and
+        // a changed schema digest recreates it.
+        record_schema_digest(&config, &first, "sha256:schema-one")?;
+        assert_eq!(
+            lease
+                .retained_instance(&config, "sha256:schema-one")
+                .await
+                .as_deref(),
+            Some(first.as_str())
+        );
+        assert_eq!(
+            lease.retained_instance(&config, "sha256:schema-two").await,
+            None
+        );
+
         let second = lease.recreate(&config).await?;
         assert_ne!(first, second);
+        assert_eq!(
+            lease.retained_instance(&config, "sha256:schema-one").await,
+            None,
+            "a record of the previous creation matches no later one"
+        );
         let (target, driver) = tokio_postgres::connect(target_database.url(), NoTls).await?;
         let driver = tokio::spawn(driver);
         assert_eq!(

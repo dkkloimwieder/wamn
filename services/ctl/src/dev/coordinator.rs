@@ -583,6 +583,20 @@ impl ProductionDevStageRunner {
             })?;
             crate::package_verbs::print_applied(&outcome);
         }
+        // Recorded only after every package applied, so a restarted session
+        // never keeps a target whose Migrate did not finish.
+        target_database::record_schema_digest(
+            &self.config,
+            self.target_instance
+                .as_deref()
+                .expect("prepare_run claimed the target instance"),
+            self.schema_input_candidate
+                .as_deref()
+                .expect("prepare_run computed the schema inputs"),
+        )
+        .map_err(|source| {
+            ProductionDevStageError::owner("record the target schema digest", source)
+        })?;
         self.schema_input_digest
             .clone_from(&self.schema_input_candidate);
         Ok(())
@@ -1823,15 +1837,22 @@ impl DevStageRunner for ProductionDevStageRunner {
             self.acl_input_digest = None;
             self.local_grants = None;
             self.catalogs.clear();
-            let instance = self
-                .target_lease
-                .as_ref()
-                .expect("lease acquired")
-                .recreate(&self.config)
-                .await
-                .map_err(|source| {
+            let lease = self.target_lease.as_ref().expect("lease acquired");
+            // The first run of a session keeps the target a previous session
+            // migrated with the same schema inputs.
+            let retained = if self.target_instance.is_none() {
+                lease.retained_instance(&self.config, &digest).await
+            } else {
+                None
+            };
+            let instance = if let Some(instance) = retained {
+                self.schema_input_digest = Some(digest.clone());
+                instance
+            } else {
+                lease.recreate(&self.config).await.map_err(|source| {
                     ProductionDevStageError::owner("recreate local schema target", source.into())
-                })?;
+                })?
+            };
             claim_environment_instance(
                 self.config.system_database_url(),
                 &self.config.activation_identity().tenant,
