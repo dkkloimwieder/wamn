@@ -26,7 +26,6 @@ mod route_authentication_live;
 mod router_tap_live;
 pub mod streambench;
 pub mod throughput_bench;
-mod throughput_bench_live;
 pub mod trusted_http_route;
 #[cfg(test)]
 mod virtualized_std_guest;
