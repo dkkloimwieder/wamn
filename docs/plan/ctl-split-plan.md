@@ -14,13 +14,18 @@ That control logic is reachable only through the module tree of a binary package
 One control library, one CLI:
 
 ```
-crates/control/lib        admission, release, provisioning, reconcile, package.
+crates/control/lib        admission, release, provisioning, reconcile, package, delivery.
                           Does database, filesystem, and network work.
-                          No CLI presentation, no process ownership.
-services/ctl              argument parsing, output formatting, exit codes.
+                          Runs the processes its work needs (git, docker, kubectl, cargo).
+                          No CLI presentation and no CLI lifecycle.
+services/ctl              argument parsing, output formatting, exit codes, signals, its stdout.
                           Each verb: parse → one library call → print.
 services/ctl/src/dev/     the loop. It stays here until its later separation.
 ```
+
+The library owns the processes that its work needs.
+The CLI owns its own lifecycle: exit codes, signals, and its stdout.
+A package that only holds process calls, with no decision of its own, is not a boundary.
 
 The dependency direction is fixed:
 
@@ -74,8 +79,8 @@ It does not own the two directory trees.
 - `services/ctl/src/delivery/`, which holds deployment, publication, and qualification. CI calls this code, so it must not stay in a CLI module.
 - The `ops` feature verbs `copy_project_env`, `dump_project_env`, `restore_project_env`, `prune_record_history`, `prune_run_history`, `event_advisories`, and `ops_schema`.
 
-`delivery/` runs `git`, `docker`, `kubectl`, and `cargo` processes, and section 2 keeps process ownership out of the library.
-Before that code moves, the lane brings the process-ownership choice to the owner.
+`delivery/` runs `git`, `docker`, `kubectl`, and `cargo` processes.
+Those process calls move into `wamn-control` with the delivery code, as section 2 allows.
 
 The separation of the dev loop in `services/ctl/src/dev/` is later work.
 
