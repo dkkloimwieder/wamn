@@ -33,7 +33,7 @@ pub struct ReconcileReplicaIdentityArgs {
 }
 
 pub async fn run(args: ReconcileReplicaIdentityArgs) -> anyhow::Result<()> {
-    let directory = crate::apply_package::read_package_directory(&args.package)?;
+    let directory = wamn_control::apply_package::read_package_directory(&args.package)?;
     let package =
         plan_package_migrations(&directory, None).context("derive package model mapping")?;
     let package_id = package.coordinate.package_id().to_owned();

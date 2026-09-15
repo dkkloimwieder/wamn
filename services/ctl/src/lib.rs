@@ -8,7 +8,6 @@
 //! lifecycle and reporting verbs require the `ops` feature and ship in the
 //! separate `wamn-ctl-ops` binary.
 
-pub use wamn_control::apply_package;
 pub mod author_wiring;
 pub mod bind_connection;
 #[cfg(feature = "ops")]
@@ -28,6 +27,7 @@ pub mod identity_issuer;
 #[cfg(feature = "ops")]
 mod ops_schema;
 mod owned_command;
+pub mod package_verbs;
 pub mod pat_client;
 pub mod print_release_env;
 pub mod project_env_membership;
@@ -41,12 +41,10 @@ pub mod prune_run_history;
 pub mod publish_release;
 pub mod push_component;
 pub mod push_release_manifest;
-pub use wamn_control::reconcile_package_data_access;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
 #[cfg(feature = "ops")]
 pub mod restore_project_env;
-use wamn_control::sql_params;
 pub mod terminalize_effect_uncertain;
 #[cfg(target_os = "linux")]
 pub mod ui;

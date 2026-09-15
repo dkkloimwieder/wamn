@@ -4,6 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context as _, ensure};
 use tokio_postgres::Client;
+use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
 use wamn_control_provision::{project_env_database_name, sql, validate_instance_suffix};
 use wamn_ctl::dev::environment::{ProvisionedRoute, read_json, secret_value};
 use wamn_ctl::enable_cdc_project_env::{self, EnableCdcProjectEnvArgs};
@@ -11,7 +12,6 @@ use wamn_ctl::provision_project_env::{self, ProvisionProjectEnvArgs};
 use wamn_ctl::push_component::{
     self, AdmitComponentArgs, PublishAdmittedComponentArgs, PushComponentArgs,
 };
-use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
 
 /// Provision the declared project and read its emitted connection and credentials.
 ///
@@ -115,9 +115,9 @@ fn secret_annotation(path: &Path, name: &str) -> anyhow::Result<String> {
 
 /// Apply the installed package grant union and require replay to make no change.
 pub async fn reconcile_package_data_access(
-    args: ReconcilePackageDataAccessArgs,
+    args: ReconcilePackageDataAccessRequest,
 ) -> anyhow::Result<()> {
-    let again = ReconcilePackageDataAccessArgs {
+    let again = ReconcilePackageDataAccessRequest {
         packages: args.packages.clone(),
         database_url: args.database_url.clone(),
         tenant: args.tenant.clone(),

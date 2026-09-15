@@ -4,7 +4,6 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
-use clap::Args;
 use tokio_postgres::{NoTls, Transaction, error::SqlState};
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_schema_control::{
@@ -52,36 +51,44 @@ pub use package_version::{
 
 const CLAIM_TENANT_SQL: &str = "SELECT set_config('app.tenant', $1, true)";
 
-/// Apply the immutable pending suffix from one package directory.
-#[derive(Debug, Args)]
-pub struct ApplyPackageArgs {
+/// Inputs of one exact package application.
+#[derive(Debug)]
+pub struct ApplyPackageRequest {
     /// Package root containing strict wamn.json and migrations/.
-    #[arg(long)]
     pub package: PathBuf,
 
     /// Owner connection to the target project-environment database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub database_url: String,
 
     /// Tenant stored with the package and migration records.
-    #[arg(long)]
     pub tenant: String,
 }
 
+/// Result of one exact package application.
 #[derive(Debug)]
-struct ApplyOutcome {
-    migrations_applied: usize,
-    changed: bool,
+pub struct ApplyOutcome {
+    /// Package id of the applied coordinate.
+    pub package_id: String,
+
+    /// Package version of the applied coordinate.
+    pub package_version: String,
+
+    /// Number of pending migrations this application ran.
+    pub migrations_applied: usize,
+
+    /// Whether this application changed the database.
+    pub changed: bool,
 }
 
-pub async fn run(args: ApplyPackageArgs) -> anyhow::Result<()> {
-    ensure!(!args.tenant.is_empty(), "tenant must not be empty");
-    let directory = read_package_directory(&args.package)?;
+/// Apply the immutable pending suffix from one package directory.
+pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
+    ensure!(!request.tenant.is_empty(), "tenant must not be empty");
+    let directory = read_package_directory(&request.package)?;
     let presented = plan_package_migrations(&directory, None)
         .context("validate package directory before database work")?;
     let manifest = PackageManifest::from_slice(&directory.manifest_bytes)
         .context("parse strict package manifest for definition ownership")?;
-    let migration_policy = validate_migration_policy(&args.package, &directory, &presented)?;
+    let migration_policy = validate_migration_policy(&request.package, &directory, &presented)?;
     let coordinate = presented.coordinate.clone();
     let coordinate_text = format!(
         "{}@{}",
@@ -89,13 +96,13 @@ pub async fn run(args: ApplyPackageArgs) -> anyhow::Result<()> {
         coordinate.package_version()
     );
 
-    let (mut client, connection) = tokio_postgres::connect(&args.database_url, NoTls)
+    let (mut client, connection) = tokio_postgres::connect(&request.database_url, NoTls)
         .await
         .context("connect to project environment")?;
     let connection_task = tokio::spawn(connection);
     let result = apply(
         &mut client,
-        &args.tenant,
+        &request.tenant,
         &coordinate_text,
         &directory,
         &manifest,
@@ -111,17 +118,7 @@ pub async fn run(args: ApplyPackageArgs) -> anyhow::Result<()> {
             .context("join package database connection")?
             .context("drive package database connection")?;
     }
-    let outcome = result?;
-    println!(
-        "applied {coordinate_text}: {} migration(s){}",
-        outcome.migrations_applied,
-        if !outcome.changed {
-            " (already converged)"
-        } else {
-            ""
-        }
-    );
-    Ok(())
+    result
 }
 
 async fn apply(
@@ -273,6 +270,8 @@ async fn apply(
         reconcile_package_registrations(&tx, tenant, &package_id, &registrations).await?;
     tx.commit().await.context("commit whole package suffix")?;
     Ok(ApplyOutcome {
+        package_id,
+        package_version,
         migrations_applied: applied_count,
         changed: package_inserted
             || migration_changed

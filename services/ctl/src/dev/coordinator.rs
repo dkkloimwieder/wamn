@@ -24,6 +24,8 @@ use wamn_authoring_model::{
     PublishedWiringIdentity,
 };
 use wamn_catalog::{PackageCoordinate, WiringDocument};
+use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
 use wamn_schema_control::BareSchemaName;
 use wamn_schema_generator::{MaterializeMode, PackageManifest};
 use wamn_schema_introspection::ir::{CatalogIr, Table};
@@ -39,7 +41,6 @@ use super::target_database;
 use super::verification_world::RUN_SCHEMA;
 use super::watch::GitSource;
 use super::{DevRunNotice, DevStage, DevStageFailure, DevStageRunner, DevTargetDurability};
-use crate::apply_package::ApplyPackageArgs;
 use crate::dev_gate::GateClient;
 use crate::print_release_env::{ReleaseCarrier, lookup_release_snapshot};
 use crate::publish_release::{PublishReleaseArgs, ReleaseWiringTarget};
@@ -48,7 +49,6 @@ use crate::push_component::{
     project_admitted_component_for_verification, publish_admitted_component,
 };
 use crate::push_release_manifest::PushReleaseManifestArgs;
-use crate::reconcile_package_data_access::ReconcilePackageDataAccessArgs;
 
 const BUILD_TOOL: &str = "tools/build-components";
 const AUTHORING_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -359,7 +359,7 @@ struct PublishedWiring {
 #[derive(Debug)]
 struct PreparedLocalGrants {
     target: target_database::PreparedConfiguration,
-    data_access: crate::reconcile_package_data_access::PreparedLocalDataAccess,
+    data_access: reconcile_package_data_access::PreparedLocalDataAccess,
     input_digest: String,
 }
 
@@ -614,7 +614,7 @@ impl ProductionDevStageRunner {
         .map_err(|source| ProductionDevStageError::owner("project environment policy", source))?;
 
         for package in package_inputs {
-            crate::apply_package::run(ApplyPackageArgs {
+            let outcome = apply_package::apply_package(ApplyPackageRequest {
                 package: package.root,
                 database_url: self.preparation_database_url().to_owned(),
                 tenant: self.config.activation_identity().tenant.clone(),
@@ -623,6 +623,7 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("apply package to verification", source)
             })?;
+            crate::package_verbs::print_applied(&outcome);
         }
         if self.config.local_artifacts().is_some() {
             self.schema_input_digest = self.schema_input_candidate.clone();
@@ -1164,7 +1165,7 @@ impl ProductionDevStageRunner {
     async fn apply(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Apply);
         for package in self.package_inputs()? {
-            crate::apply_package::run(ApplyPackageArgs {
+            let outcome = apply_package::apply_package(ApplyPackageRequest {
                 package: package.root,
                 database_url: self.config.target_database_url().to_owned(),
                 tenant: self.config.activation_identity().tenant.clone(),
@@ -1173,6 +1174,7 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("apply package to the durable environment", source)
             })?;
+            crate::package_verbs::print_applied(&outcome);
         }
         Ok(())
     }
@@ -1190,13 +1192,14 @@ impl ProductionDevStageRunner {
                 target: target_database::prepare_configuration(&self.config).map_err(|source| {
                     ProductionDevStageError::owner("prepare local target privileges", source)
                 })?,
-                data_access: crate::reconcile_package_data_access::prepare_local(&packages)
-                    .map_err(|source| {
+                data_access: reconcile_package_data_access::prepare_local(&packages).map_err(
+                    |source| {
                         ProductionDevStageError::owner(
                             "prepare generated package data access",
                             source,
                         )
-                    })?,
+                    },
+                )?,
                 input_digest,
             };
             self.reconcile_local_grants(&prepared, false).await?;
@@ -1209,8 +1212,8 @@ impl ProductionDevStageRunner {
             self.local_grants = Some(prepared);
             return Ok(());
         }
-        crate::reconcile_package_data_access::reconcile_package_data_access(
-            ReconcilePackageDataAccessArgs {
+        reconcile_package_data_access::reconcile_package_data_access(
+            ReconcilePackageDataAccessRequest {
                 packages,
                 database_url: self.config.target_database_url().to_owned(),
                 tenant: self.config.activation_identity().tenant.clone(),
@@ -1236,7 +1239,7 @@ impl ProductionDevStageRunner {
             .map_err(|source| {
                 ProductionDevStageError::owner("reconcile local target privileges", source)
             })?;
-        crate::reconcile_package_data_access::reconcile_local(
+        reconcile_package_data_access::reconcile_local(
             &prepared.data_access,
             self.config.target_database_url(),
             &self.config.activation_identity().tenant,
@@ -1847,7 +1850,7 @@ fn schema_inputs_digest(
 ) -> Result<String, ProductionDevStageError> {
     let mut inputs = Vec::new();
     for package in packages {
-        let directory = crate::apply_package::read_package_directory(&package.root)
+        let directory = apply_package::read_package_directory(&package.root)
             .map_err(|source| ProductionDevStageError::owner("read schema input", source))?;
         wamn_schema_control::plan_package_migrations(&directory, None).map_err(|source| {
             ProductionDevStageError::owner("validate schema inputs", source.into())
@@ -3004,7 +3007,7 @@ mod tests {
     #[test]
     fn local_schema_inputs_separate_contract_and_sql_changes_from_migrations() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
-        let directory = crate::apply_package::read_package_directory(&root).unwrap();
+        let directory = apply_package::read_package_directory(&root).unwrap();
         let mut manifest = PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
         let original = package_schema_inputs(&manifest, &directory);
         manifest

@@ -6,10 +6,10 @@ mod print_platform_principals;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    apply_package, author_wiring, bind_connection, delivery, enable_cdc_project_env,
-    identity_issuer, print_release_env, project_env_membership, promote, provision_org,
-    provision_project_env, publish_release, push_component, reconcile_package_data_access,
-    reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
+    author_wiring, bind_connection, delivery, enable_cdc_project_env, identity_issuer,
+    package_verbs, print_release_env, project_env_membership, promote, provision_org,
+    provision_project_env, publish_release, push_component, reconcile_replica_identity,
+    reconcile_run_plane, terminalize_effect_uncertain,
 };
 
 #[derive(Parser)]
@@ -51,9 +51,9 @@ enum Command {
     /// Overlay CDC capture onto a provisioned project-env: publication + failover slot + replication role/Secret + reader registration (wamn-l5i9.9, D19 v3)
     EnableCdcProjectEnv(enable_cdc_project_env::EnableCdcProjectEnvArgs),
     /// Apply one exact package-owned migration stream to a project database.
-    ApplyPackage(apply_package::ApplyPackageArgs),
+    ApplyPackage(package_verbs::ApplyPackageArgs),
     /// Reconcile generated package data privileges after apply-package.
-    ReconcilePackageDataAccess(reconcile_package_data_access::ReconcilePackageDataAccessArgs),
+    ReconcilePackageDataAccess(package_verbs::ReconcilePackageDataAccessArgs),
     /// Validate/publish component bytes, then exact-project their facts to both planes
     PushComponent(push_component::PushComponentArgs),
     /// Submit one authored wiring document as an immutable gated wiring version (wamn-1xb5)
@@ -108,9 +108,11 @@ async fn main() -> anyhow::Result<()> {
         Command::GrantProjectEnvMembership(args) => project_env_membership::grant(args).await,
         Command::RevokeProjectEnvMembership(args) => project_env_membership::revoke(args).await,
         Command::EnableCdcProjectEnv(args) => enable_cdc_project_env::run(args).await,
-        Command::ApplyPackage(args) => apply_package::run(args).await,
+        Command::ApplyPackage(args) => package_verbs::apply(args).await,
         Command::BindConnection(args) => bind_connection::run(args).await,
-        Command::ReconcilePackageDataAccess(args) => reconcile_package_data_access::run(args).await,
+        Command::ReconcilePackageDataAccess(args) => {
+            package_verbs::reconcile_data_access(args).await
+        }
         Command::PushComponent(args) => push_component::run(args).await,
         Command::AuthorWiring(args) => author_wiring::run(args).await,
         Command::PublishRelease(args) => publish_release::run(args).await,

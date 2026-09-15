@@ -12,6 +12,7 @@ serde = { workspace = true, features = ["derive"] }
 schemars = { workspace = true }
 url = { workspace = true }
 wamn-ctl = { workspace = true }
+wamn-control = { workspace = true }
 wamn-control-provision = { workspace = true }
 # The PG fixture/seed helpers (scope_session / seed_flow_version): gates hold
 # the connection, the harness holds the one copy of the fixture SQL.

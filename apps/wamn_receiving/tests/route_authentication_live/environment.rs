@@ -73,7 +73,7 @@ pub(super) async fn install_journey_project(
 ) -> anyhow::Result<()> {
     install_journey_platform_floor(project, TENANT, PLATFORM_DOMAIN).await?;
     for package in JOURNEY_PACKAGES {
-        apply_package::run(ApplyPackageArgs {
+        apply_package::apply_package(ApplyPackageRequest {
             package: journey_package_root(package, Some(inputs)),
             database_url: project_url.to_owned(),
             tenant: TENANT.to_owned(),
@@ -103,11 +103,13 @@ pub(super) async fn reconcile_journey_data_access(inputs: &JourneyDocument, proj
         .iter()
         .map(|package| journey_package_root(*package, Some(inputs)))
         .collect::<Vec<_>>();
-    wamn_gate_harness::environment::reconcile_package_data_access(ReconcilePackageDataAccessArgs {
-        packages,
-        database_url: project_url.to_owned(),
-        tenant: TENANT.to_owned(),
-    })
+    wamn_gate_harness::environment::reconcile_package_data_access(
+        ReconcilePackageDataAccessRequest {
+            packages,
+            database_url: project_url.to_owned(),
+            tenant: TENANT.to_owned(),
+        },
+    )
     .await
 }
 

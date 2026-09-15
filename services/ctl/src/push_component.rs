@@ -430,7 +430,7 @@ impl ComponentAdmission {
 
 /// Validate saved component and package bytes without publication side effects.
 pub fn admit_component(args: AdmitComponentArgs) -> anyhow::Result<ComponentAdmission> {
-    let directory = crate::apply_package::read_package_directory(&args.package)?;
+    let directory = wamn_control::apply_package::read_package_directory(&args.package)?;
     let package = plan_package_migrations(&directory, None)
         .context("validate strict package directory before component publication")?;
     let package_manifest =
@@ -1569,7 +1569,7 @@ async fn persist_with_client(
         None
     };
     let package_inserted = if plane == ProjectionPlane::Control {
-        crate::apply_package::register_package(
+        wamn_control::apply_package::register_package(
             &transaction,
             &component.scope.tenant_id,
             &package.coordinate,
@@ -1672,7 +1672,7 @@ async fn require_exact_applied_package(
         )
     })?;
     ensure_component_package_matches(component, &presented.coordinate)?;
-    let Some(applied) = crate::apply_package::load_applied_package(
+    let Some(applied) = wamn_control::apply_package::load_applied_package(
         transaction,
         &component.scope.tenant_id,
         &component.scope.package_id,
@@ -2576,7 +2576,7 @@ mod tests {
         let mut control = connect(&control_config).await;
 
         let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
-        let directory = crate::apply_package::read_package_directory(&package_path)
+        let directory = wamn_control::apply_package::read_package_directory(&package_path)
             .expect("read real Receiving package");
         let package = plan_package_migrations(&directory, None).expect("plan real package");
         let component_bytes = b"verification-project-component".to_vec();
@@ -2913,7 +2913,7 @@ mod tests {
         let control = connect(&control_config).await;
 
         let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
-        let directory = crate::apply_package::read_package_directory(&package_path)
+        let directory = wamn_control::apply_package::read_package_directory(&package_path)
             .expect("read real Receiving package");
         let package = plan_package_migrations(&directory, None).expect("plan real package");
 

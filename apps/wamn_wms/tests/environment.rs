@@ -10,8 +10,9 @@ use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
 use wamn_authoring_model::AuthoringScope;
 use wamn_catalog::{ComponentPackageScope, PackageCoordinate};
+use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest;
 use wamn_control_provision::{WorkloadRoleFamily, sql};
-use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::author_wiring::{self, AuthorWiringArgs};
 use wamn_ctl::bind_connection::{self, BindConnectionArgs, RequirementType};
 use wamn_ctl::dev::environment::{
@@ -25,7 +26,6 @@ use wamn_ctl::provision_project_env::{self, ProvisionProjectEnvArgs, WorkloadGen
 use wamn_ctl::publish_release::{self, PublishReleaseArgs, ReleaseWiringTarget};
 use wamn_ctl::push_component::PushComponentArgs;
 use wamn_ctl::push_release_manifest::{self, PushReleaseManifestArgs};
-use wamn_ctl::reconcile_package_data_access::ReconcilePackageDataAccessArgs;
 use wamn_ctl::reconcile_run_plane::{self, ReconcileRunPlaneArgs};
 use wamn_gate_harness::{environment as shared, journey::JourneyDocument};
 use wamn_test_infrastructure::declarations::{
@@ -253,13 +253,13 @@ pub async fn prepare_project(
     ] {
         private_file(&path)?;
     }
-    apply_package::run(ApplyPackageArgs {
+    apply_package::apply_package(ApplyPackageRequest {
         package: package_root(),
         database_url: route.database_url.clone(),
         tenant: TENANT.into(),
     })
     .await?;
-    shared::reconcile_package_data_access(ReconcilePackageDataAccessArgs {
+    shared::reconcile_package_data_access(ReconcilePackageDataAccessRequest {
         packages: vec![package_root()],
         database_url: route.database_url.clone(),
         tenant: TENANT.into(),

@@ -920,7 +920,7 @@ async fn receiving_release_journey(
         .into_iter()
         .find(|package| package.id == BASE_PACKAGE_ID)
         .context("find the base package in the journey release")?;
-    apply_package::run(ApplyPackageArgs {
+    apply_package::apply_package(ApplyPackageRequest {
         package: journey_package_root(base_package, Some(inputs)),
         database_url: route.database_url.clone(),
         tenant: TENANT.to_owned(),

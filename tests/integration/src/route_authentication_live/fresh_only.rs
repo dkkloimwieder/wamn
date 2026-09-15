@@ -8,7 +8,7 @@ use bytes::Bytes;
 use serde_json::{Value, json};
 use tokio_postgres::Client;
 use wamn_catalog::{ComponentDeclaration, PackageCoordinate};
-use wamn_ctl::apply_package::{self, ApplyPackageArgs};
+use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_ctl::author_wiring::{self, AuthorWiringArgs};
 use wamn_ctl::dev::environment::{
     ENVIRONMENT, JourneyCredentials, ORG, PROJECT, TENANT, connect, secret_value,
@@ -101,7 +101,7 @@ pub(super) async fn test_prior_commit(test: PriorCommitTest<'_>) -> anyhow::Resu
          id uuid CONSTRAINT counter_id_pkey PRIMARY KEY,\n\
          tenant_id text NOT NULL, count bigint NOT NULL);\n",
     )?;
-    apply_package::run(ApplyPackageArgs {
+    apply_package::apply_package(ApplyPackageRequest {
         package: package.clone(),
         database_url: test.project_url.to_owned(),
         tenant: TENANT.to_owned(),

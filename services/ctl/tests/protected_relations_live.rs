@@ -8,11 +8,11 @@ use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
 
+use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control_provision::identity_issuer::{
     IDENTITY_ISSUER_ROLE, IDENTITY_ISSUER_TABLES, grant_identity_issuer_surface_sql,
 };
 use wamn_control_provision::sql;
-use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::reconcile_run_plane;
 use wamn_schema_control::BareSchemaName;
 use wamn_test_infrastructure::locked_database;
@@ -217,7 +217,7 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
         "the converged post-check did not name exactly the project run-plane record"
     );
 
-    apply_package::run(ApplyPackageArgs {
+    apply_package::apply_package(ApplyPackageRequest {
         package: repository.join("apps/wamn_receiving"),
         database_url: url.to_string(),
         tenant: "protected-relation-audit".to_string(),

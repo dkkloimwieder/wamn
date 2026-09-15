@@ -5,7 +5,6 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use anyhow::{Context as _, ensure};
-use clap::Args;
 use tokio_postgres::{Client, NoTls, Transaction};
 use wamn_schema_control::plan_package_migrations;
 use wamn_schema_generator::{
@@ -64,32 +63,35 @@ SELECT namespace.nspname::text, relation.relname::text, relation.relkind::text, 
 /// Manifest hash of each package coordinate, keyed by id and version.
 type CoordinateHashes = BTreeMap<(String, String), String>;
 
-/// Post-apply generated ACL reconciliation arguments.
-#[derive(Debug, Args)]
-pub struct ReconcilePackageDataAccessArgs {
+/// Inputs of one post-apply generated ACL reconciliation.
+#[derive(Debug)]
+pub struct ReconcilePackageDataAccessRequest {
     /// Installed package roots containing wamn.json and generated policy evidence.
-    #[arg(long = "package", required = true)]
     pub packages: Vec<PathBuf>,
 
     /// Owner connection to the target project-environment database.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub database_url: String,
 
     /// Tenant owning the already-applied package coordinate.
-    #[arg(long)]
     pub tenant: String,
 }
 
-/// Effect state forming the reconciliation closing predicate.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Reconciled coordinates and the effect state forming the reconciliation closing predicate.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DataAccessReconcileResult {
+    coordinates: Vec<String>,
     changed: bool,
 }
 
 impl DataAccessReconcileResult {
     /// Whether the server already held the exact generated direct ACL.
-    pub const fn is_noop(self) -> bool {
+    pub const fn is_noop(&self) -> bool {
         !self.changed
+    }
+
+    /// Reconciled package coordinates, `<id>@<version>`, in sorted order.
+    pub fn coordinates(&self) -> &[String] {
+        &self.coordinates
     }
 }
 
@@ -128,42 +130,20 @@ struct PresentedPackage {
 #[derive(Debug)]
 pub struct PreparedLocalDataAccess(Vec<PresentedPackage>);
 
-/// Reconcile the exact installed set of generated package contributions.
-pub async fn run(args: ReconcilePackageDataAccessArgs) -> anyhow::Result<()> {
-    let (coordinates, outcome) = execute(args).await?;
-    println!(
-        "reconciled data access for [{}]{}",
-        coordinates.join(", "),
-        if outcome.is_noop() {
-            " (already converged)"
-        } else {
-            ""
-        }
-    );
-    Ok(())
-}
-
 /// Reconcile the installed package set and return its observable effect state.
 pub async fn reconcile_package_data_access(
-    args: ReconcilePackageDataAccessArgs,
+    request: ReconcilePackageDataAccessRequest,
 ) -> anyhow::Result<DataAccessReconcileResult> {
-    execute(args).await.map(|(_, outcome)| outcome)
-}
-
-async fn execute(
-    args: ReconcilePackageDataAccessArgs,
-) -> anyhow::Result<(Vec<String>, DataAccessReconcileResult)> {
-    ensure!(!args.tenant.is_empty(), "tenant must not be empty");
-    let packages = read_presented_packages(&args.packages)?;
-    let outcome =
-        execute_prepared(&args.database_url, &args.tenant, &packages, false, true).await?;
-    Ok((
-        packages
-            .into_iter()
-            .map(|package| package.coordinate)
-            .collect(),
-        outcome,
-    ))
+    ensure!(!request.tenant.is_empty(), "tenant must not be empty");
+    let packages = read_presented_packages(&request.packages)?;
+    execute_prepared(
+        &request.database_url,
+        &request.tenant,
+        &packages,
+        false,
+        true,
+    )
+    .await
 }
 
 pub fn prepare_local(packages: &[PathBuf]) -> anyhow::Result<PreparedLocalDataAccess> {
@@ -370,7 +350,13 @@ async fn reconcile_mode(
             .await
             .context("finish local data-access validation")?;
     }
-    Ok(DataAccessReconcileResult { changed })
+    Ok(DataAccessReconcileResult {
+        coordinates: packages
+            .iter()
+            .map(|package| package.coordinate.clone())
+            .collect(),
+        changed,
+    })
 }
 
 async fn validate_installed_set(

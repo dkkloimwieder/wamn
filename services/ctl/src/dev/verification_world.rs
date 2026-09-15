@@ -293,11 +293,11 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use serde_json::json;
+    use wamn_control::apply_package::{self, ApplyPackageRequest};
     use wit_component::{ComponentEncoder, StringEncoding, dummy_module, embed_component_metadata};
     use wit_parser::{ManglingAndAbi, Resolve};
 
     use super::*;
-    use crate::apply_package::{self, ApplyPackageArgs};
     use crate::dev::config::{DevConfig, parse_config};
     use crate::dev::verification_database;
     use crate::push_component::{
@@ -616,7 +616,7 @@ mod tests {
             root.join("apps/wamn_receiving"),
             root.join("apps/client_acme_receiving"),
         ] {
-            apply_package::run(ApplyPackageArgs {
+            apply_package::apply_package(ApplyPackageRequest {
                 package,
                 database_url: url.to_owned(),
                 tenant: TENANT.to_owned(),

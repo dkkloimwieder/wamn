@@ -9,8 +9,8 @@ use std::time::Duration;
 use anyhow::Context as _;
 use tokio_postgres::Client;
 use wamn_catalog::{SERVING_MANIFEST_FORMAT_VERSION};
+use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control_provision::{SystemReader, WorkloadRoleFamily, parse_system_reader_url};
-use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::project_env_membership::{self, ProjectEnvMembershipArgs};
 use wamn_ctl::provision_project_env;
 use wamn_gate_harness::journey::{journey_document_schema_bytes, parse_journey_document};
@@ -136,12 +136,12 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
         .await
         .context("seed package-coordinate residue")?;
 
-    let args = || ApplyPackageArgs {
+    let args = || ApplyPackageRequest {
         package: package_root(),
         database_url: project_url.to_owned(),
         tenant: TENANT.to_owned(),
     };
-    apply_package::run(args())
+    apply_package::apply_package(args())
         .await
         .context("apply the Receiving package")?;
     let expected = wamn_control_provision::operation_grants::operation_grant_tokens(
@@ -174,7 +174,7 @@ async fn install_project_and_reconcile(project: &Client, project_url: &str) -> a
     );
 
     let before = permission_write_identity(project).await?;
-    apply_package::run(args())
+    apply_package::apply_package(args())
         .await
         .context("replay the converged Receiving package")?;
     assert_eq!(permission_write_identity(project).await?, before);

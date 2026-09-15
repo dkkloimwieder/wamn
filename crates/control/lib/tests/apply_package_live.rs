@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use tokio_postgres::{Client, NoTls};
-use wamn_control::apply_package::{self, ApplyPackageArgs};
+use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control_provision::PlatformComponent;
 use wamn_control_provision::operation_grants::{OPERATION_GRANT_LOCK_SQL, operation_grant_tokens};
 use wamn_schema_introspection::migration_policy::{MigrationPolicyError, MigrationPolicyErrorKind};
@@ -391,12 +391,16 @@ fn rename_internal_relation(root: &Path, from: &str, to: &str) {
     .expect("write internal-relation manifest");
 }
 
-async fn apply(url: &str, package: &Path) -> anyhow::Result<()> {
+async fn apply(url: &str, package: &Path) -> anyhow::Result<apply_package::ApplyOutcome> {
     apply_for_tenant(url, package, TENANT).await
 }
 
-async fn apply_for_tenant(url: &str, package: &Path, tenant: &str) -> anyhow::Result<()> {
-    apply_package::run(ApplyPackageArgs {
+async fn apply_for_tenant(
+    url: &str,
+    package: &Path,
+    tenant: &str,
+) -> anyhow::Result<apply_package::ApplyOutcome> {
+    apply_package::apply_package(ApplyPackageRequest {
         package: package.to_path_buf(),
         database_url: url.to_owned(),
         tenant: tenant.to_owned(),

@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
 use url::Url;
-use wamn_control::apply_package::{self, ApplyPackageArgs};
-use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
+use wamn_control::apply_package::{self, ApplyPackageRequest};
+use wamn_control::reconcile_package_data_access::{self, ReconcilePackageDataAccessRequest};
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
 };
@@ -43,8 +43,8 @@ fn generation_url(admin_url: &str, role: &str) -> String {
     url.into()
 }
 
-fn reconcile_args(url: &str, packages: Vec<PathBuf>) -> ReconcilePackageDataAccessArgs {
-    ReconcilePackageDataAccessArgs {
+fn reconcile_args(url: &str, packages: Vec<PathBuf>) -> ReconcilePackageDataAccessRequest {
+    ReconcilePackageDataAccessRequest {
         packages,
         database_url: url.to_owned(),
         tenant: TENANT.to_owned(),
@@ -201,14 +201,14 @@ async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
         .batch_execute(APP_SCHEMA)
         .await
         .expect("install application authorization floor");
-    apply_package::run(ApplyPackageArgs {
+    apply_package::apply_package(ApplyPackageRequest {
         package: receiving_package_root(),
         database_url: url.to_string(),
         tenant: TENANT.to_owned(),
     })
     .await
     .expect("apply Receiving package before policy");
-    apply_package::run(ApplyPackageArgs {
+    apply_package::apply_package(ApplyPackageRequest {
         package: overlay_package_root(),
         database_url: url.to_string(),
         tenant: TENANT.to_owned(),
@@ -536,7 +536,7 @@ async fn install_lineage_fixture(url: &str) -> Client {
 }
 
 async fn apply(url: &str, package: PathBuf) {
-    apply_package::run(ApplyPackageArgs {
+    apply_package::apply_package(ApplyPackageRequest {
         package,
         database_url: url.to_owned(),
         tenant: TENANT.to_owned(),

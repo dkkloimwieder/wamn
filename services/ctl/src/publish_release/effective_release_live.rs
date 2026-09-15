@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::{AdmittedComponent, ComponentDeclaration, PackageCoordinate, ServingAttachment};
+use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control_provision::CONTROL_BOOTSTRAP_SQL;
 use wamn_runtime::component_admission::{ComponentAdmissionRequest, validate_component_admission};
 
@@ -14,7 +15,6 @@ use super::{
     mint_release_manifest_with_package_manifests, read_package_manifests,
     resolve_route_host_overlay, sha256, validate_package_metadata,
 };
-use crate::apply_package::{self, ApplyPackageArgs};
 use crate::author_wiring::{self, AuthorWiringRequest};
 use crate::push_component::{admitted_projection_hash, append_or_verify_admitted_component};
 
@@ -186,7 +186,7 @@ async fn provision_control(control: &Client) {
 
 async fn apply_packages(project_url: &str, inputs: &[PackageInput]) {
     for input in inputs {
-        apply_package::run(ApplyPackageArgs {
+        apply_package::apply_package(ApplyPackageRequest {
             package: input.root.clone(),
             database_url: project_url.to_owned(),
             tenant: TENANT.to_owned(),

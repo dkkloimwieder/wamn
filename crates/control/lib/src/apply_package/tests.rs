@@ -24,7 +24,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
         .await
         .unwrap();
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
-    run(ApplyPackageArgs {
+    apply_package(ApplyPackageRequest {
         package: shipped.clone(),
         database_url: url.clone(),
         tenant: TENANT.to_owned(),
@@ -49,7 +49,7 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
     for migration in &directory.migrations {
         std::fs::write(root.join(&migration.relative_path), &migration.bytes).unwrap();
     }
-    let applied = run(ApplyPackageArgs {
+    let applied = apply_package(ApplyPackageRequest {
         package: root.clone(),
         database_url: url.clone(),
         tenant: TENANT.to_owned(),

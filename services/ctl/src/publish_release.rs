@@ -990,7 +990,7 @@ pub async fn project_release_identity(
             .query_one(CLAIM_TENANT_SQL, &[&identity.tenant_id])
             .await
             .map_err(storage)?;
-        let params = crate::sql_params::as_postgres(&statement.params);
+        let params = wamn_control::sql_params::as_postgres(&statement.params);
         transaction
             .execute(statement.sql.as_str(), &params)
             .await
@@ -1070,7 +1070,7 @@ pub async fn attest_deployment(
             ))
         };
         let statement = wamn_schema_control::attestation::register_attestation(&attestation);
-        let params = crate::sql_params::as_postgres(&statement.params);
+        let params = wamn_control::sql_params::as_postgres(&statement.params);
         let inserted = transaction
             .query_opt(statement.sql.as_str(), &params)
             .await

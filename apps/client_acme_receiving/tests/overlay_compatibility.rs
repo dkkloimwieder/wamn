@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, ensure};
 use serde_json::{Value, json};
-use wamn_ctl::apply_package::{self, ApplyPackageArgs, ApplyPackageError, ApplyPackageErrorKind};
+use wamn_control::apply_package::{
+    self, ApplyPackageError, ApplyPackageErrorKind, ApplyPackageRequest,
+};
 use wamn_runtime::component_admission::component_digest;
 use wamn_gate_harness::journey::{BaseCandidate, CompatibilityPhase};
 use wamn_schema_introspection::ir::{
@@ -391,7 +393,7 @@ async fn breaking_install(base: &Path, database_url: &str) -> anyhow::Result<Val
     let result = async {
         project.batch_execute("SET statement_timeout = '20s'; SET lock_timeout = '10s'").await?;
         super::install_journey_platform_floor(project.as_ref(), TENANT, super::PLATFORM_DOMAIN).await?;
-        let apply = |package: PathBuf| apply_package::run(ApplyPackageArgs {
+        let apply = |package: PathBuf| apply_package::apply_package(ApplyPackageRequest {
             package,database_url:database_url.to_owned(),tenant:TENANT.to_owned(),
         });
         apply(base.to_owned()).await.context("apply the breaking base through the production boundary")?;
@@ -565,15 +567,15 @@ async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirem
         .await?;
     super::install_journey_platform_floor(&project, TENANT, super::PLATFORM_DOMAIN).await?;
     for package in [super::package_root(), super::overlay_package_root()] {
-        apply_package::run(ApplyPackageArgs {
+        apply_package::apply_package(ApplyPackageRequest {
             package,
             database_url: url.clone(),
             tenant: TENANT.to_owned(),
         })
         .await?;
     }
-    wamn_ctl::reconcile_package_data_access::run(
-        wamn_ctl::reconcile_package_data_access::ReconcilePackageDataAccessArgs {
+    wamn_control::reconcile_package_data_access::reconcile_package_data_access(
+        wamn_control::reconcile_package_data_access::ReconcilePackageDataAccessRequest {
             packages: vec![super::package_root(), super::overlay_package_root()],
             database_url: url.clone(),
             tenant: TENANT.to_owned(),

@@ -72,7 +72,7 @@ use wamn_catalog::{
     AdmittedComponent, AdmittedComponentOperation, ComponentPackageScope, DefinitionHash,
     WiringDocument, WiringNode, WiringTerminal,
 };
-use wamn_ctl::apply_package::{self, ApplyPackageArgs};
+use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_ctl::author_wiring::{AuthorWiringErrorKind, AuthorWiringRequest, author_wiring};
 use wamn_ctl::push_component::admitted_projection_hash;
 
@@ -132,7 +132,7 @@ async fn provision_project(project: &Client, project_url: &str) {
         .parent()
         .and_then(Path::parent)
         .expect("ctl crate lives under services/ctl");
-    apply_package::run(ApplyPackageArgs {
+    apply_package::apply_package(ApplyPackageRequest {
         package: repository.join("apps/wamn_receiving"),
         database_url: project_url.to_string(),
         tenant: TENANT.to_string(),

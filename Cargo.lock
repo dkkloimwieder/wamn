@@ -5703,7 +5703,6 @@ name = "wamn-control"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "hex",
  "ring",
  "serde_json",
@@ -5924,6 +5923,7 @@ dependencies = [
  "serde_json",
  "tokio-postgres",
  "url",
+ "wamn-control",
  "wamn-control-provision",
  "wamn-ctl",
 ]
@@ -6068,6 +6068,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-client",
  "wamn-component-policy",
+ "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-ctl",
@@ -6161,6 +6162,7 @@ dependencies = [
  "wamn-catalog",
  "wamn-cdc-reader",
  "wamn-client",
+ "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-ctl",
@@ -6492,6 +6494,7 @@ dependencies = [
  "wamn-authoring-model",
  "wamn-catalog",
  "wamn-cdc-reader",
+ "wamn-control",
  "wamn-control-provision",
  "wamn-control-registry",
  "wamn-ctl",
