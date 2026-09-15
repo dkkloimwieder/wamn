@@ -1,4 +1,4 @@
-//! Actual identity CLI and HTTPS routes on an explicitly armed disposable DB.
+//! Actual identity CLI and HTTPS routes on a disposable test DB.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -71,16 +71,13 @@ fn cli_and_validated_configuration_debug_do_not_disclose_database_credentials() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires an explicitly armed disposable wamn_system PostgreSQL database"]
 async fn identity_https_has_only_public_jwks_and_health() {
-    assert_eq!(
-        std::env::var("WAMN_IDENTITY_SERVICE_ALLOW_SCHEMA_RESET").as_deref(),
-        Ok("1"),
-        "arm only an owned disposable cluster: this test replaces platform schemas"
-    );
-    let admin_url = std::env::var("WAMN_IDENTITY_SERVICE_PG_URL")
-        .expect("provide the disposable wamn_system URL");
-    let (mut admin, admin_driver) = connect(&admin_url).await;
+    let mut postgres = wamn_test_postgres::start(&[]).expect("start the test PostgreSQL server");
+    let system = postgres
+        .create_database("wamn_system")
+        .expect("create the wamn_system test database");
+    let admin_url = system.url();
+    let (mut admin, admin_driver) = connect(admin_url).await;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
         .await
@@ -143,7 +140,7 @@ async fn identity_https_has_only_public_jwks_and_health() {
         )
         .await
         .expect("provision narrow identity credential");
-    let mut scoped = url::Url::parse(&admin_url).expect("fixture URL shape");
+    let mut scoped = url::Url::parse(admin_url).expect("fixture URL shape");
     scoped.set_username(&role).expect("scoped login");
     scoped
         .set_password(Some(PASSWORD))

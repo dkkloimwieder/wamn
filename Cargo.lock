@@ -6032,6 +6032,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-pg-core",
  "wamn-platform-identity",
+ "wamn-test-postgres",
 ]
 
 [[package]]

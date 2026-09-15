@@ -115,20 +115,19 @@ fn operator_ca_configuration_refuses_missing_or_malformed_roots() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires armed disposable PostgreSQL 18; replaces identity, registry, and provisioning schemas"]
 async fn operator_pat_issuance_over_https() {
-    assert!(
-        std::env::var("WAMN_PAT_ISSUANCE_ALLOW_SCHEMA_RESET").as_deref() == Ok("1"),
-        "arm only an owned disposable cluster"
-    );
-    let raw = std::env::var("WAMN_PAT_ISSUANCE_PG_URL")
-        .expect_redacted("provide disposable wamn_system URL");
-    let parsed = url::Url::parse(&raw).expect_redacted("armed URL shape");
+    let mut postgres =
+        wamn_test_postgres::start(&[]).expect_redacted("start the test PostgreSQL server");
+    let database = postgres
+        .create_database("wamn_system")
+        .expect_redacted("create the wamn_system test database");
+    let raw = database.url();
+    let parsed = url::Url::parse(raw).expect_redacted("test database URL shape");
     assert!(
         parsed.path() == "/wamn_system",
         "never reset another database"
     );
-    let (mut system, connection) = tokio_postgres::connect(&raw, NoTls)
+    let (mut system, connection) = tokio_postgres::connect(raw, NoTls)
         .await
         .expect_redacted("connect disposable PostgreSQL");
     let driver = tokio::spawn(async move {

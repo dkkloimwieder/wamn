@@ -1,4 +1,4 @@
-//! Real HTTPS exchanges against explicitly armed, disposable PostgreSQL 18.
+//! Real HTTPS exchanges against a disposable test PostgreSQL 18 server.
 //!
 //! This suite replaces the system schemas and creates three exact fixture
 //! databases. It uses the production issuer and role-reader credential builders.
@@ -79,6 +79,7 @@ impl Drop for Database {
 }
 
 struct Fixture {
+    admin: String,
     system: Database,
     environments: Vec<Database>,
     targets: Vec<SessionTarget>,
@@ -100,9 +101,14 @@ impl Drop for Https {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires armed disposable PostgreSQL 18; replaces system schemas and three named databases"]
+#[ignore = "requires WAMN_SESSION_EXCHANGE_CTL_BIN naming this worktree's compiled wamn-ctl"]
 async fn session_exchange_uses_fresh_scoped_authority_without_session_state() {
-    let fixture = setup().await;
+    let mut postgres =
+        wamn_test_postgres::start(&[]).expect_redacted("start the test PostgreSQL server");
+    let system = postgres
+        .create_database("wamn_system")
+        .expect_redacted("create the wamn_system test database");
+    let fixture = setup(system.url()).await;
     let duplicate = IdentityConfig::new(ISSUER, &fixture.issuer_url)
         .expect_redacted("validated duplicate-target control")
         .with_session_targets(vec![fixture.targets[0].clone(), fixture.targets[0].clone()]);
@@ -883,9 +889,8 @@ async fn retained_successor_allows_real_retirement(
     ))
     .await
     .expect_redacted("prepare exact successor through production builder");
-    let admin =
-        std::env::var("WAMN_SESSION_EXCHANGE_PG_URL").expect_redacted("armed administrator URL");
-    let parsed = url::Url::parse(&admin).expect_redacted("administrator URL shape");
+    let admin = fixture.admin.as_str();
+    let parsed = url::Url::parse(admin).expect_redacted("administrator URL shape");
     let successor_target = SessionTarget::new(
         triple,
         target.instance_suffix(),
@@ -901,7 +906,7 @@ async fn retained_successor_allows_real_retirement(
 
     // No synthetic B connection is created anywhere in this fixture. The
     // existing CLI must refuse retirement until an actual B exchange occurs.
-    let refusal = retire_reader_cli(&admin, target).await;
+    let refusal = retire_reader_cli(admin, target).await;
     assert!(
         !refusal.status.success(),
         "unopened successor cannot authorize retirement"
@@ -925,7 +930,7 @@ async fn retained_successor_allows_real_retirement(
     )
     .await;
     let successor_pid = only_reader_pid(dev, &successor_target).await;
-    let retirement = retire_reader_cli(&admin, target).await;
+    let retirement = retire_reader_cli(admin, target).await;
     assert!(
         retirement.status.success(),
         "real retained B service session permits existing CLI retirement"
@@ -1074,19 +1079,13 @@ async fn grant(system: &Client, principal: &Principal, org: &str, env: &str) {
         .expect_redacted("explicit environment grant");
 }
 
-async fn setup() -> Fixture {
-    assert!(
-        std::env::var("WAMN_SESSION_EXCHANGE_ALLOW_SCHEMA_RESET").as_deref() == Ok("1"),
-        "arm only an owned disposable cluster"
-    );
-    let raw = std::env::var("WAMN_SESSION_EXCHANGE_PG_URL")
-        .expect_redacted("provide disposable wamn_system URL");
-    let admin = url::Url::parse(&raw).expect_redacted("armed URL shape");
+async fn setup(raw: &str) -> Fixture {
+    let admin = url::Url::parse(raw).expect_redacted("test database URL shape");
     assert!(
         admin.path() == "/wamn_system",
         "never reset another database"
     );
-    let system = connect(&raw).await;
+    let system = connect(raw).await;
     let safe: bool = system.client.query_one("SELECT current_database()='wamn_system' AND current_setting('server_version_num')::int BETWEEN 180000 AND 189999 AND rolsuper FROM pg_roles WHERE rolname=current_user", &[])
         .await.expect_redacted("disposable PG18 preflight").get(0);
     assert!(safe, "test needs dedicated PostgreSQL 18 superuser setup");
@@ -1261,6 +1260,7 @@ async fn setup() -> Fixture {
         environments.push(environment);
     }
     Fixture {
+        admin: raw.to_owned(),
         system,
         environments,
         targets,
