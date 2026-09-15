@@ -87,19 +87,6 @@ fn observation_at_record() -> RunPlaneObservation {
             can_replicate: false,
             bypasses_rls: false,
         }),
-        effect_writer_role: Some(EffectWriterRoleObservation {
-            can_login: false,
-            is_superuser: false,
-            can_create_database: false,
-            can_create_role: false,
-            inherits_roles: false,
-            can_replicate: false,
-            bypasses_rls: false,
-            can_connect: false,
-            owns_objects: false,
-            membership_out_of_bounds: false,
-        }),
-        effect_writer_schema_privileges: (true, false),
         environment_policy_row_security: Some(environment_policy_row_security_at_record()),
         ..Default::default()
     };
@@ -168,33 +155,16 @@ fn observation_at_record() -> RunPlaneObservation {
     ] {
         obs.effect_table_owners
             .insert(table.to_string(), "platform_admin".to_string());
-        // All three tables are at record WITHOUT the writer's append
-        // authority — born parked, matching `deploy/sql/run-state.sql`.
-        let writer_at_record: &[&str] = &["SELECT"];
-        for (grantee, privileges) in [
-            ("wamn_app", &["SELECT"][..]),
-            (EFFECT_WRITER_ROLE, writer_at_record),
-        ] {
-            let key = (table.to_string(), grantee.to_string());
-            let privileges: BTreeSet<String> = privileges
-                .iter()
-                .map(|privilege| (*privilege).to_string())
-                .collect();
-            obs.effect_table_privileges
-                .insert(key.clone(), privileges.clone());
-            obs.effect_table_effective_privileges
-                .insert(key.clone(), privileges.clone());
-            obs.effect_table_effective_column_privileges
-                .insert(key, privileges);
-        }
-    }
-    for (table, columns) in EFFECT_WRITER_RUN_READ_COLUMNS {
-        for column in columns {
-            obs.effect_writer_run_column_privileges.insert(
-                (table.to_string(), (*column).to_string()),
-                ["SELECT".to_string()].into_iter().collect(),
-            );
-        }
+        // All three tables are at record without append authority — born
+        // parked, matching `deploy/sql/run-state.sql`.
+        let key = (table.to_string(), "wamn_app".to_string());
+        let privileges: BTreeSet<String> = ["SELECT".to_string()].into_iter().collect();
+        obs.effect_table_privileges
+            .insert(key.clone(), privileges.clone());
+        obs.effect_table_effective_privileges
+            .insert(key.clone(), privileges.clone());
+        obs.effect_table_effective_column_privileges
+            .insert(key, privileges);
     }
     for spec in CHECK_SPECS {
         obs.checks.insert(
@@ -655,7 +625,7 @@ fn table_sections_carry_indexes_rls_and_grants() {
     assert!(rq.contains("CREATE INDEX run_queue_claimable"));
     assert!(rq.contains("available_at, stream_seq, run_id, lease_expires_at"));
     assert!(rq.contains("FORCE ROW LEVEL SECURITY"));
-    assert!(rq.contains("FROM PUBLIC, wamn_app, wamn_effect_writer"));
+    assert!(rq.contains("FROM PUBLIC, wamn_app"));
     assert!(!rq.contains("TO wamn_app"));
     for retired in [
         "partition_key",
@@ -861,10 +831,6 @@ fn failure_detail_cutover_leads_without_poisoning_following_acl_repairs() {
             .map(|column| (*column).to_string()),
     );
     legacy.app_run_capture_privileges.0 = true;
-    legacy.effect_writer_run_table_privileges.insert(
-        "runs".to_string(),
-        ["SELECT".to_string()].into_iter().collect(),
-    );
 
     let plan = plan_run_plane(&schema("demo"), &legacy);
     assert_eq!(
@@ -873,22 +839,18 @@ fn failure_detail_cutover_leads_without_poisoning_following_acl_repairs() {
         "actions: {:#?}",
         plan.actions
     );
-    for kind in [
-        RunPlaneActionKind::RepairRunCapturePrivilege,
-        RunPlaneActionKind::RepairEffectWriterPrivilege,
-    ] {
-        let repair = plan
-            .actions
-            .iter()
-            .find(|action| action.kind == kind && action.target.contains("runs"))
-            .unwrap_or_else(|| panic!("missing {kind:?} after cutover"));
-        for retired in RETIRED_FAILURE_DETAIL_COLUMNS {
-            assert!(
-                !repair.sql.contains(retired),
-                "post-cutover {kind:?} still names {retired}: {}",
-                repair.sql
-            );
-        }
+    let kind = RunPlaneActionKind::RepairRunCapturePrivilege;
+    let repair = plan
+        .actions
+        .iter()
+        .find(|action| action.kind == kind && action.target.contains("runs"))
+        .unwrap_or_else(|| panic!("missing {kind:?} after cutover"));
+    for retired in RETIRED_FAILURE_DETAIL_COLUMNS {
+        assert!(
+            !repair.sql.contains(retired),
+            "post-cutover {kind:?} still names {retired}: {}",
+            repair.sql
+        );
     }
 }
 
@@ -1366,45 +1328,6 @@ fn widened_environment_policy_tenant_policy_mutant_plans_exact_replacement() {
             .contains("FOR SELECT TO wamn_platform USING (true)")
     );
     assert!(!repair.sql.contains("WITH CHECK"));
-}
-
-#[test]
-fn environment_policy_writer_grants_are_revoked_and_refused_effectively() {
-    let mut obs = observation_at_record();
-    let key = (
-        "demo".to_string(),
-        "environment_policies".to_string(),
-        EFFECT_WRITER_ROLE.to_string(),
-    );
-    obs.authoring_table_privileges
-        .insert(key.clone(), BTreeSet::from(["UPDATE".to_string()]));
-    obs.authoring_effective_table_privileges
-        .insert(key.clone(), BTreeSet::from(["UPDATE".to_string()]));
-    obs.authoring_effective_column_privileges
-        .insert(key, BTreeSet::from(["UPDATE".to_string()]));
-
-    let plan = plan_run_plane(&schema("demo"), &obs);
-    let repair = plan
-        .actions
-        .iter()
-        .find(|action| {
-            action.kind == RunPlaneActionKind::RepairAuthoringPrivilege
-                && action.target == "demo.environment_policies"
-        })
-        .expect("policy writer drift must be repaired");
-    assert!(repair.sql.contains(
-        "REVOKE ALL PRIVILEGES ON TABLE \"demo\".\"environment_policies\" FROM wamn_effect_writer"
-    ));
-    assert!(
-        repair
-            .sql
-            .contains("'wamn_effect_writer', '\"demo\".\"environment_policies\"', 'UPDATE'")
-    );
-    assert!(
-        repair
-            .sql
-            .contains("authoring-effective-privilege-out-of-bounds")
-    );
 }
 
 /// Column-level authority ALONE — no direct grant, no table-level effective
@@ -2189,9 +2112,8 @@ fn unsafe_legacy_attempt_upgrade_refuses() {
 }
 
 #[test]
-fn writer_role_verification_precedes_empty_structural_cutover() {
+fn empty_structural_cutover_owns_its_retired_check() {
     let mut obs = observation_at_record();
-    obs.effect_writer_role = None;
     obs.tables
         .get_mut("effect_attempts")
         .expect("attempt table")
@@ -2205,17 +2127,12 @@ fn writer_role_verification_precedes_empty_structural_cutover() {
     );
 
     let plan = plan_run_plane(&schema("demo"), &obs);
-    let verify = plan
-        .actions
-        .iter()
-        .position(|action| action.kind == RunPlaneActionKind::VerifyEffectWriterRole)
-        .expect("writer role verification");
-    let cutover = plan
-        .actions
-        .iter()
-        .position(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
-        .expect("writer structural cutover");
-    assert!(verify < cutover);
+    assert!(
+        plan.actions
+            .iter()
+            .any(|action| action.kind == RunPlaneActionKind::EffectWriterCutover),
+        "writer structural cutover"
+    );
     assert!(!plan.actions.iter().any(|action| {
         action.kind == RunPlaneActionKind::DropExtraConstraint
             && action.target == "effect_attempts.effect_attempts_key_check"
@@ -2223,9 +2140,8 @@ fn writer_role_verification_precedes_empty_structural_cutover() {
 }
 
 #[test]
-fn populated_writer_cutover_refusal_precedes_role_verification() {
+fn populated_writer_cutover_refusal_is_the_only_action() {
     let mut obs = observation_at_record();
-    obs.effect_writer_role = None;
     obs.effect_record_rows = 1;
     obs.tables
         .get_mut("effect_attempts")
@@ -2305,9 +2221,8 @@ fn from_zero_plans_the_full_set_in_order() {
     let obs = RunPlaneObservation::default();
     let plan = plan_run_plane(&schema("wamn_runner_demo"), &obs);
     let kinds: Vec<RunPlaneActionKind> = plan.actions.iter().map(|a| a.kind).collect();
-    assert_eq!(kinds[0], RunPlaneActionKind::VerifyEffectWriterRole);
-    assert_eq!(kinds[1], RunPlaneActionKind::EnsureScenarioAuthorRole);
-    assert_eq!(kinds[2], RunPlaneActionKind::EnsureSchema);
+    assert_eq!(kinds[0], RunPlaneActionKind::EnsureScenarioAuthorRole);
+    assert_eq!(kinds[1], RunPlaneActionKind::EnsureSchema);
     let creates: Vec<&str> = plan
         .actions
         .iter()
@@ -2888,7 +2803,7 @@ fn operator_action_helper_and_acl_pin_admin_only_append_and_immutability() {
             .contains("operator-run-action-immutable")
     );
     assert!(RUN_STATE_SQL.contains(
-        "REVOKE ALL PRIVILEGES ON TABLE wamn_run.operator_run_actions\n    FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer"
+        "REVOKE ALL PRIVILEGES ON TABLE wamn_run.operator_run_actions\n    FROM PUBLIC, wamn_app, wamn_scenario_author;"
     ));
     assert!(!RUN_STATE_SQL.contains("GRANT INSERT ON wamn_run.operator_run_actions"));
     assert!(RUN_STATE_SQL.contains("operator_run_actions_update_immutable"));
@@ -2896,108 +2811,25 @@ fn operator_action_helper_and_acl_pin_admin_only_append_and_immutability() {
 }
 
 #[test]
-fn effect_writer_surface_uses_acl_not_insert_authorization_triggers() {
-    assert!(!RUN_STATE_SQL.contains("CREATE ROLE wamn_effect_writer"));
+fn effect_tables_use_acl_not_insert_authorization_triggers() {
     assert!(!RUN_STATE_SQL.contains("guard_effect_writer_append"));
     assert!(!RUN_STATE_SQL.contains("writer_insert_guard"));
     assert!(RUN_STATE_SQL.contains(
-        "REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempts\n    FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer"
+        "REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempts\n    FROM PUBLIC, wamn_app, wamn_scenario_author;"
     ));
-    // BORN PARKED: read-only at record. This is the DDL-TEXT half only, and it
+    // BORN PARKED: no append at record. This is the DDL-TEXT half only, and it
     // cannot tell a declaration from a comment mentioning one. The load-bearing
-    // arm is THE SERVER'S refusal, asserted live over the applied DDL in
-    // `crates/control/provision/tests/deploy_sql_authority.rs` and over the
-    // reconciled result in `crates/control/lib/tests/run_plane_live.rs`.
-    assert!(
-        RUN_STATE_SQL
-            .contains("GRANT SELECT ON wamn_run.effect_attempts TO wamn_effect_writer")
-    );
-    assert!(
-        !RUN_STATE_SQL
-            .contains("GRANT SELECT, INSERT ON wamn_run.effect_attempts TO wamn_effect_writer")
-    );
+    // arm is THE SERVER'S answer, asserted live over the applied DDL in
+    // `crates/control/provision/tests/family_denial_matrix.rs`.
+    assert!(!RUN_STATE_SQL.contains("INSERT ON wamn_run.effect_attempts"));
     assert!(
         RUN_STATE_SQL.contains("ALTER TABLE wamn_run.effect_attempts FORCE ROW LEVEL SECURITY")
     );
-    assert!(RUN_STATE_SQL.contains(
-        "GRANT SELECT (tenant_id, run_id, status)\n    ON wamn_run.runs TO wamn_effect_writer"
-    ));
-    assert!(RUN_QUEUE_SQL.contains(
-        "GRANT SELECT (tenant_id, run_id, lease_owner, lease_expires_at, lease_generation)\n    ON wamn_run.run_queue TO wamn_effect_writer"
-    ));
-    assert!(!RUN_STATE_SQL.contains("GRANT SELECT ON wamn_run.runs TO wamn_effect_writer"));
-    assert!(
-        !RUN_QUEUE_SQL.contains("GRANT SELECT ON wamn_run.run_queue TO wamn_effect_writer")
-    );
 }
 
 #[test]
-fn effect_writer_run_reads_reconcile_to_exact_columns_without_table_authority() {
+fn effect_table_acl_repair_removes_table_and_column_drift() {
     let mut obs = observation_at_record();
-    obs.effect_writer_run_table_privileges.insert(
-        "runs".to_string(),
-        ["SELECT".to_string(), "UPDATE".to_string()]
-            .into_iter()
-            .collect(),
-    );
-    obs.effect_writer_run_column_privileges
-        .remove(&("run_queue".to_string(), "lease_expires_at".to_string()));
-    obs.tables
-        .get_mut("run_queue")
-        .expect("queue table")
-        .remove("lease_expires_at");
-    obs.effect_writer_run_column_privileges.insert(
-        ("run_queue".to_string(), "lease_generation".to_string()),
-        ["SELECT".to_string()].into_iter().collect(),
-    );
-
-    let plan = plan_run_plane(&schema("demo"), &obs);
-    let runs = plan
-        .actions
-        .iter()
-        .find(|action| action.target == "demo.runs.effect-read")
-        .expect("runs writer-read repair");
-    assert_eq!(runs.kind, RunPlaneActionKind::RepairEffectWriterPrivilege);
-    assert!(
-        runs.sql
-            .contains("REVOKE ALL PRIVILEGES ON TABLE \"demo\".\"runs\"")
-    );
-    assert!(
-        runs.sql
-            .contains("GRANT SELECT (\"tenant_id\", \"run_id\", \"status\")")
-    );
-    assert!(runs.sql.contains("has_table_privilege"));
-
-    let queue = plan
-        .actions
-        .iter()
-        .find(|action| action.target == "demo.run_queue.effect-read")
-        .expect("queue writer-read repair");
-    let add = plan
-        .actions
-        .iter()
-        .position(|action| {
-            action.kind == RunPlaneActionKind::AddColumn
-                && action.target == "run_queue.lease_expires_at"
-        })
-        .expect("missing allowed queue column is restored");
-    let repair = plan
-        .actions
-        .iter()
-        .position(|action| action.target == "demo.run_queue.effect-read")
-        .unwrap();
-    assert!(add < repair);
-    assert!(queue.sql.contains(
-        "GRANT SELECT (\"tenant_id\", \"run_id\", \"lease_owner\", \"lease_expires_at\", \"lease_generation\")"
-    ));
-    assert!(queue.sql.contains("attribute.attname"));
-    assert!(!queue.sql.contains("ARRAY['lease_generation']"));
-}
-
-#[test]
-fn effect_writer_acl_repair_removes_schema_table_and_column_drift() {
-    let mut obs = observation_at_record();
-    obs.effect_writer_schema_privileges = (true, true);
     obs.effect_table_effective_privileges.insert(
         (
             "effect_attempts".to_string(),
@@ -3011,48 +2843,30 @@ fn effect_writer_acl_repair_removes_schema_table_and_column_drift() {
         .insert("UPDATE".to_string());
 
     let plan = plan_run_plane(&schema("demo"), &obs);
-    let schema_action = plan
-        .actions
-        .iter()
-        .find(|action| {
-            action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
-                && action.target == "demo.usage"
-        })
-        .expect("writer schema ACL repair");
-    assert!(
-        schema_action
-            .sql
-            .contains("FROM PUBLIC, wamn_effect_writer")
-    );
-    assert!(
-        schema_action
-            .sql
-            .contains("effect-writer-schema-privilege-out-of-bounds")
-    );
     let table_action = plan
         .actions
         .iter()
         .find(|action| {
-            action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+            action.kind == RunPlaneActionKind::RepairEffectTablePrivilege
                 && action.target == "demo.effect_attempts"
         })
-        .expect("writer table ACL repair");
+        .expect("effect table ACL repair");
     assert!(table_action.sql.contains("REVOKE SELECT ("));
     assert!(table_action.sql.contains("has_any_column_privilege"));
     // BORN PARKED: the attempt table is re-granted READ ONLY, and the block
-    // refuses to see the server still report the writer holding INSERT.
+    // refuses to see the server still report the guest holding INSERT.
     assert!(
-        table_action.sql.contains(
-            "GRANT SELECT ON TABLE \"demo\".\"effect_attempts\" TO wamn_effect_writer"
-        )
+        table_action
+            .sql
+            .contains("GRANT SELECT ON TABLE \"demo\".\"effect_attempts\" TO wamn_app")
     );
     assert!(!table_action.sql.contains("GRANT SELECT, INSERT"));
     assert!(table_action.sql.contains(
         "ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
-             WHERE pg_catalog.has_table_privilege('wamn_effect_writer'"
+             WHERE pg_catalog.has_table_privilege('wamn_app'"
     ));
     assert!(table_action.sql.contains(
-        "has_any_column_privilege('wamn_effect_writer', \
+        "has_any_column_privilege('wamn_app', \
              '\"demo\".\"effect_attempts\"', 'INSERT,UPDATE,REFERENCES')"
     ));
 }
@@ -3062,14 +2876,14 @@ fn effect_writer_acl_repair_removes_schema_table_and_column_drift() {
 /// database converges onto, so restoring the append here would re-mint the
 /// dormant authority on every reconcile even with the DDL parked.
 #[test]
-fn dispatch_table_reconciles_to_a_parked_writer() {
+fn dispatch_table_reconciles_parked() {
     assert_sibling_table_reconciles_parked("effect_attempt_dispatches");
 }
 
 /// The same arm for the second sibling, named separately so a mutant that
 /// re-arms exactly one relation cannot hide behind the other.
 #[test]
-fn outcome_table_reconciles_to_a_parked_writer() {
+fn outcome_table_reconciles_parked() {
     assert_sibling_table_reconciles_parked("effect_attempt_outcomes");
 }
 
@@ -3084,14 +2898,14 @@ fn assert_sibling_table_reconciles_parked(table: &str) {
         .actions
         .iter()
         .find(|action| {
-            action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+            action.kind == RunPlaneActionKind::RepairEffectTablePrivilege
                 && action.target == format!("demo.{table}")
         })
         .expect("sibling table ACL repair");
     // The re-grant is READ ONLY…
     assert!(
         action.sql.contains(&format!(
-            "GRANT SELECT ON TABLE \"demo\".\"{table}\" TO wamn_effect_writer"
+            "GRANT SELECT ON TABLE \"demo\".\"{table}\" TO wamn_app"
         )),
         "{table}: sibling table is not re-granted read-only: {}",
         action.sql
@@ -3106,14 +2920,14 @@ fn assert_sibling_table_reconciles_parked(table: &str) {
     assert!(
         action.sql.contains(
             "ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
-                 WHERE pg_catalog.has_table_privilege('wamn_effect_writer'"
+                 WHERE pg_catalog.has_table_privilege('wamn_app'"
         ),
         "{table}: table-level self-check does not forbid INSERT: {}",
         action.sql
     );
     assert!(
         action.sql.contains(&format!(
-            "has_any_column_privilege('wamn_effect_writer', \
+            "has_any_column_privilege('wamn_app', \
                  '\"demo\".\"{table}\"', 'INSERT,UPDATE,REFERENCES')"
         )),
         "{table}: column-level self-check does not forbid INSERT: {}",
@@ -3153,10 +2967,10 @@ fn cutover_owned_columns_are_not_named_by_later_acl_repair() {
         .actions
         .iter()
         .find(|action| {
-            action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+            action.kind == RunPlaneActionKind::RepairEffectTablePrivilege
                 && action.target == "demo.effect_attempts"
         })
-        .expect("writer table ACL repair");
+        .expect("effect table ACL repair");
     assert!(repair.sql.contains(&quote_ident("attempt_id")));
     for dropped in ["node_id", "attempt_key"]
         .into_iter()
@@ -3343,12 +3157,6 @@ fn observation_sql_is_pinned() {
     assert!(select_run_capture_privileges_sql().contains("has_table_privilege"));
     assert!(select_run_capture_privileges_sql().contains("has_column_privilege"));
     assert!(select_run_capture_privileges_sql().contains("capture_mode"));
-    let writer_tables = select_effect_writer_run_table_privileges_sql();
-    assert!(writer_tables.contains("has_table_privilege"));
-    assert!(writer_tables.contains("relation.relname IN ('runs', 'run_queue')"));
-    let writer_columns = select_effect_writer_run_column_privileges_sql();
-    assert!(writer_columns.contains("has_column_privilege"));
-    assert!(writer_columns.contains("attribute.attnum > 0"));
     assert!(!select_authoring_table_privileges_sql().contains("authoring_report_reservations"));
     // Every observation query must see every relation the privilege
     // reconciler owns, or the planner reads an empty privilege set and plans

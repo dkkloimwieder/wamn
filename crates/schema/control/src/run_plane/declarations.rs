@@ -805,17 +805,3 @@ pub(super) const TABLE_PRIVILEGE_TYPES: [&str; 7] = [
     "REFERENCES",
     "TRIGGER",
 ];
-
-pub(super) const EFFECT_WRITER_RUN_READ_COLUMNS: [(&str, &[&str]); 2] = [
-    ("runs", &["tenant_id", "run_id", "status"]),
-    (
-        "run_queue",
-        &[
-            "tenant_id",
-            "run_id",
-            "lease_owner",
-            "lease_expires_at",
-            "lease_generation",
-        ],
-    ),
-];

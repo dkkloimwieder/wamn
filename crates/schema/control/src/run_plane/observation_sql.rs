@@ -1,6 +1,6 @@
 //! Read PostgreSQL catalog facts for run-plane reconciliation.
 
-use super::{BareSchemaName, generation_role_contract_violation_sql};
+use super::BareSchemaName;
 
 /// Security attributes of the host-only scenario-author role (zero or one row).
 pub fn select_scenario_author_role_sql() -> &'static str {
@@ -9,63 +9,18 @@ pub fn select_scenario_author_role_sql() -> &'static str {
        FROM pg_catalog.pg_roles WHERE rolname = 'wamn_scenario_author'"
 }
 
-/// Provisioning-owned writer role attributes plus ownership/membership/CONNECT.
-pub fn select_effect_writer_role_sql() -> String {
-    format!(
-        "SELECT role.rolcanlogin, role.rolsuper, role.rolcreatedb, role.rolcreaterole, \
-            role.rolinherit, role.rolreplication, role.rolbypassrls, \
-            pg_catalog.has_database_privilege(role.oid, current_database(), 'CONNECT'), \
-            EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE relowner = role.oid) \
-              OR EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspowner = role.oid) \
-              OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc WHERE proowner = role.oid) \
-              OR EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datdba = role.oid), \
-            EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member = role.oid) \
-              OR EXISTS ( \
-                   SELECT 1 FROM pg_catalog.pg_auth_members AS membership \
-                   JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
-                   WHERE membership.roleid = role.oid \
-                     AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{{40}}_[ab]$' \
-                          OR NOT member.rolcanlogin OR member.rolsuper \
-                          OR member.rolcreatedb OR member.rolcreaterole \
-                          OR NOT member.rolinherit OR member.rolreplication \
-                          OR member.rolbypassrls)) \
-              OR {generation_contract} \
-       FROM pg_catalog.pg_roles AS role \
-      WHERE role.rolname = 'wamn_effect_writer'",
-        generation_contract = generation_role_contract_violation_sql(),
-    )
-}
-
-/// Exact direct writer USAGE/no-PUBLIC boundary plus effective CREATE.
-pub fn select_effect_writer_schema_privileges_sql() -> &'static str {
-    "SELECT COALESCE( \
-              EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE( \
-                        namespace.nspacl, pg_catalog.acldefault('n', namespace.nspowner))) acl \
-                       WHERE acl.grantee = role.oid AND acl.privilege_type = 'USAGE') \
-              AND NOT EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE( \
-                        namespace.nspacl, pg_catalog.acldefault('n', namespace.nspowner))) acl \
-                       WHERE acl.grantee = 0 \
-                         AND acl.privilege_type IN ('USAGE', 'CREATE')), false), \
-            COALESCE(pg_catalog.has_schema_privilege(role.oid, namespace.oid, 'CREATE'), false) \
-       FROM (SELECT 1) AS singleton \
-       LEFT JOIN pg_catalog.pg_roles AS role \
-         ON role.rolname = 'wamn_effect_writer' \
-       LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.nspname = $1"
-}
-
-/// Direct grants on the three immutable effect-writer tables.
+/// Direct grants on the three immutable effect tables.
 pub fn select_effect_table_privileges_sql() -> &'static str {
     "SELECT table_name, grantee, privilege_type \
        FROM information_schema.table_privileges \
       WHERE table_schema = $1 \
         AND table_name IN ('effect_attempts', 'effect_attempt_dispatches', \
                            'effect_attempt_outcomes') \
-        AND grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author', \
-                        'wamn_effect_writer') \
+        AND grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author') \
       ORDER BY table_name, grantee, privilege_type"
 }
 
-/// Effective grants and owners on the effect-writer table boundary.
+/// Effective grants and owners on the effect table boundary.
 pub fn select_effect_table_effective_privileges_sql() -> &'static str {
     "SELECT relation.relname, actor.rolname, privilege.name, owner.rolname \
        FROM pg_catalog.pg_class AS relation \
@@ -78,12 +33,12 @@ pub fn select_effect_table_effective_privileges_sql() -> &'static str {
       WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
         AND relation.relname IN ('effect_attempts', 'effect_attempt_dispatches', \
                                  'effect_attempt_outcomes') \
-        AND actor.rolname IN ('wamn_app', 'wamn_scenario_author', 'wamn_effect_writer') \
+        AND actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
         AND pg_catalog.has_table_privilege(actor.oid, relation.oid, privilege.name) \
       ORDER BY relation.relname, actor.rolname, privilege.name"
 }
 
-/// Effective column grants on the effect-writer table boundary.
+/// Effective column grants on the effect table boundary.
 pub fn select_effect_table_effective_column_privileges_sql() -> &'static str {
     "SELECT relation.relname, actor.rolname, privilege.name \
        FROM pg_catalog.pg_class AS relation \
@@ -94,41 +49,9 @@ pub fn select_effect_table_effective_column_privileges_sql() -> &'static str {
       WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
         AND relation.relname IN ('effect_attempts', 'effect_attempt_dispatches', \
                                  'effect_attempt_outcomes') \
-        AND actor.rolname IN ('wamn_app', 'wamn_scenario_author', 'wamn_effect_writer') \
+        AND actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
         AND pg_catalog.has_any_column_privilege(actor.oid, relation.oid, privilege.name) \
       ORDER BY relation.relname, actor.rolname, privilege.name"
-}
-
-/// Effective table privileges of the private writer on run-authority tables.
-pub fn select_effect_writer_run_table_privileges_sql() -> &'static str {
-    "SELECT relation.relname, privilege.name \
-       FROM pg_catalog.pg_class AS relation \
-       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-       JOIN pg_catalog.pg_roles AS actor ON actor.rolname = 'wamn_effect_writer' \
-       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
-                          ('DELETE'::text), ('TRUNCATE'::text), \
-                          ('REFERENCES'::text), ('TRIGGER'::text)) AS privilege(name) \
-      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
-        AND relation.relname IN ('runs', 'run_queue') \
-        AND pg_catalog.has_table_privilege(actor.oid, relation.oid, privilege.name) \
-      ORDER BY relation.relname, privilege.name"
-}
-
-/// Effective column privileges of the private writer on run-authority tables.
-pub fn select_effect_writer_run_column_privileges_sql() -> &'static str {
-    "SELECT relation.relname, attribute.attname, privilege.name \
-       FROM pg_catalog.pg_class AS relation \
-       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-       JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
-       JOIN pg_catalog.pg_roles AS actor ON actor.rolname = 'wamn_effect_writer' \
-       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
-                          ('REFERENCES'::text)) AS privilege(name) \
-      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
-        AND relation.relname IN ('runs', 'run_queue') \
-        AND attribute.attnum > 0 AND NOT attribute.attisdropped \
-        AND pg_catalog.has_column_privilege( \
-              actor.oid, relation.oid, attribute.attname, privilege.name) \
-      ORDER BY relation.relname, attribute.attnum, privilege.name"
 }
 
 // --- Dispatcher read-principal observation (wamn-0h0g.12.123) ----------------
@@ -199,8 +122,7 @@ pub fn select_app_scenario_author_membership_sql() -> &'static str {
 pub fn select_authoring_table_privileges_sql() -> &'static str {
     "SELECT table_schema, table_name, grantee, privilege_type \
        FROM information_schema.table_privileges \
-      WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author', \
-                        'wamn_effect_writer') \
+      WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author') \
         AND ((table_schema = 'catalog' AND table_name IN \
               ('packages', 'package_migrations', 'effective_releases', \
                'effective_release_packages', 'effective_release_heads', \
@@ -224,8 +146,7 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
        JOIN pg_catalog.pg_class AS relation ON relation.relkind = 'r' \
        JOIN pg_catalog.pg_namespace AS namespace \
          ON namespace.oid = relation.relnamespace \
-      WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
-                              'wamn_effect_writer') \
+      WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('packages', 'package_migrations', 'effective_releases', \
                'effective_release_packages', 'effective_release_heads', \
@@ -250,8 +171,7 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
        JOIN pg_catalog.pg_class AS relation ON relation.relkind = 'r' \
        JOIN pg_catalog.pg_namespace AS namespace \
          ON namespace.oid = relation.relnamespace \
-      WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author', \
-                              'wamn_effect_writer') \
+      WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
               ('packages', 'package_migrations', 'effective_releases', \
                'effective_release_packages', 'effective_release_heads', \

@@ -14,36 +14,6 @@ pub struct ScenarioAuthorRoleObservation {
     pub bypasses_rls: bool,
 }
 
-/// Provisioning-owned stable effect-writer role boundary observed read-only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EffectWriterRoleObservation {
-    pub can_login: bool,
-    pub is_superuser: bool,
-    pub can_create_database: bool,
-    pub can_create_role: bool,
-    pub inherits_roles: bool,
-    pub can_replicate: bool,
-    pub bypasses_rls: bool,
-    pub can_connect: bool,
-    pub owns_objects: bool,
-    pub membership_out_of_bounds: bool,
-}
-
-impl EffectWriterRoleObservation {
-    pub(super) fn is_acl_only(self) -> bool {
-        !self.can_login
-            && !self.is_superuser
-            && !self.can_create_database
-            && !self.can_create_role
-            && !self.inherits_roles
-            && !self.can_replicate
-            && !self.bypasses_rls
-            && !self.can_connect
-            && !self.owns_objects
-            && !self.membership_out_of_bounds
-    }
-}
-
 impl ScenarioAuthorRoleObservation {
     pub(super) fn is_host_only(self) -> bool {
         !self.can_login
@@ -80,7 +50,7 @@ pub struct RowSecurityObservation {
 /// pure planner turns it into the action list.
 #[derive(Debug, Clone, Default)]
 pub struct RunPlaneObservation {
-    /// Total immutable rows across the three effect-writer tables that exist.
+    /// Total immutable rows across the three effect tables that exist.
     /// Any nonzero value makes an incompatible structural cutover refuse.
     pub effect_record_rows: i64,
     /// Persisted flow graphs that still carry retired top-level ordering keys.
@@ -88,10 +58,6 @@ pub struct RunPlaneObservation {
     /// Host-only scenario-author role attributes, or absent when the cluster
     /// has not yet provisioned the role.
     pub scenario_author_role: Option<ScenarioAuthorRoleObservation>,
-    /// Stable writer role attributes, ownership, membership, and CONNECT.
-    pub effect_writer_role: Option<EffectWriterRoleObservation>,
-    /// Exact direct `(USAGE-without-PUBLIC, effective-CREATE)` schema boundary.
-    pub effect_writer_schema_privileges: (bool, bool),
     /// Direct table grants keyed by `(table, grantee)`.
     pub effect_table_privileges: BTreeMap<(String, String), BTreeSet<String>>,
     /// Effective table grants keyed by `(table, grantee)`.
@@ -100,12 +66,6 @@ pub struct RunPlaneObservation {
     pub effect_table_effective_column_privileges: BTreeMap<(String, String), BTreeSet<String>>,
     /// Owners keyed by table.
     pub effect_table_owners: BTreeMap<String, String>,
-    /// Effective table privileges held by the writer on its two run-authority
-    /// read targets. The target state is empty: only column SELECT is allowed.
-    pub effect_writer_run_table_privileges: BTreeMap<String, BTreeSet<String>>,
-    /// Effective per-column privileges held by the writer on `runs` and
-    /// `run_queue`, keyed by `(table, column)`.
-    pub effect_writer_run_column_privileges: BTreeMap<(String, String), BTreeSet<String>>,
     /// Whether guest-visible `wamn_app` inherits the host-only author role.
     pub app_is_scenario_author_member: bool,
     /// Revocable table or column authority on `run_queue` held directly by

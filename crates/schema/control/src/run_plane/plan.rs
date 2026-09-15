@@ -13,11 +13,10 @@ use super::schema::{
 };
 
 use super::{
-    BareSchemaName, EFFECT_WRITER_ROLE, LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME,
+    BareSchemaName, LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME,
     RUN_PLANE_FILES, RUN_STATE_SQL, RowPolicyObservation, RowSecurityObservation,
     RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
-    SCENARIO_AUTHOR_ROLE, ensure_scenario_author_role_sql,
-    generation_role_contract_violation_sql, rewrite_schema,
+    SCENARIO_AUTHOR_ROLE, ensure_scenario_author_role_sql, rewrite_schema,
     strip_retired_registration_keys_sql,
 };
 
@@ -26,7 +25,7 @@ use super::declarations::{
     EFFECT_DISPATCH_ATTEMPT_FK_DEF, EFFECT_DISPATCH_ATTEMPT_FK_NAME,
     EFFECT_DISPATCH_ATTEMPT_FK_SQL, EFFECT_FRAME_COLUMNS, EFFECT_OUTCOME_DISPATCH_FK_DEF,
     EFFECT_OUTCOME_DISPATCH_FK_NAME, EFFECT_OUTCOME_DISPATCH_FK_SQL,
-    EFFECT_WRITER_RUN_READ_COLUMNS, ENVIRONMENT_POLICY_TENANT_QUAL,
+    ENVIRONMENT_POLICY_TENANT_QUAL,
     RETIRED_EFFECT_ATTEMPT_COLUMNS, TABLE_PRIVILEGE_TYPES, helper_specs, trigger_specs,
 };
 
@@ -342,45 +341,6 @@ $retire_run_projection_authority$;"#,
         });
     }
 
-    if obs
-        .effect_writer_role
-        .is_none_or(|role| !role.is_acl_only())
-    {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::VerifyEffectWriterRole,
-            target: EFFECT_WRITER_ROLE.to_string(),
-            sql: format!("DO $effect_writer_role$ \
-                  DECLARE role_oid oid; \
-                  BEGIN \
-                    SELECT oid INTO role_oid FROM pg_catalog.pg_roles \
-                     WHERE rolname = 'wamn_effect_writer' AND NOT rolcanlogin \
-                       AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole \
-                       AND NOT rolinherit AND NOT rolreplication AND NOT rolbypassrls; \
-                    IF role_oid IS NULL \
-                       OR pg_catalog.has_database_privilege(role_oid, current_database(), 'CONNECT') \
-                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE relowner = role_oid) \
-                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspowner = role_oid) \
-                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc WHERE proowner = role_oid) \
-                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datdba = role_oid) \
-                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member = role_oid) \
-                       OR EXISTS ( \
-                            SELECT 1 FROM pg_catalog.pg_auth_members AS membership \
-                            JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
-                            WHERE membership.roleid = role_oid \
-                              AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{{40}}_[ab]$' \
-                                   OR NOT member.rolcanlogin OR member.rolsuper \
-                                   OR member.rolcreatedb OR member.rolcreaterole \
-                                   OR NOT member.rolinherit OR member.rolreplication \
-                                   OR member.rolbypassrls)) \
-                       OR {generation_contract} \
-                    THEN RAISE EXCEPTION USING ERRCODE = '42501', \
-                         MESSAGE = 'effect-writer-role-out-of-bounds'; \
-                    END IF; \
-                  END $effect_writer_role$",
-                generation_contract = generation_role_contract_violation_sql(),
-            ),
-        });
-    }
     let frame_cutover_targets = frame_identity_cutover_targets(obs, schema);
     if frame_cutover_targets.needed() {
         plan.actions.push(RunPlaneAction {
@@ -570,27 +530,6 @@ $retire_run_projection_authority$;"#,
         });
     }
 
-    if obs.effect_writer_schema_privileges != (true, false) {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
-            target: format!("{}.usage", schema.as_str()),
-            sql: format!(
-                "REVOKE ALL PRIVILEGES ON SCHEMA {} FROM PUBLIC, {EFFECT_WRITER_ROLE}; \
-                 GRANT USAGE ON SCHEMA {} TO {EFFECT_WRITER_ROLE}; \
-                 DO $effect_writer_schema_acl$ BEGIN \
-                   IF NOT pg_catalog.has_schema_privilege('{EFFECT_WRITER_ROLE}', '{}', 'USAGE') \
-                      OR pg_catalog.has_schema_privilege('{EFFECT_WRITER_ROLE}', '{}', 'CREATE') \
-                   THEN RAISE EXCEPTION USING ERRCODE = '42501', \
-                        MESSAGE = 'effect-writer-schema-privilege-out-of-bounds'; \
-                   END IF; \
-                 END $effect_writer_schema_acl$",
-                schema.quoted(),
-                schema.quoted(),
-                schema.as_str(),
-                schema.as_str(),
-            ),
-        });
-    }
     for table in [
         "effect_attempts",
         "effect_attempt_dispatches",
@@ -601,38 +540,26 @@ $retire_run_projection_authority$;"#,
         }
         // BORN PARKED (owner ruling on wamn-0h0g.20.28, widened to the two sibling
         // tables by wamn-0h0g.20.32). NO effect table's APPEND authority is part
-        // of the record: the writer primitive is unwired, and every generation
-        // login inherits this role with INHERIT TRUE. So a live INSERT on any of
-        // the three is DRIFT, and this convergent step REMOVES it rather than
-        // re-granting it. Whoever wires the writer grants those INSERTs here.
-        let writer_privileges: &[&str] = &["SELECT"];
+        // of the record: the effect writer is not built. So a live INSERT on any
+        // of the three is DRIFT, and this convergent step REMOVES it rather than
+        // re-granting it. Whoever builds the writer grants those INSERTs here.
         let expected = |grantee: &str| -> BTreeSet<String> {
             match grantee {
                 "wamn_app" => ["SELECT"].into_iter().map(str::to_string).collect(),
-                EFFECT_WRITER_ROLE => writer_privileges
-                    .iter()
-                    .copied()
-                    .map(str::to_string)
-                    .collect(),
                 "PUBLIC" | SCENARIO_AUTHOR_ROLE => BTreeSet::new(),
                 _ => unreachable!("closed effect-table grantee set"),
             }
         };
-        let direct_drifted = [
-            "PUBLIC",
-            "wamn_app",
-            SCENARIO_AUTHOR_ROLE,
-            EFFECT_WRITER_ROLE,
-        ]
-        .into_iter()
-        .any(|grantee| {
-            obs.effect_table_privileges
-                .get(&(table.to_string(), grantee.to_string()))
-                .cloned()
-                .unwrap_or_default()
-                != expected(grantee)
-        });
-        let effective_drifted = ["wamn_app", SCENARIO_AUTHOR_ROLE, EFFECT_WRITER_ROLE]
+        let direct_drifted = ["PUBLIC", "wamn_app", SCENARIO_AUTHOR_ROLE]
+            .into_iter()
+            .any(|grantee| {
+                obs.effect_table_privileges
+                    .get(&(table.to_string(), grantee.to_string()))
+                    .cloned()
+                    .unwrap_or_default()
+                    != expected(grantee)
+            });
+        let effective_drifted = ["wamn_app", SCENARIO_AUTHOR_ROLE]
             .into_iter()
             .any(|grantee| {
                 obs.effect_table_effective_privileges
@@ -641,27 +568,27 @@ $retire_run_projection_authority$;"#,
                     .unwrap_or_default()
                     != expected(grantee)
             });
-        let effective_column_drifted = ["wamn_app", SCENARIO_AUTHOR_ROLE, EFFECT_WRITER_ROLE]
-            .into_iter()
-            .any(|grantee| {
-                let expected_columns: BTreeSet<String> = expected(grantee)
-                    .into_iter()
-                    .filter(|privilege| {
-                        ["SELECT", "INSERT", "UPDATE", "REFERENCES"].contains(&privilege.as_str())
-                    })
-                    .collect();
-                obs.effect_table_effective_column_privileges
-                    .get(&(table.to_string(), grantee.to_string()))
-                    .cloned()
-                    .unwrap_or_default()
-                    != expected_columns
-            });
-        let boundary_owned = obs.effect_table_owners.get(table).is_some_and(|owner| {
-            matches!(
-                owner.as_str(),
-                "wamn_app" | SCENARIO_AUTHOR_ROLE | EFFECT_WRITER_ROLE
-            )
-        });
+        let effective_column_drifted =
+            ["wamn_app", SCENARIO_AUTHOR_ROLE]
+                .into_iter()
+                .any(|grantee| {
+                    let expected_columns: BTreeSet<String> = expected(grantee)
+                        .into_iter()
+                        .filter(|privilege| {
+                            ["SELECT", "INSERT", "UPDATE", "REFERENCES"]
+                                .contains(&privilege.as_str())
+                        })
+                        .collect();
+                    obs.effect_table_effective_column_privileges
+                        .get(&(table.to_string(), grantee.to_string()))
+                        .cloned()
+                        .unwrap_or_default()
+                        != expected_columns
+                });
+        let boundary_owned = obs
+            .effect_table_owners
+            .get(table)
+            .is_some_and(|owner| matches!(owner.as_str(), "wamn_app" | SCENARIO_AUTHOR_ROLE));
         if !direct_drifted && !effective_drifted && !effective_column_drifted && !boundary_owned {
             continue;
         }
@@ -685,143 +612,33 @@ $retire_run_projection_authority$;"#,
             .map(|column| quote_ident(column))
             .collect::<Vec<_>>()
             .join(", ");
-        // The grant and the self-check move together: whatever APPEND authority
-        // this table does not carry becomes a privilege the block REFUSES to see
-        // the server still report, so a parked table shows its own denial.
-        let writer_grant = writer_privileges.join(", ");
-        let writer_forbidden_table = "'INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'";
-        let writer_forbidden_columns = "INSERT,UPDATE,REFERENCES";
         plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
+                kind: RunPlaneActionKind::RepairEffectTablePrivilege,
                 target: format!("{}.{}", schema.as_str(), table),
                 sql: format!(
                     "REVOKE SELECT ({columns}), INSERT ({columns}), UPDATE ({columns}), \
                             REFERENCES ({columns}) ON TABLE {qualified} \
-                       FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}, {EFFECT_WRITER_ROLE}; \
+                       FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}; \
                      REVOKE ALL PRIVILEGES ON TABLE {qualified} \
-                       FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}, {EFFECT_WRITER_ROLE}; \
+                       FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}; \
                      GRANT SELECT ON TABLE {qualified} TO wamn_app; \
-                     GRANT {writer_grant} ON TABLE {qualified} TO {EFFECT_WRITER_ROLE}; \
                      DO $effect_table_acl$ BEGIN \
                        IF EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
                                    WHERE pg_catalog.has_table_privilege('wamn_app', '{qualified}', privilege)) \
                           OR EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
                                    WHERE pg_catalog.has_table_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', privilege)) \
-                          OR EXISTS (SELECT 1 FROM unnest(ARRAY[{writer_forbidden_table}]) privilege \
-                                   WHERE pg_catalog.has_table_privilege('{EFFECT_WRITER_ROLE}', '{qualified}', privilege)) \
                           OR pg_catalog.has_any_column_privilege('wamn_app', '{qualified}', 'INSERT,UPDATE,REFERENCES') \
                           OR pg_catalog.has_any_column_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', 'SELECT,INSERT,UPDATE,REFERENCES') \
-                          OR pg_catalog.has_any_column_privilege('{EFFECT_WRITER_ROLE}', '{qualified}', '{writer_forbidden_columns}') \
                           OR (SELECT owner.rolname FROM pg_catalog.pg_class relation \
                               JOIN pg_catalog.pg_roles owner ON owner.oid = relation.relowner \
                              WHERE relation.oid = pg_catalog.to_regclass('{qualified}')) \
-                             IN ('wamn_app', '{SCENARIO_AUTHOR_ROLE}', '{EFFECT_WRITER_ROLE}') \
+                             IN ('wamn_app', '{SCENARIO_AUTHOR_ROLE}') \
                        THEN RAISE EXCEPTION USING ERRCODE = '42501', \
                             MESSAGE = 'effect-ledger-effective-privilege-out-of-bounds:{table}'; \
                        END IF; \
                      END $effect_table_acl$"
                 ),
             });
-    }
-
-    let mut effect_writer_run_read_repairs = Vec::new();
-    for (table, allowed) in EFFECT_WRITER_RUN_READ_COLUMNS {
-        let Some(live_columns) = obs.tables.get(table) else {
-            continue;
-        };
-        let table_drifted = obs
-            .effect_writer_run_table_privileges
-            .get(table)
-            .is_some_and(|privileges| !privileges.is_empty());
-        let column_drifted = allowed.iter().any(|column| !live_columns.contains(*column))
-            || live_columns.iter().any(|column| {
-                let actual = obs
-                    .effect_writer_run_column_privileges
-                    .get(&(table.to_string(), column.clone()))
-                    .cloned()
-                    .unwrap_or_default();
-                let expected: BTreeSet<String> = if allowed.contains(&column.as_str()) {
-                    ["SELECT".to_string()].into_iter().collect()
-                } else {
-                    BTreeSet::new()
-                };
-                actual != expected
-            });
-        if !table_drifted && !column_drifted {
-            continue;
-        }
-
-        let qualified = format!("{}.{}", schema.quoted(), quote_ident(table));
-        let all_columns = live_columns
-            .iter()
-            .filter(|column| {
-                !(table == "run_queue"
-                    && partition_plane_cutover_needed
-                    && RETIRED_PARTITION_COLUMNS.contains(&column.as_str()))
-                    && !(table == "runs"
-                        && rerun_lineage_cutover_needed
-                        && RETIRED_RERUN_LINEAGE_COLUMNS.contains(&column.as_str()))
-                    && !(table == "runs"
-                        && failure_detail_cutover_needed
-                        && RETIRED_FAILURE_DETAIL_COLUMNS.contains(&column.as_str()))
-            })
-            .map(|column| quote_ident(column))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let allowed_columns = allowed
-            .iter()
-            .map(|column| quote_ident(column))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let allowed_literals = allowed
-            .iter()
-            .map(|column| format!("'{}'", column.replace('\'', "''")))
-            .collect::<Vec<_>>()
-            .join(", ");
-        effect_writer_run_read_repairs.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
-            target: format!("{}.{}.effect-read", schema.as_str(), table),
-            sql: format!(
-                "REVOKE SELECT ({all_columns}), INSERT ({all_columns}), \
-                        UPDATE ({all_columns}), REFERENCES ({all_columns}) \
-                   ON TABLE {qualified} FROM PUBLIC, {EFFECT_WRITER_ROLE}; \
-                 REVOKE ALL PRIVILEGES ON TABLE {qualified} \
-                   FROM PUBLIC, {EFFECT_WRITER_ROLE}; \
-                 GRANT SELECT ({allowed_columns}) ON TABLE {qualified} \
-                   TO {EFFECT_WRITER_ROLE}; \
-                 DO $effect_writer_run_read_acl$ BEGIN \
-                   IF EXISTS ( \
-                        SELECT 1 FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE', \
-                                                   'TRUNCATE','REFERENCES','TRIGGER']) privilege \
-                         WHERE pg_catalog.has_table_privilege( \
-                               '{EFFECT_WRITER_ROLE}', '{qualified}', privilege)) \
-                      OR EXISTS ( \
-                        SELECT 1 FROM pg_catalog.pg_attribute AS attribute \
-                        CROSS JOIN unnest(ARRAY['INSERT','UPDATE','REFERENCES']) privilege \
-                         WHERE attribute.attrelid=pg_catalog.to_regclass('{qualified}') \
-                           AND attribute.attnum > 0 AND NOT attribute.attisdropped \
-                           AND pg_catalog.has_column_privilege( \
-                               '{EFFECT_WRITER_ROLE}', '{qualified}', \
-                               attribute.attname, privilege)) \
-                      OR EXISTS ( \
-                        SELECT 1 FROM pg_catalog.pg_attribute AS attribute \
-                         WHERE attribute.attrelid=pg_catalog.to_regclass('{qualified}') \
-                           AND attribute.attnum > 0 AND NOT attribute.attisdropped \
-                           AND NOT (attribute.attname = ANY (ARRAY[{allowed_literals}])) \
-                           AND pg_catalog.has_column_privilege( \
-                               '{EFFECT_WRITER_ROLE}', '{qualified}', \
-                               attribute.attname, 'SELECT')) \
-                      OR EXISTS ( \
-                        SELECT 1 FROM unnest(ARRAY[{allowed_literals}]) column_name \
-                         WHERE NOT pg_catalog.has_column_privilege( \
-                               '{EFFECT_WRITER_ROLE}', '{qualified}', \
-                               column_name, 'SELECT')) \
-                   THEN RAISE EXCEPTION USING ERRCODE='42501', \
-                        MESSAGE='effect-writer-run-read-privilege-out-of-bounds:{table}'; \
-                   END IF; \
-                 END $effect_writer_run_read_acl$"
-            ),
-        });
     }
 
     if wiring_identity_cutover_needed {
@@ -870,28 +687,13 @@ $retire_run_projection_authority$;"#,
         if !present {
             continue;
         }
-        let is_environment_policy = matches!(spec.schema, AuthoringTableSchema::RunPlane)
-            && spec.table == "environment_policies";
-        let direct_grantees: &[&str] = if is_environment_policy {
-            &[
-                "PUBLIC",
-                "wamn_app",
-                SCENARIO_AUTHOR_ROLE,
-                EFFECT_WRITER_ROLE,
-            ]
-        } else {
-            &["PUBLIC", "wamn_app", SCENARIO_AUTHOR_ROLE]
-        };
-        let effective_grantees: &[&str] = if is_environment_policy {
-            &["wamn_app", SCENARIO_AUTHOR_ROLE, EFFECT_WRITER_ROLE]
-        } else {
-            &["wamn_app", SCENARIO_AUTHOR_ROLE]
-        };
+        let direct_grantees: &[&str] = &["PUBLIC", "wamn_app", SCENARIO_AUTHOR_ROLE];
+        let effective_grantees: &[&str] = &["wamn_app", SCENARIO_AUTHOR_ROLE];
         let expected_for = |grantee: &str| -> BTreeSet<String> {
             let privileges = match grantee {
                 "wamn_app" => spec.app,
                 SCENARIO_AUTHOR_ROLE => spec.author,
-                "PUBLIC" | EFFECT_WRITER_ROLE => &[],
+                "PUBLIC" => &[],
                 _ => unreachable!("closed authoring grantee set"),
             };
             privileges
@@ -974,7 +776,6 @@ $retire_run_projection_authority$;"#,
             let expected = match grantee {
                 "wamn_app" => spec.app,
                 SCENARIO_AUTHOR_ROLE => spec.author,
-                EFFECT_WRITER_ROLE => &[],
                 _ => unreachable!("closed effective grantee set"),
             };
             for privilege in TABLE_PRIVILEGE_TYPES {
@@ -1163,10 +964,6 @@ $retire_run_projection_authority$;"#,
             sql: repair_environment_policy_row_security_sql(schema),
         });
     }
-
-    // Required columns are added before the exact writer read boundary names
-    // them. This also lets one reconcile turn converge a partial queue shape.
-    plan.actions.extend(effect_writer_run_read_repairs);
 
     // A broad legacy grant is narrowed after the record column exists.
     if !capture_mode_present && run_capture_privileges_drifted && !obs.app_run_capture_privileges.0

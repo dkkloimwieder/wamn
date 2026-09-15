@@ -70,7 +70,7 @@ use declarations::{
     EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF, EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF,
     EFFECT_DISPATCH_ATTEMPT_FK_DEF, EFFECT_DISPATCH_ATTEMPT_FK_NAME, EFFECT_FRAME_COLUMNS,
     EFFECT_OUTCOME_DISPATCH_FK_DEF, EFFECT_OUTCOME_DISPATCH_FK_NAME,
-    EFFECT_WRITER_RUN_READ_COLUMNS, REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_SQL,
+    REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_SQL,
     RETIRED_EFFECT_ATTEMPT_COLUMNS, RUNS_ADMISSION_PINS_TRIGGER_DEF,
     RUNS_ADMISSION_PINS_TRIGGER_SQL, RUNS_RELEASE_FK_DEF, RUNS_RELEASE_INDEX_DEF,
     RUNS_ROOT_INDEX_DEF, helper_specs, trigger_specs,
@@ -103,7 +103,7 @@ mod schema;
 
 #[doc(inline)]
 pub use observation::{
-    EffectWriterRoleObservation, RowPolicyObservation, RowSecurityObservation, RunPlaneObservation,
+    RowPolicyObservation, RowSecurityObservation, RunPlaneObservation,
     ScenarioAuthorRoleObservation,
 };
 #[doc(inline)]
@@ -116,8 +116,6 @@ pub use observation_sql::{
     select_dispatch_reader_table_privileges_sql,
     select_effect_table_effective_column_privileges_sql,
     select_effect_table_effective_privileges_sql, select_effect_table_privileges_sql,
-    select_effect_writer_role_sql, select_effect_writer_run_column_privileges_sql,
-    select_effect_writer_run_table_privileges_sql, select_effect_writer_schema_privileges_sql,
     select_environment_policy_policies_sql, select_environment_policy_row_security_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_run_capture_privileges_sql, select_scenario_author_role_sql,
@@ -150,8 +148,6 @@ pub const OUTBOX_TRIGGER_NAME: &str = "wamn_outbox_event";
 /// Reserved non-login project-author identity. No production credential inherits
 /// it, and the guest-visible `wamn_app` role is never a member.
 pub const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
-/// Stable NOLOGIN ACL role inherited only by scoped writer generations.
-pub const EFFECT_WRITER_ROLE: &str = "wamn_effect_writer";
 /// What one plan action does (for reporting; the SQL is on the action).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunPlaneActionKind {
@@ -186,10 +182,8 @@ pub enum RunPlaneActionKind {
     RetiredEffectDispositionCutover,
     /// Strict empty-only installation of the coordinate-bound writer tables.
     EffectWriterCutover,
-    /// Refuse a provisioning-owned stable writer role outside its frozen shape.
-    VerifyEffectWriterRole,
-    /// Converge exact stable-writer schema/table ACLs and deny other writers.
-    RepairEffectWriterPrivilege,
+    /// Converge exact effect-table ACLs and deny guest and author writes.
+    RepairEffectTablePrivilege,
     /// Drop/re-add a drifted record CHECK, or add it when absent.
     RepairConstraint,
     /// Drop/re-add a missing or drifted named record foreign key.
@@ -268,56 +262,6 @@ impl RunPlanePlan {
     pub fn is_noop(&self) -> bool {
         self.actions.is_empty()
     }
-}
-
-fn generation_role_contract_violation_sql() -> &'static str {
-    "EXISTS ( \
-         SELECT 1 FROM pg_catalog.pg_roles AS generation \
-          WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
-            AND (pg_catalog.has_database_privilege( \
-                   generation.oid, current_database(), 'CONNECT') \
-                 OR EXISTS ( \
-                      SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
-                      JOIN pg_catalog.pg_roles AS parent ON parent.oid = edge.roleid \
-                     WHERE edge.member = generation.oid \
-                       AND parent.rolname = 'wamn_effect_writer')) \
-            AND (NOT generation.rolcanlogin OR generation.rolsuper \
-                 OR generation.rolcreatedb OR generation.rolcreaterole \
-                 OR NOT generation.rolinherit OR generation.rolreplication \
-                 OR generation.rolbypassrls \
-                 OR NOT EXISTS ( \
-                      SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
-                      JOIN pg_catalog.pg_roles AS parent ON parent.oid = edge.roleid \
-                     WHERE edge.member = generation.oid \
-                       AND parent.rolname = 'wamn_effect_writer') \
-                 OR EXISTS ( \
-                      SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
-                      JOIN pg_catalog.pg_roles AS parent ON parent.oid = edge.roleid \
-                     WHERE edge.member = generation.oid \
-                       AND parent.rolname NOT IN ( \
-                             'wamn_effect_writer', 'wamn_run_projection_writer')) \
-                 OR EXISTS ( \
-                      SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
-                       WHERE edge.member = generation.oid \
-                         AND (edge.admin_option OR NOT edge.inherit_option \
-                              OR edge.set_option)) \
-                 OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
-                             WHERE edge.roleid = generation.oid) \
-                 OR EXISTS (SELECT 1 FROM pg_catalog.pg_shdepend AS dependency \
-                             WHERE dependency.refclassid = 'pg_authid'::regclass \
-                               AND dependency.refobjid = generation.oid \
-                               AND dependency.deptype = 'o'))) \
-       OR (SELECT count(*) FROM pg_catalog.pg_roles AS generation \
-            WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
-              AND pg_catalog.has_database_privilege( \
-                    generation.oid, current_database(), 'CONNECT')) > 2 \
-       OR (SELECT count(DISTINCT substring( \
-                    generation.rolname FROM \
-                    '^wamn_effect_writer_([0-9a-f]{40})_[ab]$')) \
-             FROM pg_catalog.pg_roles AS generation \
-            WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
-              AND pg_catalog.has_database_privilege( \
-                    generation.oid, current_database(), 'CONNECT')) > 1"
 }
 
 /// Strip retired registration keys that fail the current declaration parser.
