@@ -515,3 +515,30 @@ fn a_name_filter_needs_cluster_and_a_matching_ignored_test() {
         )]
     );
 }
+
+#[test]
+fn a_name_filter_fails_when_the_change_set_selects_no_package() {
+    let fixture = Fixture::new();
+    // An unchanged tree selects nothing. Under --cluster, a no-std change selects
+    // no root package.
+    for (change, command) in [
+        (None, "dry-run"),
+        (Some("apps/platform/no-std/Cargo.lock"), "run"),
+    ] {
+        if let Some(file) = change {
+            fixture.write(file, "changed\n");
+        }
+        let output = fixture.tool(&["--cluster", "--name", "journey", command]);
+        assert_eq!(output.status.code(), Some(1));
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert_eq!(stdout.lines().last(), Some("selected: nothing"), "{stdout}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(
+                "no package is selected, so no ignored test matches the name filter 'journey'"
+            ),
+            "{stderr}"
+        );
+    }
+    assert!(!fixture.directory.join("cargo calls").exists());
+}

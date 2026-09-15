@@ -95,6 +95,8 @@ if [[ "$WAMN_RELEVANT" == '[]' ]]; then
   printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
   printf 'base: %s\n' "$WAMN_BASE"
   printf 'selected: nothing\n'
+  [[ -z "$WAMN_NAME" ]] ||
+    wamn_fail 1 "no package is selected, so no ignored test matches the name filter '$WAMN_NAME'"
   exit 0
 fi
 
@@ -180,6 +182,8 @@ printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
 printf 'base: %s\n' "$WAMN_BASE"
 if [[ -z "$WAMN_PLAN" ]]; then
   printf 'selected: nothing\n'
+  [[ -z "$WAMN_NAME" ]] ||
+    wamn_fail 1 "no package is selected, so no ignored test matches the name filter '$WAMN_NAME'"
   exit 0
 fi
 
