@@ -31,8 +31,8 @@
 //!
 //! ## Scope vs siblings
 //! Owns: the global `run_queue`, exact FIFO claim decision, lease/reclaim
-//! classifier, and janitor. Trigger schedule and cadence decisions live in `wamn-scheduler`;
-//! this module owns only their durable SQL boundary. (Row events are no longer a
+//! classifier, and janitor. The dispatcher's poll cadence lives in `wamn-scheduler`.
+//! (Row events are no longer a
 //! dispatcher concern: the D19 v3 event plane — CDC reader → JetStream →
 //! materializer — delivers them; the outbox path was torn down at l5i9.19.)
 //! The host-only Postgres adapter composes the transaction and hands the exact
