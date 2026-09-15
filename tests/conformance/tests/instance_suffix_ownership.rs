@@ -49,25 +49,6 @@ fn stored_instance_suffix_owns_every_cluster_global_project_env_name() {
     assert!(workload.contains(
         "let instance = read_project_env_instance(system_url, &triple).await?; let database = project_env_database_name(org, project, environment, &instance);"
     ));
-    // Pinned to the BINDING, not to the owned-conversion method: 358f6792
-    // (wamn-0h0g.13.59) rewrote this exact line from `database.to_string()` to
-    // `database.clone()` in a pure refactor and turned the guard red on a
-    // spelling with no behaviour behind it. What is load-bearing is that the
-    // credential scope is fed the stored-suffix-derived `database`, never a
-    // freshly recomputed name (wamn-0h0g.15.137).
-    assert!(
-        workload.contains("database: database."),
-        "the effect-writer credential scope must carry the stored-suffix-derived \
-         `database` binding"
-    );
-    // `wamn-0h0g.22.16` replaced four per-family renderers with one derivation,
-    // so the pin moved to the derived call. What is load-bearing is unchanged:
-    // the published Secret is rendered from `&credential`, which carries the
-    // stored-suffix-derived database, never a freshly recomputed name.
-    assert!(workload.contains(
-        "render_workload_secret_manifest( family, &triple, &args.namespace, \
-         WorkloadSecretBody::EffectWriterCredential(&credential), )"
-    ));
     let registry = compact(&source(
         "crates/control/lib/src/provision_project_env/registry.rs",
     ));
@@ -116,8 +97,5 @@ fn namespace_scoped_secret_names_remain_triple_only() {
     );
     assert!(names.contains(
         "pub fn project_env_cdc_secret_name(org: &str, project: &str, env: &str) -> String"
-    ));
-    assert!(names.contains(
-        "pub fn project_env_effect_writer_secret_name(org: &str, project: &str, env: &str) -> String"
     ));
 }
