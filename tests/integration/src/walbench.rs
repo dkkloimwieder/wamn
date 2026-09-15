@@ -75,12 +75,6 @@ pub enum Mode {
 
 #[derive(Debug, Args)]
 pub struct WalBenchArgs {
-    /// Superuser URL: prepares the scoped App-generation credential,
-    /// provisions/drops the ephemeral schema, VACUUM/CHECKPOINT, reads WAL
-    /// LSNs + the pre-CDC provenance, and TRUNCATEs between rates.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub admin_database_url: Option<String>,
-
     /// Which measurement to run.
     #[arg(long, value_enum, default_value_t = Mode::All)]
     pub mode: Mode,
@@ -364,10 +358,12 @@ async fn toast_size(admin: &Client, table: &str) -> anyhow::Result<i64> {
 pub async fn run(args: WalBenchArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
-    let admin_url = args
-        .admin_database_url
-        .clone()
-        .context("walbench needs a superuser url: pass --admin-database-url / WAMN_PG_ADMIN_URL")?;
+    // The gate owns its server. Its superuser prepares the scoped App-generation
+    // credential, provisions/drops the ephemeral schema, VACUUM/CHECKPOINT, reads
+    // WAL LSNs + the pre-CDC provenance, and TRUNCATEs between rates. Dropping the
+    // server at the end of the run stops it.
+    let server = wamn_test_infrastructure::postgres::start(&[])?;
+    let admin_url = server.database("postgres")?.url().to_owned();
     let rates = parse_rates(&args.mixed_rates)?;
 
     println!(

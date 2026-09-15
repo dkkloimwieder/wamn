@@ -52,8 +52,8 @@
 //! drops the slot, the database (which takes any idle slot with it), the
 //! replication role, and the `EVT_` stream.
 //!
-//! Needs: `--admin-database-url` (SUPERUSER, path `/postgres`, on a
-//! `wal_level=logical` PG) + `--nats-url` (JetStream). Recipe:
+//! Needs: the PostgreSQL 18 binaries, from which the gate starts its own
+//! `wal_level=logical` server, + `--nats-url` (JetStream). Recipe:
 //! docs/operations/running-tests.md#live-prerequisites-and-troubleshooting [EVT-C-CDC].
 
 use std::path::PathBuf;
@@ -90,11 +90,6 @@ pub enum Mode {
 
 #[derive(Debug, Args)]
 pub struct CdcBenchArgs {
-    /// SUPERUSER URL (path `/postgres`) on a `wal_level=logical` Postgres —
-    /// the gate owns the throwaway `wamn_ccdc` database, slot, and role.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub admin_database_url: String,
-
     /// JetStream-enabled NATS the reader publishes the `EVT_` stream to.
     #[arg(long, default_value = "nats://127.0.0.1:4222")]
     pub nats_url: String,
@@ -618,15 +613,15 @@ struct DrainVariant {
     work_mem: Option<&'static str>,
 }
 
-async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
+async fn drain_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyhow::Result<()> {
     println!(
         "\n## drain (C-CDC axis 1) — reader catch-up after a bulk import; \
          spill counters = the logical_decoding_work_mem evidence (wamn-mu4h)"
     );
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let stream_name = event_stream_name(ORG, PROJECT, ENV);
-    let (_admin, db) = provision(&args.admin_database_url).await?;
-    let app = connect_app(&args.admin_database_url).await?;
+    let (_admin, db) = provision(admin_url).await?;
+    let app = connect_app(admin_url).await?;
     let nats = async_nats::connect(&args.nats_url)
         .await
         .with_context(|| format!("connect NATS at {}", args.nats_url))?;
@@ -782,7 +777,7 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
         );
 
         // Reader up — the drain window starts here (includes session open).
-        let mut reader = spawn_reader(&args.admin_database_url, &args.nats_url)?;
+        let mut reader = spawn_reader(admin_url, &args.nats_url)?;
         let t0 = Instant::now();
         let deadline = t0 + Duration::from_secs(args.drain_deadline_secs);
         let drain_secs = loop {
@@ -877,7 +872,7 @@ async fn drain_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> 
 // lag — slot-lag knee vs sustained write rate
 // ---------------------------------------------------------------------------
 
-async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
+async fn lag_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyhow::Result<()> {
     let rates = parse_rates(&args.lag_rates)?;
     println!(
         "\n## lag (C-CDC axis 2) — slot-lag knee vs sustained write rate; steps {rates:?}/s × {}s, \
@@ -886,7 +881,7 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
     );
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let stream_name = event_stream_name(ORG, PROJECT, ENV);
-    let (_admin, db) = provision(&args.admin_database_url).await?;
+    let (_admin, db) = provision(admin_url).await?;
     let nats = async_nats::connect(&args.nats_url)
         .await
         .with_context(|| format!("connect NATS at {}", args.nats_url))?;
@@ -906,10 +901,10 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
     db.batch_execute(&provision_sql::create_failover_slot_sql(&cdc_name))
         .await
         .context("create failover slot")?;
-    let mut reader = spawn_reader(&args.admin_database_url, &args.nats_url)?;
+    let mut reader = spawn_reader(admin_url, &args.nats_url)?;
 
     // Warm write: shows the pipeline is live before the first step.
-    let app = connect_app(&args.admin_database_url).await?;
+    let app = connect_app(admin_url).await?;
     app.execute(
         "INSERT INTO \"suppliers\" (tenant_id, name) \
          VALUES ($1, 'lag-warm')",
@@ -937,7 +932,7 @@ async fn lag_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
         let lag_start = slot_lag(&db, &cdc_name).await?;
         let mut handles = Vec::new();
         for w in 0..args.lag_writers {
-            let admin_url = args.admin_database_url.clone();
+            let admin_url = admin_url.to_owned();
             let step_secs = args.lag_step_secs;
             handles.push(tokio::spawn(async move {
                 let app = connect_app(&admin_url).await?;
@@ -1226,14 +1221,14 @@ async fn ri_leg(
     Ok(out)
 }
 
-async fn ri_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
+async fn ri_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyhow::Result<()> {
     println!(
         "\n## ri (C-CDC axis 3) — per-op WAL, REPLICA IDENTITY DEFAULT vs FULL @ wal_level=logical \
          ({} ops/batch; C-WAL-0 is the wal_level=replica denominator)",
         args.ri_iters
     );
-    let (_admin, db) = provision(&args.admin_database_url).await?;
-    let app = connect_app(&args.admin_database_url).await?;
+    let (_admin, db) = provision(admin_url).await?;
+    let app = connect_app(admin_url).await?;
     let n = args.ri_iters;
 
     // The delete registrations that DRIVE the flip (the real l5i9.31 path:
@@ -1273,8 +1268,7 @@ async fn ri_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
     measurement_schema::write_package_directory(&package, "app")
         .context("write RI package fixture")?;
     let reconcile =
-        ctl_process::reconcile_replica_identity(&swap_db(&args.admin_database_url, DB), &package)
-            .await;
+        ctl_process::reconcile_replica_identity(&swap_db(admin_url, DB), &package).await;
     let cleanup = std::fs::remove_dir_all(&package).context("remove RI package fixture");
     let reconcile = match (reconcile, cleanup) {
         (Ok(reconcile), Ok(())) => reconcile,
@@ -1350,7 +1344,11 @@ async fn ri_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
 // switchover — the timed availability drill (cdc1 shape + the REAL reader)
 // ---------------------------------------------------------------------------
 
-async fn switchover_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result<()> {
+async fn switchover_mode(
+    args: &CdcBenchArgs,
+    admin_url: &str,
+    pass: &mut bool,
+) -> anyhow::Result<()> {
     println!(
         "\n## switchover (C-CDC axis 4) — timed availability drill: trigger the promotion / \
          primary restart INSIDE the {}s window",
@@ -1358,7 +1356,7 @@ async fn switchover_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result
     );
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let stream_name = event_stream_name(ORG, PROJECT, ENV);
-    let (_admin, db) = provision(&args.admin_database_url).await?;
+    let (_admin, db) = provision(admin_url).await?;
     let nats = async_nats::connect(&args.nats_url)
         .await
         .with_context(|| format!("connect NATS at {}", args.nats_url))?;
@@ -1378,7 +1376,7 @@ async fn switchover_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result
     db.batch_execute(&provision_sql::create_failover_slot_sql(&cdc_name))
         .await
         .context("create failover slot")?;
-    let mut reader = spawn_reader(&args.admin_database_url, &args.nats_url)?;
+    let mut reader = spawn_reader(admin_url, &args.nats_url)?;
 
     // Warm write as the superuser with an explicit tenant (no dependence on a
     // workload credential during reader warm-up); `sw-warm` never parses as a seq.
@@ -1478,7 +1476,7 @@ async fn switchover_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result
     let mut writer: Option<Client> = None;
     while started.elapsed() < Duration::from_secs(args.secs) {
         if writer.is_none() {
-            match connect(&swap_db(&args.admin_database_url, DB)).await {
+            match connect(&swap_db(admin_url, DB)).await {
                 Ok(c) => {
                     println!(
                         "[writer {:>5.1}s] connected",
@@ -1641,9 +1639,12 @@ async fn switchover_mode(args: &CdcBenchArgs, pass: &mut bool) -> anyhow::Result
 pub async fn run(args: CdcBenchArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
     println!("# wamn-gates cdcbench (wamn-l5i9.14 EVT-C-CDC — measurement, not a gate)");
+    // The gate owns its server. Dropping it at the end of the run stops it.
+    let server = wamn_test_infrastructure::postgres::start(&[("wal_level", "logical")])?;
+    let admin_url = server.database("postgres")?.url().to_owned();
     {
         // Provenance header: the knobs every number depends on.
-        let admin = connect(&args.admin_database_url).await?;
+        let admin = connect(&admin_url).await?;
         let wal_level: String = admin.query_one("SHOW wal_level", &[]).await?.get(0);
         let ldwm: String = admin
             .query_one("SHOW logical_decoding_work_mem", &[])
@@ -1676,14 +1677,14 @@ pub async fn run(args: CdcBenchArgs) -> anyhow::Result<()> {
             continue;
         }
         let r = match body {
-            "drain" => drain_mode(&args, &mut pass).await,
-            "lag" => lag_mode(&args, &mut pass).await,
-            "ri" => ri_mode(&args, &mut pass).await,
-            _ => switchover_mode(&args, &mut pass).await,
+            "drain" => drain_mode(&args, &admin_url, &mut pass).await,
+            "lag" => lag_mode(&args, &admin_url, &mut pass).await,
+            "ri" => ri_mode(&args, &admin_url, &mut pass).await,
+            _ => switchover_mode(&args, &admin_url, &mut pass).await,
         };
         // Zero residue whatever happened (fresh connections — a switchover
         // kills the mode's own).
-        teardown(&args.admin_database_url, &args.nats_url).await;
+        teardown(&admin_url, &args.nats_url).await;
         if let Err(e) = r {
             outcome = Err(e);
             break;

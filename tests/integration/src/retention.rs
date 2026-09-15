@@ -56,16 +56,11 @@ const GENERATION_PASSWORD: &str = "retention-gate-generation";
 #[derive(Debug, Args)]
 pub struct RetentionArgs {
     /// LEGACY AND IGNORED. The gate mints its own scoped `wamn_run_retention`
-    /// credential generation from `--admin-database-url`, because a generation's
+    /// credential generation on its own server, because a generation's
     /// password is created WITH it and cannot be handed in from outside.
     /// Retained so existing invocations still parse.
     #[arg(long)]
     pub database_url: Option<String>,
-
-    /// Superuser URL: applies/drops the ephemeral run-plane schemas and mints
-    /// the retention credential generation.
-    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
-    pub admin_database_url: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -587,9 +582,11 @@ pub async fn run(args: RetentionArgs) -> anyhow::Result<()> {
              generation (wamn-0h0g.12.69)"
         );
     }
-    let admin_url = args.admin_database_url.clone().context(
-        "retention needs a superuser url: pass --admin-database-url / WAMN_PG_ADMIN_URL",
-    )?;
+    // The gate owns its server. Its superuser applies/drops the ephemeral
+    // run-plane schemas and mints the retention credential generation. Dropping
+    // the server at the end of the run stops it.
+    let server = wamn_test_infrastructure::postgres::start(&[])?;
+    let admin_url = server.database("postgres")?.url().to_owned();
 
     println!("# wamn-gates retention (schema {SCHEMA}, tenant {TENANT})");
     provision(&admin_url)
