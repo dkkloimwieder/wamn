@@ -1722,18 +1722,13 @@ pub(crate) mod tests {
         );
     }
 
+    /// Regenerate the checked-in schema with
+    /// `cargo run --locked --offline -p wamn-ctl --example print-dev-config-schema > services/ctl/schema/wamn-dev.schema.json`.
     #[test]
     fn checked_in_dev_config_schema_matches_generated_bytes() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEV_CONFIG_SCHEMA_PATH);
         let checked_in = fs::read(&path).expect("read checked-in wamn dev schema");
         assert_eq!(checked_in, dev_config_schema_bytes());
-    }
-
-    #[test]
-    #[ignore = "schema regeneration command only"]
-    fn regenerate_checked_in_dev_config_schema() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(DEV_CONFIG_SCHEMA_PATH);
-        fs::write(path, dev_config_schema_bytes()).expect("write generated wamn dev schema");
     }
 
     #[test]

@@ -889,26 +889,20 @@ async fn production_route_caller_authentication_and_operation_authorization() {
     admin_task.abort();
 }
 /// Checked-in schema generated from [`JourneyDocument`], relative to this
-/// crate's manifest. Regenerate with the ignored test beside its drift test.
+/// crate's manifest. Regenerate it with the command beside its drift test.
 const JOURNEY_SCHEMA_PATH: &str = "schema/wamn-journey.schema.json";
 /// A complete example the shell writer reproduces byte-for-byte and this crate
 /// parses, so the two sides are pinned to one artifact rather than to each
 /// other's reading of the schema.
 const JOURNEY_EXAMPLE_PATH: &str = "schema/wamn-journey.example.json";
 
+/// Regenerate the checked-in schema with
+/// `cargo run --locked --offline -p wamn-integration-tests --example print-journey-schema > tests/integration/schema/wamn-journey.schema.json`.
 #[test]
 fn checked_in_journey_schema_matches_generated_bytes() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(JOURNEY_SCHEMA_PATH);
     let checked_in = std::fs::read(&path).expect("read the checked-in journey schema");
     assert_eq!(checked_in, journey_document_schema_bytes());
-}
-
-#[test]
-#[ignore = "schema regeneration command only"]
-fn regenerate_checked_in_journey_schema() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(JOURNEY_SCHEMA_PATH);
-    std::fs::write(path, journey_document_schema_bytes())
-        .expect("write the generated journey schema");
 }
 
 /// The generated schema and the strict parser share ONE field authority: a
