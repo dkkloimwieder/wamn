@@ -140,7 +140,7 @@ pub async fn reconcile_package_data_access(
         &request.database_url,
         &request.tenant,
         &packages,
-        false,
+        None,
         true,
     )
     .await
@@ -160,7 +160,7 @@ pub async fn reconcile_local(
 ) -> anyhow::Result<DataAccessReconcileResult> {
     wamn_runtime::local_application::require_local_target(database_url, tenant, environment)
         .await?;
-    execute_prepared(database_url, tenant, &prepared.0, true, apply).await
+    execute_prepared(database_url, tenant, &prepared.0, Some(environment), apply).await
 }
 
 fn read_presented_packages(roots: &[PathBuf]) -> anyhow::Result<Vec<PresentedPackage>> {
@@ -224,7 +224,7 @@ async fn execute_prepared(
     database_url: &str,
     tenant: &str,
     packages: &[PresentedPackage],
-    local: bool,
+    local: Option<&str>,
     apply: bool,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     ensure!(!tenant.is_empty(), "tenant must not be empty");
@@ -249,7 +249,7 @@ async fn reconcile_mode(
     client: &mut Client,
     tenant: &str,
     packages: &[PresentedPackage],
-    local: bool,
+    local: Option<&str>,
     apply: bool,
 ) -> anyhow::Result<DataAccessReconcileResult> {
     let tx = client
@@ -262,7 +262,7 @@ async fn reconcile_mode(
     tx.query_one(LOCK_SQL, &[])
         .await
         .context("lock project data-access carrier")?;
-    if local {
+    if local.is_some() {
         for package in packages {
             crate::apply_package::reconcile_local_package_configuration(
                 &tx,
@@ -363,8 +363,18 @@ async fn validate_installed_set(
     tx: &Transaction<'_>,
     tenant: &str,
     packages: &[PresentedPackage],
-    local: bool,
+    local: Option<&str>,
 ) -> anyhow::Result<()> {
+    // catalog.packages keeps the first manifest hash of a coordinate. A local
+    // target records the current hash of each package it applied in its comment.
+    let current = match local {
+        Some(environment) => {
+            wamn_runtime::local_application::read_local_target_comment(tx, tenant, environment)
+                .await?
+                .manifests
+        }
+        None => BTreeMap::new(),
+    };
     let mut installed = CoordinateHashes::new();
     for row in tx
         .query(SELECT_INSTALLED_SQL, &[&tenant])
@@ -373,11 +383,15 @@ async fn validate_installed_set(
     {
         let package_id = row.get::<_, String>(0);
         let package_version = row.get::<_, String>(1);
+        let manifest_sha256 = current
+            .get(&format!("{package_id}@{package_version}"))
+            .cloned()
+            .unwrap_or_else(|| row.get::<_, String>(2));
         ensure!(
             installed
                 .insert(
                     (package_id.clone(), package_version.clone()),
-                    row.get::<_, String>(2)
+                    manifest_sha256
                 )
                 .is_none(),
             "package-data-access-installed-set-repeats-coordinate: {package_id}@{package_version}"
@@ -388,7 +402,7 @@ async fn validate_installed_set(
         .map(|package| {
             (
                 (package.package_id.clone(), package.package_version.clone()),
-                if local {
+                if local.is_some() {
                     installed
                         .get(&(package.package_id.clone(), package.package_version.clone()))
                         .cloned()

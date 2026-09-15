@@ -1959,3 +1959,349 @@ async fn record_history_log_follows_the_declaration() {
         .expect("clean record-history log schemas");
     std::fs::remove_dir_all(package).expect("remove record-history log package fixture");
 }
+
+/// The full comment of the connected database.
+async fn database_comment(client: &Client) -> Option<String> {
+    client
+        .query_one(
+            "SELECT pg_catalog.shobj_description(oid, 'pg_database') \
+               FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
+            &[],
+        )
+        .await
+        .expect("read the database comment")
+        .get(0)
+}
+
+async fn set_database_comment(client: &Client, comment: Option<&str>) {
+    let comment = comment.map_or_else(|| "NULL".to_owned(), wamn_pg_core::quote_literal);
+    client
+        .batch_execute(&format!(
+            "DO $comment$ BEGIN \
+               EXECUTE format('COMMENT ON DATABASE %I IS %L', current_database(), {comment}::text); \
+             END $comment$;"
+        ))
+        .await
+        .expect("write the database comment");
+}
+
+fn manifest_sha256(package: &Path) -> String {
+    let directory =
+        apply_package::read_package_directory(package).expect("read local target package");
+    wamn_schema_control::plan_package_migrations(&directory, None)
+        .expect("plan local target package")
+        .manifest_sha256
+}
+
+fn package_migration_error(
+    error: &anyhow::Error,
+) -> wamn_schema_control::PackageMigrationErrorKind {
+    error
+        .downcast_ref::<wamn_schema_control::PackageMigrationError>()
+        .unwrap_or_else(|| panic!("not a package migration refusal: {error:#}"))
+        .kind()
+}
+
+async fn receiving_column_present(client: &Client, table: &str, column: &str) -> bool {
+    client
+        .query_one(
+            "SELECT EXISTS ( \
+               SELECT 1 FROM information_schema.columns \
+                WHERE table_schema = 'receiving' AND table_name = $1 AND column_name = $2)",
+            &[&table, &column],
+        )
+        .await
+        .expect("read receiving column")
+        .get(0)
+}
+
+/// Insert one migration record for the sealed coordinate in its own transaction.
+async fn record_after_seal(
+    client: &Client,
+    setting: Option<&str>,
+) -> Result<(), tokio_postgres::Error> {
+    client.batch_execute("BEGIN").await?;
+    let result = async {
+        client
+            .query_one("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
+            .await?;
+        if let Some(setting) = setting {
+            client
+                .query_one(
+                    "SELECT set_config('wamn.local_target_comment', $1, true)",
+                    &[&setting],
+                )
+                .await?;
+        }
+        client
+            .execute(
+                "INSERT INTO catalog.package_migrations \
+                     (tenant_id, package_id, package_version, ordinal, relative_path, sha256) \
+                 VALUES ($1, 'wamn_receiving', '1.0.0', 99, 'migrations/0099_seal_probe.sql', $2)",
+                &[&TENANT, &format!("sha256:{}", "0".repeat(64))],
+            )
+            .await
+            .map(|_| ())
+    }
+    .await;
+    client
+        .batch_execute("ROLLBACK")
+        .await
+        .expect("roll back the seal probe");
+    result
+}
+
+fn is_sealed(error: &tokio_postgres::Error) -> bool {
+    error
+        .as_db_error()
+        .is_some_and(|database| database.message() == apply_package::PACKAGE_VERSION_SEALED_REFUSAL)
+}
+
+/// Owner rulings 1, 2, and 4 of wamn-ri4b: only a marked local target takes a
+/// changed wamn.json and an appended migration at an applied coordinate, also
+/// after release membership, and its comment records the current manifest hash.
+#[tokio::test]
+async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
+    const ENVIRONMENT: &str = "development";
+    let url = locked_database::database(wamn_test_postgres::database);
+    let client = connect(&url).await;
+    install(&client).await;
+    let package =
+        fixture_root().with_file_name(format!("apply-package-local-target-{}", std::process::id()));
+    copy_receiving_package(&package);
+    let instance: u32 = client
+        .query_one(
+            "SELECT oid FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
+            &[],
+        )
+        .await
+        .expect("read the database instance")
+        .get(0);
+    let marker =
+        wamn_runtime::local_application::local_target_marker(TENANT, ENVIRONMENT, instance);
+    set_database_comment(&client, Some(&marker)).await;
+    let apply_local = || {
+        apply_package::apply_local_package(
+            ApplyPackageRequest {
+                package: package.clone(),
+                database_url: url.to_string(),
+                tenant: TENANT.to_owned(),
+            },
+            ENVIRONMENT,
+        )
+    };
+    let recorded_comment = |hash: &str| {
+        let mut comment = wamn_runtime::local_application::parse_local_target_comment(&marker)
+            .expect("parse the marker");
+        comment
+            .manifests
+            .insert("wamn_receiving@1.0.0".to_owned(), hash.to_owned());
+        comment.to_string()
+    };
+
+    apply_local()
+        .await
+        .expect("apply the package to the local target");
+    let first = manifest_sha256(&package);
+    assert_eq!(
+        database_comment(&client).await,
+        Some(recorded_comment(&first))
+    );
+
+    // Before release membership: an audit_log change and an appended column.
+    set_audit_log_retention(&package, "location", "unlimited");
+    std::fs::write(
+        package.join("migrations/0002_location_description.sql"),
+        "ALTER TABLE receiving.location ADD COLUMN description text NOT NULL DEFAULT 'not_required';",
+    )
+    .expect("append the column migration");
+    let refused = apply(&url, &package)
+        .await
+        .expect_err("plain apply-package refuses the changed manifest on a marked target");
+    assert_eq!(
+        package_migration_error(&refused),
+        wamn_schema_control::PackageMigrationErrorKind::ManifestDrift
+    );
+    let outcome = apply_local()
+        .await
+        .expect("the local target takes the appended migration and the changed manifest");
+    assert_eq!(outcome.migrations_applied, 1);
+    let second = manifest_sha256(&package);
+    assert_ne!(second, first);
+    assert_eq!(
+        database_comment(&client).await,
+        Some(recorded_comment(&second))
+    );
+    assert!(receiving_column_present(&client, "location", "description").await);
+    assert!(
+        client
+            .query_one(
+                "SELECT pg_catalog.to_regclass('receiving.location_history') IS NOT NULL",
+                &[],
+            )
+            .await
+            .expect("read the reconciled history table")
+            .get::<_, bool>(0),
+        "the local apply reconciles the changed audit_log"
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT manifest_sha256 FROM catalog.packages \
+                  WHERE tenant_id = $1 AND package_id = 'wamn_receiving' \
+                    AND package_version = '1.0.0'",
+                &[&TENANT],
+            )
+            .await
+            .expect("read the immutable package row")
+            .get::<_, String>(0),
+        first,
+        "catalog.packages keeps the first recorded manifest hash"
+    );
+
+    client
+        .execute(
+            "INSERT INTO catalog.effective_releases \
+                 (tenant_id, effective_release_id, environment) \
+             VALUES ($1, 1, $2)",
+            &[&TENANT, &ENVIRONMENT],
+        )
+        .await
+        .expect("seed a local effective release");
+    client
+        .execute(
+            "INSERT INTO catalog.effective_release_packages \
+                 (tenant_id, effective_release_id, package_id, package_version) \
+             VALUES ($1, 1, 'wamn_receiving', '1.0.0')",
+            &[&TENANT],
+        )
+        .await
+        .expect("seal the coordinate through local release membership");
+
+    // A marked target without the setting keeps the seal, and a setting that
+    // holds only the marker, a prefix of the comment, does not lift it.
+    let comment = database_comment(&client)
+        .await
+        .expect("the target is marked");
+    let unset = record_after_seal(&client, None).await.expect_err("sealed");
+    assert!(is_sealed(&unset), "{unset}");
+    let prefix = record_after_seal(&client, Some(&marker))
+        .await
+        .expect_err("sealed");
+    assert!(is_sealed(&prefix), "{prefix}");
+    record_after_seal(&client, Some(&comment))
+        .await
+        .expect("the full comment lifts the seal for its transaction");
+    let first_bytes_package = package.with_file_name(format!(
+        "apply-package-local-target-first-{}",
+        std::process::id()
+    ));
+    copy_receiving_package(&first_bytes_package);
+    std::fs::copy(
+        package.join("migrations/0002_location_description.sql"),
+        first_bytes_package.join("migrations/0002_location_description.sql"),
+    )
+    .expect("copy the applied column migration");
+    std::fs::write(
+        first_bytes_package.join("migrations/0003_location_note.sql"),
+        "ALTER TABLE receiving.location ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
+    )
+    .expect("append a migration after the seal");
+    let sealed = apply(&url, &first_bytes_package)
+        .await
+        .expect_err("plain apply-package keeps the seal on a marked target");
+    assert_eq!(
+        sealed
+            .downcast_ref::<apply_package::ApplyPackageError>()
+            .expect("the seal is translated at the apply-package boundary")
+            .kind(),
+        apply_package::ApplyPackageErrorKind::PackageVersionSealed
+    );
+    std::fs::remove_dir_all(&first_bytes_package).expect("remove first-bytes fixture");
+
+    // After release membership: another appended migration and manifest change.
+    std::fs::write(
+        package.join("migrations/0003_location_note.sql"),
+        "ALTER TABLE receiving.location ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
+    )
+    .expect("append a migration after the seal");
+    let mut changed = std::fs::read(package.join("wamn.json")).expect("read manifest");
+    changed.push(b'\n');
+    std::fs::write(package.join("wamn.json"), changed).expect("change manifest bytes");
+    apply_local()
+        .await
+        .expect("the local target records an appended migration after the seal");
+    let third = manifest_sha256(&package);
+    assert_eq!(
+        database_comment(&client).await,
+        Some(recorded_comment(&third))
+    );
+    assert!(receiving_column_present(&client, "location", "note").await);
+
+    // An edited or removed applied migration still refuses.
+    let edited_path = package.join("migrations/0002_location_description.sql");
+    let edited_bytes = std::fs::read(&edited_path).expect("read applied migration");
+    std::fs::write(
+        &edited_path,
+        b"ALTER TABLE receiving.location ADD COLUMN detail text NOT NULL DEFAULT 'not_required';",
+    )
+    .expect("edit an applied migration");
+    let edited = apply_local()
+        .await
+        .expect_err("an edited applied migration refuses on a marked target");
+    assert_eq!(
+        package_migration_error(&edited),
+        wamn_schema_control::PackageMigrationErrorKind::MigrationDrift
+    );
+    std::fs::write(&edited_path, edited_bytes).expect("restore the edited migration");
+    let removed_path = package.join("migrations/0003_location_note.sql");
+    let removed_bytes = std::fs::read(&removed_path).expect("read applied migration");
+    std::fs::remove_file(&removed_path).expect("remove an applied migration");
+    let removed = apply_local()
+        .await
+        .expect_err("a removed applied migration refuses on a marked target");
+    assert_eq!(
+        package_migration_error(&removed),
+        wamn_schema_control::PackageMigrationErrorKind::MigrationDrift
+    );
+    std::fs::write(&removed_path, removed_bytes).expect("restore the removed migration");
+    assert_eq!(
+        database_comment(&client).await,
+        Some(recorded_comment(&third))
+    );
+
+    // A comment with only the marker prefix, or no comment, is not a local target.
+    std::fs::write(
+        package.join("migrations/0004_location_code.sql"),
+        "ALTER TABLE receiving.location ADD COLUMN code text NOT NULL DEFAULT 'not_required';",
+    )
+    .expect("append a migration for the unmarked cases");
+    for comment in [Some("wamn-local-target:"), None] {
+        set_database_comment(&client, comment).await;
+        let unset = record_after_seal(&client, None).await.expect_err("sealed");
+        assert!(is_sealed(&unset), "{unset}");
+        apply_local()
+            .await
+            .expect_err("the local apply requires the full marker");
+        let unmarked = apply(&url, &package)
+            .await
+            .expect_err("an unmarked target refuses the changed manifest");
+        assert_eq!(
+            package_migration_error(&unmarked),
+            wamn_schema_control::PackageMigrationErrorKind::ManifestDrift
+        );
+    }
+    assert!(!receiving_column_present(&client, "location", "code").await);
+
+    client
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
+        )
+        .await
+        .expect("clean local target schemas");
+    std::fs::remove_dir_all(package).expect("remove local target package fixture");
+}

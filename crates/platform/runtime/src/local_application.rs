@@ -473,6 +473,49 @@ pub fn local_target_marker(tenant: &str, environment: &str, instance: u32) -> St
     format!("wamn-local-target:{digest}")
 }
 
+/// The marker and current package manifest hashes in a local target database comment.
+///
+/// The comment is the marker alone, or the marker, one space, and a JSON object.
+/// The object maps each `<package-id>@<package-version>` that the local apply
+/// applied to the manifest sha256 that it applied last.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LocalTargetComment {
+    pub marker: String,
+    pub manifests: BTreeMap<String, String>,
+}
+
+impl std::fmt::Display for LocalTargetComment {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.marker)?;
+        if !self.manifests.is_empty() {
+            let manifests =
+                serde_json::to_string(&self.manifests).expect("a map of strings serializes");
+            write!(formatter, " {manifests}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Parse a local target database comment that has exactly its written spelling.
+pub fn parse_local_target_comment(comment: &str) -> anyhow::Result<LocalTargetComment> {
+    let parsed = match comment.split_once(' ') {
+        Some((marker, manifests)) => LocalTargetComment {
+            marker: marker.to_owned(),
+            manifests: serde_json::from_str(manifests)
+                .context("parse the manifest hashes of the local target comment")?,
+        },
+        None => LocalTargetComment {
+            marker: comment.to_owned(),
+            manifests: BTreeMap::new(),
+        },
+    };
+    anyhow::ensure!(
+        parsed.to_string() == comment,
+        "the local target comment does not have its written spelling"
+    );
+    Ok(parsed)
+}
+
 /// Check the marker through the selected runtime connection before local loading.
 ///
 /// The normal runtime credential and capability checks remain mandatory.
@@ -486,6 +529,17 @@ pub async fn require_local_target(
         .map(|_| ())
 }
 
+/// Read the comment of the connected local target after checking its marker.
+pub async fn read_local_target_comment(
+    client: &impl tokio_postgres::GenericClient,
+    tenant: &str,
+    environment: &str,
+) -> anyhow::Result<LocalTargetComment> {
+    read_target_comment(client, tenant, environment)
+        .await
+        .map(|(_, comment)| comment)
+}
+
 async fn read_local_target(
     database_url: &str,
     tenant: &str,
@@ -497,27 +551,37 @@ async fn read_local_target(
     let connection = tokio::spawn(async move {
         let _ = connection.await;
     });
-    let result = async {
-        let row = client
-            .query_one(
-                "SELECT oid, pg_catalog.shobj_description(oid, 'pg_database') \
-             FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
-                &[],
-            )
-            .await
-            .context("read the local target ownership marker")?;
-        let instance: u32 = row.try_get(0)?;
-        let marker: Option<String> = row.try_get(1)?;
-        anyhow::ensure!(
-            marker.as_deref() == Some(local_target_marker(tenant, environment, instance).as_str()),
-            "local application requires an owned disposable target created by wamn dev"
-        );
-        Ok(instance)
-    }
-    .await;
+    let result = read_target_comment(&client, tenant, environment)
+        .await
+        .map(|(instance, _)| instance);
     drop(client);
     connection.abort();
     result
+}
+
+async fn read_target_comment(
+    client: &impl tokio_postgres::GenericClient,
+    tenant: &str,
+    environment: &str,
+) -> anyhow::Result<(u32, LocalTargetComment)> {
+    let row = client
+        .query_one(
+            "SELECT oid, pg_catalog.shobj_description(oid, 'pg_database') \
+             FROM pg_catalog.pg_database WHERE datname = pg_catalog.current_database()",
+            &[],
+        )
+        .await
+        .context("read the local target ownership marker")?;
+    let instance: u32 = row.try_get(0)?;
+    let comment: Option<String> = row.try_get(1)?;
+    let comment = comment
+        .as_deref()
+        .and_then(|comment| parse_local_target_comment(comment).ok())
+        .filter(|comment| comment.marker == local_target_marker(tenant, environment, instance));
+    let Some(comment) = comment else {
+        anyhow::bail!("local application requires an owned disposable target created by wamn dev");
+    };
+    Ok((instance, comment))
 }
 
 #[cfg(test)]
@@ -686,5 +750,38 @@ mod tests {
         assert_ne!(marker, local_target_marker("tenant-b", "dev", 17));
         assert_ne!(marker, local_target_marker("tenant-a", "other", 17));
         assert_ne!(marker, local_target_marker("tenant-a", "dev", 18));
+    }
+
+    #[test]
+    fn a_local_target_comment_reads_only_its_written_spelling() {
+        let marker = local_target_marker("tenant-a", "dev", 17);
+        let bare = super::parse_local_target_comment(&marker).unwrap();
+        assert_eq!(bare.marker, marker);
+        assert!(bare.manifests.is_empty());
+        let mut recorded = bare;
+        recorded.manifests.insert(
+            "wamn_receiving@1.0.0".to_owned(),
+            format!("sha256:{}", "1".repeat(64)),
+        );
+        recorded
+            .manifests
+            .insert("client_acme@1 beta".to_owned(), "sha256:2".to_owned());
+        let written = recorded.to_string();
+        assert_eq!(
+            super::parse_local_target_comment(&written).unwrap(),
+            recorded
+        );
+        for foreign in [
+            format!("{marker} {{}}"),
+            format!("{marker}  {{\"a@1\":\"b\"}}"),
+            format!("{marker} {{ \"a@1\": \"b\" }}"),
+            format!("{marker} not-json"),
+            format!("{written} "),
+        ] {
+            assert!(
+                super::parse_local_target_comment(&foreign).is_err(),
+                "{foreign:?} is not a written local target comment"
+            );
+        }
     }
 }

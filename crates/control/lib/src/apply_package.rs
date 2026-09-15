@@ -7,7 +7,7 @@ use anyhow::{Context as _, ensure};
 use tokio_postgres::{NoTls, Transaction, error::SqlState};
 use wamn_control_provision::{PlatformComponent, bind_platform_principal_sql};
 use wamn_schema_control::{
-    PackageDirectory, RecordedMigration, SqlStatement, plan_package_migrations,
+    AppliedPackage, PackageDirectory, RecordedMigration, SqlStatement, plan_package_migrations,
     plan_package_registration,
 };
 use wamn_schema_generator::PackageManifest;
@@ -28,6 +28,7 @@ use roles::{assert_host_role, reset_host_role, set_package_owner_role};
 mod definition_ownership;
 mod entity_maps;
 mod error;
+mod local_target;
 mod migration_policy;
 mod operation_grants;
 mod package_version;
@@ -82,6 +83,32 @@ pub struct ApplyOutcome {
 
 /// Apply the immutable pending suffix from one package directory.
 pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<ApplyOutcome> {
+    apply_request(request, None).await
+}
+
+/// Apply one package directory to a local target that wamn dev created.
+///
+/// The target also takes a changed wamn.json at an applied coordinate, and a
+/// migration appended after release membership, while every applied migration
+/// stays byte-identical. The database comment then records the current manifest
+/// hash of the package.
+pub async fn apply_local_package(
+    request: ApplyPackageRequest,
+    environment: &str,
+) -> anyhow::Result<ApplyOutcome> {
+    wamn_runtime::local_application::require_local_target(
+        &request.database_url,
+        &request.tenant,
+        environment,
+    )
+    .await?;
+    apply_request(request, Some(environment)).await
+}
+
+async fn apply_request(
+    request: ApplyPackageRequest,
+    local_environment: Option<&str>,
+) -> anyhow::Result<ApplyOutcome> {
     ensure!(!request.tenant.is_empty(), "tenant must not be empty");
     let directory = read_package_directory(&request.package)?;
     let presented = plan_package_migrations(&directory, None)
@@ -107,6 +134,7 @@ pub async fn apply_package(request: ApplyPackageRequest) -> anyhow::Result<Apply
         &directory,
         &manifest,
         migration_policy,
+        local_environment,
     )
     .await;
     drop(client);
@@ -128,6 +156,7 @@ async fn apply(
     directory: &PackageDirectory,
     manifest: &PackageManifest,
     migration_policy: MigrationPolicyPlan,
+    local_environment: Option<&str>,
 ) -> anyhow::Result<ApplyOutcome> {
     wamn_schema_generator::validate_operation_vocabulary(manifest)
         .context("validate package manifest for registration projection")?;
@@ -144,11 +173,28 @@ async fn apply(
     tx.query_one(LOCK_PACKAGE_SQL, &[&tenant, &package_id])
         .await
         .context("lock package family")?;
+    let local_comment = match local_environment {
+        Some(environment) => Some(local_target::lift_release_seal(&tx, tenant, environment).await?),
+        None => None,
+    };
 
     let applied = load_applied_package(&tx, tenant, &package_id, &package_version).await?;
     let plan = if let Some(applied) = applied.as_ref() {
-        plan_package_migrations(directory, Some(applied))
-            .context("compare package bytes with immutable records")?
+        let compared = if local_comment.is_some() {
+            // A local target takes a changed wamn.json at the same coordinate.
+            // The planner still refuses an edited, removed, or reordered
+            // applied migration.
+            plan_package_migrations(
+                directory,
+                Some(&AppliedPackage {
+                    manifest_sha256: presented.manifest_sha256.clone(),
+                    ..applied.clone()
+                }),
+            )
+        } else {
+            plan_package_migrations(directory, Some(applied))
+        };
+        compared.context("compare package bytes with immutable records")?
     } else {
         match current_package_version(&tx, tenant, &package_id).await? {
             None => presented,
@@ -230,11 +276,17 @@ async fn apply(
     set_package_owner_role(&tx).await?;
     ensure_model_schemas(&tx, &plan).await?;
     reset_host_role(&tx).await?;
+    // catalog.packages is immutable, so a local target keeps the first recorded
+    // manifest hash there and records the current one in its comment.
+    let registered_manifest_sha256 = match (&local_comment, &applied) {
+        (Some(_), Some(applied)) => &applied.manifest_sha256,
+        _ => &plan.manifest_sha256,
+    };
     let package_inserted = register_package(
         &tx,
         tenant,
         &plan.coordinate,
-        &plan.manifest_sha256,
+        registered_manifest_sha256,
         plan.predecessor_version.as_deref(),
     )
     .await
@@ -268,6 +320,13 @@ async fn apply(
         reconcile_package_operation_grants(&tx, &directory.manifest_bytes, tenant).await?;
     let registrations_changed =
         reconcile_package_registrations(&tx, tenant, &package_id, &registrations).await?;
+    let comment_changed = match local_comment {
+        Some(comment) => {
+            local_target::record_manifest(&tx, comment, coordinate_text, &plan.manifest_sha256)
+                .await?
+        }
+        None => false,
+    };
     tx.commit().await.context("commit whole package suffix")?;
     Ok(ApplyOutcome {
         package_id,
@@ -279,7 +338,8 @@ async fn apply(
             || history_changed
             || triggers_changed
             || !operation_grants.is_noop()
-            || registrations_changed,
+            || registrations_changed
+            || comment_changed,
     })
 }
 

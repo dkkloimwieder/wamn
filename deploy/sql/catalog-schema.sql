@@ -109,6 +109,7 @@ CREATE TABLE catalog.effective_release_packages (
 -- publisher and migration table serialize on the package row, so whichever
 -- commits first determines whether one last migration precedes the seal or is
 -- refused after it. There is no second seal flag or snapshot of release records.
+-- Local-target exception: wamn.local_target_comment equal to the full database comment lifts it.
 CREATE FUNCTION catalog.lock_package_coordinate_for_release_membership()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -148,6 +149,12 @@ BEGIN
          WHERE tenant_id = NEW.tenant_id
            AND package_id = NEW.package_id
            AND package_version = NEW.package_version
+    ) AND NOT EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_database
+         WHERE datname = pg_catalog.current_database()
+           AND pg_catalog.shobj_description(oid, 'pg_database')
+               = pg_catalog.current_setting('wamn.local_target_comment', true)
     ) THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
