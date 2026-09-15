@@ -16,7 +16,7 @@ use super::declarations::{
     RUNS_ROOT_INDEX_DEF, RUNS_WIRING_IDENTITY_CHECK_DEF,
 };
 
-pub(super) fn effect_writer_cutover_owned_check(table: &str, name: &str) -> bool {
+pub(super) fn effect_table_cutover_owned_check(table: &str, name: &str) -> bool {
     table == "effect_attempts"
         && matches!(
             name,
@@ -158,7 +158,7 @@ pub(super) fn frame_identity_cutover_targets(
     FrameIdentityCutoverTargets {
         effect,
         dispatch,
-        restore_dispatch_fk: dispatch && !effect_writer_table_cutover_needed(schema, obs),
+        restore_dispatch_fk: dispatch && !effect_table_cutover_needed(schema, obs),
     }
 }
 
@@ -269,10 +269,10 @@ ALTER TABLE {schema}.effect_attempts
     sql
 }
 
-pub(super) fn effect_writer_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
+pub(super) fn effect_table_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
     let target = schema;
     let schema = target.quoted();
-    let table_cutover_needed = effect_writer_table_cutover_needed(target, obs);
+    let table_cutover_needed = effect_table_cutover_needed(target, obs);
     let present_tables: Vec<&str> = if table_cutover_needed {
         [
             "effect_attempts",
@@ -312,7 +312,7 @@ BEGIN
     IF {populated} THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
-            MESSAGE = 'effect-writer-cutover-requires-empty-ledger';
+            MESSAGE = 'effect-table-cutover-requires-empty-ledger';
     END IF;
 END
 $retire$;
@@ -408,7 +408,7 @@ ALTER TABLE {schema}.effect_attempt_dispatches
     sql
 }
 
-pub(super) fn effect_writer_table_cutover_needed(schema: &BareSchemaName, obs: &RunPlaneObservation) -> bool {
+pub(super) fn effect_table_cutover_needed(schema: &BareSchemaName, obs: &RunPlaneObservation) -> bool {
     let attempts_need_cutover = obs.tables.get("effect_attempts").is_some_and(|columns| {
         RETIRED_EFFECT_ATTEMPT_COLUMNS
             .iter()

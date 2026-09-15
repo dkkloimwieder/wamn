@@ -33,8 +33,8 @@ use super::schema_changes::{
     RETIRED_CHILD_RUN_COLUMNS, RETIRED_FAILURE_DETAIL_COLUMNS, RETIRED_PARTITION_CHECK,
     RETIRED_PARTITION_COLUMNS, RETIRED_RERUN_LINEAGE_COLUMNS,
     RETIRED_TEST_SET_REFERENCE_COLUMN, RETIRED_TEST_SET_REFERENCE_TABLES,
-    child_run_cutover_needed, child_run_cutover_sql, effect_writer_cutover_owned_check,
-    effect_writer_cutover_sql, effect_writer_table_cutover_needed,
+    child_run_cutover_needed, child_run_cutover_sql, effect_table_cutover_owned_check,
+    effect_table_cutover_sql, effect_table_cutover_needed,
     execution_bundle_cutover_needed, execution_bundle_cutover_sql,
     failure_detail_cutover_needed, failure_detail_cutover_sql, frame_identity_check,
     frame_identity_column, frame_identity_cutover_sql, frame_identity_cutover_targets,
@@ -286,12 +286,12 @@ $retire_run_projection_authority$;"#,
     let run_capture_privileges_drifted = run_capture_privileges_drifted(schema, obs);
     let wiring_identity_cutover_needed = has_runs && !run_wiring_identity_contract_complete(obs);
 
-    let effect_writer_table_cutover_needed = effect_writer_table_cutover_needed(schema, obs);
-    if effect_writer_table_cutover_needed && obs.effect_record_rows != 0 {
+    let effect_table_cutover_needed = effect_table_cutover_needed(schema, obs);
+    if effect_table_cutover_needed && obs.effect_record_rows != 0 {
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::EffectWriterCutover,
-            target: "effect-tables.coordinate-writer-boundary".to_string(),
-            sql: effect_writer_cutover_sql(schema, obs),
+            kind: RunPlaneActionKind::EffectTableCutover,
+            target: "effect-tables.coordinate-boundary".to_string(),
+            sql: effect_table_cutover_sql(schema, obs),
         });
         return plan;
     }
@@ -349,11 +349,11 @@ $retire_run_projection_authority$;"#,
             sql: frame_identity_cutover_sql(schema, frame_cutover_targets),
         });
     }
-    if effect_writer_table_cutover_needed {
+    if effect_table_cutover_needed {
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::EffectWriterCutover,
-            target: "effect-tables.coordinate-writer-boundary".to_string(),
-            sql: effect_writer_cutover_sql(schema, obs),
+            kind: RunPlaneActionKind::EffectTableCutover,
+            target: "effect-tables.coordinate-boundary".to_string(),
+            sql: effect_table_cutover_sql(schema, obs),
         });
     }
     // This is the final pre-role-bootstrap migration. Keeping it behind the
@@ -605,9 +605,9 @@ $retire_run_projection_authority$;"#,
                 let frame_owned = frame_cutover_targets.effect
                     && (column.as_str() == "node_id"
                         || EFFECT_FRAME_COLUMNS.contains(&column.as_str()));
-                let writer_owned = effect_writer_table_cutover_needed
+                let cutover_owned = effect_table_cutover_needed
                     && RETIRED_EFFECT_ATTEMPT_COLUMNS.contains(&column.as_str());
-                !frame_owned && !writer_owned
+                !frame_owned && !cutover_owned
             })
             .map(|column| quote_ident(column))
             .collect::<Vec<_>>()
@@ -852,7 +852,7 @@ $retire_run_projection_authority$;"#,
                 if frame_cutover_targets.needed() && frame_identity_column(&table, col) {
                     continue;
                 }
-                if effect_writer_table_cutover_needed
+                if effect_table_cutover_needed
                     && table == "effect_attempt_dispatches"
                     && matches!(
                         col.as_str(),
@@ -914,7 +914,7 @@ $retire_run_projection_authority$;"#,
                 {
                     continue;
                 }
-                if effect_writer_table_cutover_needed
+                if effect_table_cutover_needed
                     && table == "effect_attempts"
                     && RETIRED_EFFECT_ATTEMPT_COLUMNS.contains(&col.as_str())
                 {
@@ -1006,7 +1006,7 @@ $retire_run_projection_authority$;"#,
         {
             continue;
         }
-        if effect_writer_table_cutover_needed
+        if effect_table_cutover_needed
             && spec.table == "effect_attempt_dispatches"
             && matches!(
                 spec.name,
@@ -1052,8 +1052,7 @@ $retire_run_projection_authority$;"#,
         if obs.tables.contains_key(table)
             && record_table_names().contains(table.as_str())
             && !expected_checks.contains(&(table.as_str(), name.as_str()))
-            && !(effect_writer_table_cutover_needed
-                && effect_writer_cutover_owned_check(table, name))
+            && !(effect_table_cutover_needed && effect_table_cutover_owned_check(table, name))
             && !(frame_cutover_targets.includes_table(table) && frame_identity_check(table, name))
             && !(partition_plane_cutover_needed
                 && table == "run_queue"
@@ -1090,7 +1089,7 @@ $retire_run_projection_authority$;"#,
             EFFECT_OUTCOME_DISPATCH_FK_SQL,
         ),
     ] {
-        if effect_writer_table_cutover_needed
+        if effect_table_cutover_needed
             && table == "effect_attempt_dispatches"
             && obs.tables.contains_key("effect_attempts")
         {
@@ -1166,7 +1165,7 @@ $retire_run_projection_authority$;"#,
         if record_table_names().contains(table.as_str())
             && !expected_triggers.contains(&(table.as_str(), name.as_str()))
             && name != OUTBOX_TRIGGER_NAME
-            && !(effect_writer_table_cutover_needed
+            && !(effect_table_cutover_needed
                 && matches!(
                     (table.as_str(), name.as_str()),
                     ("effect_attempts", "effect_attempts_insert_guard")
@@ -1204,7 +1203,7 @@ $retire_run_projection_authority$;"#,
             if matches!(name.as_str(), "runs_release" | "runs_execution_bundle") {
                 continue;
             }
-            if effect_writer_table_cutover_needed
+            if effect_table_cutover_needed
                 && matches!(
                     name.as_str(),
                     "effect_attempts_dispatch_identity_key"

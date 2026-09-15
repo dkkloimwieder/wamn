@@ -51,7 +51,7 @@
 //! (`extra_columns`) and preserved. Explicit cutovers physically remove only
 //! named retired state after locked safety preflights. The partition-plane
 //! cutover requires drained leases and refuses nonempty dead-letter history;
-//! the effect-writer cutovers remove retired identity/recovery columns; the
+//! the effect-table cutovers remove retired identity/recovery columns; the
 //! rerun-lineage cutover removes only the two retired run columns and its
 //! canonical index while preserving every run row; and the stored-test
 //! cutover removes retired persistence. PostgreSQL
@@ -180,8 +180,8 @@ pub enum RunPlaneActionKind {
     StoredSuiteCutover,
     /// Empty-only deletion of the retired effect-disposition request/outcome plane.
     RetiredEffectDispositionCutover,
-    /// Strict empty-only installation of the coordinate-bound writer tables.
-    EffectWriterCutover,
+    /// Strict empty-only installation of the coordinate-bound effect tables.
+    EffectTableCutover,
     /// Converge exact effect-table ACLs and deny guest and author writes.
     RepairEffectTablePrivilege,
     /// Drop/re-add a drifted record CHECK, or add it when absent.

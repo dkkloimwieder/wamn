@@ -1650,7 +1650,7 @@ fn retired_effect_disposition_cutover_is_locked_empty_only_and_idempotent() {
 }
 
 #[test]
-fn empty_incompatible_effect_writer_shape_is_physically_retired() {
+fn empty_incompatible_effect_table_shape_is_physically_retired() {
     let mut obs = observation_at_record();
     let attempt_columns = obs
         .tables
@@ -1706,12 +1706,12 @@ fn empty_incompatible_effect_writer_shape_is_physically_retired() {
     let action = plan
         .actions
         .into_iter()
-        .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
-        .expect("effect writer cutover");
+        .find(|action| action.kind == RunPlaneActionKind::EffectTableCutover)
+        .expect("effect table cutover");
     assert!(
         action
             .sql
-            .contains("effect-writer-cutover-requires-empty-ledger")
+            .contains("effect-table-cutover-requires-empty-ledger")
     );
     assert!(
         action
@@ -1724,10 +1724,10 @@ fn empty_incompatible_effect_writer_shape_is_physically_retired() {
     assert!(!action.sql.contains("INSERT INTO "));
 }
 
-// The retired populated-table cleanup test covered the node-runs half of the effect-writer
+// The retired populated-table cleanup test covered the node-runs half of the effect-table
 // cutover, which wamn-0h0g.26.3.1 (204220e8) deleted along with the
 // projection. An observed `node_runs` now plans one leading `RetireNodeRuns`
-// and returns, so no effect-writer cutover can name it.
+// and returns, so no effect-table cutover can name it.
 
 #[test]
 fn dispatch_type_and_index_drift_is_replaced_by_empty_cutover() {
@@ -1751,7 +1751,7 @@ fn dispatch_type_and_index_drift_is_replaced_by_empty_cutover() {
     let action = plan_run_plane(&schema("demo"), &obs)
         .actions
         .into_iter()
-        .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
+        .find(|action| action.kind == RunPlaneActionKind::EffectTableCutover)
         .expect("dispatch drift cutover");
     assert!(action.sql.contains("DROP COLUMN IF EXISTS frame_id"));
     assert!(action.sql.contains("ADD COLUMN frame_id bigint NOT NULL"));
@@ -1920,7 +1920,7 @@ fn frame_identity_cutover_is_empty_only_and_precedes_ddl() {
 }
 
 #[test]
-fn frame_cutover_defers_dispatch_fk_to_concurrent_writer_cutover() {
+fn frame_cutover_defers_dispatch_fk_to_concurrent_effect_table_cutover() {
     let mut obs = observation_at_record();
     obs.checks.insert(
         (
@@ -1943,12 +1943,12 @@ fn frame_cutover_defers_dispatch_fk_to_concurrent_writer_cutover() {
         .iter()
         .position(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover)
         .expect("effect frame cutover");
-    let writer_position = plan
+    let table_cutover_position = plan
         .actions
         .iter()
-        .position(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
+        .position(|action| action.kind == RunPlaneActionKind::EffectTableCutover)
         .expect("dispatch coordinate cutover");
-    assert!(frame_position < writer_position);
+    assert!(frame_position < table_cutover_position);
 
     let frame = &plan.actions[frame_position];
     assert!(
@@ -1963,10 +1963,10 @@ fn frame_cutover_defers_dispatch_fk_to_concurrent_writer_cutover() {
         "frame cutover must not restore an FK against incompatible dispatch coordinates"
     );
     assert!(
-        plan.actions[writer_position]
+        plan.actions[table_cutover_position]
             .sql
             .contains("ADD CONSTRAINT effect_attempt_dispatches_attempt_fk"),
-        "the following writer cutover owns dispatch-coordinate and FK restoration"
+        "the following effect-table cutover owns dispatch-coordinate and FK restoration"
     );
 }
 
@@ -2097,12 +2097,12 @@ fn unsafe_legacy_attempt_upgrade_refuses() {
     let action = plan_run_plane(&schema("demo"), &obs)
         .actions
         .into_iter()
-        .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
-        .expect("effect writer cutover");
+        .find(|action| action.kind == RunPlaneActionKind::EffectTableCutover)
+        .expect("effect table cutover");
     assert!(
         action
             .sql
-            .contains("effect-writer-cutover-requires-empty-ledger")
+            .contains("effect-table-cutover-requires-empty-ledger")
     );
     assert!(
         action
@@ -2130,8 +2130,8 @@ fn empty_structural_cutover_owns_its_retired_check() {
     assert!(
         plan.actions
             .iter()
-            .any(|action| action.kind == RunPlaneActionKind::EffectWriterCutover),
-        "writer structural cutover"
+            .any(|action| action.kind == RunPlaneActionKind::EffectTableCutover),
+        "effect-table structural cutover"
     );
     assert!(!plan.actions.iter().any(|action| {
         action.kind == RunPlaneActionKind::DropExtraConstraint
@@ -2140,7 +2140,7 @@ fn empty_structural_cutover_owns_its_retired_check() {
 }
 
 #[test]
-fn populated_writer_cutover_refusal_is_the_only_action() {
+fn populated_effect_table_cutover_refusal_is_the_only_action() {
     let mut obs = observation_at_record();
     obs.effect_record_rows = 1;
     obs.tables
@@ -2150,14 +2150,11 @@ fn populated_writer_cutover_refusal_is_the_only_action() {
 
     let plan = plan_run_plane(&schema("demo"), &obs);
     assert_eq!(plan.actions.len(), 1);
-    assert_eq!(
-        plan.actions[0].kind,
-        RunPlaneActionKind::EffectWriterCutover
-    );
+    assert_eq!(plan.actions[0].kind, RunPlaneActionKind::EffectTableCutover);
     assert!(
         plan.actions[0]
             .sql
-            .contains("effect-writer-cutover-requires-empty-ledger")
+            .contains("effect-table-cutover-requires-empty-ledger")
     );
 }
 
@@ -2173,8 +2170,8 @@ fn trusted_cdc_lineage_is_unchanged_by_attempt_retirement() {
     let action = plan_run_plane(&schema("demo"), &obs)
         .actions
         .into_iter()
-        .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
-        .expect("effect writer cutover");
+        .find(|action| action.kind == RunPlaneActionKind::EffectTableCutover)
+        .expect("effect table cutover");
     for lineage in ["event_source_run_id", "event_root_run_id", "event_depth"] {
         assert!(!action.sql.contains(lineage));
     }
@@ -2196,8 +2193,8 @@ fn effect_lineage_and_temporal_fks_are_repaired_on_existing_tables() {
     let cutover = plan
         .actions
         .iter()
-        .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
-        .expect("dispatch identity drift uses the empty-only writer cutover");
+        .find(|action| action.kind == RunPlaneActionKind::EffectTableCutover)
+        .expect("dispatch identity drift uses the empty-only effect-table cutover");
     assert!(cutover.sql.contains(EFFECT_DISPATCH_ATTEMPT_FK_NAME));
 
     let targets: BTreeSet<String> = plan
@@ -2961,7 +2958,7 @@ fn cutover_owned_columns_are_not_named_by_later_acl_repair() {
     assert!(
         plan.actions
             .iter()
-            .any(|action| { action.kind == RunPlaneActionKind::EffectWriterCutover })
+            .any(|action| { action.kind == RunPlaneActionKind::EffectTableCutover })
     );
     let repair = plan
         .actions
