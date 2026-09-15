@@ -243,8 +243,13 @@ CREATE TABLE catalog.connection_requirements (
 --
 -- `disposable` STAYS, though the three overwrites it used to gate are gone. It
 -- is still read: `publish_release` selects wamn-10yt.48's dependency-digest rule
--- from it, and the retention mechanism that will bound this store's growth needs
--- to know whose rows belong to a recreatable environment.
+-- from it.
+--
+-- RETENTION (wamn-10yt.70). Rows keyed by a non-empty `environment_instance`
+-- accumulate only within one `wamn dev up` standup. Nothing deletes them one at
+-- a time. That command's control store reset drops and installs this whole
+-- store again, and it is the retention step, outside the recreate path. The
+-- immutability trigger below stays unconditional.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.tenant_environments (
     tenant_id            text        NOT NULL CHECK (tenant_id <> ''),

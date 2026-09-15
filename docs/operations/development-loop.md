@@ -71,6 +71,11 @@ The new database receives a new target instance, the identity of one database cr
 The operator clears records, revisions, cursors, drafts, and pending submissions for the previous instance.
 It does not replay interrupted mutations.
 
+Control store rows keyed by a non-empty target instance accumulate only within one `wamn dev up` standup.
+Nothing deletes them one at a time, and the immutability trigger stays unconditional.
+The control store reset of `wamn dev up` is the retention step, outside the recreate path.
+A disposable projection made by hand with `wamn-ctl provision-project-env --disposable` against a durable control store has no such bound.
+
 For code and compatible SQL changes, the previous application remains available during candidate preparation.
 Build, Gate, and binding failures keep that application running.
 The loop replaces the host and operator only after the candidate passes preparation.
