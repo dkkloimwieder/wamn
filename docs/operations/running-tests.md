@@ -18,8 +18,9 @@ It includes committed, staged, unstaged, deleted, and untracked files.
 - A file in a Cargo package selects that package and its dependents in every workspace that resolves it: normal and build dependents transitively, then one development dependent.
 - A file under `apps/<name>/` outside a package selects every package under that directory in every workspace, with their dependents.
 - A workspace `Cargo.toml` or `Cargo.lock` runs that whole workspace.
-- Any other file outside `docs/` and `.beads/` runs the root command `cargo test --workspace --locked --offline --features wamn-ctl/ops --no-fail-fast`.
-- A change set with only `docs/` and `.beads/` files selects nothing.
+- Any other file outside `docs/`, `.beads/`, and the root Markdown files runs the root command `cargo test --workspace --locked --offline --features wamn-ctl/ops --no-fail-fast`.
+- A change set with only `docs/` files, `.beads/` files, and root Markdown files such as `README.md` and `CLAUDE.md` selects nothing.
+  A Markdown file below another directory follows the rules above.
 
 Selected packages run their default tests with the required features of their targets.
 Cargo metadata does not show a file that a package reads from another package's directory through `include_str!` or `#[path]`.
