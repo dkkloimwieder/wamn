@@ -231,6 +231,7 @@ Export `CARGO_TARGET_DIR` with the path to its separate absolute build directory
 The case changes authored files, observes the running application, and restores the saved source.
 Run this case alone.
 The fixture requires PostgreSQL 18 binaries, Docker, and the existing development service images.
+The case also requires SQLx CLI 0.9.0 as `cargo-sqlx` and `jq` on `PATH`.
 
 Build the native programs, fixture, HTTP guest, and exact test binary from that worktree:
 
@@ -259,6 +260,7 @@ WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_rou
 ```
 
 The fixture starts Compose services on assigned loopback ports.
+It sets every variable that the case declares, except the two that the command sets.
 The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.
 The case requires authenticated application results after code, SQL, and schema edits.
 It also requires retained data for compatible edits, refusal of invalid SQL, and a new database after a schema edit.

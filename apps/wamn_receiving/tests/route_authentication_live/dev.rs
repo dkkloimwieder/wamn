@@ -41,7 +41,7 @@ impl DevJourneyInputs {
                     directory: PathBuf::new(),
                     flow_http_component: required_journey_path("WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")?
                         .canonicalize()
-                        .context("resolve the local flow-http component")?,
+                        .context("resolve the local flow-http component named by WAMN_DEV_ENV_FLOW_HTTP_COMPONENT")?,
                     bindings: None,
                 },
                 host_binary: required_journey_path("WAMN_RECEIVING_DEV_HOST_BIN")?,
@@ -380,8 +380,26 @@ pub(super) async fn current_database_acl(client: &Client) -> anyhow::Result<(Str
 }
 
 #[tokio::test]
-#[ignore = "requires disposable NATS and built wamn/host/flow-http binaries"]
+#[ignore = "requires: WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_TEMPO_QUERY_URL, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
 async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_RECEIVING_DEV_BIN",
+        "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT",
+        "WAMN_RECEIVING_DEV_HOST_BIN",
+        "WAMN_RECEIVING_DEV_NATS_URL",
+        "WAMN_EVT_NATS_URL",
+        "WAMN_EVT_NATS_USERNAME",
+        "WAMN_EVT_NATS_PASSWORD_FILE",
+        "WAMN_EVT_STREAM_REPLICAS",
+        "WAMN_EVT_DUP_WINDOW_SECS",
+        "WAMN_RECEIVING_DEV_TEMPO_QUERY_URL",
+        "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
+        "WAMN_ROUTE_HOST",
+        "WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME",
+        "WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE",
+        "cargo-sqlx",
+        "jq",
+    ]);
     // The environment resets the control store of the whole server, so the test starts its own.
     let mut server = wamn_test_infrastructure::postgres::start(&[])?;
     let system_url = server.create_database("wamn_system")?.url().to_owned();

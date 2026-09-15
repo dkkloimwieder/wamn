@@ -29,11 +29,33 @@ const SCHEMA_AFTER: &str =
     "location_code text NOT NULL DEFAULT 'delivery-reset' CONSTRAINT";
 
 #[tokio::test]
-#[ignore = "requires an explicitly owned linked worktree, owned NATS, and built local runtime files"]
+#[ignore = "requires: WAMN_LOCAL_DEV_EDIT_ROOT, WAMN_RECEIVING_DEV_BIN, WAMN_DEV_ENV_FLOW_HTTP_COMPONENT, WAMN_RECEIVING_DEV_HOST_BIN, WAMN_RECEIVING_DEV_NATS_URL, WAMN_EVT_NATS_URL, WAMN_EVT_NATS_USERNAME, WAMN_EVT_NATS_PASSWORD_FILE, WAMN_EVT_STREAM_REPLICAS, WAMN_EVT_DUP_WINDOW_SECS, WAMN_RECEIVING_DEV_TEMPO_QUERY_URL, WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT, WAMN_ROUTE_HOST, WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME, WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE, cargo-sqlx, jq"]
 async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "WAMN_LOCAL_DEV_EDIT_ROOT",
+        "WAMN_RECEIVING_DEV_BIN",
+        "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT",
+        "WAMN_RECEIVING_DEV_HOST_BIN",
+        "WAMN_RECEIVING_DEV_NATS_URL",
+        "WAMN_EVT_NATS_URL",
+        "WAMN_EVT_NATS_USERNAME",
+        "WAMN_EVT_NATS_PASSWORD_FILE",
+        "WAMN_EVT_STREAM_REPLICAS",
+        "WAMN_EVT_DUP_WINDOW_SECS",
+        "WAMN_RECEIVING_DEV_TEMPO_QUERY_URL",
+        "WAMN_RECEIVING_DEV_OTEL_EXPORTER_OTLP_ENDPOINT",
+        "WAMN_ROUTE_HOST",
+        "WAMN_DEV_ENV_EVENT_PROVISIONING_USERNAME",
+        "WAMN_DEV_ENV_EVENT_PROVISIONING_PASSWORD_FILE",
+        "cargo-sqlx",
+        "jq",
+    ]);
     let repository = repository_root()?;
     ensure!(
-        required_journey_path("WAMN_LOCAL_DEV_EDIT_ROOT")?.canonicalize()? == repository
+        required_journey_path("WAMN_LOCAL_DEV_EDIT_ROOT")?
+            .canonicalize()
+            .context("resolve WAMN_LOCAL_DEV_EDIT_ROOT")?
+            == repository
             && repository.join(".git").is_file(),
         "WAMN_LOCAL_DEV_EDIT_ROOT must name this explicitly owned linked worktree"
     );
@@ -53,7 +75,7 @@ async fn local_watch_preserves_data_refuses_bad_sql_and_recreates_schema() -> an
             .local_artifacts
             .flow_http_component
             .is_file(),
-        "the local flow-http component must exist"
+        "WAMN_DEV_ENV_FLOW_HTTP_COMPONENT must name the local flow-http component file"
     );
     let mut original = SavedSource::capture(&repository)?;
     let scratch = ScratchRoot::create()?;
