@@ -27,3 +27,13 @@ jobs = 4
 # incremental compilation on: cargo only passes `-C incremental` for workspace
 # members, which sccache treats as non-cacheable, so workspace crates keep
 # incremental rebuilds while dependencies still come from the cache.
+
+[env]
+# SQLx query macros compile from each application's committed `tests/.sqlx/`
+# data, so an ordinary build needs no database. The macros ignore an ambient
+# `DATABASE_URL` while `SQLX_OFFLINE` is true, and they read this value before
+# any `.env` file. `force` stays off on purpose: `cargo sqlx prepare` sets
+# `SQLX_OFFLINE=false` for its own `cargo check`, and that value must win so
+# preparation reaches its database. An explicit `SQLX_OFFLINE=false` in your
+# environment also wins.
+SQLX_OFFLINE = "true"

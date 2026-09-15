@@ -36,9 +36,9 @@ cargo test --locked --offline -p wamn-receiving-tui
 cargo test --locked --offline -p wamn-wms-tests --lib
 cargo test --manifest-path apps/Cargo.toml --locked --offline \
   -p wamn-receiving-data-access --all-targets
-SQLX_OFFLINE=true cargo test --locked --offline \
+cargo test --locked --offline \
   -p wamn-receiving-tests --test receiving_sqlx_verifier
-SQLX_OFFLINE=true cargo test --locked --offline \
+cargo test --locked --offline \
   -p wamn-client-acme-receiving-tests --test client_acme_sqlx_verifier
 ```
 
@@ -318,7 +318,8 @@ Use `apps/client_acme_receiving` as the generation input.
 For WMS, create its declared schema and apply only `apps/wamn_wms/migrations/*.sql` in its separate database.
 Use `apps/wamn_wms` as the input.
 
-SQLx uses each application's committed `tests/.sqlx/` directory during offline compilation.
+`.cargo/config.toml` sets `SQLX_OFFLINE=true`, so SQLx compiles from each application's committed `tests/.sqlx/` directory and needs no database.
+A `DATABASE_URL` in the environment does not change this.
 After a Receiving SQL change, regenerate that cache:
 
 ```bash
