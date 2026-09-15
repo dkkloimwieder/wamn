@@ -30,7 +30,7 @@ license = "Apache-2.0"
 # sqlx move. So the channel is the PRESENCE of `sqlx-core` in the test
 # selection and absent from m1, not any declaration in this file. Removing
 # these defaults moved three of the four virtualized digests and converged
-# none. See `[GUEST-DIGEST-REPRODUCIBILITY]`.
+# none. See docs/operations/building.md#guest-artifact-comparisons.
 futures-core = { version = "0.3", default-features = false, features = ["alloc"] }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 log = "0.4"
