@@ -116,6 +116,8 @@ wamn-record-history = { path = "platform/data/record-history", version = "0.1.0"
 wamn-client-acme-receiving-data-access = { path = "client_acme_receiving/data", version = "0.1.0" }
 wamn-receiving-data-access = { path = "wamn_receiving/data", version = "0.1.0" }
 wamn-wms-data-access = { path = "wamn_wms/data", version = "0.1.0" }
+# The root workspace's test PostgreSQL server, for live tests of guest-owned crates.
+wamn-test-postgres = { path = "../test-support/postgres", version = "0.1.0" }
 
 [profile.release]
 opt-level = "s"
