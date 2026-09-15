@@ -167,8 +167,9 @@ pub(super) fn render_component_declarations(
             // Like the disposable dev coordinator, layer this run's exact
             // virtualized bytes over authored pins without editing the package.
             let package_root = journey_package_root(package, inputs);
-            let mut base_digests = wamn_ctl::dev::coordinator::authored_base_digests(&package_root)
-                .with_context(|| format!("read {} base pins", package_root.display()))?;
+            let mut base_digests =
+                wamn_control::component_declaration::authored_base_digests(&package_root)
+                    .with_context(|| format!("read {} base pins", package_root.display()))?;
             for base in JOURNEY_PACKAGES {
                 let coordinate = format!("{}@{}", base.id, base.version);
                 if let Some(digest) = base_digests.get_mut(coordinate.as_str()) {
@@ -179,7 +180,7 @@ pub(super) fn render_component_declarations(
                         .into_boxed_str();
                 }
             }
-            let declaration = wamn_ctl::dev::coordinator::render_declaration_document(
+            let declaration = wamn_control::component_declaration::render_declaration_document(
                 &source,
                 TENANT,
                 &base_digests,

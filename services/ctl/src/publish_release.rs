@@ -2381,9 +2381,9 @@ mod tests {
     fn repository_overlay_declaration() -> wamn_catalog::ComponentDeclaration {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../apps/client_acme_receiving");
-        let base_digests = crate::dev::coordinator::authored_base_digests(&root)
+        let base_digests = wamn_control::component_declaration::authored_base_digests(&root)
             .expect("the repository overlay manifest authors its base digest");
-        let document = crate::dev::coordinator::render_declaration_document(
+        let document = wamn_control::component_declaration::render_declaration_document(
             &root.join("publication/components/client_acme_receiving.json.in"),
             "tenant-a",
             &base_digests,

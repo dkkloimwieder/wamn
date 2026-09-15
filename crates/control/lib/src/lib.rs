@@ -5,6 +5,7 @@
 //! presentation and owns no process.
 
 pub mod apply_package;
+pub mod component_declaration;
 pub mod enable_cdc_project_env;
 pub mod env_policies;
 pub mod event_streams;

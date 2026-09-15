@@ -82,7 +82,7 @@ fn read_json(path: &Path) -> Value {
 /// overlay manifest pins, and the template carried a third copy. The template
 /// now leaves a placeholder, so the render is what makes it a declaration.
 fn base_digests() -> BTreeMap<Box<str>, Box<str>> {
-    wamn_ctl::dev::coordinator::authored_base_digests(&package_root())
+    wamn_control::component_declaration::authored_base_digests(&package_root())
         .expect("the overlay manifest authors its base digest")
 }
 
@@ -90,9 +90,12 @@ fn declaration() -> ComponentDeclaration {
     let path = publication_root()
         .join("components")
         .join("client_acme_receiving.json.in");
-    let document =
-        wamn_ctl::dev::coordinator::render_declaration_document(&path, TENANT, &base_digests())
-            .unwrap_or_else(|error| panic!("render {}: {error}", path.display()));
+    let document = wamn_control::component_declaration::render_declaration_document(
+        &path,
+        TENANT,
+        &base_digests(),
+    )
+    .unwrap_or_else(|error| panic!("render {}: {error}", path.display()));
     serde_json::from_value(document)
         .unwrap_or_else(|error| panic!("decode {}: {error}", path.display()))
 }

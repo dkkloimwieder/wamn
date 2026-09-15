@@ -66,7 +66,7 @@ fn repository_root() -> PathBuf {
 /// overlay manifest pins, which is a third copy of a value that must be one.
 fn base_component_digest() -> String {
     let overlay = repository_root().join("apps/client_acme_receiving");
-    crate::dev::coordinator::authored_base_digests(&overlay)
+    wamn_control::component_declaration::authored_base_digests(&overlay)
         .expect("the overlay manifest authors its base digest")["wamn_receiving@1.0.0"]
         .to_string()
 }
@@ -210,11 +210,11 @@ async fn admit_components(
         // The template leaves its base dependency digest as a placeholder, so
         // the render -- not a tenant substitution -- is what makes it a
         // declaration (wamn-10yt.50).
-        let base_digests = crate::dev::coordinator::authored_base_digests(&input.root)
+        let base_digests = wamn_control::component_declaration::authored_base_digests(&input.root)
             .unwrap_or_else(|error| {
                 panic!("read {}@{} base pins: {error}", input.id, input.version)
             });
-        let declaration = crate::dev::coordinator::render_declaration_document(
+        let declaration = wamn_control::component_declaration::render_declaration_document(
             &input.component_declaration,
             TENANT,
             &base_digests,
