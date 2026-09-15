@@ -1,26 +1,19 @@
 //! Live PostgreSQL 18 test of the statement check that generation runs as `wamn_app`.
 //!
-//! `WAMN_SCHEMA_INTROSPECTION_PG_URL` names a disposable PostgreSQL 18 database
-//! through a superuser connection. The database holds the Receiving migrations
-//! in the schema `receiving` and the history table of each logged relation.
-//! The owned test runner creates that database on a fresh server:
-//!
-//! ```bash
-//! cargo build --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres
-//! target/debug/wamn-test-postgres --database wamn_receiving --schema receiving \
-//!   --migration-dir apps/wamn_receiving/migrations \
-//!   --history-manifest apps/wamn_receiving/wamn.json \
-//!   --url-env WAMN_SCHEMA_INTROSPECTION_PG_URL -- \
-//!   cargo test --locked --offline -p wamn-schema-generator --test statement_check_live \
-//!   -- --ignored --test-threads=1
-//! ```
+//! The test connects as the superuser of a test database on the test PostgreSQL
+//! server. The database holds the Receiving migrations in the schema
+//! `receiving` and the history table of each logged relation.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 use tokio_postgres::NoTls;
-use wamn_schema_generator::{MaterializeMode, materialize_package_verified};
+use wamn_schema_generator::{MaterializeMode, PackageManifest, materialize_package_verified};
+
+const RECORD_HISTORY_SQL: &str = include_str!("../../../../deploy/sql/record-history.sql");
+const RECORD_HISTORY_APP_GRANTS_SQL: &str =
+    include_str!("../../../../deploy/sql/record-history-app-grants.sql");
 
 /// The roles and privileges that the statement check must leave unchanged.
 const AUTHORITY_SNAPSHOT_SQL: &str = "SELECT \
@@ -38,6 +31,55 @@ const AUTHORITY_SNAPSHOT_SQL: &str = "SELECT \
 const WHOLE_ROW_READ: &str = "SELECT\n    to_jsonb(receipt_line)::text AS image\n\
                               FROM receipt_line AS receipt_line\n\
                               ORDER BY receipt_line.id ASC;\n";
+
+/// Create the Receiving generation database: the Receiving migrations in the
+/// schema `receiving`, then the history table of each logged relation.
+///
+/// `wamn_app` exists first, because `record-history-app-grants.sql` grants the
+/// history read functions to it.
+fn receiving_generation_database() -> wamn_test_postgres::Database {
+    let receiving = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/wamn_receiving");
+    let database = wamn_test_postgres::database();
+    let mut batches = vec![
+        "CREATE SCHEMA receiving".to_owned(),
+        format!(
+            "ALTER DATABASE {} SET search_path TO receiving, public",
+            database.name()
+        ),
+    ];
+    let mut migrations = fs::read_dir(receiving.join("migrations"))
+        .expect("read the Receiving migrations")
+        .map(|entry| entry.expect("read a migration entry").path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "sql"))
+        .collect::<Vec<_>>();
+    migrations.sort();
+    for migration in migrations {
+        batches.push(fs::read_to_string(migration).expect("read a Receiving migration"));
+    }
+    batches.extend([
+        "CREATE ROLE wamn_app NOLOGIN".to_owned(),
+        RECORD_HISTORY_SQL.to_owned(),
+        RECORD_HISTORY_APP_GRANTS_SQL.to_owned(),
+    ]);
+    let manifest = PackageManifest::from_slice(
+        &fs::read(receiving.join("wamn.json")).expect("read the Receiving manifest"),
+    )
+    .expect("parse the Receiving manifest");
+    for model in manifest
+        .models
+        .values()
+        .filter(|model| model.owner == manifest.package.id && model.log_retention().is_some())
+    {
+        batches.push(format!(
+            "SELECT wamn_history.create_history_table('{}', '{}', false)",
+            model.schema, model.table
+        ));
+    }
+    database
+        .execute(&batches.iter().map(String::as_str).collect::<Vec<_>>())
+        .expect("prepare the Receiving generation database");
+    database
+}
 
 async fn authority_snapshot(url: &str) -> Vec<Option<String>> {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -124,10 +166,11 @@ impl Drop for ReceivingCopy {
 /// lexer reads too few columns from then fails at generate time with its source
 /// path, and the generation database keeps its roles and privileges.
 #[tokio::test(flavor = "current_thread")]
-#[ignore = "requires WAMN_SCHEMA_INTROSPECTION_PG_URL and disposable PostgreSQL 18"]
 async fn generation_refuses_whole_row_references_as_the_application_role() {
-    let url = std::env::var("WAMN_SCHEMA_INTROSPECTION_PG_URL")
-        .expect("WAMN_SCHEMA_INTROSPECTION_PG_URL must name the Receiving generation database");
+    // The setup creates the cluster-wide wamn_app and wamn_db_owner roles.
+    let _serialized = wamn_test_postgres::lock();
+    let database = receiving_generation_database();
+    let url = database.url().to_owned();
     let copy = ReceivingCopy::new();
     let before = authority_snapshot(&url).await;
 

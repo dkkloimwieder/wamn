@@ -24,6 +24,7 @@ wamn-record-history = { workspace = true }
 
 [dev-dependencies]
 proptest.workspace = true
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

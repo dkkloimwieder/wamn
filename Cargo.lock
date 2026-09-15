@@ -6344,6 +6344,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-record-history",
  "wamn-schema-introspection",
+ "wamn-test-postgres",
 ]
 
 [[package]]
