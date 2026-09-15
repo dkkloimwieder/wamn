@@ -300,7 +300,7 @@ impl DevSnapshot {
         self.revision
     }
 
-    /// All twelve stages in execution order.
+    /// All ten stages in execution order.
     pub const fn stages(&self) -> &[DevStageSnapshot; DEV_STAGE_COUNT] {
         &self.stages
     }
@@ -649,7 +649,7 @@ mod tests {
             "target-one",
         ));
 
-        publisher.reset(DevStage::Apply);
+        publisher.reset(DevStage::Acl);
         let snapshot = handle.snapshot();
 
         assert_eq!(
@@ -657,11 +657,11 @@ mod tests {
             &DevStageState::Passed
         );
         assert_eq!(
-            snapshot.stages()[DevStage::Apply.position()].state(),
+            snapshot.stages()[DevStage::Acl.position()].state(),
             &DevStageState::Awaiting
         );
         assert_eq!(
-            snapshot.stages()[DevStage::Publish.position()].state(),
+            snapshot.stages()[DevStage::Release.position()].state(),
             &DevStageState::Awaiting
         );
         assert!(snapshot.release().is_none());
@@ -670,7 +670,7 @@ mod tests {
             "target-one"
         );
         publisher.stage_failed(
-            DevStage::Apply,
+            DevStage::Acl,
             super::super::DevStageFailure::new(
                 "preparation-failed",
                 "the previous activation remains",

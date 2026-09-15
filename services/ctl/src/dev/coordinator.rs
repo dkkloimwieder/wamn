@@ -17,7 +17,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::process::Command;
 use tokio_postgres::NoTls;
-use wamn_authoring_model::{GateResult, PublishedWiringIdentity};
+use wamn_authoring_model::GateResult;
 use wamn_catalog::{PackageCoordinate, WiringDocument};
 use wamn_control::apply_package::{self, ApplyPackageRequest};
 use wamn_control::component_declaration::{
@@ -335,18 +335,6 @@ struct WiringInput {
     wiring: WiringDocument,
 }
 
-#[derive(Clone, Debug)]
-struct GatedWiring {
-    input: WiringInput,
-    result: GateResult,
-}
-
-#[derive(Clone, Debug)]
-struct PublishedWiring {
-    input: WiringInput,
-    result: PublishedWiringIdentity,
-}
-
 #[derive(Debug)]
 struct PreparedLocalGrants {
     target: target_database::PreparedConfiguration,
@@ -354,7 +342,7 @@ struct PreparedLocalGrants {
     input_digest: String,
 }
 
-/// Concrete runner carrying production-owner outputs through all twelve stages.
+/// Concrete runner carrying production-owner outputs through all ten stages.
 pub struct ProductionDevStageRunner {
     config: DevConfig,
     overlay_root: PathBuf,
@@ -365,8 +353,7 @@ pub struct ProductionDevStageRunner {
     artifacts: Vec<SelectedComponentArtifact>,
     verified_base_digests: Vec<VerifiedBaseComponentDigest>,
     admissions: Vec<ComponentAdmission>,
-    gated_wirings: Vec<GatedWiring>,
-    published_wirings: Vec<PublishedWiring>,
+    gated_wirings: Vec<WiringInput>,
     target_instance: Option<String>,
     target_lease: Option<target_database::TargetLease>,
     release: Option<ReleaseCarrier>,
@@ -417,7 +404,6 @@ impl fmt::Debug for ProductionDevStageRunner {
             )
             .field("admission_count", &self.admissions.len())
             .field("gated_wiring_count", &self.gated_wirings.len())
-            .field("published_wiring_count", &self.published_wirings.len())
             .field("release", &self.release)
             .field("activation", &self.activation)
             .field(
@@ -445,7 +431,6 @@ impl ProductionDevStageRunner {
             gated_wirings: Vec::new(),
             target_instance: None,
             target_lease: None,
-            published_wirings: Vec::new(),
             release: None,
             local_bindings: Vec::new(),
             local_binding_inputs: Vec::new(),
@@ -948,10 +933,10 @@ impl ProductionDevStageRunner {
                         package_version: input.package_version.to_string(),
                         wiring_id: input.wiring.wiring_id.clone(),
                         wiring_version: input.wiring.version,
-                        verdict: DevGateVerdict::Accepted(result.clone()),
+                        verdict: DevGateVerdict::Accepted(result),
                     });
                     self.read_publisher.set_gate_outcomes(read_outcomes.clone());
-                    self.gated_wirings.push(GatedWiring { input, result });
+                    self.gated_wirings.push(input);
                 }
                 Err(refusal) => {
                     read_outcomes.push(DevGateOutcome {
@@ -971,56 +956,6 @@ impl ProductionDevStageRunner {
                     ));
                 }
             }
-        }
-        Ok(())
-    }
-
-    async fn publish(&mut self) -> Result<(), ProductionDevStageError> {
-        self.clear_after(DevStage::Publish);
-        if self.gated_wirings.is_empty() {
-            return Err(ProductionDevStageError::invalid(
-                "publish package wirings",
-                "the Gate stage produced no accepted wiring",
-            ));
-        }
-        if self
-            .gated_wirings
-            .iter()
-            .any(|gated| gated.result.report_id.is_empty())
-        {
-            return Err(ProductionDevStageError::invalid(
-                "publish package wirings",
-                "the Gate stage returned an empty report identity",
-            ));
-        }
-
-        self.reauthenticate_publisher().await?;
-        for gated in self.gated_wirings.clone() {
-            let input = gated.input;
-            let result = PublishedWiringIdentity {
-                wiring_id: input.wiring.wiring_id.clone(),
-                version: input.wiring.version,
-                artifact_hash: input.wiring.wiring_hash().as_str().to_owned(),
-            };
-            self.published_wirings
-                .push(PublishedWiring { input, result });
-        }
-        Ok(())
-    }
-
-    async fn apply(&mut self) -> Result<(), ProductionDevStageError> {
-        self.clear_after(DevStage::Apply);
-        for package in self.package_inputs()? {
-            let outcome = apply_package::apply_package(ApplyPackageRequest {
-                package: package.root,
-                database_url: self.config.target_database_url().to_owned(),
-                tenant: self.config.activation_identity().tenant.clone(),
-            })
-            .await
-            .map_err(|source| {
-                ProductionDevStageError::owner("apply package to the durable environment", source)
-            })?;
-            crate::package_verbs::print_applied(&outcome);
         }
         Ok(())
     }
@@ -1084,10 +1019,10 @@ impl ProductionDevStageRunner {
 
     async fn release(&mut self) -> Result<(), ProductionDevStageError> {
         self.clear_after(DevStage::Release);
-        if self.published_wirings.is_empty() {
+        if self.gated_wirings.is_empty() {
             return Err(ProductionDevStageError::invalid(
                 "mint effective release",
-                "the Publish stage produced no exact wiring identities",
+                "the Gate stage produced no accepted wiring",
             ));
         }
         let principal = self.reauthenticate_publisher().await?;
@@ -1108,13 +1043,13 @@ impl ProductionDevStageRunner {
             })
             .collect::<Result<Vec<_>, _>>()?;
         let wirings = self
-            .published_wirings
+            .gated_wirings
             .iter()
-            .map(|published| ReleaseWiringTarget {
-                package_id: published.input.package_id.to_string(),
-                package_version: published.input.package_version.to_string(),
-                wiring_id: published.result.wiring_id.clone(),
-                wiring_version: published.result.version,
+            .map(|gated| ReleaseWiringTarget {
+                package_id: gated.package_id.to_string(),
+                package_version: gated.package_version.to_string(),
+                wiring_id: gated.wiring.wiring_id.clone(),
+                wiring_version: gated.wiring.version,
             })
             .collect();
         let attachments = packages
@@ -1144,16 +1079,16 @@ impl ProductionDevStageRunner {
         };
         let local = self.config.local_artifacts();
         let documents = self
-            .published_wirings
+            .gated_wirings
             .iter()
-            .map(|published| {
+            .map(|gated| {
                 (
                     wamn_catalog::ComponentPackageScope {
                         tenant_id: identity.tenant.clone(),
-                        package_id: published.input.package_id.to_string(),
-                        package_version: published.input.package_version.to_string(),
+                        package_id: gated.package_id.to_string(),
+                        package_version: gated.package_version.to_string(),
                     },
-                    published.input.wiring.clone(),
+                    gated.wiring.clone(),
                 )
             })
             .collect();
@@ -1531,7 +1466,6 @@ impl ProductionDevStageRunner {
                 self.verified_base_digests.clear();
                 self.admissions.clear();
                 self.gated_wirings.clear();
-                self.published_wirings.clear();
                 self.release = None;
             }
             DevStage::Generate | DevStage::Build => {
@@ -1540,7 +1474,6 @@ impl ProductionDevStageRunner {
                 self.verified_base_digests.clear();
                 self.admissions.clear();
                 self.gated_wirings.clear();
-                self.published_wirings.clear();
                 self.release = None;
             }
             DevStage::Virtualize => {
@@ -1548,25 +1481,18 @@ impl ProductionDevStageRunner {
                 self.verified_base_digests.clear();
                 self.admissions.clear();
                 self.gated_wirings.clear();
-                self.published_wirings.clear();
                 self.release = None;
             }
             DevStage::Admit => {
                 self.admissions.clear();
                 self.gated_wirings.clear();
-                self.published_wirings.clear();
                 self.release = None;
             }
             DevStage::Gate => {
                 self.gated_wirings.clear();
-                self.published_wirings.clear();
                 self.release = None;
             }
-            DevStage::Publish => {
-                self.published_wirings.clear();
-                self.release = None;
-            }
-            DevStage::Apply | DevStage::Acl | DevStage::Release => {
+            DevStage::Acl | DevStage::Release => {
                 self.release = None;
             }
             DevStage::Activate => {}
@@ -1838,7 +1764,7 @@ impl DevStageRunner for ProductionDevStageRunner {
 
     async fn stage_is_unchanged(&mut self, stage: DevStage) -> Result<bool, Self::Error> {
         match stage {
-            DevStage::Migrate | DevStage::Apply => {
+            DevStage::Migrate => {
                 return Ok(self.schema_input_digest.is_some()
                     && self.schema_input_digest == self.schema_input_candidate);
             }
@@ -1954,8 +1880,6 @@ impl DevStageRunner for ProductionDevStageRunner {
             DevStage::Virtualize => self.virtualize().await,
             DevStage::Admit => self.admit().await,
             DevStage::Gate => self.gate().await,
-            DevStage::Publish => self.publish().await,
-            DevStage::Apply => self.apply().await,
             DevStage::Acl => self.acl().await,
             DevStage::Release => self.release().await,
             DevStage::Activate => self.activate().await,

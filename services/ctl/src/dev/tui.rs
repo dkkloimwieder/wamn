@@ -427,7 +427,7 @@ pub fn apply_key(state: &mut DevTuiState, key: KeyEvent) -> DevTuiAction {
 
 /// Run one development session under the interactive terminal client.
 ///
-/// The twelve stages run exactly as the non-interactive command runs them. On
+/// The ten stages run exactly as the non-interactive command runs them. On
 /// success the session then holds the activated environment open, because
 /// asking for a terminal client is asking for a session to use; quitting
 /// requests shutdown and the session leaves through its own native cleanup. A

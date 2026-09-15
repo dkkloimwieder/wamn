@@ -1,4 +1,4 @@
-//! The disposable development environment the twelve-stage `wamn dev` loop runs
+//! The disposable development environment the ten-stage `wamn dev` loop runs
 //! against.
 //!
 //! `wamn dev` was testable before it was startable: every value its strict

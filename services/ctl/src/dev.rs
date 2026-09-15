@@ -51,22 +51,15 @@ pub const DIRTY_WORKTREE_ERROR: &str = "dev-worktree-dirty";
 pub const COMMIT_WORKTREE_REMEDY: &str = "commit the worktree";
 
 /// Exact stage order of one local development run.
-pub const DEV_STAGE_ORDER: [DevStage; 12] = [
+pub const DEV_STAGE_ORDER: [DevStage; 10] = [
     DevStage::Migrate,
     DevStage::Introspect,
     DevStage::Generate,
     DevStage::Build,
     DevStage::Virtualize,
-    // Apply and Acl carry the package to the project-environment database
-    // BEFORE Admit, because component projection refuses with
-    // source-package-not-applied against a database that does not hold the
-    // package yet. The authoring chain writes to that same database (owner
-    // ruling 2026-09-06, wamn-10yt.10.34), so the package must land first.
-    DevStage::Apply,
     DevStage::Acl,
     DevStage::Admit,
     DevStage::Gate,
-    DevStage::Publish,
     DevStage::Release,
     DevStage::Activate,
 ];
@@ -81,8 +74,6 @@ pub enum DevStage {
     Virtualize,
     Admit,
     Gate,
-    Publish,
-    Apply,
     Acl,
     Release,
     Activate,
@@ -106,8 +97,6 @@ impl DevStage {
             Self::Virtualize => "virtualize",
             Self::Admit => "admit",
             Self::Gate => "gate",
-            Self::Publish => "publish",
-            Self::Apply => "apply",
             Self::Acl => "acl",
             Self::Release => "release",
             Self::Activate => "activate",
@@ -128,12 +117,9 @@ impl DevStage {
             | Self::Build
             | Self::Virtualize
             | Self::Gate => DevStageBoundary::SavedBytes,
-            Self::Admit
-            | Self::Publish
-            | Self::Apply
-            | Self::Acl
-            | Self::Release
-            | Self::Activate => DevStageBoundary::CommittedSource,
+            Self::Admit | Self::Acl | Self::Release | Self::Activate => {
+                DevStageBoundary::CommittedSource
+            }
         }
     }
 }
@@ -1286,11 +1272,11 @@ mod tests {
             .expect_err("dirty source must not reach durable provenance stages");
 
         assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
-        assert_eq!(error.stage(), DevStage::Apply);
+        assert_eq!(error.stage(), DevStage::Acl);
         assert_eq!(error.remedy(), Some(COMMIT_WORKTREE_REMEDY));
         assert_eq!(
             error.to_string(),
-            "dev-worktree-dirty at apply: commit the worktree"
+            "dev-worktree-dirty at acl: commit the worktree"
         );
         assert_eq!(
             runner.invoked,
@@ -1319,11 +1305,8 @@ mod tests {
                 .expect_err("generated dirty bytes must refuse before publication");
 
         assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
-        assert_eq!(error.stage(), DevStage::Apply);
-        assert_eq!(
-            runner.invoked,
-            DEV_STAGE_ORDER[..DevStage::Apply.position()]
-        );
+        assert_eq!(error.stage(), DevStage::Acl);
+        assert_eq!(runner.invoked, DEV_STAGE_ORDER[..DevStage::Acl.position()]);
     }
 
     #[tokio::test]
@@ -1336,13 +1319,16 @@ mod tests {
         let mut runner = RecordingRunner::default();
 
         let error =
-            run_suffix_with_source_state_provider(DevStage::Publish, &mut runner, &mut provider)
+            run_suffix_with_source_state_provider(DevStage::Admit, &mut runner, &mut provider)
                 .await
                 .expect_err("a later dirty boundary must refuse before its stage");
 
         assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
         assert_eq!(error.stage(), DevStage::Activate);
-        assert_eq!(runner.invoked, [DevStage::Publish, DevStage::Release]);
+        assert_eq!(
+            runner.invoked,
+            [DevStage::Admit, DevStage::Gate, DevStage::Release]
+        );
         assert!(provider.0.is_empty());
     }
 
@@ -1351,7 +1337,7 @@ mod tests {
         let events = FakeEvents::with([
             DevInvalidation::Ignore,
             DevInvalidation::Rerun {
-                from: DevStage::Publish,
+                from: DevStage::Release,
                 source_state: DevSourceState::Dirty,
             },
             DevInvalidation::Rerun {
@@ -1388,7 +1374,7 @@ mod tests {
             DevStage::Gate,
             vec![
                 DevInvalidation::Rerun {
-                    from: DevStage::Apply,
+                    from: DevStage::Acl,
                     source_state: DevSourceState::Clean,
                 },
                 DevInvalidation::Ignore,
@@ -1447,7 +1433,6 @@ mod tests {
         let expected = [
             DevStage::Build,
             DevStage::Virtualize,
-            DevStage::Apply,
             DevStage::Acl,
             DevStage::Admit,
             DevStage::Gate,
@@ -1473,7 +1458,7 @@ mod tests {
     #[tokio::test]
     async fn dirty_watch_suffix_refuses_before_its_first_provenance_stage() {
         let events = FakeEvents::with([DevInvalidation::Rerun {
-            from: DevStage::Apply,
+            from: DevStage::Acl,
             source_state: DevSourceState::Dirty,
         }]);
         let mut source = FakeSource::new(events);
@@ -1489,9 +1474,9 @@ mod tests {
         let error = observer.outcomes[0]
             .result()
             .as_ref()
-            .expect_err("dirty source must not invoke apply");
+            .expect_err("dirty source must not invoke acl");
         assert_eq!(error.kind(), DevRunErrorKind::DirtyWorktree);
-        assert_eq!(error.stage(), DevStage::Apply);
+        assert_eq!(error.stage(), DevStage::Acl);
         assert_eq!(error.remedy(), Some(COMMIT_WORKTREE_REMEDY));
     }
 }

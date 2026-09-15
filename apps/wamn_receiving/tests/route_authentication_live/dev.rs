@@ -379,8 +379,7 @@ pub(super) async fn current_database_acl(client: &Client) -> anyhow::Result<(Str
 
 #[tokio::test]
 #[ignore = "requires disposable NATS and built wamn/host/flow-http binaries"]
-async fn product_dev_command_owns_the_clean_twelve_stage_output_and_cleanup() -> anyhow::Result<()>
-{
+async fn product_dev_command_owns_the_clean_ten_stage_output_and_cleanup() -> anyhow::Result<()> {
     // The environment resets the control store of the whole server, so the test starts its own.
     let mut server = wamn_test_infrastructure::postgres::start(&[])?;
     let system_url = server.create_database("wamn_system")?.url().to_owned();
