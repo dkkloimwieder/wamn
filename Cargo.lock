@@ -5595,6 +5595,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-event-wire",
  "wamn-pg-core",
+ "wamn-test-postgres",
 ]
 
 [[package]]

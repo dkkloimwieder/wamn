@@ -1,9 +1,10 @@
 //! Live gate for the CDC event reader (wamn-l5i9.10, D19 v3 §4).
 //!
-//! Set `WAMN_READER_PG_URL` to a **superuser** URL (path `/postgres`) of a
-//! throwaway Postgres 18 running `wal_level=logical`, and
-//! `WAMN_READER_NATS_URL` to a throwaway JetStream-enabled NATS; skipped
-//! cleanly when either is unset (recipe: docs/operations/running-tests.md#live-prerequisites-and-troubleshooting
+//! The gate starts its own PostgreSQL 18 server with `wal_level=logical` and
+//! connects as its superuser to the `postgres` database. Set
+//! `WAMN_READER_NATS_URL` to a throwaway JetStream-enabled NATS; the gate is
+//! ignored, and fails naming that variable when it is selected without it
+//! (recipe: docs/operations/running-tests.md#live-prerequisites-and-troubleshooting
 //! [EVT-READER]).
 //!
 //! Stands up the REAL substrate (system schema + registration rows via the
@@ -288,15 +289,17 @@ fn key_of(e: &Envelope) -> (Op, String) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a JetStream-enabled NATS server in WAMN_READER_NATS_URL"]
 async fn reader_streams_one_project_env_to_the_evt_stream() {
-    let Ok(super_url) = std::env::var("WAMN_READER_PG_URL") else {
-        eprintln!("WAMN_READER_PG_URL unset — skipping the event-reader live gate");
-        return;
-    };
-    let Ok(nats_url) = std::env::var("WAMN_READER_NATS_URL") else {
-        eprintln!("WAMN_READER_NATS_URL unset — skipping the event-reader live gate");
-        return;
-    };
+    let nats_url = std::env::var("WAMN_READER_NATS_URL")
+        .expect("set WAMN_READER_NATS_URL to a throwaway JetStream-enabled NATS");
+    let postgres = wamn_test_postgres::start(&[("wal_level", "logical")])
+        .expect("start a PostgreSQL 18 server with wal_level=logical");
+    let super_url = postgres
+        .database("postgres")
+        .expect("the test server's postgres database")
+        .url()
+        .to_owned();
 
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let stream_name = event_stream_name(ORG, PROJECT, ENV);

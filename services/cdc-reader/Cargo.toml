@@ -38,3 +38,4 @@ workspace = true
 
 [dev-dependencies]
 wamn-catalog = { workspace = true }
+wamn-test-postgres = { workspace = true }
