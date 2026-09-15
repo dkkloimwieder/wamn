@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use serde_json::json;
-use tokio::io::AsyncWriteExt as _;
 use tokio::process::Command;
 use wamn_control_provision::events::{advisory_stream_config, source_stream_config};
 use wamn_control_provision::sql;
@@ -34,11 +33,6 @@ impl Run {
             .arg(self.directory.join("env"))
             .env("WAMN_STD_VIRT_PG_PORT", "54332")
             .env("WAMN_STD_VIRT_REGISTRY_PORT", "5003")
-            .env("WAMN_ROUTE_REGISTRY_PORT", "5004")
-            .env(
-                "WAMN_ROUTE_REGISTRY_HTPASSWD",
-                self.directory.join("env/htpasswd"),
-            )
             .env("WAMN_RECEIVING_DEV_NATS_PORT", "4224")
             .env("WAMN_RECEIVING_DEV_TEMPO_PORT", "3201")
             .env("WAMN_RECEIVING_DEV_OTLP_PORT", "4319");
@@ -79,27 +73,6 @@ impl Run {
                 "healthcheck":{"test":["CMD-SHELL","wget -qO- http://127.0.0.1:8222/healthz | grep -q ok"],"interval":"1s","timeout":"2s","retries":60}
             }}}),
         )?;
-        let password = string(Command::new("openssl").args(["rand", "-hex", "32"])).await?;
-        let mut prepare = self.lifecycle("prepare-registry");
-        let mut child = prepare
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
-        let mut input = child
-            .stdin
-            .take()
-            .context("registry password input exists")?;
-        input.write_all(password.as_bytes()).await?;
-        input.write_all(b"\n").await?;
-        drop(input);
-        let result = child.wait_with_output().await?;
-        anyhow::ensure!(
-            result.status.success(),
-            "registry password preparation failed"
-        );
-        write(&environment.join("htpasswd"), &result.stdout)?;
         self.logged(&mut self.lifecycle("up")).await?;
         let port = string(&mut self.lifecycle("event-port")).await?;
         let (host, port) = port

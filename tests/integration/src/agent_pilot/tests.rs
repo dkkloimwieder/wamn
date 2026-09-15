@@ -5,6 +5,7 @@ use std::os::unix::fs::DirBuilderExt as _;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
+use wamn_ctl::dev::DEV_STAGE_ORDER;
 use wamn_test_infrastructure::scratch::ScratchRoot;
 
 use super::{
@@ -90,7 +91,7 @@ fn recorded_input(root: &Path) {
         {"id":"exactly-one","must":true,"concurrent":["book","refused"],"expect":{"exactly_one":{"error_code":"slot_unavailable"}}},
         {"id":"count-rows","must":true,"sql":"select 1","expect":{"rows":"2"}}
     ])).unwrap();
-    fs::write(root.join("grade/dev.out"), "run completed: Migrate,Introspect,Generate,Build,Virtualize,Apply,Acl,Admit,Gate,Publish,Release,Activate\nrun served: http://127.0.0.1:18080 host=test.localhost\nrun holding\n").unwrap();
+    fs::write(root.join("grade/dev.out"), "run completed: migrate,introspect,generate,build,virtualize,acl,admit,gate,release,activate\nrun served: http://127.0.0.1:18080 host=test.localhost\nrun holding\n").unwrap();
     let mut records = Vec::new();
     for (id, path, item) in [
         (
@@ -131,11 +132,7 @@ fn recorded_input(root: &Path) {
     )
     .unwrap();
     fs::write(root.join("grade/results.json"), "[]\n").unwrap();
-    fs::write(
-        root.join("checklist.json"),
-        "{\"teardown\":{\"verification_database_removed\":true},\"outcome\":\"PASS\"}\n",
-    )
-    .unwrap();
+    fs::write(root.join("checklist.json"), "{\"outcome\":\"PASS\"}\n").unwrap();
 }
 
 fn save_records(root: &Path, records: &[Value]) {
@@ -198,7 +195,7 @@ async fn recorded_run_grades_without_live_services() {
             report["loop"]["pass"].clone(),
             report["loop"]["stages"].clone()
         ),
-        (json!(true), json!(12))
+        (json!(true), json!(DEV_STAGE_ORDER.len()))
     );
     assert_eq!(report["checks"]["claim-replay"], "pass");
 }
@@ -306,13 +303,13 @@ async fn a_run_without_a_served_release_does_not_grade_saved_responses() {
 }
 
 #[tokio::test]
-async fn eleven_completed_stages_still_fail_with_a_served_release() {
+async fn one_missing_stage_still_fails_with_a_served_release() {
     let root = directory();
     recorded_input(root.path());
     let log = root.path().join("grade/dev.out");
     fs::write(
         &log,
-        fs::read_to_string(&log).unwrap().replace(",Activate", ""),
+        fs::read_to_string(&log).unwrap().replace(",activate", ""),
     )
     .unwrap();
     let (code, report) = replay(root.path()).await;
@@ -321,7 +318,7 @@ async fn eleven_completed_stages_still_fail_with_a_served_release() {
             report["loop"]["pass"].clone(),
             report["loop"]["stages"].clone()
         ),
-        (json!(false), json!(11))
+        (json!(false), json!(DEV_STAGE_ORDER.len() - 1))
     );
     assert!(code == 30 && report["outcome"].as_str().unwrap().starts_with("FAIL"));
 }

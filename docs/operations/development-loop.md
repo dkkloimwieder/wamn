@@ -173,7 +173,7 @@ tools/agent-pilot-run all --run 001 --agent claude \
 ```
 
 Choose an unused run identifier. Run only one pilot at a time, separately from cluster tests.
-The runner refuses occupied ports `54332`, `5004`, `4224`, `3201`, `4319`, and `8088`.
+The runner refuses occupied ports `54332`, `4224`, `3201`, and `4319`.
 `CARGO_TARGET_DIR` selects the built native entrypoint, with `target/debug/wamn-gates` as the fallback.
 The separate actions are `up`, `launch`, `grade`, and `down`.
 `--agent stub` selects the local driver, without completing or grading a Dock implementation.

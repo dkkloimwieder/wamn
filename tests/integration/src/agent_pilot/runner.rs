@@ -19,10 +19,11 @@ use clap::Args;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tokio::process::Command;
+use wamn_ctl::dev::DEV_STAGE_ORDER;
 
 use super::{GradeArgs, GradeFailure, failure, home, read_json, text, write, write_json};
 
-const PORTS: [u16; 6] = [54332, 5004, 4224, 3201, 4319, 8088];
+const PORTS: [u16; 4] = [54332, 4224, 3201, 4319];
 const GATE_DOCUMENT: &str = "docs/operations/development-loop.md";
 const PILOT_SECTION: &str = "[AGENT-PILOT]";
 const REPLAY_RESULTS: &str = "evidence/perf/2026.09/consolidation-step3/pilot-recorded-replay-001";
@@ -648,11 +649,14 @@ impl Run {
             stages = super::loop_result(&String::from_utf8_lossy(&bytes))["stages"]
                 .as_u64()
                 .unwrap_or(0);
-            if stages != 12 {
+            if stages != DEV_STAGE_ORDER.len() as u64 {
                 let _ = self.down().await;
                 return Err(failure(
                     10,
-                    format!("the baseline run reported {stages} stages, not twelve"),
+                    format!(
+                        "the baseline run reported {stages} stages, not {}",
+                        DEV_STAGE_ORDER.len()
+                    ),
                 ));
             }
         }
@@ -729,7 +733,6 @@ impl Run {
             "psql",
             "curl",
             "git",
-            "openssl",
             "flock",
             "ss",
             "tee",
@@ -800,7 +803,6 @@ impl Run {
                 ],
             ),
             ("Cargo.toml", vec!["-p", "wamn-host", "-p", "wamn-identity"]),
-            ("Cargo.toml", vec!["-p", "wamn-scenario-worker"]),
             (
                 "apps/Cargo.toml",
                 vec!["-p", "http-route", "--target", "wasm32-wasip2"],
@@ -824,13 +826,7 @@ impl Run {
             before == after && head_before == head_after,
             "the run worktree changed while the run was building; the binaries no longer match the pinned commit"
         );
-        for artifact in [
-            "wamn",
-            "wamn-ctl-ops",
-            "wamn-identity",
-            "wamn-host",
-            "wamn-scenario-worker",
-        ] {
+        for artifact in ["wamn", "wamn-ctl-ops", "wamn-identity", "wamn-host"] {
             anyhow::ensure!(
                 executable(&self.target.join("debug").join(artifact)),
                 "{artifact} was not built"
@@ -850,7 +846,6 @@ impl Run {
             "debug/wamn-ctl-ops",
             "debug/wamn-identity",
             "debug/wamn-host",
-            "debug/wamn-scenario-worker",
             "wasm32-wasip2/debug/http_route.wasm",
         ] {
             let bytes = fs::read(self.target.join(artifact))?;

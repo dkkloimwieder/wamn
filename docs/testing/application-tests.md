@@ -14,7 +14,7 @@ The [local saved-edit case](../operations/running-tests.md#local-saved-edit-acce
 It keeps an authenticated mutation through code and SQL edits, and it observes the changed application response.
 Invalid SQL must refuse while the previous candidate remains usable.
 A schema edit must create a new disposable database with the edited schema and no retained business rows.
-The case also requires zero registry requests, unchanged system database grants, restored source, and successful cleanup.
+The case also requires unchanged system database grants, restored source, and successful cleanup.
 Client tests separately establish the state reset after target replacement.
 
 For requested build measurements, complete correctness acceptance first.

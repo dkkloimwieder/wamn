@@ -7,7 +7,6 @@ It does not provision infrastructure, mutate Git, or stop the environment Gate.
 """
 
 import argparse
-import base64
 import fcntl
 import importlib.util
 import json
@@ -61,30 +60,20 @@ class Redactor:
     def __init__(self, config):
         self.secrets = set()
         self.collect(config)
-        registry = config.get("registry_auth_file")
-        if registry:
-            self.collect(json.loads(Path(registry).read_text()))
         self.collect({key: value for key, value in os.environ.items()
                       if re.search(r"TOKEN|PASSWORD|SECRET|ACCESS_KEY", key)})
         self.secrets.discard("")
 
     def collect(self, value, key=""):
         if isinstance(value, dict):
-            if isinstance(value.get("username"), str) and isinstance(value.get("password"), str):
-                pair = f"{value['username']}:{value['password']}"
-                self.secrets.add(base64.b64encode(pair.encode()).decode())
             for name, child in value.items():
                 self.collect(child, name)
         elif isinstance(value, list):
             for child in value:
                 self.collect(child, key)
         elif isinstance(value, str) and value:
-            if re.search(r"token|password|secret|access_key|^auth$", key, re.I):
+            if re.search(r"token|password|secret|access_key", key, re.I):
                 self.secrets.add(value)
-            if key == "auth":
-                decoded = base64.b64decode(value, validate=True).decode()
-                if ":" in decoded:
-                    self.secrets.update((decoded, decoded.split(":", 1)[1]))
             if "://" in value:
                 parsed = urlsplit(value)
                 if parsed.password:

@@ -12,6 +12,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tokio::process::{Child, Command};
+use wamn_ctl::dev::DEV_STAGE_ORDER;
 
 use super::{PORTS, Run, directory, executable, git, output, string};
 use crate::agent_pilot::{GradeFailure, failure, read_json, read_lines, text, write, write_json};
@@ -181,7 +182,7 @@ fn first_green(run: &Path, rows: &[Value], started: &str) -> anyhow::Result<i64>
                 continue;
             }
             let output = fs::read_to_string(entry.path())?;
-            if super::super::loop_result(&output)["stages"] == 12 {
+            if super::super::loop_result(&output)["stages"] == DEV_STAGE_ORDER.len() {
                 let at = DateTime::parse_from_rfc3339(text(&row["ts"]))?;
                 let started = DateTime::parse_from_rfc3339(started)?;
                 return Ok((at.timestamp() - started.timestamp()) / 60);

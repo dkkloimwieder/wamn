@@ -13,8 +13,7 @@ operation=$1; repository=$2; run=$3; environment=$4
 compose=(docker compose --profile receiving-route -p "wamn-pilot-$run" -f "$repository/test-support/infrastructure/std-virtualization.compose.yaml")
 [[ ! -f $environment/compose.json ]] || compose+=(-f "$environment/compose.json")
 case "$operation" in
-  prepare-registry) docker run --rm -i --entrypoint htpasswd httpd:2-alpine -Bni wamn-pilot ;;
-  up) "${compose[@]}" up --detach --wait --wait-timeout 60 receiving-route-postgres authenticated-registry receiving-dev-nats receiving-dev-tempo receiving-pilot-events ;;
+  up) "${compose[@]}" up --detach --wait --wait-timeout 60 receiving-route-postgres receiving-dev-nats receiving-dev-tempo receiving-pilot-events ;;
   event-port) "${compose[@]}" port receiving-pilot-events 4222 ;;
   down) "${compose[@]}" down --volumes --remove-orphans ;;
   containers) docker ps -aq --filter "label=com.docker.compose.project=wamn-pilot-$run" ;;

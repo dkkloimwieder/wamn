@@ -100,8 +100,6 @@ jq -r --slurpfile checklist "$DIR/checklist.json" \
     "- loop: " + (if $c.loop.pass then "pass" else "FAIL" end) +
       " (" + ($c.loop.stages | tostring) + " stages)",
     "- paths: " + (if $c.paths.pass then "pass" else "FAIL, outside: " + ($c.paths.outside | join(", ")) end),
-    "- teardown: verification database removed: " +
-      ($c.teardown.verification_database_removed | tostring),
     ""
   ]
   + ["### Steps", ""]

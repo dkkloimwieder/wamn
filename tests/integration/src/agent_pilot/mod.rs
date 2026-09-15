@@ -17,6 +17,7 @@ use anyhow::Context as _;
 use clap::Args;
 use serde_json::{Value, json};
 use tokio::process::Command;
+use wamn_ctl::dev::DEV_STAGE_ORDER;
 
 use grading::Grading;
 
@@ -126,7 +127,7 @@ fn loop_result(output: &str) -> Value {
         .filter_map(|line| line.split_once(" host=").map(|(url, _)| url))
         .next()
         .unwrap_or_default();
-    json!({"pass":stages==12 && !base.is_empty(),"stages":stages,"base_url":base})
+    json!({"pass":stages==DEV_STAGE_ORDER.len() && !base.is_empty(),"stages":stages,"base_url":base})
 }
 
 fn expand_run(value: &mut Value, run: &str) {
@@ -347,16 +348,8 @@ async fn grade_inner(args: GradeArgs) -> Result<u8, GradeFailure> {
         Some(held) => held.stop().await,
         None => Ok(()),
     };
-    let mut checklist = result?;
+    let checklist = result?;
     stopped?;
-    let removed = if context.replay {
-        read_json(&context.grading.directory.join("checklist.json"))
-            .ok()
-            .is_some_and(|value| value["teardown"]["verification_database_removed"] == true)
-    } else {
-        live::verification_removed(&context).await
-    };
-    checklist["teardown"] = json!({"verification_database_removed":removed});
     let passed = checklist["outcome"] == "PASS";
     write_json(&context.checklist, &checklist)?;
     eprintln!("[grade] {}", text(&checklist["outcome"]));
@@ -445,8 +438,7 @@ async fn grade_started(context: &mut GradeContext) -> Result<Value, GradeFailure
         format!("FAIL (items: {})", failures.join(" "))
     };
     Ok(
-        json!({"loop":loop_state,"paths":paths,"contract":contract,"steps":step_results,"checks":checks,"fences":fences,
-        "teardown":{"verification_database_removed":false},"outcome":outcome,
+        json!({"loop":loop_state,"paths":paths,"contract":contract,"steps":step_results,"checks":checks,"fences":fences,"outcome":outcome,
         "human":{"Q3":null,"Q7":null,"Q8":null,"Q9":null,"Q10.activated":null,"Q11":null,"E1":null,"E2":null,"E3":null,"E4":null,"E5":null,"E6":null,"E7":null,
         "H-1":null,"H-2":null,"H-3":null,"H-4":null,"H-5":null,"H-6":null,"S-1":null,"S-2":null,"S-3":null}}),
     )

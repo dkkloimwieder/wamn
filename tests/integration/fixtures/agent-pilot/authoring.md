@@ -74,7 +74,6 @@ The grader does not replace capability admission, migration rules, or environmen
 Replay evaluates a recorded run without starting its environment.
 It writes `checklist-replay.json` and preserves the original record.
 A run without recorded requests cannot establish replayed route results.
-The live run's recorded teardown result remains the only basis for teardown during replay.
 
 ## Driver boundary
 
@@ -115,7 +114,7 @@ A held call can have a start record without a completion record.
 
 `wamn_dev_runs` and `wamn_dev_hold_runs` count started calls.
 `wamn_dev_failed` counts nonzero completed calls.
-`first_green_minutes` uses the first started call whose output records a completed twelve-stage run.
+`first_green_minutes` uses the first started call whose output records a completed run of every `wamn dev` stage.
 The absence of a completion record does not establish a failed call.
 
 The runner retains final source differences and the exact path comparison against `allowed_paths`.

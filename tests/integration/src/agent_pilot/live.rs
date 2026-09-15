@@ -297,28 +297,3 @@ async fn sql_rows(url: &str, sql: &str) -> anyhow::Result<usize> {
         .filter(|line| !line.is_empty())
         .count())
 }
-
-pub(super) async fn verification_removed(context: &GradeContext) -> bool {
-    let result = async {
-        let environment = read_json(&context.grading.directory.join("env/dev.json"))?;
-        let admin = text(&environment["system_database_url"]);
-        let configuration: tokio_postgres::Config =
-            text(&environment["verification_database_url"]).parse()?;
-        let database = configuration
-            .get_dbname()
-            .context("verification URL names its database")?;
-        let (client, connection) = tokio_postgres::connect(admin, NoTls).await?;
-        let connection = tokio::spawn(connection);
-        let row = client
-            .query_one(
-                "select count(*) from pg_database where datname = $1",
-                &[&database],
-            )
-            .await;
-        drop(client);
-        connection.await??;
-        Ok::<_, anyhow::Error>(row?.get::<_, i64>(0) == 0)
-    }
-    .await;
-    result.unwrap_or(false)
-}
