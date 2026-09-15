@@ -29,9 +29,10 @@
 //!    deliberately RLS-legal for the pinned tenant, and each denial is checked to
 //!    be a privilege refusal and *not* a row-level-security refusal. Both raise
 //!    SQLSTATE 42501, so a naive probe passes for the wrong reason.
-//! 4. **the denials are not vacuous** — each refused statement is replayed as
-//!    a login generation inheriting the matching stable ACL role inside a
-//!    rolled-back transaction, and must SUCCEED there.
+//! 4. **the denials are not vacuous where a login holds the grant** — the
+//!    `runs` read is replayed as an App generation inside a rolled-back
+//!    transaction and must SUCCEED there. The `run_queue` and `effect_attempts`
+//!    arms have no replay and rely on the privilege versus RLS check of test 3.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -176,9 +177,8 @@ fn assert_denied(url: &str, label: &str, statement: &str) {
 /// role's queue DML away: `deploy/sql/run-queue.sql` REVOKEs everything from
 /// `wamn_app` and contains ZERO grants to it, so replaying a queue write as
 /// `wamn_app` fails with `permission denied for table run_queue` and the arm
-/// reports a broken control instead of a test. Each queue statement now names
-/// the principal the schema of record actually grants it to, or names none at
-/// all — see the arm list.
+/// reports a broken control instead of a test. No queue statement names a
+/// replay principal now — see the arm list.
 fn assert_permitted_to(url: &str, role: &str, label: &str, statement: &str) {
     let script = format!(
         "BEGIN; SET LOCAL search_path TO {SCHEMA}; SET LOCAL app.tenant TO '{TENANT}'; \
@@ -594,8 +594,8 @@ END $$;
     // Each case carries BOTH forms of the same statement: the plpgsql form the
     // denial probe runs inside its `DO` block (reads use `PERFORM`, whose result
     // has somewhere to go), and the plain-SQL form the non-vacuity arm replays as
-    // a login generation of the role that owns the grant. `None` means no replay
-    // is possible — see the effect table case.
+    // a login generation of the role that owns the grant. `None` means the test
+    // runs no replay — see the arm list.
     let insert_queue =
         format!("INSERT INTO run_queue (tenant_id, run_id) VALUES ('{TENANT}','run-a2')");
     let update_queue =

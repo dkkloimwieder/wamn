@@ -67,9 +67,10 @@
 #                        PROJECT database. It is a separate plane from the
 #                        authoring connection above, not a fallback for it and
 #                        not reachable from it — authoring writes the control
-#                        table, admission writes project run state, and a
-#                        transaction cannot span two databases. It is refused
-#                        before any I/O on exactly the same predicates
+#                        table, admission appends project `catalog.wirings`
+#                        rows, and a transaction cannot span two databases.
+#                        It is refused before any I/O on exactly the same
+#                        predicates
 #                        (crates/control/provision parse_management_admission_url),
 #                        so a URL naming the control database, or carrying the
 #                        shared `wamn_app` role, crash-loops instead of serving.
