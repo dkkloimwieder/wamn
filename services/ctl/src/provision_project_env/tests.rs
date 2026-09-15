@@ -1937,40 +1937,18 @@ fn stable_acl_role_members_are_only_scoped_generation_roles() {
 
 #[tokio::test]
 async fn tenant_projection_and_instance_claim_hold_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_CTL_PG_URL") else {
-        eprintln!("skipping tenant projection test: WAMN_CTL_PG_URL is unset");
-        return;
-    };
-    let lock = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(std::env::temp_dir().join("wamn-ctl-live-database.lock"))
-        .unwrap();
-    lock.lock().unwrap();
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_control_provision::test_database::system();
+    let url = database.url();
     let connect = async || {
-        let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
+        let (client, connection) = tokio_postgres::connect(url, NoTls).await.unwrap();
         tokio::spawn(async move {
             connection.await.unwrap();
         });
         client
     };
     let mut first = connect().await;
-    // A test that ran first in this database can own wamn_history, so the reset drops it.
-    first.batch_execute("DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS wamn_run CASCADE; DROP SCHEMA IF EXISTS wamn_authority CASCADE; DROP SCHEMA IF EXISTS registry CASCADE; DROP SCHEMA IF EXISTS provisioning CASCADE; DROP SCHEMA IF EXISTS identity CASCADE; DROP SCHEMA IF EXISTS wamn_history CASCADE; CREATE EXTENSION IF NOT EXISTS pgcrypto;
-DO $roles$ DECLARE role_name text; BEGIN FOREACH role_name IN ARRAY ARRAY['wamn_system','wamn_control_author','wamn_app','wamn_scenario_author','wamn_db_owner'] LOOP
-IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname=role_name) THEN EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS',role_name); END IF; END LOOP;
-EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system',current_database()); END $roles$;
-SET ROLE wamn_system;").await.unwrap();
-    first
-        .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
-        .await
-        .unwrap();
-    first
-        .batch_execute(wamn_control_provision::CONTROL_PORTABLE_STORE_SQL)
-        .await
-        .unwrap();
+    first.batch_execute("SET ROLE wamn_system").await.unwrap();
     first.batch_execute("INSERT INTO registry.orgs (id,placement_kind) VALUES ('acme','dedicated'); INSERT INTO registry.env_policies (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) VALUES ('acme','dev','\"own\"',0,1,'1Gi','1','1Gi','postgres:18')").await.unwrap();
     let triple = Triple::new("acme", "receiving", "dev");
     let other = Triple::new("acme", "shipping", "dev");
@@ -2056,7 +2034,7 @@ SET ROLE wamn_system;").await.unwrap();
     )
     .await
     .unwrap();
-    crate::dev::coordinator::claim_environment_instance(&url, "tenant-a", "16384")
+    crate::dev::coordinator::claim_environment_instance(url, "tenant-a", "16384")
         .await
         .unwrap();
     first
@@ -2114,11 +2092,11 @@ SET ROLE wamn_system;").await.unwrap();
     assert_eq!(row.get::<_, chrono::DateTime<chrono::Utc>>(1), stable_at);
     assert_eq!(first.query_one("SELECT secret_name FROM registry.project_envs WHERE org='acme' AND project='shipping' AND env='dev'", &[]).await.unwrap().get::<_, String>(0), "db-other", "the earlier registry commit survives projection refusal");
 
-    crate::dev::coordinator::claim_environment_instance(&url, "tenant-a", "")
+    crate::dev::coordinator::claim_environment_instance(url, "tenant-a", "")
         .await
         .unwrap();
     let absent =
-        crate::dev::coordinator::claim_environment_instance(&url, "tenant-unprojected", "16384")
+        crate::dev::coordinator::claim_environment_instance(url, "tenant-unprojected", "16384")
             .await
             .unwrap_err();
     assert!(

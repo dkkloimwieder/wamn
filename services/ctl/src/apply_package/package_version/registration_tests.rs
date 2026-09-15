@@ -44,34 +44,17 @@ fn refusal(error: anyhow::Error, kind: PackageMigrationErrorKind) {
 }
 
 #[tokio::test]
-#[ignore = "requires fresh PostgreSQL 18 in WAMN_CTL_PG_URL"]
 async fn registration_serializes_replay_conflicts_successors_and_rollback() {
-    let url = std::env::var("WAMN_CTL_PG_URL").expect("owned PostgreSQL database URL");
-    let (admin, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
-    tokio::spawn(async move { connection.await.unwrap() });
-    admin.batch_execute(
-        "CREATE EXTENSION IF NOT EXISTS pgcrypto; \
-         DO $roles$ DECLARE name text; BEGIN \
-         FOREACH name IN ARRAY ARRAY['wamn_system','wamn_control_author','wamn_app','wamn_scenario_author'] LOOP \
-         IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = name) THEN \
-         EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', name); \
-         END IF; END LOOP; \
-         EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $roles$;"
-    ).await.unwrap();
+    let _lock = wamn_test_postgres::lock();
     let hash = format!("sha256:{}", "a".repeat(64));
     let other_hash = format!("sha256:{}", "b".repeat(64));
-    for (control, schema) in [
-        (false, wamn_catalog::CATALOG_SCHEMA_SQL),
-        (true, wamn_control_provision::CONTROL_PORTABLE_STORE_SQL),
+    for (control, database) in [
+        (false, wamn_catalog::test_database::tenant()),
+        (true, wamn_control_provision::test_database::system()),
     ] {
-        admin.batch_execute("DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS wamn_run CASCADE; DROP SCHEMA IF EXISTS wamn_authority CASCADE;").await.unwrap();
-        if control {
-            admin.batch_execute("SET ROLE wamn_system").await.unwrap();
-        }
-        admin.batch_execute(schema).await.unwrap();
-        admin.batch_execute("RESET ROLE").await.unwrap();
-        let mut first = connect(&url, control).await;
-        let mut second = connect(&url, control).await;
+        let url = database.url();
+        let mut first = connect(url, control).await;
+        let mut second = connect(url, control).await;
         assert!(register(&mut first, "1.0.0", &hash, None).await.unwrap());
         let timestamp: String = first
             .query_one("SELECT registered_at::text FROM catalog.packages", &[])

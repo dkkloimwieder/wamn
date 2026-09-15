@@ -40,25 +40,7 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-async fn fresh_catalog(client: &Client) {
-    client
-        .batch_execute(
-            "DO $$ BEGIN
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN
-             CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOBYPASSRLS;
-           END IF;
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN
-             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOBYPASSRLS;
-           END IF;
-         END $$;
-         DROP SCHEMA IF EXISTS catalog CASCADE;",
-        )
-        .await
-        .expect("prepare fresh catalog");
-    client
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await
-        .expect("install catalog");
+async fn seed_catalog(client: &Client) {
     client
         .batch_execute(&format!(
             "SET app.tenant = 't1';
@@ -290,15 +272,15 @@ async fn concurrent_changes_keep_serializable_refusal(client: &mut Client, url: 
 }
 
 #[tokio::test]
-#[ignore = "requires WAMN_CTL_PG_URL for a disposable PostgreSQL database"]
 async fn promotion_activation_retains_decisions_and_transaction_boundaries() {
-    let url =
-        std::env::var("WAMN_CTL_PG_URL").expect("set WAMN_CTL_PG_URL for a disposable database");
-    let mut client = connect(&url).await;
-    fresh_catalog(&client).await;
-    let args = args(&url);
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_catalog::test_database::tenant();
+    let url = database.url();
+    let mut client = connect(url).await;
+    seed_catalog(&client).await;
+    let args = args(url);
     refuses_unreleased_absent_and_foreign_definitions(&mut client, &args).await;
     commit_retry_and_rollback_keep_one_history(&mut client, &args).await;
     retirement_refuses_change_but_keeps_exact_retry(&mut client, &args).await;
-    concurrent_changes_keep_serializable_refusal(&mut client, &url).await;
+    concurrent_changes_keep_serializable_refusal(&mut client, url).await;
 }

@@ -2050,8 +2050,6 @@ async fn append_or_verify_admitted_component_count(
 
 #[cfg(test)]
 mod tests {
-    use std::fs::OpenOptions;
-
     use wamn_catalog::{
         AdmittedComponentOperation, ComponentOperationDeclaration, ComponentPackageScope,
     };
@@ -2551,109 +2549,31 @@ mod tests {
         client
     }
 
-    fn database_config(base: &PgConfig, database: &str) -> PgConfig {
-        let mut config = base.clone();
-        config.dbname(database);
-        config
-    }
-
-    async fn run_alone(client: &PgClient, sql: &str) {
-        client
-            .batch_execute(sql)
-            .await
-            .unwrap_or_else(|error| panic!("{sql}: {error}"));
-    }
-
     #[tokio::test]
+    #[ignore = "requires a component registry named by WAMN_COMPONENT_ARTIFACT_BASE and WAMN_REGISTRY_AUTH_FILE"]
     async fn verification_projection_replays_refuses_drift_and_leaves_publish_project_noop() {
-        let Ok(url) = std::env::var("WAMN_CTL_PG_URL") else {
-            eprintln!("skipping publication projection test; WAMN_CTL_PG_URL is unset");
-            return;
-        };
-        let Ok(artifact_base) = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE") else {
-            eprintln!(
-                "skipping publication projection test; WAMN_COMPONENT_ARTIFACT_BASE is unset"
-            );
-            return;
-        };
-        let Ok(registry_auth_file) = std::env::var("WAMN_REGISTRY_AUTH_FILE") else {
-            eprintln!("skipping publication projection test; WAMN_REGISTRY_AUTH_FILE is unset");
-            return;
-        };
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(std::env::temp_dir().join("wamn-ctl-live-database.lock"))
-            .expect("open shared ctl database lock");
-        lock.lock()
-            .expect("lock disposable PostgreSQL across tests");
+        let artifact_base = std::env::var("WAMN_COMPONENT_ARTIFACT_BASE")
+            .expect("WAMN_COMPONENT_ARTIFACT_BASE names the component registry base");
+        let registry_auth_file = std::env::var("WAMN_REGISTRY_AUTH_FILE")
+            .expect("WAMN_REGISTRY_AUTH_FILE names the component registry credentials");
+        let _lock = wamn_test_postgres::lock();
+        let project_database = wamn_catalog::test_database::tenant();
+        let control_database = wamn_control_provision::test_database::system();
 
-        let base_config: PgConfig = url.parse().expect("parse WAMN_CTL_PG_URL");
-        let base = connect(&base_config).await;
-        let suffix = std::process::id();
-        let project_database = format!("wamn_projection_project_{suffix}");
-        let control_database = format!("wamn_projection_control_{suffix}");
-        for database in [&project_database, &control_database] {
-            run_alone(
-                &base,
-                &format!("DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)"),
-            )
-            .await;
-        }
-        base.batch_execute(
-            "DO $roles$ DECLARE role_name text; BEGIN \
-               FOREACH role_name IN ARRAY ARRAY[\
-                 'wamn_system', 'wamn_control_author', 'wamn_app', 'wamn_scenario_author', \
-                 'wamn_db_owner'\
-               ] LOOP \
-                 IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
-                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-                 END IF; \
-               END LOOP; \
-             END $roles$;",
-        )
-        .await
-        .expect("ensure production schema prerequisite roles");
-        for database in [&project_database, &control_database] {
-            run_alone(&base, &format!("CREATE DATABASE \"{database}\"")).await;
-        }
-        run_alone(
-            &base,
-            &format!("GRANT CREATE ON DATABASE \"{control_database}\" TO wamn_system"),
-        )
-        .await;
-
-        let project_config = database_config(&base_config, &project_database);
-        let control_config = database_config(&base_config, &control_database);
-        let mut verification_url = url::Url::parse(&url).expect("parse PostgreSQL fixture URL");
-        verification_url.set_path(&format!("/{project_database}"));
-        let mut control_url = url::Url::parse(&url).expect("parse PostgreSQL fixture URL");
-        control_url.set_path(&format!("/{control_database}"));
+        let project_config: PgConfig = project_database
+            .url()
+            .parse()
+            .expect("parse the project test database URL");
+        let control_config: PgConfig = control_database
+            .url()
+            .parse()
+            .expect("parse the control test database URL");
+        let verification_url =
+            url::Url::parse(project_database.url()).expect("parse the project test database URL");
+        let control_url =
+            url::Url::parse(control_database.url()).expect("parse the control test database URL");
         let mut project = connect(&project_config).await;
         let mut control = connect(&control_config).await;
-        project
-            .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-            .await
-            .expect("install production project catalog");
-        control
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .expect("assume production control owner");
-        control
-            .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
-            .await
-            .expect("install production control system schema");
-        control
-            .batch_execute(wamn_control_provision::CONTROL_PORTABLE_STORE_SQL)
-            .await
-            .expect("install production portable control store");
-        control
-            .batch_execute("RESET ROLE")
-            .await
-            .expect("restore test administrator");
 
         let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
         let directory = crate::apply_package::read_package_directory(&package_path)
@@ -2970,9 +2890,6 @@ mod tests {
 
         drop(project);
         drop(control);
-        for database in [&project_database, &control_database] {
-            run_alone(&base, &format!("DROP DATABASE \"{database}\" WITH (FORCE)")).await;
-        }
     }
 
     /// wamn-10yt.52 against a real control store: the ENVIRONMENT INSTANCE, not
@@ -2990,68 +2907,10 @@ mod tests {
     /// nothing here.
     #[tokio::test]
     async fn the_environment_instance_decides_which_run_owns_a_component_fact() {
-        let Ok(url) = std::env::var("WAMN_CTL_PG_URL") else {
-            eprintln!("skipping environment-instance projection test; WAMN_CTL_PG_URL is unset");
-            return;
-        };
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(std::env::temp_dir().join("wamn-ctl-live-database.lock"))
-            .expect("open shared ctl database lock");
-        lock.lock()
-            .expect("lock disposable PostgreSQL across tests");
-
-        let base_config: PgConfig = url.parse().expect("parse WAMN_CTL_PG_URL");
-        let base = connect(&base_config).await;
-        let control_database = format!("wamn_disposable_control_{}", std::process::id());
-        run_alone(
-            &base,
-            &format!("DROP DATABASE IF EXISTS \"{control_database}\" WITH (FORCE)"),
-        )
-        .await;
-        base.batch_execute(
-            "DO $roles$ DECLARE role_name text; BEGIN \
-               FOREACH role_name IN ARRAY ARRAY[\
-                 'wamn_system', 'wamn_control_author', 'wamn_app', 'wamn_scenario_author', \
-                 'wamn_db_owner'\
-               ] LOOP \
-                 IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = role_name) THEN \
-                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-                                   NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
-                 END IF; \
-               END LOOP; \
-             END $roles$;",
-        )
-        .await
-        .expect("ensure production schema prerequisite roles");
-        run_alone(&base, &format!("CREATE DATABASE \"{control_database}\"")).await;
-        run_alone(
-            &base,
-            &format!("GRANT CREATE ON DATABASE \"{control_database}\" TO wamn_system"),
-        )
-        .await;
-
-        let control_config = database_config(&base_config, &control_database);
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_control_provision::test_database::system();
+        let control_config: PgConfig = database.url().parse().expect("parse the test database URL");
         let control = connect(&control_config).await;
-        control
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .expect("assume production control owner");
-        control
-            .batch_execute(wamn_control_provision::SYSTEM_SCHEMA_SQL)
-            .await
-            .expect("install production control system schema");
-        control
-            .batch_execute(wamn_control_provision::CONTROL_PORTABLE_STORE_SQL)
-            .await
-            .expect("install production portable control store");
-        control
-            .batch_execute("RESET ROLE")
-            .await
-            .expect("restore test administrator");
 
         let package_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
         let directory = crate::apply_package::read_package_directory(&package_path)
@@ -3257,11 +3116,6 @@ mod tests {
         );
 
         drop(control);
-        run_alone(
-            &base,
-            &format!("DROP DATABASE \"{control_database}\" WITH (FORCE)"),
-        )
-        .await;
     }
 
     /// The exact bytes this publisher stores in `requirement_json`, frozen

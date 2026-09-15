@@ -549,7 +549,6 @@ mod tests {
     use serde_json::json;
 
     #[tokio::test]
-    #[ignore = "starts an owned disposable PostgreSQL 18 server"]
     async fn local_lease_retains_data_and_reset_reapplies_exact_configuration() -> anyhow::Result<()>
     {
         let mut server = wamn_test_infrastructure::postgres::start(&[])?;

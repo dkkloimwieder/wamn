@@ -22,8 +22,6 @@ const TENANT: &str = "effective-release-poc";
 const ENVIRONMENT: &str = "dev";
 const PUBLISHER: &str = "effective-release-poc-publisher";
 const RELEASE_ID: i32 = 1;
-const PROJECT_URL_ENV: &str = "WAMN_EFFECTIVE_RELEASE_PROJECT_PG_URL";
-const CONTROL_URL_ENV: &str = "WAMN_EFFECTIVE_RELEASE_CONTROL_PG_URL";
 const BASE_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_BASE_COMPONENT_WASM";
 const OVERLAY_WASM_ENV: &str = "WAMN_EFFECTIVE_RELEASE_OVERLAY_COMPONENT_WASM";
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
@@ -391,14 +389,15 @@ fn assert_typed_metadata_refusal(input: &PackageInput) {
 }
 
 #[tokio::test]
-#[ignore = "requires two disposable PostgreSQL 18 databases and exact built base/overlay component paths"]
+#[ignore = "requires exact built base/overlay component paths"]
 async fn fresh_base_and_overlay_mint_byte_identically_and_refuse_drift() {
-    let project_url = std::env::var(PROJECT_URL_ENV)
-        .expect("WAMN_EFFECTIVE_RELEASE_PROJECT_PG_URL names disposable PostgreSQL 18");
-    let control_url = std::env::var(CONTROL_URL_ENV)
-        .expect("WAMN_EFFECTIVE_RELEASE_CONTROL_PG_URL names disposable PostgreSQL 18");
     let inputs = packages();
     assert_typed_metadata_refusal(&inputs[0]);
+    let _lock = wamn_test_postgres::lock();
+    let project_database = wamn_test_postgres::database();
+    let control_database = wamn_test_postgres::database();
+    let project_url = project_database.url().to_owned();
+    let control_url = control_database.url().to_owned();
 
     let (mut project, project_task) = connect(&project_url).await;
     let (control, control_task) = connect(&control_url).await;

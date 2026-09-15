@@ -304,7 +304,6 @@ mod tests {
         AdmitComponentArgs, admit_component, project_admitted_component_for_verification,
     };
 
-    const LIVE_URL: &str = "WAMN_DEV_VERIFICATION_PG_URL";
     const TENANT: &str = "dev-verification-bootstrap";
 
     async fn connect(url: &str) -> Client {
@@ -656,10 +655,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires disposable PostgreSQL 18 through WAMN_DEV_VERIFICATION_PG_URL"]
     async fn lifecycle_bootstraps_then_accepts_packages_and_one_exact_admission() {
-        let url = std::env::var(LIVE_URL)
-            .expect("WAMN_DEV_VERIFICATION_PG_URL must name a disposable PostgreSQL 18 database");
+        let _lock = wamn_test_postgres::lock();
+        let database = wamn_test_postgres::database();
+        let url = database.url().to_owned();
         let config = live_config(&url);
         let verification_database = database_name(&url);
         let durable_database = database_name(config.target_database_url());

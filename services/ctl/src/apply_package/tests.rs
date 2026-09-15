@@ -4,30 +4,13 @@ use super::*;
 /// check of apply-package. A manifest that drops a model whose relation the
 /// installed migrations create gets the refusal of apply.
 #[tokio::test]
-#[ignore = "requires disposable PostgreSQL 18 in WAMN_CTL_PG_URL"]
 async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
     const TENANT: &str = "local-configuration";
-    let url = std::env::var("WAMN_CTL_PG_URL").expect("owned PostgreSQL database URL");
+    let _lock = wamn_test_postgres::lock();
+    let database = wamn_project_state::test_database::tenant_app_system();
+    let url = database.url().to_owned();
     let (mut client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
     tokio::spawn(connection);
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS receiving CASCADE; \
-             DROP SCHEMA IF EXISTS app_system CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE; \
-             DO $roles$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-                 CREATE ROLE wamn_app NOLOGIN; \
-               END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-                 CREATE ROLE wamn_scenario_author NOLOGIN; \
-               END IF; \
-             END $roles$;",
-        )
-        .await
-        .unwrap();
     client
         .batch_execute(wamn_control_provision::sql::ensure_db_owner_role_sql())
         .await
@@ -38,14 +21,6 @@ async fn local_configuration_refuses_a_removed_model_with_the_apply_refusal() {
                EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_db_owner', current_database()); \
              END $grant$;",
         )
-        .await
-        .unwrap();
-    client
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await
-        .unwrap();
-    client
-        .batch_execute(include_str!("../../../../deploy/sql/app-schema.sql"))
         .await
         .unwrap();
     let shipped = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");

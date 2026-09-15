@@ -938,10 +938,10 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires disposable PostgreSQL through WAMN_DEV_VERIFICATION_PG_URL"]
+    #[ignore = "existing failure: live_config omits target_database_acl_file, so the configuration is refused before PostgreSQL"]
     async fn disposable_postgres_checks_freshness_cleanup_and_confinement() {
-        let url = std::env::var("WAMN_DEV_VERIFICATION_PG_URL")
-            .expect("WAMN_DEV_VERIFICATION_PG_URL must name a disposable database");
+        let database = wamn_test_postgres::database();
+        let url = database.url().to_owned();
         let spec = DatabaseSpec::from_url(&url).expect("valid disposable database URL");
         let authority = PostgresAuthority::connect(&spec.maintenance)
             .await
