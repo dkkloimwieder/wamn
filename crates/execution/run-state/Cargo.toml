@@ -1,36 +1,24 @@
 [package]
 name = "wamn-run-state"
-description = "The durable execution-state contract. Its default graph is pure and guest-safe; the optional native feature owns the private effect-writer Postgres adapter."
+description = "The durable execution-state contract. Its default graph is pure and guest-safe."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [features]
-# The framed scope digest alone, WITHOUT the effect-writer credential document.
+# The framed scope digest alone.
 # The shipped runtime needs exactly this much to check that a resolved guest
 # credential belongs to the tenant it is about to serve (wamn-0h0g.22.6.7).
 tenant-key = [
     "dep:hex",
     "dep:sha2",
 ]
-effect-writer-credential = [
-    "dep:chrono",
-    "dep:url",
-    "tenant-key",
-]
-native = [
-    "dep:deadpool-postgres",
-    "dep:tokio-postgres",
-    "effect-writer-credential",
-]
 test-util = []
 # wamn-hopk R1: the durable-tier shelf, OFF by default. Live crates never enable
 # it, so a reference from a live path is E0433 at build time rather than a
 # source scan's problem. Membership is measured, not assumed: only modules with
 # zero internal AND zero external references qualify. `durability` does NOT --
-# it threads through live `queue/claim.rs` and `queue/sql.rs` -- and
-# `effect_writer_credential` does NOT, because `effect_writer.rs` is live on
-# both tiers (`reset_expired_pre_effect_projection`).
+# it threads through live `queue/claim.rs` and `queue/sql.rs`.
 durable-tier = []
 
 [dependencies]
@@ -43,16 +31,11 @@ wamn-pg-core = { workspace = true }
 # store facts, not published package contracts.
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-chrono = { workspace = true, features = ["std"], optional = true }
 hex = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
-url = { workspace = true, optional = true }
-deadpool-postgres = { version = "0.14", optional = true }
-tokio-postgres = { workspace = true, optional = true }
 
 [dev-dependencies]
 wamn-catalog = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 wamn-control-provision = { workspace = true }
 wamn-test-postgres = { workspace = true }
 

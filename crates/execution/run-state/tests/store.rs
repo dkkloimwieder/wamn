@@ -363,7 +363,6 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
         "run-state-store-test-password",
         "2099-01-01T00:00:00Z",
     );
-    let ensure_effect_writer = provision_sql::ensure_effect_writer_acl_role_sql();
     let retire_app = provision_sql::retire_workload_generation_sql(
         WorkloadRoleFamily::App,
         &database,
@@ -384,7 +383,6 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
                NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
            END IF; \
          END $$;\n\
-         {ensure_effect_writer}\n\
          {prepare_app}\n\
          DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
          DROP SCHEMA IF EXISTS catalog CASCADE;\n\

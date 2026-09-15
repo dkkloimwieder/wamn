@@ -6237,15 +6237,10 @@ dependencies = [
 name = "wamn-run-state"
 version = "0.1.0"
 dependencies = [
- "chrono",
- "deadpool-postgres",
  "hex",
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "tokio",
- "tokio-postgres",
- "url",
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-execution-contract",

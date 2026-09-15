@@ -8,7 +8,6 @@
 //! doorbells remain adapter effects.
 //!
 //! This crate's default graph is **pure**: no DB, no wasm, no clock. The
-//! non-default `native` feature contains the private effect-writer adapter. The
 //! crate maps execution outcomes to storage literals ([`RunStatus`]); the
 //! host-owned executor adapter supplies the `wamn:postgres` effects against the
 //! schema in `deploy/sql/run-state.sql`.
@@ -34,18 +33,10 @@
 pub mod attempt;
 /// The closed authority a trusted caller selects its credential under.
 pub mod authority_class;
+/// The two reusable credential-generation slots.
+mod credential_generation;
 /// The durability class a run was admitted under, and the crash-floor gate.
 pub mod durability;
-/// Shared strict credential document for the private native effect writer.
-#[cfg(feature = "effect-writer-credential")]
-pub mod effect_writer_credential;
-/// The framed scope digest and the guest-SQL tenant key.
-#[cfg(feature = "tenant-key")]
-pub mod tenant_scope;
-// Host-only effect table statements stay out of the default guest-safe graph.
-// The attempt table adapter remains unmounted in production. See the module doc.
-#[cfg(feature = "native")]
-mod effect_writer;
 /// RUN-* as plain `fn check(state)` functions, for the pure decision tests to
 /// call after every step.
 pub mod invariants;
@@ -63,29 +54,15 @@ pub mod schema_drift;
 /// Run-state SQL text builders (SR2): the single source adapters execute.
 pub mod sql;
 mod status;
+/// The framed scope digest and the guest-SQL tenant key.
+#[cfg(feature = "tenant-key")]
+pub mod tenant_scope;
 /// Typed, queue-joined executor transitions.
 pub mod transitions;
 
 pub use authority_class::AuthorityClass;
+pub use credential_generation::CredentialGeneration;
 pub use durability::{DURABLE_CLASS_SQL_PREDICATE, DurabilityClass};
-#[cfg(feature = "native")]
-pub use effect_writer::{
-    BeginEffectAttempt, EffectAttempt, EffectAttemptId, EffectDispatchPermit, EffectOutcome,
-    RecordEffectOutcome,
-};
-#[cfg(feature = "native")]
-pub use effect_writer::{
-    EffectWriterClient, EffectWriterError, EffectWriterErrorKind, EffectWriterScope,
-};
-#[cfg(feature = "effect-writer-credential")]
-pub use effect_writer_credential::{
-    CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_CREDENTIAL_PATH,
-    EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION, EFFECT_WRITER_ROLE, EffectWriterCredential,
-    EffectWriterCredentialError, EffectWriterCredentialErrorKind, EffectWriterCredentialScope,
-    EffectWriterCredentialValidity, RUN_PROJECTION_WRITER_ROLE, effect_writer_credential,
-    effect_writer_generation_role, effect_writer_scope_hash, parse_effect_writer_credential,
-    validate_effect_writer_credential,
-};
 pub use status::{
     EffectUncertainFailure, FailKind, InvalidEffectUncertainRunId, NodeErrorKind, NodeRunStatus,
     RunStatus,

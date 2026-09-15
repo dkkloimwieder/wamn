@@ -7,8 +7,8 @@
 //! claim before it opens the connection.
 //!
 //! `wamn-control-provision` DELEGATES here for the App family rather than
-//! carrying a second implementation, exactly as it already does for the effect
-//! writer. There is one definition of the digest and one of the framing.
+//! carrying a second implementation. There is one definition of the digest and
+//! one of the framing.
 
 use sha2::{Digest as _, Sha256};
 

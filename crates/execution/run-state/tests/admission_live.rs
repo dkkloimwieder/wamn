@@ -94,7 +94,7 @@ fn surviving_authority_matrix_live() {
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $$ DECLARE role_name text; BEGIN \
                FOREACH role_name IN ARRAY ARRAY[ \
-                 'wamn_app','wamn_control_author','wamn_scenario_author','wamn_effect_writer', \
+                 'wamn_app','wamn_control_author','wamn_scenario_author', \
                  'wamn_executor_platform','wamn_management_admitter', \
                  '{EXECUTOR_LOGIN}','{MANAGEMENT_LOGIN}' \
                ] LOOP \
@@ -108,8 +108,6 @@ fn surviving_authority_matrix_live() {
              CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
              CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                NOINHERIT NOREPLICATION NOBYPASSRLS; \
              BEGIN; {catalog} {run_state} {run_queue} COMMIT; \
              {access_floor} \
@@ -367,7 +365,6 @@ result_json,state_json,status,terminal_reason,updated_at', \
         "wamn_app",
         "wamn_control_author",
         "wamn_scenario_author",
-        "wamn_effect_writer",
     ] {
         assert_eq!(
             success(
