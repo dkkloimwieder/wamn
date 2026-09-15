@@ -13,9 +13,8 @@
 //! This gate applies THE SAME text the subcommand emits — [`role_sql`] and
 //! [`privilege_sql`], not a transcription.
 //!
-//! Set `WAMN_CTL_PG_URL` to a **superuser** URL (path `/postgres`) of a throwaway
-//! Postgres — the variable `run_plane_live` uses, so one container serves both.
-//! Skipped cleanly when unset.
+//! It uses a superuser connection to a database on the PostgreSQL server of its
+//! test process, and holds the process lock of that server.
 //!
 //! The legs run sequentially under one test entry: PostgreSQL roles are
 //! CLUSTER-wide, so two entries mutating `wamn_dispatch_reader` in parallel
@@ -242,10 +241,7 @@ async fn can_connect(su: &Client, role: &str, database: &str) -> bool {
 
 #[tokio::test]
 async fn dispatch_reader_provisioning_live() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the wamn-0h0g.12.122 provisioning gate");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     provisioned_reader_is_idempotent_and_connection_free_leg(&su, &url).await;
     owner_statement_asymmetry_leg(&su).await;

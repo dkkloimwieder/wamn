@@ -7,20 +7,15 @@ use super::{
 
 /// Own entry so the two-plane post-check can be run — and mutated — alone.
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn two_plane_residency_live() {
-    let url =
-        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     two_plane_residency_leg(&su).await;
 }
 
 #[tokio::test]
 async fn stored_suite_cutover_live() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the stored-suite cutover gate");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     stored_suite_cutover_leg(&su).await;
 }
@@ -44,10 +39,7 @@ async fn stored_suite_cutover_live() {
 /// reachable while that stands.
 #[tokio::test]
 async fn authoring_privileges_at_record_plan_no_repair_live() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the authoring-privilege drift gate");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     reset(&su).await;
     let schema = schema();

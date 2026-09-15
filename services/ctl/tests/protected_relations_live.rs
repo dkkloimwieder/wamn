@@ -1,6 +1,7 @@
 //! Checks database shapes and author privileges in fresh PostgreSQL 18.
 //!
-//! Set `WAMN_CTL_PG_URL` to a superuser URL for a disposable database.
+//! It uses a superuser connection to a database on the PostgreSQL server of its
+//! test process.
 
 mod support;
 
@@ -497,10 +498,8 @@ async fn assert_author_sql_boundaries(client: &Client, control_database: bool) {
 }
 
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn protected_relations_match_reconciled_postgres() {
-    let url =
-        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url = support::database(wamn_test_postgres::database);
     let repository = repository();
     let client = connect(&url).await;
     let version: String = client

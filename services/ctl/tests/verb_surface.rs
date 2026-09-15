@@ -1,9 +1,4 @@
-mod support;
-
-use std::fs::{OpenOptions, TryLockError};
 use std::process::Command;
-
-const LOCK_CHILD_ENV: &str = "WAMN_CTL_LOCK_CHILD";
 
 const MVP_VERBS: &[&str] = &[
     "provision-org",
@@ -41,52 +36,6 @@ fn command_help(binary: &str, command: &str) -> String {
         .expect("run ctl command help");
     assert!(output.status.success());
     String::from_utf8(output.stdout).expect("help is UTF-8")
-}
-
-// wamn-hopk R5: the live-database lock call list was asserted by reading nine
-// sibling test files as source and counting lock calls in them. Deleted - a
-// test that greps other tests shows nothing about the database. The lock's
-// behaviour is shown by ctl_live_database_lock_child_observes_parent and
-// ctl_live_database_lock_excludes_another_process below, which take real locks.
-
-#[test]
-#[ignore = "child process for ctl_live_database_lock_excludes_another_process"]
-fn ctl_live_database_lock_child_observes_parent() {
-    if std::env::var_os(LOCK_CHILD_ENV).is_none() {
-        return;
-    }
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(std::env::temp_dir().join(support::LOCK_FILE_NAME))
-        .expect("open the child-process lock file");
-    assert!(
-        matches!(file.try_lock(), Err(TryLockError::WouldBlock)),
-        "the child process acquired the parent process's live-database lock"
-    );
-}
-
-#[test]
-fn ctl_live_database_lock_excludes_another_process() {
-    let _lock = support::lock();
-    let output =
-        Command::new(std::env::current_exe().expect("locate the verb-surface test binary"))
-            .args([
-                "--ignored",
-                "--exact",
-                "ctl_live_database_lock_child_observes_parent",
-            ])
-            .env(LOCK_CHILD_ENV, "1")
-            .output()
-            .expect("run the child-process lock probe");
-    assert!(
-        output.status.success(),
-        "child-process lock probe failed\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
 }
 
 #[test]

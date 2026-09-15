@@ -11,8 +11,6 @@ use wamn_ctl::publish_release::{
     DeploymentCoordinate, attest_deployment, project_release_identity,
 };
 
-const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
-const CONTROL_STORE: &str = wamn_control_provision::CONTROL_PORTABLE_STORE_SQL;
 const TENANT: &str = "publish-release-live";
 const INSERT_MIGRATION_SQL: &str = "\
 INSERT INTO catalog.package_migrations (\
@@ -37,51 +35,6 @@ async fn connect(url: &str) -> Client {
         let _ = connection.await;
     });
     client
-}
-
-async fn install(client: &Client, store: Store) {
-    client
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_run CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             CREATE EXTENSION IF NOT EXISTS pgcrypto; \
-             DO $roles$ DECLARE role_name text; BEGIN \
-               FOREACH role_name IN ARRAY ARRAY[\
-                 'wamn_system', 'wamn_control_author', 'wamn_app', \
-                 'wamn_scenario_author'\
-               ] LOOP \
-                 IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
-                   EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB \
-                                   NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS', \
-                                  role_name); \
-                 END IF; \
-               END LOOP; \
-               EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', \
-                              current_database()); \
-             END $roles$;",
-        )
-        .await
-        .expect("reset release-publication schemas and ensure prerequisite roles");
-
-    match store {
-        Store::Project => client
-            .batch_execute(CATALOG_SCHEMA)
-            .await
-            .expect("install project package catalog"),
-        Store::Control => {
-            client
-                .batch_execute("SET ROLE wamn_system")
-                .await
-                .expect("assume the control-store owner");
-            let installed = client.batch_execute(CONTROL_STORE).await;
-            client
-                .batch_execute("RESET ROLE")
-                .await
-                .expect("leave the control-store owner");
-            installed.expect("install control portable store");
-        }
-    }
 }
 
 async fn seed_package_and_release(client: &Client) {
@@ -176,7 +129,6 @@ async fn assert_immutable_rows(client: &Client, store: Store) {
 
 async fn assert_package_seal(url: &str, store: Store) {
     let installer = connect(url).await;
-    install(&installer, store).await;
     seed_package_and_release(&installer).await;
     assert_immutable_rows(&installer, store).await;
 
@@ -267,13 +219,12 @@ async fn assert_package_seal(url: &str, store: Store) {
 
 #[tokio::test]
 async fn package_seal_and_attestation_winner_are_server_enforced() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping publish-release live test; WAMN_CTL_PG_URL is unset");
-        return;
-    };
+    let project = support::database(wamn_catalog::test_database::tenant);
+    let control = wamn_control_provision::test_database::system();
+    let url = control.url();
 
-    assert_package_seal(&url, Store::Project).await;
-    assert_package_seal(&url, Store::Control).await;
+    assert_package_seal(&project, Store::Project).await;
+    assert_package_seal(url, Store::Control).await;
 
     let release = ServingRelease {
         tenant_id: TENANT.to_owned(),
@@ -284,34 +235,20 @@ async fn package_seal_and_attestation_winner_are_server_enforced() {
     let coordinate = DeploymentCoordinate::new("acme", "receiving", &release);
     let digest = ManifestDigest::parse(format!("sha256:{}", "f".repeat(64))).unwrap();
     let (first, second) = tokio::join!(
-        attest_deployment(&url, &coordinate, &digest, Some("0123456789abcdef")),
-        attest_deployment(&url, &coordinate, &digest, Some("0123456789abcdef"))
+        attest_deployment(url, &coordinate, &digest, Some("0123456789abcdef")),
+        attest_deployment(url, &coordinate, &digest, Some("0123456789abcdef"))
     );
     assert_eq!(
         first.expect("first identical attestation succeeds"),
         second.expect("concurrent identical attestation returns the winner")
     );
-
-    connect(&url)
-        .await
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_run CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE;",
-        )
-        .await
-        .expect("clean release-publication schemas");
 }
 
 #[tokio::test]
 async fn release_identity_and_attestation_decisions_preserve_concurrent_winners() {
     use wamn_schema_control::attestation::{AttestationError, AttestationErrorKind};
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping release identity and attestation test: WAMN_CTL_PG_URL is unset");
-        return;
-    };
+    let url = support::database(wamn_control_provision::test_database::system);
     let inspector = connect(&url).await;
-    install(&inspector, Store::Control).await;
     let coordinate = DeploymentCoordinate {
         tenant_id: TENANT.to_owned(),
         effective_release_id: 7,

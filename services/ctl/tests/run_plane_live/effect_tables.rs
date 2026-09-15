@@ -5,19 +5,15 @@ use super::{
 };
 
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn frame_identity_cutover_live() {
-    let url =
-        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     frame_identity_cutover_leg(&su).await;
 }
 
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn effect_writer_cutover_live() {
-    let url =
-        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     effect_writer_cutover_leg(&su).await;
 }

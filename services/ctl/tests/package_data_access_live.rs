@@ -141,12 +141,8 @@ async fn applier_owned_authority(client: &Client) -> Vec<String> {
 }
 
 #[tokio::test]
-#[ignore = "requires disposable PG18 named by WAMN_CTL_PG_URL"]
 async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping package_data_access_live; WAMN_CTL_PG_URL is unset");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let admin = connect(&url).await;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
@@ -551,12 +547,8 @@ async fn apply(url: &str, package: PathBuf) {
 }
 
 #[tokio::test]
-#[ignore = "requires disposable PG18 named by WAMN_CTL_PG_URL"]
 async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping package_data_access_live; WAMN_CTL_PG_URL is unset");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let admin = install_lineage_fixture(&url).await;
     let (released, _) = stage_package_root(&receiving_package_root(), "receiving", None);
     let (overlay, _) = stage_package_root(&overlay_package_root(), "overlay", None);
@@ -659,12 +651,8 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
 }
 
 #[tokio::test]
-#[ignore = "requires disposable PG18 named by WAMN_CTL_PG_URL"]
 async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_standing() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping package_data_access_live; WAMN_CTL_PG_URL is unset");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let admin = install_lineage_fixture(&url).await;
     apply(&url, receiving_package_root()).await;
     apply(&url, overlay_package_root()).await;
@@ -732,12 +720,8 @@ fn stage_logged_receiving() -> PathBuf {
 /// writes history entries through the production App role, and the reconciler
 /// keeps the derived history insert grant.
 #[tokio::test]
-#[ignore = "requires disposable PG18 named by WAMN_CTL_PG_URL"]
 async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping package_data_access_live; WAMN_CTL_PG_URL is unset");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let admin = install_lineage_fixture(&url).await;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])

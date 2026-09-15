@@ -2,11 +2,10 @@
 //! durable migration path for provisioned run-plane schemas, shown against a
 //! REAL Postgres in every starting state the bead's manifestations recorded.
 //!
-//! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a
-//! throwaway Postgres (recipe: docs/operations/running-tests.md#live-prerequisites-and-troubleshooting [RUN-PLANE-RECONCILE]);
-//! skipped cleanly when unset. The legs run sequentially under the main test
-//! entry (they share the `catalog` schema and the `wamn_app` role); the
-//! execution-pin cutover has one separate test entry:
+//! Each entry uses a superuser connection to a database on the PostgreSQL server
+//! of its test process, and holds the process lock of that server. The legs run
+//! sequentially under the main test entry (they share the `catalog` schema and
+//! the `wamn_app` role); the execution-pin cutover has one separate test entry:
 //!
 //! - **shared-runner legacy** (wamn-l5i9.73): the deployed fixture's old
 //!   runs/run_queue shape gains canonical admission/causation
@@ -471,10 +470,7 @@ fn assert_db_code_in_chain(error: &anyhow::Error, expected: &str, context: &str)
 
 #[tokio::test]
 async fn run_plane_reconcile_live() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the wamn-1wdq run-plane gate");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     node_runs_retirement_leg(&su).await;
     shared_runner_legacy_leg(&su).await;
@@ -513,10 +509,8 @@ async fn run_plane_reconcile_live() {
 /// Own entry so the provisioner-minted generation contract can be run — and
 /// mutated — alone (wamn-0h0g.12.178).
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn provisioner_minted_generation_live() {
-    let url =
-        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     provisioner_minted_generation_leg(&su).await;
 }
@@ -705,34 +699,25 @@ async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
 
 /// Also a leg of `run_plane_reconcile_live`, and a separate entry for the same
 /// reason `stored_suite_cutover_live` is: so it can be run — and reached — on
-/// its own. Run the whole file with `-- --test-threads=1`; the entries share the
-/// `catalog` schema, the run-plane schema, and the cluster-wide roles.
+/// its own. The entries share the cluster-wide roles, so each holds the process
+/// lock.
 #[tokio::test]
 async fn dispatch_reader_read_surface_live() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the dispatch-reader read-surface gate");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     dispatch_reader_read_surface_leg(&su, &url).await;
 }
 
 #[tokio::test]
 async fn environment_policy_row_security_live() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the environment-policy RLS gate");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     environment_policy_row_security_leg(&su, &url).await;
 }
 
 #[tokio::test]
 async fn registry_durability_schema_ensure_live() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the registry durability migration gate");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let system_su = connect(&url).await;
     let database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
     recreate_database(&system_su, &database).await;
@@ -745,10 +730,7 @@ async fn registry_durability_schema_ensure_live() {
 
 #[tokio::test]
 async fn retired_effect_disposition_cutover_live() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping retired disposition cutover gate");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     retired_effect_disposition_cutover_leg(&su).await;
 }

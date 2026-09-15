@@ -122,29 +122,21 @@ async fn failure_detail_snapshot(su: &Client) -> String {
 
 #[tokio::test]
 async fn child_run_cutover_live() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the child-run cutover gate");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     child_run_cutover_leg(&su).await;
 }
 
 #[tokio::test]
 async fn rerun_lineage_cutover_live() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the rerun-lineage cutover gate");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     rerun_lineage_cutover_leg(&su).await;
 }
 
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn failure_detail_cutover_live() {
-    let url =
-        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     failure_detail_cutover_leg(&su).await;
 }

@@ -6,7 +6,6 @@ use tokio_postgres::{Client, NoTls};
 use wamn_ctl::reconcile_replica_identity::reconcile;
 use wamn_schema_control::ManagedModel;
 
-const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const PACKAGE_ID: &str = "ri_package";
 const OWNER_PACKAGE_ID: &str = "client_overlay";
 
@@ -61,27 +60,14 @@ async fn identity(client: &Client, table: &str) -> String {
 async fn install(client: &Client) {
     client
         .batch_execute(
-            "DROP SCHEMA IF EXISTS ri_data CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DO $roles$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
-                 CREATE ROLE wamn_app NOLOGIN; \
-               END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_scenario_author') THEN \
-                 CREATE ROLE wamn_scenario_author NOLOGIN; \
-               END IF; \
+            "DO $roles$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_ri_probe') THEN \
                  CREATE ROLE wamn_ri_probe NOLOGIN NOSUPERUSER NOBYPASSRLS; \
                END IF; \
              END $roles$;",
         )
         .await
-        .expect("reset RI schemas and roles");
-    client
-        .batch_execute(CATALOG_SCHEMA)
-        .await
-        .expect("install production package catalog schema");
+        .expect("create the RI probe role");
     client
         .batch_execute(
             "CREATE SCHEMA ri_data; \
@@ -96,10 +82,7 @@ async fn install(client: &Client) {
 
 #[tokio::test]
 async fn package_registration_union_flips_exact_tables_and_unreadable_state_refuses() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping RI live test; WAMN_CTL_PG_URL is unset");
-        return;
-    };
+    let url = support::database(wamn_catalog::test_database::tenant);
     let client = connect(&url).await;
     install(&client).await;
     client

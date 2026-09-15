@@ -1,8 +1,7 @@
 //! Exercise session-target publication through the compiled provisioning CLI.
 //!
-//! The ignored test requires a disposable PostgreSQL 18 server on wamn_system.
-//! Set WAMN_SESSION_AUDIENCE_CLI_PG_URL and
-//! WAMN_SESSION_AUDIENCE_CLI_ALLOW_SCHEMA_RESET=1. It replaces system schemas,
+//! The test creates the database wamn_system on the PostgreSQL server of its test
+//! process and holds the process lock of that server. It replaces system schemas,
 //! creates two fixture databases, and closes the cluster PUBLIC CONNECT floor.
 
 mod support;
@@ -444,15 +443,22 @@ async fn compiled_session_reader_refuses_invalid_tenants_before_io() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires explicitly armed disposable PostgreSQL 18"]
 async fn compiled_cli_publishes_bound_session_targets_and_rotates_reader_generations() {
-    let _lock = support::lock();
-    let url = std::env::var("WAMN_SESSION_AUDIENCE_CLI_PG_URL")
-        .expect("set WAMN_SESSION_AUDIENCE_CLI_PG_URL");
-    assert_eq!(
-        std::env::var("WAMN_SESSION_AUDIENCE_CLI_ALLOW_SCHEMA_RESET").as_deref(),
-        Ok("1")
-    );
+    let database = support::database(wamn_test_postgres::database);
+    let maintenance = connect(&database)
+        .await
+        .expect("connect the test database");
+    maintenance
+        .batch_execute("DROP DATABASE IF EXISTS wamn_system WITH (FORCE)")
+        .await
+        .expect("drop a previous system database");
+    maintenance
+        .batch_execute("CREATE DATABASE wamn_system")
+        .await
+        .expect("create the system database");
+    let mut url = Url::parse(&database).expect("test database URL");
+    url.set_path("/wamn_system");
+    let url = url.to_string();
     assert_eq!(Url::parse(&url).expect("armed URL").path(), "/wamn_system");
     let admin = connect(&url)
         .await

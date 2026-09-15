@@ -548,10 +548,7 @@ async fn write_identity(client: &Client) -> Vec<String> {
 
 #[tokio::test]
 async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping apply-package live test; WAMN_CTL_PG_URL is unset");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     let package = fixture_root();
     copy_receiving_package(&package);
@@ -1522,10 +1519,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 /// Spec test 13: the declaration is the trigger.
 #[tokio::test]
 async fn record_history_triggers_follow_the_declaration() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping apply-package record-history test; WAMN_CTL_PG_URL is unset");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     install(&client).await;
     let package = fixture_root().with_file_name(format!(
@@ -1744,10 +1738,7 @@ fn retention_grants_on(history: &str) -> Vec<String> {
 /// a P<n>D relation, and revokes them when the retention changes.
 #[tokio::test]
 async fn record_history_log_follows_the_declaration() {
-    let Some(url) = support::LockedUrl::optional() else {
-        eprintln!("skipping apply-package record-history log test; WAMN_CTL_PG_URL is unset");
-        return;
-    };
+    let url = support::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     install(&client).await;
     let package = fixture_root().with_file_name(format!(

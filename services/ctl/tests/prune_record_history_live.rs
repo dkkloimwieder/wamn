@@ -1,8 +1,7 @@
 //! Live test of the `prune-record-history` verb of `wamn-ctl-ops`.
 //!
-//! Run it through `wamn-test-postgres` with `WAMN_CTL_PG_URL`. It needs its own
-//! PostgreSQL 18 server, because it creates roles and replaces the catalog
-//! schemas.
+//! It runs on the PostgreSQL server of its test process and holds the process
+//! lock of that server, because it creates roles.
 //!
 //! Each case applies a fixture package through the real `wamn-ctl apply-package`
 //! process. The package logs three relations: `shipment` keeps its entries for
@@ -42,7 +41,6 @@ use wamn_control_provision::{
 };
 use wamn_test_infrastructure::ctl_process;
 
-const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const SCHEMA: &str = "record_retention";
 const PACKAGE_ID: &str = "record_retention_fixture";
 const TENANT: &str = "record-retention-t";
@@ -79,24 +77,6 @@ async fn current_database(admin: &Client) -> String {
 /// Install the catalog and the application floor on a clean database.
 async fn provision(admin: &Client) {
     admin
-        .batch_execute(&format!(
-            "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
-             DROP SCHEMA IF EXISTS app_system CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
-             DROP SCHEMA IF EXISTS wamn_history CASCADE; \
-             DO $roles$ BEGIN \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-                 CREATE ROLE wamn_app NOLOGIN; \
-               END IF; \
-               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
-                 CREATE ROLE wamn_scenario_author NOLOGIN; \
-               END IF; \
-             END $roles$;"
-        ))
-        .await
-        .expect("reset the fixture schemas");
-    admin
         .batch_execute(sql::ensure_db_owner_role_sql())
         .await
         .expect("ensure the package-owner role");
@@ -108,14 +88,6 @@ async fn provision(admin: &Client) {
         )
         .await
         .expect("grant the package-owner role its database authority");
-    admin
-        .batch_execute(wamn_catalog::CATALOG_SCHEMA_SQL)
-        .await
-        .expect("install the catalog schema");
-    admin
-        .batch_execute(APP_SCHEMA)
-        .await
-        .expect("install the application authorization floor");
 }
 
 async fn drop_fixture_schemas(admin: &Client) {
@@ -447,8 +419,7 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
 
 #[tokio::test]
 async fn prune_removes_only_the_expired_prefix_of_each_row() {
-    let url =
-        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url = support::database(wamn_project_state::test_database::tenant_app_system);
     let admin = connect(&url).await;
     let database = current_database(&admin).await;
     provision(&admin).await;
@@ -740,8 +711,7 @@ async fn await_lock_waiters(
 /// apply-package changes the trigger only after that transaction commits.
 #[tokio::test]
 async fn a_retention_change_waits_for_a_running_prune() {
-    let url =
-        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url = support::database(wamn_project_state::test_database::tenant_app_system);
     let admin = connect(&url).await;
     let database = current_database(&admin).await;
     provision(&admin).await;

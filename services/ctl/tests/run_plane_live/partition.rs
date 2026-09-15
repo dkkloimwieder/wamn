@@ -71,19 +71,15 @@ async fn partition_plane_schema_snapshot(su: &Client) -> String {
 }
 
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn partition_plane_cutover_live() {
-    let url =
-        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     partition_plane_cutover_leg(&su).await;
 }
 
 #[tokio::test]
-#[ignore = "requires a fresh PostgreSQL 18 database via WAMN_CTL_PG_URL"]
 async fn partition_plane_active_lease_refusal_live() {
-    let url =
-        support::LockedUrl::required("WAMN_CTL_PG_URL must name a fresh PostgreSQL 18 database");
+    let url = support::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     partition_plane_active_lease_refusal_leg(&su).await;
 }

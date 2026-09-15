@@ -144,10 +144,7 @@ fn target_guard_args(
 /// before either the system-policy carrier or either project database changes.
 #[tokio::test]
 async fn reconcile_target_identity_guard_live() {
-    let Some(system_url) = support::LockedUrl::optional() else {
-        eprintln!("WAMN_CTL_PG_URL unset — skipping the run-plane target-identity gate");
-        return;
-    };
+    let system_url = support::database(wamn_test_postgres::database);
     let system_su = connect(&system_url).await;
     let primary_database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
     let sibling_project_database =

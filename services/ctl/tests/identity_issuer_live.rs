@@ -1,8 +1,8 @@
 //! Run the compiled issuer-provisioning CLI on a disposable PostgreSQL 18 cluster.
 //!
-//! Set WAMN_IDENTITY_ISSUER_CLI_PG_URL to its wamn_system administrator URL and
-//! WAMN_IDENTITY_ISSUER_CLI_ALLOW_SCHEMA_RESET=1. This ignored test resets the
-//! system schemas and closes the cluster PUBLIC CONNECT floor.
+//! The test creates the database wamn_system on the PostgreSQL server of its test
+//! process and holds the process lock of that server. It resets the system
+//! schemas and closes the cluster PUBLIC CONNECT floor.
 
 mod support;
 
@@ -644,16 +644,22 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[ignore = "requires an explicitly armed disposable PostgreSQL 18 cluster"]
 async fn compiled_cli_publishes_rolls_back_and_retires_identity_generations() {
-    let _lock = support::lock();
-    let url = std::env::var("WAMN_IDENTITY_ISSUER_CLI_PG_URL")
-        .expect("set WAMN_IDENTITY_ISSUER_CLI_PG_URL");
-    assert_eq!(
-        std::env::var("WAMN_IDENTITY_ISSUER_CLI_ALLOW_SCHEMA_RESET").as_deref(),
-        Ok("1"),
-        "allow schema reset only on a disposable cluster"
-    );
+    let database = support::database(wamn_test_postgres::database);
+    let maintenance = connect(&database)
+        .await
+        .expect("connect the test database");
+    maintenance
+        .batch_execute("DROP DATABASE IF EXISTS wamn_system WITH (FORCE)")
+        .await
+        .expect("drop a previous system database");
+    maintenance
+        .batch_execute("CREATE DATABASE wamn_system")
+        .await
+        .expect("create the system database");
+    let mut url = Url::parse(&database).expect("test database URL");
+    url.set_path("/wamn_system");
+    let url = url.to_string();
     assert_eq!(
         Url::parse(&url).expect("armed administrator URL").path(),
         "/wamn_system"
