@@ -2,7 +2,7 @@
 //! docs/archive/events/event-plane-jetstream.md §7/§8, docs/archive/results/ceilings.md § C-CDC).
 //!
 //! A MEASUREMENT campaign, not a regression gate (§8: curves and knees, no
-//! pass/fail — only sanity/completeness asserts gate). Four axes:
+//! pass/fail — only sanity/completeness asserts gate). Three axes:
 //!
 //!   drain      — decode drain rate after a bulk import: the slot exists, the
 //!                bulk import lands with the reader DOWN, then the REAL reader
@@ -31,25 +31,14 @@
 //!                the unchanged 6 KiB old image into WAL). C-WAL-0 (DEFAULT @
 //!                `wal_level=replica`) is the historical denominator; the
 //!                in-run DEFAULT leg isolates the `wal_level=logical` tax.
-//!   switchover — the CNPG availability drill, TIMED: reconnecting writer +
-//!                the REAL reader (its R11 re-open ladder is the recovery
-//!                path) across an operator-triggered promotion/primary
-//!                restart; write blackout, publish gap, catch-up time, and
-//!                the cdc1 no-gap check (every committed row on the stream
-//!                exactly once) from commit wall-times + JetStream ingest
-//!                timestamps. TOPOLOGY: live wamn-pg is single-instance, so
-//!                the live drill is a timed primary recreate; the F2 spike's
-//!                multi-instance graceful switchover is the reference.
-//!   all        — drain, lag, ri (NOT switchover: it needs an external
-//!                trigger and usually a different target cluster).
+//!   all        — drain, lag, ri.
 //!
 //! Substrate = the gate-owned throwaway-database pattern: a DATABASE
 //! (`wamn_ccdc`) on a `wal_level=logical` Postgres — created and dropped WITH
 //! (FORCE), the REAL deploy/sql DDL via `include_str!`, the REAL
 //! wamn-control-provision/wamn-control-registry builders, the slot created LAST (provisioning
 //! and seed writes stay uncaptured), and zero residue: teardown ALWAYS runs on
-//! FRESH connections (a switchover kills the provisioning-time connections),
-//! drops the slot, the database (which takes any idle slot with it), the
+//! FRESH connections, drops the slot, the database (which takes any idle slot with it), the
 //! replication role, and the `EVT_` stream.
 //!
 //! Needs: the PostgreSQL 18 binaries, from which the gate starts its own
@@ -57,14 +46,10 @@
 //! docs/operations/running-tests.md#live-prerequisites-and-troubleshooting [EVT-C-CDC].
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
-use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
 use clap::{Args, ValueEnum};
-use futures_util::StreamExt as _;
-use pg_walstream::CancellationToken;
 use tokio_postgres::{Client, NoTls};
 
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
@@ -84,7 +69,6 @@ pub enum Mode {
     Drain,
     Lag,
     Ri,
-    Switchover,
     All,
 }
 
@@ -94,7 +78,7 @@ pub struct CdcBenchArgs {
     #[arg(long, default_value = "nats://127.0.0.1:4222")]
     pub nats_url: String,
 
-    /// Which axis to run (`all` = drain, lag, ri — switchover is explicit).
+    /// Which axis to run (`all` = drain, lag, ri).
     #[arg(long, value_enum, default_value_t = Mode::All)]
     pub mode: Mode,
 
@@ -136,14 +120,6 @@ pub struct CdcBenchArgs {
     /// ri: single-row operations per measured batch.
     #[arg(long, default_value_t = 1000)]
     pub ri_iters: usize,
-
-    /// switchover: drill window seconds (trigger the promotion/restart inside it).
-    #[arg(long, default_value_t = 90)]
-    pub secs: u64,
-
-    /// switchover: milliseconds between writer rows.
-    #[arg(long, default_value_t = 200)]
-    pub write_interval_ms: u64,
 
     /// Also write each CSV to this directory (stdout always carries them
     /// between `=== BEGIN/END CSV <name> ===` markers).
@@ -377,13 +353,6 @@ fn parse_rates(s: &str) -> anyhow::Result<Vec<f64>> {
     Ok(v)
 }
 
-fn unix_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
-
 // ---------------------------------------------------------------------------
 // Provisioning + teardown (the disposable CDC substrate, reader-only scope)
 // ---------------------------------------------------------------------------
@@ -542,9 +511,8 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
     Ok((admin, db))
 }
 
-/// ALWAYS-run teardown on FRESH connections (the provisioning-time connections
-/// are dead after a switchover): slot, database (WITH FORCE — takes any idle
-/// slot with it), role, stream. Zero residue — the §11 never-leave-a-slot rule.
+/// ALWAYS-run teardown on FRESH connections: slot, database (WITH FORCE — takes
+/// any idle slot with it), role, stream. Zero residue — the §11 never-leave-a-slot rule.
 async fn teardown(admin_url: &str, nats_url: &str) {
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
     let app_role = app_generation_role().ok();
@@ -1341,298 +1309,6 @@ async fn ri_mode(args: &CdcBenchArgs, admin_url: &str, pass: &mut bool) -> anyho
 }
 
 // ---------------------------------------------------------------------------
-// switchover — the timed availability drill (cdc1 shape + the REAL reader)
-// ---------------------------------------------------------------------------
-
-async fn switchover_mode(
-    args: &CdcBenchArgs,
-    admin_url: &str,
-    pass: &mut bool,
-) -> anyhow::Result<()> {
-    println!(
-        "\n## switchover (C-CDC axis 4) — timed availability drill: trigger the promotion / \
-         primary restart INSIDE the {}s window",
-        args.secs
-    );
-    let cdc_name = cdc_object_name(ORG, PROJECT, ENV, INSTANCE);
-    let stream_name = event_stream_name(ORG, PROJECT, ENV);
-    let (_admin, db) = provision(admin_url).await?;
-    let nats = async_nats::connect(&args.nats_url)
-        .await
-        .with_context(|| format!("connect NATS at {}", args.nats_url))?;
-    let js = async_nats::jetstream::new(nats);
-    let _ = js.delete_stream(&stream_name).await;
-    let _ = js
-        .delete_stream(wamn_event_wire::delivery_advisory_stream(&stream_name))
-        .await;
-    wamn_control::event_streams::provision(
-        &js,
-        &wamn_control_registry::Triple::new(ORG, PROJECT, ENV),
-        1,
-        Duration::from_secs(120),
-        &[],
-    )
-    .await?;
-    db.batch_execute(&provision_sql::create_failover_slot_sql(&cdc_name))
-        .await
-        .context("create failover slot")?;
-    let mut reader = spawn_reader(admin_url, &args.nats_url)?;
-
-    // Warm write as the superuser with an explicit tenant (no dependence on a
-    // workload credential during reader warm-up); `sw-warm` never parses as a seq.
-    db.execute(
-        "INSERT INTO app.suppliers (tenant_id, name) VALUES ($1, 'sw-warm')",
-        &[&TENANT],
-    )
-    .await?;
-    let warm_deadline = Instant::now() + Duration::from_secs(60);
-    while stream_msgs(&js, &stream_name).await < 1 {
-        if Instant::now() > warm_deadline {
-            bail!("switchover: warm write never reached the stream (reader dead?)");
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-
-    // Stream tail: collect `sw-<seq>` insert envelopes with their JetStream
-    // ingest timestamps (the publish-side clock) + a dupe count.
-    type Tail = Arc<Mutex<std::collections::BTreeMap<i64, (i64, u32)>>>;
-    let received: Tail = Arc::new(Mutex::new(std::collections::BTreeMap::new()));
-    let tail_token = CancellationToken::new();
-    let tail = {
-        let received = received.clone();
-        let token = tail_token.clone();
-        let js = js.clone();
-        let stream_name = stream_name.clone();
-        tokio::spawn(async move {
-            let stream = js
-                .get_stream(&stream_name)
-                .await
-                .map_err(|e| anyhow::anyhow!("tail get_stream: {e}"))?;
-            let consumer = stream
-                .create_consumer(async_nats::jetstream::consumer::pull::Config {
-                    deliver_policy: DeliverPolicy::All,
-                    ack_policy: AckPolicy::None,
-                    ..Default::default()
-                })
-                .await
-                .map_err(|e| anyhow::anyhow!("tail consumer: {e}"))?;
-            while !token.is_cancelled() {
-                let mut batch = match consumer.fetch().max_messages(500).messages().await {
-                    Ok(b) => b,
-                    Err(_) => {
-                        tokio::time::sleep(Duration::from_millis(250)).await;
-                        continue;
-                    }
-                };
-                let mut got_any = false;
-                while let Some(Ok(msg)) = batch.next().await {
-                    got_any = true;
-                    let Ok(env) = serde_json::from_slice::<wamn_event_wire::Envelope>(&msg.payload)
-                    else {
-                        continue;
-                    };
-                    if env.table != "suppliers" || !matches!(env.op, wamn_event_wire::Op::Insert) {
-                        continue;
-                    }
-                    let Some(seq) = env
-                        .new
-                        .as_ref()
-                        .and_then(|m| m.get("name"))
-                        .and_then(|v| v.as_str())
-                        .and_then(|s| s.strip_prefix("sw-"))
-                        .and_then(|s| s.parse::<i64>().ok())
-                    else {
-                        continue;
-                    };
-                    let ingest_ms = msg
-                        .info()
-                        .map(|i| (i.published.unix_timestamp_nanos() / 1_000_000) as i64)
-                        .unwrap_or_else(|_| unix_ms());
-                    let mut map = received.lock().unwrap();
-                    map.entry(seq)
-                        .and_modify(|(_, c)| *c += 1)
-                        .or_insert((ingest_ms, 1));
-                }
-                if !got_any {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                }
-            }
-            anyhow::Ok(())
-        })
-    };
-
-    println!(
-        "\n>>> DRILL WINDOW OPEN ({}s) — TRIGGER NOW: multi-instance: `kubectl cnpg promote <cluster> <standby>`; \
-         single-instance wamn-pg: `kubectl -n wamn-system delete pod wamn-pg-1` (CNPG recreates the primary) <<<\n",
-        args.secs
-    );
-
-    // Reconnecting writer (the cdc1 shape): committed ONLY on a clean 1-row
-    // result — an errored commit is unknown-outcome and never counted (it can
-    // only surface as an on-stream EXTRA, reported, not failed).
-    let mut committed: std::collections::BTreeMap<i64, i64> = std::collections::BTreeMap::new();
-    let mut seq: i64 = 0;
-    let started = Instant::now();
-    let mut writer: Option<Client> = None;
-    while started.elapsed() < Duration::from_secs(args.secs) {
-        if writer.is_none() {
-            match connect(&swap_db(admin_url, DB)).await {
-                Ok(c) => {
-                    println!(
-                        "[writer {:>5.1}s] connected",
-                        started.elapsed().as_secs_f32()
-                    );
-                    writer = Some(c);
-                }
-                Err(_) => {
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    continue;
-                }
-            }
-        }
-        seq += 1;
-        let res = writer
-            .as_ref()
-            .unwrap()
-            .execute(
-                "INSERT INTO app.suppliers (tenant_id, name) VALUES ($1, $2)",
-                &[&TENANT, &format!("sw-{seq}")],
-            )
-            .await;
-        match res {
-            Ok(1) => {
-                committed.insert(seq, unix_ms());
-            }
-            Ok(_) => {}
-            Err(e) => {
-                println!(
-                    "[writer {:>5.1}s] write error (reconnecting): {e}",
-                    started.elapsed().as_secs_f32()
-                );
-                writer = None;
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(args.write_interval_ms)).await;
-    }
-    drop(writer);
-
-    // Catch-up: every committed row must reach the stream (delayed, never
-    // lost — the reader's R11 re-open ladder is the recovery under test).
-    let catchup_t0 = Instant::now();
-    let catchup_deadline = catchup_t0 + Duration::from_secs(300);
-    loop {
-        let missing = {
-            let rec = received.lock().unwrap();
-            committed.keys().filter(|s| !rec.contains_key(s)).count()
-        };
-        if missing == 0 || Instant::now() > catchup_deadline {
-            break;
-        }
-        tokio::time::sleep(Duration::from_secs(2)).await;
-    }
-    let catchup_secs = catchup_t0.elapsed().as_secs_f64();
-    tail_token.cancel();
-    let _ = tokio::time::timeout(Duration::from_secs(10), tail).await;
-    let reader_alive = !reader.is_finished()?;
-    let clean = stop_reader(reader).await;
-
-    // Metrics.
-    let rec = received.lock().unwrap().clone();
-    let missing: Vec<i64> = committed
-        .keys()
-        .filter(|s| !rec.contains_key(s))
-        .copied()
-        .collect();
-    let extras = rec.keys().filter(|s| !committed.contains_key(s)).count();
-    let dupes: u32 = rec.values().map(|(_, c)| c.saturating_sub(1)).sum();
-    let commit_times: Vec<i64> = committed.values().copied().collect();
-    let write_blackout_ms = commit_times
-        .windows(2)
-        .map(|w| w[1] - w[0])
-        .max()
-        .unwrap_or(0);
-    let mut ingests: Vec<i64> = rec
-        .iter()
-        .filter(|(s, _)| committed.contains_key(s))
-        .map(|(_, (t, _))| *t)
-        .collect();
-    ingests.sort_unstable();
-    let publish_gap_ms = ingests.windows(2).map(|w| w[1] - w[0]).max().unwrap_or(0);
-    let mut latencies: Vec<i64> = committed
-        .iter()
-        .filter_map(|(s, t)| rec.get(s).map(|(i, _)| i - t))
-        .collect();
-    latencies.sort_unstable();
-    let lat = |p: f64| {
-        latencies
-            .get(((latencies.len() as f64 - 1.0) * p).round() as usize)
-            .copied()
-            .unwrap_or(0)
-    };
-    println!(
-        "\nSWITCHOVER: committed={} received={} missing={} extras={extras} dupes={dupes} \
-         write_blackout={write_blackout_ms}ms publish_gap={publish_gap_ms}ms catchup={catchup_secs:.1}s \
-         commit→ingest p50/p95/max {}/{}/{} ms",
-        committed.len(),
-        rec.len(),
-        missing.len(),
-        lat(0.50),
-        lat(0.95),
-        latencies.last().copied().unwrap_or(0),
-    );
-    check(
-        pass,
-        &format!(
-            "switchover: NO GAP — every committed row on the stream ({} committed, missing {:?})",
-            committed.len(),
-            missing
-        ),
-        missing.is_empty() && !committed.is_empty(),
-    );
-    check(
-        pass,
-        &format!("switchover: exactly-once on-stream (dupes {dupes} — Msg-Id dedupe held)"),
-        dupes == 0,
-    );
-    check(
-        pass,
-        &format!(
-            "switchover: the drill actually severed the pipeline (publish gap {publish_gap_ms}ms > 2000ms)"
-        ),
-        publish_gap_ms > 2000,
-    );
-    check(
-        pass,
-        "switchover: reader survived to the end (re-open ladder, not death)",
-        reader_alive,
-    );
-    check(pass, "switchover: reader cancelled cleanly", clean);
-
-    let mut csv = String::from(
-        "committed,received,missing,extras,dupes,write_blackout_ms,publish_gap_ms,catchup_secs,\
-         latency_p50_ms,latency_p95_ms,latency_max_ms\n",
-    );
-    csv.push_str(&format!(
-        "{},{},{},{extras},{dupes},{write_blackout_ms},{publish_gap_ms},{catchup_secs:.1},{},{},{}\n",
-        committed.len(),
-        rec.len(),
-        missing.len(),
-        lat(0.50),
-        lat(0.95),
-        latencies.last().copied().unwrap_or(0),
-    ));
-    let mut series = String::from("seq,commit_unix_ms,ingest_unix_ms\n");
-    for (s, t) in &committed {
-        if let Some((i, _)) = rec.get(s) {
-            series.push_str(&format!("{s},{t},{i}\n"));
-        }
-    }
-    emit_csv("ccdc-switchover", &csv, &args.out);
-    emit_csv("ccdc-switchover-series", &series, &args.out);
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
 // The dispatcher
 // ---------------------------------------------------------------------------
 
@@ -1671,7 +1347,6 @@ pub async fn run(args: CdcBenchArgs) -> anyhow::Result<()> {
         (run_all || args.mode == Mode::Drain, "drain"),
         (run_all || args.mode == Mode::Lag, "lag"),
         (run_all || args.mode == Mode::Ri, "ri"),
-        (args.mode == Mode::Switchover, "switchover"),
     ] {
         if !selected {
             continue;
@@ -1679,11 +1354,9 @@ pub async fn run(args: CdcBenchArgs) -> anyhow::Result<()> {
         let r = match body {
             "drain" => drain_mode(&args, &admin_url, &mut pass).await,
             "lag" => lag_mode(&args, &admin_url, &mut pass).await,
-            "ri" => ri_mode(&args, &admin_url, &mut pass).await,
-            _ => switchover_mode(&args, &admin_url, &mut pass).await,
+            _ => ri_mode(&args, &admin_url, &mut pass).await,
         };
-        // Zero residue whatever happened (fresh connections — a switchover
-        // kills the mode's own).
+        // Zero residue whatever happened (fresh connections).
         teardown(&admin_url, &args.nats_url).await;
         if let Err(e) = r {
             outcome = Err(e);

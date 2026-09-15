@@ -17,7 +17,6 @@ libc = { workspace = true }
 oci-client = { workspace = true }
 opentelemetry = { workspace = true, features = ["trace"] }
 opentelemetry_sdk = { workspace = true, features = ["testing", "trace"] }
-pg_walstream = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
 schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
