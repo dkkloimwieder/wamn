@@ -2305,3 +2305,87 @@ async fn a_local_target_takes_an_appended_migration_and_a_changed_manifest() {
         .expect("clean local target schemas");
     std::fs::remove_dir_all(package).expect("remove local target package fixture");
 }
+
+/// Owner rulings 3 and 6 of wamn-ri4b: a kept local target is recreated only
+/// for a changed applied migration or a history table with rows whose model no
+/// longer keeps a log.
+#[tokio::test]
+async fn a_local_target_recreates_for_a_changed_migration_or_a_history_table_with_rows() {
+    let url = locked_database::database(wamn_test_postgres::database);
+    let client = connect(&url).await;
+    install(&client).await;
+    let package = fixture_root().with_file_name(format!(
+        "apply-package-local-target-reuse-{}",
+        std::process::id()
+    ));
+    copy_receiving_package(&package);
+    set_audit_log_retention(&package, "item", "unlimited");
+    set_audit_log_retention(&package, "location", "unlimited");
+    apply(&url, &package)
+        .await
+        .expect("apply declarations that keep a log");
+    let reason = || {
+        apply_package::local_target_recreate_reason(&url, TENANT, std::slice::from_ref(&package))
+    };
+    assert_eq!(reason().await.expect("check the applied package"), None);
+
+    client
+        .batch_execute(&format!(
+            "BEGIN; \
+             SELECT set_config('app.user_id', '{FIXTURE_PRINCIPAL}', true), \
+                    set_config('app.operation', 'admin:seed-history-fixture', true); \
+             INSERT INTO receiving.location (id, location_code) \
+               VALUES ('00000000-0000-4000-8000-00000000b001', 'DOCK-1'); \
+             COMMIT;"
+        ))
+        .await
+        .expect("write a logged location row as the fixture principal");
+    set_audit_log_retention(&package, "item", "none");
+    assert_eq!(
+        reason().await.expect("check an empty history table"),
+        None,
+        "an empty history table whose model keeps no log keeps the target"
+    );
+    set_audit_log_retention(&package, "location", "none");
+    let history = reason()
+        .await
+        .expect("check a history table with rows")
+        .expect("a history table with rows whose model keeps no log recreates the target");
+    assert!(history.contains("receiving.location_history"), "{history}");
+    set_audit_log_retention(&package, "location", "unlimited");
+
+    std::fs::write(
+        package.join("migrations/0002_location_note.sql"),
+        "ALTER TABLE receiving.location ADD COLUMN note text NOT NULL DEFAULT 'not_required';",
+    )
+    .expect("append a migration");
+    assert_eq!(
+        reason().await.expect("check an appended migration"),
+        None,
+        "an appended migration keeps the target"
+    );
+    let migration = package.join("migrations/0001_initial.sql");
+    let mut edited = std::fs::read(&migration).expect("read the applied migration");
+    edited.extend_from_slice(b"\n");
+    std::fs::write(&migration, edited).expect("edit the applied migration");
+    let drift = reason()
+        .await
+        .expect("check an edited migration")
+        .expect("an edited applied migration recreates the target");
+    assert!(
+        drift.contains(wamn_schema_control::PACKAGE_MIGRATION_DRIFT_REFUSAL),
+        "{drift}"
+    );
+
+    client
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS receiving CASCADE; \
+             DROP SCHEMA IF EXISTS app_system CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_history CASCADE;",
+        )
+        .await
+        .expect("clean local target reuse schemas");
+    std::fs::remove_dir_all(package).expect("remove local target reuse package fixture");
+}

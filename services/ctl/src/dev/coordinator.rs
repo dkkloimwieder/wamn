@@ -373,6 +373,8 @@ pub struct ProductionDevStageRunner {
     generated_output_digest: Option<String>,
     schema_input_digest: Option<String>,
     schema_input_candidate: Option<String>,
+    /// Structure of the packages that the current target instance took.
+    target_structure_digest: Option<String>,
     /// Inputs of each verifier's last successful SQLx preparation; `None` while unknown.
     sqlx_metadata_inputs: BTreeMap<String, Option<SqlxMetadataInputs>>,
     acl_input_digest: Option<String>,
@@ -445,6 +447,7 @@ impl ProductionDevStageRunner {
             generated_output_digest: None,
             schema_input_digest: None,
             schema_input_candidate: None,
+            target_structure_digest: None,
             sqlx_metadata_inputs: BTreeMap::new(),
             acl_input_digest: None,
             read_publisher,
@@ -572,11 +575,14 @@ impl ProductionDevStageRunner {
         .map_err(|source| ProductionDevStageError::owner("project environment policy", source))?;
 
         for package in package_inputs {
-            let outcome = apply_package::apply_package(ApplyPackageRequest {
-                package: package.root,
-                database_url: self.config.target_database_url().to_owned(),
-                tenant: self.config.activation_identity().tenant.clone(),
-            })
+            let outcome = apply_package::apply_local_package(
+                ApplyPackageRequest {
+                    package: package.root,
+                    database_url: self.config.target_database_url().to_owned(),
+                    tenant: self.config.activation_identity().tenant.clone(),
+                },
+                &self.config.activation_identity().environment,
+            )
             .await
             .map_err(|source| {
                 ProductionDevStageError::owner("apply package to verification", source)
@@ -613,6 +619,9 @@ impl ProductionDevStageRunner {
             self.schema_input_digest
                 .as_deref()
                 .expect("Migrate recorded the schema inputs"),
+            self.target_structure_digest
+                .as_deref()
+                .expect("prepare_run recorded the target structure"),
             &self.catalogs,
         )
         .map_err(|source| ProductionDevStageError::owner("record the target schema", source))?;
@@ -1560,6 +1569,53 @@ fn package_schema_inputs(
     serde_json::json!({"package": manifest.package, "models": models, "internal-relations": manifest.internal_relations, "migrations": migrations})
 }
 
+/// Digest of the package inputs whose change needs a new target.
+fn target_structure_digest(packages: &[PackageInput], config: &DevConfig) -> String {
+    let mut inputs = packages
+        .iter()
+        .map(|package| package_structure_inputs(&package.manifest))
+        .collect::<Vec<_>>();
+    inputs.push(serde_json::json!({"template": config.target_template_database()}));
+    wamn_execution_contract::canonical_json_sha256(&serde_json::json!(inputs))
+}
+
+/// The package identity, the models with their definition owners, and the internal relations.
+///
+/// A kept target takes appended migrations, enum_fields, server_owned_fields,
+/// and audit_log in place, so they are not structure.
+fn package_structure_inputs(manifest: &PackageManifest) -> Value {
+    let models = manifest
+        .models
+        .iter()
+        .map(|(model_id, model)| {
+            let wamn_schema_generator::ModelDeclaration {
+                schema,
+                table,
+                owner,
+                client_field_extensible,
+                field_owners,
+                constraint_owners,
+                server_owned_fields: _,
+                enum_fields: _,
+                audit_log: _,
+                operations: _,
+            } = model;
+            (
+                model_id,
+                serde_json::json!({
+                    "schema": schema,
+                    "table": table,
+                    "owner": owner,
+                    "client_field_extensible": client_field_extensible,
+                    "field_owners": field_owners,
+                    "constraint_owners": constraint_owners,
+                }),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    serde_json::json!({"package": manifest.package, "models": models, "internal-relations": manifest.internal_relations})
+}
+
 fn generated_outputs_digest(packages: &[PackageInput]) -> Result<String, ProductionDevStageError> {
     let mut files = Vec::new();
     for package in packages {
@@ -1809,7 +1865,8 @@ impl DevStageRunner for ProductionDevStageRunner {
                 },
             )?,
         );
-        let digest = schema_inputs_digest(&self.package_inputs()?, &self.config)?;
+        let packages = self.package_inputs()?;
+        let digest = schema_inputs_digest(&packages, &self.config)?;
         if self.target_lease.is_none() {
             self.target_lease = Some(target_database::acquire(&self.config).await.map_err(
                 |source| {
@@ -1826,6 +1883,46 @@ impl DevStageRunner for ProductionDevStageRunner {
                 ProductionDevStageError::owner("check local session lease", source.into())
             })?;
         if self.schema_input_digest.as_deref() != Some(digest.as_str()) {
+            let structure = target_structure_digest(&packages, &self.config);
+            // A target keeps its data while its structure is unchanged. The first
+            // run of a session reads the structure that a previous session
+            // recorded, and it also keeps the catalogs of an unchanged schema.
+            let kept = match &self.target_instance {
+                None => self
+                    .target_lease
+                    .as_ref()
+                    .expect("lease acquired")
+                    .retained_target(&self.config, &structure)
+                    .await
+                    .map(|(instance, recorded, catalogs)| {
+                        (instance, (recorded == digest).then_some(catalogs))
+                    }),
+                Some(instance) => (self.target_structure_digest.as_deref()
+                    == Some(structure.as_str()))
+                .then(|| (instance.clone(), None)),
+            };
+            let kept = match kept {
+                Some(kept) => {
+                    let roots = packages
+                        .iter()
+                        .map(|package| package.root.clone())
+                        .collect::<Vec<_>>();
+                    let reason = apply_package::local_target_recreate_reason(
+                        self.config.target_database_url(),
+                        &self.config.activation_identity().tenant,
+                        &roots,
+                    )
+                    .await
+                    .map_err(|source| {
+                        ProductionDevStageError::owner("check the kept local target", source)
+                    })?;
+                    if let Some(reason) = &reason {
+                        eprintln!("wamn dev recreates the target: {reason}");
+                    }
+                    reason.is_none().then_some(kept)
+                }
+                None => None,
+            };
             self.shutdown().await?;
             self.schema_input_digest = None;
             self.generate_input_digest = None;
@@ -1833,22 +1930,16 @@ impl DevStageRunner for ProductionDevStageRunner {
             self.local_grants = None;
             self.catalogs.clear();
             let lease = self.target_lease.as_ref().expect("lease acquired");
-            // The first run of a session keeps the target a previous session
-            // migrated with the same schema inputs, and the catalogs that
-            // session introspected from it.
-            let retained = if self.target_instance.is_none() {
-                lease.retained_target(&self.config, &digest).await
-            } else {
-                None
-            };
-            let instance = if let Some((instance, catalogs)) = retained {
-                self.schema_input_digest = Some(digest.clone());
-                self.catalogs = catalogs;
-                instance
-            } else {
-                lease.recreate(&self.config).await.map_err(|source| {
+            let instance = match kept {
+                Some((instance, Some(catalogs))) => {
+                    self.schema_input_digest = Some(digest.clone());
+                    self.catalogs = catalogs;
+                    instance
+                }
+                Some((instance, None)) => instance,
+                None => lease.recreate(&self.config).await.map_err(|source| {
                     ProductionDevStageError::owner("recreate local schema target", source.into())
-                })?
+                })?,
             };
             claim_environment_instance(
                 self.config.system_database_url(),
@@ -1857,6 +1948,7 @@ impl DevStageRunner for ProductionDevStageRunner {
             )
             .await?;
             self.target_instance = Some(instance);
+            self.target_structure_digest = Some(structure);
         }
         self.schema_input_candidate = Some(digest);
         Ok(())
@@ -2407,6 +2499,174 @@ mod tests {
         assert_ne!(package_schema_inputs(&manifest, &changed), original);
         manifest.models.get_mut("purchase_order").unwrap().table = "replacement".to_owned();
         assert_ne!(package_schema_inputs(&manifest, &directory), original);
+    }
+
+    /// Owner rulings 3 and 5 of wamn-ri4b: the changes a column edit makes keep
+    /// the target, and a structure change or a changed applied migration
+    /// recreates it.
+    #[test]
+    fn a_column_edit_keeps_the_target_and_a_structure_change_recreates_it() {
+        use wamn_schema_control::{
+            AppliedPackage, MigrationSource, PackageDirectory, RecordedMigration,
+        };
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/wamn_receiving");
+        let directory = apply_package::read_package_directory(&root).unwrap();
+        let manifest = PackageManifest::from_slice(&directory.manifest_bytes).unwrap();
+        let plan = wamn_schema_control::plan_package_migrations(&directory, None).unwrap();
+        let applied = AppliedPackage {
+            coordinate: plan.coordinate,
+            predecessor_version: plan.predecessor_version,
+            manifest_sha256: plan.manifest_sha256,
+            migrations: plan
+                .pending
+                .into_iter()
+                .map(|migration| RecordedMigration {
+                    ordinal: migration.ordinal,
+                    relative_path: migration.relative_path,
+                    sha256: migration.sha256,
+                })
+                .collect(),
+        };
+        // The decision of prepare_run for a target that applied the shipped package.
+        let keeps = |changed: &PackageManifest, migrations: &PackageDirectory| {
+            let presented = PackageDirectory {
+                manifest_bytes: serde_json::to_vec(changed).unwrap(),
+                migrations: migrations.migrations.clone(),
+            };
+            package_structure_inputs(changed) == package_structure_inputs(&manifest)
+                && apply_package::applied_migration_drift(&presented, &applied)
+                    .unwrap()
+                    .is_none()
+        };
+        let edit = |change: fn(&mut PackageManifest)| {
+            let mut changed = manifest.clone();
+            change(&mut changed);
+            changed
+        };
+
+        let mut appended = directory.clone();
+        appended.migrations.push(MigrationSource {
+            relative_path: "migrations/0002_location_description.sql".to_owned(),
+            bytes: b"ALTER TABLE receiving.location ADD COLUMN description text NOT NULL DEFAULT 'not_required';".to_vec(),
+        });
+        assert!(keeps(&manifest, &appended), "an appended migration keeps");
+        assert_ne!(
+            package_schema_inputs(&manifest, &appended),
+            package_schema_inputs(&manifest, &directory),
+            "an appended migration runs Migrate on the kept target"
+        );
+        let mut edited = directory.clone();
+        edited.migrations[0]
+            .bytes
+            .extend_from_slice(b"\n-- schema changed\n");
+        assert!(!keeps(&manifest, &edited), "an edited migration recreates");
+        for (kept, change) in [
+            (
+                "enum_fields",
+                edit(|manifest| {
+                    manifest
+                        .models
+                        .get_mut("purchase_order")
+                        .unwrap()
+                        .enum_fields
+                        .insert(
+                            "status".to_owned(),
+                            vec!["open".to_owned(), "held".to_owned()],
+                        );
+                }),
+            ),
+            (
+                "server_owned_fields",
+                edit(|manifest| {
+                    manifest
+                        .models
+                        .get_mut("purchase_order")
+                        .unwrap()
+                        .server_owned_fields
+                        .pop();
+                }),
+            ),
+            (
+                "audit_log",
+                edit(|manifest| {
+                    manifest
+                        .models
+                        .get_mut("location")
+                        .unwrap()
+                        .audit_log
+                        .as_mut()
+                        .unwrap()
+                        .retention = "unlimited".to_owned();
+                }),
+            ),
+        ] {
+            assert!(keeps(&change, &directory), "{kept} keeps");
+        }
+        for (recreated, change) in [
+            (
+                "field_owners",
+                edit(|manifest| {
+                    manifest
+                        .models
+                        .get_mut("purchase_order")
+                        .unwrap()
+                        .field_owners
+                        .insert("status".to_owned(), "wamn_receiving".to_owned());
+                }),
+            ),
+            (
+                "constraint_owners",
+                edit(|manifest| {
+                    manifest
+                        .models
+                        .get_mut("purchase_order")
+                        .unwrap()
+                        .constraint_owners
+                        .insert(
+                            "purchase_order_status_check".to_owned(),
+                            "wamn_receiving".to_owned(),
+                        );
+                }),
+            ),
+            (
+                "client_field_extensible",
+                edit(|manifest| {
+                    manifest
+                        .models
+                        .get_mut("purchase_order")
+                        .unwrap()
+                        .client_field_extensible = false;
+                }),
+            ),
+            (
+                "a package version bump",
+                edit(|manifest| {
+                    manifest.package.version = "1.0.1".to_owned();
+                }),
+            ),
+            (
+                "a predecessor_version change",
+                edit(|manifest| {
+                    manifest.package.predecessor_version = Some("0.9.0".to_owned());
+                }),
+            ),
+            (
+                "a new model",
+                edit(|manifest| {
+                    let model = manifest.models["location"].clone();
+                    manifest.models.insert("location_copy".to_owned(), model);
+                }),
+            ),
+            (
+                "a removed internal relation",
+                edit(|manifest| {
+                    manifest.internal_relations.clear();
+                }),
+            ),
+        ] {
+            assert!(!keeps(&change, &directory), "{recreated} recreates");
+        }
     }
 
     #[test]

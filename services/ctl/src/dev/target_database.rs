@@ -1,9 +1,9 @@
 //! Exclusive ownership and explicit recreation of disposable development targets.
 //!
-//! Local sessions retain the target until schema inputs change, also across
-//! restarts of the developer process. Recreation clones the stamped template and
-//! restores its captured database ACL. The lease prevents another session or
-//! reset command from replacing a serving target.
+//! Local sessions retain the target until its structure or an applied migration
+//! changes, also across restarts of the developer process. Recreation clones
+//! the stamped template and restores its captured database ACL. The lease
+//! prevents another session or reset command from replacing a serving target.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -247,8 +247,8 @@ pub(crate) fn prepare_configuration(config: &DevConfig) -> anyhow::Result<Prepar
     })
 }
 
-/// Record the schema inputs of one target creation and the catalogs a successful
-/// Introspect read from it.
+/// Record the schema inputs and structure of one target creation and the catalogs
+/// a successful Introspect read from it.
 ///
 /// The record names the database instance, so a record left beside a target
 /// that was since recreated or reset matches nothing.
@@ -256,6 +256,7 @@ pub(crate) fn record_target_schema(
     config: &DevConfig,
     instance: &str,
     schema_digest: &str,
+    structure_digest: &str,
     catalogs: &BTreeMap<String, CatalogIr>,
 ) -> anyhow::Result<()> {
     use anyhow::Context as _;
@@ -264,6 +265,7 @@ pub(crate) fn record_target_schema(
     let record = serde_json::json!({
         "database-instance": instance,
         "schema-input-digest": schema_digest,
+        "target-structure-digest": structure_digest,
         "catalogs": catalogs,
     });
     std::fs::write(
@@ -358,24 +360,25 @@ impl TargetLease {
         Ok(())
     }
 
-    /// The instance of this target and its saved catalogs when the record names
-    /// `schema_digest`.
+    /// The instance of this target, its recorded schema digest, and its saved
+    /// catalogs when the record names `structure_digest`.
     ///
     /// Returns `None` when the record is absent or unreadable, holds no
-    /// catalogs, names another digest or another creation of the database, or
-    /// when the local target marker no longer matches. The caller then
+    /// catalogs, names another structure or another creation of the database,
+    /// or when the local target marker no longer matches. The caller then
     /// recreates the target.
     pub(crate) async fn retained_target(
         &self,
         config: &DevConfig,
-        schema_digest: &str,
-    ) -> Option<(String, BTreeMap<String, CatalogIr>)> {
+        structure_digest: &str,
+    ) -> Option<(String, String, BTreeMap<String, CatalogIr>)> {
         let bytes =
             std::fs::read(config.local_artifacts().directory.join(SCHEMA_RECORD_FILE)).ok()?;
         let mut record: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-        if record["schema-input-digest"] != schema_digest {
+        if record["target-structure-digest"] != structure_digest {
             return None;
         }
+        let schema_digest = record["schema-input-digest"].as_str()?.to_owned();
         let catalogs = serde_json::from_value(record["catalogs"].take()).ok()?;
         let instance: u32 = self
             .client
@@ -398,7 +401,7 @@ impl TargetLease {
         )
         .await
         .ok()?;
-        Some((instance, catalogs))
+        Some((instance, schema_digest, catalogs))
     }
 
     /// Recreate only the target named by this still-held lease.
@@ -929,35 +932,43 @@ mod tests {
         drop(target);
         driver.await??;
 
-        // A restarted session keeps the target and the catalogs its last
-        // Introspect recorded, and a changed schema digest recreates it.
+        // A restarted session keeps the target, its schema digest, and the
+        // catalogs its last Introspect recorded, and a changed structure
+        // recreates it.
         std::fs::write(
             directory.join(SCHEMA_RECORD_FILE),
             serde_json::to_vec(&json!({
                 "database-instance": first,
                 "schema-input-digest": "sha256:schema-one",
+                "target-structure-digest": "sha256:structure-one",
             }))?,
         )?;
         assert_eq!(
-            lease.retained_target(&config, "sha256:schema-one").await,
+            lease.retained_target(&config, "sha256:structure-one").await,
             None,
             "a record that holds no catalogs recreates the target"
         );
         let catalogs = record_catalogs()?;
-        record_target_schema(&config, &first, "sha256:schema-one", &catalogs)?;
+        record_target_schema(
+            &config,
+            &first,
+            "sha256:schema-one",
+            "sha256:structure-one",
+            &catalogs,
+        )?;
         assert_eq!(
-            lease.retained_target(&config, "sha256:schema-one").await,
-            Some((first.clone(), catalogs))
+            lease.retained_target(&config, "sha256:structure-one").await,
+            Some((first.clone(), "sha256:schema-one".to_owned(), catalogs))
         );
         assert_eq!(
-            lease.retained_target(&config, "sha256:schema-two").await,
+            lease.retained_target(&config, "sha256:structure-two").await,
             None
         );
 
         let second = lease.recreate(&config).await?;
         assert_ne!(first, second);
         assert_eq!(
-            lease.retained_target(&config, "sha256:schema-one").await,
+            lease.retained_target(&config, "sha256:structure-one").await,
             None,
             "a record of the previous creation matches no later one"
         );

@@ -45,6 +45,7 @@ pub use error::{
     PACKAGE_VERSION_SEALED_REFUSAL, PREDECESSOR_NOT_CURRENT_REFUSAL,
     RELATION_NOT_CLIENT_EXTENSIBLE_REFUSAL,
 };
+pub use local_target::{applied_migration_drift, local_target_recreate_reason};
 pub use package_version::{
     LOCK_PACKAGE_SQL, SELECT_CURRENT_PACKAGE_VERSION_SQL, load_applied_package,
     read_package_directory, register_package,
