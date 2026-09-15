@@ -5,7 +5,8 @@ umask 077
 action=${1:?receiving, wms, native-registry, load-native, remove-native, or render-host}
 repository=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 if [[ $action == receiving ]]; then
-  export WAMN_RECEIVING_EVIDENCE_DIR=${2:?new absolute evidence directory}
+  # An optional existing parent directory for the test result directory.
+  if [[ -n ${2:-} ]]; then parent=$(cd -- "$2" && pwd); export WAMN_RECEIVING_EVIDENCE_DIR=$parent; fi
   [[ -z ${WAMN_DELIVERY_CANDIDATE:-} ]] || { printf 'The owned setup mints its own candidate.\n' >&2; exit 64; }
   cd "$repository"
   exec cargo test --locked --offline -p wamn-receiving-tests --lib \
@@ -13,7 +14,8 @@ if [[ $action == receiving ]]; then
     -- --exact --ignored --nocapture
 fi
 if [[ $action == wms ]]; then
-  export WAMN_WMS_EVIDENCE_DIR=${2:?new absolute evidence directory}
+  # An optional existing parent directory for the test result directory.
+  if [[ -n ${2:-} ]]; then parent=$(cd -- "$2" && pwd); export WAMN_WMS_EVIDENCE_DIR=$parent; fi
   [[ -z ${WAMN_DELIVERY_CANDIDATE:-} ]] || { printf 'The owned setup mints its own candidate.\n' >&2; exit 64; }
   cd "$repository"
   exec cargo test --locked --offline -p wamn-wms-tests --lib cluster::owned_release_delivery \

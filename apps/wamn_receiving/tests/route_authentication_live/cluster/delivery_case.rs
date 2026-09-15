@@ -20,7 +20,7 @@ async fn owned_release_delivery() -> anyhow::Result<()> {
         Candidate::from_env()?.is_none(),
         "owned setup mints its own candidate"
     );
-    let evidence = super::evidence_directory().await?;
+    let evidence = super::evidence_directory()?;
     let cancelled = pg_walstream::CancellationToken::new();
     let mut operation = Box::pin(async {
         let mut cluster = super::start(&evidence, true, false).await?;

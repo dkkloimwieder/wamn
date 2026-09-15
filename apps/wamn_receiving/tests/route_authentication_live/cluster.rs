@@ -548,40 +548,28 @@ async fn apply(cluster: &Resources, path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn evidence_directory() -> anyhow::Result<PathBuf> {
-    let path = PathBuf::from(std::env::var_os("WAMN_RECEIVING_EVIDENCE_DIR").context(
-        "WAMN_RECEIVING_EVIDENCE_DIR must name a new absolute directory under repository evidence",
-    )?);
-    ensure!(
-        path.is_absolute() && !path.exists(),
-        "Receiving evidence must use a new absolute directory"
-    );
-    let parent = path
-        .parent()
-        .context("Receiving evidence has a parent")?
+/// Name this test's new result directory and print its path.
+///
+/// `WAMN_RECEIVING_EVIDENCE_DIR` names an existing parent directory. The
+/// parent is the system temporary directory when the variable is not set.
+/// The test creates the returned directory.
+fn evidence_directory() -> anyhow::Result<PathBuf> {
+    let parent = std::env::var_os("WAMN_RECEIVING_EVIDENCE_DIR")
+        .map_or_else(std::env::temp_dir, PathBuf::from);
+    let path = parent
         .canonicalize()
-        .context("create the evidence parent before running the Receiving test")?;
-    let repository = repository_root()?;
-    let common = checked(Command::new("git").current_dir(&repository).args([
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-common-dir",
-    ]))
-    .await?;
-    let common = PathBuf::from(std::str::from_utf8(&common)?.trim());
-    let results_root = common
-        .parent()
-        .context("the Git directory has a repository parent")?
-        .join("evidence")
-        .canonicalize()?;
-    ensure!(
-        parent.starts_with(&results_root),
-        "Receiving evidence must be under the main repository evidence"
-    );
-    Ok(parent.join(
-        path.file_name()
-            .context("Receiving evidence has a directory name")?,
-    ))
+        .with_context(|| {
+            format!(
+                "the Receiving result parent directory {} must exist",
+                parent.display()
+            )
+        })?
+        .join(format!(
+            "wamn-receiving-results-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+    println!("Receiving test results: {}", path.display());
+    Ok(path)
 }
 
 async fn with_signals(

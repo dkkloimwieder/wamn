@@ -13,21 +13,21 @@ use super::{deployment, install_host, provision, route_cases, session_cluster, s
 #[tokio::test]
 #[ignore = "builds and runs the Receiving session issuer and two native hosts"]
 async fn session_hosts_preserve_the_original_caller() -> anyhow::Result<()> {
-    let evidence = super::evidence_directory().await?;
+    let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, run(&evidence, false, false)).await
 }
 
 #[tokio::test]
 #[ignore = "builds and runs Receiving fresh-only session selection"]
 async fn fresh_only_session_selection() -> anyhow::Result<()> {
-    let evidence = super::evidence_directory().await?;
+    let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, run(&evidence, true, false)).await
 }
 
 #[tokio::test]
 #[ignore = "builds and runs Receiving client login and fresh session selection"]
 async fn session_client_login_and_fresh_selection() -> anyhow::Result<()> {
-    let evidence = super::evidence_directory().await?;
+    let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, run(&evidence, true, true)).await
 }
 

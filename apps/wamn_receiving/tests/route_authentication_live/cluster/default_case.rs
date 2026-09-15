@@ -12,7 +12,7 @@ use super::{
 #[tokio::test]
 #[ignore = "builds and runs the complete Receiving application on owned local services"]
 async fn released_routes_materializer_startup_and_environment_isolation() -> anyhow::Result<()> {
-    let evidence = super::evidence_directory().await?;
+    let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, run(&evidence)).await
 }
 

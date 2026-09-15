@@ -12,7 +12,7 @@ use super::{
 #[tokio::test]
 #[ignore = "measures cold, restarted, and steady Receiving requests on an owned cluster"]
 async fn startup_and_steady_request_overhead() -> anyhow::Result<()> {
-    let evidence = super::evidence_directory().await?;
+    let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
         let (mut cluster, _, cold) = prepare(&evidence).await?;
         let result = measurement::measure_startup(&cluster, &cold).await;
@@ -24,7 +24,7 @@ async fn startup_and_steady_request_overhead() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "runs the retained Receiving throughput sweep on an owned cluster"]
 async fn receiving_throughput() -> anyhow::Result<()> {
-    let evidence = super::evidence_directory().await?;
+    let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
         let (mut cluster, route, cold) = prepare(&evidence).await?;
         let result = measurement::throughput(&cluster, &cold, &route.database_url).await;
@@ -36,7 +36,7 @@ async fn receiving_throughput() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "compares service and human Receiving request authority on an owned cluster"]
 async fn receiving_fresh_authority() -> anyhow::Result<()> {
-    let evidence = super::evidence_directory().await?;
+    let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
         let (mut cluster, route, cold) = prepare(&evidence).await?;
         let result = measurement::fresh_auth(&cluster, &cold, &route.database_url).await;

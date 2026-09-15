@@ -27,7 +27,7 @@ async fn additive_overlay_and_materializer_progress() -> anyhow::Result<()> {
 }
 
 async fn run(base: BaseCandidate) -> anyhow::Result<()> {
-    let evidence = super::evidence_directory().await?;
+    let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, run_selected(base, &evidence)).await
 }
 

@@ -10,7 +10,7 @@ use wamn_gate_harness::journey::BaseCandidate;
 #[tokio::test]
 #[ignore = "builds two independent Receiving installations and compares the unchanged overlay"]
 async fn unchanged_overlay_across_baseline_and_additive_installations() -> anyhow::Result<()> {
-    let evidence = super::evidence_directory().await?;
+    let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
         fs::create_dir(&evidence)?;
         super::postcommit_case::run_selected(BaseCandidate::Baseline, &evidence.join("baseline"))

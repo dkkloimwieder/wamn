@@ -81,9 +81,8 @@ fn nonce() -> anyhow::Result<String> {
 struct TemporaryResults(PathBuf);
 
 impl TemporaryResults {
-    fn create(base: &Path) -> anyhow::Result<Self> {
-        fs::create_dir_all(base).context("create the allowed evidence directory")?;
-        let path = base.join(format!("wamn-qualification-{}", nonce()?));
+    fn create() -> anyhow::Result<Self> {
+        let path = std::env::temp_dir().join(format!("wamn-qualification-{}", nonce()?));
         fs::create_dir(&path).context("create temporary application results")?;
         Ok(Self(path))
     }
@@ -308,28 +307,13 @@ async fn qualify_candidate(
         compile_tests(root, app.package, None, &target_env, &mut result.checks).await?;
     // Compiling check harnesses cannot replace deployment artifacts.
     result.assert_artifacts()?;
-    let common = Command::new("git")
-        .current_dir(root)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output()
-        .await?;
-    ensure!(
-        common.status.success(),
-        "resolve the repository evidence owner"
-    );
-    let common = PathBuf::from(String::from_utf8(common.stdout)?.trim());
-    let evidence_root = common
-        .parent()
-        .context("the common Git directory has a parent")?
-        .join("evidence");
-    let temporary = TemporaryResults::create(&evidence_root)?;
+    let temporary = TemporaryResults::create()?;
     for (index, case) in app.cases.iter().enumerate() {
         ensure!(
             Candidate::read(&args.candidate)? == result.candidate,
             "candidate inputs changed during qualification"
         );
         let case_result = temporary.0.join(format!("case-{index}.json"));
-        let evidence = temporary.0.join(format!("evidence-{index}"));
         let mut env = target_env.clone();
         env.extend([
             (
@@ -340,7 +324,8 @@ async fn qualify_candidate(
                 "WAMN_DELIVERY_RESULT".to_owned(),
                 case_result.display().to_string(),
             ),
-            (app.evidence_env.to_owned(), evidence.display().to_string()),
+            // The case creates its own new result directory inside this parent.
+            (app.evidence_env.to_owned(), temporary.0.display().to_string()),
         ]);
         let command = vec![
             executable.display().to_string(),

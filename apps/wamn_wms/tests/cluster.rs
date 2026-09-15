@@ -134,39 +134,21 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
     } else {
         repository.join(target)
     };
-    let evidence = PathBuf::from(std::env::var_os("WAMN_WMS_EVIDENCE_DIR").context(
-        "set WAMN_WMS_EVIDENCE_DIR to a new directory under the main repository evidence",
-    )?);
-    ensure!(
-        evidence.is_absolute(),
-        "the WMS result directory must be absolute"
-    );
-    let parent = evidence
-        .parent()
-        .context("the WMS result directory has a parent")?
-        .canonicalize()?;
-    let common = checked(Command::new("git").current_dir(&repository).args([
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-common-dir",
-    ]))
-    .await?;
-    let common = PathBuf::from(std::str::from_utf8(&common)?.trim());
-    let results_root = common
-        .parent()
-        .context("the Git directory has a repository parent")?
-        .join("evidence")
-        .canonicalize()?;
-    ensure!(
-        parent.starts_with(&results_root),
-        "the WMS result directory must be under the main repository evidence"
-    );
-    let evidence = parent.join(
-        evidence
-            .file_name()
-            .context("the WMS result directory has a name")?,
-    );
+    // WAMN_WMS_EVIDENCE_DIR names an existing parent directory. The parent is
+    // the system temporary directory when the variable is not set.
+    let parent =
+        std::env::var_os("WAMN_WMS_EVIDENCE_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
+    let evidence = parent
+        .canonicalize()
+        .with_context(|| {
+            format!(
+                "the WMS result parent directory {} must exist",
+                parent.display()
+            )
+        })?
+        .join(format!("wamn-wms-results-{identifier}"));
     fs::create_dir(&evidence).context("create the new WMS result directory")?;
+    println!("WMS test results: {}", evidence.display());
     let work_path = std::env::temp_dir().join(&cluster);
     DirBuilder::new()
         .mode(0o700)

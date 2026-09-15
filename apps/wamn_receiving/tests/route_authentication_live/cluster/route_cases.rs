@@ -14,7 +14,7 @@ use super::{
 #[tokio::test]
 #[ignore = "builds and runs Receiving command histories against an owned disposable cluster"]
 async fn command_histories() -> anyhow::Result<()> {
-    let evidence = evidence_directory().await?;
+    let evidence = evidence_directory()?;
     super::with_signals(&evidence, run_histories(&evidence)).await
 }
 
@@ -59,7 +59,7 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "builds and runs the retained in-cluster Receiving membership cases"]
 async fn human_membership_and_permission_revocation() -> anyhow::Result<()> {
-    let evidence = evidence_directory().await?;
+    let evidence = evidence_directory()?;
     super::with_signals(&evidence, run_membership(&evidence)).await
 }
 
