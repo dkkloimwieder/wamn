@@ -1,8 +1,9 @@
 # Short development cycles
 
 **Status:** rev 2 · 2026-09-15 · external review applied · measured at
-`ab9859e7`. Scope: the time between saving a change and knowing whether it
-works. Three removals of repeated work and one consolidation. No caching
+`ab9859e7` · 4.2 and §6 item 2 amended by the `wamn-eg9d` owner rulings.
+Scope: the time between saving a change and knowing whether it works. Three
+removals of repeated work and one consolidation. No caching
 framework, no attribute system, no machine-wide service, no crate quota.
 
 ## 1. Measured
@@ -61,25 +62,38 @@ a result; it stops recomputing inputs that didn't move.
 
 ### 4.2 One test-server entrypoint, isolated databases
 
-- One managed PostgreSQL server for tests, started once per machine and
-  reused; ordinary setup functions in the existing test support select the
-  floor a test needs (`system`, `tenant`, `tenant+app_system`,
-  `verification`) and create a database the test owns. **No custom
-  attribute, no mandatory singleton, no new fixture framework** — `sqlx::test`
-  per-test databases where they already fit.
-- The eight URL variables are removed.
+- **One private PostgreSQL 18 server per test process**, not per machine. An
+  ordinary setup function starts it on first use, and it is removed when the
+  process exits, also after a panic. Each test creates a database that it
+  owns. Measured: initdb 0.33 s, start 0.11 s.
+- The server lives in `test-support/postgres` (`wamn-test-postgres`), a crate
+  with no workspace dependencies; `wamn-test-infrastructure` re-exports it.
+  Floor setup functions (`system`, `tenant`, `tenant+app_system`) live beside
+  the crate that owns each SQL file, behind that crate's `test-util` feature,
+  so no production build links the test server. The verification tests run
+  the verification bootstrap themselves from a plain test database. **No
+  custom attribute, no new fixture framework, no `sqlx::test`**: sqlx
+  resolves without its `migrate` feature, and the live tests use
+  tokio-postgres or psql.
+- The test-side URL variables are removed: 60 measured, not eight.
+  Production configuration variables that services read stay; a test sets
+  them for a child process from its owned database.
 - Three safeguards: tests never connect to or modify the interactive session
-  database; **roles are cluster-wide**, so tests that change shared roles or
-  settings serialize (or take a separate disposable server) rather than run
-  in parallel; a test of provisioning, migrations, or grants **executes that
+  database; **roles are cluster-wide**, so tests in one binary that change
+  shared roles or server settings hold a process lock or start their own
+  server; a test of provisioning, migrations, or grants **executes that
   operation** — it never starts from a template that already performed it,
   and setup credentials never replace the application role under test.
 - Templates are an optional optimization behind the same setup functions,
   added where setup remains expensive, with database-level settings and
   permissions reapplied after cloning. Start without them.
-- `#[ignore]` stays only on tests needing a cluster, broker, or registry. The
-  **explicit cluster command selects them** and fails naming any missing
-  prerequisite; the ordinary local command does not fail for suites it did
+- A test that needs only a server setting (`standard_conforming_strings=off`,
+  `wal_level=logical`) gets a separate server from a setup function and runs
+  by default. `#[ignore]` stays only on tests needing built components,
+  Docker, a cluster, a broker, or a registry.
+  **`cargo test --workspace -- --ignored` selects them**, and each fails
+  naming its missing input instead of skipping; no separate cluster command
+  script exists. The ordinary local command does not fail for suites it did
   not select.
 
 ### 4.3 Selection by ownership, then by Cargo
@@ -131,9 +145,11 @@ and after; not a crate count.
 
 1. After 4.1: the walkthrough's Rust-only edit shows 0 s preparation; a SQL
    edit shows preparation and nothing else regressed.
-2. After 4.2: `cargo test` with no environment variables runs every
-   PostgreSQL-backed test; the cluster command with no cluster fails naming
-   the prerequisite; measured wall time replaces any promised parallelism.
+2. After 4.2: `cargo test --workspace --features wamn-ctl/ops` with no
+   database variables runs every PostgreSQL-backed test that needs no other
+   input; `default-members` does not change;
+   `cargo test --workspace -- --ignored` with no cluster fails naming each
+   missing input; measured wall time replaces any promised parallelism.
 3. After 4.3: a Receiving SQL edit runs Receiving's tests and the generator's
    only where a test consumes Receiving; a lockfile change runs the full
    command.

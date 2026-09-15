@@ -30,42 +30,54 @@ It reports each command and returns a nonzero status if any command fails.
 
 ## Test-database isolation
 
-Tests use explicitly owned disposable databases, never an interactive development database.
-Test setup, execution, and cleanup must not connect to or change the interactive database.
-A test database can share a PostgreSQL server only when roles and server configuration do not collide.
-If a suite changes roles or server configuration, give it a separate owned PostgreSQL 18 server.
-Use serial execution when cases share database state.
+Tests never connect to or change an interactive development database.
+A database test takes its PostgreSQL from the `wamn-test-postgres` crate in `test-support/postgres`, and it reads no database variable.
+The crate requires the PostgreSQL 18 binaries under `/usr/lib/postgresql/18/bin`.
 
-For a fresh local server, run `pg_virtualenv -t -v 18 bash`.
+`wamn_test_postgres::database()` creates a database with a unique name that the calling test owns.
+The first call starts one private server for the test process.
+That server stops, and its directory is removed, when the test process exits, also after a panic.
+Dropping the returned value drops the database.
+`url()` returns its superuser URL, and `execute` runs SQL batches in it.
+
+Roles and server settings belong to the whole server.
+A test that changes roles, or depends on roles that another test of the same binary changes, holds `wamn_test_postgres::lock()` for its whole duration.
+Take the lock before you create the database.
+
+`wamn_test_postgres::start(settings)` starts a separate server, for example with `("wal_level", "logical")` or `("standard_conforming_strings", "off")`.
+A test that changes the whole server, such as a control store that revokes PUBLIC CONNECT on every database, holds the lock or starts its own server.
+Dropping the server stops it and removes its directory.
+
+Floor setup functions create a database with the schema that a test starts from.
+Each lives beside the crate that owns its SQL, behind that crate's `test-util` feature.
+Enable the feature on a dev-dependency.
+The floors do not take the lock.
+
+| Floor | Function | Installs |
+| --- | --- | --- |
+| system | `wamn_control_provision::test_database::system()` | the control store, applied as `wamn_system`, which owns the database |
+| tenant | `wamn_catalog::test_database::tenant()` | `CATALOG_SCHEMA_SQL` and the `wamn_app` and `wamn_scenario_author` roles |
+| tenant+app_system | `wamn_project_state::test_database::tenant_app_system()` | the tenant floor and `deploy/sql/app-schema.sql` |
+
+A test of provisioning, migrations, or grants executes that operation and does not start from a floor that already performed it.
+Exercise the intended role because a superuser bypasses row security.
+
+An ignored test needs built components, Docker, a cluster, a broker, or a registry.
+It takes its database from the same functions.
+When `--ignored` selects it, it fails and names its first missing input instead of skipping.
+
+Some tests in the table below still name a URL variable.
+For those tests and the manual generation commands, run `pg_virtualenv -t -v 18 bash`.
 The shell receives its connection variables, and the server is removed when the shell exits.
 For Docker fixtures, choose a new container name and an unused loopback port.
 Make sure that a real query succeeds through the same connection path that the test uses.
 Read the selected test's database-name and role requirements before setting its URL.
-Exercise the intended role because a superuser bypasses row security.
 
-The delivery test runner creates its own PostgreSQL 18 server and database.
-It passes a private ownership record through `WAMN_TEST_POSTGRES_OWNERSHIP`.
-It sets `WAMN_TEST_REQUIRED=1`, so selected optional constructors require their database input.
-The record identifies the live process, connection port, and databases created by that runner.
-The selected test constructors refuse mismatched coordinates before connecting.
-The runner stops its test process group and removes its server on completion, failure, or handled interruption.
-
-Build the runner, then give it the exact test command:
-
-```bash
-cargo build --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres
-"${CARGO_TARGET_DIR:-target}/debug/wamn-test-postgres" \
-  --database wamn_ctl --url-env WAMN_CTL_PG_URL -- \
-  cargo test --locked --offline -p wamn-ctl --test publish_release_live \
-  -- --nocapture --test-threads=1
-```
-
-The runner requires PostgreSQL 18 binaries under `/usr/lib/postgresql/18/bin`.
-Repeat `--url-env` when multiple variable names must identify the same owned database.
-Its Rust fixture API creates separate databases when a test needs different targets.
-The runner does not accept an existing database URL.
-Legacy optional tests retain their manual inputs when no ownership record is present.
-This bounded adoption does not establish automatic refusal in every repository test.
+The `wamn-test-postgres` runner binary in `wamn-test-infrastructure` serves delivery tooling.
+`wamn-ctl check-changes --database-url-env` runs a selected test through it, and release qualification uses it for the generation database and SQLx preparation.
+It starts a server, creates the named database, and optionally applies migrations and history tables.
+It removes inherited PostgreSQL variables, sets each `--url-env` variable to the database URL, and runs the command.
+It stops the command's process group and removes its server on completion, failure, or handled interruption.
 
 ## Capture a run
 
@@ -130,15 +142,11 @@ For a named case, require its exact result row and one executed case.
 An ignored test needs `--ignored` or `--include-ignored` after Cargo's `--` separator.
 Some tests return early when an environment variable is absent and appear among reported passes.
 Read their `--nocapture` output and required inputs before reporting execution.
-
-`services/ctl/tests/support/mod.rs` owns `WAMN_CTL_PG_URL` and its cross-process database lock.
-Its optional constructor permits an explicit skip and enforces an ownership record when supplied.
-Its required constructor requires the owned runner above and refuses missing input or ownership.
 Do not infer execution from the aggregate Cargo pass count.
 
 | Existing reference | Current owner and required setup |
 | --- | --- |
-| `[RUN-PLANE-RECONCILE]` | `services/ctl/tests/run_plane_live.rs`: fresh PostgreSQL 18 through `WAMN_CTL_PG_URL` |
+| `[RUN-PLANE-RECONCILE]` | `services/ctl/tests/run_plane_live.rs`: runs by default on the test server and holds the process lock |
 | `[CLAIMS-LIVE]` | Runtime `plugins::wamn_postgres::claims::tests` cases that call `test_pg_url`: fresh PostgreSQL 18 through `WAMN_PG_TEST_URL` |
 | `[R18-NEG]` | Runtime `plugins::wamn_postgres::claims::tests::live_scs_off_server_fails_checkout_closed`: separate `WAMN_SCS_OFF_PG_URL`, server setting `standard_conforming_strings=off` |
 | `[EVT-READER]` | `services/cdc-reader/tests/event_reader_live.rs`: `WAMN_READER_PG_URL` at `/postgres`, logical WAL, and `WAMN_READER_NATS_URL` |
@@ -154,16 +162,12 @@ For deployed runs, use [cluster commands](cluster-tests.md).
 ### Record history retention test
 
 `services/ctl/tests/prune_record_history_live.rs` tests the record history retention verb.
-It creates roles and replaces the catalog schemas, so it needs its own PostgreSQL 18 server.
-Its cases use the required constructor, so run it through the owned runner above.
+It creates roles, so each case holds the process lock and starts from the tenant+app_system floor.
 The `ops` feature builds `wamn-ctl-ops` beside the test binary:
 
 ```bash
-cargo build --locked --offline -p wamn-test-infrastructure --bin wamn-test-postgres
-"${CARGO_TARGET_DIR:-target}/debug/wamn-test-postgres" \
-  --database wamn_ctl --url-env WAMN_CTL_PG_URL -- \
-  cargo test --locked --offline -p wamn-ctl --features ops \
-  --test prune_record_history_live -- --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-ctl --features ops \
+  --test prune_record_history_live -- --nocapture
 ```
 
 Each case applies a fixture package through `wamn-ctl apply-package` and runs `wamn-ctl-ops prune-record-history`.
@@ -205,7 +209,8 @@ WAMN_DEV_ENV_FLOW_HTTP_COMPONENT="$CARGO_TARGET_DIR/wasm32-wasip2/debug/http_rou
   --exact --ignored --nocapture --test-threads=1
 ```
 
-The fixture creates its own PostgreSQL server and Compose services on assigned loopback ports.
+The fixture starts Compose services on assigned loopback ports.
+The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.
 The case refuses registry access and requires authenticated application results after code, SQL, and schema edits.
 It also requires retained data for compatible edits, refusal of invalid SQL, and a new database after a schema edit.
 Require one executed passing case, successful resource cleanup, and restored source before reporting success.
@@ -215,7 +220,9 @@ This correctness case does not report performance measurements.
 
 Use the exact debug integration test binary and debug `http_request.wasm` from the intended build.
 Keep source unchanged between that build and both runs.
-The runner requires local `postgres:18` and `registry:2` images.
+The runner requires the local `registry:2` image.
+Each test starts its own PostgreSQL server from the local PostgreSQL 18 binaries.
+The runner has an open bug, Beads `wamn-1pj3`.
 Replace `<hash>` below with the exact suffix from the integration test build.
 
 ```bash
@@ -225,7 +232,7 @@ bash tools/http-reuse-run trusted_http_route::tests::real_http_guest_reuses_conn
 bash tools/http-reuse-run trusted_http_route::tests::nested_http_authorizes_child_and_preserves_original_caller
 ```
 
-Each command creates fresh PostgreSQL and registry containers, runs its exact test, and removes only owned containers and volumes.
+Each command creates a fresh registry container, runs its exact test, and removes only owned containers and volumes.
 These cases test connection reuse and authority isolation without measuring throughput.
 
 ## Application generation and SQLx
