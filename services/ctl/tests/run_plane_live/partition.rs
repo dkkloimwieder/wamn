@@ -1,7 +1,7 @@
 use super::{
     Client, RunPlaneActionKind, SCHEMA, column_exists, connect, indexdef,
-    install_current_run_plane, install_legacy_flow_registry, reconcile_run_plane, reset, schema,
-    seed_run_admission_facts, support, table_exists,
+    install_current_run_plane, install_legacy_flow_registry, locked_database, reconcile_run_plane,
+    reset, schema, seed_run_admission_facts, table_exists,
 };
 
 async fn install_legacy_partition_plane(su: &Client) {
@@ -72,14 +72,14 @@ async fn partition_plane_schema_snapshot(su: &Client) -> String {
 
 #[tokio::test]
 async fn partition_plane_cutover_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     partition_plane_cutover_leg(&su).await;
 }
 
 #[tokio::test]
 async fn partition_plane_active_lease_refusal_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     partition_plane_active_lease_refusal_leg(&su).await;
 }

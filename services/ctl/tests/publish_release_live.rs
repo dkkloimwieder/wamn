@@ -1,7 +1,5 @@
 //! Disposable-PostgreSQL tests for package sealing at release publication.
 
-mod support;
-
 use std::collections::BTreeSet;
 use std::time::Duration;
 
@@ -10,6 +8,7 @@ use wamn_catalog::{EffectiveReleaseId, ManifestDigest, PackageCoordinate, Servin
 use wamn_ctl::publish_release::{
     DeploymentCoordinate, attest_deployment, project_release_identity,
 };
+use wamn_test_infrastructure::locked_database;
 
 const TENANT: &str = "publish-release-live";
 const INSERT_MIGRATION_SQL: &str = "\
@@ -219,7 +218,7 @@ async fn assert_package_seal(url: &str, store: Store) {
 
 #[tokio::test]
 async fn package_seal_and_attestation_winner_are_server_enforced() {
-    let project = support::database(wamn_catalog::test_database::tenant);
+    let project = locked_database::database(wamn_catalog::test_database::tenant);
     let control = wamn_control_provision::test_database::system();
     let url = control.url();
 
@@ -247,7 +246,7 @@ async fn package_seal_and_attestation_winner_are_server_enforced() {
 #[tokio::test]
 async fn release_identity_and_attestation_decisions_preserve_concurrent_winners() {
     use wamn_schema_control::attestation::{AttestationError, AttestationErrorKind};
-    let url = support::database(wamn_control_provision::test_database::system);
+    let url = locked_database::database(wamn_control_provision::test_database::system);
     let inspector = connect(&url).await;
     let coordinate = DeploymentCoordinate {
         tenant_id: TENANT.to_owned(),

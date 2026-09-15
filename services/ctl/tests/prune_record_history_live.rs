@@ -25,8 +25,6 @@
 //! retention change in apply-package waits for a running prune, so the prune
 //! deletes with the retention that it read.
 
-mod support;
-
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -40,6 +38,7 @@ use wamn_control_provision::{
     sql, workload_generation_role,
 };
 use wamn_test_infrastructure::ctl_process;
+use wamn_test_infrastructure::locked_database;
 
 const SCHEMA: &str = "record_retention";
 const PACKAGE_ID: &str = "record_retention_fixture";
@@ -419,7 +418,7 @@ async fn assert_authority(admin: &Client, credential_url: &str) {
 
 #[tokio::test]
 async fn prune_removes_only_the_expired_prefix_of_each_row() {
-    let url = support::database(wamn_project_state::test_database::tenant_app_system);
+    let url = locked_database::database(wamn_project_state::test_database::tenant_app_system);
     let admin = connect(&url).await;
     let database = current_database(&admin).await;
     provision(&admin).await;
@@ -711,7 +710,7 @@ async fn await_lock_waiters(
 /// apply-package changes the trigger only after that transaction commits.
 #[tokio::test]
 async fn a_retention_change_waits_for_a_running_prune() {
-    let url = support::database(wamn_project_state::test_database::tenant_app_system);
+    let url = locked_database::database(wamn_project_state::test_database::tenant_app_system);
     let admin = connect(&url).await;
     let database = current_database(&admin).await;
     provision(&admin).await;

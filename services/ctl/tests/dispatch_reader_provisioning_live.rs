@@ -36,8 +36,6 @@
 //!    a neighbouring one. Both directions, because an arm that only shows the
 //!    refusal cannot tell a closed reach from a broken credential.
 
-mod support;
-
 use tokio_postgres::{Client, NoTls};
 
 use wamn_control_provision::{
@@ -45,6 +43,7 @@ use wamn_control_provision::{
     WorkloadRoleScope, sql, workload_generation_role,
 };
 use wamn_ctl::provision_project_env::{privilege_sql, role_posture_sql, role_sql};
+use wamn_test_infrastructure::locked_database;
 
 /// The legacy app-password input remains until `wamn-0h0g.12.185`, but
 /// `ensure_app_role_sql` deliberately emits none of it. Keeping a conspicuous
@@ -241,7 +240,7 @@ async fn can_connect(su: &Client, role: &str, database: &str) -> bool {
 
 #[tokio::test]
 async fn dispatch_reader_provisioning_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     provisioned_reader_is_idempotent_and_connection_free_leg(&su, &url).await;
     owner_statement_asymmetry_leg(&su).await;

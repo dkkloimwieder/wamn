@@ -4,8 +4,6 @@
 //! process and holds the process lock of that server. It replaces system schemas,
 //! creates two fixture databases, and closes the cluster PUBLIC CONNECT floor.
 
-mod support;
-
 use std::fs;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
@@ -22,6 +20,7 @@ use wamn_control_provision::{
     project_env_database_name, sql, workload_generation_role,
 };
 use wamn_pg_core::quote_ident;
+use wamn_test_infrastructure::locked_database;
 
 const ORG: &str = "sessioncli";
 const PROJECT: &str = "receiving";
@@ -444,7 +443,7 @@ async fn compiled_session_reader_refuses_invalid_tenants_before_io() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compiled_cli_publishes_bound_session_targets_and_rotates_reader_generations() {
-    let database = support::database(wamn_test_postgres::database);
+    let database = locked_database::database(wamn_test_postgres::database);
     let maintenance = connect(&database)
         .await
         .expect("connect the test database");

@@ -3,8 +3,6 @@
 //! It uses a superuser connection to a database on the PostgreSQL server of its
 //! test process.
 
-mod support;
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -17,6 +15,7 @@ use wamn_control_provision::sql;
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::reconcile_run_plane;
 use wamn_schema_control::BareSchemaName;
+use wamn_test_infrastructure::locked_database;
 
 const SYSTEM_SCHEMA_SQL: &str = wamn_control_provision::SYSTEM_SCHEMA_SQL;
 const OPS_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/ops-schema.sql");
@@ -499,7 +498,7 @@ async fn assert_author_sql_boundaries(client: &Client, control_database: bool) {
 
 #[tokio::test]
 async fn protected_relations_match_reconciled_postgres() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let repository = repository();
     let client = connect(&url).await;
     let version: String = client

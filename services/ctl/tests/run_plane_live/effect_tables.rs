@@ -1,19 +1,19 @@
 use super::{
     CATALOG_SCHEMA_SQL, Client, EMPTY_EXECUTION_BUNDLE_HASH, RUN_STATE_SQL, RunPlaneActionKind,
-    SCHEMA, column_exists, connect, reconcile_run_plane, reset, rewrite_schema, schema,
-    seed_run_admission_facts, support,
+    SCHEMA, column_exists, connect, locked_database, reconcile_run_plane, reset, rewrite_schema,
+    schema, seed_run_admission_facts,
 };
 
 #[tokio::test]
 async fn frame_identity_cutover_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     frame_identity_cutover_leg(&su).await;
 }
 
 #[tokio::test]
 async fn effect_writer_cutover_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     effect_writer_cutover_leg(&su).await;
 }

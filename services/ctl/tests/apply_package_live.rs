@@ -1,7 +1,5 @@
 //! Disposable-PostgreSQL closure test for the exact-byte package runner.
 
-mod support;
-
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -11,6 +9,7 @@ use wamn_control_provision::PlatformComponent;
 use wamn_control_provision::operation_grants::{OPERATION_GRANT_LOCK_SQL, operation_grant_tokens};
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_schema_introspection::migration_policy::{MigrationPolicyError, MigrationPolicyErrorKind};
+use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
@@ -548,7 +547,7 @@ async fn write_identity(client: &Client) -> Vec<String> {
 
 #[tokio::test]
 async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     let package = fixture_root();
     copy_receiving_package(&package);
@@ -1519,7 +1518,7 @@ async fn exact_runner_commits_once_refuses_drift_and_rolls_back_a_failing_suffix
 /// Spec test 13: the declaration is the trigger.
 #[tokio::test]
 async fn record_history_triggers_follow_the_declaration() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     install(&client).await;
     let package = fixture_root().with_file_name(format!(
@@ -1738,7 +1737,7 @@ fn retention_grants_on(history: &str) -> Vec<String> {
 /// a P<n>D relation, and revokes them when the retention changes.
 #[tokio::test]
 async fn record_history_log_follows_the_declaration() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let client = connect(&url).await;
     install(&client).await;
     let package = fixture_root().with_file_name(format!(

@@ -1,8 +1,8 @@
 use super::{
     CLI_ENV, CLI_INSTANCE, CLI_ORG, CLI_PROJECT, Client, RECONCILE_TARGET_REFUSAL_PREFIX,
     ReconcileRunPlaneArgs, ReconcileTargetError, ReconcileTargetErrorKind, SCHEMA, connect,
-    database_url, drop_database, project_env_database_name, project_environment_policy,
-    reconcile_run_plane, recreate_database, reset, schema, support,
+    database_url, drop_database, locked_database, project_env_database_name,
+    project_environment_policy, reconcile_run_plane, recreate_database, reset, schema,
 };
 
 async fn seed_target_guard_registry(su: &Client) {
@@ -144,7 +144,7 @@ fn target_guard_args(
 /// before either the system-policy carrier or either project database changes.
 #[tokio::test]
 async fn reconcile_target_identity_guard_live() {
-    let system_url = support::database(wamn_test_postgres::database);
+    let system_url = locked_database::database(wamn_test_postgres::database);
     let system_su = connect(&system_url).await;
     let primary_database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
     let sibling_project_database =

@@ -1,21 +1,21 @@
 use super::{
     CATALOG_SCHEMA_SQL, CONTROL_PORTABLE_STORE_SQL, Client, RUN_QUEUE_SQL, RUN_STATE_SQL,
     RunPlaneActionKind, SCHEMA, assert_db_code, column_exists, connect, drop_generation_role,
-    install_current_run_plane, mint_guest_generation, reconcile_run_plane, reset, rewrite_schema,
-    schema, seed_run_admission_facts, support, table_exists,
+    install_current_run_plane, locked_database, mint_guest_generation, reconcile_run_plane, reset,
+    rewrite_schema, schema, seed_run_admission_facts, table_exists,
 };
 
 /// Own entry so the two-plane post-check can be run — and mutated — alone.
 #[tokio::test]
 async fn two_plane_residency_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     two_plane_residency_leg(&su).await;
 }
 
 #[tokio::test]
 async fn stored_suite_cutover_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     stored_suite_cutover_leg(&su).await;
 }
@@ -39,7 +39,7 @@ async fn stored_suite_cutover_live() {
 /// reachable while that stands.
 #[tokio::test]
 async fn authoring_privileges_at_record_plan_no_repair_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     reset(&su).await;
     let schema = schema();

@@ -1,8 +1,8 @@
 use super::{
     CATALOG_SCHEMA_SQL, Client, RUN_QUEUE_SQL, RUN_STATE_SQL, RunPlaneActionKind, SCHEMA,
     assert_db_code, assert_db_code_in_chain, column_exists, connect, indexdef,
-    install_current_run_plane, reconcile_run_plane, reset, rewrite_schema, schema,
-    seed_run_admission_facts, support, table_exists,
+    install_current_run_plane, locked_database, reconcile_run_plane, reset, rewrite_schema, schema,
+    seed_run_admission_facts, table_exists,
 };
 
 async fn install_legacy_child_run_state(su: &Client) {
@@ -122,21 +122,21 @@ async fn failure_detail_snapshot(su: &Client) -> String {
 
 #[tokio::test]
 async fn child_run_cutover_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     child_run_cutover_leg(&su).await;
 }
 
 #[tokio::test]
 async fn rerun_lineage_cutover_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     rerun_lineage_cutover_leg(&su).await;
 }
 
 #[tokio::test]
 async fn failure_detail_cutover_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     failure_detail_cutover_leg(&su).await;
 }

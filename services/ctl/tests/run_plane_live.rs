@@ -72,8 +72,6 @@
 //!   5-literal record form; the runaway UPDATE then succeeds and a re-run is a
 //!   no-op (the reconciled CHECK converges with fresh provisioning).
 
-mod support;
-
 #[path = "run_plane_live/catalog.rs"]
 mod catalog;
 #[path = "run_plane_live/effect_tables.rs"]
@@ -115,6 +113,7 @@ use wamn_ctl::reconcile_run_plane::{
 };
 use wamn_ctl::verification_policy::project_environment_policy;
 use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
+use wamn_test_infrastructure::locked_database;
 
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
@@ -470,7 +469,7 @@ fn assert_db_code_in_chain(error: &anyhow::Error, expected: &str, context: &str)
 
 #[tokio::test]
 async fn run_plane_reconcile_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     node_runs_retirement_leg(&su).await;
     shared_runner_legacy_leg(&su).await;
@@ -510,7 +509,7 @@ async fn run_plane_reconcile_live() {
 /// mutated — alone (wamn-0h0g.12.178).
 #[tokio::test]
 async fn provisioner_minted_generation_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     provisioner_minted_generation_leg(&su).await;
 }
@@ -703,21 +702,21 @@ async fn dispatch_reader_read_surface_leg(su: &Client, url: &str) {
 /// lock.
 #[tokio::test]
 async fn dispatch_reader_read_surface_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     dispatch_reader_read_surface_leg(&su, &url).await;
 }
 
 #[tokio::test]
 async fn environment_policy_row_security_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     environment_policy_row_security_leg(&su, &url).await;
 }
 
 #[tokio::test]
 async fn registry_durability_schema_ensure_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let system_su = connect(&url).await;
     let database = project_env_database_name(CLI_ORG, CLI_PROJECT, CLI_ENV, CLI_INSTANCE);
     recreate_database(&system_su, &database).await;
@@ -730,7 +729,7 @@ async fn registry_durability_schema_ensure_live() {
 
 #[tokio::test]
 async fn retired_effect_disposition_cutover_live() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
     retired_effect_disposition_cutover_leg(&su).await;
 }

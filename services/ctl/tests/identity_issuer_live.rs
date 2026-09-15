@@ -4,8 +4,6 @@
 //! process and holds the process lock of that server. It resets the system
 //! schemas and closes the cluster PUBLIC CONNECT floor.
 
-mod support;
-
 use std::fs;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
@@ -23,6 +21,7 @@ use wamn_control_provision::{
     CredentialGeneration, PlatformComponent, SYSTEM_SCHEMA_SQL, bind_platform_principal_sql, sql,
 };
 use wamn_platform_identity::{PrincipalId, authenticate_pat, issue_pat};
+use wamn_test_infrastructure::locked_database;
 
 const ISSUER: &str = "https://identity-issuer-cli-test.wamn-system.svc";
 
@@ -645,7 +644,7 @@ async fn journey(admin: &Client, admin_url: &str, directory: &Path) -> anyhow::R
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn compiled_cli_publishes_rolls_back_and_retires_identity_generations() {
-    let database = support::database(wamn_test_postgres::database);
+    let database = locked_database::database(wamn_test_postgres::database);
     let maintenance = connect(&database)
         .await
         .expect("connect the test database");

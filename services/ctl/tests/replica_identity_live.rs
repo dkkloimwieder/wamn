@@ -1,10 +1,9 @@
 //! Server-answer test for package-model replica-identity reconciliation.
 
-mod support;
-
 use tokio_postgres::{Client, NoTls};
 use wamn_ctl::reconcile_replica_identity::reconcile;
 use wamn_schema_control::ManagedModel;
+use wamn_test_infrastructure::locked_database;
 
 const PACKAGE_ID: &str = "ri_package";
 const OWNER_PACKAGE_ID: &str = "client_overlay";
@@ -82,7 +81,7 @@ async fn install(client: &Client) {
 
 #[tokio::test]
 async fn package_registration_union_flips_exact_tables_and_unreadable_state_refuses() {
-    let url = support::database(wamn_catalog::test_database::tenant);
+    let url = locked_database::database(wamn_catalog::test_database::tenant);
     let client = connect(&url).await;
     install(&client).await;
     client

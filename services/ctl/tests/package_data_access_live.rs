@@ -1,7 +1,5 @@
 //! Disposable-PG18 test for installed-set generated data authority.
 
-mod support;
-
 use std::path::{Path, PathBuf};
 
 use tokio_postgres::{Client, NoTls};
@@ -11,6 +9,7 @@ use wamn_control_provision::{
 };
 use wamn_ctl::apply_package::{self, ApplyPackageArgs};
 use wamn_ctl::reconcile_package_data_access::{self, ReconcilePackageDataAccessArgs};
+use wamn_test_infrastructure::locked_database;
 
 const CATALOG_SCHEMA: &str = wamn_catalog::CATALOG_SCHEMA_SQL;
 const APP_SCHEMA: &str = include_str!("../../../deploy/sql/app-schema.sql");
@@ -142,7 +141,7 @@ async fn applier_owned_authority(client: &Client) -> Vec<String> {
 
 #[tokio::test]
 async fn installed_package_set_unions_a_real_app_generation_and_replays_noop() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let admin = connect(&url).await;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
@@ -548,7 +547,7 @@ async fn apply(url: &str, package: PathBuf) {
 
 #[tokio::test]
 async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let admin = install_lineage_fixture(&url).await;
     let (released, _) = stage_package_root(&receiving_package_root(), "receiving", None);
     let (overlay, _) = stage_package_root(&overlay_package_root(), "overlay", None);
@@ -652,7 +651,7 @@ async fn an_author_recovers_from_a_failed_version_bump_in_either_direction() {
 
 #[tokio::test]
 async fn reconciliation_leaves_every_platform_schema_grant_on_the_app_role_standing() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let admin = install_lineage_fixture(&url).await;
     apply(&url, receiving_package_root()).await;
     apply(&url, overlay_package_root()).await;
@@ -721,7 +720,7 @@ fn stage_logged_receiving() -> PathBuf {
 /// keeps the derived history insert grant.
 #[tokio::test]
 async fn a_logged_relation_writes_history_through_the_reconciled_app_role() {
-    let url = support::database(wamn_test_postgres::database);
+    let url = locked_database::database(wamn_test_postgres::database);
     let admin = install_lineage_fixture(&url).await;
     let database: String = admin
         .query_one("SELECT current_database()::text", &[])
