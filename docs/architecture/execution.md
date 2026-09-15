@@ -183,6 +183,7 @@ A revision-bearing operation needs a declared compatible record read and revisio
 Without that mapping, the screen requires ordinary Rust composition and blocks submission.
 A user cannot type a revision or obtain a guessed read route.
 Query columns come from that query's result descriptors, not a union of model fields.
+Generated screens show the [record history](data-access.md#record-history) stamp columns `created_at`, `created_by`, `updated_at`, and `updated_by` as raw result values, and the actor columns show the `app_system.users` row id.
 
 Fields separately declare whether a property is required and whether its value can be null.
 Editors retain `Absent`, `Null`, and `Value` according to those two facts.
