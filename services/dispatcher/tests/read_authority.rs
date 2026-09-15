@@ -634,12 +634,12 @@ END $$;
         // holds INSERT on `run_queue` any more. Privilege is checked BEFORE
         // column constraints, so a 42501 here can only be the missing grant.
         ("INSERT into run_queue", insert_queue.as_str(), None),
-        // No replay arm for the three below: since `wamn-0h0g.22.6.3` NOTHING in
-        // this tree holds UPDATE or DELETE on `run_queue` — the executor-platform
-        // family that will is admitted to the vocabulary but has no grant set yet
-        // — so there is no principal to show them legal with. `assert_denied`
-        // still discriminates a privilege refusal from an RLS one, which is the
-        // half that could otherwise pass for the wrong reason.
+        // No replay arm for the three below. The executor platform family holds
+        // DELETE and column-scoped UPDATE on `run_queue`
+        // (`grant_executor_platform_surface_sql`), but this test mints no login
+        // for it. `assert_denied` still discriminates a privilege refusal from an
+        // RLS one, which is the half that could otherwise pass for the wrong
+        // reason.
         ("UPDATE run_queue", update_queue.as_str(), None),
         ("DELETE from run_queue", delete_queue.as_str(), None),
         (
