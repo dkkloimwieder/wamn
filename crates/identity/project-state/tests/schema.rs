@@ -7,12 +7,10 @@
 //!   `UserStatus::as_str`, and the FK cascades);
 //! - a **live-apply gate** showing the DB-enforced behavior — tenant RLS
 //!   isolation, the FK cascades, the empty-tenant / status / type CHECKs, and
-//!   the platform principal rows — gated on
-//!   `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness prepares App generations)
-//!   and skipped cleanly when unset.
+//!   the platform principal rows — on a test database of the test PostgreSQL
+//!   server (a superuser URL; the harness prepares App generations).
 
 use std::path::Path;
-use std::sync::{Mutex, PoisonError};
 
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, platform_principals_sql, sql,
@@ -22,10 +20,6 @@ use wamn_project_state::{PlatformComponent, SCHEMA_NAME, TABLES, UserStatus, Use
 
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
-
-/// Each live test rebuilds `app_system` in the target database, so they take
-/// turns (cargo runs the tests in one binary on parallel threads).
-static LIVE_DB: Mutex<()> = Mutex::new(());
 
 fn deploy_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../deploy")
@@ -248,19 +242,14 @@ fn app_generation(database: &str, tenant: &str) -> String {
     .expect("App accepts tenant scope")
 }
 
-/// Apply `deploy/sql/app-schema.sql` to a throwaway Postgres and assert the live,
-/// DB-enforced behavior. Set `WAMN_SYSSCHEMA_PG_URL` to a superuser URL (the
-/// harness prepares tenant-scoped App generations); skipped when unset.
+/// Apply `deploy/sql/app-schema.sql` to a test database and assert the live,
+/// DB-enforced behavior, as the superuser (the harness prepares tenant-scoped
+/// App generations).
 #[test]
 fn app_schema_applies_and_enforces_isolation_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
-        eprintln!(
-            "skipping app_schema_applies_and_enforces_isolation_and_claims_on_postgres \
-             (set WAMN_SYSSCHEMA_PG_URL to run)"
-        );
-        return;
-    };
-    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     const U1: &str = "11111111-1111-1111-1111-111111111111";
     const U2: &str = "22222222-2222-2222-2222-222222222222";
@@ -423,8 +412,7 @@ fn run(url: &str, script: &str) -> String {
 /// function renders, with the ids that `PlatformComponent::principal_id`
 /// derives. The users CHECKs refuse every other shape: a missing or unknown
 /// type, a platform row with a name or id outside the pinned pairs, and a
-/// person or service row with a `wamn:` name. Set `WAMN_SYSSCHEMA_PG_URL` to a
-/// superuser URL. Skipped when unset.
+/// person or service row with a `wamn:` name.
 #[test]
 fn platform_rows_carry_their_pinned_ids_on_postgres() {
     const TENANT: &str = "t1";
@@ -432,14 +420,9 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
     const PERSON: &str = "11111111-1111-1111-1111-111111111111";
     const FIXTURE_PERSON: &str = "00000000-0000-0000-0000-000000000000";
 
-    let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
-        eprintln!(
-            "skipping platform_rows_carry_their_pinned_ids_on_postgres \
-             (set WAMN_SYSSCHEMA_PG_URL to run)"
-        );
-        return;
-    };
-    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let provisioning = PlatformComponent::Provisioning;
     let executor = PlatformComponent::Executor;
@@ -575,21 +558,15 @@ fn platform_rows_carry_their_pinned_ids_on_postgres() {
 /// argument `unlimited`, and its history table. The provisioning SQL binds
 /// `wamn:provisioning` for its writes, every platform row stamps that
 /// principal, and the `wamn:provisioning` row stamps itself. The binding ends
-/// with the provisioning transaction. Set `WAMN_SYSSCHEMA_PG_URL` to a
-/// superuser URL. Skipped when unset.
+/// with the provisioning transaction.
 #[test]
 fn app_system_relations_stamp_provisioning_writes_on_postgres() {
     const TENANT: &str = "t1";
     const DOMAIN: &str = "example.invalid";
 
-    let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
-        eprintln!(
-            "skipping app_system_relations_stamp_provisioning_writes_on_postgres \
-             (set WAMN_SYSSCHEMA_PG_URL to run)"
-        );
-        return;
-    };
-    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
@@ -701,8 +678,7 @@ fn app_system_relations_stamp_provisioning_writes_on_postgres() {
 /// The user delete cascades to `user_roles` and `api_keys`, and those delete
 /// entries carry the actor and the operation of the deleting transaction. The
 /// `api_keys` images carry `key_hash` (ruling 41). The server ACLs show the
-/// `wamn_app` grant of every relation (ruling 76). Set `WAMN_SYSSCHEMA_PG_URL`
-/// to a superuser URL. Skipped when unset.
+/// `wamn_app` grant of every relation (ruling 76).
 #[test]
 fn app_system_relations_log_every_row_change_on_postgres() {
     const U1: &str = "11111111-1111-1111-1111-111111111111";
@@ -714,14 +690,9 @@ fn app_system_relations_log_every_row_change_on_postgres() {
     const CHANGE: &str = "admin:change-history-fixture";
     const REMOVE: &str = "admin:remove-history-fixture";
 
-    let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
-        eprintln!(
-            "skipping app_system_relations_log_every_row_change_on_postgres \
-             (set WAMN_SYSSCHEMA_PG_URL to run)"
-        );
-        return;
-    };
-    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let mut script = sql::ensure_app_acl_role_sql();
     script.push_str("\nDROP SCHEMA IF EXISTS app_system CASCADE;\n");
@@ -864,18 +835,12 @@ entry|users|t2|delete|admin:remove-history-fixture|U3|{"id": "U2", "tenant_id": 
 /// Record history spec test 19. `wamn_history.row_image` spells each
 /// `timestamptz` exactly as the platform canonicalizer spells the value that
 /// PostgreSQL holds. The session time zone is not UTC, and the values have
-/// zero and non-zero microseconds. Set `WAMN_SYSSCHEMA_PG_URL` to a superuser
-/// URL. Skipped when unset.
+/// zero and non-zero microseconds.
 #[test]
 fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
-        eprintln!(
-            "skipping row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres \
-             (set WAMN_SYSSCHEMA_PG_URL to run)"
-        );
-        return;
-    };
-    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let mut script = sql::ensure_app_acl_role_sql();
     script.push('\n');
@@ -914,18 +879,12 @@ fn row_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
 /// platform canonicalizer spells it, and exactly as `wamn_history.row_image`
 /// spells the same column. A history read builds its current row image with
 /// this function. The session time zone is not UTC, and the values include
-/// zero and non-zero microseconds and infinity. Set `WAMN_SYSSCHEMA_PG_URL` to
-/// a superuser URL. Skipped when unset.
+/// zero and non-zero microseconds and infinity.
 #[test]
 fn timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres() {
-    let Ok(url) = std::env::var("WAMN_SYSSCHEMA_PG_URL") else {
-        eprintln!(
-            "skipping timestamptz_image_spells_timestamptz_as_the_platform_canonicalizer_on_postgres \
-             (set WAMN_SYSSCHEMA_PG_URL to run)"
-        );
-        return;
-    };
-    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let mut script = sql::ensure_app_acl_role_sql();
     script.push('\n');

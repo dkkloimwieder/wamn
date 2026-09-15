@@ -15,12 +15,12 @@
 //! - the six history tables take no read and no direct write from an App
 //!   generation, except the entries that its `configurations` writes append.
 //!
-//! Gated on `WAMN_SYSSCHEMA_PG_URL` (a superuser URL; the harness prepares one
-//! tenant-scoped App generation) and skipped cleanly when unset — the `tests/schema.rs`
+//! Each test runs as the superuser of a test database on the test PostgreSQL
+//! server (the harness prepares one tenant-scoped App generation) and holds the
+//! process lock, because it changes cluster-wide roles — the `tests/schema.rs`
 //! live-apply convention.
 
 use std::path::Path;
-use std::sync::{Mutex, PoisonError};
 
 use wamn_control_provision::{
     CredentialGeneration, WorkloadRoleFamily, WorkloadRoleScope, sql, workload_generation_role,
@@ -36,10 +36,6 @@ const PROVISIONING: &str = "770df186-ac15-579e-b46b-c297cae2011b";
 const APP_GENERATION_PASSWORD: &str = "test-owned-app-generation-password";
 const APP_GENERATION_VALID_UNTIL: &str = "2099-01-01T00:00:00Z";
 
-/// Each test rebuilds `app_system` in the target database, so they take turns
-/// (cargo runs the tests in one binary on parallel threads).
-static LIVE_DB: Mutex<()> = Mutex::new(());
-
 /// `deploy/sql/record-history.sql`, `deploy/sql/record-history-app-grants.sql`,
 /// and `deploy/sql/app-schema.sql`, the order every tenant applier uses.
 fn app_schema_sql() -> String {
@@ -51,17 +47,6 @@ fn app_schema_sql() -> String {
     let app_schema = std::fs::read_to_string(deploy.join("sql/app-schema.sql"))
         .expect("read deploy/sql/app-schema.sql");
     format!("{record_history}\n{app_grants}\n{app_schema}")
-}
-
-/// The live gate's URL, or `None` after printing the skip notice.
-fn live_url(test: &str) -> Option<String> {
-    match std::env::var("WAMN_SYSSCHEMA_PG_URL") {
-        Ok(url) => Some(url),
-        Err(_) => {
-            eprintln!("skipping {test} (set WAMN_SYSSCHEMA_PG_URL to run)");
-            None
-        }
-    }
 }
 
 fn current_database(url: &str) -> String {
@@ -166,10 +151,9 @@ fn run(url: &str, script: &str) {
 /// does admit such a row under the App generation is what the configurations test shows.
 #[test]
 fn author_sql_cannot_write_the_relations_that_authorize_it() {
-    let Some(url) = live_url("author_sql_cannot_write_the_relations_that_authorize_it") else {
-        return;
-    };
-    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let (app_generation, mut script) = prelude(&url);
     script.push_str(&format!(
@@ -244,10 +228,9 @@ ROLLBACK;
 /// bound operation, and the bound actor.
 #[test]
 fn a_project_still_owns_its_own_configuration() {
-    let Some(url) = live_url("a_project_still_owns_its_own_configuration") else {
-        return;
-    };
-    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let (app_generation, mut script) = prelude(&url);
     script.push_str(&format!(
@@ -310,11 +293,9 @@ ROLLBACK;
 /// test shows that the same generation appends an entry through the trigger.
 #[test]
 fn author_sql_appends_history_only_through_the_configurations_trigger() {
-    let Some(url) = live_url("author_sql_appends_history_only_through_the_configurations_trigger")
-    else {
-        return;
-    };
-    let _live = LIVE_DB.lock().unwrap_or_else(PoisonError::into_inner);
+    let _serialized = wamn_test_postgres::lock();
+    let test_database = wamn_test_postgres::database();
+    let url = test_database.url().to_owned();
 
     let (app_generation, mut script) = prelude(&url);
     // One direct entry insert. A position also names the position column.
