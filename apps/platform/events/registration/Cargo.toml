@@ -16,5 +16,8 @@ serde_json = { workspace = true }
 # at write time to reject bad syntax; the materializer owns evaluation.
 jmespath = { workspace = true }
 
+[dev-dependencies]
+wamn-test-postgres = { path = "../../../../test-support/postgres" }
+
 [lints]
 workspace = true

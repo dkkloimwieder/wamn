@@ -1,7 +1,6 @@
 //! Live PostgreSQL test for package-coordinate registration reconciliation.
 //!
-//! `WAMN_EVENT_REGISTRATION_PG_URL` must name a fresh disposable database: the
-//! test drops and recreates the `catalog` schema.
+//! The test drops and recreates the `catalog` schema in a database of its own.
 
 use std::io::Write as _;
 use std::process::{Command, Stdio};
@@ -10,12 +9,9 @@ use wamn_event_reg::{DELETE_STALE_CATALOG_REGISTRATIONS_SQL, UPSERT_CATALOG_REGI
 
 #[test]
 fn replay_is_a_no_op_with_base_and_overlay_registrations_applied() {
-    let Ok(url) = std::env::var("WAMN_EVENT_REGISTRATION_PG_URL") else {
-        eprintln!("WAMN_EVENT_REGISTRATION_PG_URL unset — skipping registration reconcile gate");
-        return;
-    };
+    let database = wamn_test_postgres::database();
     let mut child = Command::new("psql")
-        .arg(url)
+        .arg(database.url())
         .args(["-v", "ON_ERROR_STOP=1", "-q", "-f", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -1159,6 +1159,7 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-event-wire",
+ "wamn-test-postgres",
 ]
 
 [[package]]
@@ -1230,6 +1231,15 @@ dependencies = [
 [[package]]
 name = "wamn-record-history"
 version = "0.1.0"
+
+[[package]]
+name = "wamn-test-postgres"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "url",
+]
 
 [[package]]
 name = "wamn-wms-data-access"
