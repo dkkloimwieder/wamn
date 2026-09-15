@@ -5940,7 +5940,6 @@ dependencies = [
  "url",
  "wamn-control",
  "wamn-control-provision",
- "wamn-ctl",
 ]
 
 [[package]]
