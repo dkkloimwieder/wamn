@@ -50,9 +50,6 @@ pub struct CheckChangesArgs {
     pub cases: Vec<String>,
     #[arg(long)]
     pub include_ignored: bool,
-    /// Test URL variables supplied by a fresh owned PostgreSQL server.
-    #[arg(long = "database-url-env")]
-    pub database_url_env: Vec<String>,
     #[arg(long)]
     pub result: PathBuf,
 }
@@ -487,52 +484,18 @@ pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
             &mut result.checks,
         )
         .await?;
-        let runner = if args.database_url_env.is_empty() {
-            None
-        } else {
-            let output = run(
-                root,
-                &strings(&[
-                    "cargo",
-                    "build",
-                    "--locked",
-                    "--offline",
-                    "-p",
-                    "wamn-test-infrastructure",
-                    "--bin",
-                    "wamn-test-postgres",
-                    "--message-format=json",
-                ]),
-                &[],
-                &mut result.checks,
-            )
-            .await?;
-            Some(artifact_executable(&output, "wamn-test-postgres")?)
-        };
         for case in &args.cases {
             ensure!(
                 !case.trim().is_empty(),
                 "a required case name cannot be empty"
             );
-            let mut command = Vec::new();
-            if let Some(runner) = &runner {
-                command.extend([
-                    runner.display().to_string(),
-                    "--database".to_owned(),
-                    "delivery_changes".to_owned(),
-                ]);
-                for name in &args.database_url_env {
-                    command.extend(["--url-env".to_owned(), name.clone()]);
-                }
-                command.push("--".to_owned());
-            }
-            command.extend([
+            let mut command = vec![
                 binary.display().to_string(),
                 case.clone(),
                 "--exact".to_owned(),
                 "--nocapture".to_owned(),
                 "--test-threads=1".to_owned(),
-            ]);
+            ];
             if args.include_ignored {
                 command.push("--include-ignored".to_owned());
             }
