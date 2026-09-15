@@ -187,11 +187,6 @@ pub trait DevStageRunner {
         async { Ok(false) }
     }
 
-    /// Select the coarse pipeline boundary before checking retained outputs.
-    fn first_stage(&self, requested: DevStage) -> DevStage {
-        requested
-    }
-
     /// Prepare the target before the first stage of a run.
     ///
     /// A disposable runner checks its lease and recreates invalidated schema here.
@@ -453,7 +448,6 @@ async fn run_suffix<R>(from: DevStage, runner: &mut R) -> Result<DevRunResult, D
 where
     R: DevStageRunner,
 {
-    let from = runner.first_stage(from);
     let first = from.position();
     runner.reset(from);
     let preparing = Instant::now();

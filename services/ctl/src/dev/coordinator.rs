@@ -1750,10 +1750,6 @@ impl DevStageRunner for ProductionDevStageRunner {
         self.read_publisher.stage_skipped(stage);
     }
 
-    fn first_stage(&self, _requested: DevStage) -> DevStage {
-        DevStage::Migrate
-    }
-
     async fn stage_is_unchanged(&mut self, stage: DevStage) -> Result<bool, Self::Error> {
         match stage {
             DevStage::Migrate => {

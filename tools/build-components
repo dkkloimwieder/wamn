@@ -203,14 +203,43 @@ WAMN_PLAN="$(
 readonly WAMN_PLAN
 
 if [[ "$WAMN_MODE" == watch-roots ]]; then
-  jq -nceS --arg profile "$WAMN_PROFILE" --argjson build "$WAMN_PLAN" '
+  # Watch each selected crate and the normal and build path dependencies it
+  # compiles, never the whole workspace: other workspace files change no
+  # selected artifact.
+  printf '%s\n' "${WAMN_METADATA[@]}" | jq -ceS -s --arg profile "$WAMN_PROFILE" \
+    --arg root "$WAMN_REPOSITORY_ROOT/" \
+    --argjson manifests "$WAMN_MANIFEST_LIST" \
+    --argjson build "$WAMN_PLAN" '
+    def directory: sub("/Cargo.toml$"; "");
+    def closure($packages; $pending; $seen):
+      if ($pending | length) == 0 then $seen
+      elif ($seen | index($pending[0])) != null then closure($packages; $pending[1:]; $seen)
+      else closure($packages;
+                   $pending[1:]
+                   + [$packages[$pending[0]].dependencies[]?
+                      | select(.kind == null or .kind == "build")
+                      | .path
+                      | select(. != null)];
+                   $seen + [$pending[0]])
+      end;
     {profile: $profile,
      workspace_roots:
-       [$build[].manifest
-        | select(endswith("/Cargo.toml"))
-        | sub("/Cargo.toml$"; "")]
+       [to_entries[]
+        | .key as $index
+        | (.value.packages
+           | map({key: (.manifest_path | directory), value: .})
+           | from_entries) as $packages
+        | [$build[] | select(.manifest == $manifests[$index]) | .packages[0]] as $selected
+        | closure($packages;
+                  [.value.packages[]
+                   | select(.name as $name | $selected | index($name) != null)
+                   | .manifest_path
+                   | directory];
+                  [])[]
+        | select(startswith($root))
+        | ltrimstr($root)]
        | unique}
-    | select(.workspace_roots | length == ($build | map(.manifest) | unique | length))
+    | select(.workspace_roots | length > 0)
   '
   exit 0
 fi

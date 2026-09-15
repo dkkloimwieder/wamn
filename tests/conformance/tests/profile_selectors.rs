@@ -25,7 +25,15 @@ struct CargoMetadata {
 struct CargoPackage {
     id: String,
     name: String,
+    manifest_path: PathBuf,
+    dependencies: Vec<CargoDependency>,
     targets: Vec<CargoTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoDependency {
+    kind: Option<String>,
+    path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -331,11 +339,13 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
     let metadata_directory = scratch.join("canned metadata");
     fs::create_dir(&metadata_directory).expect("failed to create canned metadata directory");
     let mut component_members = Vec::new();
+    let mut component_metadata = Vec::new();
     for manifest in COMPONENT_MANIFESTS {
         let output = cargo_metadata_output(&root, manifest);
         let metadata = parse_metadata(&output, manifest);
         component_members.push(set(&names_for_ids(&metadata, &metadata.workspace_members)));
         write_fake_metadata(&metadata_directory, &root.join(manifest), &output.stdout);
+        component_metadata.push(metadata);
     }
 
     for profile in ["app", "all"] {
@@ -447,20 +457,62 @@ fn selector_tools_execute_exact_fake_cargo_argv() {
         );
         let roots: Value = serde_json::from_slice(&watch_roots.stdout)
             .expect("watch roots must be machine-readable JSON");
-        let expected_roots = COMPONENT_MANIFESTS
+        // Each selected crate and the normal and build path dependencies it
+        // compiles, never the whole workspace.
+        let mut expected_roots = BTreeSet::new();
+        for metadata in &component_metadata {
+            let directory = |package: &CargoPackage| {
+                package
+                    .manifest_path
+                    .parent()
+                    .expect("package manifest must name a directory")
+                    .to_path_buf()
+            };
+            let packages = metadata
+                .packages
+                .iter()
+                .map(|package| (directory(package), package))
+                .collect::<BTreeMap<_, _>>();
+            let mut pending = metadata
+                .packages
+                .iter()
+                .filter(|package| selected.contains(&package.name))
+                .map(directory)
+                .collect::<Vec<_>>();
+            while let Some(crate_directory) = pending.pop() {
+                if !expected_roots.insert(crate_directory.clone()) {
+                    continue;
+                }
+                if let Some(package) = packages.get(&crate_directory) {
+                    pending.extend(
+                        package
+                            .dependencies
+                            .iter()
+                            .filter(|dependency| {
+                                dependency
+                                    .kind
+                                    .as_deref()
+                                    .is_none_or(|kind| kind == "build")
+                            })
+                            .filter_map(|dependency| dependency.path.clone()),
+                    );
+                }
+            }
+        }
+        let expected_roots = expected_roots
             .iter()
-            .zip(&component_members)
-            .filter(|(_, members)| selected.iter().any(|name| members.contains(name)))
-            .map(|(manifest, _)| {
-                manifest
-                    .strip_suffix("/Cargo.toml")
-                    .expect("component manifest must name a workspace")
+            .map(|crate_directory| {
+                crate_directory
+                    .strip_prefix(&root)
+                    .expect("watched crates must live in the repository")
+                    .to_str()
+                    .expect("watched crate paths must be UTF-8")
             })
             .collect::<Vec<_>>();
         assert_eq!(
             roots,
             serde_json::json!({"profile": profile, "workspace_roots": expected_roots}),
-            "separate package builds must not duplicate a watched workspace"
+            "watch roots must name the selected crates and their path dependencies"
         );
         assert_eq!(
             captured_invocations(&capture),

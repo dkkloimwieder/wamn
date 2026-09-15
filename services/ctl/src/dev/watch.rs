@@ -1,8 +1,8 @@
 //! Git source-state and filesystem invalidation adapters for `wamn dev`.
 //!
-//! The adapter maps package-owned inputs and explicit component source roots
-//! into engine stage identities. It deliberately does not coalesce events or
-//! execute stages; [`super::run_watch`] remains the sole orchestration owner.
+//! The adapter decides whether a change touches package-owned inputs or explicit
+//! component source roots. It deliberately does not coalesce events or execute
+//! stages; [`super::run_watch`] remains the sole orchestration owner.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::error::Error;
@@ -485,38 +485,30 @@ impl PackageRoot {
         self.native_outputs = native_output_paths(&self.root, &manifest);
     }
 
-    fn stage(&self, path: &Path) -> Option<DevStage> {
-        let relative = path.strip_prefix(&self.root).ok()?;
-        if relative.as_os_str().is_empty()
+    fn is_input(&self, path: &Path) -> bool {
+        let Ok(relative) = path.strip_prefix(&self.root) else {
+            return false;
+        };
+        relative.as_os_str().is_empty()
             || relative == Path::new("wamn.json")
             || relative.starts_with("migrations")
-        {
-            return Some(DevStage::Migrate);
-        }
-        if relative.starts_with("generated") {
-            return None;
-        }
-        if self.authored_inputs.contains(path) {
-            return Some(DevStage::Generate);
-        }
-        if relative.starts_with("publication/components") {
-            return Some(DevStage::Generate);
-        }
-        if relative.starts_with("publication/wirings") {
-            return Some(DevStage::Generate);
-        }
-        if relative == Path::new("publication/attachments.json")
+            || self.authored_inputs.contains(path)
+            || relative.starts_with("publication/components")
+            || relative.starts_with("publication/wirings")
+            || relative == Path::new("publication/attachments.json")
             || relative == Path::new("ui")
             || relative == Path::new("ui/Cargo.toml")
-        {
-            return Some(DevStage::Generate);
-        }
-        None
     }
 
     fn owns_generated(&self, path: &Path) -> bool {
         path.strip_prefix(&self.root)
             .is_ok_and(|relative| relative.starts_with("generated"))
+    }
+
+    /// SQLx metadata the loop itself prepares during Generate.
+    fn owns_sqlx_metadata(&self, path: &Path) -> bool {
+        path.strip_prefix(&self.root)
+            .is_ok_and(|relative| relative.starts_with("tests/.sqlx"))
     }
 }
 
@@ -839,50 +831,43 @@ impl WatchRoots {
             .any(|directory| path == directory || path.starts_with(directory))
     }
 
-    fn stage(&self, path: &Path) -> Option<DevStage> {
+    fn is_input(&self, path: &Path) -> bool {
         // An excluded directory is unwatched, so nothing inside it can arrive
         // here; the directory ITSELF still can, through its watched parent,
         // when a build creates or replaces it.
-        if self.is_excluded(path) {
-            return None;
+        if self.is_excluded(path)
+            || self
+                .packages
+                .iter()
+                .any(|package| package.owns_sqlx_metadata(path))
+        {
+            return false;
         }
         if self
             .packages
             .iter()
             .any(|package| package.owns_generated(path))
         {
-            return (self.watch_generated_native
+            return self.watch_generated_native
                 && self
                     .packages
                     .iter()
-                    .any(|package| affects_native_output(&package.native_outputs, path)))
-            .then_some(DevStage::Build);
+                    .any(|package| affects_native_output(&package.native_outputs, path));
         }
-        let package_stage = self
-            .packages
-            .iter()
-            .filter_map(|package| package.stage(path))
-            .min_by_key(|stage| stage.position());
-        let component_stage = self
-            .component_build_roots
-            .iter()
-            .any(|root| path == root || path.starts_with(root))
-            .then_some(DevStage::Build);
-        let native_stage = (self.exact_file_or_parent(path)
+        self.packages.iter().any(|package| package.is_input(path))
+            || self
+                .component_build_roots
+                .iter()
+                .any(|root| path == root || path.starts_with(root))
+            || self.exact_file_or_parent(path)
             || self
                 .native_build_roots
                 .iter()
-                .any(|root| path.starts_with(root)))
-        .then_some(DevStage::Build);
-        package_stage
-            .into_iter()
-            .chain(component_stage)
-            .chain(native_stage)
-            .min_by_key(|stage| stage.position())
+                .any(|root| path.starts_with(root))
     }
 
     fn is_changed_input(&self, path: &Path, changed_native: &BTreeSet<PathBuf>) -> bool {
-        self.stage(path).is_some()
+        self.is_input(path)
             && (!self
                 .packages
                 .iter()
@@ -1239,17 +1224,13 @@ impl FilesystemInvalidationSource {
             } else if vanished_directories.contains(&index) {
                 DevInvalidation::Ignore
             } else if let Some(path) = change.path {
-                // Path classification decides RELEVANCE, not the starting
-                // stage. Every relevant change reruns the whole pipeline,
-                // because the target database is recreated per run and a
-                // suffix that started after Apply would run against an empty
-                // one. What a run does not have to redo is decided by each
-                // stage's input digest, not by which file was touched.
+                // Path classification decides only relevance. Every relevant
+                // change reruns from Migrate, and each stage's input digest
+                // decides what a run does not have to redo.
                 if self.roots.is_changed_input(&path, &changed_native) {
                     tracing::debug!(
                         path = %path.display(),
                         event_mask = change.events.bits(),
-                        stage_owner = ?self.roots.stage(&path),
                         generated_native_output = self.roots.packages
                             .iter()
                             .filter(|package| changed_native.contains(&package.root))
@@ -1399,8 +1380,10 @@ mod tests {
             Self { root }
         }
 
+        /// The package sits inside a component root, so a package file the
+        /// loop writes itself is also under a watched build root.
         fn package(&self) -> PathBuf {
-            self.root.join("package")
+            self.component().join("package")
         }
 
         fn component(&self) -> PathBuf {
@@ -1415,6 +1398,10 @@ mod tests {
             fs::create_dir_all(self.package().join("publication/wirings"))
                 .expect("create wiring declarations root");
             fs::create_dir_all(self.package().join("migrations")).expect("create migrations root");
+            fs::create_dir_all(self.package().join("tests/.sqlx"))
+                .expect("create SQLx metadata root");
+            fs::write(self.package().join("tests/.sqlx/query.json"), "{}")
+                .expect("write SQLx metadata");
             fs::create_dir_all(self.component().join("src")).expect("create component source root");
             fs::write(
                 self.package().join("wamn.json"),
@@ -1471,45 +1458,35 @@ mod tests {
     }
 
     #[test]
-    fn package_artifacts_map_to_their_first_semantic_owner() {
+    fn package_inputs_are_relevant_and_other_package_files_are_not() {
         let repository = TempRepository::new();
         repository.write_fixture();
         let package = PackageRoot::read(&repository.package()).expect("read package watch root");
         let root = repository.package();
 
-        assert_eq!(
-            package.stage(&root.join("wamn.json")),
-            Some(DevStage::Migrate)
-        );
-        assert_eq!(
-            package.stage(&root.join("migrations/0002.sql")),
-            Some(DevStage::Migrate)
-        );
-        assert_eq!(
-            package.stage(&root.join("query/open_purchase_order.sql")),
-            Some(DevStage::Generate)
-        );
-        assert_eq!(package.stage(&root.join("query/not-declared.sql")), None);
-        assert_eq!(package.stage(&root.join("generated/wamn.rs")), None);
-        assert_eq!(
-            package.stage(&root.join("publication/components/receiving.json.in")),
-            Some(DevStage::Generate)
-        );
-        assert_eq!(
-            package.stage(&root.join("publication/wirings/receiving.json")),
-            Some(DevStage::Generate)
-        );
-        assert_eq!(
-            package.stage(&root.join("publication/attachments.json")),
-            Some(DevStage::Generate)
-        );
-        assert_eq!(package.stage(&root.join("README.md")), None);
-        assert_eq!(package.stage(&root.join("ui")), Some(DevStage::Generate));
-        assert_eq!(
-            package.stage(&root.join("ui/Cargo.toml")),
-            Some(DevStage::Generate)
-        );
-        assert_eq!(package.stage(&root.join("ui/src/lib.rs")), None);
+        for input in [
+            "wamn.json",
+            "migrations/0002.sql",
+            "query/open_purchase_order.sql",
+            "publication/components/receiving.json.in",
+            "publication/wirings/receiving.json",
+            "publication/attachments.json",
+            "ui",
+            "ui/Cargo.toml",
+        ] {
+            assert!(package.is_input(&root.join(input)), "{input} is an input");
+        }
+        for other in [
+            "query/not-declared.sql",
+            "generated/wamn.rs",
+            "README.md",
+            "ui/src/lib.rs",
+        ] {
+            assert!(
+                !package.is_input(&root.join(other)),
+                "{other} is not an input"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1546,19 +1523,15 @@ mod tests {
                 .values()
                 .any(|path| path.starts_with(&unrelated))
         );
-        assert_eq!(source.roots.stage(&manifest), Some(DevStage::Build));
-        assert_eq!(
-            source.roots.stage(&native.join("src/lib.rs")),
-            Some(DevStage::Build)
-        );
-        assert_eq!(source.roots.stage(&repository.root.join("README.md")), None);
-        assert_eq!(
-            source.roots.stage(
+        assert!(source.roots.is_input(&manifest));
+        assert!(source.roots.is_input(&native.join("src/lib.rs")));
+        assert!(!source.roots.is_input(&repository.root.join("README.md")));
+        assert!(
+            !source.roots.is_input(
                 &repository
                     .package()
                     .join("generated/receiving-tui/src/main.rs")
-            ),
-            None
+            )
         );
 
         let added = repository.root.join("new-unrelated");
@@ -1610,11 +1583,8 @@ mod tests {
                 .values()
                 .any(|path| { path.starts_with(configuration.root.join("unrelated")) })
         );
-        assert_eq!(source.roots.stage(&privilege), Some(DevStage::Build));
-        assert_eq!(
-            source.roots.stage(&configuration.root.join("other.sql")),
-            None
-        );
+        assert!(source.roots.is_input(&privilege));
+        assert!(!source.roots.is_input(&configuration.root.join("other.sql")));
 
         let replacement = configuration.root.join("replacement.sql");
         fs::write(&replacement, "SELECT 2;\n").expect("write replacement configuration");
@@ -1686,11 +1656,10 @@ mod tests {
             &collect_batch(first, &mut source),
             DevStage::Migrate
         ));
-        assert_eq!(
-            source
+        assert!(
+            !source
                 .roots
-                .stage(&repository.root.join(".cargo/unrelated")),
-            None
+                .is_input(&repository.root.join(".cargo/unrelated"))
         );
     }
 
@@ -1718,34 +1687,23 @@ mod tests {
             .replace_native_inputs([second.clone()], [repository.root.join("Cargo.lock")])
             .await
             .expect("refresh the native dependency graph");
-        assert_eq!(source.roots.stage(&first.join("lib.rs")), None);
-        assert_eq!(
-            source.roots.stage(&second.join("lib.rs")),
-            Some(DevStage::Build)
-        );
-        assert_eq!(
+        assert!(!source.roots.is_input(&first.join("lib.rs")));
+        assert!(source.roots.is_input(&second.join("lib.rs")));
+        assert!(
             source
                 .roots
-                .stage(&repository.component().join("src/lib.rs")),
-            Some(DevStage::Build)
+                .is_input(&repository.component().join("src/lib.rs"))
         );
-        assert_eq!(
-            source.roots.stage(&repository.root.join("Cargo.toml")),
-            None
-        );
-        assert_eq!(
-            source.roots.stage(&repository.root.join("Cargo.lock")),
-            Some(DevStage::Build)
-        );
+        assert!(!source.roots.is_input(&repository.root.join("Cargo.toml")));
+        assert!(source.roots.is_input(&repository.root.join("Cargo.lock")));
         assert!(
             source
                 .replace_native_inputs([], [repository.root.join("../outside.toml")])
                 .await
                 .is_err()
         );
-        assert_eq!(
-            source.roots.stage(&second.join("lib.rs")),
-            Some(DevStage::Build),
+        assert!(
+            source.roots.is_input(&second.join("lib.rs")),
             "a refused refresh retains the prior ownership"
         );
     }
@@ -1773,7 +1731,7 @@ mod tests {
         }
         // Generated native sources are tracked in real packages. Keep their
         // deletion dirty too, including the last file removed by the test.
-        git(&repository.root, &["add", "package/generated"]);
+        git(&repository.root, &["add", "component/package/generated"]);
         git(
             &repository.root,
             &["commit", "--quiet", "-m", "generated native fixture"],
@@ -1811,7 +1769,7 @@ mod tests {
         repository.write_fixture();
         let (mut source, _outputs, paths) = native_output_source(&repository).await;
         for path in &paths {
-            assert_eq!(source.roots.stage(path), Some(DevStage::Build));
+            assert!(source.roots.is_input(path));
             fs::write(path, "external output").expect("edit native output externally");
             assert!(has_rerun(
                 &native_output_batch(&mut source).await,
@@ -1826,7 +1784,7 @@ mod tests {
         let application = repository.package().join("generated/wamn.rs");
         fs::write(&application, "application generation stays ignored")
             .expect("write unrelated generated application output");
-        assert_eq!(source.roots.stage(&application), None);
+        assert!(!source.roots.is_input(&application));
         assert!(
             native_output_batch(&mut source)
                 .await
@@ -2160,6 +2118,24 @@ mod tests {
             .await
             .expect("generated event arrived")
             .expect("read generated event")
+            .expect("source remains open");
+        assert!(
+            collect_batch(first, &mut source)
+                .iter()
+                .all(|event| *event == DevInvalidation::Ignore)
+        );
+
+        // The loop writes SQLx metadata during Generate, so its own output
+        // inside a component root does not rerun the loop.
+        fs::write(
+            repository.package().join("tests/.sqlx/query.json"),
+            "{\"x\":1}",
+        )
+        .expect("write SQLx metadata");
+        let first = tokio::time::timeout(Duration::from_secs(2), source.next())
+            .await
+            .expect("SQLx metadata event arrived")
+            .expect("read SQLx metadata event")
             .expect("source remains open");
         assert!(
             collect_batch(first, &mut source)
