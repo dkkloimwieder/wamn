@@ -313,13 +313,25 @@ fn project_catalog_for_package(
             })
             .cloned()
             .collect::<Vec<_>>();
-        tables.push(Table::new(
-            table.schema(),
-            table.name(),
-            columns,
-            constraints,
-            indexes,
-        ));
+        let exclusions = table
+            .exclusions()
+            .iter()
+            .filter(|exclusion| {
+                let owner = constraint_owners
+                    .get(&(
+                        table.schema().to_owned(),
+                        table.name().to_owned(),
+                        exclusion.name().to_owned(),
+                    ))
+                    .unwrap_or(relation_owner);
+                admitted_owners.contains(owner.as_str())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        tables.push(
+            Table::new(table.schema(), table.name(), columns, constraints, indexes)
+                .with_exclusions(exclusions),
+        );
     }
     Ok(CatalogIr::new(tables))
 }
@@ -2758,7 +2770,10 @@ impl Drop for TemporaryFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_schema_introspection::ir::{Column, ColumnDefault, ColumnType, Constraint};
+    use wamn_schema_introspection::ir::{
+        Column, ColumnDefault, ColumnType, Constraint, Exclusion, ExclusionAccessMethod,
+        ExclusionElement, ExclusionKey,
+    };
 
     fn package(id: &str, version: &str, component: &str) -> PackageInput {
         let manifest = serde_json::from_value(serde_json::json!({
@@ -3054,13 +3069,43 @@ mod tests {
             ))
             .expect("parse shipped base manifest"),
         };
-        let overlay = PackageInput {
+        let mut overlay = PackageInput {
             root: PathBuf::from("/apps/client_acme_receiving"),
             manifest: PackageManifest::from_slice(include_bytes!(
                 "../../../../apps/client_acme_receiving/wamn.json"
             ))
             .expect("parse shipped overlay manifest"),
         };
+        overlay
+            .manifest
+            .models
+            .get_mut("purchase_order")
+            .expect("overlay extends the base purchase order")
+            .constraint_owners
+            .insert(
+                "purchase_order_acme_quality_status_excl".to_owned(),
+                "client_acme_receiving".to_owned(),
+            );
+        let base_exclusion = Exclusion::new(
+            "purchase_order_supplier_id_excl",
+            ExclusionAccessMethod::Gist,
+            vec![ExclusionKey::new(
+                ExclusionElement::column("supplier_id"),
+                "=",
+            )],
+            ["supplier_id"],
+        )
+        .expect("base exclusion");
+        let overlay_exclusion = Exclusion::new(
+            "purchase_order_acme_quality_status_excl",
+            ExclusionAccessMethod::Gist,
+            vec![ExclusionKey::new(
+                ExclusionElement::column("acme_quality_status"),
+                "=",
+            )],
+            ["acme_quality_status"],
+        )
+        .expect("overlay exclusion");
         let catalog = CatalogIr::new(vec![
             Table::new(
                 "receiving",
@@ -3097,7 +3142,8 @@ mod tests {
                     .expect("overlay quality constraint"),
                 ],
                 Vec::new(),
-            ),
+            )
+            .with_exclusions(vec![base_exclusion.clone(), overlay_exclusion]),
             Table::new(
                 "receiving",
                 "quality_inspection",
@@ -3145,6 +3191,14 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["purchase_order_id_pkey"]
         );
+        assert_eq!(
+            base_purchase_order
+                .exclusions()
+                .iter()
+                .map(|exclusion| exclusion.name())
+                .collect::<Vec<_>>(),
+            ["purchase_order_supplier_id_excl"]
+        );
 
         let overlay_catalog = project_catalog_for_package(&catalog, &overlay.manifest, &installed)
             .expect("project overlay");
@@ -3156,20 +3210,24 @@ mod tests {
             .expect("overlay includes the extended base relation");
         assert_eq!(overlay_purchase_order.columns().len(), 8);
         assert_eq!(overlay_purchase_order.constraints().len(), 2);
-        let clean_base = CatalogIr::new(vec![Table::new(
-            "receiving",
-            "purchase_order",
-            vec![
-                Column::new("id", ColumnType::Uuid, false, None, None),
-                Column::new("supplier_id", ColumnType::Uuid, false, None, None),
-                Column::new("created_at", ColumnType::Timestamptz, false, None, None),
-                Column::new("created_by", ColumnType::Uuid, false, None, None),
-                Column::new("updated_at", ColumnType::Timestamptz, false, None, None),
-                Column::new("updated_by", ColumnType::Uuid, false, None, None),
-            ],
-            vec![Constraint::primary_key("purchase_order_id_pkey", ["id"]).unwrap()],
-            Vec::new(),
-        )]);
+        assert_eq!(overlay_purchase_order.exclusions().len(), 2);
+        let clean_base = CatalogIr::new(vec![
+            Table::new(
+                "receiving",
+                "purchase_order",
+                vec![
+                    Column::new("id", ColumnType::Uuid, false, None, None),
+                    Column::new("supplier_id", ColumnType::Uuid, false, None, None),
+                    Column::new("created_at", ColumnType::Timestamptz, false, None, None),
+                    Column::new("created_by", ColumnType::Uuid, false, None, None),
+                    Column::new("updated_at", ColumnType::Timestamptz, false, None, None),
+                    Column::new("updated_by", ColumnType::Uuid, false, None, None),
+                ],
+                vec![Constraint::primary_key("purchase_order_id_pkey", ["id"]).unwrap()],
+                Vec::new(),
+            )
+            .with_exclusions(vec![base_exclusion]),
+        ]);
         let mut manifest = base.manifest.clone();
         manifest.models.retain(|name, _| name == "purchase_order");
         manifest.custom_operations.clear();
