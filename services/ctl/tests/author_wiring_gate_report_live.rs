@@ -123,19 +123,26 @@ fn wiring(id: &str, version: u32) -> WiringDocument {
 async fn provision_project(project: &Client, project_url: &str) {
     project
         .batch_execute(
+            // `apply_package` runs the migrations as `wamn_db_owner`, so that
+            // role must exist and own this database, as provisioning sets it.
             "DROP SCHEMA IF EXISTS catalog CASCADE; \
              DO $$ DECLARE role_name text; BEGIN \
                PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('wamn_role_bootstrap')); \
-               FOREACH role_name IN ARRAY ARRAY['wamn_app', 'wamn_scenario_author'] LOOP \
+               FOREACH role_name IN ARRAY \
+                   ARRAY['wamn_app', 'wamn_scenario_author', 'wamn_db_owner'] LOOP \
                  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
                    EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                                    NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
                  END IF; \
                END LOOP; \
+             END $$; \
+             DO $$ BEGIN \
+               EXECUTE format('ALTER DATABASE %I OWNER TO wamn_db_owner', \
+                              pg_catalog.current_database()); \
              END $$;",
         )
         .await
-        .expect("reset the project catalog schema and prerequisite role");
+        .expect("reset the project catalog schema and prerequisite roles");
     project
         .batch_execute(&format!("{CATALOG_SCHEMA_SQL}\n{APP_SCHEMA_SQL}"))
         .await
