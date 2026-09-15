@@ -250,12 +250,11 @@ async fn guest_generations_are_per_tenant_and_carry_the_predicate_key() {
         .batch_execute(&format!("CREATE DATABASE \"{database}\""))
         .await
         .expect("create lifecycle database");
-    // The PUBLIC floor only, NOT `grant_connect_on_database_sql`: that helper
-    // also grants CONNECT to `wamn_app`, and for THIS family `wamn_app` IS the
-    // stable ACL role. Recreating it here would leave a healthy role for the
-    // ensure-ACL builder's IF NOT EXISTS guard to find and mask a mutated
-    // builder — the trap the drop above exists to avoid. The generation's own
-    // CONNECT is granted by the action and asserted below.
+    // The PUBLIC floor only. For THIS family `wamn_app` IS the stable ACL role,
+    // and naming it here would mean recreating it, which would leave a healthy
+    // role for the ensure-ACL builder's IF NOT EXISTS guard to find and mask a
+    // mutated builder — the trap the drop above exists to avoid. The
+    // generation's own CONNECT is granted by the action and asserted below.
     catalog
         .batch_execute(&format!(
             "REVOKE CONNECT, TEMPORARY ON DATABASE \"{database}\" FROM PUBLIC"

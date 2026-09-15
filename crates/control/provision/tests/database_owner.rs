@@ -10,7 +10,7 @@
 //!
 //! 1. **ownership** — a project-env database's `datdba` is `wamn_db_owner`, and
 //!    specifically NOT `wamn_app` (the role guest-authored SQL executes as) and
-//!    NOT a superuser. `wamn_app` is left with `CONNECT` and nothing else: no
+//!    NOT a superuser. `wamn_app` is left with nothing: no `CONNECT`, no
 //!    `CREATE`, no `TEMPORARY`, and zero owned objects anywhere in the cluster.
 //!    `wamn_db_owner` itself cannot log in and holds no membership in either
 //!    direction — it holds title and nothing else.
@@ -140,14 +140,15 @@ fn project_env_database_ownership_and_connect_are_scoped() {
     );
 
     // The privilege SQL, in the order the runbook applies it. The owner change
-    // MUST precede the CONNECT grant: `ALTER DATABASE … OWNER TO` rewrites the
-    // outgoing owner's ACL entry, and a `wamn_app` grant made while `wamn_app`
-    // owns the database merges into exactly that entry.
+    // MUST precede the CONNECT revokes: `ALTER DATABASE … OWNER TO` rewrites the
+    // outgoing owner's ACL entry, so a revoke applied before it can be undone by
+    // the entry the owner change carries over.
     let privilege_sql = |database: &str| {
         format!(
-            "{owner};\n{connect}\n",
+            "{owner};\n\
+             REVOKE CONNECT, TEMPORARY ON DATABASE \"{database}\" FROM PUBLIC; \
+             REVOKE CONNECT ON DATABASE \"{database}\" FROM \"{APP_ROLE}\";\n",
             owner = sql::set_database_owner_sql(database),
-            connect = sql::grant_connect_on_database_sql(database),
         )
     };
     for database in [&first, &second] {
@@ -174,11 +175,11 @@ DO $$ BEGIN
              AND (r.rolname = '{APP_ROLE}' OR r.rolsuper)) = 0,
     'no project-env database is owned by wamn_app or by a superuser';
 
-  -- 2. wamn_app keeps CONNECT and loses every ownership-implied right. These
+  -- 2. wamn_app holds no CONNECT and no ownership-implied right. The latter
   --    are the rights no grant matrix expressed and no REVOKE could remove.
-  ASSERT has_database_privilege('{APP_ROLE}', '{first}', 'CONNECT')
-     AND has_database_privilege('{APP_ROLE}', '{second}', 'CONNECT'),
-    'wamn_app still reaches both project-env databases';
+  ASSERT has_database_privilege('{APP_ROLE}', '{first}', 'CONNECT') = false
+     AND has_database_privilege('{APP_ROLE}', '{second}', 'CONNECT') = false,
+    'wamn_app reaches neither project-env database';
   ASSERT has_database_privilege('{APP_ROLE}', '{first}', 'CREATE') = false
      AND has_database_privilege('{APP_ROLE}', '{second}', 'CREATE') = false,
     'wamn_app holds no CREATE on a project-env database';

@@ -105,7 +105,7 @@ async fn prepare_scratch_database(client: &Client) {
                EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); \
                EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_effect_writer', current_database()); \
                EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_run_projection_writer', current_database()); \
-               EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_app', current_database()); \
+               EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_app', current_database()); \
                EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); \
              END $$;"
         ))

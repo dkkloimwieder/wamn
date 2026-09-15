@@ -2,8 +2,8 @@
 //! per-project-env Postgres **database** on an org's appropriate cluster (or the
 //! T3 trials pool) and record it in the T1 control-plane registry.
 //!
-//! The four-tier counterpart of `provision-project`: identity is the `(org,
-//! project, env)` [`Triple`], and the database lives on the cluster **derived** by
+//! Identity is the `(org, project, env)` [`Triple`], and the database lives on
+//! the cluster **derived** by
 //! [`cluster_of`](wamn_control_registry::cluster_of) (D18) from the org's placement + the
 //! env's policy — a dedicated org's `<org>-<owner(env)>` (so `canary` sharing prod
 //! lands on `<org>-prod`, `canary` own on `<org>-canary`), or the shared pool for a

@@ -6,11 +6,11 @@
 //! … OWNER …` on the target cluster. The imperative work the CRD does *not* cover
 //! — ensuring the `wamn_db_owner` title role (which the CR's `spec.owner` names,
 //! so it must exist first) and the shared `wamn_app` role, then `ALTER DATABASE
-//! … OWNER TO` / `REVOKE CONNECT FROM PUBLIC` / `GRANT` (the [`crate::sql`]
-//! builders) — stays a thin privilege step (topology fact 3).
+//! … OWNER TO` / `REVOKE CONNECT` (the [`crate::sql`] builders) — stays a thin
+//! privilege step (topology fact 3).
 //!
 //! Rendered as a `serde_json::Value` (`kubectl apply -f` accepts JSON — the
-//! [`render_secret_manifest`](crate::secret::render_secret_manifest) /
+//! [`render_project_env_secret_manifest`](crate::secret::render_project_env_secret_manifest) /
 //! [`render_org_cluster_set`](crate::org::render_org_cluster_set) precedent);
 //! the `provision-project-env` driver emits it and the runbook/Job applies it and
 //! waits ready. This crate is pure — no K8s client.

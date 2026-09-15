@@ -504,7 +504,14 @@ async fn owner_statement_asymmetry_leg(su: &Client) {
     // The RETIRED shape, re-created by hand because the shipped builders no
     // longer produce it: both stable roles granted CONNECT before the owner
     // statement.
-    run_alone(su, &sql::grant_connect_on_database_sql(ORDERING_DATABASE)).await;
+    run_alone(
+        su,
+        &format!(
+            "REVOKE CONNECT, TEMPORARY ON DATABASE \"{ORDERING_DATABASE}\" FROM PUBLIC; \
+             GRANT CONNECT ON DATABASE \"{ORDERING_DATABASE}\" TO \"{APP_ROLE}\";"
+        ),
+    )
+    .await;
     run_alone(
         su,
         &format!("GRANT CONNECT ON DATABASE \"{ORDERING_DATABASE}\" TO \"{DISPATCH_READER_ROLE}\""),

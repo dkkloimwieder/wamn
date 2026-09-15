@@ -424,9 +424,12 @@ async fn management_admitter_generation_lifecycle_converges_and_rotates() {
         .await
         .expect("create lifecycle database");
     catalog
-        .batch_execute(&sql::grant_connect_on_database_sql(&database))
+        .batch_execute(&format!(
+            "REVOKE CONNECT, TEMPORARY ON DATABASE \"{database}\" FROM PUBLIC; \
+             REVOKE CONNECT ON DATABASE \"{database}\" FROM wamn_app;"
+        ))
         .await
-        .expect("revoke target PUBLIC TEMPORARY and grant app CONNECT");
+        .expect("revoke target PUBLIC TEMPORARY and app CONNECT");
 
     let target_url = database_url(&admin_url, &database);
     let target = connect(&target_url).await;

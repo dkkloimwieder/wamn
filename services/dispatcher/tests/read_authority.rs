@@ -292,13 +292,15 @@ fn dispatcher_reads_the_queue_as_a_reader_that_cannot_write_it() {
     );
 
     run_ok(&url, &sql::create_database_named_sql(&database));
-    // Ownership converges BEFORE either CONNECT grant: `ALTER DATABASE … OWNER TO`
-    // rewrites the outgoing owner's ACL entry, and a CONNECT granted while that
-    // role still owned the database is carried away with it.
+    // Ownership converges BEFORE the CONNECT revokes: `ALTER DATABASE … OWNER TO`
+    // rewrites the outgoing owner's ACL entry, so a revoke applied before it can
+    // be undone by the entry the owner change carries over.
     let privilege_sql = format!(
-        "{owner};\n{connect}\n{reader_connect}\n",
+        "{owner};\n\
+         REVOKE CONNECT, TEMPORARY ON DATABASE \"{database}\" FROM PUBLIC; \
+         REVOKE CONNECT ON DATABASE \"{database}\" FROM \"{APP_ROLE}\";\n\
+         {reader_connect}\n",
         owner = sql::set_database_owner_sql(&database),
-        connect = sql::grant_connect_on_database_sql(&database),
         reader_connect = sql::revoke_dispatch_reader_connect_sql(&database),
     );
     run_ok(&url, &privilege_sql);

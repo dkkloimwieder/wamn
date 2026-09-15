@@ -497,8 +497,9 @@ async fn provision_project(
         .batch_execute(&format!(
             "{CURRENT_DATABASE_PUBLIC_CONNECT_SQL} \
              BEGIN; {catalog} {run_state} {run_queue} COMMIT; \
-             {access_floor} {generation}",
-            access_floor = sql::grant_connect_on_database_sql(PROJECT_DATABASE),
+             REVOKE CONNECT, TEMPORARY ON DATABASE \"{PROJECT_DATABASE}\" FROM PUBLIC; \
+             REVOKE CONNECT ON DATABASE \"{PROJECT_DATABASE}\" FROM wamn_app; \
+             {generation}",
             // One call mints the stable admitter ACL role, applies the exact
             // column-level surface `ctl` applies, creates this generation, and
             // grants it CONNECT. The gate does not hand-write any of it.

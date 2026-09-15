@@ -74,8 +74,8 @@ wamn-schema-control = { workspace = true }
 wamn-schema-generator = { workspace = true }
 wamn-schema-introspection = { workspace = true }
 wamn-record-history = { workspace = true }
-# 2.3 provision-project: the pure CREATE DATABASE / role / GRANT CONNECT
-# builders + project-id naming + credential Secret rendering.
+# The pure provisioning SQL builders + identifier naming + credential Secret
+# rendering.
 wamn-control-provision = { workspace = true }
 # wamn-q3n.6 provision-org: the control-plane registry model + registry SQL.
 wamn-control-registry = { workspace = true }

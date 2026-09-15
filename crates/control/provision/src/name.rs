@@ -1,8 +1,8 @@
 //! Identifier naming + the connection-URL composer.
 //!
 //! A project id is a K8s-friendly lowercase slug (`[a-z0-9-]`, start/end
-//! alphanumeric) — the same shape the platform uses for flow ids (wi4). It maps
-//! to a database and Secret named `wamn-db-<project>`. Hyphenated names are
+//! alphanumeric) — the same shape the platform uses for flow ids (wi4). It is a
+//! component of the database and Secret names under `wamn-db-`. Hyphenated names are
 //! quoted in DDL (see [`crate::sql`]) and are unreserved in a connection URL
 //! path, so one slug serves both the K8s (hyphen) and Postgres (quoted) domains
 //! without translation.
@@ -11,9 +11,9 @@ use crate::error::ProvisionError;
 use crate::workload_role::WorkloadRoleFamily;
 
 /// The single shared, cluster-global application role. Every generated tenant
-/// floor and hand-written schema grants to it; provisioning grants it `CONNECT`
-/// on each project database (isolation is per-database + RLS, not per-role — see
-/// the crate docs).
+/// floor and hand-written schema grants to it. It holds no database `CONNECT`:
+/// every App generation inherits it, so provisioning revokes that privilege and
+/// grants `CONNECT` to each generation on its own database instead.
 pub const APP_ROLE: &str = "wamn_app";
 
 /// The role every project-env database's `datdba` points at — the title holder,
@@ -84,7 +84,7 @@ pub const MANAGEMENT_ADMITTER_SECRET_PREFIX: &str = "wamn-mgmt-admitter-";
 /// characters a DNS-1123 name cannot.
 pub const GUEST_SECRET_PREFIX: &str = "wamn-guest-";
 
-/// Prefix for the per-project database **and** Secret name: `wamn-db-<project>`.
+/// Prefix for the per-project-env database **and** Secret names: `wamn-db-<org>--…`.
 /// It is under the platform-reserved `wamn` prefix (wamn-66x) on purpose — the
 /// platform mints it, and project ids in that space are rejected.
 pub const DB_PREFIX: &str = "wamn-db-";
@@ -213,23 +213,11 @@ fn is_slug_byte(b: u8) -> bool {
     is_alnum(b) || b == b'-'
 }
 
-/// The project's database name: `wamn-db-<project>`. Quote it in DDL (it
-/// contains hyphens) via [`crate::sql`]; it is URL-path-safe as-is.
-pub fn database_name(project: &str) -> String {
-    format!("{DB_PREFIX}{project}")
-}
-
-/// The project's credential Secret name: `wamn-db-<project>` — the same string
-/// the future `K8sSecretProvider` (5x0.1) will look up.
-pub fn secret_name(project: &str) -> String {
-    format!("{DB_PREFIX}{project}")
-}
-
 /// The per-project-env database name:
 /// `wamn-db-<org>--<project>--<env>--<instance>`
 /// (wamn-q3n.7).
 ///
-/// The **org** is encoded — unlike the 2.3 [`database_name`] — because the shared
+/// The **org** is encoded — unlike the retired 2.3 project-only name — because the shared
 /// T3 trials pool hosts many orgs (two orgs' identically-named projects would
 /// otherwise collide on one cluster), and because every cluster's CNPG `Database`
 /// resources share the one K8s namespace, so the resource name must be unique
@@ -620,14 +608,6 @@ mod tests {
         // The boundary is a hyphen: `wamn` + non-hyphen is a normal project.
         assert!(validate_project_id("wamning").is_ok());
         assert!(validate_project_id("wamnable").is_ok());
-    }
-
-    #[test]
-    fn names_derive_from_the_project_id() {
-        assert_eq!(database_name("acme-corp"), "wamn-db-acme-corp");
-        assert_eq!(secret_name("acme-corp"), "wamn-db-acme-corp");
-        // Database and Secret names are identical (one lookup key for 5x0.1).
-        assert_eq!(database_name("p1"), secret_name("p1"));
     }
 
     #[test]

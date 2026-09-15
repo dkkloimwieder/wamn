@@ -6,7 +6,6 @@ use std::process::Command;
 const LOCK_CHILD_ENV: &str = "WAMN_CTL_LOCK_CHILD";
 
 const MVP_VERBS: &[&str] = &[
-    "provision-project",
     "provision-org",
     "provision-project-env",
     "enable-cdc-project-env",

@@ -2,23 +2,20 @@
 //!
 //! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
 //!
-//! Standing up a project turns the SQL-emitting E3 crates into a live system:
-//! given a project id, provision a per-project Postgres **database** on the
-//! shared cluster (D6: CloudNativePG, one shared Cluster with a database per
-//! project), granting the shared [`APP_ROLE`] `CONNECT` and revoking it from
-//! `PUBLIC`. The output 2.4 (system schema) consumes is *a provisioned,
-//! credentialed, `wamn_app`-roled, empty project database*.
+//! Standing up a project environment turns the SQL-emitting E3 crates into a
+//! live system: provision a per-project-env Postgres **database** (D6:
+//! CloudNativePG), owned by the NOLOGIN title role, with `CONNECT` revoked from
+//! `PUBLIC` and from the stable [`APP_ROLE`]. The output 2.4 (system schema)
+//! consumes is *a provisioned, empty project-env database*.
 //!
 //! This crate is the pure core (SR3 / house rule 1): identifier naming, the
-//! `CREATE DATABASE` / role-bootstrap / `GRANT CONNECT` text builders, the
-//! per-project credential Secret renderer, the connection-URL composer, and — for
+//! `CREATE DATABASE` / role-bootstrap / credential-generation text builders, the
+//! per-project-env credential Secret renderers, the connection-URL composer, and — for
 //! the four-tier topology — the org [`Cluster` SET](crate::org) renderer (one
 //! cluster per recovery-domain owner, each sized by its env policy — D18, cjv.21)
 //! and the per-project-env CNPG [`Database` CR](crate::database) renderer
 //! (wamn-q3n.7) — no DB, no K8s client, no clock. The effects live in the
-//! `provision-project` / `provision-org` / `provision-project-env` subcommands
-//! (`wamn-ctl`); the `provisionbench` gate (`wamn-gates`) drives the whole path
-//! against a real cluster.
+//! `provision-org` / `provision-project-env` subcommands (`wamn-ctl`).
 //!
 //! # Isolation model
 //!
@@ -30,8 +27,9 @@
 //! 1. **per-project DATABASE** — a component resolved to project *a* holds a
 //!    connection pool to *a*'s database only and physically cannot address
 //!    another project's database (Postgres has no cross-database queries);
-//! 2. **per-DB CONNECT** — `PUBLIC` is revoked and only `wamn_app` is granted
-//!    `CONNECT`, so no unexpected role reaches a project database;
+//! 2. **per-generation CONNECT** — `PUBLIC` and the stable `wamn_app` role hold
+//!    no `CONNECT`; each generation login is granted `CONNECT` on its own
+//!    database only, so a generation cannot open a session on another database;
 //! 3. **RLS within** — the 3.2 tenant floor confines rows by `app.tenant`.
 //!
 //! Per-project **distinct** roles/passwords (stronger credential isolation) are
@@ -114,9 +112,9 @@ pub use name::{
     DB_PREFIX, DISPATCH_READER_ROLE, EFFECT_WRITER_SECRET_PREFIX, GUEST_SECRET_PREFIX,
     INSTANCE_SUFFIX_LEN, MANAGEMENT_ADMITTER_SECRET_PREFIX, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN,
     MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, compose_url,
-    control_author_secret_name, database_name, event_stream_name, management_admitter_secret_name,
+    control_author_secret_name, event_stream_name, management_admitter_secret_name,
     project_env_cdc_secret_name, project_env_database_name, project_env_effect_writer_secret_name,
-    project_env_guest_secret_name, project_env_namespace, project_env_secret_name, secret_name,
+    project_env_guest_secret_name, project_env_namespace, project_env_secret_name,
     validate_instance_suffix, validate_project_env, validate_project_env_cdc, validate_project_id,
     workload_secret_name,
 };

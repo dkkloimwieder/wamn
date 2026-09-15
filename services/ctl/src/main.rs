@@ -7,7 +7,7 @@ mod print_platform_principals;
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
     apply_package, author_wiring, bind_connection, delivery, enable_cdc_project_env,
-    identity_issuer, print_release_env, project_env_membership, promote, provision, provision_org,
+    identity_issuer, print_release_env, project_env_membership, promote, provision_org,
     provision_project_env, publish_release, push_component, reconcile_package_data_access,
     reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
 };
@@ -38,8 +38,6 @@ enum Command {
     CheckChanges(delivery::qualification::CheckChangesArgs),
     /// Qualify the exact release artifacts from a clean selected revision.
     QualifyRelease(delivery::qualification::QualifyReleaseArgs),
-    /// Provision a per-project Postgres database + credential on the shared cluster (2.3)
-    ProvisionProject(provision::ProvisionProjectArgs),
     /// Render a dedicated org's CNPG Cluster set (one per recovery domain, sized by env policy) + record it in the T1 registry (wamn-q3n.6 / D18)
     ProvisionOrg(provision_org::ProvisionOrgArgs),
     /// Render a per-project-env database (CNPG Database CRD) + privilege step + record it in the T1 registry (wamn-q3n.7)
@@ -104,7 +102,6 @@ async fn main() -> anyhow::Result<()> {
         Command::PrepareRelease(args) => delivery::prepare(args).await,
         Command::CheckChanges(args) => delivery::qualification::check_changes(args).await,
         Command::QualifyRelease(args) => delivery::qualification::qualify(args).await,
-        Command::ProvisionProject(args) => provision::run(args).await,
         Command::ProvisionOrg(args) => provision_org::run(args).await,
         Command::ProvisionProjectEnv(args) => provision_project_env::run(args).await,
         Command::ProvisionIdentityIssuer(args) => identity_issuer::run(args).await,

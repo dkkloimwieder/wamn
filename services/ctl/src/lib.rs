@@ -2,7 +2,7 @@
 //!
 //! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
 //!
-//! Provisioning (`provision-project`, `provision-org`, `provision-project-env`,
+//! Provisioning (`provision-org`, `provision-project-env`,
 //! `enable-cdc-project-env`), exact package application, and reconciliation
 //! ship in `wamn-ctl`. Environment
 //! lifecycle and reporting verbs require the `ops` feature and ship in the
@@ -32,7 +32,6 @@ pub mod pat_client;
 pub mod print_release_env;
 pub mod project_env_membership;
 pub mod promote;
-pub mod provision;
 pub mod provision_org;
 pub mod provision_project_env;
 #[cfg(feature = "ops")]

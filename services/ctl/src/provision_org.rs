@@ -4,8 +4,7 @@
 //! — then render its CNPG `Cluster` set (one cluster per recovery-domain owner,
 //! each sized by the org's policy for that env).
 //!
-//! An imperative CLI (the `provision-project` precedent), run as a Job or from a
-//! runbook. It:
+//! An imperative CLI, run as a Job or from a runbook. It:
 //!
 //! 1. looks up the `--template` preset (`trials` / `standard` / `dedicated` —
 //!    the `Tier` successor) and builds the org's [`Placement`](wamn_control_registry::Placement)

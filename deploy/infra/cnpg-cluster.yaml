@@ -9,16 +9,15 @@
 # CONVERSION = promotion to a dedicated T2 pair (the tier-move, wamn-q3n.13).
 #
 # Stands up ALONGSIDE the guardrailed deploy/platform/postgres.yaml pod — the legacy S2–S6
-# gates keep running against that; the 2.3 provisionbench + the wamn-q3n
-# provisioning gates target this cluster. Pinned operator: deploy/infra/cnpg-operator.yaml
+# gates keep running against that; the wamn-q3n provisioning gates target this
+# cluster. Pinned operator: deploy/infra/cnpg-operator.yaml
 # (CNPG 1.29.2). SHARED-CLUSTER GUARDRAIL: this file is doc-of-intent — the live
 # `wamn-pg` Cluster is never re-applied/recreated (provisioning adds Databases to
 # it additively). Retiring the legacy postgres.yaml gate pod is a separate concern
 # (wamn-689).
 #
-# Cross-tenant isolation = per-project-env database + per-DB CONNECT (PUBLIC
-# revoked) + RLS within, under the single shared NOSUPERUSER `wamn_app` role
-# (roles are cluster-global). See docs/archive/platform/provisioning.md.
+# Cross-tenant isolation = per-project-env database + per-generation CONNECT
+# (PUBLIC and the cluster-global stable `wamn_app` role revoked) + RLS within.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -33,7 +32,7 @@ metadata:
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:18
-  # provision-project connects as the `postgres` superuser to CREATE DATABASE /
+  # Provisioning connects as the `postgres` superuser to CREATE DATABASE /
   # CREATE ROLE (the runtime `wamn_app` role is NOSUPERUSER/NOCREATEDB). CNPG
   # disables the superuser password by default; enable it so the secret
   # `wamn-pg-superuser` carries a usable admin URI.

@@ -46,7 +46,7 @@ async fn reset_and_install(client: &Client) -> BareSchemaName {
              DO $database$ BEGIN \
                EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_effect_writer', \
                               current_database()); \
-               EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_app', current_database()); \
+               EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_app', current_database()); \
              END $database$;"
         ))
         .await

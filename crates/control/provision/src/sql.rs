@@ -1,11 +1,11 @@
 //! Pure Postgres text builders for project provisioning (SR3 house rule 3:
 //! pure text + validated/quoted identifiers; the driver holds the connection).
 //!
-//! Every builder takes an **already-validated** project id (see
-//! [`crate::validate_project_id`]); the database name it derives is
+//! Every builder takes an **already-validated** name (see
+//! [`crate::validate_project_env`]); a database name it takes is
 //! double-quoted, so a slug (which cannot contain a `"`) is injection-safe. The
-//! `wamn_app` role name is a pinned constant. Values that vary (a probe's
-//! database name, a role password) travel as `$n` params or quoted literals.
+//! `wamn_app` role name is a pinned constant. Values that vary (a probed role
+//! name, a role password) travel as `$n` params or quoted literals.
 
 mod cdc;
 mod credentials;
@@ -14,10 +14,8 @@ mod database_grants;
 
 #[doc(inline)]
 pub use database::{
-    PLATFORM_EXTENSIONS, create_database_named_sql, create_database_sql, database_exists_sql,
-    drop_database_named_sql, drop_database_sql, ensure_db_owner_role_sql,
-    grant_connect_on_database_sql, grant_connect_sql, install_platform_extensions_sql,
-    set_database_owner_sql,
+    PLATFORM_EXTENSIONS, create_database_named_sql, drop_database_named_sql,
+    ensure_db_owner_role_sql, install_platform_extensions_sql, set_database_owner_sql,
 };
 
 #[doc(inline)]
@@ -50,7 +48,7 @@ pub use cdc::{
     upsert_cdc_exclusion_map_sql, upsert_entity_map_sql,
 };
 
-use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, database_name};
+use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE};
 use crate::workload_role::{
     EVENT_MATERIALIZER_ROLE, EXECUTOR_PLATFORM_ROLE, HTTP_ADMITTER_ROLE, MANAGEMENT_ADMITTER_ROLE,
     PLATFORM_GROUP_ROLE, SESSION_ROLE_READER_ROLE, WorkloadRoleFamily,
@@ -136,8 +134,8 @@ pub fn drain_app_role_sessions_sql() -> String {
 
 /// Legacy entry point for [`ensure_app_acl_role_sql`].
 ///
-/// `password` remains only because the legacy `provision-project` command and
-/// URL surface still accepts it; removing that surface belongs to
+/// `password` remains only because the legacy `provision-project-env`
+/// `--app-password` URL surface still accepts it; removing that surface belongs to
 /// `wamn-0h0g.12.185`. It is deliberately not emitted into the SQL.
 pub fn ensure_app_role_sql(_password: &str) -> String {
     ensure_app_acl_role_sql()
@@ -149,11 +147,6 @@ pub fn ensure_app_role_sql(_password: &str) -> String {
 // [`APP_ROLE`], which holds `INSERT`/`UPDATE`/`DELETE` on the run queue and on
 // the whole `catalog` schema. Its real surface is two `SELECT`s. These builders
 // mint the scoped reader and grant it exactly that surface, nothing wider.
-//
-// Deliberately parallel to the `CONNECT` builders above rather than folded into
-// them: [`grant_connect_on_database_sql`] names [`APP_ROLE`] specifically, and a
-// shared builder would be one edit away from handing the dispatcher's narrow
-// credential the application role's authority, or vice versa.
 
 /// The relations the dispatcher reads, in the order it touches them: the
 /// parked-due reconciliation `SELECT` scans `run_queue` and its budget clause
@@ -291,7 +284,7 @@ pub const EXECUTOR_PLATFORM_QUEUE_UPDATE_COLUMNS: [&str; 4] = [
 /// `wamn_dispatch_reader` is CLUSTER-GLOBAL and its generations are members
 /// `WITH INHERIT TRUE`, so one `GRANT CONNECT` per environment reached EVERY
 /// environment on the cluster — the identical defect `wamn-0h0g.12.179` measured
-/// live for the guest and closed in [`grant_connect_on_database_sql`]'s caller.
+/// live for the guest and closed in `provision_project_env::privilege_sql`.
 /// CONNECT belongs to the GENERATION, which
 /// [`prepare_workload_generation_sql`] grants it directly and only on the one
 /// database that generation was minted for.
@@ -951,19 +944,7 @@ mod tests {
     }
 
     #[test]
-    fn database_ddl_quotes_the_hyphenated_name() {
-        assert_eq!(
-            create_database_sql("acme-corp"),
-            "CREATE DATABASE \"wamn-db-acme-corp\" OWNER \"wamn_db_owner\""
-        );
-        assert_eq!(
-            drop_database_sql("acme-corp"),
-            "DROP DATABASE IF EXISTS \"wamn-db-acme-corp\" WITH (FORCE)"
-        );
-    }
-
-    #[test]
-    fn named_database_ddl_targets_an_arbitrary_db_name_and_the_wrappers_delegate() {
+    fn named_database_ddl_targets_an_arbitrary_db_name() {
         // The per-project-env path (wamn-q3n.7/.8) passes a full triple-derived name.
         assert_eq!(
             create_database_named_sql("wamn-db-acme--billing--dev"),
@@ -972,54 +953,6 @@ mod tests {
         assert_eq!(
             drop_database_named_sql("wamn-db-acme--billing--dev"),
             "DROP DATABASE IF EXISTS \"wamn-db-acme--billing--dev\" WITH (FORCE)"
-        );
-        // The 2.3 create wrapper adds its stable title owner; the named helper
-        // stays owner-neutral for substrate scaffolding.
-        assert_eq!(
-            create_database_sql("acme"),
-            "CREATE DATABASE \"wamn-db-acme\" OWNER \"wamn_db_owner\""
-        );
-        assert_eq!(
-            create_database_named_sql("wamn-db-acme"),
-            "CREATE DATABASE \"wamn-db-acme\""
-        );
-        // The drop wrapper remains a direct delegation.
-        assert_eq!(
-            drop_database_sql("acme"),
-            drop_database_named_sql("wamn-db-acme")
-        );
-    }
-
-    #[test]
-    fn grant_connect_revokes_public_then_grants_app_role() {
-        let sql = grant_connect_sql("acme");
-        // The REVOKE FROM PUBLIC must precede the GRANT (order is not load-bearing
-        // for correctness, but both must be present — the isolation backstop).
-        let revoke = sql
-            .find("REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-acme\" FROM PUBLIC")
-            .expect("revoke public");
-        let grant = sql
-            .find("GRANT CONNECT ON DATABASE \"wamn-db-acme\" TO \"wamn_app\"")
-            .expect("grant app role");
-        assert!(revoke < grant);
-    }
-
-    #[test]
-    fn grant_connect_on_database_targets_an_arbitrary_db_name() {
-        // The per-project-env path (wamn-q3n.7) passes a full triple-derived name.
-        let sql = grant_connect_on_database_sql("wamn-db-acme--billing--dev");
-        assert!(sql.contains(
-            "REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-acme--billing--dev\" FROM PUBLIC"
-        ));
-        assert!(
-            sql.contains(
-                "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_app\""
-            )
-        );
-        // The project-taking 2.3 wrapper delegates to it with the derived name.
-        assert_eq!(
-            grant_connect_sql("acme"),
-            grant_connect_on_database_sql("wamn-db-acme")
         );
     }
 
@@ -1565,10 +1498,6 @@ mod tests {
         assert!(!sql.contains("GRANT"));
         // It touches ONE principal, so one edit cannot move both.
         assert!(!sql.contains(APP_ROLE));
-        assert!(
-            !grant_connect_on_database_sql("wamn-db-acme--billing--dev")
-                .contains(DISPATCH_READER_ROLE)
-        );
         // The generation is where CONNECT lives now, and only for its own
         // database.
         let generation = prepare_workload_generation_sql(
@@ -1991,13 +1920,5 @@ mod tests {
         let drop_slot = drop_replication_slot_sql("wamn_cdc_x");
         assert!(drop_slot.contains("pg_drop_replication_slot('wamn_cdc_x')"));
         assert!(drop_slot.contains("IF EXISTS"));
-    }
-
-    #[test]
-    fn database_exists_is_parameterized() {
-        assert_eq!(
-            database_exists_sql(),
-            "SELECT EXISTS (SELECT FROM pg_database WHERE datname = $1)"
-        );
     }
 }

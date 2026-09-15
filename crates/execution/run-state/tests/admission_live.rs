@@ -66,7 +66,10 @@ fn surviving_authority_matrix_live() {
     let database = success(&url, "SELECT current_database();")
         .trim()
         .to_string();
-    let access_floor = sql::grant_connect_on_database_sql(&database);
+    let access_floor = format!(
+        "REVOKE CONNECT, TEMPORARY ON DATABASE \"{database}\" FROM PUBLIC; \
+         REVOKE CONNECT ON DATABASE \"{database}\" FROM wamn_app;"
+    );
     // The production role builders retain the platform RLS membership.
     let executor_provision = sql::prepare_workload_generation_sql(
         WorkloadRoleFamily::ExecutorPlatform,

@@ -19,7 +19,6 @@ pub mod identity_keys_test;
 pub mod identity_session_test;
 mod measurement_schema;
 pub mod membership_test;
-pub mod provisionbench;
 pub mod readerbench;
 pub mod rc;
 pub mod retention;
