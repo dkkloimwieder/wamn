@@ -86,23 +86,10 @@ DO $scenario_author$ BEGIN
   END IF;
 END $scenario_author$;
 
--- Stable host-only ACL role for the effect table. Credential generations are
--- provisioned separately; this local fixture needs only the NOLOGIN grant
--- carrier so canonical run-state.sql can be applied.
-DO $effect_writer$ BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
-                 WHERE rolname = 'wamn_effect_writer') THEN
-    CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB
-      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-  END IF;
-END $effect_writer$;
-
 -- Stable host-only ACL role for run-history retention (`wamn-0h0g.12.69`). Its
 -- scoped A/B LOGIN generations, their CONNECT and their Secret are provisioned
--- separately; this local fixture needs only the NOLOGIN grant carrier, exactly
--- as it does for the effect writer above, so canonical run-state.sql can be
--- applied against it.
+-- separately; this local fixture needs only the NOLOGIN grant carrier, so
+-- canonical run-state.sql can be applied against it.
 DO $run_retention$ BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
   IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
@@ -137,7 +124,7 @@ END $platform_group$;
 -- INHERIT TRUE IS SPELLED, NOT DEFAULTED, AND THE OMISSION IS SILENT.
 -- Every role below is NOINHERIT, and in PostgreSQL 16+ a role's `rolinherit`
 -- supplies the DEFAULT `INHERIT` option for memberships granted TO it — so a
--- bare `GRANT wamn_platform TO wamn_effect_writer` lands `inherit_option =
+-- bare `GRANT wamn_platform TO wamn_run_retention` lands `inherit_option =
 -- false`, the two-hop chain (generation login -> ACL role -> wamn_platform)
 -- dies, and the platform principal reads ZERO ROWS with no error at all.
 -- Measured on PostgreSQL 18.6: bare grant -> 0 rows, `INHERIT TRUE` -> all rows.
@@ -156,17 +143,6 @@ END $platform_group$;
 -- deleting it strands nothing — the silent-deny risk that made the timing hard
 -- is gone. Whether the author's two remaining catalog reads are load-bearing
 -- for authoring is `wamn-0h0g.22.25`'s question and is not decided here.
---
--- `wamn_effect_writer` IS ALSO DELIBERATELY ABSENT (`wamn-0h0g.22.32`), and for
--- a harder reason than the author's. Its stable role is under a shape guard —
--- `RunPlaneActionKind::VerifyEffectWriterRole` — that refuses the role outright,
--- with 42501 `effect-writer-role-out-of-bounds`, if it holds ANY row in
--- `pg_auth_members` as a member. This grant WAS that row, so a fresh install
--- built a cluster that `reconcile-run-plane` then refused. Measured before the
--- removal: 8 of the 17 tests in `crates/control/lib/tests/run_plane_live.rs` failed on
--- that exact code. The writer reaches its four run-plane tables through
--- per-relation arms naming it directly in `deploy/sql/run-state.sql`, so
--- deleting this line strands no read.
 GRANT wamn_platform TO wamn_run_retention WITH ADMIN FALSE, INHERIT TRUE, SET FALSE;
 
 CREATE DATABASE wamn OWNER postgres;

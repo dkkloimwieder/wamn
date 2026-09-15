@@ -50,24 +50,12 @@ save_record() {
     print_record >"$1"
 }
 
-print_writer_metadata() {
-    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s' \
-        "$name" "$namespace" "$managed" "$component" "$org" "$project" \
-        "$env_name" "$pending_issued" "$purpose" "$prefix" "$role" "$pending_revoke" \
-        "$principal_id" "$kind" "$expiry" "$subject"
-}
-
 case $1 in
     get)
         name=$3
         file=$MOCK_STATE/$name
         check_namespace "$@"
-        if [[ $* == *wamn.io/credential-id* ]]; then
-            if [[ -f $file ]]; then
-                load_record "$file"
-                print_writer_metadata
-            fi
-        elif [[ $* == *ignore-not-found* ]]; then
+        if [[ $* == *ignore-not-found* ]]; then
             [[ ! -f $file ]] || printf '%s' "$name"
         else
             failure=$MOCK_STATE/.reread-failure-$name
@@ -81,11 +69,7 @@ case $1 in
     create)
         path=$(argument_after -f "$@")
         load_record "$path"
-        if [[ $component == effect-writer-credentials ]]; then
-            print_writer_metadata
-        else
-            printf '%s' "$prefix"
-        fi
+        printf '%s' "$prefix"
         ;;
     patch)
         path=$(argument_after -f "$@")
@@ -102,24 +86,9 @@ case $1 in
             save_record "$MOCK_STATE/$name"
         else
             apply_purpose=$purpose
-            [[ $component != effect-writer-credentials ]] || apply_purpose=effect-writer
             echo "apply:$apply_purpose" >>"$MOCK_LOG"
             [[ ${MOCK_APPLY_FAIL:-} != "$apply_purpose" ]] || exit 1
-            if [[ ${MOCK_APPLY_THIRD:-} == "$apply_purpose" ]]; then
-                purpose=cccccccccccccccccccccccccccccccc
-                save_record "$MOCK_STATE/$name"
-                exit 1
-            fi
-            if [[ ${MOCK_APPLY_NOOP:-} == "$apply_purpose" ]]; then
-                echo "secret/$name configured"
-                exit 0
-            fi
             save_record "$MOCK_STATE/$name"
-            if [[ $apply_purpose == effect-writer ]]; then
-                # Client-side kubectl apply adds an unrelated annotation. The
-                # wrapper compares only its owned wamn.io metadata fields.
-                : >"$MOCK_STATE/.last-applied-$name"
-            fi
             [[ ${MOCK_APPLY_AMBIGUOUS:-} != "$apply_purpose" ]] || exit 1
             if [[ ${MOCK_REREAD_FAIL:-} == "$apply_purpose" ]]; then
                 : >"$MOCK_STATE/.reread-failure-$name"
@@ -194,11 +163,6 @@ management=
 route=
 role_sql=
 revoke=
-writer_prepare=
-writer_retire=
-writer_abort=
-writer_secret=
-tenant=
 namespace=${WAMN_NAMESPACE:-wamn-system}
 while (($#)); do
     case $1 in
@@ -206,67 +170,11 @@ while (($#)); do
         --emit-route-caller-pat-secret) route=$2; shift 2 ;;
         --emit-role-sql) role_sql=$2; shift 2 ;;
         --revoke-pat-prefix) revoke=$2; shift 2 ;;
-        --prepare-effect-writer-generation) writer_prepare=$2; shift 2 ;;
-        --retire-effect-writer-generation) writer_retire=$2; shift 2 ;;
-        --abort-effect-writer-generation) writer_abort=$2; shift 2 ;;
-        --emit-effect-writer-secret) writer_secret=$2; shift 2 ;;
-        --tenant) tenant=$2; shift 2 ;;
-        --tenant=*) tenant=${1#*=}; shift ;;
         --namespace) namespace=$2; shift 2 ;;
         --namespace=*) namespace=${1#*=}; shift ;;
         *) shift ;;
     esac
 done
-
-writer_role() {
-    printf 'wamn_effect_writer_1111111111111111111111111111111111111111_%s' "$1"
-}
-
-if [[ -n $writer_prepare ]]; then
-    role=$(writer_role "$writer_prepare")
-    other_generation=$([[ $writer_prepare == a ]] && printf b || printf a)
-    predecessor=
-    if [[ -f $MOCK_STATE/.writer-$other_generation-login ]] &&
-        [[ $(cat "$MOCK_STATE/.writer-$other_generation-login") == t ]]; then
-        predecessor=${MOCK_WRITER_PREDECESSOR_ROLE:-$(writer_role "$other_generation")}
-    fi
-    echo "prepare:$writer_prepare" >>"$MOCK_LOG"
-    if [[ $writer_prepare == b && -z $predecessor ]]; then
-        exit 1
-    fi
-    printf t >"$MOCK_STATE/.writer-$writer_prepare-login"
-    issued_at=2026-01-01T00:00:00Z
-    not_before=2026-01-01T00:00:00Z
-    expires_at=2099-01-01T00:00:00Z
-    revoked_at=
-    if [[ $writer_prepare == a ]]; then
-        credential_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-    else
-        credential_id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-    fi
-    case ${MOCK_WRITER_MANIFEST_CORRUPTION:-} in
-        validity) not_before=2100-01-01T00:00:00Z ;;
-        revoked) revoked_at=present=2026-01-02T00:00:00Z ;;
-    esac
-    printf 'wamn-effect-writer-acme--billing--dev|%s|wamn|effect-writer-credentials|acme|billing|dev|%s|%s|%s|%s|%s|%s|%s|%s|%s|present\n' \
-        "$namespace" "$credential_id" \
-        "$issued_at" "$not_before" "$revoked_at" "$role" "$writer_prepare" "$expires_at" \
-        "$tenant" "$predecessor" \
-        >"$writer_secret"
-    exit 0
-fi
-
-if [[ -n $writer_retire ]]; then
-    echo "retire:$writer_retire" >>"$MOCK_LOG"
-    printf f >"$MOCK_STATE/.writer-$writer_retire-login"
-    exit 0
-fi
-
-if [[ -n $writer_abort ]]; then
-    echo "abort:$writer_abort" >>"$MOCK_LOG"
-    printf f >"$MOCK_STATE/.writer-$writer_abort-login"
-    exit 0
-fi
 
 if [[ -n $revoke ]]; then
     echo "revoke:$revoke" >>"$MOCK_LOG"
@@ -303,34 +211,7 @@ write_record() {
 echo provisioned
 MOCK
 
-cat >"$test_dir/bin/psql" <<'MOCK'
-#!/usr/bin/env bash
-set -euo pipefail
-
-role=
-while (($#)); do
-    case $1 in
-        -v) role=${2#role=}; shift 2 ;;
-        -c) shift 2 ;;
-        *) shift ;;
-    esac
-done
-generation=${role##*_}
-echo "probe-login:$generation" >>"$MOCK_LOG"
-if [[ -n ${MOCK_REQUIRED_LOGIN_ROLE:-} &&
-    $generation == "${MOCK_REQUIRED_LOGIN_ROLE##*_}" &&
-    $role != "$MOCK_REQUIRED_LOGIN_ROLE" ]]; then
-    exit 1
-fi
-if [[ ${MOCK_WRITER_LOGIN_PROBE_FAIL_GENERATION:-} == "$generation" ]]; then
-    exit 1
-fi
-if [[ -f $MOCK_STATE/.writer-$generation-login ]]; then
-    cat "$MOCK_STATE/.writer-$generation-login"
-    printf '\n'
-fi
-MOCK
-chmod +x "$test_dir/bin/kubectl" "$test_dir/bin/wamn-ctl" "$test_dir/bin/psql" "$bootstrap"
+chmod +x "$test_dir/bin/kubectl" "$test_dir/bin/wamn-ctl" "$bootstrap"
 
 expected_namespace() {
     printf '%s' "${TEST_NAMESPACE:-wamn-system}"
@@ -367,53 +248,9 @@ run_bootstrap() {
         MOCK_CTL_FAIL_BEFORE_WRITE="${MOCK_CTL_FAIL_BEFORE_WRITE:-0}" \
         MOCK_CTL_FAIL_AFTER_MANAGEMENT="${MOCK_CTL_FAIL_AFTER_MANAGEMENT:-0}" \
         WAMN_CTL_BIN="$test_dir/bin/wamn-ctl" KUBECTL_BIN="$test_dir/bin/kubectl" \
-        PSQL_BIN="$test_dir/bin/psql" \
         "$bootstrap" --org acme --project billing --env dev --tenant tenant-acme \
         --system-database-url 'postgres://admin:URL_SECRET_SENTINEL@sys/db' \
         --emit-secret "$test_dir/db.json" "$@"
-}
-
-run_writer_rotation() {
-    : >"$test_dir/log"
-    MOCK_STATE="$test_dir/state" MOCK_LOG="$test_dir/log" \
-        MOCK_EXPECT_NAMESPACE=wamn-system \
-        MOCK_APPLY_FAIL="${MOCK_APPLY_FAIL:-}" \
-        MOCK_APPLY_AMBIGUOUS="${MOCK_APPLY_AMBIGUOUS:-}" \
-        MOCK_APPLY_THIRD="${MOCK_APPLY_THIRD:-}" \
-        MOCK_APPLY_NOOP="${MOCK_APPLY_NOOP:-}" \
-        MOCK_WRITER_LOGIN_PROBE_FAIL_GENERATION="${MOCK_WRITER_LOGIN_PROBE_FAIL_GENERATION:-}" \
-        MOCK_WRITER_MANIFEST_CORRUPTION="${MOCK_WRITER_MANIFEST_CORRUPTION:-}" \
-        MOCK_WRITER_PREDECESSOR_ROLE="${MOCK_WRITER_PREDECESSOR_ROLE:-}" \
-        MOCK_REQUIRED_LOGIN_ROLE="${MOCK_REQUIRED_LOGIN_ROLE:-}" \
-        WAMN_CTL_BIN="$test_dir/bin/wamn-ctl" KUBECTL_BIN="$test_dir/bin/kubectl" \
-        PSQL_BIN="$test_dir/bin/psql" \
-        "$bootstrap" --org acme --project billing --env dev --tenant tenant-acme \
-        --target-admin-database-url 'postgres://admin:WRITER_ADMIN_SENTINEL@pg/wamn-db-acme--billing--dev' \
-        --rotate-effect-writer-generation "$1"
-}
-
-reset_writer_state() {
-    rm -f "$test_dir/state/wamn-effect-writer-acme--billing--dev" \
-        "$test_dir/state/.last-applied-wamn-effect-writer-acme--billing--dev" \
-        "$test_dir/state/.writer-a-login" "$test_dir/state/.writer-b-login"
-}
-
-writer_record() {
-    local generation=$1 issued_at=${2:-2026-01-01T00:00:00Z}
-    local not_before=${3:-2026-01-01T00:00:00Z} expires_at=${4:-2099-01-01T00:00:00Z}
-    local revoked_at=${5:-} record_tenant=${6-tenant-acme}
-    local role_hash=${7:-1111111111111111111111111111111111111111} credential_id role
-    if [[ $generation == a ]]; then
-        credential_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-    else
-        credential_id=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-    fi
-    role=wamn_effect_writer_${role_hash}_$generation
-    printf 'wamn-effect-writer-acme--billing--dev|wamn-system|wamn|effect-writer-credentials|acme|billing|dev|%s|%s|%s|%s|%s|%s|%s|%s||present\n' \
-        "$credential_id" "$issued_at" "$not_before" "$revoked_at" "$role" \
-        "$generation" "$expires_at" "$record_tenant" \
-        >"$test_dir/state/wamn-effect-writer-acme--billing--dev"
-    printf t >"$test_dir/state/.writer-$generation-login"
 }
 
 assert_log() {
@@ -425,14 +262,14 @@ assert_log() {
     }
 }
 
-# DO NOT DEBUG THIS FILE WITH `bash -x`. Every rotation is captured as
+# DO NOT DEBUG THIS FILE WITH `bash -x`. Every run is captured as
 # `output=$(... 2>&1)`, so xtrace lands INSIDE the capture, carries the
-# `--target-admin-database-url` sentinel with it, and trips the check below with
+# `--system-database-url` sentinel with it, and trips the check below with
 # a false `bootstrap leaked credential material`. Use an ERR trap on $LINENO.
 assert_no_secret_output() {
     local output=$1
     if [[ $output == *PAT_TOKEN_SENTINEL* || $output == *URL_SECRET_SENTINEL* ||
-        $output == *ROLE_SQL_PASSWORD_SENTINEL* || $output == *WRITER_ADMIN_SENTINEL* ]]; then
+        $output == *ROLE_SQL_PASSWORD_SENTINEL* ]]; then
         echo 'bootstrap leaked credential material' >&2
         exit 1
     fi
@@ -619,154 +456,12 @@ if run_bootstrap >/dev/null 2>&1; then
 fi
 assert_log ''
 
-# Writer generation rotation is wrapper-owned: ctl prepares/authenticates,
-# kubectl publishes, and only then ctl retires the old generation. NO PICKUP
-# TEST SITS BETWEEN PUBLISH AND RETIRE (wamn-0h0g.10.12) - see the rationale in
-# bootstrap.sh, and wamn-0h0g.10.17 for the tripwire on the first consumer.
-reset_writer_state
-if MOCK_APPLY_FAIL=effect-writer run_writer_rotation a >/dev/null 2>&1; then
-    echo 'expected non-installing writer Secret apply failure' >&2
-    exit 1
-fi
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nabort:a'
-[[ $(cat "$test_dir/state/.writer-a-login") == f ]]
-output=$(run_writer_rotation a 2>&1)
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nprobe-login:a'
-assert_no_secret_output "$output"
-[[ -f "$test_dir/state/.last-applied-wamn-effect-writer-acme--billing--dev" ]]
-
-# Prepared-but-unpublished generations are aborted on every definite failure,
-# including invalid ctl metadata before publication and a successful apply that
-# provably left the exact prior (absent) state installed.
-reset_writer_state
-if MOCK_WRITER_MANIFEST_CORRUPTION=validity run_writer_rotation a >/dev/null 2>&1; then
-    echo 'expected invalid prepared writer metadata to fail closed' >&2
-    exit 1
-fi
-assert_log $'prepare:a\nabort:a'
-[[ $(cat "$test_dir/state/.writer-a-login") == f ]]
-reset_writer_state
-if MOCK_APPLY_NOOP=effect-writer run_writer_rotation a >/dev/null 2>&1; then
-    echo 'expected no-op writer Secret publication to fail closed' >&2
-    exit 1
-fi
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nabort:a'
-[[ $(cat "$test_dir/state/.writer-a-login") == f ]]
-
-# An invalid same-generation installed Secret is never silently reused.
-reset_writer_state
-writer_record a 2026-01-01T00:00:00Z 2026-01-01T00:00:00Z 2026-02-01T00:00:00Z
-if run_writer_rotation a >/dev/null 2>&1; then
-    echo 'expected invalid installed writer Secret refusal' >&2
-    exit 1
-fi
-assert_log ''
-
-# An expired but structurally exact old Secret may rotate to the opposite slot;
-# refusing that path would make ordinary expiry unrecoverable.
-output=$(run_writer_rotation b 2>&1)
-assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
-assert_no_secret_output "$output"
-
-# A pre-tenant Secret is migration input, not a scope-equivalent credential.
-# The same slot refuses; the opposite slot mints the tenant identity, permits
-# the deliberate prefix change, and retires the exact predecessor ctl observed.
-reset_writer_state
-legacy_a=wamn_effect_writer_2222222222222222222222222222222222222222_a
-writer_record a 2026-01-01T00:00:00Z 2026-01-01T00:00:00Z \
-    2099-01-01T00:00:00Z '' '' 2222222222222222222222222222222222222222
-if run_writer_rotation a >/dev/null 2>&1; then
-    echo 'expected same-slot legacy writer migration refusal' >&2
-    exit 1
-fi
-assert_log ''
-output=$(MOCK_WRITER_PREDECESSOR_ROLE=$legacy_a run_writer_rotation b 2>&1)
-assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
-assert_no_secret_output "$output"
-
-reset_writer_state
-output=$(MOCK_APPLY_AMBIGUOUS=effect-writer run_writer_rotation a 2>&1)
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nprobe-login:a'
-assert_no_secret_output "$output"
-output=$(run_writer_rotation a 2>&1)
-assert_log $'probe-login:b\nprobe-login:a\nprobe-login:b'
-assert_no_secret_output "$output"
-if MOCK_APPLY_FAIL=effect-writer run_writer_rotation b >/dev/null 2>&1; then
-    echo 'expected prior-preserving writer Secret apply failure' >&2
-    exit 1
-fi
-assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nabort:b'
-[[ $(cat "$test_dir/state/.writer-b-login") == f ]]
-installed_generation=$(cut -d '|' -f 13 \
-    "$test_dir/state/wamn-effect-writer-acme--billing--dev")
-[[ $installed_generation == a ]]
-
-# A failed apply that leaves neither the exact prior nor the exact emitted
-# metadata is ambiguous and requires manual reconciliation; it is not aborted.
-reset_writer_state
-if MOCK_APPLY_THIRD=effect-writer run_writer_rotation a >/dev/null 2>&1; then
-    echo 'expected third-state writer Secret publication refusal' >&2
-    exit 1
-fi
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer'
-[[ $(cat "$test_dir/state/.writer-a-login") == t ]]
-
-# If the Secret is absent after publication loss while a legacy opposite slot
-# remains active, ctl carries that actual predecessor identity in its emitted
-# metadata. The wrapper probes and retires that identity without deriving a
-# tenant-scoped name that may never have existed.
-reset_writer_state
-printf t >"$test_dir/state/.writer-a-login"
-printf t >"$test_dir/state/.writer-b-login"
-legacy_b=wamn_effect_writer_3333333333333333333333333333333333333333_b
-output=$(MOCK_WRITER_PREDECESSOR_ROLE=$legacy_b MOCK_REQUIRED_LOGIN_ROLE=$legacy_b \
-    run_writer_rotation a 2>&1)
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nprobe-login:b\nretire:b\nprobe-login:a\nprobe-login:b'
-assert_no_secret_output "$output"
-
-# The mirror migration is admitted too: absent Secret metadata cannot tell a
-# fresh install from a live legacy A, so ctl observes A and authorizes tenant B.
-reset_writer_state
-printf t >"$test_dir/state/.writer-a-login"
-legacy_a=wamn_effect_writer_4444444444444444444444444444444444444444_a
-output=$(MOCK_WRITER_PREDECESSOR_ROLE=$legacy_a MOCK_REQUIRED_LOGIN_ROLE=$legacy_a \
-    run_writer_rotation b 2>&1)
-assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
-assert_no_secret_output "$output"
-
-# With neither slot present, the same desired-B request reaches ctl and ctl's
-# `(B, None, None)` rule refuses it before minting a LOGIN.
-reset_writer_state
-if run_writer_rotation b >/dev/null 2>&1; then
-    echo 'expected ctl to refuse a fresh generation-B install' >&2
-    exit 1
-fi
-assert_log 'prepare:b'
-[[ ! -e $test_dir/state/.writer-b-login ]]
-
-reset_writer_state
-printf t >"$test_dir/state/.writer-a-login"
-printf t >"$test_dir/state/.writer-b-login"
-if MOCK_WRITER_LOGIN_PROBE_FAIL_GENERATION=b run_writer_rotation a >/dev/null 2>&1; then
-    echo 'expected old-generation LOGIN probe failure to abort rotation' >&2
-    exit 1
-fi
-assert_log $'prepare:a\nprobe-login:a\napply:effect-writer\nprobe-login:b'
-
-output=$(run_writer_rotation b 2>&1)
-assert_log $'prepare:b\nprobe-login:b\napply:effect-writer\nprobe-login:a\nretire:a\nprobe-login:b\nprobe-login:a'
-assert_no_secret_output "$output"
-
 # The wrapper owns every credential-bearing output flag, including role SQL.
 for forbidden in \
     '--emit-role-sql=-' \
     '--emit-management-author-pat-secret=/tmp/forbidden' \
     '--emit-route-caller-pat-secret=/tmp/forbidden' \
     '--revoke-pat-prefix=0123456789abcdef' \
-    '--prepare-effect-writer-generation=a' \
-    '--retire-effect-writer-generation=b' \
-    '--abort-effect-writer-generation=a' \
-    '--emit-effect-writer-secret=/tmp/forbidden' \
     '--prepare-control-author-generation=a' \
     '--retire-control-author-generation=b' \
     '--abort-control-author-generation=a' \
