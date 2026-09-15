@@ -519,7 +519,10 @@ fn required_contract_observation_refuses_changed_consumed_fields_and_constraints
 
 /// Narrow seam check; the paired journey remains the fresh-install test.
 #[tokio::test]
-#[ignore = "requires a fresh disposable PostgreSQL 18 server and retained evidence path"]
+#[ignore = "requires a fresh PostgreSQL 18 server on which deploy/sql/postgres-init.sql already \
+            ran as the superuser named postgres, so that wamn_app exists. Set \
+            WAMN_OVERLAY_OBSERVER_DATABASE_URL to a database there with no receiving or catalog \
+            schema, and WAMN_OVERLAY_OBSERVER_EVIDENCE_FILE to the retained evidence path"]
 async fn installed_contract_observer_preserves_acls_and_refuses_changed_requirements()
 -> anyhow::Result<()> {
     use wamn_schema_introspection::postgres::{PostgresIntrospectionErrorKind, read_catalog};
