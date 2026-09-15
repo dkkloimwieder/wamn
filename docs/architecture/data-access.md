@@ -100,6 +100,8 @@ Generated queries return bounded pages.
 The generated `query` action declares a `limit` that defaults to 100 and accepts 1 to 100, with a keyset cursor.
 A custom projection declares its result class and typed result fields, and no row or byte limit.
 Its authored SQL decides how many rows it returns.
+A custom projection or command admits the result classes `one`, `optional_one`, and `bounded_list`.
+Generation refuses `page` on a custom operation, because `page` belongs to the generated `query` action.
 The host refuses a statement that returns more rows than its row limit.
 The row limit is `WAMN_PG_ROW_LIMIT`, default 100,000, or the `row_limit` of the project.
 The limit applies to each statement, and a projection runs one statement for each envelope item, up to 100 items.

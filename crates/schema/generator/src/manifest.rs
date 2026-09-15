@@ -807,6 +807,17 @@ fn validate_custom_operation(
     validate_custom_operation_kind(manifest, operation_name, operation)?;
     validate_custom_operation_input(operation_name, &operation.input)?;
     if let Some(result) = &operation.result {
+        // No paging contract exists for a custom operation. Page belongs to
+        // the generated query, which checks its cursor, limit and envelope.
+        if result.class == ResultClass::Page {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{} {operation_name} must not declare result class page; page belongs to the generated query",
+                    operation.kind()
+                ),
+            ));
+        }
         validate_contract_fields(operation_name, "result", &result.fields)?;
     }
     validate_custom_operation_errors(operation_name, operation)?;

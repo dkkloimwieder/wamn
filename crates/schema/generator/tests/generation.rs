@@ -116,6 +116,43 @@ fn custom_sql_generated_rust_symbols_are_unique_before_emission() {
     );
 }
 
+/// A custom projection or command cannot declare the page result class. No
+/// paging contract exists for it, so page belongs to the generated query.
+#[test]
+fn a_custom_operation_refuses_the_page_result_class() {
+    let projection = projection_operation();
+    let mut command = projection_operation();
+    command["kind"] = json!("command");
+    command["transaction"] = json!("explicit_per_input");
+    command["automatic_retry"] = json!(false);
+    command["idempotent_by"] =
+        json!({"state": {"guards": {"purchase_order": "purchase_order_id"}}});
+    for (kind, mut operation) in [("projection", projection), ("command", command)] {
+        let mut admitted = manifest();
+        admitted["custom_operations"]["quality.load_purchase_order_detail"] = operation.clone();
+        validate_operation_vocabulary(&parsed_manifest(&admitted))
+            .unwrap_or_else(|error| panic!("the {kind} fixture is valid with class one: {error}"));
+
+        operation["result"]["class"] = json!("page");
+        let mut paged = manifest();
+        paged["custom_operations"]["quality.load_purchase_order_detail"] = operation;
+        let refusal = run(&catalog(false), &paged, &QUERY_SOURCES)
+            .expect_err("a custom operation declaring page generated");
+        assert_eq!(
+            refusal.kind(),
+            GenerateErrorKind::InvalidOperation,
+            "{kind}"
+        );
+        assert_eq!(
+            refusal.context(),
+            format!(
+                "{kind} quality.load_purchase_order_detail must not declare result class page; \
+                 page belongs to the generated query"
+            ),
+        );
+    }
+}
+
 #[test]
 fn component_grouping_defaults_one_group_and_refuses_invalid_splits() {
     let single = parsed_manifest(&manifest());
