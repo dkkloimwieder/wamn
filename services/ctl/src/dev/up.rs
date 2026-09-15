@@ -30,6 +30,13 @@ use super::environment::{
 /// point at it: only the path is ever printed, never the token inside it.
 const ROUTE_CALLER_PAT_FILE: &str = "route-caller-pat.json";
 
+/// The address the authoring Gate listens on when `--gate-bind` is not given.
+///
+/// Port 8088 mirrors the scenario-worker production management port. The host
+/// is loopback because the session is local. The port is fixed, not ephemeral,
+/// because the configuration this command writes outlives the process.
+const DEFAULT_GATE_BIND: &str = "127.0.0.1:8088";
+
 /// Inputs `wamn dev up` takes to mint one disposable environment.
 #[derive(Debug, Args)]
 pub struct DevUpArgs {
@@ -49,7 +56,7 @@ pub struct DevUpArgs {
     ///
     /// A nameable port, not an ephemeral one: the configuration written here
     /// outlives the process that writes it.
-    #[arg(long, default_value = "127.0.0.1:8088")]
+    #[arg(long, default_value = DEFAULT_GATE_BIND)]
     gate_bind: String,
 
     #[arg(long, env = "WAMN_DEV_ENV_NATS_URL")]
