@@ -92,7 +92,7 @@ For Docker fixtures, choose a new container name and an unused loopback port.
 Make sure that a real query succeeds through the same connection path that the command uses.
 
 The `wamn-test-postgres` runner binary in `wamn-test-infrastructure` serves delivery tooling.
-Release qualification uses it for the generation database and SQLx preparation.
+Release qualification uses it for the generation database and the SQLx metadata check.
 It starts a server, creates the named database, and optionally applies migrations and history tables.
 It removes inherited PostgreSQL variables, sets each `--url-env` variable to the database URL, and runs the command.
 It stops the command's process group and removes its server on completion, failure, or handled interruption.
@@ -320,7 +320,23 @@ Use `apps/wamn_wms` as the input.
 
 `.cargo/config.toml` sets `SQLX_OFFLINE=true`, so SQLx compiles from each application's committed `tests/.sqlx/` directory and needs no database.
 A `DATABASE_URL` in the environment does not change this.
-After a Receiving SQL change, regenerate that cache:
+A query that has no matching metadata fails to compile until the metadata is prepared again.
+`cargo sqlx prepare` sets `SQLX_OFFLINE=false` for its own build, so it still reaches its database.
+
+The development loop prepares the metadata of Receiving and Acme in its Generate stage.
+It prepares an application only when one of these inputs changed:
+
+- the emitted SQL, `application_sql_corpus_identity` in `generated/package-weld.json`
+- the verified schema, `verified_schema_state_id` in the same file, which for Acme also changes with a Receiving migration
+- `deploy/sql/record-history.sql`
+- the locked SQLx crates in `Cargo.lock`
+
+The loop compares these inputs with the inputs of its last successful preparation.
+At the start of a session, it compares them with the committed files at `HEAD`.
+A failed or interrupted preparation runs again in the next cycle.
+A Rust-only change does not prepare.
+
+To prepare the metadata manually after a Receiving SQL change, run:
 
 ```bash
 RECEIVING_SQLX_DATABASE_URL="${RECEIVING_DATABASE_URL}?options=-csearch_path%3Dreceiving%2Cpublic"
@@ -334,6 +350,7 @@ RECEIVING_SQLX_DATABASE_URL="${RECEIVING_DATABASE_URL}?options=-csearch_path%3Dr
 For Acme, use its separate database, `apps/client_acme_receiving/tests`, and the `client_acme_sqlx_verifier` target.
 For an explicit metadata comparison, use the same command with `prepare --check`.
 That comparison writes temporary output under the target and preserves committed metadata.
+Release qualification runs this comparison against a fresh database for each verifier.
 
 ## Cleanup
 

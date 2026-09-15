@@ -39,22 +39,7 @@ a result; it stops recomputing inputs that didn't move.
 
 ### 4.1 SQLx offline by default
 
-- `SQLX_OFFLINE=true` in `.cargo/config.toml` `[env]`. Ordinary `cargo build`
-  and `cargo test` compile from committed `tests/.sqlx/` with no database; an
-  ambient `DATABASE_URL` cannot restore online checking.
-- **Refresh trigger — the effective inputs, not file extensions.** Generate
-  already byte-compares its emitted SQL; `prepare` runs when Generate emitted
-  different SQL for the application, when its effective schema changed (a
-  base migration under an overlay counts), or when the verifier version
-  moved. No new digest.
-- Command and location, stated: `cargo sqlx prepare` run in the application's
-  `tests/` directory against the verification database, writing
-  `tests/.sqlx/`, for the targets and features the verifier builds.
-- CI runs `cargo sqlx prepare --check` once per qualification against a
-  fresh database and refuses stale metadata. Local cycles never pay it.
-- Tests: an ordinary build with no database succeeds offline; preparation and
-  the CI check reach the verification database and cover the required
-  targets.
+4.1 landed under `wamn-0lgk`; `docs/operations/running-tests.md` owns SQLx offline compilation, the development-loop preparation rule, and the metadata check.
 
 ### 4.2 One test-server entrypoint, isolated databases
 

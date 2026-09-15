@@ -60,7 +60,8 @@ Reuse lasts for that watch session, not across restarts of the developer process
 
 Rust code saves reuse the schema, database rows, and unchanged generated files.
 Cargo controls which selected components need compilation.
-Named SQL and operation contract changes refresh generation and SQLx metadata against the retained database.
+Named SQL and operation contract changes refresh generation against the retained database.
+SQLx metadata is prepared again only when [its inputs](running-tests.md#application-generation-and-sqlx) changed.
 Changes to generator inputs, dependency locks, checker tools, or grants also invalidate the corresponding generated state.
 Missing or changed generated files prevent reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
