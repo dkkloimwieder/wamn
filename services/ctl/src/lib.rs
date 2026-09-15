@@ -33,10 +33,10 @@ pub mod prune_record_history;
 #[cfg(feature = "ops")]
 pub mod prune_run_history;
 pub mod push_release_manifest;
-pub mod reconcile_replica_identity;
+pub use wamn_control::reconcile_replica_identity;
 pub mod release_verbs;
 #[cfg(feature = "ops")]
 pub mod restore_project_env;
-pub mod terminalize_effect_uncertain;
+pub use wamn_control::terminalize_effect_uncertain;
 #[cfg(target_os = "linux")]
 pub mod ui;

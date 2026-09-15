@@ -1,7 +1,7 @@
 //! Server-answer test for package-model replica-identity reconciliation.
 
 use tokio_postgres::{Client, NoTls};
-use wamn_ctl::reconcile_replica_identity::reconcile;
+use wamn_control::reconcile_replica_identity::reconcile;
 use wamn_schema_control::ManagedModel;
 use wamn_test_infrastructure::locked_database;
 

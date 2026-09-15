@@ -18,6 +18,8 @@ pub mod provision_project_env;
 pub mod publish_release;
 pub mod push_component;
 pub mod reconcile_package_data_access;
+pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
 pub mod sql_params;
+pub mod terminalize_effect_uncertain;
 pub mod verification_policy;

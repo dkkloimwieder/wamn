@@ -5,12 +5,12 @@
 
 use tokio_postgres::{Client, NoTls};
 use wamn_control::reconcile_run_plane;
-use wamn_ctl::terminalize_effect_uncertain;
+use wamn_control::terminalize_effect_uncertain;
 use wamn_run_state::operator_action::{OperatorActionBasis, OperatorTerminalizeResult};
 use wamn_schema_control::BareSchemaName;
 
 const CURRENT_DATABASE_PUBLIC_CONNECT_SQL: &str =
-    include_str!("../../../test-support/fixtures/sql/current-database-public-connect.sql");
+    include_str!("../../../../test-support/fixtures/sql/current-database-public-connect.sql");
 const SCHEMA: &str = "operator_live";
 const HASH: &str = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
