@@ -122,7 +122,7 @@ pub struct ProvisionProjectEnvArgs {
     pub secret_namespace: Option<String>,
 
     /// Explicit target project-database admin URL for the generation actions that
-    /// address the project-env database (effect-writer, management-admitter).
+    /// address the project-env database (for example, management-admitter).
     /// Provisioning authority only: never persisted or emitted.
     #[arg(
         long,

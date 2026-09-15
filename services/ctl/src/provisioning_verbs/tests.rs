@@ -252,14 +252,14 @@ fn pat_issue_flags_select_independently_and_revoke_conflicts() {
     let abort = parse_args(&[
         "--target-admin-database-url",
         "postgresql://postgres@localhost/wamn-db-acme--billing--dev",
-        "--abort-effect-writer-generation",
+        "--abort-management-admitter-generation",
         "a",
     ])
     .unwrap();
     assert_eq!(
         abort.workload.action,
         Some(WorkloadGenerationAction {
-            family: WorkloadRoleFamily::EffectWriter,
+            family: WorkloadRoleFamily::ManagementAdmitter,
             verb: WorkloadActionVerb::Abort,
             generation: CredentialGeneration::A,
         })

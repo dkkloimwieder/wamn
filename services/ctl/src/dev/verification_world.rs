@@ -58,7 +58,7 @@ impl VerificationWorldBootstrapResult {
 /// The URL is the only mutation target. Deployment identity enters only to name
 /// the two existing management-admitter generations that the authenticated
 /// Gate and Publish path presents. The order mirrors production prerequisites:
-/// generation access, package-owner/effect-writer roles, package-owner database
+/// generation access, package-owner role, package-owner database
 /// authority, the converged catalog + run plane, the static
 /// application-authorization floor with the tenant's platform principal rows,
 /// then the management-admitter surface that names those relations.
@@ -107,12 +107,6 @@ async fn bootstrap_with_client(
         .context("ensure the package-owner role")?;
     let package_owner_create_granted = ensure_package_owner_create(client).await?;
 
-    // The run-plane record names this stable role in grants and policies, so
-    // the identity must exist before the from-zero reconciler applies it.
-    client
-        .batch_execute(&sql::ensure_effect_writer_acl_role_sql())
-        .await
-        .context("ensure the effect-writer role before run-plane reconciliation")?;
     let run_schema = BareSchemaName::new(RUN_SCHEMA)
         .expect("the repository-owned run schema is a valid bare identifier");
     let run_plane = reconcile_run_plane::reconcile(client, &run_schema, true)
