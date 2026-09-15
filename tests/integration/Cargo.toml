@@ -62,6 +62,7 @@ http-body-util = { workspace = true }
 hyper = { workspace = true }
 wamn-run-state = { workspace = true, features = ["test-util"] }
 wasmtime-wasi-http = { workspace = true }
+wamn-test-postgres = { workspace = true }
 
 [lints]
 workspace = true

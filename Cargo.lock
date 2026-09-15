@@ -5692,6 +5692,7 @@ dependencies = [
  "wamn-gate-harness",
  "wamn-run-state",
  "wamn-runtime",
+ "wamn-test-postgres",
  "wash-runtime",
  "wasi-virt",
  "wasm-encoder 0.251.0",
@@ -6018,6 +6019,7 @@ dependencies = [
  "wamn-execution-host",
  "wamn-platform-identity",
  "wamn-runtime",
+ "wamn-test-postgres",
  "wash-runtime",
 ]
 
@@ -6099,6 +6101,7 @@ dependencies = [
  "wamn-schema-generator",
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
+ "wamn-test-postgres",
  "wash-runtime",
  "wasm-encoder 0.251.0",
  "wasmparser 0.251.0",
@@ -6194,6 +6197,7 @@ dependencies = [
  "wamn-schema-generator",
  "wamn-schema-introspection",
  "wamn-test-infrastructure",
+ "wamn-test-postgres",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
@@ -6500,6 +6504,7 @@ dependencies = [
  "wamn-execution-contract",
  "wamn-gate-harness",
  "wamn-test-infrastructure",
+ "wamn-test-postgres",
 ]
 
 [[package]]

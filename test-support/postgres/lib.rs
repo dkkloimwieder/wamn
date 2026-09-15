@@ -3,12 +3,13 @@
 //! [`database`] gives the calling test a database of its own on the server of
 //! its test process. [`start`] gives a test a separate server, for example one
 //! with other server settings. The owned runner binary uses the same server to
-//! pass database coordinates to one child command.
+//! pass database coordinates to one child command. [`require_prerequisites`]
+//! fails an ignored test that is missing a declared prerequisite.
 
 use std::fs::{self, DirBuilder, File, OpenOptions};
 use std::io::{Read as _, Write as _};
 use std::net::{Ipv4Addr, TcpListener};
-use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _, PermissionsExt as _};
 use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -72,6 +73,44 @@ pub fn lock() -> ProcessLock {
 #[derive(Debug)]
 pub struct ProcessLock {
     _guard: MutexGuard<'static, ()>,
+}
+
+/// Fail the calling test, naming every missing prerequisite, before it does any work.
+///
+/// An ignored test calls this on its first line with the names that its
+/// `#[ignore = "requires: ..."]` reason lists. A name in upper case is an
+/// environment variable that must be set and not empty. Any other name is a
+/// program that must be an executable file on `PATH`.
+///
+/// # Panics
+///
+/// Panics with one message that names each missing prerequisite.
+pub fn require_prerequisites(names: &[&str]) {
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let missing: Vec<String> = names
+        .iter()
+        .filter_map(|name| {
+            if name
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+            {
+                std::env::var_os(name)
+                    .is_none_or(|value| value.is_empty())
+                    .then(|| format!("environment variable {name}"))
+            } else {
+                (!std::env::split_paths(&path).any(|directory| {
+                    fs::metadata(directory.join(name))
+                        .is_ok_and(|file| file.is_file() && file.permissions().mode() & 0o111 != 0)
+                }))
+                .then(|| format!("program {name} on PATH"))
+            }
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "missing prerequisites: {}",
+        missing.join(", ")
+    );
 }
 
 /// A database that one test owns on the server of its test process.
@@ -427,6 +466,26 @@ fn valid_database_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prerequisites_fail_naming_every_missing_variable_and_program() {
+        require_prerequisites(&["PATH", "sh"]);
+        let panic = std::panic::catch_unwind(|| {
+            require_prerequisites(&[
+                "PATH",
+                "WAMN_TEST_PREREQUISITE_NEVER_SET",
+                "sh",
+                "wamn-test-program-never-installed",
+            ])
+        })
+        .unwrap_err();
+        assert_eq!(
+            panic.downcast_ref::<String>().map(String::as_str),
+            Some(
+                "missing prerequisites: environment variable WAMN_TEST_PREREQUISITE_NEVER_SET, program wamn-test-program-never-installed on PATH"
+            )
+        );
+    }
 
     #[test]
     fn process_server_starts_on_first_use_and_gives_each_call_a_distinct_database() {
