@@ -848,8 +848,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires cargo-sqlx 0.9.0 and PostgreSQL 18"]
+    #[ignore = "requires: cargo-sqlx"]
     async fn sqlx_metadata_check_reaches_fresh_receiving_and_acme_databases() {
+        wamn_test_postgres::require_prerequisites(&["cargo-sqlx"]);
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .canonicalize()

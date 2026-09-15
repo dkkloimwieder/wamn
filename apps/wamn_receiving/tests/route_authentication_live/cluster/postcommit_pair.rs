@@ -8,8 +8,9 @@ use serde_json::{Value, json};
 use wamn_gate_harness::journey::BaseCandidate;
 
 #[tokio::test]
-#[ignore = "builds two independent Receiving installations and compares the unchanged overlay"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn unchanged_overlay_across_baseline_and_additive_installations() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
         fs::create_dir(&evidence)?;

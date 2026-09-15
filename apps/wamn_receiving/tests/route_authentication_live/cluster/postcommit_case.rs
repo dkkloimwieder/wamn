@@ -15,14 +15,16 @@ use super::{
 };
 
 #[tokio::test]
-#[ignore = "builds and runs the complete baseline Receiving cluster on owned local services"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn baseline_overlay_and_materializer_progress() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     run(BaseCandidate::Baseline).await
 }
 
 #[tokio::test]
-#[ignore = "builds and runs the complete additive Receiving cluster on owned local services"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn additive_overlay_and_materializer_progress() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     run(BaseCandidate::Additive).await
 }
 

@@ -12,8 +12,9 @@ use super::{
 };
 
 #[tokio::test]
-#[ignore = "builds and runs Receiving command histories against an owned disposable cluster"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn command_histories() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = evidence_directory()?;
     super::with_signals(&evidence, run_histories(&evidence)).await
 }
@@ -57,8 +58,9 @@ async fn run_histories(evidence: &std::path::Path) -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "builds and runs the retained in-cluster Receiving membership cases"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn human_membership_and_permission_revocation() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = evidence_directory()?;
     super::with_signals(&evidence, run_membership(&evidence)).await
 }

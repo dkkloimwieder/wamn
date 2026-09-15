@@ -11,22 +11,31 @@ use wamn_test_infrastructure::workload;
 use super::{deployment, install_host, provision, route_cases, session_cluster, start};
 
 #[tokio::test]
-#[ignore = "builds and runs the Receiving session issuer and two native hosts"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl"]
 async fn session_hosts_preserve_the_original_caller() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
+    ]);
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, run(&evidence, false, false)).await
 }
 
 #[tokio::test]
-#[ignore = "builds and runs Receiving fresh-only session selection"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl"]
 async fn fresh_only_session_selection() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
+    ]);
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, run(&evidence, true, false)).await
 }
 
 #[tokio::test]
-#[ignore = "builds and runs Receiving client login and fresh session selection"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, openssl"]
 async fn session_client_login_and_fresh_selection() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "docker", "kind", "kubectl", "helm", "jq", "curl", "openssl",
+    ]);
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, run(&evidence, true, true)).await
 }

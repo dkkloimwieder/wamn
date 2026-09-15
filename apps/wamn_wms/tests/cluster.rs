@@ -30,33 +30,40 @@ use crate::wms_runtime_live::write_result;
 use deployment::{checked, kubectl};
 
 #[tokio::test]
-#[ignore = "builds and runs a disposable WMS cluster"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn released_wms_routes() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     run_case(Case::Routes).await
 }
 
 #[tokio::test]
-#[ignore = "runs release preparation, qualification, publication, and deployment on owned services"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn owned_release_delivery() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     run_case(Case::Delivery).await
 }
 
 #[tokio::test]
-#[ignore = "builds and runs a disposable WMS cluster with a failed labels store"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn released_wms_routes_retain_committed_work_after_label_failure() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     run_case(Case::PartialCompletion).await
 }
 
 #[tokio::test]
-#[ignore = "builds and runs the WMS generated terminal in a disposable cluster"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, python3"]
 async fn generated_wms_terminal_reports_success_and_partial_completion() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "docker", "kind", "kubectl", "helm", "jq", "curl", "python3",
+    ]);
     run_case(Case::GeneratedTerminal).await
 }
 
 #[tokio::test]
-#[ignore = "measures cold, restarted, and steady requests in a disposable WMS cluster"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn restarted_wms_host_retains_compiled_code_and_serves_requests()
 -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     run_case(Case::Startup).await
 }
 

@@ -10,8 +10,9 @@ use super::{
 };
 
 #[tokio::test]
-#[ignore = "measures cold, restarted, and steady Receiving requests on an owned cluster"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn startup_and_steady_request_overhead() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
         let (mut cluster, _, cold) = prepare(&evidence).await?;
@@ -22,8 +23,9 @@ async fn startup_and_steady_request_overhead() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "runs the retained Receiving throughput sweep on an owned cluster"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn receiving_throughput() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
         let (mut cluster, route, cold) = prepare(&evidence).await?;
@@ -34,8 +36,9 @@ async fn receiving_throughput() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
-#[ignore = "compares service and human Receiving request authority on an owned cluster"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn receiving_fresh_authority() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, async {
         let (mut cluster, route, cold) = prepare(&evidence).await?;

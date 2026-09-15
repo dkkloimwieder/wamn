@@ -14,8 +14,17 @@ use super::super::{ORG, PROJECT, RELEASE_ID, TENANT};
 use super::{ReceivingCluster, apply, checked, deployment, kubectl, resources};
 
 #[tokio::test]
-#[ignore = "runs release preparation, qualification, publication, and deployment on owned services"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl, cargo-sqlx"]
 async fn owned_release_delivery() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&[
+        "docker",
+        "kind",
+        "kubectl",
+        "helm",
+        "jq",
+        "curl",
+        "cargo-sqlx",
+    ]);
     ensure!(
         Candidate::from_env()?.is_none(),
         "owned setup mints its own candidate"

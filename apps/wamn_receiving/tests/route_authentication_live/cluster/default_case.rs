@@ -10,8 +10,9 @@ use super::{
 };
 
 #[tokio::test]
-#[ignore = "builds and runs the complete Receiving application on owned local services"]
+#[ignore = "requires: docker, kind, kubectl, helm, jq, curl"]
 async fn released_routes_materializer_startup_and_environment_isolation() -> anyhow::Result<()> {
+    wamn_test_postgres::require_prerequisites(&["docker", "kind", "kubectl", "helm", "jq", "curl"]);
     let evidence = super::evidence_directory()?;
     super::with_signals(&evidence, run(&evidence)).await
 }
