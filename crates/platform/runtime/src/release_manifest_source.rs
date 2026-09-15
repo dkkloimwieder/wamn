@@ -112,6 +112,7 @@ impl ReleaseManifestFetchError {
     /// body pull now asks [`transport_is_mismatched`] first, and a registry that
     /// served bytes the named digest does not address is refused as
     /// [`ReleaseManifestFetchErrorKind::Mismatched`], not as absence.
+    /// `wamn-0h0g.19.18` applied the same split to the manifest pull.
     ///
     /// The version coupling is real and is accepted, because it was already
     /// being paid next door — the component source has classified this way since
@@ -252,11 +253,19 @@ impl ReleaseManifestSource {
             .client
             .pull_image_manifest(&reference, &self.auth)
             .await
-            .map_err(|_| {
-                ReleaseManifestFetchError::unavailable(
-                    &named,
-                    "release-manifest-artifact-manifest-unavailable",
-                )
+            .map_err(|source| {
+                if transport_is_mismatched(&source) {
+                    // Reuses the layout check's literal: the registry contradicts the envelope.
+                    ReleaseManifestFetchError::mismatched(
+                        &named,
+                        "release-manifest-artifact-envelope-mismatch",
+                    )
+                } else {
+                    ReleaseManifestFetchError::unavailable(
+                        &named,
+                        "release-manifest-artifact-manifest-unavailable",
+                    )
+                }
             })?;
         // The config blob is the frozen empty document and its digest is pinned
         // by the layout check, so there is nothing a second round trip could

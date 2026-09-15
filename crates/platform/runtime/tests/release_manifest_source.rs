@@ -462,3 +462,28 @@ async fn a_served_body_the_named_digest_does_not_address_refuses_the_pull() {
         "release-manifest-artifact-body-digest-mismatch"
     );
 }
+
+/// A manifest the registry serves but `oci-client` cannot parse is a contradiction.
+///
+/// `oci-client` 0.17 refuses a manifest body with schema version 1 before the
+/// layout check sees it. `pull_verified` classifies that transport error as
+/// `Mismatched`, the same class the layout check gives a wrong envelope, and
+/// not as an unreachable registry (`wamn-0h0g.19.18`).
+#[tokio::test]
+async fn a_manifest_the_registry_cannot_parse_refuses_as_a_contradiction() {
+    let canonical = br#"{"format-version":1}"#;
+    let (digest, _) = published_artifact(canonical);
+
+    let registry = lying_registry(br#"{"schemaVersion":1}"#.to_vec(), Vec::new()).await;
+    let credential = ScratchCredential::write_for(&registry.authority);
+    let error = source_for(&registry, &credential)
+        .pull_verified(&digest)
+        .await
+        .expect_err("a manifest the registry cannot parse refuses");
+
+    assert_eq!(error.kind(), ReleaseManifestFetchErrorKind::Mismatched);
+    assert_eq!(
+        error.refusal(),
+        "release-manifest-artifact-envelope-mismatch"
+    );
+}
