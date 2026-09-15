@@ -115,7 +115,7 @@ const PRE_ROLE_BOOTSTRAP_ACTIONS: [RunPlaneActionKind; 11] = [
     RunPlaneActionKind::RetireExecutionBundles,
     RunPlaneActionKind::FrameIdentityCutover,
     RunPlaneActionKind::RetireLegacyAdmissionSurface,
-    RunPlaneActionKind::EffectWriterCutover,
+    RunPlaneActionKind::EffectTableCutover,
     RunPlaneActionKind::PartitionPlaneCutover,
     RunPlaneActionKind::ChildRunCutover,
     RunPlaneActionKind::RerunLineageCutover,
@@ -826,7 +826,7 @@ async fn observe(
                 &[],
             )
             .await
-            .context("count effect records for writer cutover")?
+            .context("count effect records for effect-table cutover")?
             .get(0);
     }
     if obs
@@ -1099,7 +1099,7 @@ mod tests {
                 RunPlaneActionKind::RetireExecutionBundles,
                 RunPlaneActionKind::FrameIdentityCutover,
                 RunPlaneActionKind::RetireLegacyAdmissionSurface,
-                RunPlaneActionKind::EffectWriterCutover,
+                RunPlaneActionKind::EffectTableCutover,
                 RunPlaneActionKind::PartitionPlaneCutover,
                 RunPlaneActionKind::ChildRunCutover,
                 RunPlaneActionKind::RerunLineageCutover,

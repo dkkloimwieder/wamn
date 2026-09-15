@@ -12,7 +12,7 @@
 //!   columns, CHECKs, helper functions, and lineage trigger without losing its
 //!   compatible history. The materializer catalog-head lock and immutable
 //!   lineage are exercised, then a second reconcile is a no-op.
-//! - **effect frame + writer cutovers** (wamn-0h0g.4.13/.4.9): incompatible
+//! - **effect frame + table cutovers** (wamn-0h0g.4.13/.4.9): incompatible
 //!   populated immutable tables refuse before DDL. Empty tables converge to
 //!   frame-keyed, coordinate-bound attempt/dispatch/outcome facts while retired
 //!   mutable node projection columns are removed without fabricating history.
@@ -95,7 +95,7 @@ use run_history::{
 };
 
 use effect_tables::{
-    effect_writer_cutover_leg, effect_writer_populated_refusal_leg, frame_identity_cutover_leg,
+    effect_table_cutover_leg, effect_table_populated_refusal_leg, frame_identity_cutover_leg,
 };
 
 use catalog::{capture_mode_additive_leg, stored_suite_cutover_leg, two_plane_residency_leg};
@@ -315,8 +315,8 @@ async fn seed_run_admission_facts(
 /// reader left behind by another gate against the same container would make
 /// `current_noop_leg`'s first plan legitimately non-empty. `DROP OWNED BY` is
 /// what makes the role droppable: `DROP ROLE` refuses while any acl entry
-/// anywhere still names it. `wamn_app` and the two writer roles are created or
-/// hardened because the run-plane DDL and reconciler name them.
+/// anywhere still names it. `wamn_app` and the projection writer role are created
+/// or hardened because the run-plane DDL and reconciler name them.
 async fn reset(su: &Client) {
     su.batch_execute(&provision_sql::ensure_app_acl_role_sql())
         .await
@@ -466,8 +466,8 @@ async fn run_plane_reconcile_live() {
     node_runs_retirement_leg(&su).await;
     shared_runner_legacy_leg(&su).await;
     frame_identity_cutover_leg(&su).await;
-    effect_writer_cutover_leg(&su).await;
-    effect_writer_populated_refusal_leg(&su).await;
+    effect_table_cutover_leg(&su).await;
+    effect_table_populated_refusal_leg(&su).await;
     forced_rls_owner_refusal_leg(&su).await;
     partition_plane_authored_ordering_refusal_leg(&su).await;
     partition_plane_cutover_leg(&su).await;

@@ -12,10 +12,10 @@ async fn frame_identity_cutover_live() {
 }
 
 #[tokio::test]
-async fn effect_writer_cutover_live() {
+async fn effect_table_cutover_live() {
     let url = locked_database::database(wamn_test_postgres::database);
     let su = connect(&url).await;
-    effect_writer_cutover_leg(&su).await;
+    effect_table_cutover_leg(&su).await;
 }
 
 async fn retired_shape_schema_snapshot(su: &Client) -> String {
@@ -93,7 +93,7 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
             .await
             .expect_err("populated legacy identity must refuse before DDL");
         assert!(
-            format!("{error:#}").contains("effect-writer-cutover-requires-empty-ledger"),
+            format!("{error:#}").contains("effect-table-cutover-requires-empty-ledger"),
             "{label}: wrong refusal: {error:#}"
         );
         assert_eq!(
@@ -221,10 +221,10 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
     reset(su).await;
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
-        .expect("apply catalog for combined frame/writer cutover");
+        .expect("apply catalog for combined frame/effect-table cutover");
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema()))
         .await
-        .expect("apply current run-state for combined frame/writer cutover");
+        .expect("apply current run-state for combined frame/effect-table cutover");
     su.batch_execute(&format!(
         "ALTER TABLE {SCHEMA}.effect_attempt_dispatches \
            DROP CONSTRAINT effect_attempt_dispatches_attempt_fk, \
@@ -240,18 +240,18 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
     .expect("install combined frame and dispatch-coordinate drift");
     let plan = reconcile_run_plane::reconcile(su, &schema(), true)
         .await
-        .expect("combined frame/writer cutover converges in one pass");
+        .expect("combined frame/effect-table cutover converges in one pass");
     let frame_position = plan
         .actions
         .iter()
         .position(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover)
         .expect("combined frame cutover action");
-    let writer_position = plan
+    let table_cutover_position = plan
         .actions
         .iter()
-        .position(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
-        .expect("combined writer cutover action");
-    assert!(frame_position < writer_position);
+        .position(|action| action.kind == RunPlaneActionKind::EffectTableCutover)
+        .expect("combined effect-table cutover action");
+    assert!(frame_position < table_cutover_position);
     assert!(
         plan.actions[frame_position]
             .sql
@@ -263,7 +263,7 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
             .contains("ADD CONSTRAINT effect_attempt_dispatches_attempt_fk")
     );
     assert!(
-        plan.actions[writer_position]
+        plan.actions[table_cutover_position]
             .sql
             .contains("ADD CONSTRAINT effect_attempt_dispatches_attempt_fk")
     );
@@ -288,10 +288,10 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
     ));
     let again = reconcile_run_plane::reconcile(su, &schema(), true)
         .await
-        .expect("combined frame/writer cutover reapply");
+        .expect("combined frame/effect-table cutover reapply");
     assert!(!again.actions.iter().any(|action| matches!(
         action.kind,
-        RunPlaneActionKind::FrameIdentityCutover | RunPlaneActionKind::EffectWriterCutover
+        RunPlaneActionKind::FrameIdentityCutover | RunPlaneActionKind::EffectTableCutover
     )));
 
     reset(su).await;
@@ -391,7 +391,7 @@ pub(super) async fn frame_identity_cutover_leg(su: &Client) {
     assert!(exists, "missing current peer was not recreated");
 }
 
-async fn effect_writer_schema_snapshot(su: &Client) -> String {
+async fn effect_table_schema_snapshot(su: &Client) -> String {
     su.query_one(
         "SELECT jsonb_build_object( \
            'columns', COALESCE(( \
@@ -417,7 +417,7 @@ async fn effect_writer_schema_snapshot(su: &Client) -> String {
     .get(0)
 }
 
-async fn install_empty_incompatible_effect_writer_shape(su: &Client) {
+async fn install_empty_incompatible_effect_table_shape(su: &Client) {
     su.batch_execute(&format!(
         "ALTER TABLE {SCHEMA}.effect_attempt_dispatches \
              DROP CONSTRAINT effect_attempt_dispatches_attempt_fk, \
@@ -430,18 +430,18 @@ async fn install_empty_incompatible_effect_writer_shape(su: &Client) {
              ADD COLUMN attempt_key text;"
     ))
     .await
-    .expect("install incompatible empty writer-table shape");
+    .expect("install incompatible empty effect-table shape");
 }
 
-pub(super) async fn effect_writer_cutover_leg(su: &Client) {
+pub(super) async fn effect_table_cutover_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
-        .expect("apply catalog for writer cutover");
+        .expect("apply catalog for effect-table cutover");
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
-        .expect("apply current run-state for writer cutover");
+        .expect("apply current run-state for effect-table cutover");
     seed_run_admission_facts(su, "t1", "writer_cat", 1, "dev", "standard").await;
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
@@ -451,17 +451,17 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
                  'running');"
     ))
     .await
-    .expect("seed the run the writer cutover reconciles around");
-    install_empty_incompatible_effect_writer_shape(su).await;
+    .expect("seed the run the effect-table cutover reconciles around");
+    install_empty_incompatible_effect_table_shape(su).await;
 
     let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
-        .expect("empty writer-table cutover succeeds");
+        .expect("empty effect-table cutover succeeds");
     let action = plan
         .actions
         .iter()
-        .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
-        .expect("effect writer cutover action");
+        .find(|action| action.kind == RunPlaneActionKind::EffectTableCutover)
+        .expect("effect table cutover action");
     assert_eq!(
         action.sql.matches("LOCK TABLE").count(),
         3,
@@ -469,7 +469,7 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
     );
     let preflight = action
         .sql
-        .find("effect-writer-cutover-requires-empty-ledger")
+        .find("effect-table-cutover-requires-empty-ledger")
         .expect("frozen cutover preflight");
     let first_ddl = ["ALTER TABLE", "DROP TRIGGER", "DROP FUNCTION"]
         .into_iter()
@@ -520,12 +520,12 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
 
     let second = reconcile_run_plane::reconcile(su, &schema, true)
         .await
-        .expect("writer-table cutover reapply");
+        .expect("effect-table cutover reapply");
     assert!(
         !second
             .actions
             .iter()
-            .any(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
+            .any(|action| action.kind == RunPlaneActionKind::EffectTableCutover)
     );
 
     su.batch_execute(&format!(
@@ -618,7 +618,7 @@ pub(super) async fn effect_writer_cutover_leg(su: &Client) {
     }));
 }
 
-pub(super) async fn effect_writer_populated_refusal_leg(su: &Client) {
+pub(super) async fn effect_table_populated_refusal_leg(su: &Client) {
     for populated in [
         "effect_attempts",
         "effect_attempt_dispatches",
@@ -628,10 +628,10 @@ pub(super) async fn effect_writer_populated_refusal_leg(su: &Client) {
         let schema = schema();
         su.batch_execute(CATALOG_SCHEMA_SQL)
             .await
-            .expect("apply catalog for writer refusal");
+            .expect("apply catalog for effect-table refusal");
         su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
             .await
-            .expect("apply current run-state for writer refusal");
+            .expect("apply current run-state for effect-table refusal");
         su.batch_execute("SELECT set_config('app.tenant','t1',false)")
             .await
             .expect("prepare isolated incompatible record fact");
@@ -685,19 +685,19 @@ pub(super) async fn effect_writer_populated_refusal_leg(su: &Client) {
         su.batch_execute("GRANT wamn_scenario_author TO wamn_app")
             .await
             .expect("install unrelated mutation sentinel");
-        let before = effect_writer_schema_snapshot(su).await;
+        let before = effect_table_schema_snapshot(su).await;
         let error = reconcile_run_plane::reconcile(su, &schema, true)
             .await
-            .expect_err("populated incompatible writer table refuses");
+            .expect_err("populated incompatible effect table refuses");
         let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
         let database = postgres.as_db_error().expect("typed cutover refusal");
         assert_eq!(database.code().code(), "55000");
         assert_eq!(
             database.message(),
-            "effect-writer-cutover-requires-empty-ledger"
+            "effect-table-cutover-requires-empty-ledger"
         );
         assert_eq!(
-            effect_writer_schema_snapshot(su).await,
+            effect_table_schema_snapshot(su).await,
             before,
             "{populated}: refusal leaves schema unchanged"
         );
