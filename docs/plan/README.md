@@ -6,4 +6,5 @@ These pages describe unbuilt work and its limits. Current behavior belongs in [a
 - [Delivery](delivery.md): Deferred CI-provider configuration and conditional delivery extensions.
 - [Identity](identity.md): External login providers within the existing identity authority.
 - [Operator UI](operator-ui.md): Deferred client and screen capabilities.
+- [Short development cycles](dev-cycle-spec.md): Offline SQLx, one test PostgreSQL server, test selection, and crate consolidation.
 - [Upgrades](upgrades.md): Design for changing a schema after installation.
