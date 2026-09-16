@@ -1,71 +1,9 @@
 //! Portable connection requirements and environment-owned persistence records.
 
-use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-
-/// Controlled lifecycle states for an environment-owned connection instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ConnectionInstanceStatus {
-    Enabled,
-    Disabled,
-}
-
-impl ConnectionInstanceStatus {
-    /// Return the database literal pinned by the catalog schema.
-    pub fn as_sql(self) -> &'static str {
-        match self {
-            Self::Enabled => "enabled",
-            Self::Disabled => "disabled",
-        }
-    }
-}
 
 #[doc(inline)]
 pub use wamn_catalog::ComponentConnectionRequirement;
-
-/// An environment-owned stable connection identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConnectionInstance {
-    pub tenant_id: String,
-    pub environment: String,
-    pub instance_id: String,
-    pub requirement_type: String,
-    pub contract: String,
-    pub status: ConnectionInstanceStatus,
-    pub active_generation: Option<i64>,
-    pub revision: i64,
-}
-
-/// An immutable component-release association to one stable instance.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ComponentConnectionBinding {
-    pub tenant_id: String,
-    pub effective_release_id: i32,
-    pub component_digest: String,
-    pub store_alias: String,
-    pub environment: String,
-    pub instance_id: String,
-    pub status: ConnectionBindingStatus,
-    pub validation: ConnectionBindingValidation,
-    pub validation_hash: String,
-}
-
-/// Controlled state of an immutable release binding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ConnectionBindingStatus {
-    Active,
-    Disabled,
-}
-
-/// Persisted outcome of binding compatibility validation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ConnectionBindingValidation {
-    Valid,
-    Invalid,
-}
 
 /// Insert one immutable component requirement into the PROJECT plane; identical
 /// retries converge.
