@@ -5,7 +5,7 @@ set -euo pipefail
 umask 077
 
 fail() { printf '%s\n' "$1" >&2; exit 1; }
-[[ $# == 1 ]] || fail 'usage: bash live.sh EXACT_TEST_NAME'
+[[ $# == 1 ]] || fail 'usage: bash tools/http-reuse-run EXACT_TEST_NAME'
 test_name=$1
 case "$test_name" in
     trusted_http_route::tests::real_http_guest_reuses_connections_without_reusing_authority) ;;
@@ -118,7 +118,7 @@ curl --noproxy '*' --silent --show-error --fail --retry 20 --retry-connrefused -
 
 printf 'test=%s\nregistry=%s\n' "$test_name" "$registry_name"
 docker inspect --format '{{.Name}} {{.Image}}' "$registry_id"
-sha256sum -- "$test_binary" "$component_wasm" "$script_dir/live.sh"
+sha256sum -- "$test_binary" "$component_wasm" "$script_dir/http-reuse-run"
 test_environment=(env -i "PATH=$PATH" \
     "WAMN_HTTP_REUSE_ARTIFACT_BASE=$registry_address/http-reuse" \
     "WAMN_HTTP_REUSE_COMPONENT_WASM=$component_wasm")

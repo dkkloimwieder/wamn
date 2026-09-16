@@ -283,7 +283,6 @@ Use the exact debug integration test binary and debug `http_request.wasm` from t
 Keep source unchanged between that build and both runs.
 The runner requires the local `registry:2` image.
 Each test starts its own PostgreSQL server from the local PostgreSQL 18 binaries.
-The runner has an open bug, Beads `wamn-1pj3`.
 Replace `<hash>` below with the exact suffix from the integration test build.
 
 ```bash
