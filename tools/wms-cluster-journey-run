@@ -5,6 +5,7 @@ action=${1:?lifecycle action}
 cluster=${2:?cluster or container name}
 case "$cluster" in wamn) printf 'The kind-wamn cluster is frozen.\n' >&2; exit 64 ;; esac
 chart=oci://ghcr.io/wasmcloud/charts/runtime-operator
+cache="$(dirname -- "${BASH_SOURCE[0]}")/journey-image-cache"
 case "$action" in
   registry-password) docker run --rm -i --entrypoint htpasswd httpd:2-alpine -Bni "$cluster" ;;
   docker-version) docker info --format '{{json .ServerVersion}}' ;;
@@ -12,9 +13,12 @@ case "$action" in
   containers) docker container ls --all --format '{{json .Names}}' ;;
   images) docker image ls --format '{{json .Repository}} {{json .Tag}}' ;;
   build-images)
-    work=${3:?work directory}; image=${4:?host image}
-    docker build --platform=linux/amd64 --provenance=false \
-      --file "$work/host-image/Dockerfile" --tag "$image" "$work/host-image"
+    work=${3:?work directory}; image=${4:?host image}; source=${5:?source}
+    # The debug image is reused across runs by the content of its context, and
+    # relabeled to this run's own tag and commit (wamn-szr0).
+    name=${image%%:*}; name=${name#wamn-}
+    "$cache" ensure-context "$work/host-image" "$name" "$source" "${image#*:}" \
+      "$cluster" debug
     ;;
   create)
     work=${3:?work directory}; repository=${4:?repository}; host_image=${5:?host image}
@@ -107,6 +111,10 @@ case "$action" in
     if [[ -n ${4:-} ]] && docker image inspect "$4" >/dev/null 2>&1; then
       docker image rm --force "$4" || status=$?
     fi
+    # The run's own tag is gone above. The identity image stays for the next
+    # run of this context, under the retention bound (wamn-szr0).
+    "$cache" release "$cluster" || status=$?
+    "$cache" retain host || status=$?
     exit "$status"
     ;;
   *) printf 'Unknown lifecycle action: %s\n' "$action" >&2; exit 64 ;;

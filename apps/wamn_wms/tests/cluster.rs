@@ -194,13 +194,14 @@ async fn run_case(case: Case) -> anyhow::Result<()> {
                 )
                 .await?;
             } else if candidate.is_none() {
-                deployment::prepare_image(&target, work.path(), &head)?;
+                deployment::prepare_image(&target, work.path())?;
                 checked(
                     Command::new(&lifecycle)
                         .arg("build-images")
                         .arg(&cluster)
                         .arg(work.path())
-                        .arg(&image),
+                        .arg(&image)
+                        .arg(&head),
                 )
                 .await?;
             }

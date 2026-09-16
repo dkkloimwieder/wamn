@@ -59,21 +59,24 @@ pub(super) async fn preflight(lifecycle: &Path, cluster: &str, image: &str) -> a
     Ok(())
 }
 
-pub(super) fn prepare_image(target: &Path, work: &Path, head: &str) -> anyhow::Result<()> {
+/// Write the build context for the debug host image.
+///
+/// The context carries no source-head label. Its content is the image's
+/// identity, so a commit that produces the same binary must produce the same
+/// context and reuse the same image. The run's own commit is written by the
+/// relabel that gives the image its per-run tag (wamn-szr0).
+pub(super) fn prepare_image(target: &Path, work: &Path) -> anyhow::Result<()> {
     let directory = work.join("host-image");
     fs::create_dir(&directory)?;
     fs::copy(target.join("debug/wamn-host"), directory.join("wamn-host"))
         .context("copy the already built native host")?;
     fs::write(
         directory.join("Dockerfile"),
-        format!(
-            "FROM debian:trixie-slim\n\
+        "FROM debian:trixie-slim\n\
          RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \\\n          && rm -rf /var/lib/apt/lists/*\n\
          COPY wamn-host /usr/local/bin/wamn-host\n\
          ENV HOME=/tmp\n\
-         LABEL wamn.dev/source-head=\"{head}\" wamn.dev/build-profile=\"debug\"\n\
-         ENTRYPOINT [\"/usr/local/bin/wamn-host\"]\n"
-        ),
+         ENTRYPOINT [\"/usr/local/bin/wamn-host\"]\n",
     )?;
     Ok(())
 }
