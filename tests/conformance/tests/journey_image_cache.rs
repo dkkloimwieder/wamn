@@ -18,6 +18,10 @@ set -euo pipefail
 printf 'docker' >>"$FAKE_CALLS"
 printf '\t%q' "$@" >>"$FAKE_CALLS"
 printf '\n' >>"$FAKE_CALLS"
+if [[ $1 == build ]]; then
+  context=${!#}
+  [[ -f $context/Dockerfile ]] && cat "$context/Dockerfile" >>"$FAKE_CALLS"
+fi
 case "$1 ${2-}" in
   "image inspect") exit 1 ;;
 esac
@@ -30,6 +34,10 @@ set -euo pipefail
 printf 'docker' >>"$FAKE_CALLS"
 printf '\t%q' "$@" >>"$FAKE_CALLS"
 printf '\n' >>"$FAKE_CALLS"
+if [[ $1 == build ]]; then
+  context=${!#}
+  [[ -f $context/Dockerfile ]] && cat "$context/Dockerfile" >>"$FAKE_CALLS"
+fi
 exit 0
 "#;
 
@@ -297,5 +305,93 @@ fn retention_keeps_three_identities_and_never_a_leased_one() {
     assert!(
         calls(&directory).contains("image\trm\twamn-host:src-a"),
         "the released identity must become removable"
+    );
+}
+
+/// A prepared context is identified by what it holds, not by what a caller says.
+///
+/// The WMS debug image is built from a binary this run compiled, so no tree
+/// object describes it. A caller that passed its own identity could hand over
+/// a stale one and reuse the wrong image without an error (wamn-szr0).
+#[test]
+fn a_prepared_context_is_identified_by_its_own_content() {
+    let directory = TestDirectory::new();
+    executable(&directory.path("docker"), FAKE_DOCKER_ABSENT);
+    let context = directory.path("host-image");
+    fs::create_dir_all(&context).expect("create the context");
+    fs::write(context.join("Dockerfile"), "FROM scratch\n").expect("write the context Dockerfile");
+    fs::write(context.join("wamn-host"), "one").expect("write the built binary");
+    let context = context.to_str().expect("path");
+
+    let built = run(
+        &directory,
+        &[
+            "ensure-context",
+            context,
+            "host",
+            HEAD_LABEL,
+            CLUSTER,
+            CLUSTER,
+            "debug",
+        ],
+    );
+
+    assert!(
+        built.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    let first = String::from_utf8_lossy(&built.stdout).trim().to_owned();
+    assert!(
+        first.starts_with("wamn-host:src-"),
+        "the context must name an identity image, got {first}"
+    );
+    let log = calls(&directory);
+    assert!(
+        log.contains(&format!("LABEL wamn.dev/source-head=\"{HEAD_LABEL}\"")),
+        "the relabel must carry this run's own commit: {log}"
+    );
+    assert!(
+        log.contains("wamn.dev/build-profile=\"debug\""),
+        "the caller's build profile must reach the relabel: {log}"
+    );
+
+    // The same bytes keep the identity; a changed binary must not reuse it.
+    fs::write(directory.path("calls"), "").expect("reset the call log");
+    let again = run(
+        &directory,
+        &[
+            "ensure-context",
+            context,
+            "host",
+            HEAD_LABEL,
+            CLUSTER,
+            CLUSTER,
+            "debug",
+        ],
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&again.stdout).trim(),
+        first,
+        "identical content changed the identity"
+    );
+
+    fs::write(directory.path("host-image/wamn-host"), "two").expect("rebuild the binary");
+    let changed = run(
+        &directory,
+        &[
+            "ensure-context",
+            context,
+            "host",
+            HEAD_LABEL,
+            CLUSTER,
+            CLUSTER,
+            "debug",
+        ],
+    );
+    assert_ne!(
+        String::from_utf8_lossy(&changed.stdout).trim(),
+        first,
+        "a changed binary reused the old identity"
     );
 }

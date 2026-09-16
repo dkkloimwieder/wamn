@@ -47,6 +47,10 @@ usage: journey-image-cache ACTION [arguments]
       Build wamn-NAME for the Docker stage TARGET if no image of this identity
       exists, then relabel it to wamn-NAME:TAG carrying source-head=HEAD, and
       lease the identity for CLUSTER.
+  ensure-context CONTEXT NAME HEAD TAG CLUSTER PROFILE
+      The same reuse for an image built from CONTEXT, which holds its own
+      Dockerfile and the binaries this run built. The identity is the content
+      of that directory.
   release CLUSTER
       Drop every identity lease that CLUSTER holds.
   retain NAME
@@ -72,17 +76,17 @@ identity() {
 # checks compare source-head to the run's own commit. One FROM plus LABEL adds
 # metadata and no layer, so the gates layer comparison still holds.
 relabel() {
-  local from=$1 to=$2 head=$3 directory
+  local from=$1 to=$2 head=$3 profile=$4 directory
   directory=$(mktemp -d)
-  printf 'FROM %s\nLABEL wamn.dev/source-head="%s" wamn.dev/build-profile="release"\n' \
-    "$from" "$head" >"$directory/Dockerfile"
+  printf 'FROM %s\nLABEL wamn.dev/source-head="%s" wamn.dev/build-profile="%s"\n' \
+    "$from" "$head" "$profile" >"$directory/Dockerfile"
   "$docker_executable" build --platform=linux/amd64 --provenance=false --tag "$to" "$directory" >&2
   rm -rf "$directory"
 }
 
 ensure() {
   local repository=$1 target=$2 name=$3 head=$4 tag=$5 cluster=$6
-  local source_identity image used leases
+  local source_identity image
   source_identity=$(identity "$repository")
   image="wamn-$name:src-$source_identity"
   if ! "$docker_executable" image inspect "$image" >/dev/null 2>&1; then
@@ -91,15 +95,48 @@ ensure() {
       --label "wamn.dev/source-identity=$source_identity" \
       --label wamn.dev/build-profile=release "$repository" >&2
   fi
+  hold "$name" "$source_identity" "$cluster"
+  relabel "$image" "wamn-$name:$tag" "$head" release
+  printf '%s\n' "$image"
+}
+
+# The identity of a prepared build context is its own content: every file it
+# holds, by path and by bytes. A binary this run compiled is not a tree object,
+# so nothing in Git describes it, and a caller that passed its own identity
+# could hand over a stale one and get the wrong image with no error.
+context_identity() {
+  local context=$1
+  [[ -d $context ]] || { printf 'the build context %s is absent\n' "$context" >&2; exit 64; }
+  (cd "$context" && find . -type f -print0 | sort -z | xargs -0 sha256sum) |
+    sha256sum | cut -c1-16
+}
+
+# An image built from a context this run prepared, not from the repository
+# Dockerfile.
+ensure_context() {
+  local context=$1 name=$2 head=$3 tag=$4 cluster=$5 profile=$6
+  local source_identity image
+  source_identity=$(context_identity "$context")
+  image="wamn-$name:src-$source_identity"
+  if ! "$docker_executable" image inspect "$image" >/dev/null 2>&1; then
+    "$docker_executable" build --platform=linux/amd64 --provenance=false \
+      --file "$context/Dockerfile" --tag "$image" \
+      --label "wamn.dev/source-identity=$source_identity" "$context" >&2
+  fi
+  hold "$name" "$source_identity" "$cluster"
+  relabel "$image" "wamn-$name:$tag" "$head" "$profile"
+  printf '%s\n' "$image"
+}
+
+# The retention order is last use, not build time, so an identity that every
+# run keeps reaching for outlives one built after it and never used again.
+hold() {
+  local name=$1 source_identity=$2 cluster=$3 used leases
   used=$(state_root)/used/$name
   leases=$(state_root)/leases/$name
   mkdir -p "$used" "$leases"
-  # The retention order is last use, not build time, so an identity that every
-  # run keeps reaching for outlives one built after it and never used again.
   : >"$used/$source_identity"
   : >"$leases/$source_identity--$cluster"
-  relabel "$image" "wamn-$name:$tag" "$head"
-  printf '%s\n' "$image"
 }
 
 release() {
@@ -145,6 +182,10 @@ case "${1-}" in
   ensure)
     ensure "${2:?repository}" "${3:?docker target}" "${4:?image name}" \
       "${5:?source head}" "${6:?per-run tag}" "${7:?cluster}"
+    ;;
+  ensure-context)
+    ensure_context "${2:?context}" "${3:?image name}" "${4:?source head}" \
+      "${5:?per-run tag}" "${6:?cluster}" "${7:?build profile}"
     ;;
   release) release "${2:?cluster}" ;;
   retain) retain "${2:?image name}" ;;
