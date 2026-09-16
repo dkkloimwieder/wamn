@@ -59,8 +59,17 @@ readonly -a WAMN_CONNECTION_HTTP_NATIVE_CLIPPY=(
   clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked
   --package connection-http-standard -- -D warnings
 )
+readonly -a WAMN_CONNECTION_HTTP_WASM_CLIPPY=(
+  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked
+  --package connection-http-standard --target wasm32-wasip2 -- -D warnings
+)
+# connection-http-standard is excluded for the same reason the native leg
+# excludes it: the fixture is no_std with its own #[panic_handler], and a
+# --workspace build unifies features so that std links in and duplicates the
+# panic_impl lang item (E0152). It keeps its own leg above and below instead.
 readonly -a WAMN_COMPONENT_WASM_CLIPPY=(
   clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --workspace
+  --exclude connection-http-standard
   --target wasm32-wasip2 -- -D warnings
 )
 # The second component workspace. It exists because Cargo feature unification is
@@ -102,6 +111,7 @@ wamn_dry_run() {
     "$WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS"
   printf ' %q' "$WAMN_CARGO" "${WAMN_CONNECTION_HTTP_NATIVE_CLIPPY[@]}"
   printf '\n'
+  wamn_print_plan 'connection-http-wasm-clippy' "${WAMN_CONNECTION_HTTP_WASM_CLIPPY[@]}"
   wamn_print_plan 'components-wasm-clippy' "${WAMN_COMPONENT_WASM_CLIPPY[@]}"
   printf 'no-std-native-clippy: RUSTFLAGS=%q' "$WAMN_NO_STD_NATIVE_RUSTFLAGS"
   printf ' %q' "$WAMN_CARGO" "${WAMN_NO_STD_NATIVE_CLIPPY[@]}"
@@ -281,6 +291,8 @@ case "$WAMN_COMMAND" in
     wamn_run 'root Clippy' "${WAMN_ROOT_CLIPPY[@]}"
     wamn_run 'components native Clippy' "${WAMN_COMPONENT_NATIVE_CLIPPY[@]}"
     wamn_run_connection_http_native_clippy
+    wamn_run 'connection-http-standard wasm Clippy' \
+      "${WAMN_CONNECTION_HTTP_WASM_CLIPPY[@]}"
     wamn_run 'components wasm Clippy' "${WAMN_COMPONENT_WASM_CLIPPY[@]}"
     wamn_run_no_std_native_clippy
     wamn_run 'no-std wasm Clippy' "${WAMN_NO_STD_WASM_CLIPPY[@]}"
