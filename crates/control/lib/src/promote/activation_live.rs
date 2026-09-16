@@ -27,6 +27,7 @@ fn args(url: &str) -> PromoteRequest {
         artifact_base: "unused".to_owned(),
         registry_auth_file: "unused".into(),
         insecure_registry: false,
+        oci_ca_paths: Vec::new(),
         principal: "spiffe://wamn.test/publisher".to_owned(),
         reason: "test activation".to_owned(),
     }

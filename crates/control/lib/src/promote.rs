@@ -171,6 +171,8 @@ pub struct PromoteRequest {
     pub registry_auth_file: PathBuf,
     /// Whether the exact registry host may use plain HTTP.
     pub insecure_registry: bool,
+    /// PEM CA bundles trusted for the registry on top of the compiled-in roots.
+    pub oci_ca_paths: Vec<PathBuf>,
     /// Principal recorded as the promoting publisher.
     pub principal: String,
     /// Reason recorded with each wiring activation.
@@ -268,7 +270,9 @@ pub async fn promote(args: PromoteRequest) -> anyhow::Result<PromoteOutcome> {
     )
     .context("configure component artifact source")?
     .with_registry_auth_file(&args.registry_auth_file)
-    .context("load component registry pull credential")?;
+    .context("load component registry pull credential")?
+    .with_ca_paths(&args.oci_ca_paths)
+    .context("read component registry CA bundles")?;
     let artifact_source = ComponentArtifactSource::new(artifact_config);
 
     let (mut target, target_connection) = tokio_postgres::connect(&args.target_database_url, NoTls)

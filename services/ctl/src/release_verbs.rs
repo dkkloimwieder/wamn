@@ -13,6 +13,7 @@ use wamn_control::publish_release::{
 use wamn_control::reconcile_run_plane::{self, ReconcileRunPlaneOutcome, ReconcileRunPlaneRequest};
 use wamn_control::terminalize_effect_uncertain::{self, TerminalizeEffectUncertainRequest};
 use wamn_run_state::operator_action::OperatorActionBasis;
+use wamn_runtime::component_artifact_source::OCI_CA_PATHS_ENV;
 
 /// Arguments for the wiring-authorship verb.
 #[derive(Debug, Args)]
@@ -119,6 +120,10 @@ pub struct PromoteArgs {
     pub registry_auth_file: PathBuf,
     #[arg(long, default_value_t = false)]
     pub insecure_registry: bool,
+    /// PEM CA bundle trusted for the registry, on top of the compiled-in
+    /// roots. Repeat or comma-delimit. Env `WASH_OCI_CA_PATHS`.
+    #[arg(long = "oci-ca-path", env = OCI_CA_PATHS_ENV, value_delimiter = ',')]
+    pub oci_ca_paths: Vec<PathBuf>,
     #[arg(long)]
     pub principal: String,
     #[arg(long, default_value = "promote-release")]
@@ -260,6 +265,7 @@ pub async fn promote(args: PromoteArgs) -> anyhow::Result<()> {
         artifact_base: args.artifact_base,
         registry_auth_file: args.registry_auth_file,
         insecure_registry: args.insecure_registry,
+        oci_ca_paths: args.oci_ca_paths,
         principal: args.principal,
         reason: args.reason,
     })
