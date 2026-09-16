@@ -1008,8 +1008,17 @@ fn canonical_subject(value: &str) -> Result<String, IdentityError> {
 /// Accept the same human email `principals_email_check` accepts: one `@`, no
 /// space on either side, a dot in the domain, and at most 254 bytes. The rule
 /// is deliberately loose, because the address is delivered to, not parsed.
+///
+/// The whole address folds to lower case, exactly as [`canonical_subject`]
+/// folds a subject. By the mail standard the local part is case-sensitive, so
+/// this deployment folds more than the standard allows. That is a decision and
+/// not an oversight. One rule beside an identical rule beats two rules that
+/// split the field, and `UNIQUE (email)` then catches `A@x.test` and
+/// `a@x.test` as the one address a reader already reads them as. The fold is
+/// Unicode and not ASCII, because `principals_email_check` admits a non-ASCII
+/// address and a narrower fold would split that address in two.
 fn checked_email(value: &str) -> Result<String, IdentityError> {
-    let value = value.trim();
+    let value = value.trim().to_lowercase();
     let Some((local, domain)) = value.split_once('@') else {
         return Err(invalid_email());
     };
@@ -1024,7 +1033,7 @@ fn checked_email(value: &str) -> Result<String, IdentityError> {
     {
         return Err(invalid_email());
     }
-    Ok(value.to_owned())
+    Ok(value)
 }
 
 fn invalid_email() -> IdentityError {
@@ -1186,6 +1195,36 @@ mod tests {
             assert!(
                 canonical_role(invalid).is_err(),
                 "accepted role {invalid:?}"
+            );
+        }
+    }
+
+    /// A human email folds to lower case in full, like a subject, so two
+    /// spellings of one address become one value (`wamn-0h0g.9.18`). The
+    /// `UNIQUE (email)` in `deploy/sql/system-schema.sql` then refuses
+    /// the second human, and `identity_live` pins that refusal.
+    #[test]
+    fn a_human_email_folds_to_one_lowercase_address() {
+        assert_eq!(
+            checked_email("  Case.User@Example.Test ").unwrap(),
+            "case.user@example.test"
+        );
+        assert_eq!(
+            checked_email("CASE.USER@EXAMPLE.TEST").unwrap(),
+            checked_email("case.user@example.test").unwrap()
+        );
+        for invalid in [
+            "",
+            "no-at-sign",
+            "no@domaindot",
+            "two words@example.test",
+            "@example.test",
+            "user@",
+            "one@two@example.test",
+        ] {
+            assert!(
+                checked_email(invalid).is_err(),
+                "accepted email {invalid:?}"
             );
         }
     }

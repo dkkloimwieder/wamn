@@ -243,6 +243,16 @@ CREATE TABLE registry.projects (
 -- nothing reads it as an address. A service and a platform row take
 -- `<subject>@<platform-domain>` in the tenant, built from
 -- `registry.meta.platform_domain`, so neither needs a column here.
+--
+-- `UNIQUE (email)` says the rule plainly: an address names one person. It needs
+-- no `kind`, because `principals_email_check` already forces NULL on every
+-- other kind, and PostgreSQL treats repeated NULLs as distinct. So the
+-- constraint touches no service or platform row.
+--
+-- The refusal belongs here, where the address is entered.
+-- `app_system.users` is `UNIQUE (tenant_id, email)`, so without this the two
+-- people collide inside a tenant instead. That failure stops a whole
+-- `reconcile-run-plane` run, unrelated schema repair included.
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.principals (
     id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -258,6 +268,7 @@ CREATE TABLE identity.principals (
     updated_by   uuid NOT NULL,
     UNIQUE (id, kind),
     UNIQUE (kind, subject),
+    UNIQUE (email),
     CONSTRAINT principals_kind_check
         CHECK (kind IN ('human', 'service', 'platform')),
     CONSTRAINT principals_subject_check

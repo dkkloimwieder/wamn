@@ -446,10 +446,12 @@ The guarantee is bounded historical state:
 
 Stamps and log entries are correct for writes through the supported platform paths.
 On those paths, the triggers exist and every writer binds its executing principal and its operation.
-`reconcile-run-plane` applies `app-schema.sql` to the project database and writes its platform rows and a service row for each service principal of the project.
+`reconcile-run-plane` applies `app-schema.sql` to the project database and writes its platform rows.
+It writes a service row for each service principal of the project.
 It reads the platform domain from `registry.meta.platform_domain`, and it refuses while that value is unset.
-No production code writes a person row today, so a human write refuses with `actor-required`.
-Beads `wamn-0h0g.9.18` owns the person rows.
+It writes a person row for each human with a membership in that project environment.
+A person row carries the email of that human from `identity.principals`.
+A new member gains the row at the next reconcile, because the membership grant holds no tenant connection.
 A principal with no users row cannot write in the tenant.
 The invocation bind refuses it.
 `WamnPostgres::bind_session_claims` reads `app_system.users` in the tenant and refuses a principal that owns no row.

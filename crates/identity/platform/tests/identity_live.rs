@@ -84,6 +84,8 @@ async fn platform_identity_round_trip_on_postgres() {
     .expect_err("duplicate human identity must fail");
     assert_eq!(duplicate.kind(), IdentityErrorKind::Conflict);
 
+    one_address_admits_one_human(&client).await;
+
     let service = create_service(&client, "agent-ci", "CI Agent")
         .await
         .expect("create service principal");
@@ -155,6 +157,42 @@ async fn platform_identity_round_trip_on_postgres() {
     connection_task
         .await
         .expect("join database connection task");
+}
+
+/// Two spellings of one address are one address (`wamn-0h0g.9.18`).
+/// `checked_email` folds the case in full, and `UNIQUE (email)` then
+/// refuses the second human. The two humans carry different subjects, so only
+/// the email constraint can refuse the second one.
+async fn one_address_admits_one_human(client: &tokio_postgres::Client) {
+    let first = create_human(
+        client,
+        "case-fold-first",
+        "Case.Fold@Example.Invalid",
+        "Case Fold First",
+    )
+    .await
+    .expect("create the first human of the address");
+    let stored: String = client
+        .query_one(
+            "SELECT email FROM identity.principals WHERE id = $1::text::uuid",
+            &[&first.id().as_str()],
+        )
+        .await
+        .expect("read the stored email")
+        .get(0);
+    assert_eq!(
+        stored, "case.fold@example.invalid",
+        "the stored address is folded in full"
+    );
+    let second = create_human(
+        client,
+        "case-fold-second",
+        "case.fold@example.invalid",
+        "Case Fold Second",
+    )
+    .await
+    .expect_err("one address admits one human");
+    assert_eq!(second.kind(), IdentityErrorKind::Conflict);
 }
 
 async fn project_environment_membership_round_trip(
