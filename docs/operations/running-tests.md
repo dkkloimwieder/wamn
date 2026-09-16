@@ -272,7 +272,8 @@ The fixture starts Compose services on assigned loopback ports.
 It sets every variable that the case declares, except the two that the command sets.
 The case starts its own PostgreSQL server, because the development environment resets the control store of the whole server.
 The case requires authenticated application results after code, SQL, and schema edits.
-It also requires retained data for compatible edits, refusal of invalid SQL, and a new database after a schema edit.
+It also requires retained data for compatible edits and for an appended migration.
+It requires refusal of invalid SQL, and a new database after a declared definition owner change.
 Require one executed passing case, successful resource cleanup, and restored source before reporting success.
 This correctness case does not report performance measurements.
 

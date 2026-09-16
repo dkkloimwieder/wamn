@@ -1,7 +1,8 @@
 # Development loop
 
 The local developer loop builds components and loads them from files.
-It retains the application database during a watch session and recreates it when schema inputs change.
+It keeps the application database for most saved changes.
+When the package structure changes, it recreates that database.
 Local saves do not publish components or release manifests to a registry.
 [Building](building.md) gives the required build commands.
 
@@ -11,6 +12,8 @@ Build `wamn`, `wamn-host`, `wamn-identity`, and the flow-http component before s
 Use only disposable PostgreSQL 18, scheduler NATS, event NATS, and telemetry services.
 The system administrator URL must name `wamn_system` without a query or fragment.
 `wamn dev up` resets its control store, so shared or durable targets are unsuitable.
+An environment template keeps the catalog functions of the standup that created it.
+To take changed catalog SQL, run `wamn dev up` again and get a new template.
 
 Read the current required arguments from the existing command:
 
@@ -64,7 +67,8 @@ The running loop holds a lease, an exclusive claim on its application database.
 A second loop or reset command cannot take that target while the lease remains active.
 The first run creates the target from the environment template.
 After each successful introspection, the loop records the schema inputs and the introspected catalogs beside its local artifacts.
-A restarted developer process keeps the target and reuses the catalogs when that record matches the current schema inputs and database creation.
+A restarted developer process keeps the target when that record names the same package structure.
+It also reuses the catalogs when the record matches the current schema inputs.
 Otherwise the first run of the new process recreates the target.
 
 Rust code saves reuse the schema, database rows, and unchanged generated files.
@@ -76,7 +80,25 @@ Missing or changed generated files prevent reuse.
 Receiving and Acme use the shared SQLx CLI 0.9.0 commands and their existing verifier targets.
 
 Schema inputs include migrations, package identity, model structure, and internal relations.
-When these inputs change, the loop stops the operator and host before recreating the target database.
+When these inputs change, the loop stops the operator and host before it applies them.
+
+These changes keep the target database and the rows it holds:
+
+- a migration file appended after the last applied migration
+- a changed `wamn.json` at the same package coordinate
+- a change to `enum_fields`, `server_owned_fields`, or `audit_log`
+
+The loop applies them to the kept target and reads its catalogs again.
+
+These changes recreate the target database:
+
+- a new model or a new internal relation
+- a change to `field_owners`, `constraint_owners`, or `client_field_extensible`
+- a package version bump or a changed `predecessor_version`
+- an applied migration that the directory edits, removes, or reorders
+- a retention change that removes a history table that holds rows
+
+Before it recreates the target, the loop prints the reason.
 The new database receives a new target instance, the identity of one database creation.
 The operator clears records, revisions, cursors, drafts, and pending submissions for the previous instance.
 It does not replay interrupted mutations.

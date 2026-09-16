@@ -1,6 +1,7 @@
 # Receiving change walkthrough
 
-This record measures one Rust-only Receiving change through `wamn dev`.
+This file holds two records of Receiving changes through `wamn dev`.
+The first record measures one Rust-only change.
 It follows owner rulings 1, 4, and 6 of Beads `wamn-llst`.
 The run used source `8934079994519c5d89e21a65f6514d6c378e8daf` from a clean worktree.
 
@@ -141,5 +142,98 @@ Those three commands took 214.667077 s together.
 No separate database test run took place.
 The old total was about 218 s, not 433 s.
 
-The earlier walkthrough added the nullable text column `location.description`.
-Beads `wamn-ri4b` tracks that new-column case through `wamn dev`.
+## Column change record
+
+This record measures the nullable column `location.description` through the same loop.
+The run used source `dd7fe6479962edb20a6c16ac3556f834546e2a3a` with the column patch uncommitted.
+The patch is never committed, as owner ruling 6 of Beads `wamn-ri4b` states.
+
+The run used a private PostgreSQL 18 server on a loopback port, with a `wamn_system` database.
+Compose project `rcv-column` ran scheduler NATS, Tempo, and an event NATS server with JetStream.
+`wamn dev up` took a new environment template, because the changed catalog SQL reaches only a new template.
+The loop ran with `apps/wamn_receiving` as its only package and as its overlay root.
+
+### Patch files
+
+The save batch wrote six authored files:
+
+- `migrations/0002_location_description.sql`, one statement `ALTER TABLE receiving.location ADD COLUMN description text;`
+- `query/location.sql`, which selects the new column
+- `wamn.json`, which declares the result field, the select field, and the statement row
+- `data/src/operation.rs`, the `LocationValue` field and its unit test
+- `tests/generation.rs`, the fixture column and the ACL select set
+- `tests/operator_pty.py`, the result descriptor set
+
+The loop then wrote thirteen generated files and two SQLx metadata files.
+`tests/.sqlx/query-35923fd6….json` went away and `tests/.sqlx/query-b5c60b00….json` arrived.
+The whole change set was 21 paths, all under `apps/wamn_receiving`.
+
+### Results
+
+A loop time starts at the process start or at the file save.
+It ends at the `run served` line of that run.
+The `wamn dev up` and `wamn dev clean-check` times are the whole command.
+
+| Step | Seconds | Stages that ran | Stages skipped | Target oid |
+| --- | ---: | --- | --- | ---: |
+| `wamn dev up` | 5.071 | not a loop run | not a loop run | not sampled |
+| First run | 29.535 | all ten | none | 18239 |
+| Column save | 27.310 | all ten | none | 18239 |
+| Restart with unchanged source | 47.311 | generate, build, virtualize, acl, admit, gate, release, activate | migrate, introspect | 18239 |
+| `wamn dev clean-check` | 10.074 | not a loop run | not a loop run | not used |
+
+The loop printed these stage times, in the order of the loop rows above:
+
+```text
+watch stage-ms: prepare=130ms migrate=261ms introspect=56ms generate=769ms build=4558ms virtualize=750ms acl=1463ms admit=3961ms gate=399ms release=5558ms activate=11417ms
+watch stage-ms: prepare=128ms migrate=241ms introspect=64ms generate=2317ms build=5132ms virtualize=1051ms acl=1730ms admit=4481ms gate=475ms release=5571ms activate=5660ms
+watch stage-ms: prepare=748ms migrate=0ms introspect=0ms generate=7023ms build=2261ms virtualize=2945ms acl=6203ms admit=11042ms gate=991ms release=11991ms activate=3032ms
+```
+
+Every command returned exit status 0.
+The one-minute load average was 4.45 at the first run, 5.11 at the column save, and 11.72 at the restart.
+Other work compiled Rust on the same computer during the restart, which explains its longer stages.
+
+### Target database
+
+The first run recreated the target from the environment template and served oid 18239.
+The column save kept that target: the served `target_instance` stayed 18239, and `pg_database` listed the same four databases.
+The seeded row `DOCK-1` survived the save.
+`catalog.package_migrations` then held two rows for `wamn_receiving@1.0.0`, `migrations/0001_initial.sql` and `migrations/0002_location_description.sql`.
+`catalog.effective_release_packages` already held `wamn_receiving@1.0.0` from the first run.
+The release seal was therefore active, and the local exception recorded the second migration.
+The local target comment held the marker and the current manifest hash of the package.
+`information_schema.columns` showed `description` as nullable with no default.
+
+### SQLx preparation
+
+A script sampled the processes of each loop session every 0.2 seconds.
+The first run ran no `cargo sqlx prepare`.
+The column save and the restart each ran `cargo sqlx prepare -- --test receiving_sqlx_verifier --locked --offline`.
+The Acme verifier never prepared, because the run selected only the Receiving package.
+No sample showed `cargo test` or a test binary inside a loop session.
+
+### Application result
+
+Before the save, `POST /location/list` with `[{"request_id":"ri4b-valid"}]` returned the two old fields.
+After the save, the same request returned status 200 and `"description":null` for `DOCK-1`.
+An `UPDATE` then set the description over SQL, and the same request returned `"description":"North loading dock"`.
+The restart served the same row and the same text.
+
+### Covering case
+
+`wamn dev clean-check` ran `operation::tests::bounded_projection_rows_preserve_the_declared_wire_scalars`.
+The result records source `dd7fe6479962edb20a6c16ac3556f834546e2a3a` with uncommitted changes, and all four checks passed.
+After the run, every authored file, generated file, and `tests/.sqlx` entry went back to the committed bytes, and `git status` listed no change.
+
+### One refusal and its fix
+
+The first attempt of this run refused at Introspect with `dev-stage-owner-failed while introspect package`.
+A kept target runs Migrate and Introspect again, so the catalog reader saw the grants that the loop itself had written.
+The reader refused the `receiving` schema and the granted columns, because they carry an ACL entry for the application role.
+Commit `dd7fe6479` lets the reader skip the ACL entries of the audit retention role and of the application role by name.
+A grant to any other role still refuses.
+
+A later lane commit, `856267331`, also changed the ownership preflight of one apply.
+A stream that creates a relation and then adds a column to it now applies to an empty database.
+None of the four steps above runs that path, so the times stand as recorded.

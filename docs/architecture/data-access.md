@@ -21,6 +21,7 @@ Guest SQL names relations without schema qualification and uses the host-selecte
 Guest input cannot choose a database, schema, or database role.
 
 The migration policy admits the supported additive table, field, and named-constraint forms.
+An added column is nullable with a modeled type and no default, or it carries one of the two demanded non-null defaults.
 The catalog reader supports ordinary tables, supported columns and defaults, identity properties, constraints, and supported indexes.
 It normalizes identity sequences and indexes that belong to constraints instead of counting them as independent definitions.
 It excludes PostgreSQL object identifiers and storage details from semantic identity.
