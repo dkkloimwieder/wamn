@@ -1030,7 +1030,6 @@ async fn retire_reader_cli(admin: &str, target: &SessionTarget) -> std::process:
                 "--retire-session-role-reader-generation",
                 "a",
             ])
-            .env_remove("WAMN_APP_PASSWORD")
             .env("WAMN_SYSTEM_ADMIN_URL", admin)
             .env("WAMN_TARGET_ADMIN_DATABASE_URL", project.as_str())
             .stdin(std::process::Stdio::null())

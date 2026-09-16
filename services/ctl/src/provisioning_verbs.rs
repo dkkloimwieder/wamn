@@ -339,9 +339,10 @@ pub struct EnableCdcProjectEnvArgs {
     /// emitted URL + role SQL). Supply it with `--replication-password` or the
     /// env var `WAMN_REPLICATION_PASSWORD`.
     ///
-    /// **Deliberately has no `default_value`** — the same shape
-    /// `--dispatch-reader-password` takes in `provision-project-env`
-    /// (wamn-0h0g.12.122). A default here minted a `LOGIN REPLICATION` role
+    /// **Deliberately has no `default_value`.** This is the shape
+    /// `--dispatch-reader-password` held in `provision-project-env`
+    /// (wamn-0h0g.12.122) until `wamn-0h0g.22.24` retired that flag. A default
+    /// here minted a `LOGIN REPLICATION` role
     /// with a publicly known password, and `REPLICATION` authority is
     /// cluster-wide: it can open a replication session against any database on
     /// the cluster and decode co-tenant WAL. Provisioning refuses instead
