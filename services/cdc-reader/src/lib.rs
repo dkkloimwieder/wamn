@@ -39,6 +39,14 @@
 //!   GAP — a first-class incident (v3 §11): the reader refuses to start (or
 //!   dies) loudly instead of silently re-creating and resuming from "now".
 //!   Recovery is operator-driven: re-enable CDC + replay/backfill assessment.
+//! - **The reader captures only the declared shape** (wamn-0h0g.19.19). Before
+//!   every session it reads the server version, the publication, and the slot,
+//!   and compares them against the provisioning declaration in
+//!   `wamn_control_provision::sql::cdc`. A server below
+//!   [`POSTGRES_MAJOR_FLOOR`], a publication that publishes other operations or
+//!   another scope, or a slot with another plugin, lifetime, two-phase setting,
+//!   or failover setting stops the reader. The declared publication excludes
+//!   TRUNCATE, so a received TRUNCATE is counted and alerted as an incident.
 //! - The reader never creates or changes streams. Provisioning owns both the
 //!   source stream and its advisory stream. Activation reads and compares their
 //!   complete declared configuration before it opens the replication session.
@@ -564,9 +572,30 @@ async fn read_registration(args: &EventReaderArgs) -> anyhow::Result<Registratio
     })
 }
 
-/// Verify the slot EXISTS and is healthy over an ordinary SQL connection,
-/// and log the resume position. Absent or invalidated ⇒ the v3 §11 incident.
-async fn preflight_slot(args: &EventReaderArgs, slot: &str) -> anyhow::Result<()> {
+/// The lowest PostgreSQL major version the reader accepts. Provisioning creates
+/// the slot with the five-argument `pg_create_logical_replication_slot`, and
+/// PostgreSQL 17 added that `failover` argument. Every deployment target in this
+/// repository runs PostgreSQL 18.
+const POSTGRES_MAJOR_FLOOR: i32 = 17;
+
+/// The output plugin `create_failover_slot_sql` declares.
+const DECLARED_SLOT_PLUGIN: &str = "pgoutput";
+
+/// The prefix every drift refusal carries, so operators grep one string.
+pub const CAPTURE_SHAPE_DRIFT_REFUSAL: &str = "CAPTURE SHAPE DRIFT";
+
+/// The distinct log event a received TRUNCATE raises. The declared publication
+/// excludes TRUNCATE, so alerts bind to this name as an incident.
+pub const TRUNCATE_INCIDENT_EVENT: &str = "CDC_TRUNCATE_RECEIVED";
+
+/// Verify the whole declared capture substrate over one ordinary SQL
+/// connection, before every session: the server version floor, the publication
+/// shape, and the slot shape and health.
+///
+/// An absent or invalidated slot is the v3 §11 capture-gap incident. Any other
+/// difference from the provisioned declaration is drift, and the reader refuses
+/// it rather than capture an unknown shape (wamn-0h0g.19.19).
+async fn preflight(args: &EventReaderArgs, reg: &Registration) -> anyhow::Result<()> {
     let url = preflight_url(&args.cdc_url, &args.sslmode)?;
     let (client, conn) = tokio_postgres::connect(&url, NoTls)
         .await
@@ -574,9 +603,175 @@ async fn preflight_slot(args: &EventReaderArgs, slot: &str) -> anyhow::Result<()
     tokio::spawn(async move {
         let _ = conn.await;
     });
+    preflight_server_version(&client).await?;
+    preflight_publication(&client, &reg.publication).await?;
+    preflight_slot(&client, &reg.slot).await
+}
+
+/// The major version carried by a `server_version_num` setting.
+fn postgres_major(version_num: i32) -> i32 {
+    version_num / 10_000
+}
+
+/// Refuse a server below [`POSTGRES_MAJOR_FLOOR`]. The reader states its
+/// requirement at startup instead of failing later inside the walsender.
+async fn preflight_server_version(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    let row = client
+        .query_one("SELECT current_setting('server_version_num')::int4", &[])
+        .await
+        .context("preflight: read server_version_num")?;
+    let version_num: i32 = row.get(0);
+    let major = postgres_major(version_num);
+    if major < POSTGRES_MAJOR_FLOOR {
+        bail!(
+            "PostgreSQL {major} is below the reader's floor of {POSTGRES_MAJOR_FLOOR} \
+             (server_version_num={version_num}) — the declared failover slot needs \
+             PostgreSQL {POSTGRES_MAJOR_FLOOR} or later"
+        );
+    }
+    tracing::info!(major, version_num, "preflight: server version accepted");
+    Ok(())
+}
+
+/// The live publication shape, straight off `pg_publication`.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the fields are the catalog's own boolean columns, one for one"
+)]
+struct PublicationShape {
+    all_tables: bool,
+    insert: bool,
+    update: bool,
+    delete: bool,
+    truncate: bool,
+    /// Rows in `pg_publication_namespace` for this publication.
+    schemas: i64,
+    /// Rows in `pg_publication_rel` for this publication.
+    tables: i64,
+}
+
+/// Every way a live publication differs from `create_publication_sql`, one
+/// sentence each. An empty result means the publication matches.
+fn publication_drift(shape: &PublicationShape) -> Vec<String> {
+    let mut drift: Vec<String> = Vec::new();
+    if shape.all_tables {
+        drift.push("puballtables=true, declared false (FOR TABLES IN SCHEMA)".to_owned());
+    }
+    for (name, live) in [
+        ("pubinsert", shape.insert),
+        ("pubupdate", shape.update),
+        ("pubdelete", shape.delete),
+    ] {
+        if !live {
+            drift.push(format!("{name}=false, declared true"));
+        }
+    }
+    if shape.truncate {
+        drift.push("pubtruncate=true, declared false".to_owned());
+    }
+    if shape.schemas != 1 {
+        drift.push(format!("{} published schemas, declared 1", shape.schemas));
+    }
+    if shape.tables != 0 {
+        drift.push(format!(
+            "{} explicitly published tables, declared 0",
+            shape.tables
+        ));
+    }
+    drift
+}
+
+/// The live slot shape, straight off `pg_replication_slots`.
+struct SlotShape {
+    slot_type: Option<String>,
+    plugin: Option<String>,
+    temporary: bool,
+    two_phase: bool,
+    failover: bool,
+}
+
+/// Every way a live slot differs from `create_failover_slot_sql`, one sentence
+/// each. An empty result means the slot matches.
+fn slot_drift(shape: &SlotShape) -> Vec<String> {
+    let mut drift: Vec<String> = Vec::new();
+    if shape.slot_type.as_deref() != Some("logical") {
+        drift.push(format!(
+            "slot_type={:?}, declared \"logical\"",
+            shape.slot_type
+        ));
+    }
+    if shape.plugin.as_deref() != Some(DECLARED_SLOT_PLUGIN) {
+        drift.push(format!(
+            "plugin={:?}, declared {DECLARED_SLOT_PLUGIN:?}",
+            shape.plugin
+        ));
+    }
+    if shape.temporary {
+        drift.push("temporary=true, declared false".to_owned());
+    }
+    if shape.two_phase {
+        drift.push("two_phase=true, declared false".to_owned());
+    }
+    if !shape.failover {
+        drift.push("failover=false, declared true".to_owned());
+    }
+    drift
+}
+
+/// Compare the live publication against `create_publication_sql`: one schema,
+/// no explicit tables, never `FOR ALL TABLES`, and the three row operations the
+/// event plane carries with TRUNCATE excluded.
+async fn preflight_publication(
+    client: &tokio_postgres::Client,
+    publication: &str,
+) -> anyhow::Result<()> {
     let row = client
         .query_opt(
-            "SELECT active, confirmed_flush_lsn::text, wal_status::text, invalidation_reason::text \
+            "SELECT p.puballtables, p.pubinsert, p.pubupdate, p.pubdelete, p.pubtruncate, \
+                    (SELECT count(*) FROM pg_publication_namespace n WHERE n.pnpubid = p.oid), \
+                    (SELECT count(*) FROM pg_publication_rel r WHERE r.prpubid = p.oid) \
+             FROM pg_publication p WHERE p.pubname = $1",
+            &[&publication],
+        )
+        .await
+        .context("preflight: read pg_publication")?;
+    let Some(row) = row else {
+        bail!(
+            "{CAPTURE_SHAPE_DRIFT_REFUSAL}: publication {publication} does not exist — \
+             the reader never creates publications; re-enable CDC for this project-env"
+        );
+    };
+    let drift = publication_drift(&PublicationShape {
+        all_tables: row.get(0),
+        insert: row.get(1),
+        update: row.get(2),
+        delete: row.get(3),
+        truncate: row.get(4),
+        schemas: row.get(5),
+        tables: row.get(6),
+    });
+    if !drift.is_empty() {
+        bail!(
+            "{CAPTURE_SHAPE_DRIFT_REFUSAL}: publication {publication} differs from its \
+             declaration ({}) — restore the declared publication before capture resumes",
+            drift.join(", ")
+        );
+    }
+    tracing::info!(
+        publication,
+        "preflight: publication matches its declaration (insert/update/delete, one schema)"
+    );
+    Ok(())
+}
+
+/// Verify the slot EXISTS, is healthy, and carries its declared shape over an
+/// ordinary SQL connection, and log the resume position. Absent or invalidated
+/// ⇒ the v3 §11 incident. A different shape ⇒ a drift refusal.
+async fn preflight_slot(client: &tokio_postgres::Client, slot: &str) -> anyhow::Result<()> {
+    let row = client
+        .query_opt(
+            "SELECT active, confirmed_flush_lsn::text, wal_status::text, invalidation_reason::text, \
+                    slot_type::text, plugin::text, temporary, two_phase, failover \
              FROM pg_replication_slots WHERE slot_name = $1",
             &[&slot],
         )
@@ -599,12 +794,27 @@ async fn preflight_slot(args: &EventReaderArgs, slot: &str) -> anyhow::Result<()
              assess the gap (v3 §11)"
         );
     }
+    let drift = slot_drift(&SlotShape {
+        slot_type: row.get(4),
+        plugin: row.get(5),
+        temporary: row.get(6),
+        two_phase: row.get(7),
+        failover: row.get(8),
+    });
+    if !drift.is_empty() {
+        bail!(
+            "{CAPTURE_SHAPE_DRIFT_REFUSAL}: replication slot {slot} differs from its \
+             declaration ({}) — drop and re-enable CDC to restore the declared slot, \
+             and assess the gap that drop creates",
+            drift.join(", ")
+        );
+    }
     tracing::info!(
         slot,
         active,
         confirmed_flush_lsn = confirmed.as_deref().unwrap_or("-"),
         wal_status = wal_status.as_deref().unwrap_or("-"),
-        "preflight: slot healthy (resume position = confirmed LSN)"
+        "preflight: slot healthy and matching its declaration (resume position = confirmed LSN)"
     );
     Ok(())
 }
@@ -753,9 +963,10 @@ pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> 
         if token.is_cancelled() {
             return Ok(());
         }
-        // Absent/invalidated slot = incident — checked before EVERY session
-        // so a slot dropped mid-life is caught on the re-open path too.
-        preflight_slot(&args, &reg.slot).await?;
+        // Absent/invalidated slot = incident, a drifted publication or slot =
+        // refusal — checked before EVERY session, so a substrate changed
+        // mid-life is caught on the re-open path too.
+        preflight(&args, &reg).await?;
 
         let mut stream = match open_session(&args, &reg, token.clone()).await {
             Ok(s) => s,
@@ -884,6 +1095,9 @@ struct DrainSummary {
     commits: u64,
     published: u64,
     deduped: u64,
+    /// TRUNCATE frames received this session. The declared publication carries
+    /// none, so any count above zero is an operational incident.
+    truncates: u64,
     excluded_by_relation: BTreeMap<String, u64>,
 }
 
@@ -893,6 +1107,7 @@ fn log_drain_summary(summary: &DrainSummary, ending: &str) {
         commits = summary.commits,
         events_published = summary.published,
         deduped = summary.deduped,
+        truncates = summary.truncates,
         excluded_by_relation = ?summary.excluded_by_relation,
         ending,
         "drain summary"
@@ -928,6 +1143,7 @@ async fn drain(
         commits: 0,
         published: 0,
         deduped: 0,
+        truncates: 0,
         excluded_by_relation: BTreeMap::new(),
     };
     // The per-session OID cache stores the relation's closed classification.
@@ -1104,8 +1320,19 @@ async fn drain(
                 relation_oid,
             ),
             EventType::Truncate(tables) => {
-                // Not part of the event plane (v3 ops are insert/update/delete).
-                tracing::warn!(?tables, "TRUNCATE observed — not published");
+                // The declared publication omits `truncate`, so a TRUNCATE
+                // frame proves the publication drifted after this session
+                // opened. Count it and alert; the event plane still carries
+                // insert/update/delete only (wamn-0h0g.19.19).
+                summary.truncates += 1;
+                tracing::error!(
+                    target: "wamn::event_reader",
+                    event = TRUNCATE_INCIDENT_EVENT,
+                    ?tables,
+                    truncates = summary.truncates,
+                    "TRUNCATE received from a publication that declares none — \
+                     operational incident, not published"
+                );
                 continue;
             }
             // Metadata frames; nothing to buffer, nothing to advance.
@@ -1618,6 +1845,120 @@ async fn settle_all<P: AckPublisher>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The declared shape the preflight compares against, so the two
+    /// constructors below read as the provisioned substrate.
+    fn declared_publication() -> PublicationShape {
+        PublicationShape {
+            all_tables: false,
+            insert: true,
+            update: true,
+            delete: true,
+            truncate: false,
+            schemas: 1,
+            tables: 0,
+        }
+    }
+
+    fn declared_slot() -> SlotShape {
+        SlotShape {
+            slot_type: Some("logical".to_owned()),
+            plugin: Some(DECLARED_SLOT_PLUGIN.to_owned()),
+            temporary: false,
+            two_phase: false,
+            failover: true,
+        }
+    }
+
+    /// The reader's expectations and the provisioning builders name ONE shape.
+    /// A change to either side that the other does not follow fails here rather
+    /// than at a tenant's preflight (wamn-0h0g.19.19).
+    #[test]
+    fn the_preflight_expectations_match_the_provisioning_declaration() {
+        let publication = wamn_control_provision::sql::create_publication_sql(
+            "wamn_cdc_acme__billing__dev",
+            "app",
+        );
+        assert!(
+            publication.contains("WITH (publish = 'insert, update, delete')"),
+            "{publication}"
+        );
+        assert!(!publication.contains("truncate"), "{publication}");
+        assert!(!publication.contains("FOR ALL TABLES"), "{publication}");
+        let slot =
+            wamn_control_provision::sql::create_failover_slot_sql("wamn_cdc_acme__billing__dev");
+        assert!(
+            slot.contains(&format!("'{DECLARED_SLOT_PLUGIN}', false, false, true")),
+            "{slot}"
+        );
+    }
+
+    /// The declared substrate produces no drift, and each single departure from
+    /// it produces exactly one named refusal reason.
+    #[test]
+    fn publication_and_slot_drift_name_every_departure_from_the_declaration() {
+        assert!(publication_drift(&declared_publication()).is_empty());
+        assert!(slot_drift(&declared_slot()).is_empty());
+
+        let truncating = PublicationShape {
+            truncate: true,
+            ..declared_publication()
+        };
+        assert_eq!(
+            publication_drift(&truncating),
+            vec!["pubtruncate=true, declared false".to_owned()]
+        );
+        let all_tables = PublicationShape {
+            all_tables: true,
+            ..declared_publication()
+        };
+        assert_eq!(publication_drift(&all_tables).len(), 1);
+        let re_pointed = PublicationShape {
+            schemas: 2,
+            tables: 3,
+            ..declared_publication()
+        };
+        assert_eq!(publication_drift(&re_pointed).len(), 2);
+        let no_updates = PublicationShape {
+            update: false,
+            ..declared_publication()
+        };
+        assert_eq!(
+            publication_drift(&no_updates),
+            vec!["pubupdate=false, declared true".to_owned()]
+        );
+
+        let no_failover = SlotShape {
+            failover: false,
+            ..declared_slot()
+        };
+        assert_eq!(
+            slot_drift(&no_failover),
+            vec!["failover=false, declared true".to_owned()]
+        );
+        let other_plugin = SlotShape {
+            plugin: Some("wal2json".to_owned()),
+            ..declared_slot()
+        };
+        assert_eq!(slot_drift(&other_plugin).len(), 1);
+        let physical_and_temporary = SlotShape {
+            slot_type: Some("physical".to_owned()),
+            temporary: true,
+            two_phase: true,
+            ..declared_slot()
+        };
+        assert_eq!(slot_drift(&physical_and_temporary).len(), 3);
+    }
+
+    /// The floor refuses PostgreSQL 16 and accepts the 17 the failover argument
+    /// needs and the 18 every deployment target runs.
+    #[test]
+    fn the_postgres_floor_sits_at_the_failover_slot_argument() {
+        assert_eq!(POSTGRES_MAJOR_FLOOR, 17);
+        assert!(postgres_major(160_009) < POSTGRES_MAJOR_FLOOR);
+        assert!(postgres_major(170_000) >= POSTGRES_MAJOR_FLOOR);
+        assert!(postgres_major(180_001) >= POSTGRES_MAJOR_FLOOR);
+    }
 
     #[test]
     fn event_broker_credentials_refuse_partial_invalid_and_unreadable_inputs() {

@@ -48,18 +48,29 @@ pub fn ensure_schema_sql(schema: &str) -> String {
 }
 
 /// Idempotently create the CDC publication over the project-env's app **data**
-/// schema: `CREATE PUBLICATION <pub> FOR TABLES IN SCHEMA <schema>`, guarded by
-/// a `pg_publication` probe (Postgres has no `CREATE PUBLICATION IF NOT
-/// EXISTS`). `FOR TABLES IN SCHEMA` auto-includes tables created in the schema
-/// later — the D19 v3 replacement for the retired per-table trigger emission.
-/// Re-pointing an existing publication at a different schema is a manual
-/// `ALTER PUBLICATION … SET TABLES IN SCHEMA` (the guard never rewrites).
+/// schema: `CREATE PUBLICATION <pub> FOR TABLES IN SCHEMA <schema> WITH
+/// (publish = 'insert, update, delete')`, guarded by a `pg_publication` probe
+/// (Postgres has no `CREATE PUBLICATION IF NOT EXISTS`). `FOR TABLES IN SCHEMA`
+/// auto-includes tables created in the schema later, the D19 v3 replacement for
+/// the retired per-table trigger emission.
+///
+/// The publish list omits `truncate`. The event plane carries insert, update,
+/// and delete only, so the server sends no TRUNCATE frame. The reader counts
+/// any TRUNCATE that still arrives as an operational incident.
+///
+/// This guard never rewrites an existing publication. An operator re-points one
+/// with `ALTER PUBLICATION … SET TABLES IN SCHEMA`. The reader compares the
+/// live publication against this declaration at preflight and refuses a
+/// publication that differs, so a manual change stops capture instead of
+/// passing unnoticed (wamn-0h0g.19.19).
+///
 /// Run connected to the project-env database.
 pub fn create_publication_sql(publication: &str, schema: &str) -> String {
     format!(
         "DO $$ BEGIN \
            IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = {pub_lit}) THEN \
-             CREATE PUBLICATION {publication} FOR TABLES IN SCHEMA {schema}; \
+             CREATE PUBLICATION {publication} FOR TABLES IN SCHEMA {schema} \
+               WITH (publish = 'insert, update, delete'); \
            END IF; \
          END $$;",
         publication = quote_ident(publication),
@@ -72,11 +83,11 @@ pub fn create_publication_sql(publication: &str, schema: &str) -> String {
 /// the SQL-function form: `pg_create_logical_replication_slot(<slot>,
 /// 'pgoutput', temporary => false, twophase => false, failover => true)`
 /// (PG17+ fifth argument) — a normal connection, no replication-protocol
-/// syntax; the reader's `ensure_replication_slot` tolerates the existing slot
-/// (same plugin/twophase/failover shape). Logical slots are DATABASE-BOUND:
-/// run connected to the project-env database. WAL is pinned from creation
-/// (capture starts at CDC-enable), bounded by the cluster's
-/// `max_slot_wal_keep_size`.
+/// syntax. The reader reads this exact shape at preflight and refuses a slot
+/// that differs from it (wamn-0h0g.19.19). The reader never creates a slot.
+/// Logical slots are DATABASE-BOUND: run connected to the project-env database.
+/// WAL is pinned from creation (capture starts at CDC-enable), bounded by the
+/// cluster's `max_slot_wal_keep_size`.
 pub fn create_failover_slot_sql(slot: &str) -> String {
     format!(
         "DO $$ BEGIN \

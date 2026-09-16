@@ -1715,6 +1715,10 @@ mod tests {
             "CREATE PUBLICATION \"wamn_cdc_acme__billing__dev\" FOR TABLES IN SCHEMA \"app\""
         ));
         assert!(!sql.contains("FOR ALL TABLES"));
+        // TRUNCATE is excluded at the source: the publish list names only the
+        // three row operations the event plane carries (wamn-0h0g.19.19).
+        assert!(sql.contains("WITH (publish = 'insert, update, delete')"));
+        assert!(!sql.contains("truncate"));
         // Idempotent: guarded by a pg_publication probe (no IF NOT EXISTS in PG).
         assert!(sql.contains("IF NOT EXISTS (SELECT FROM pg_publication WHERE pubname = 'wamn_cdc_acme__billing__dev')"));
         // The eager schema guard is a separate statement.
