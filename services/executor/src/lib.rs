@@ -21,7 +21,7 @@ use wamn_event_wire::Causation;
 use wamn_execution_host::{
     CandidateCaseRequest, CandidateExecutionRefusal, CandidateExecutionRefusalKind,
     CandidateWiringTarget, RouterDriver, RouterDriverConfig, RouterDriverRequest,
-    RouterReadinessProbe, WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
+    RouterReadinessProbe, Verdict, WIRING_CACHE_CAPACITY_ENV, WiringCacheCapacity,
 };
 use wamn_project_state::PlatformComponent;
 use wamn_run_state::FailKind;
@@ -741,6 +741,19 @@ async fn drive_claim(
             request.target.wiring_version,
         )),
     };
+    // Both arms, unlike `candidate_coordinate`, which is deliberately `None` for
+    // a released run because it gates a candidate-only refusal. A derived
+    // publication names its wiring position on either path, and `request` is
+    // consumed by the driver below, so the coordinates are taken here.
+    let (wiring_id, wiring_version) = match &request {
+        QueueDriverRequest::Released(request) => {
+            (request.wiring_id.clone(), request.wiring_version)
+        }
+        QueueDriverRequest::Candidate(request) => (
+            request.target.wiring_id.clone(),
+            request.target.wiring_version,
+        ),
+    };
     let execute = async {
         match request {
             QueueDriverRequest::Released(request) => driver.execute(request).await,
@@ -835,10 +848,24 @@ async fn drive_claim(
             entity,
             operation,
         } => {
+            // Read off the verdict rather than carried on the action: the node
+            // id is a trace coordinate, and `ProductionRouterAction` states what
+            // the boundary must DO. Widening it would put a tracing field on the
+            // run-store contract, and the outcome that decided the action is
+            // still in scope here, so nothing is lost by reading it directly. An
+            // empty node id is unreachable — only an Emit verdict yields an Emit
+            // action — and records EMPTY rather than panicking if it ever is.
+            let node_id = match &delivery.outcome.verdict {
+                Some(Verdict::Emit { node_id, .. }) => node_id.clone(),
+                _ => String::new(),
+            };
             let publish = jetstream
                 .publish_derived(DerivedPublishRequest {
                     component_id: QUEUE_CLAIM_SCOPE.to_owned(),
                     package_id: package_id.to_owned(),
+                    wiring_id,
+                    wiring_version,
+                    node_id,
                     entity,
                     operation,
                     payload: event.clone(),

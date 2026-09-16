@@ -629,6 +629,7 @@ fn terminal_verdict(
                 dedup_id: id.to_string(),
                 entity: entity.clone(),
                 operation: *operation,
+                node_id: node.to_string(),
             })),
     }
 }

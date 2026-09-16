@@ -260,6 +260,7 @@ fn stored_emit_terminal_reaches_the_router_verdict() {
             dedup_id: "stored-terminal:1:entry".to_owned(),
             entity: "orders".to_owned(),
             operation: Op::Insert,
+            node_id: "entry".to_owned(),
         })
     );
 }

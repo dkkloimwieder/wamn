@@ -244,8 +244,10 @@ fn emit_publishes_the_event_under_the_authors_dedup_id() {
             dedup_id: "wiring-1:7:a:d1".to_string(),
             entity: "orders".to_string(),
             operation: Op::Insert,
+            node_id: "a".to_string(),
         }),
-        "the dedup id travels beside the event the boundary dedups on"
+        "the dedup id travels beside the event the boundary dedups on, under the \
+         node that declared the emit"
     );
 }
 

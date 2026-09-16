@@ -300,6 +300,7 @@ fn an_existing_verdict_suppresses_partial_evidence() {
             dedup_id: "event-1".to_owned(),
             entity: "movement".to_owned(),
             operation: wamn_event_wire::Op::Insert,
+            node_id: "store".to_owned(),
         },
         Verdict::Discard,
     ] {

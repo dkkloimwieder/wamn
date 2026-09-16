@@ -65,12 +65,18 @@ pub enum Verdict {
     /// last node happened to produce.
     Respond { payload: Value, node_id: String },
     /// Publish `event` into the boundary under `dedup_id`, using only the
-    /// selector copied from the admitted terminal occurrence.
+    /// selector copied from the admitted terminal occurrence. `node_id` is the
+    /// exact wiring node that declared [`Terminal::Emit`], copied from the
+    /// host-owned walk coordinate by `terminal_verdict` exactly as
+    /// [`Verdict::Respond`] copies it; it is never read from component output or
+    /// the delivery payload. The publishing host carries it onto the effect
+    /// span, so a derived event names the node that produced it.
     Emit {
         event: Value,
         dedup_id: String,
         entity: String,
         operation: Op,
+        node_id: String,
     },
     /// Nothing to answer and nothing to publish: the frontier emptied with no
     /// caller attached and no terminal node reached.

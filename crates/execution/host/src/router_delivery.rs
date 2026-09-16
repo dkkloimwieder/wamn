@@ -205,7 +205,7 @@ impl RouterDeliveryBridge {
                     &result,
                 )
                 .await;
-                self.publish_emit(&target.package_id, &delivery.outcome, causation)
+                self.publish_emit(&target, &delivery.outcome, causation)
                     .await?;
                 lower_with_evidence(delivery.outcome, delivery.partial)
             }
@@ -316,9 +316,12 @@ impl RouterDeliveryBridge {
             .await;
     }
 
+    /// `target` rather than a bare package id: the wiring position this bridge
+    /// resolved before the walk is what names the publication on its effect
+    /// span, and the node comes from the verdict the walk recorded.
     async fn publish_emit(
         &self,
-        package_id: &str,
+        target: &ResolvedTarget,
         outcome: &Outcome,
         causation: Causation,
     ) -> Result<(), DeliveryError> {
@@ -327,6 +330,7 @@ impl RouterDeliveryBridge {
             dedup_id,
             entity,
             operation,
+            node_id,
         }) = outcome.verdict.as_ref()
         else {
             return Ok(());
@@ -334,7 +338,10 @@ impl RouterDeliveryBridge {
         self.jetstream
             .publish_derived(DerivedPublishRequest {
                 component_id: ROUTER_DELIVERY_ID.to_owned(),
-                package_id: package_id.to_owned(),
+                package_id: target.package_id.clone(),
+                wiring_id: target.wiring_id.clone(),
+                wiring_version: target.wiring_version,
+                node_id: node_id.clone(),
                 entity: entity.clone(),
                 operation: *operation,
                 payload: event.clone(),

@@ -310,6 +310,7 @@ fn production_router_action_with_mode(
             dedup_id,
             entity,
             operation,
+            ..
         }) => {
             return Ok(ProductionRouterAction::Emit {
                 event: event.clone(),
@@ -2085,6 +2086,7 @@ mod tests {
                     dedup_id: "wiring-1:7:first:d1".into(),
                     entity: "orders".into(),
                     operation: wamn_event_wire::Op::Insert,
+                    node_id: "first".into(),
                 }),
             };
 
@@ -2114,6 +2116,7 @@ mod tests {
                 dedup_id: "d1".into(),
                 entity: "orders".into(),
                 operation: wamn_event_wire::Op::Insert,
+                node_id: "entry".into(),
             }),
         };
         let ProductionRouterAction::Complete(completion) =

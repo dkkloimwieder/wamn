@@ -5,6 +5,12 @@ mod router_delivery;
 mod router_driver;
 mod router_response;
 
+/// [`RouterDelivery::outcome`] is a [`wamn_router::Outcome`], so this crate
+/// already hands its callers a verdict; re-exporting the type lets them read one
+/// without taking a direct router dependency for a field they were already
+/// given.
+pub use wamn_router::Verdict;
+
 pub use readiness::{
     RELEASE_READINESS_CHECK_FAILED, RELEASE_READINESS_INVALIDATED, RouterReadinessProbe,
     RouterReadinessSnapshot, RouterReadinessStatus,

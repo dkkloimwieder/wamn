@@ -44,7 +44,8 @@ use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::plugins::effect_span::{
-    EFFECT_OPERATION, EffectIdentity, JETSTREAM_DURATION_MS, effect_span, record_effect_ms,
+    EFFECT_OPERATION, EffectIdentity, EffectWiring, JETSTREAM_DURATION_MS, effect_span,
+    record_effect_ms, record_wiring,
 };
 use crate::plugins::wamn_postgres::{DEFAULT_PROJECT, PROJECT_CONFIG_KEY, TENANT_CONFIG_KEY};
 use crate::release_manifest::LoadedRelease;
@@ -72,10 +73,20 @@ pub const ENVIRONMENT_CONFIG_KEY: &str = "wamn.environment";
 /// [`WamnJetstream::publish_derived`] resolves them from the claim bound to
 /// `component_id`. `package_id` is supplied only by the native host caller from
 /// its loaded release/run/wiring identity; it is not a guest WIT operand.
+///
+/// `wiring_id`, `wiring_version` and `node_id` are trace coordinates only: they
+/// name the wiring position the Emit terminal was admitted at, and nothing on
+/// the publish path authorizes against them. Both callers are native hosts that
+/// already hold all three — the router bridge from its resolved target and the
+/// executor from its claimed queue row — so neither reads them from guest
+/// output. See [`js_span`] for how they reach the effect span.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DerivedPublishRequest {
     pub component_id: String,
     pub package_id: String,
+    pub wiring_id: String,
+    pub wiring_version: u32,
+    pub node_id: String,
     pub entity: String,
     pub operation: Op,
     pub payload: serde_json::Value,
@@ -576,6 +587,18 @@ struct PreparedDerivedPublication {
     message_id: String,
     expected_stream: String,
     body: Vec<u8>,
+    /// Carried through only so the span opened after preparation can name the
+    /// wiring position; `prepare_derived_publication` consumes the request.
+    wiring: DerivedPublishWiring,
+}
+
+/// The wiring position one derived publication was admitted at, for tracing.
+#[derive(Debug)]
+struct DerivedPublishWiring {
+    package_id: String,
+    wiring_id: String,
+    wiring_version: u32,
+    node_id: String,
 }
 
 fn prepare_derived_publication(
@@ -662,17 +685,45 @@ fn prepare_derived_publication(
         subject: event_subject,
         message_id,
         expected_stream,
+        wiring: DerivedPublishWiring {
+            package_id: event.package_id.clone(),
+            wiring_id: request.wiring_id,
+            wiring_version: request.wiring_version,
+            node_id: request.node_id,
+        },
         body,
     })
 }
 
 /// The span one `wamn:jetstream` effect opens, enriched from the component's
-/// bind-time claim.
-fn js_span(claim: &JetstreamClaim, component_id: &str, operation: &'static str) -> tracing::Span {
+/// bind-time claim and, where the operation has one, its wiring position.
+///
+/// Only `publish-derived` passes a `wiring`. It is the one operation this plugin
+/// performs on behalf of an admitted Emit terminal, and its native callers hand
+/// the coordinates down with the request. The other three — `router-tap`,
+/// `prepare-registration` and `doorbell.ring` — are plugin-initiated control
+/// work standing at no wiring node, so they record the keys EMPTY through
+/// [`record_wiring`]'s `None`, which reads as "this effect holds no such claim"
+/// rather than as dropped instrumentation.
+///
+/// Four of the eight keys are EMPTY even on `publish-derived`.
+/// `wamn.occurrence`, `wamn.component_digest`, `wamn.component_name` and
+/// `wamn.operation` all belong to a bound `ConnectionInvocation`, and the
+/// publish path never stands in a guest component scope: its two callers are the
+/// router delivery bridge and the executor queue, both native hosts. They hold
+/// the wiring position but no per-visit invocation, so there is nothing
+/// host-attested to fill those four with and a placeholder would be a claim the
+/// platform cannot make.
+fn js_span(
+    claim: &JetstreamClaim,
+    component_id: &str,
+    operation: &'static str,
+    wiring: Option<&DerivedPublishWiring>,
+) -> tracing::Span {
     // The span name is the host capability, not the wire: `doorbell.ring`
     // publishes on the CONTROL-plane core-NATS connection and is still
     // `wamn.jetstream`, because this plugin is what an operator would open next.
-    effect_span!(
+    let span = effect_span!(
         "wamn.jetstream",
         EffectIdentity {
             tenant: &claim.tenant,
@@ -681,7 +732,21 @@ fn js_span(claim: &JetstreamClaim, component_id: &str, operation: &'static str) 
         },
         None,
         effect.operation = operation,
-    )
+    );
+    record_wiring(
+        &span,
+        wiring.map(|wiring| EffectWiring {
+            package_id: &wiring.package_id,
+            wiring_id: &wiring.wiring_id,
+            wiring_version: wiring.wiring_version,
+            node_id: &wiring.node_id,
+            occurrence: 0,
+            component_digest: "",
+            component_name: "",
+            operation: "",
+        }),
+    );
+    span
 }
 
 impl WamnJetstream {
@@ -987,6 +1052,7 @@ impl WamnJetstream {
             &publication.claim,
             &publication.component_id,
             "publish-derived",
+            Some(&publication.wiring),
         );
         let started = std::time::Instant::now();
         let result = async {
@@ -1084,7 +1150,7 @@ impl WamnJetstream {
             );
             return;
         };
-        let span = js_span(&claim, component_id, "router-tap");
+        let span = js_span(&claim, component_id, "router-tap", None);
         let outcome = async {
             let ctx = self
                 .ensure_ctx()
@@ -1361,7 +1427,7 @@ impl registration::Host for ActiveCtx<'_> {
         let plugin = plugin_of(self)?;
         let component_id = self.component_id.to_string();
         let claim = plugin.claim_for(&component_id);
-        let span = js_span(&claim, &component_id, "prepare-registration");
+        let span = js_span(&claim, &component_id, "prepare-registration", None);
         let started = std::time::Instant::now();
         let result = prepare_consumer(&plugin, &config, &package_id, &registration_id)
             .instrument(span)
@@ -1397,7 +1463,7 @@ impl doorbell::Host for ActiveCtx<'_> {
         };
         let subject = doorbell_subject(&execution_target_id);
         let claim = plugin.claim_for(&component_id);
-        let span = js_span(&claim, &component_id, "doorbell.ring");
+        let span = js_span(&claim, &component_id, "doorbell.ring", None);
         let started = std::time::Instant::now();
         // Publish + flush: the hint must be ON THE WIRE when ring returns, or a
         // buffered publish could outlive the caller's interest (the async-nats
@@ -1433,11 +1499,15 @@ mod tests {
     };
 
     use super::*;
+    use crate::plugins::effect_span::span_tests::{SpanHarness, expected_attributes};
 
     fn derived_request(component_id: &str, dedup_id: &str) -> DerivedPublishRequest {
         DerivedPublishRequest {
             component_id: component_id.into(),
             package_id: "receiving".into(),
+            wiring_id: "receiving-orders".into(),
+            wiring_version: 7,
+            node_id: "publish".into(),
             entity: "orders".into(),
             operation: Op::Update,
             payload: serde_json::json!(["arbitrary", {"status": "ready"}]),
@@ -1448,6 +1518,97 @@ mod tests {
                 depth: 3,
             },
         }
+    }
+
+    /// A plugin bound for derived publication into a valid event scope, with no
+    /// broker URL so `ensure_ctx` refuses before any socket is opened. The span
+    /// is opened before that refusal, which is what makes the shape assertable
+    /// with no NATS server running.
+    fn span_test_plugin() -> WamnJetstream {
+        let mut plugin = WamnJetstream::new(WamnJetstreamConfig::default());
+        plugin
+            .bind_derived_scope(
+                "component-1",
+                "receiving-route-auth",
+                "database-project",
+                "dev",
+            )
+            .expect("trusted driver scope binds");
+        plugin.event_coordinates = EventCoordinates {
+            org: "acme".into(),
+            project: "receiving".into(),
+            environment: "dev".into(),
+        };
+        plugin
+    }
+
+    /// The whole span value, frozen as a literal: a derived publication names
+    /// the wiring position it was admitted at, and names EMPTY the four keys the
+    /// publish path cannot source.
+    #[tokio::test]
+    async fn derived_publication_span_carries_the_wiring_and_node_it_published_for() {
+        let plugin = span_test_plugin();
+        let harness = SpanHarness::install("jetstream-derived-span-test");
+
+        plugin
+            .publish_derived(derived_request("component-1", "author:orders:7"))
+            .await
+            .expect_err("no broker URL refuses before connecting");
+
+        assert_eq!(
+            harness.attributes("wamn.jetstream"),
+            expected_attributes(&[
+                ("effect.operation", "publish-derived"),
+                ("wamn.tenant", "receiving-route-auth"),
+                ("wamn.project", "database-project"),
+                ("wamn.component", "component-1"),
+                ("wamn.package_id", "receiving"),
+                ("wamn.wiring_id", "receiving-orders"),
+                ("wamn.wiring_version", "7"),
+                ("wamn.node_id", "publish"),
+                // The publish path stands in no guest component scope, so it
+                // holds no bound invocation to source these four from.
+                ("wamn.occurrence", "0"),
+                ("wamn.component_digest", ""),
+                ("wamn.component_name", ""),
+                ("wamn.operation", ""),
+            ]),
+            "a derived event must name the wiring node that produced it"
+        );
+    }
+
+    /// Two emits from different nodes of one wiring must not read alike, or the
+    /// coordinate is decoration rather than an answer to "which node published
+    /// this?".
+    #[tokio::test]
+    async fn two_derived_publications_name_their_own_nodes() {
+        let plugin = span_test_plugin();
+        let harness = SpanHarness::install("jetstream-two-nodes-span-test");
+
+        for (node_id, dedup_id) in [
+            ("publish", "author:orders:7"),
+            ("escalate", "author:orders:8"),
+        ] {
+            let mut request = derived_request("component-1", dedup_id);
+            request.node_id = node_id.into();
+            plugin
+                .publish_derived(request)
+                .await
+                .expect_err("no broker URL refuses before connecting");
+        }
+
+        let nodes: Vec<String> = harness
+            .every_span("wamn.jetstream")
+            .into_iter()
+            .map(|attributes| {
+                attributes
+                    .into_iter()
+                    .find(|(key, _)| key == "wamn.node_id")
+                    .expect("every derived publish span records a node id")
+                    .1
+            })
+            .collect();
+        assert_eq!(nodes, vec!["publish".to_owned(), "escalate".to_owned()]);
     }
 
     #[test]
