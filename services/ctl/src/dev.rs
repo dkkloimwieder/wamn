@@ -41,7 +41,7 @@ async fn execute_preparation(
     command: &mut tokio::process::Command,
     timeout: Duration,
 ) -> anyhow::Result<std::process::Output> {
-    crate::owned_command::execute(command, timeout, Duration::from_secs(5)).await
+    wamn_control::owned_command::execute(command, timeout, Duration::from_secs(5)).await
 }
 
 /// Exact stage order of one local development run.

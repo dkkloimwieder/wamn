@@ -11,7 +11,7 @@ use serde::Serialize;
 use tokio::process::Command;
 
 use super::{ApplicationResult, Candidate, CheckResult, Qualification, sqlx};
-use crate::dev::{DevSourceState, watch::GitSource};
+use crate::git_source::{GitSourceState, discover_repository_root, read_status};
 
 const RECEIVING_CASES: &[&str] = &[
     "route_authentication_live::cluster::route_cases::command_histories",
@@ -180,8 +180,8 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
         .open(&args.result)
         .context("create a fresh qualification result file")?;
     let candidate = Candidate::read(&fs::canonicalize(&args.candidate)?)?;
-    let source = GitSource::discover(&args.repository).await?;
-    let snapshot = source.snapshot().await?;
+    let repository_root = discover_repository_root(&args.repository).await?;
+    let snapshot = read_status(&repository_root).await?;
     let (manifest, digest) = candidate.manifest()?;
     let mut result = Qualification {
         source_commit: snapshot.source_commit().to_owned(),
@@ -192,7 +192,7 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
         checks: Vec::new(),
         result: "fail".to_owned(),
     };
-    let run = qualify_candidate(&args, &source, &mut result).await;
+    let run = qualify_candidate(&args, &repository_root, &mut result).await;
     if run.is_ok() {
         result.result = "pass".to_owned();
     }
@@ -209,12 +209,12 @@ pub async fn qualify(args: QualifyReleaseArgs) -> anyhow::Result<()> {
 
 async fn qualify_candidate(
     args: &QualifyReleaseArgs,
-    source: &GitSource,
+    repository_root: &Path,
     result: &mut Qualification,
 ) -> anyhow::Result<()> {
-    let snapshot = source.snapshot().await?;
+    let snapshot = read_status(repository_root).await?;
     ensure!(
-        snapshot.state() == DevSourceState::Clean,
+        snapshot.state() == GitSourceState::Clean,
         "qualification requires a clean selected source revision"
     );
     let root = snapshot.repository_root();
@@ -351,9 +351,9 @@ async fn qualify_candidate(
         );
         result.assert_artifacts()?;
     }
-    let finished = source.snapshot().await?;
+    let finished = read_status(repository_root).await?;
     ensure!(
-        finished.state() == DevSourceState::Clean
+        finished.state() == GitSourceState::Clean
             && finished.source_commit() == result.source_commit,
         "source changed during qualification"
     );
@@ -466,11 +466,10 @@ pub async fn check_changes(args: CheckChangesArgs) -> anyhow::Result<()> {
         .write(true)
         .open(&args.result)
         .context("create a fresh change result file")?;
-    let source = GitSource::discover(&args.repository).await?;
-    let snapshot = source.snapshot().await?;
+    let snapshot = read_status(&discover_repository_root(&args.repository).await?).await?;
     let mut result = ChangeResult {
         source_commit: snapshot.source_commit().to_owned(),
-        source_dirty: snapshot.state() == DevSourceState::Dirty,
+        source_dirty: snapshot.state() == GitSourceState::Dirty,
         checks: Vec::new(),
         result: "fail",
     };
@@ -852,7 +851,7 @@ mod tests {
     async fn sqlx_metadata_check_reaches_fresh_receiving_and_acme_databases() {
         wamn_test_postgres::require_prerequisites(&["cargo-sqlx"]);
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
+            .join("../../..")
             .canonicalize()
             .expect("resolve the repository root");
         let target =

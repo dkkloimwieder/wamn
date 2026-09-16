@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn package_search_path_preserves_other_connection_options() {
         let manifest = PackageManifest::from_slice(include_bytes!(
-            "../../../../apps/wamn_receiving/wamn.json"
+            "../../../../../apps/wamn_receiving/wamn.json"
         ))
         .expect("read the existing package schema owner");
         let database_url = package_database_url(

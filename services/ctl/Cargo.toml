@@ -57,7 +57,6 @@ tracing = { workspace = true }
 # keeps its meaning (dep diagnostics to stderr), matching the pre-split
 # no-OTEL behavior of wash_runtime::observability::initialize_observability.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-oci-client = { workspace = true }
 async-nats = { workspace = true, features = ["jetstream"] }
 futures-util = { workspace = true }
 crossterm = { workspace = true }

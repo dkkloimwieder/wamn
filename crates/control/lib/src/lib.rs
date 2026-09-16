@@ -10,6 +10,7 @@ pub mod author_wiring;
 pub mod component_declaration;
 #[cfg(feature = "ops")]
 pub mod copy_project_env;
+pub mod delivery;
 #[cfg(feature = "ops")]
 pub mod dump_project_env;
 pub mod enable_cdc_project_env;
@@ -22,6 +23,7 @@ pub mod ident;
 pub mod identity_issuer;
 #[cfg(feature = "ops")]
 mod ops_schema;
+pub mod owned_command;
 pub mod pat_client;
 pub mod print_release_env;
 pub mod project_env_membership;

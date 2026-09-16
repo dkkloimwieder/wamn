@@ -24,7 +24,7 @@ impl Drop for ProcessGroup {
 }
 
 /// Execute a child with a deadline, signal cancellation, and owned descendants.
-pub(crate) async fn execute(
+pub async fn execute(
     command: &mut Command,
     run_timeout: Duration,
     termination_grace: Duration,

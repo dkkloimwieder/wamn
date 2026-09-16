@@ -353,13 +353,13 @@ async fn require_compatible_schema(
     for package in &release.packages {
         transaction
             .query_one(
-                wamn_control::apply_package::LOCK_PACKAGE_SQL,
+                crate::apply_package::LOCK_PACKAGE_SQL,
                 &[&release.tenant_id, &package.package_id()],
             )
             .await?;
         let installed = transaction
             .query_opt(
-                wamn_control::apply_package::SELECT_CURRENT_PACKAGE_VERSION_SQL,
+                crate::apply_package::SELECT_CURRENT_PACKAGE_VERSION_SQL,
                 &[&release.tenant_id, &package.package_id()],
             )
             .await?

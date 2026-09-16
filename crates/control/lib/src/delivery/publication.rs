@@ -124,7 +124,7 @@ mod tests {
     mod vector {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../crates/catalog/model/tests/fixtures/release_manifest_mint_vector.rs"
+            "/../../../crates/catalog/model/tests/fixtures/release_manifest_mint_vector.rs"
         ));
     }
 

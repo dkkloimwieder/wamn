@@ -10,12 +10,11 @@
 
 pub mod bind_connection;
 pub mod component_verbs;
-pub mod delivery;
+pub use wamn_control::delivery;
 pub mod dev;
 pub mod identity_verbs;
 #[cfg(feature = "ops")]
 pub mod ops_verbs;
-mod owned_command;
 pub mod package_verbs;
 pub use wamn_control::print_release_env;
 pub mod provision_org;
