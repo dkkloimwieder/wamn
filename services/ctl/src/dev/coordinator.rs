@@ -98,7 +98,10 @@ impl ProductionDevStageError {
     }
 
     fn owner(operation: &'static str, source: anyhow::Error) -> Self {
-        let detail = source.to_string().into_boxed_str();
+        // The whole chain, top context first. Display alone prints only the
+        // outermost context, which cost two fixture runs to recover the
+        // refusal that actually stopped the stage (wamn-aij8).
+        let detail = format!("{source:#}").into_boxed_str();
         Self {
             kind: ProductionDevStageErrorKind::StageOwner,
             operation,
@@ -127,7 +130,8 @@ impl ProductionDevStageError {
             kind: ProductionDevStageErrorKind::AuthenticationUnavailable,
             operation: "re-authenticate publisher",
             endpoint: Some(endpoint.into()),
-            detail: "the configured identity authority is unavailable".into(),
+            detail: format!("the configured identity authority is unavailable: {source:#}")
+                .into_boxed_str(),
             source: Some(source),
         }
     }
@@ -2440,6 +2444,35 @@ mod tests {
             root: PathBuf::from(format!("/packages/{id}")),
             manifest,
         }
+    }
+
+    /// A failed stage carries the refusal that stopped it, under its context.
+    ///
+    /// The live run of wamn-ri4b printed "dev-stage-owner-failed while
+    /// introspect package: introspect package schemas" and dropped the
+    /// unsupported-acl refusal underneath it. Both the watch output and the
+    /// read model take this one string, so recovering that cause cost two
+    /// fixture runs (wamn-aij8).
+    #[test]
+    fn a_failed_stage_names_its_whole_cause_chain_after_the_top_context() {
+        let source = anyhow::Error::msg("schema has an explicit ACL")
+            .context("PostgreSQL introspection refused (unsupported-acl) in schema receiving")
+            .context("introspect package schemas");
+
+        let error = ProductionDevStageError::owner("introspect package", source);
+
+        assert_eq!(
+            error.to_string(),
+            "dev-stage-owner-failed while introspect package: introspect package schemas: \
+             PostgreSQL introspection refused (unsupported-acl) in schema receiving: \
+             schema has an explicit ACL"
+        );
+        assert_eq!(
+            ProductionDevStageError::owner("introspect package", anyhow::Error::msg("one line"))
+                .to_string(),
+            "dev-stage-owner-failed while introspect package: one line",
+            "a cause with no context keeps the line it always printed"
+        );
     }
 
     /// The claim says which creation of the target database it ran against.

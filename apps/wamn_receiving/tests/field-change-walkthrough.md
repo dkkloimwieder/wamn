@@ -234,6 +234,10 @@ The reader refused the `receiving` schema and the granted columns, because they 
 Commit `dd7fe6479` lets the reader skip the ACL entries of the audit retention role and of the application role by name.
 A grant to any other role still refuses.
 
+The printed line stopped at that top context and dropped the refusal underneath it.
+Recovering the cause cost two runs.
+Issue `wamn-aij8` fixed that afterwards, and a failed stage now prints the whole cause chain.
+
 A later lane commit, `856267331`, also changed the ownership preflight of one apply.
 A stream that creates a relation and then adds a column to it now applies to an empty database.
 None of the four steps above runs that path, so the times stand as recorded.

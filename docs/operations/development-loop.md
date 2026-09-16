@@ -110,6 +110,8 @@ A disposable projection made by hand with `wamn-ctl provision-project-env --disp
 
 For code and compatible SQL changes, the previous application remains available during candidate preparation.
 Build, Gate, and binding failures keep that application running.
+A failed stage prints its top context first and every cause under it.
+The printed line names the refusal that stopped the stage.
 The loop replaces the host and operator only after the candidate passes preparation.
 The local Gate uses the same wiring rules as release authoring and authenticates the configured publisher.
 The runtime still enforces operation grants, connection bindings, and credentials for each database role.
