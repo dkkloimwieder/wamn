@@ -45,16 +45,15 @@ impl ComponentConnectionRequirement {
 
     /// SHA-256 of [`Self::canonical_bytes`].
     pub fn requirement_hash(&self) -> String {
-        {
-            use sha2::Digest as _;
-            format!(
-                "sha256:{}",
-                sha2::Sha256::digest(self.canonical_bytes())
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect::<String>()
-            )
+        use sha2::Digest as _;
+        let digest = sha2::Sha256::digest(self.canonical_bytes());
+        let mut output = String::with_capacity("sha256:".len() + digest.len() * 2);
+        output.push_str("sha256:");
+        for byte in digest {
+            use std::fmt::Write as _;
+            write!(&mut output, "{byte:02x}").expect("writing to a string is infallible");
         }
+        output
     }
 }
 

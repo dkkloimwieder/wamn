@@ -206,8 +206,10 @@ pub enum ServingRegistrationInput {
     Batch,
 }
 
-fn registration_input_is_event(input: &ServingRegistrationInput) -> bool {
-    *input == ServingRegistrationInput::Event
+/// Serde `skip_serializing_if` predicate for a field whose default carries no
+/// information on the wire.
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
 }
 
 /// One event registration targeting an exact wiring identity and version.
@@ -222,7 +224,7 @@ pub struct ServingRegistration {
     pub wiring_version: u32,
     pub entity: String,
     pub ops: BTreeSet<String>,
-    #[serde(default, skip_serializing_if = "registration_input_is_event")]
+    #[serde(default, skip_serializing_if = "is_default")]
     pub input: ServingRegistrationInput,
 }
 

@@ -20,7 +20,7 @@ pub(crate) fn validate_canonical_operation(value: &str) -> Result<(), CatalogIde
     };
     if local.contains('@') {
         return invalid("registered operation contains more than one version separator");
-    };
+    }
     validate_kebab_identifier(package_id, "registered-operation package-id")?;
     refuse_reserved_package_id(package_id)?;
     validate_package_version(package_version)?;

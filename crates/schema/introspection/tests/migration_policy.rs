@@ -76,7 +76,7 @@ fn admits_every_manifest_schema_and_refuses_an_out_of_set_target() {
 fn admits_the_demanded_overlay_additions() {
     let artifact = TempArtifact::write(
         "sql",
-        r#"
+        r"
 ALTER TABLE receiving.purchase_order
     ADD COLUMN acme_inspection_required boolean NOT NULL DEFAULT false;
 ALTER TABLE receiving.purchase_order
@@ -84,7 +84,7 @@ ALTER TABLE receiving.purchase_order
 ALTER TABLE receiving.purchase_order
     ADD CONSTRAINT purchase_order_acme_quality_status_check
     CHECK (acme_quality_status IN ('not_required', 'pending', 'approved', 'rejected'));
-"#,
+",
     );
 
     validate_migration_file(artifact.path(), "receiving")
@@ -147,14 +147,14 @@ fn a_nullable_column_admits_no_further_clause_and_no_unmodeled_type() {
 fn reports_definition_mutations_from_the_artifact_loader() {
     let artifact = TempArtifact::write(
         "sql",
-        r#"
+        r"
 CREATE TABLE receiving.quality_inspection (id uuid);
 ALTER TABLE receiving.purchase_order ADD COLUMN acme_flag boolean NOT NULL DEFAULT false;
 ALTER TABLE receiving.purchase_order ADD CONSTRAINT purchase_order_acme_flag_check CHECK (acme_flag);
 ALTER TABLE receiving.purchase_order ALTER COLUMN status SET DEFAULT 'complete';
 ALTER TABLE receiving.purchase_order DROP CONSTRAINT purchase_order_status_check;
 DROP TABLE receiving.purchase_order;
-"#,
+",
     );
     let bytes = fs::read(artifact.path()).expect("read mutation fixture bytes");
     let mutations = inspect_migration_definition_mutations(artifact.path(), &bytes, &["receiving"])

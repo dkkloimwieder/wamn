@@ -203,8 +203,8 @@ impl fmt::Display for CatalogIdentityError {
             Self::UnsupportedServingManifestVersion { requested } => {
                 write!(
                     formatter,
-                    "{}: requested {requested}; supported version is {}",
-                    UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL, SERVING_MANIFEST_FORMAT_VERSION
+                    "{UNSUPPORTED_SERVING_MANIFEST_VERSION_REFUSAL}: requested {requested}; \
+                     supported version is {SERVING_MANIFEST_FORMAT_VERSION}"
                 )
             }
             Self::InvalidAttachmentAuthPolicy { attachment_id } => {
@@ -798,17 +798,6 @@ fn write_frame(output: &mut Vec<u8>, value: &[u8]) {
     output.extend_from_slice(value);
 }
 
-/// Canonical identity-frame bytes for one serializable identity input.
-///
-/// Routes through `wamn_execution_contract::canonical_json_bytes`, the workspace's only RFC
-/// 8785 producer. Until wamn-0h0g.15.63 this crate carried a second, `ryu-js`
-/// based implementation of the same spec beside it, which left release identity
-/// depending on *which* producer a call site happened to reach for.
-fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
-    wamn_execution_contract::canonical_json_bytes(
-        &serde_json::to_value(value).expect("identity input serializes"),
-    )
-}
 
 #[cfg(test)]
 mod tests {

@@ -353,10 +353,10 @@ fn validate_parameter_value(
         .add_resource(PARAMETER_SCHEMA_URI, schema.schema.clone())
         .expect("an admitted component carries a compiled-valid schema");
     let mut schemas = Schemas::new();
-    let compiled = compiler
+    let schema_index = compiler
         .compile(PARAMETER_SCHEMA_URI, &mut schemas)
         .expect("an admitted component carries a compiled-valid schema");
-    schemas.validate(value, compiled).map_err(|error| {
+    schemas.validate(value, schema_index).map_err(|error| {
         WiringCompatibilityError::new(
             WiringCompatibilityErrorKind::InvalidParameter,
             format!(
@@ -382,18 +382,14 @@ fn resolve_input_port<'a>(
                 WiringCompatibilityError::new(
                     WiringCompatibilityErrorKind::UnknownInputPort,
                     format!(
-                        "wiring target {node_id:?} operation {:?} does not declare input port {name:?}",
-                        operation_name
+                        "wiring target {node_id:?} operation {operation_name:?} does not declare input port {name:?}"
                     ),
                 )
             }),
         None if operation.input_ports.len() == 1 => Ok(&operation.input_ports[0]),
         None if operation.input_ports.is_empty() => Err(WiringCompatibilityError::new(
             WiringCompatibilityErrorKind::MissingInputPort,
-            format!(
-                "wiring target {node_id:?} operation {:?} declares no input port",
-                operation_name
-            ),
+            format!("wiring target {node_id:?} operation {operation_name:?} declares no input port"),
         )),
         None => Err(WiringCompatibilityError::new(
             WiringCompatibilityErrorKind::AmbiguousInputPort,
