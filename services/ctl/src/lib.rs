@@ -16,7 +16,7 @@
 #[cfg(target_os = "linux")]
 use wamn_control::{delivery, print_release_env};
 
-pub mod bind_connection;
+pub use wamn_control::bind_connection;
 pub mod component_verbs;
 pub mod delivery_verbs;
 pub mod dev;
@@ -24,7 +24,7 @@ pub mod identity_verbs;
 #[cfg(feature = "ops")]
 pub mod ops_verbs;
 pub mod package_verbs;
-pub mod provision_org;
+pub use wamn_control::provision_org;
 pub mod provisioning_verbs;
 pub mod release_verbs;
 #[cfg(target_os = "linux")]

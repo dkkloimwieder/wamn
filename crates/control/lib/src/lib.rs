@@ -9,6 +9,7 @@
 
 pub mod apply_package;
 pub mod author_wiring;
+pub mod bind_connection;
 pub mod component_declaration;
 #[cfg(feature = "ops")]
 pub mod copy_project_env;
@@ -30,6 +31,7 @@ pub mod pat_client;
 pub mod print_release_env;
 pub mod project_env_membership;
 pub mod promote;
+pub mod provision_org;
 pub mod provision_project_env;
 #[cfg(feature = "ops")]
 pub mod prune_record_history;

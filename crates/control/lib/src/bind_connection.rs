@@ -57,7 +57,7 @@ pub enum RequirementType {
 }
 
 impl RequirementType {
-    pub(crate) fn descriptor(self) -> ConnectionTypeDescriptor {
+    pub fn descriptor(self) -> ConnectionTypeDescriptor {
         match self {
             Self::Blobstore => ConnectionTypeDescriptor::blobstore_v1(),
         }
@@ -399,7 +399,7 @@ mod tests {
 /// Existing non-secret provisioning inputs for a disposable local instance.
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub(crate) struct LocalInstanceInput {
+pub struct LocalInstanceInput {
     pub requirement_type: RequirementType,
     pub definition: PathBuf,
     pub credential_handle: String,
@@ -407,13 +407,13 @@ pub(crate) struct LocalInstanceInput {
 
 /// Validated non-secret instance inputs retained until candidate cutover.
 #[derive(Debug)]
-pub(crate) struct PreparedLocalInstance {
+pub struct PreparedLocalInstance {
     requirement_type: RequirementType,
     definition: Value,
     credential_handle: String,
 }
 
-pub(crate) fn read_local_instance(
+pub fn read_local_instance(
     input: &LocalInstanceInput,
 ) -> anyhow::Result<PreparedLocalInstance> {
     ensure!(
@@ -436,7 +436,7 @@ pub(crate) fn read_local_instance(
 }
 
 /// Insert only absent local instances; never replace live generation authority.
-pub(crate) async fn prepare_local_instance(
+pub async fn prepare_local_instance(
     client: &impl tokio_postgres::GenericClient,
     tenant: &str,
     environment: &str,

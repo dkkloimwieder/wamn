@@ -45,7 +45,7 @@ use anyhow::Context as _;
 use clap::{Args, ValueEnum};
 use tokio_postgres::NoTls;
 
-use wamn_control::env_policies::{ensure_env_policy_durability_schema, read_env_policies};
+use crate::env_policies::{ensure_env_policy_durability_schema, read_env_policies};
 use wamn_control_registry::{EnvPolicy, Org, OrgEnvPolicy, Registry, SCHEMA_VERSION, Template};
 
 /// The named org preset `provision-org` stamps (the `Tier` successor —
