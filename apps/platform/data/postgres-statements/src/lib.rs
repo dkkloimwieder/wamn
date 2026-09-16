@@ -84,7 +84,8 @@ pub struct StatementError {
     kind: StatementErrorKind,
     statement_digest: Option<Box<str>>,
     constraint: Option<Box<str>>,
-    contract_mismatch: Option<ContractMismatch>,
+    // Boxed to keep `StatementError` small enough for a by-value `Result`.
+    contract_mismatch: Option<Box<ContractMismatch>>,
     context: Box<str>,
 }
 
@@ -105,8 +106,8 @@ impl StatementError {
     }
 
     /// Structured request/result shape mismatch reported by the host.
-    pub const fn contract_mismatch(&self) -> Option<&ContractMismatch> {
-        self.contract_mismatch.as_ref()
+    pub fn contract_mismatch(&self) -> Option<&ContractMismatch> {
+        self.contract_mismatch.as_deref()
     }
 
     fn invalid_result(statement_digest: &str, context: impl Into<Box<str>>) -> Self {
@@ -148,7 +149,7 @@ impl StatementError {
                     kind: StatementErrorKind::StatementContractMismatch,
                     statement_digest: Some(mismatch.statement_digest.clone()),
                     constraint: None,
-                    contract_mismatch: Some(mismatch),
+                    contract_mismatch: Some(Box::new(mismatch)),
                     context: "statement values do not match the admitted contract".into(),
                 }
             }
@@ -231,6 +232,15 @@ impl Error for StatementError {}
 #[derive(Debug, Default)]
 pub struct Connection;
 
+// The host statement calls are synchronous today and become asynchronous under
+// the WIT async lift; the awaited shape is the SDK contract callers compile
+// against, and `future::ready` would run the statement at call time, not at
+// await time.
+#[allow(
+    clippy::unused_async,
+    clippy::unused_async_trait_impl,
+    reason = "the awaited shape is the SDK contract over a host call that is not yet async"
+)]
 impl Connection {
     /// Open the ambient capability; no socket or credential is accepted.
     pub const fn new() -> Self {
@@ -267,6 +277,12 @@ impl fmt::Debug for Transaction {
     }
 }
 
+// Same reason as `impl Connection` above.
+#[allow(
+    clippy::unused_async,
+    clippy::unused_async_trait_impl,
+    reason = "the awaited shape is the SDK contract over a host call that is not yet async"
+)]
 impl Transaction {
     /// Run one admitted statement in this transaction.
     pub async fn run(
