@@ -277,3 +277,132 @@ fn build_graph_has_no_shared_or_retired_cook_leg() {
         );
     }
 }
+
+// wamn-at27. A stage copies named directories, so a workspace member or path
+// dependency outside them breaks the image build with no source-level signal.
+// 7e53e7f3b declared `wamn-test-postgres` in `apps/Cargo.toml` by the path
+// `../test-support/postgres`; the component stage copied no `test-support`, and
+// `docker build --target gates` then failed reading
+// `/build/test-support/postgres/Cargo.toml` while every `tools/repo-lint` leg
+// stayed green. Cargo reads every workspace manifest before it builds one guest,
+// so a directory that no guest links still has to be present. This case compares
+// the two workspace manifests against the two stages that carry their sources.
+// It reads text only: an image build is far too slow for a gate run.
+
+const ROOT_MANIFEST: &str = include_str!("../../../Cargo.toml");
+const APPS_MANIFEST: &str = include_str!("../../../apps/Cargo.toml");
+
+/// Whether the character before a key is part of a longer word.
+///
+/// `default-members` and `jmespath` both end in a key this reader looks for.
+fn inside_word(manifest: &str, start: usize) -> bool {
+    manifest[..start]
+        .chars()
+        .next_back()
+        .is_some_and(|last| last.is_alphanumeric() || last == '-' || last == '_')
+}
+
+/// The text between the brackets of the `members` array of a workspace manifest.
+fn members_array(manifest: &str) -> &str {
+    let mut offset = 0;
+    while let Some(found) = manifest[offset..].find("members") {
+        let start = offset + found;
+        offset = start + "members".len();
+        if inside_word(manifest, start) {
+            continue;
+        }
+        let Some(tail) = manifest[offset..].trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let Some(tail) = tail.trim_start().strip_prefix('[') else {
+            continue;
+        };
+        return tail
+            .split_once(']')
+            .expect("the members array must close")
+            .0;
+    }
+    panic!("a workspace manifest must declare its members");
+}
+
+/// Every `path = "..."` value of a manifest, in declaration order.
+fn declared_paths(manifest: &str) -> Vec<&str> {
+    let mut paths = Vec::new();
+    let mut offset = 0;
+    while let Some(found) = manifest[offset..].find("path") {
+        let start = offset + found;
+        offset = start + "path".len();
+        if inside_word(manifest, start) {
+            continue;
+        }
+        let Some(tail) = manifest[offset..].trim_start().strip_prefix('=') else {
+            continue;
+        };
+        let Some(tail) = tail.trim_start().strip_prefix('"') else {
+            continue;
+        };
+        paths.push(tail.split_once('"').expect("a path value must close").0);
+    }
+    paths
+}
+
+/// The repository-relative path that `relative` names when read from `base`.
+fn resolve(base: &str, relative: &str) -> String {
+    let mut segments: Vec<&str> = base.split('/').filter(|part| !part.is_empty()).collect();
+    for segment in relative.split('/') {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            named => segments.push(named),
+        }
+    }
+    segments.join("/")
+}
+
+/// The build-context sources of the plain `COPY` lines of one stage.
+fn copied_sources(contents: &str) -> Vec<&str> {
+    contents
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("COPY ") && !line.contains("--from="))
+        .flat_map(|line| {
+            let fields: Vec<_> = line.split_ascii_whitespace().skip(1).collect();
+            let sources = fields.len() - 1;
+            fields.into_iter().take(sources)
+        })
+        .map(|source| source.trim_start_matches("./"))
+        .collect()
+}
+
+#[test]
+fn every_workspace_path_a_build_stage_reads_is_inside_its_copy_set() {
+    assert_eq!(
+        resolve("apps", "../test-support/postgres"),
+        "test-support/postgres",
+        "a path dependency that leaves its workspace must resolve against the repository"
+    );
+
+    for (manifest, base, stage_name) in [
+        (ROOT_MANIFEST, "", "root-planner"),
+        (APPS_MANIFEST, "apps", "component-toolchain"),
+    ] {
+        let copied = copied_sources(stage(DOCKERFILE, stage_name));
+        assert!(!copied.is_empty(), "{stage_name} copies no source");
+        let declared = members_array(manifest)
+            .split('"')
+            .skip(1)
+            .step_by(2)
+            .chain(declared_paths(manifest));
+        for entry in declared {
+            let path = resolve(base, entry);
+            assert!(
+                copied
+                    .iter()
+                    .any(|source| path == *source || path.starts_with(&format!("{source}/"))),
+                "{stage_name} reads {path}, which none of its COPY sources {copied:?} carries"
+            );
+        }
+    }
+}
