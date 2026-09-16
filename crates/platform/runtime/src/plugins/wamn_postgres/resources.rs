@@ -928,12 +928,12 @@ impl bindings::named_imports::wamn::postgres::client::HostCursor for ActiveCtx<'
         cursor_fetch(self, id.project(), rep, max_rows).await
     }
 
-    async fn drop(
+    fn drop(
         &mut self,
         _id: super::NamedProject,
         rep: Resource<PgCursor>,
-    ) -> wash_runtime::wasmtime::Result<()> {
-        cursor_drop(self, rep)
+    ) -> impl std::future::Future<Output = wash_runtime::wasmtime::Result<()>> {
+        std::future::ready(cursor_drop(self, rep))
     }
 }
 
