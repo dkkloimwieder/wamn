@@ -404,6 +404,13 @@ CREATE TABLE wamn_run.runs (
       event_depth IS DISTINCT FROM 0
       OR (event_source_run_id = run_id AND event_root_run_id = run_id)
     ),
+    -- The executor stamps `updated_at` from its own host clock (D2b), while
+    -- `created_at` keeps the server default above. A worker whose clock runs
+    -- behind the database would otherwise store a terminal state that looks
+    -- older than the admission that created the run. Refuse that write.
+    -- At insert both columns take the same `now()`, so equal is admitted.
+    CONSTRAINT runs_updated_after_created
+        CHECK (updated_at >= created_at),
     CONSTRAINT runs_check6
         CHECK ((caller_released_at IS NULL) = (caller_outcome_kind IS NULL)),
     CONSTRAINT runs_check7

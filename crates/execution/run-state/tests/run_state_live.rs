@@ -279,8 +279,12 @@ fn run_state_live() {
     // D2b: the two transitions take their instant from the caller. This test
     // picks the instants, so the stored stamps are exact and reproducible. A
     // server clock could not produce either literal, which is the proof.
-    let released_at = "2024-03-04 05:06:07.000008+00";
-    let terminal_at = "2024-03-04 05:06:09.000010+00";
+    //
+    // The instants sit in the future on purpose. `runs_updated_after_created`
+    // refuses an `updated_at` older than the server-stamped `created_at`, so a
+    // literal in the past would fail that CHECK rather than test the stamp.
+    let released_at = "2099-03-04 05:06:07.000008+00";
+    let terminal_at = "2099-03-04 05:06:09.000010+00";
 
     // Positive caller release, duplicate replay, then terminalization. A
     // transition after terminal state returns its typed refusal.
@@ -1079,6 +1083,45 @@ fn run_state_live() {
         terminalize_exhausted,
     );
     success(&url, &reap_script);
+
+    // The executor now stamps `updated_at` from its own host clock (D2b), while
+    // `created_at` keeps the server default. A worker running behind the
+    // database must fail the write rather than store a run that looks older
+    // than its own admission. The CHECK is what makes that a refusal, and the
+    // executor grant list already carries `updated_at`, so the role that would
+    // commit the skew is the role that meets the constraint here.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,package_id,effective_release_id,environment, \
+            wiring_id,wiring_version,attachment_id,status) \
+         VALUES ('t1','clock-skew','f',1,'cat',1,'prod', \
+           'fixture-wiring',1,'http-skew','running');",
+    );
+    let clock_skew_script = format!(
+        "{} \
+         DO $$ DECLARE refusal text; stored timestamptz; BEGIN \
+           ASSERT (SELECT updated_at = created_at FROM runs WHERE run_id='clock-skew'), \
+                  'a fresh run must admit equal stamps'; \
+           UPDATE runs SET updated_at = created_at + interval '1 second' \
+            WHERE run_id = 'clock-skew'; \
+           ASSERT (SELECT updated_at > created_at FROM runs WHERE run_id='clock-skew'), \
+                  'a later instant must be admitted'; \
+           SELECT updated_at INTO stored FROM runs WHERE run_id='clock-skew'; \
+           BEGIN \
+             UPDATE runs SET updated_at = created_at - interval '1 millisecond' \
+              WHERE run_id = 'clock-skew'; \
+             ASSERT false, 'a skewed worker clock stored a backwards updated_at'; \
+           EXCEPTION WHEN check_violation THEN \
+             GET STACKED DIAGNOSTICS refusal = CONSTRAINT_NAME; \
+             ASSERT refusal = 'runs_updated_after_created', refusal; \
+           END; \
+           ASSERT (SELECT updated_at FROM runs WHERE run_id='clock-skew') = stored, \
+                  'the refusal changed the stored instant'; \
+         END $$; COMMIT;",
+        executor_preamble()
+    );
+    success(&url, &clock_skew_script);
 
     // A malformed digest reaches the named CHECK while the old value is NULL;
     // the immutable-record guard owns only rewrites of a digest already recorded.
