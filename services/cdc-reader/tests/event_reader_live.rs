@@ -9,7 +9,7 @@
 //!
 //! Stands up the REAL substrate (system schema + registration rows via the
 //! wamn-control-registry builders; role/publication/slot/grants via the wamn-control-provision
-//! builders) and drives `event_reader::run_with_token` — the service body the
+//! builders) and drives `event_reader::run_with_shutdown` — the service body the
 //! subcommand runs — through the load-bearing drills:
 //!
 //! - refusal probes: a disabled registration refuses; a MISSING slot is the
@@ -30,10 +30,9 @@ use async_nats::jetstream;
 use async_nats::jetstream::consumer::pull::Config as PullConfig;
 use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy};
 use futures_util::StreamExt as _;
-use pg_walstream::CancellationToken;
 use tokio_postgres::NoTls;
 
-use wamn_cdc_reader::{EventReaderArgs, run_with_token};
+use wamn_cdc_reader::{EventReaderArgs, ReaderShutdown, run_with_shutdown};
 use wamn_control_provision::{
     CredentialGeneration, SystemReader, WorkloadRoleFamily, cdc_object_name, event_stream_name,
     sql, system_reader_generation_role,
@@ -525,9 +524,9 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     // stall it — that is exactly the M4 mutant's shape.
     let err = tokio::time::timeout(
         Duration::from_secs(60),
-        run_with_token(
+        run_with_shutdown(
             reader_args(&super_url, &cdc_name, proxied_nats.clone()),
-            CancellationToken::new(),
+            ReaderShutdown::new(),
         ),
     )
     .await
@@ -536,9 +535,9 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     assert!(err.to_string().contains("disabled"), "got: {err:#}");
 
     register(true).await;
-    let err = run_with_token(
+    let err = run_with_shutdown(
         reader_args(&super_url, &cdc_name, proxied_nats.clone()),
-        CancellationToken::new(),
+        ReaderShutdown::new(),
     )
     .await
     .expect_err("a missing stream must refuse activation");
@@ -565,9 +564,9 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
 
     let err = tokio::time::timeout(
         Duration::from_secs(60),
-        run_with_token(
+        run_with_shutdown(
             reader_args(&super_url, &cdc_name, proxied_nats.clone()),
-            CancellationToken::new(),
+            ReaderShutdown::new(),
         ),
     )
     .await
@@ -579,10 +578,10 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     sys.batch_execute(&sql::create_failover_slot_sql(&cdc_name))
         .await
         .expect("failover slot");
-    let token = CancellationToken::new();
-    let handle = tokio::spawn(run_with_token(
+    let shutdown = ReaderShutdown::new();
+    let handle = tokio::spawn(run_with_shutdown(
         reader_args(&super_url, &cdc_name, proxied_nats.clone()),
-        token.clone(),
+        shutdown.clone(),
     ));
     // The walsender attaching shows the session opened with the CDC role.
     let deadline = Instant::now() + Duration::from_secs(15);
@@ -779,10 +778,10 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         .unwrap();
         expected.push((Op::Insert, id.to_string()));
     }
-    let token2 = CancellationToken::new();
-    let handle2 = tokio::spawn(run_with_token(
+    let shutdown2 = ReaderShutdown::new();
+    let handle2 = tokio::spawn(run_with_shutdown(
         reader_args(&super_url, &cdc_name, proxied_nats.clone()),
-        token2.clone(),
+        shutdown2.clone(),
     ));
     wait_for_count(&js, &stream_name, expected.len() as u64, 30).await;
     let delivered = read_all(&js, &stream_name, expected.len()).await;
@@ -940,7 +939,7 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     // 105 rolled back — never on the stream (the exact count above confirmed it).
 
     // --- phase E: clean shutdown --------------------------------------------
-    token2.cancel();
+    shutdown2.shutdown();
     let joined = tokio::time::timeout(Duration::from_secs(10), handle2)
         .await
         .expect("reader exits promptly on cancellation")
@@ -948,9 +947,9 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
     assert!(joined.is_ok(), "clean shutdown: {joined:?}");
 
     // --- phase H: an unmapped application relation refuses before publish ----
-    let handle3 = tokio::spawn(run_with_token(
+    let handle3 = tokio::spawn(run_with_shutdown(
         reader_args(&super_url, &cdc_name, proxied_nats),
-        CancellationToken::new(),
+        ReaderShutdown::new(),
     ));
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {

@@ -849,9 +849,53 @@ async fn open_session(
     Ok(stream.into_stream(token))
 }
 
+/// The reader's own shutdown handle. It holds the replication adapter's
+/// cancellation type inside this crate, so the public entry point names no type
+/// from `pg_walstream` (wamn-0h0g.19.19). Clone it to hold the handle in more
+/// than one place. Every clone controls the same reader.
+#[derive(Clone, Debug, Default)]
+pub struct ReaderShutdown {
+    token: CancellationToken,
+}
+
+impl ReaderShutdown {
+    /// Create a handle that has not asked for shutdown yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Ask the reader to stop. The reader finishes nothing new, drops the
+    /// walsender session, and returns `Ok(())`.
+    pub fn shutdown(&self) {
+        self.token.cancel();
+    }
+
+    /// Consume the handle into a guard that asks for shutdown when it drops.
+    /// A caller holds one so an early return or an unwind still stops the
+    /// reader.
+    #[must_use]
+    pub fn into_guard(self) -> ReaderShutdownGuard {
+        ReaderShutdownGuard { shutdown: self }
+    }
+}
+
+/// Asks the reader to stop when it drops. [`ReaderShutdown::into_guard`] builds
+/// one.
+#[derive(Debug)]
+pub struct ReaderShutdownGuard {
+    shutdown: ReaderShutdown,
+}
+
+impl Drop for ReaderShutdownGuard {
+    fn drop(&mut self) {
+        self.shutdown.shutdown();
+    }
+}
+
 pub async fn run(args: EventReaderArgs) -> anyhow::Result<()> {
-    let token = CancellationToken::new();
-    let t = token.clone();
+    let shutdown = ReaderShutdown::new();
+    let signalled = shutdown.clone();
     // PID 1 gets no default signal disposition (the dispatcher precedent).
     tokio::spawn(async move {
         let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -860,9 +904,9 @@ pub async fn run(args: EventReaderArgs) -> anyhow::Result<()> {
             _ = tokio::signal::ctrl_c() => {}
             _ = term.recv() => {}
         }
-        t.cancel();
+        signalled.shutdown();
     });
-    run_with_token(args, token).await
+    run_with_shutdown(args, shutdown).await
 }
 
 fn event_nats_options(
@@ -892,9 +936,13 @@ fn event_nats_options(
     }
 }
 
-/// The service body, cancellation injected — the live gate drives this
-/// directly (abort = the crash drill, cancel = clean shutdown).
-pub async fn run_with_token(args: EventReaderArgs, token: CancellationToken) -> anyhow::Result<()> {
+/// The service body, shutdown injected — the live gate drives this directly
+/// (abort = the crash drill, shutdown = clean stop).
+pub async fn run_with_shutdown(
+    args: EventReaderArgs,
+    shutdown: ReaderShutdown,
+) -> anyhow::Result<()> {
+    let token = shutdown.token;
     let nats_options = event_nats_options(
         args.nats_username.as_deref(),
         args.nats_password_file.as_deref(),
