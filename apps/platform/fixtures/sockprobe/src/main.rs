@@ -56,9 +56,8 @@ fn tcp_connect_verdict(target: SocketAddr) -> &'static str {
 /// Attempt `UdpConnect` against a non-loopback address. A service's loopback
 /// bind is permitted regardless of the raw-egress opt-in.
 fn udp_connect_verdict(target: SocketAddr) -> &'static str {
-    let sock = match UdpSocket::bind("127.0.0.1:0") {
-        Ok(s) => s,
-        Err(_) => return "bind-failed",
+    let Ok(sock) = UdpSocket::bind("127.0.0.1:0") else {
+        return "bind-failed";
     };
     match sock.connect(target) {
         Err(e) if is_denied(&e) => "denied",
@@ -70,9 +69,8 @@ fn udp_connect_verdict(target: SocketAddr) -> &'static str {
 /// Attempt `UdpOutgoingDatagram` on an unconnected socket against a
 /// non-loopback address.
 fn udp_outgoing_datagram_verdict(target: SocketAddr) -> &'static str {
-    let sock = match UdpSocket::bind("127.0.0.1:0") {
-        Ok(s) => s,
-        Err(_) => return "bind-failed",
+    let Ok(sock) = UdpSocket::bind("127.0.0.1:0") else {
+        return "bind-failed";
     };
     match sock.send_to(b"x", target) {
         Ok(_) => "sent",

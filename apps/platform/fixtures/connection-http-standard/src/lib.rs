@@ -75,18 +75,24 @@ unsafe extern "C" fn cabi_realloc(
     unsafe { alloc::alloc::realloc(old_ptr, old_layout, new_len) }
 }
 
-wit_bindgen::generate!({
-    world: "connection-http-standard",
-    path: "wit",
-    generate_all,
-    std_feature,
-});
+#[allow(
+    clippy::same_length_and_capacity,
+    reason = "wit-bindgen 0.61 emits Vec::from_raw_parts with equal length and capacity"
+)]
+mod bindings {
+    wit_bindgen::generate!({
+        world: "connection-http-standard",
+        path: "wit",
+        generate_all,
+        std_feature,
+    });
+}
 
 struct Component;
 
-impl exports::wamn::connection_http_standard_fixture::node::Guest for Component {
+impl bindings::exports::wamn::connection_http_standard_fixture::node::Guest for Component {
     fn run(_input: u32) -> u32 {
-        let request = wamn::connection::http::Request {
+        let request = bindings::wamn::connection::http::Request {
             requirement: "standard-erp".to_string(),
             method: "POST".to_string(),
             path_and_query: "/receipts?source=standard".to_string(),
@@ -95,14 +101,14 @@ impl exports::wamn::connection_http_standard_fixture::node::Guest for Component 
             // Frozen 0.1 ABI field: authored keys are not accepted.
             idempotency_key: None,
         };
-        match wamn::connection::http::send(&request) {
+        match bindings::wamn::connection::http::send(&request) {
             Ok(response) => u32::from(response.status),
             Err(_) => 0,
         }
     }
 }
 
-export!(Component);
+bindings::export!(Component with_types_in bindings);
 
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
