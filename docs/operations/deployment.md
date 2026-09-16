@@ -156,6 +156,8 @@ Exercise a meaningful operation and inspect its expected state or outcome before
 Record the selected source, artifact identity, release identity, command exits, and actual observed outcome in one run directory.
 
 `wamn-ctl promote` copies portable release facts only after the target's package and migration records match exactly.
+It pulls each component artifact of the source release from the registry and verifies its bytes.
+If the registry certificate chains to a private CA, pass that CA with `--oci-ca-path` or `WASH_OCI_CA_PATHS`.
 It does not apply migrations to the target.
 The [repository delivery commands](delivery.md) serialize activation against the existing selected release.
 A CI completion order does not set deployment precedence.
