@@ -32,7 +32,6 @@ const PROJECT: &str = "receiving";
 const ENVIRONMENT: &str = "dev";
 const TENANT: &str = "tenant-order";
 const INSTANCE: &str = "k3m9x2p7";
-const APP_PASSWORD: &str = "app-secret-order";
 
 async fn connect(url: &str) -> Client {
     let (client, connection) = tokio_postgres::connect(url, NoTls)
@@ -185,7 +184,7 @@ async fn reset_cluster(catalog: &Client, database: &str, roles: &[&str]) {
 /// rewrite, which is the ordering hazard `privilege_sql` documents.
 async fn apply_documented_order(catalog: &Client, database: &str) {
     catalog
-        .batch_execute(&role_posture_sql(APP_PASSWORD))
+        .batch_execute(&role_posture_sql())
         .await
         .expect("step 1a: role posture SQL");
     catalog

@@ -73,38 +73,6 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long)]
     pub connection_limit: Option<i64>,
 
-    /// Password carried by the legacy shared-app URL surface. Supply it with
-    /// `--app-password` or the env var `WAMN_APP_PASSWORD`.
-    ///
-    /// `wamn-0h0g.12.140` removes it from role SQL: `wamn_app` is now a stable
-    /// passwordless NOLOGIN ACL role. The argument remains until
-    /// `wamn-xv69` retires the legacy URL surface itself.
-    ///
-    /// **Deliberately has no `default_value`.** A default here provisioned every
-    /// project-env with a publicly known password on a `LOGIN` role that
-    /// guest-authored SQL executes as; a 2026-08-19 verifier read measured it
-    /// live on every cluster the role existed on, because nothing ever
-    /// overrode it. Provisioning refuses instead (wamn-0h0g.12.129).
-    ///
-    /// **Required only where it is consumed** (wamn-0h0g.12.141): the exempt
-    /// list is `--emit-secret`'s, member for member, because the credential and
-    /// the Secret are wanted by exactly the same invocations. The refusal stays
-    /// a parse error — mode-scoping narrows *when* the guard fires, never
-    /// weakens it into a runtime check.
-    ///
-    /// `wamn-0h0g.22.16` names the exemption ONCE, as the derived
-    /// [`WORKLOAD_ACTION_GROUP`], instead of listing each family's three flags.
-    /// Listing them by hand is what left the guest family out of all three
-    /// exempt lists: preparing a guest generation demanded an `--emit-secret`
-    /// that its own action then refused, so the mode was unrunnable.
-    #[arg(
-        long,
-        env = "WAMN_APP_PASSWORD",
-        value_name = "PASSWORD ($WAMN_APP_PASSWORD)",
-        required_unless_present_any = ["revoke_pat_prefix", WORKLOAD_ACTION_GROUP]
-    )]
-    pub app_password: Option<String>,
-
     /// Host the runtime reaches the project-env database at. Defaults to the
     /// target cluster's read-write service `<cluster>-rw`.
     #[arg(long)]
@@ -613,14 +581,6 @@ fn provisioning_request(
         system_database_url: args.system_database_url,
         cluster: args.cluster,
         connection_limit: args.connection_limit,
-        // `--app-password` is `required_unless_present_any` over the modes that
-        // provision nothing, and every one of those has already returned above. A
-        // missing credential here is a broken parser contract, not a user error:
-        // re-checking it would plant a second, weaker enforcement point and hollow
-        // out the parse-time refusal (wamn-0h0g.12.141).
-        app_password: args
-            .app_password
-            .expect("clap requires --app-password on every provisioning invocation"),
         app_host: args.app_host,
         app_port: args.app_port,
         namespace: args.namespace,

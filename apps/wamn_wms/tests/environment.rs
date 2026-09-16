@@ -118,7 +118,6 @@ pub async fn provision_project(
         system_database_url: Some(inputs.system_pg_url.clone()),
         cluster: Some(CLUSTER.into()),
         connection_limit: None,
-        app_password: "unused-legacy-secret".into(),
         app_host: Some(host),
         app_port: port,
         namespace: inputs.host_secret_namespace.clone(),
@@ -146,7 +145,6 @@ pub async fn prepare_project(
     let result = shared::apply_project_database(
         admin.as_ref(),
         &route.database_url,
-        "unused-legacy-secret",
         &work.join("privileges.sql"),
     )
     .await;

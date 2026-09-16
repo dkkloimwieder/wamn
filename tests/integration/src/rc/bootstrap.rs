@@ -84,11 +84,6 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         &json!({"passed":true,"substrate":"postgresql-18","port":port,"operation":"provision-org"}),
     )?;
     let issuer = pat_issuer::start(&system_url, &resources.work).await?;
-    let password = format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    );
     let database_path = resources.work.join("bootstrap-database.json");
     let role_path = resources.work.join("bootstrap-role.sql");
     let privilege_path = resources.work.join("bootstrap-privilege.sql");
@@ -104,7 +99,6 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         system_database_url: Some(system_url),
         cluster: Some("rc-pg".into()),
         connection_limit: None,
-        app_password: password,
         app_host: Some("rc-pg-rw".into()),
         app_port: 5432,
         namespace: NAMESPACE.into(),

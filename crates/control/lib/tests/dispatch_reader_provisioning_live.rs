@@ -10,7 +10,7 @@
 //! cluster the moment the family gains generations that inherit it — the defect
 //! `wamn-0h0g.12.179` measured live for the guest.
 //!
-//! This gate applies THE SAME text the subcommand emits — [`role_sql`] and
+//! This gate applies THE SAME text the subcommand emits — [`role_posture_sql`] and
 //! [`privilege_sql`], not a transcription.
 //!
 //! It uses a superuser connection to a database on the PostgreSQL server of its
@@ -38,18 +38,13 @@
 
 use tokio_postgres::{Client, NoTls};
 
-use wamn_control::provision_project_env::{privilege_sql, role_posture_sql, role_sql};
+use wamn_control::provision_project_env::{privilege_sql, role_posture_sql};
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, DB_OWNER_ROLE, DISPATCH_READER_ROLE, WorkloadRoleFamily,
     WorkloadRoleScope, sql, workload_generation_role,
 };
 use wamn_test_infrastructure::locked_database;
 
-/// The legacy app-password input remains until `wamn-xv69`, but
-/// `ensure_app_role_sql` deliberately emits none of it. Keeping a conspicuous
-/// fixture value here shows the role batch cannot leak that input back into
-/// the retired shared LOGIN.
-const APP_PASSWORD: &str = "wamn_app";
 const RETIRED_APP_PASSWORD: &str = "retired-app-session-probe";
 const GENERATION_PASSWORD: &str = "reader-generation-probe";
 const DATABASE: &str = "wamn-db-probe--dispatch--dev";
@@ -119,7 +114,7 @@ async fn run_alone(client: &Client, statement: &str) {
 /// Apply the emitted role artifact with the same commit boundary psql gives
 /// its complete statements: harden first, then drain after NOLOGIN is visible.
 async fn apply_role_artifact(client: &Client) {
-    run_alone(client, &role_posture_sql(APP_PASSWORD)).await;
+    run_alone(client, &role_posture_sql()).await;
     run_alone(client, &sql::drain_app_role_sessions_sql()).await;
 }
 
@@ -136,7 +131,7 @@ async fn apply_role_artifact(client: &Client) {
 ///
 /// Only the reader family is dropped. `wamn_app` and `wamn_db_owner` are shared
 /// with every other gate against this container and are left to their own
-/// idempotent create-or-harden builders inside [`role_sql`].
+/// idempotent create-or-harden builders inside [`role_posture_sql`].
 async fn drop_reader_role(su: &Client) {
     run_alone(
         su,
@@ -257,12 +252,7 @@ async fn provisioned_reader_is_idempotent_and_connection_free_leg(su: &Client, u
     drop_reader_role(su).await;
 
     // Step 1 of the runbook: the role batch, to the target cluster's superuser.
-    let roles = role_posture_sql(APP_PASSWORD);
-    let artifact = role_sql(APP_PASSWORD);
-    assert!(
-        !artifact.contains(&format!("PASSWORD '{APP_PASSWORD}'")),
-        "the legacy app-password input reached role SQL: {artifact}"
-    );
+    let roles = role_posture_sql();
     apply_role_artifact(su).await;
     run_alone(
         su,

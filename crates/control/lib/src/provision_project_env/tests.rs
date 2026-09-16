@@ -295,15 +295,15 @@ fn the_privilege_batch_never_grants_the_stable_guest_acl_role_connect() {
 /// Before wamn-0h0g.12.122 the example manifest named a dispatch role
 /// production provisioning never created; wamn-0h0g.22.24 keeps it created
 /// without a credential. `wamn-0h0g.12.140` gives `wamn_app` the same
-/// posture while preserving the legacy password argument outside SQL.
+/// posture, and `wamn-xv69` deleted the legacy password argument outright.
 #[test]
 fn the_role_batch_creates_passwordless_nologin_acl_roles() {
-    let batch = role_sql("app-secret");
+    let batch = role_sql();
     assert_eq!(
-        role_posture_sql("app-secret"),
+        role_posture_sql(),
         format!(
             "{app}\n{owner}\n{reader}\n",
-            app = sql::ensure_app_role_sql("app-secret"),
+            app = sql::ensure_app_acl_role_sql(),
             owner = sql::ensure_db_owner_role_sql(),
             reader = sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
         )
@@ -312,7 +312,7 @@ fn the_role_batch_creates_passwordless_nologin_acl_roles() {
         batch,
         format!(
             "{posture}\n{drain}\n",
-            posture = role_posture_sql("app-secret"),
+            posture = role_posture_sql(),
             drain = sql::drain_app_role_sessions_sql(),
         )
     );
@@ -323,10 +323,6 @@ fn the_role_batch_creates_passwordless_nologin_acl_roles() {
     assert!(batch.contains("ALTER ROLE \"wamn_app\" NOLOGIN PASSWORD NULL"));
     assert!(batch.contains("CREATE ROLE %I NOLOGIN"));
     assert!(batch.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL"));
-    assert!(
-        !batch.contains("app-secret"),
-        "the legacy app password reached role SQL: {batch}"
-    );
 }
 
 /// The dispatch, the lifecycle and the ACL expectation are one derivation

@@ -308,7 +308,6 @@ if [[ -n ${WAMN_REAL_CTL_BIN:-} ]]; then
         WAMN_CTL_BIN="$WAMN_REAL_CTL_BIN" KUBECTL_BIN="$test_dir/bin/kubectl" \
         "$bootstrap" --org acme --project billing --env dev --tenant tenant-acme \
         --cluster wamn-pg \
-        --app-password ROLE_SQL_PASSWORD_SENTINEL \
         --dispatch-reader-password ROLE_SQL_PASSWORD_SENTINEL_READER \
         --emit-secret "$test_dir/db.json" 2>&1)
     assert_no_secret_output "$output"

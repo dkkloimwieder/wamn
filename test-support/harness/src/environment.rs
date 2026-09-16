@@ -68,7 +68,6 @@ pub async fn provision_project(
 pub async fn apply_project_database(
     admin: &Client,
     database_url: &str,
-    app_password: &str,
     privilege_path: &Path,
 ) -> anyhow::Result<()> {
     let configuration: tokio_postgres::Config = database_url
@@ -79,7 +78,7 @@ pub async fn apply_project_database(
         .context("the emitted project URL names its database")?;
     // Commit the NOLOGIN posture before the existing bounded session drain.
     admin
-        .batch_execute(&provision_project_env::role_posture_sql(app_password))
+        .batch_execute(&provision_project_env::role_posture_sql())
         .await
         .context("apply the project role posture")?;
     admin

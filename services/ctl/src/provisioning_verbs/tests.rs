@@ -1,4 +1,4 @@
-use clap::{CommandFactory as _, FromArgMatches as _, Parser};
+use clap::{CommandFactory as _, Parser};
 use wamn_control::provision_project_env::{ensure_distinct_secret_paths, role_sql};
 
 use super::*;
@@ -35,19 +35,10 @@ struct TestCli {
     args: ProvisionProjectEnvArgs,
 }
 
-fn parse_without_password_envs<const N: usize>(
-    argv: [&str; N],
-) -> Result<ProvisionProjectEnvArgs, clap::Error> {
-    parse_argv(argv.iter().map(|arg| (*arg).to_string()).collect())
-}
-
-/// The same parser over a DERIVED command line, which a fixed-size array
-/// cannot express.
+/// The parser over a DERIVED command line, which a fixed-size array cannot
+/// express.
 fn parse_argv(argv: Vec<String>) -> Result<ProvisionProjectEnvArgs, clap::Error> {
-    let matches = TestCli::command()
-        .mut_arg("app_password", |arg| arg.env(None::<&str>))
-        .try_get_matches_from(argv)?;
-    TestCli::from_arg_matches(&matches).map(|cli| cli.args)
+    TestCli::try_parse_from(argv).map(|cli| cli.args)
 }
 
 /// `["test", "--org", .., "--env", "dev"]` plus whatever the caller adds.
@@ -77,13 +68,6 @@ fn parse_args(extra: &[&str]) -> Result<ProvisionProjectEnvArgs, clap::Error> {
         "billing",
         "--env",
         "dev",
-        // Required with no default on a PROVISIONING invocation
-        // (wamn-0h0g.12.129), which is every invocation this helper builds.
-        // The credential-free modes are exempt (wamn-0h0g.12.141) and
-        // must therefore be parsed bare — see
-        // `the_credential_free_modes_parse_without_a_password`.
-        "--app-password",
-        "app-probe",
     ];
     argv.extend_from_slice(extra);
     TestCli::try_parse_from(argv).map(|cli| cli.args)
@@ -105,8 +89,6 @@ fn clap_guards_the_three_infallible_provisioning_identity_accesses() {
             "dev",
             "--cluster",
             "acme-dev",
-            "--app-password",
-            "app-probe",
             "--emit-secret",
             "/tmp/db.json",
         ];
@@ -224,19 +206,12 @@ fn pat_issue_flags_select_independently_and_revoke_conflicts() {
         Some(Path::new("/tmp/server-ca.pem"))
     );
 
-    // `--app-password` (wamn-0h0g.12.129) is required with no default, but
-    // only where it is consumed: wamn-0h0g.12.141 scoped it to the
-    // provisioning modes, so revoke-only may carry it and need not. Passing
-    // it here keeps this case about the PAT flags; the exemption itself is
-    // checked by `the_credential_free_modes_parse_without_a_password`.
     let revoke = TestCli::try_parse_from([
         "test",
         "--system-database-url",
         "postgresql://postgres@localhost/postgres",
         "--revoke-pat-prefix",
         "0123456789abcdef",
-        "--app-password",
-        "app-probe",
     ])
     .unwrap()
     .args;
@@ -453,32 +428,11 @@ fn provisioning_summary_contains_no_database_credentials() {
 /// reintroduced shared login.
 #[test]
 fn provisioning_mints_no_dispatch_reader_credential() {
-    let parsed = parse_without_password_envs([
-        "test",
-        "--org",
-        "acme",
-        "--project",
-        "billing",
-        "--env",
-        "dev",
-        "--app-password",
-        "app-probe",
-        "--emit-secret",
-        "/tmp/db.json",
-    ])
-    .expect("provisioning needs no dispatch-reader credential");
+    let parsed = parse_args(&["--emit-secret", "/tmp/db.json"])
+        .expect("provisioning needs no dispatch-reader credential");
     assert!(parsed.emit_secret.is_some());
     // The flag is gone from the parser, not merely unused by this call.
-    let rejected = parse_without_password_envs([
-        "test",
-        "--org",
-        "acme",
-        "--project",
-        "billing",
-        "--env",
-        "dev",
-        "--app-password",
-        "app-probe",
+    let rejected = parse_args(&[
         "--emit-secret",
         "/tmp/db.json",
         "--dispatch-reader-password",
@@ -488,65 +442,34 @@ fn provisioning_mints_no_dispatch_reader_credential() {
     assert_eq!(rejected.kind(), clap::error::ErrorKind::UnknownArgument);
     // And the role batch mints a connection-free NOLOGIN carrier, never a
     // login with a password.
-    let batch = role_sql("app-secret");
+    let batch = role_sql();
     assert!(batch.contains("'wamn_dispatch_reader'"));
     assert!(!batch.contains("\"wamn_dispatch_reader\" LOGIN"));
     assert!(batch.contains("ALTER ROLE %I NOLOGIN PASSWORD NULL"));
 }
 
-/// The sibling guard for `--app-password` (wamn-0h0g.12.129).
+/// The exempt-mode half of `wamn-0h0g.12.141`, kept after `wamn-xv69`
+/// deleted the `--app-password` half it was written beside.
 ///
-/// The argument remains required for the legacy URL surface until
-/// `wamn-xv69`, but it must never regain a default or reach role SQL.
-/// A 2026-08-19 verifier read measured the old default on every cluster the
-/// shared LOGIN existed on.
-#[test]
-fn the_app_password_has_no_default() {
-    let error = parse_without_password_envs([
-        "test",
-        "--org",
-        "acme",
-        "--project",
-        "billing",
-        "--env",
-        "dev",
-        "--emit-secret",
-        "/tmp/db.json",
-    ])
-    .expect_err("provisioning accepted a missing --app-password");
-    assert_eq!(
-        error.kind(),
-        clap::error::ErrorKind::MissingRequiredArgument
-    );
-    assert!(
-        error.to_string().contains("--app-password"),
-        "unexpected missing-argument error: {error}"
-    );
-}
-
-/// The other half of the two guards above (wamn-0h0g.12.141). Refusing a
-/// missing credential is only half the contract: the modes that
-/// provision nothing reach neither [`compose_url`] nor [`role_sql`], so the
-/// parser must not demand a secret they would immediately discard — which
-/// is what forced `deploy/mvp/bootstrap.sh`'s generation and revoke call
-/// sites to invent one. The exempt list is `--emit-secret`'s: the
-/// credentials and the Secret are owed by the same invocations.
+/// The modes that provision nothing reach neither [`compose_url`] nor
+/// [`role_sql`], so the parser must not demand a database `Secret` they would
+/// immediately discard — which is what forced `deploy/mvp/bootstrap.sh`'s
+/// generation and revoke call sites to invent one.
 ///
-/// Deliberately built without [`parse_args`], which injects both credentials
-/// and would leave every assertion here vacuous. The test parser also
-/// ignores ambient credential variables so they cannot contaminate the
-/// asserted command-line shape.
+/// Deliberately built without [`parse_args`]'s extras, which would supply the
+/// Secret and leave every assertion here vacuous.
 #[test]
-fn the_credential_free_modes_parse_without_a_password() {
-    let revoke = parse_without_password_envs([
+fn the_credential_free_modes_parse_without_a_database_secret() {
+    let revoke = TestCli::try_parse_from([
         "test",
         "--system-database-url",
         "postgresql://postgres@localhost/postgres",
         "--revoke-pat-prefix",
         "0123456789abcdef",
     ])
-    .expect("revoke provisions nothing and needs no database credential");
-    assert!(revoke.app_password.is_none());
+    .expect("revoke provisions nothing and needs no database Secret")
+    .args;
+    assert!(revoke.emit_secret.is_none());
 
     // EVERY family's action, derived — not the six that were remembered.
     // `wamn-0h0g.22.16` measured that the guest family's three flags were
@@ -561,11 +484,7 @@ fn the_credential_free_modes_parse_without_a_password() {
             &action,
             "a",
         ]))
-        .unwrap_or_else(|e| panic!("{action} demanded a database credential: {e}"));
-        assert!(
-            parsed.app_password.is_none(),
-            "{action} acquired an --app-password"
-        );
+        .unwrap_or_else(|e| panic!("{action} demanded a database Secret: {e}"));
         assert!(
             parsed.emit_secret.is_none(),
             "{action} was made to name a database Secret it would discard"
@@ -624,11 +543,12 @@ fn no_flag_exclusion_list_names_a_family_and_none_can() {
     }
     assert_eq!(
         survivors.len(),
-        2,
-        "the app password and the database Secret are the arguments a \
-             provisioning-only invocation owes — wamn-0h0g.22.24 retired the \
-             third, `--dispatch-reader-password`, with the stable-LOGIN shape \
-             that needed it"
+        1,
+        "the database Secret is the only argument a provisioning-only \
+             invocation still owes — wamn-0h0g.22.24 retired \
+             `--dispatch-reader-password` with the stable-LOGIN shape that \
+             needed it, and wamn-xv69 retired `--app-password` with the \
+             legacy shared-app URL surface"
     );
 
     for family in WorkloadRoleFamily::ALL {

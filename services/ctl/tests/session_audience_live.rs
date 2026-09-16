@@ -90,7 +90,6 @@ async fn cli(
             action,
             generation,
         ])
-        .env_remove("WAMN_APP_PASSWORD")
         .env_remove("WAMN_SYSTEM_ADMIN_URL")
         .stdin(Stdio::null())
         .kill_on_drop(true);
@@ -255,7 +254,9 @@ async fn setup(admin: &Client, system_url: &str) -> anyhow::Result<Client> {
             .await?;
     }
     let project = connect(&database_url(system_url, &database(INSTANCE))?).await?;
-    project.batch_execute(&sql::ensure_app_role_sql("")).await?;
+    project
+        .batch_execute(&sql::ensure_app_acl_role_sql())
+        .await?;
     project
         .batch_execute(include_str!("../../../deploy/sql/record-history.sql"))
         .await?;

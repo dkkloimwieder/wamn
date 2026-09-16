@@ -130,15 +130,6 @@ pub fn drain_app_role_sessions_sql() -> String {
     )
 }
 
-/// Legacy entry point for [`ensure_app_acl_role_sql`].
-///
-/// `password` remains only because the legacy `provision-project-env`
-/// `--app-password` URL surface still accepts it; removing that surface belongs to
-/// `wamn-xv69`. It is deliberately not emitted into the SQL.
-pub fn ensure_app_role_sql(_password: &str) -> String {
-    ensure_app_acl_role_sql()
-}
-
 // --- Dispatcher read-only provisioning (wamn-0h0g.12.66) ---------------------
 //
 // The always-on dispatcher authenticated as the shared, guest-reachable
@@ -910,12 +901,7 @@ mod tests {
 
     #[test]
     fn ensure_app_role_is_a_passwordless_nologin_acl_role() {
-        let sql = ensure_app_role_sql("must-not-reach-sql");
-        assert_eq!(
-            sql,
-            ensure_app_acl_role_sql(),
-            "the legacy entry point must converge through the generation family's ACL builder"
-        );
+        let sql = ensure_app_acl_role_sql();
         assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
         assert!(sql.contains("'wamn_app'"));
         assert!(sql.contains("CREATE ROLE \"wamn_app\" NOLOGIN"));
@@ -925,15 +911,6 @@ mod tests {
         assert!(sql.contains("FROM pg_catalog.pg_authid WHERE rolname = 'wamn_app'"));
         assert!(sql.contains("EXCEPTION WHEN duplicate_object THEN"));
         assert!(!sql.contains("pg_terminate_backend"));
-        assert!(
-            !sql.contains("must-not-reach-sql"),
-            "the retired shared password reached SQL"
-        );
-        assert_eq!(
-            ensure_app_role_sql("first"),
-            ensure_app_role_sql("second"),
-            "legacy password input must not affect emitted role SQL"
-        );
         for attr in [
             "NOSUPERUSER",
             "NOCREATEDB",

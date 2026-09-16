@@ -92,7 +92,7 @@ fn project_env_database_ownership_and_connect_are_scoped() {
         &url,
         &format!(
             "{app_role}\n{owner_role}\n",
-            app_role = sql::ensure_app_role_sql("wamn_app"),
+            app_role = sql::ensure_app_acl_role_sql(),
             owner_role = sql::ensure_db_owner_role_sql(),
         ),
     );

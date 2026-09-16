@@ -163,10 +163,6 @@ pub struct ProvisionProjectEnvRequest {
     /// Per-project-env `CONNECTION LIMIT`. Absent means no limit (`-1`).
     pub connection_limit: Option<i64>,
 
-    /// Password carried by the legacy shared-app URL surface. It never reaches
-    /// role SQL (`wamn-0h0g.12.140`).
-    pub app_password: String,
-
     /// Host the runtime reaches the project-env database at. Defaults to the
     /// target cluster's read-write service `<cluster>-rw`.
     pub app_host: Option<String>,
@@ -318,10 +314,8 @@ pub fn workload_secret_flag(family: WorkloadRoleFamily) -> String {
 /// password is CREATED by its own prepare action rather than handed to
 /// provisioning on a flag.
 ///
-/// The app-password parameter remains for the legacy URL surface owned
-/// by `wamn-xv69`, but [`sql::ensure_app_role_sql`] deliberately emits
-/// none of it. The app role is the same stable passwordless NOLOGIN carrier as
-/// every other generation family.
+/// It takes no app password either (`wamn-xv69`). The app role is the same
+/// stable passwordless NOLOGIN carrier as every other generation family.
 ///
 /// psql commits each complete statement in this standalone artifact. That
 /// makes the app-role hardening visible before the final bounded session drain.
@@ -330,19 +324,19 @@ pub fn workload_secret_flag(family: WorkloadRoleFamily) -> String {
 ///
 /// `pub` so the live gate applies the SAME fragments production uses instead of
 /// hand-transcribed copies — the `reconcile_run_plane::reconcile` precedent.
-pub fn role_sql(app_password: &str) -> String {
+pub fn role_sql() -> String {
     format!(
         "{posture}\n{drain}\n",
-        posture = role_posture_sql(app_password),
+        posture = role_posture_sql(),
         drain = sql::drain_app_role_sessions_sql(),
     )
 }
 
 /// Role creation and hardening half of [`role_sql`].
-pub fn role_posture_sql(app_password: &str) -> String {
+pub fn role_posture_sql() -> String {
     format!(
         "{app}\n{owner}\n{reader}\n",
-        app = sql::ensure_app_role_sql(app_password),
+        app = sql::ensure_app_acl_role_sql(),
         owner = sql::ensure_db_owner_role_sql(),
         reader = sql::ensure_workload_acl_role_sql(WorkloadRoleFamily::DispatchReader),
     )
@@ -490,13 +484,10 @@ pub async fn provision_project_env(
         .app_host
         .clone()
         .unwrap_or_else(|| format!("{cluster}-rw"));
-    let app_url = compose_url(
-        APP_ROLE,
-        &args.app_password,
-        &app_host,
-        args.app_port,
-        &db_name,
-    );
+    // The recorded URL names the app role and carries NO password (`wamn-xv69`).
+    // `wamn_app` is a passwordless NOLOGIN ACL role, so there is no credential
+    // to carry and provisioning must not be handed one.
+    let app_url = compose_url(APP_ROLE, "", &app_host, args.app_port, &db_name);
 
     // Render the artifacts the runbook applies.
     let db_cr = render_project_env_database(&triple, &instance, &cluster, args.connection_limit);
@@ -504,7 +495,7 @@ pub async fn provision_project_env(
     // database. The shared-login drain is an operator finalizer and is emitted
     // only by a successful App-generation prepare after every carrier has a
     // replacement credential.
-    let role_sql = role_posture_sql(&args.app_password);
+    let role_sql = role_posture_sql();
     let privilege_sql = privilege_sql(&db_name);
     let secret_doc = render_project_env_secret_manifest(&triple, &args.namespace, &app_url);
 

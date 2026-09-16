@@ -497,7 +497,7 @@ pub async fn run_workload_action(
             .await?;
             let app_retirement_role_sql =
                 if family == WorkloadRoleFamily::App && args.emit_role_sql.is_some() {
-                    let retirement_sql = role_sql("");
+                    let retirement_sql = role_sql();
                     write_output(args.emit_role_sql.as_deref(), &retirement_sql)?;
                     Some(retirement_sql)
                 } else {
