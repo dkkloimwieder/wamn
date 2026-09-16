@@ -1,6 +1,7 @@
 //! Temporary directory ownership shared by route tests.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Context as _;
 
@@ -26,6 +27,14 @@ impl Drop for ScratchRoot {
     }
 }
 
+/// Distinguishes the directories that one process creates, so that concurrent
+/// tests never remove or recreate a directory that another test still uses.
+static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
+
 fn scratch_root() -> PathBuf {
-    std::env::temp_dir().join(format!("route-authentication-live-{}", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "route-authentication-live-{}-{}",
+        std::process::id(),
+        NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed)
+    ))
 }
