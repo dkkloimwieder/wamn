@@ -994,11 +994,7 @@ fn validate_command_idempotence(
                     ),
                 )
             })?;
-            if !dependency
-                .operations
-                .iter()
-                .any(|candidate| *candidate == inherited.operation)
-            {
+            if !dependency.operations.contains(&inherited.operation) {
                 return Err(GenerateError::new(
                     GenerateErrorKind::InvalidOperation,
                     format!(
@@ -1186,13 +1182,13 @@ fn validate_custom_operation_input(
         ));
     }
     for (name, limit) in [("envelope", &input.envelope), ("line", &input.line)] {
-        if let Some(limit) = limit {
-            if limit.minimum == 0 || limit.maximum < limit.minimum {
-                return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
-                    format!("{operation_name} {name} bounds must be a positive closed interval"),
-                ));
-            }
+        if let Some(limit) = limit
+            && (limit.minimum == 0 || limit.maximum < limit.minimum)
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!("{operation_name} {name} bounds must be a positive closed interval"),
+            ));
         }
     }
     Ok(())
@@ -1218,19 +1214,18 @@ fn validate_contract_fields(
                 format!("{operation_name} {contract} repeats field {}", field.path),
             ));
         }
-        if !field.values.is_empty() {
-            if field.ty != wamn_schema_introspection::ir::ColumnType::Text
+        if !field.values.is_empty()
+            && (field.ty != wamn_schema_introspection::ir::ColumnType::Text
                 || field.values.iter().any(String::is_empty)
-                || field.values.iter().collect::<BTreeSet<_>>().len() != field.values.len()
-            {
-                return Err(GenerateError::new(
-                    GenerateErrorKind::InvalidOperation,
-                    format!(
-                        "{operation_name} {contract} field {} has invalid closed text values",
-                        field.path
-                    ),
-                ));
-            }
+                || field.values.iter().collect::<BTreeSet<_>>().len() != field.values.len())
+        {
+            return Err(GenerateError::new(
+                GenerateErrorKind::InvalidOperation,
+                format!(
+                    "{operation_name} {contract} field {} has invalid closed text values",
+                    field.path
+                ),
+            ));
         }
     }
     Ok(())

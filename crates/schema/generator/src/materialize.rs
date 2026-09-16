@@ -398,7 +398,10 @@ fn statement_corpus(
     }
     let discovery = generate_package(catalog, package_root, &StatementTransactionality::default())?;
     for file in discovery.files() {
-        if file.path().ends_with(".sql") {
+        if std::path::Path::new(file.path())
+            .extension()
+            .is_some_and(|extension| extension == "sql")
+        {
             corpus.insert(file.path().to_owned(), file.bytes().to_vec());
         }
     }

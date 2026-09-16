@@ -996,7 +996,7 @@ fn validate_constraint_error_mappings(
     operation: &str,
     declaration: &CustomOperationDeclaration,
 ) -> Result<(), GenerateError> {
-    for (name, _) in &declaration.constraint_errors {
+    for name in declaration.constraint_errors.keys() {
         custom_operation_constraint_origin(catalog, declaration, name).ok_or_else(|| {
             GenerateError::for_object(
                 GenerateErrorKind::InvalidOperation,

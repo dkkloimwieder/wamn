@@ -229,7 +229,7 @@ pub(super) fn emit_static_sql_projection(
 fn emit_claim_transaction(source: &mut String, finalized_row: &str) {
     writeln!(
         source,
-        r#"/// One claim and its work, with no commit before finalization.
+        r"/// One claim and its work, with no commit before finalization.
 #[derive(Debug)]
 pub(crate) struct PendingClaim {{
     transaction: wamn_postgres_statements::Transaction,
@@ -253,7 +253,7 @@ impl FinalizedClaim {{
         self.transaction.commit().await
     }}
 }}
-"#
+"
     )
     .expect("writing to a String cannot fail");
 }

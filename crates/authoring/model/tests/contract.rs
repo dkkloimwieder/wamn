@@ -32,7 +32,7 @@ fn wiring_document() -> Value {
     })
 }
 
-fn command(kind: &str, input: Value) -> Value {
+fn command(kind: &str, input: &Value) -> Value {
     json!({
         "document": "request",
         "body": {
@@ -43,7 +43,7 @@ fn command(kind: &str, input: Value) -> Value {
     })
 }
 
-fn query(kind: &str, input: Value, query_id: &str) -> Value {
+fn query(kind: &str, input: &Value, query_id: &str) -> Value {
     json!({
         "document": "request",
         "body": {
@@ -90,12 +90,12 @@ fn exact_two_commands_and_one_query_round_trip() {
     let commands = [
         // wamn-0h0g.7.11 moved this pin deliberately: the wire literal is now
         // `gate`, the same name the Rust variant carries.
-        command("gate", input.clone()),
-        command("publish", input),
+        command("gate", &input),
+        command("publish", &input),
     ];
     let queries = [query(
         "get-report",
-        json!({"scope": scope(), "report-id": "report-1"}),
+        &json!({"scope": scope(), "report-id": "report-1"}),
         "report-1",
     )];
 
@@ -113,23 +113,23 @@ fn the_collapsed_draft_operations_no_longer_decode() {
     let refused_commands = [
         command(
             "save-draft",
-            json!({
+            &json!({
                 "scope": scope(), "draft-id": "draft-1", "wiring-id": "wiring-1",
                 "expected-revision": 0, "definition": "{draft"
             }),
         ),
         command(
             "validate",
-            json!({"scope": scope(), "draft": {"draft-id": "draft-1", "revision": 1}}),
+            &json!({"scope": scope(), "draft": {"draft-id": "draft-1", "revision": 1}}),
         ),
         command(
             "draft-run",
-            json!({"scope": scope(), "validated-draft": validated, "input": {"value": 1}}),
+            &json!({"scope": scope(), "validated-draft": validated, "input": {"value": 1}}),
         ),
     ];
     let refused_queries = [query(
         "read-draft",
-        json!({"scope": scope(), "draft": {"draft-id": "draft-1", "revision": 1}}),
+        &json!({"scope": scope(), "draft": {"draft-id": "draft-1", "revision": 1}}),
         "read-1",
     )];
     for document in refused_commands.into_iter().chain(refused_queries) {
@@ -170,7 +170,7 @@ fn query_id_enforces_exact_utf8_byte_boundary() {
     let at_limit = "q".repeat(MAX_QUERY_ID_BYTES);
     decode(&query(
         "get-report",
-        json!({"scope": scope(), "report-id": "report-1"}),
+        &json!({"scope": scope(), "report-id": "report-1"}),
         &at_limit,
     ));
 
@@ -181,7 +181,7 @@ fn query_id_enforces_exact_utf8_byte_boundary() {
     ] {
         let encoded = serde_json::to_string(&query(
             "get-report",
-            json!({"scope": scope(), "report-id": "report-1"}),
+            &json!({"scope": scope(), "report-id": "report-1"}),
             &refused,
         ))
         .expect("query serializes");
@@ -465,7 +465,7 @@ fn query_kinds_and_operation_pairing_are_exact() {
 fn unsupported_version_is_classified_without_dispatch() {
     let mut request = query(
         "get-report",
-        json!({"scope": scope(), "report-id": "report-1"}),
+        &json!({"scope": scope(), "report-id": "report-1"}),
         "query-1",
     );
     request["body"]["schema-version"] = json!("0.2");
@@ -482,7 +482,7 @@ fn unsupported_version_is_classified_without_dispatch() {
 fn query_request_is_exactly_the_three_ratified_fields() {
     let mut request = query(
         "get-report",
-        json!({"scope": scope(), "report-id": "report-1"}),
+        &json!({"scope": scope(), "report-id": "report-1"}),
         "query-1",
     );
     request["body"]["command-id"] = json!("forged-command-identity");
@@ -509,7 +509,7 @@ fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {
         "package-version": "1.0.0",
         "document": wiring_document()
     });
-    decode(&command("publish", complete.clone()));
+    decode(&command("publish", &complete));
     let mut attributed = complete.clone();
     attributed
         .as_object_mut()
@@ -518,7 +518,7 @@ fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {
             "provenance".to_owned(),
             json!({"commit": "0123456789abcdef", "ref": null, "dirty": false}),
         );
-    decode(&command("publish", attributed));
+    decode(&command("publish", &attributed));
 
     // Every field is load-bearing: dropping any one leaves `catalog.wirings`
     // unwritable, so none may carry a serde default.
@@ -533,7 +533,7 @@ fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {
             "{field} was not in the complete publish input"
         );
         let encoded =
-            serde_json::to_string(&command("publish", omitted)).expect("command serializes");
+            serde_json::to_string(&command("publish", &omitted)).expect("command serializes");
         assert_eq!(
             decode_document(&encoded).unwrap_err().kind(),
             ContractDecodeErrorKind::Json,
@@ -556,7 +556,7 @@ fn publish_carries_the_document_and_derives_no_identity_from_the_wire() {
             .expect("publish input is an object")
             .insert(field.to_owned(), value);
         let encoded =
-            serde_json::to_string(&command("publish", extra)).expect("command serializes");
+            serde_json::to_string(&command("publish", &extra)).expect("command serializes");
         assert_eq!(
             decode_document(&encoded).unwrap_err().kind(),
             ContractDecodeErrorKind::Json,
