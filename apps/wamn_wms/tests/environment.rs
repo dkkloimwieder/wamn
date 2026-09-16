@@ -102,13 +102,6 @@ pub async fn provision_project(
         system_database_url: Some(inputs.system_pg_url.clone()),
     })
     .await?;
-    let database_config: tokio_postgres::Config =
-        admin_url.parse().context("parse WMS cluster URL")?;
-    let host = match database_config.get_hosts() {
-        [tokio_postgres::config::Host::Tcp(host)] => host.clone(),
-        _ => anyhow::bail!("WMS provisioning requires one TCP database host"),
-    };
-    let port = database_config.get_ports().first().copied().unwrap_or(5432);
     let args = ProvisionProjectEnvRequest {
         org: ORG.into(),
         project: PROJECT.into(),
@@ -118,8 +111,6 @@ pub async fn provision_project(
         system_database_url: Some(inputs.system_pg_url.clone()),
         cluster: Some(CLUSTER.into()),
         connection_limit: None,
-        app_host: Some(host),
-        app_port: port,
         namespace: inputs.host_secret_namespace.clone(),
         secret_namespace: None,
         emit_database: Some(work.join("database.json")),

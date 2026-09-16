@@ -115,8 +115,8 @@ spec:
             # below, spells the two cut-over halves as SCOPED GENERATIONS like
             # the other carriers, and records why no url can stand in for
             # another. `wamn-ctl provision-project-env` supplies the values:
-            # `--emit-secret` writes the guest url as
-            # `wamn-db-<org>--<project>--<env>`,
+            # `--prepare-guest-generation` / `--emit-guest-secret` write the
+            # guest url as `wamn-guest-<org>--<project>--<env>`,
             # `--prepare-executor-platform-generation` /
             # `--emit-executor-platform-secret` write the platform url as
             # `wamn-executor-platform-<org>--<project>--<env>`, and

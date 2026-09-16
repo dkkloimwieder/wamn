@@ -182,8 +182,6 @@ fn provisioning_args(
         system_database_url: Some(system_url.to_owned()),
         cluster: Some("route-auth-pg18".to_owned()),
         connection_limit: None,
-        app_host: Some("route-auth-pg18.invalid".to_owned()),
-        app_port: 5432,
         namespace: "wamn-system".to_owned(),
         secret_namespace: None,
         emit_database: Some(root.join("database.json")),

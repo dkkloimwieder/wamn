@@ -15,12 +15,15 @@ use crate::name::{
 use crate::session_target::{SESSION_TARGET_KEY, SessionTarget};
 use crate::workload_role::{WorkloadRoleFamily, WorkloadSecretBodyKind};
 
-/// Render the per-project-env credential `Secret` (wamn-q3n.7). Name
+/// Render the per-project-env identity `Secret` (wamn-q3n.7). Name
 /// `wamn-db-<org>--<project>--<env>` — the 5x0.1 lookup key recorded as the
-/// project-env's `SecretRef` in the registry. `stringData.url` is the app-role
-/// connection URL to the project-env database; the labels carry the full identity
+/// project-env's `SecretRef` in the registry. The labels carry the full identity
 /// triple so tooling never parses the name.
-pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str, url: &str) -> Value {
+///
+/// The Secret carries no connection URL. `wamn_app` is a passwordless NOLOGIN
+/// ACL role, so no credential exists to put in one. Every workload family mounts
+/// its own scoped generation Secret instead.
+pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str) -> Value {
     json!({
         "apiVersion": "v1",
         "kind": "Secret",
@@ -37,7 +40,6 @@ pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str, url:
         },
         "type": "Opaque",
         "stringData": {
-            "url": url,
             "org": triple.org,
             "project": triple.project,
             "env": triple.env.as_str(),
@@ -285,15 +287,18 @@ mod tests {
     #[test]
     fn project_env_secret_names_and_labels_carry_the_triple() {
         let t = Triple::new("acme", "billing", "dev");
-        let url = "postgres://wamn_app:wamn_app@acme-dev-rw:5432/wamn-db-acme--billing--dev";
-        let s = render_project_env_secret_manifest(&t, "wamn-system", url);
+        let s = render_project_env_secret_manifest(&t, "wamn-system");
         assert_eq!(s["kind"], "Secret");
         assert_eq!(s["metadata"]["name"], "wamn-db-acme--billing--dev");
         assert_eq!(s["metadata"]["namespace"], "wamn-system");
         assert_eq!(s["metadata"]["labels"]["wamn.org"], "acme");
         assert_eq!(s["metadata"]["labels"]["wamn.project"], "billing");
         assert_eq!(s["metadata"]["labels"]["wamn.env"], "dev");
-        assert_eq!(s["stringData"]["url"], url);
+        // The project-env Secret carries identity only, never a connection URL.
+        assert!(
+            s["stringData"]["url"].is_null(),
+            "the project-env Secret must carry no url key"
+        );
         assert_eq!(s["stringData"]["org"], "acme");
         assert_eq!(s["stringData"]["project"], "billing");
         assert_eq!(s["stringData"]["env"], "dev");
@@ -462,7 +467,7 @@ mod tests {
         assert_eq!(s["metadata"]["name"], "wamn-cdc-acme--billing--dev");
         assert_ne!(
             s["metadata"]["name"],
-            render_project_env_secret_manifest(&t, "wamn-system", url)["metadata"]["name"]
+            render_project_env_secret_manifest(&t, "wamn-system")["metadata"]["name"]
         );
         assert_eq!(
             s["metadata"]["labels"]["app.kubernetes.io/component"],

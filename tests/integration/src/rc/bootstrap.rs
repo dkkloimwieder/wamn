@@ -99,8 +99,6 @@ pub(super) async fn run(resources: &Resources) -> anyhow::Result<()> {
         system_database_url: Some(system_url),
         cluster: Some("rc-pg".into()),
         connection_limit: None,
-        app_host: Some("rc-pg-rw".into()),
-        app_port: 5432,
         namespace: NAMESPACE.into(),
         secret_namespace: None,
         emit_database: Some(database_path.clone()),

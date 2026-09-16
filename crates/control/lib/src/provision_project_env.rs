@@ -78,7 +78,7 @@ use wamn_control_provision::tenant_key::tenant_key;
 use wamn_control_provision::{
     APP_ROLE, CredentialGeneration, INSTANCE_SUFFIX_LEN, PLATFORM_GROUP_ROLE, PlatformComponent,
     WorkloadRoleFamily, WorkloadRoleScope, WorkloadRoleScopeKind, WorkloadSecretBody,
-    WorkloadSecretBodyKind, bind_platform_principal_sql, compose_url, project_env_database_name,
+    WorkloadSecretBodyKind, bind_platform_principal_sql, project_env_database_name,
     project_env_namespace, project_env_secret_name, render_project_env_database,
     render_project_env_secret_manifest, render_workload_secret_manifest, sql,
     validate_instance_suffix, validate_project_env, workload_generation_role,
@@ -162,13 +162,6 @@ pub struct ProvisionProjectEnvRequest {
 
     /// Per-project-env `CONNECTION LIMIT`. Absent means no limit (`-1`).
     pub connection_limit: Option<i64>,
-
-    /// Host the runtime reaches the project-env database at. Defaults to the
-    /// target cluster's read-write service `<cluster>-rw`.
-    pub app_host: Option<String>,
-
-    /// Port the runtime reaches the database at.
-    pub app_port: u16,
 
     /// Namespace the rendered `Database` CR + `Secret` are applied to.
     pub namespace: String,
@@ -480,14 +473,6 @@ pub async fn provision_project_env(
     };
 
     let db_name = project_env_database_name(org, project, env, &instance);
-    let app_host = args
-        .app_host
-        .clone()
-        .unwrap_or_else(|| format!("{cluster}-rw"));
-    // The recorded URL names the app role and carries NO password (`wamn-xv69`).
-    // `wamn_app` is a passwordless NOLOGIN ACL role, so there is no credential
-    // to carry and provisioning must not be handed one.
-    let app_url = compose_url(APP_ROLE, "", &app_host, args.app_port, &db_name);
 
     // Render the artifacts the runbook applies.
     let db_cr = render_project_env_database(&triple, &instance, &cluster, args.connection_limit);
@@ -497,7 +482,7 @@ pub async fn provision_project_env(
     // replacement credential.
     let role_sql = role_posture_sql();
     let privilege_sql = privilege_sql(&db_name);
-    let secret_doc = render_project_env_secret_manifest(&triple, &args.namespace, &app_url);
+    let secret_doc = render_project_env_secret_manifest(&triple, &args.namespace);
 
     write_output(
         args.emit_database.as_deref(),

@@ -73,15 +73,6 @@ pub struct ProvisionProjectEnvArgs {
     #[arg(long)]
     pub connection_limit: Option<i64>,
 
-    /// Host the runtime reaches the project-env database at. Defaults to the
-    /// target cluster's read-write service `<cluster>-rw`.
-    #[arg(long)]
-    pub app_host: Option<String>,
-
-    /// Port the runtime reaches the database at.
-    #[arg(long, default_value_t = 5432)]
-    pub app_port: u16,
-
     /// Namespace the emitted `Database` CR + `Secret` are applied to.
     #[arg(long, env = "WAMN_NAMESPACE", default_value = "wamn-system")]
     pub namespace: String,
@@ -529,7 +520,6 @@ fn workload_action_request(
     anyhow::ensure!(
         args.cluster.is_none()
             && args.connection_limit.is_none()
-            && args.app_host.is_none()
             && args.emit_database.is_none()
             && args.emit_privilege_sql.is_none()
             && args.emit_secret.is_none()
@@ -582,8 +572,6 @@ fn provisioning_request(
         system_database_url: args.system_database_url,
         cluster: args.cluster,
         connection_limit: args.connection_limit,
-        app_host: args.app_host,
-        app_port: args.app_port,
         namespace: args.namespace,
         secret_namespace: args.secret_namespace,
         emit_database: args.emit_database,
