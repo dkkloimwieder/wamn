@@ -73,7 +73,8 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     // `authoring_test_sets_schema_version_check`: the reconciliation CheckSpec
     // went with its table in wamn-0h0g.15.27 (3a042d96). The admission-context
     // CheckSpec below is the only governed `0.1` reconciliation identity left in
-    // that file.
+    // that declaration set, which `75ffd53e7` moved out of `run_plane.rs` into
+    // `run_plane/declarations.rs` unchanged.
     GovernedLiteral {
         path: "deploy/sql/run-state.sql",
         exact: "admission_context_version text NOT NULL DEFAULT '0.1'",
@@ -85,7 +86,7 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "crates/schema/control/src/run_plane.rs",
+        path: "crates/schema/control/src/run_plane/declarations.rs",
         exact: r#"definition: "CHECK (admission_context_version = '0.1'::text)","#,
         expected_count: 1,
     },

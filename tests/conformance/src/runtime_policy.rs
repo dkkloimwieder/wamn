@@ -6,22 +6,29 @@ use std::path::{Path, PathBuf};
 use url::Url;
 
 const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
-/// The release manifest load call, deliberately truncated before the
-/// `(` so it matches `load` and `load_from` alike — the guard counts
-/// *construction*, not one spelling of it.
+/// The release manifest load call, truncated before the `(` so it matches every
+/// spelling — `load_canonical_bytes` for a registry-backed pull, `load_from` for
+/// a local application directory. It is a PRESENCE marker, not a counted one: a
+/// host may reach its one loaded release through several mutually exclusive
+/// spellings, so counting them counts branches rather than releases.
 ///
-/// Counted as raw text, like every other marker here, so prose in a host file that
-/// wrote this marker out in full would read as a second construction site. Host
-/// doc comments name the type and the method separately for that reason.
+/// Matched as raw text, like every other marker here, so prose in a host file that
+/// wrote this marker out in full would read as a construction site. Host doc
+/// comments name the type and the method separately for that reason.
 const RELEASE_LOAD_CONSTRUCTION: &str = "LoadedRelease::load";
 
-/// The two host processes, and per process the two positions that must hold:
-/// `(file, the text that reaches the loaded release, the first bind-capable text it must
-/// precede)`.
+/// The one-per-process binding that holds the loaded release. This is the counted
+/// marker: the ruling is one loaded release per host process, and a process holds
+/// exactly one of them when exactly one binding carries it, whatever the branch
+/// that filled it called.
+const RELEASE_BINDING: &str = "let release = ";
+
+/// The two host processes, and per process the position that must hold:
+/// `(file, the first bind-capable text the release binding must precede)`.
 ///
 /// wamn-0h0g.15.101 rules one loaded release instance PER PROCESS: the wash host serves
 /// flow-http routing and jetstream delivery, the executor serves the durable
-/// queue. Separate processes cannot share one object, so each constructs exactly
+/// queue. Separate processes cannot share one object, so each binds exactly
 /// once — and must do so before anything binds a component, because under ruling
 /// wamn-0h0g.15.102 the verified manifest is the sole carrier of the
 /// `(effective release id, manifest digest)` pair a claim records. A component that
@@ -31,17 +38,9 @@ const RELEASE_LOAD_CONSTRUCTION: &str = "LoadedRelease::load";
 /// `load_plan_release`; `18ba72b6` deleted host plan supply and that symbol with
 /// it, so this entry named a function that existed nowhere and the guard checked
 /// nothing (wamn-nguw). Both surviving processes call the loaded release directly.
-const HOST_RELEASE_LOAD_SITES: [(&str, &str, &str); 2] = [
-    (
-        "services/host/src/host.rs",
-        "let release = load_release(",
-        "ClusterHostBuilder::default()",
-    ),
-    (
-        "services/executor/src/lib.rs",
-        "let release = load_release(",
-        "RouterDriver::new(",
-    ),
+const HOST_RELEASE_LOAD_SITES: [(&str, &str); 2] = [
+    ("services/host/src/host.rs", "ClusterHostBuilder::default()"),
+    ("services/executor/src/lib.rs", "RouterDriver::new("),
 ];
 
 /// The production construction of a claim's release pair.
@@ -138,7 +137,14 @@ fn production_half<'a>(source: &'a str, seam: &str) -> Result<&'a str, String> {
 
 fn validate_one_release_load_site(source: &str, seam: &str) -> Result<(), String> {
     let production = production_half(source, seam)?;
-    validate_one(production, RELEASE_LOAD_CONSTRUCTION, seam)
+    validate_one(production, RELEASE_BINDING, seam)?;
+    if production.contains(RELEASE_LOAD_CONSTRUCTION) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{seam} must fill its release binding through `{RELEASE_LOAD_CONSTRUCTION}`"
+        ))
+    }
 }
 
 fn validate_release_load_precedes_bind(
@@ -579,10 +585,10 @@ fn database_url_names_and_values_outside_component_environment_are_allowed() {
 #[test]
 fn one_release_load_site_per_host_process() {
     let root = repository_root();
-    for (path, entry, bind) in HOST_RELEASE_LOAD_SITES {
+    for (path, bind) in HOST_RELEASE_LOAD_SITES {
         let source = host_source(&root, path);
         validate_one_release_load_site(&source, path).unwrap_or_else(|error| panic!("{error}"));
-        validate_release_load_precedes_bind(&source, entry, bind, path)
+        validate_release_load_precedes_bind(&source, RELEASE_BINDING, bind, path)
             .unwrap_or_else(|error| panic!("{error}"));
     }
 }
@@ -685,44 +691,52 @@ fn release_identity_list_rejects_a_returning_config_key() {
 #[test]
 fn release_load_ignores_cfg_test_construction_sites() {
     // Unit tests and plan-supply tests load releases from fixture directories.
-    // The one-instance rule applies only to production sites.
+    // The one-instance rule applies only to production sites, and it counts the
+    // binding: the production half here fills one binding from two mutually
+    // exclusive branches, which is exactly the shape the wash host has.
     let source = format!(
-        "{RELEASE_LOAD_CONSTRUCTION}_from(root)\n\
+        "{RELEASE_BINDING}if local {{\n\
+         \x20   {RELEASE_LOAD_CONSTRUCTION}_from(root)\n\
+         }} else {{\n\
+         \x20   {RELEASE_LOAD_CONSTRUCTION}_canonical_bytes(bytes)\n\
+         }};\n\
          {CFG_TEST_MODULE}\n\
-             {RELEASE_LOAD_CONSTRUCTION}_from(fixture)\n\
-             {RELEASE_LOAD_CONSTRUCTION}()\n\
+         \x20   {RELEASE_BINDING}fixture_release();\n\
+         \x20   {RELEASE_LOAD_CONSTRUCTION}_from(fixture)\n\
          }}\n"
     );
     assert_eq!(
-        source.matches(RELEASE_LOAD_CONSTRUCTION).count(),
-        3,
-        "fixture must carry one production and two test-only construction sites"
+        source.matches(RELEASE_BINDING).count(),
+        2,
+        "fixture must carry one production and one test-only release binding"
     );
-    validate_one_release_load_site(&source, "release-load-mutant.rs")
-        .expect("cfg(test) construction must not widen the production list");
+    validate_one_release_load_site(&source, "release-load-mutant.rs").expect(
+        "cfg(test) bindings and exclusive load spellings must not widen the production list",
+    );
 }
 
 #[test]
 fn release_load_rejects_removed_or_duplicated_construction_site() {
-    let test_module =
-        format!("{CFG_TEST_MODULE}\n    {RELEASE_LOAD_CONSTRUCTION}_from(fixture)\n}}\n");
+    let test_module = format!(
+        "{CFG_TEST_MODULE}\n    {RELEASE_BINDING}{RELEASE_LOAD_CONSTRUCTION}_from(fixture)\n}}\n"
+    );
 
     let removed = validate_one_release_load_site(&test_module, "release-load-mutant.rs")
-        .expect_err("removing the production release load must fail");
+        .expect_err("removing the production release binding must fail");
     assert!(
         removed.ends_with("found 0"),
         "removed-release-load failure must report the production count: {removed}"
     );
 
-    // Two production sites in one process is the exact drift this guard exists to
+    // Two live bindings in one process is the exact drift this guard exists to
     // catch: two loaded manifests where the ruling allows one.
     let duplicated = format!(
-        "{RELEASE_LOAD_CONSTRUCTION}_from(root)\n\
-         {RELEASE_LOAD_CONSTRUCTION}()\n\
+        "{RELEASE_BINDING}{RELEASE_LOAD_CONSTRUCTION}_from(root)\n\
+         {RELEASE_BINDING}{RELEASE_LOAD_CONSTRUCTION}_canonical_bytes(bytes)\n\
          {test_module}"
     );
     let duplicate = validate_one_release_load_site(&duplicated, "release-load-mutant.rs")
-        .expect_err("a second production release load must fail");
+        .expect_err("a second production release binding must fail");
     assert!(
         duplicate.ends_with("found 2"),
         "duplicate-release-load failure must report the production count: {duplicate}"

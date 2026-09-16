@@ -338,7 +338,10 @@ fn stable_defaults_and_shipping_command_surfaces_exclude_cranelift() {
     }
 
     let mut command_surfaces = Vec::new();
-    for path in ["architecture", "apps", "deploy", "tools"] {
+    // RETIRED `architecture/`: it held one data file, `state-owners.json`, and
+    // `24beb72ba` deleted the file and the directory with it. No path succeeded
+    // it, so the scan over it goes with its subject.
+    for path in ["apps", "deploy", "tools"] {
         text_files(&root.join(path), &mut command_surfaces);
     }
     command_surfaces.retain(|path| path != &root.join(HELPER));
